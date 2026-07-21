@@ -2,13 +2,11 @@
 
 <img src="docs/boss-logo.png" alt="BOSS" width="128" height="128" />
 
-# BOSS — Business OS + Simulator
-
-### 🎛️ The operator's console for AI agents
+### 🔬 The operator's console for AI agents — and the scientists who direct them
 
 **The first open-source, multi-platform harness for AI agents — an evolvable toolbox for agents and the humans they work with.**
 
-_Built for enterprises, science, and research._
+_🧪 Built for enterprises, science, and research._
 
 Bring your own agent — Claude Code, Codex, Gemini, or OpenCode — and give it a real browser, terminal, editor, secrets, and automation. Then decide exactly what each one is allowed to touch. Run it on your own machine, hand a live terminal to your phone with a QR code, and reshape any tool — by hand or by the agent itself — while the app keeps running.
 
@@ -120,6 +118,8 @@ BOSS is agent-agnostic. Open a terminal, launch your preferred CLI, and — once
 
 **Scaffold a tool for any of them** — the built-in **Tool Creator** generates a new plugin (build files, manifest, skeleton UI, CI) and writes its skill in *all four* CLI formats (`.claude/`, `.codex/`, `.gemini/`, `.opencode/`), so the repo works with whichever agent you open it with — then launches that agent in a fresh terminal to start building.
 
+**A tool-creation framework for a reinforcement layer.** Together, Tool Creator and its companion **Tool Evolver** let an agent build *and continuously improve* its own capabilities: scaffold a tool, probe how it behaves (memory, leaks, logs, output), then evolve it — hot-reloaded into the running app and opened as a PR. Tools are created, measured, and reinforced in a loop, so the toolbox gets better with use.
+
 ---
 
 ## You decide what your agents can touch
@@ -160,42 +160,42 @@ Plugin authors add tools by implementing `McpToolProvider` (boss-plugin-api 1.0.
 ### Core tabs
 | Plugin | What it does |
 |--------|--------------|
-| **Terminal Tab** | Full terminal built on the BossTerm library — persistent sessions, split panes, sharing, and the `boss` MCP server |
-| **Code Editor Tab** | Code editor with syntax highlighting (50+ languages), code folding, and run-gutter icons |
-| **Fluck Browser** | Embedded web browser — zoom, security/loading indicators, downloads, and Secret Manager autofill |
+| **[Terminal Tab](https://github.com/risa-labs-inc/boss-plugin-terminal-tab)** | Full terminal built on the BossTerm library — persistent sessions, split panes, sharing, and the `boss` MCP server |
+| **[Code Editor Tab](https://github.com/risa-labs-inc/boss-plugin-editor-tab)** | Code editor with syntax highlighting (50+ languages), code folding, and run-gutter icons |
+| **[Fluck Browser](https://github.com/risa-labs-inc/boss-plugin-fluck-browser)** | Embedded web browser — zoom, security/loading indicators, downloads, and Secret Manager autofill |
 | **Jupyter Notebook** | Cursor-style `.ipynb` editor running against a local Python kernel over Jupyter's ZeroMQ protocol |
 
 ### Dev tools
 | Plugin | What it does |
 |--------|--------------|
-| **Codebase** | Browse and explore project files (`codebase_*` MCP tools) |
-| **Console** | Captured stdout/stderr logs, filterable per plugin (`console_*` MCP tools) |
-| **Git Status / Git Log** | Working-tree status & staged changes; commit history with a graph |
-| **Run Configurations** | Auto-detect and run project run-configs (`run_config_*` MCP tools) |
-| **Performance** | Live JVM metrics — CPU, memory, resource counts |
+| **[Codebase](https://github.com/risa-labs-inc/boss-plugin-codebase)** | Browse and explore project files (`codebase_*` MCP tools) |
+| **[Console](https://github.com/risa-labs-inc/boss-plugin-console)** | Captured stdout/stderr logs, filterable per plugin (`console_*` MCP tools) |
+| **[Git Status](https://github.com/risa-labs-inc/boss-plugin-git-status) / [Git Log](https://github.com/risa-labs-inc/boss-plugin-git-log)** | Working-tree status & staged changes; commit history with a graph |
+| **[Run Configurations](https://github.com/risa-labs-inc/boss-plugin-run-configurations)** | Auto-detect and run project run-configs (`run_config_*` MCP tools) |
+| **[Performance](https://github.com/risa-labs-inc/boss-plugin-performance)** | Live JVM metrics — CPU, memory, resource counts |
 
 ### AI & automation
 | Plugin | What it does |
 |--------|--------------|
-| **Tool Creator** | Scaffold a new plugin and hand it to Claude Code / Codex / Gemini / OpenCode to build |
-| **Tool Evolver** | Probe a plugin's memory/leaks/logs, then AI-evolve it with hot-reload + a PR (`evolver_*`) |
-| **LLM RPA** | AI-powered robotic process automation (`llmrpa_*`) |
-| **RPA Engine / Recorder** | Record browser interactions and replay them as automation (`rpa_*`) |
-| **ChatGPT** | Embedded ChatGPT integration |
+| **[Tool Creator](https://github.com/risa-labs-inc/boss-plugin-tool-creator)** | Scaffold a new plugin and hand it to Claude Code / Codex / Gemini / OpenCode to build |
+| **[Tool Evolver](https://github.com/risa-labs-inc/boss-plugin-tool-evolver)** | Probe a plugin's memory/leaks/logs, then AI-evolve it with hot-reload + a PR (`evolver_*`) |
+| **[LLM RPA](https://github.com/risa-labs-inc/boss-plugin-llmrpa)** | AI-powered robotic process automation (`llmrpa_*`) |
+| **[RPA Engine](https://github.com/risa-labs-inc/boss-plugin-rpaengine) / [Recorder](https://github.com/risa-labs-inc/boss-plugin-rparecorder)** | Record browser interactions and replay them as automation (`rpa_*`) |
+| **[ChatGPT](https://github.com/risa-labs-inc/boss-plugin-fluck-chatgpt)** | Embedded ChatGPT integration |
 
 ### Security & secrets
 | Plugin | What it does |
 |--------|--------------|
-| **Secret Manager** | Encrypted credential vault — website/username/password, notes, tags, 2FA, expiry. Row-level-scoped to you, browser auto-fill, and permission-gated `secret_*` MCP tools |
-| **My Secrets** | Read-only view of your own and shared credentials |
+| **[Secret Manager](https://github.com/risa-labs-inc/boss-plugin-secret-manager)** | Encrypted credential vault — website/username/password, notes, tags, 2FA, expiry. Row-level-scoped to you, browser auto-fill, and permission-gated `secret_*` MCP tools |
+| **[My Secrets](https://github.com/risa-labs-inc/boss-plugin-user-secret-list)** | Read-only view of your own and shared credentials |
 
 ### Productivity & admin
 | Plugin | What it does |
 |--------|--------------|
-| **Bookmarks** | Bookmark management with global-search integration (`bookmark_*`) |
-| **Downloads** | Active and completed downloads |
-| **Top of Mind** | Quick access to frequently used items |
-| **Admin Role Management / Role Creation** | Manage roles and permissions; build custom roles (admin) |
+| **[Bookmarks](https://github.com/risa-labs-inc/boss-plugin-bookmarks)** | Bookmark management with global-search integration (`bookmark_*`) |
+| **[Downloads](https://github.com/risa-labs-inc/boss-plugin-downloads)** | Active and completed downloads |
+| **[Top of Mind](https://github.com/risa-labs-inc/boss-plugin-topofmind)** | Quick access to frequently used items |
+| **[Admin Role Management](https://github.com/risa-labs-inc/boss-plugin-admin-role-management) / [Role Creation](https://github.com/risa-labs-inc/boss-plugin-role-creation)** | Manage roles and permissions; build custom roles (admin) |
 
 *…and more in [boss-plugins](https://github.com/risa-labs-inc/boss-plugins), including analytics, atlas (chat about the current page), and hardware integrations.*
 
@@ -225,7 +225,7 @@ Your machine *is* the server: BossTerm runs a small embedded web server and stre
 
 ## Case study: the DNA Origami Inventor
 
-BOSS isn't only for shipping software. **DNA Origami Inventor** is a BOSS plugin for computational nanotechnology: a researcher describes a target nanostructure in a **chat-first UI**, and an agent designs the **DNA origami** and runs **oxDNA** molecular-dynamics simulations to validate it — orchestrating BOSS's terminal, editor, browser, and tools end to end.
+BOSS isn't only for shipping software. **🧬 DNA Origami Inventor** is a BOSS plugin for computational nanotechnology: a researcher describes a target nanostructure in a **chat-first UI**, and an agent designs the **DNA origami** and runs **oxDNA** molecular-dynamics simulations to validate it — orchestrating BOSS's terminal, editor, browser, and tools end to end.
 
 It's a concrete example of what BOSS is built for beyond coding: **enterprises, science, and research** — domains where an agent needs real tools, real compute, and governed access, not just a chat window.
 
