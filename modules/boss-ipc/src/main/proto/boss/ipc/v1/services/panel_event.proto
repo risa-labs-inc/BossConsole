@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package boss.ipc.v1.services;
+
+import "boss/ipc/v1/common.proto";
+
+option java_package = "ai.rever.boss.ipc.proto.services";
+option java_multiple_files = true;
+
+// PanelEventService allows out-of-process plugins to send panel lifecycle events
+// back to the kernel, such as requesting a panel to close or be revealed.
+service PanelEventService {
+  // Request that a specific panel be closed
+  rpc ClosePanel(ClosePanelRequest) returns (boss.ipc.v1.Empty);
+  // Request that a specific panel be revealed/activated (as if its sidebar icon was clicked)
+  rpc OpenPanel(OpenPanelRequest) returns (boss.ipc.v1.Empty);
+}
+
+// ---- Messages ----
+
+message ClosePanelRequest {
+  string panel_id = 1;
+  string plugin_id = 2;
+  int32 default_order = 3;
+  string window_id = 4;
+}
+
+message OpenPanelRequest {
+  string panel_id = 1;
+  string plugin_id = 2;
+  int32 default_order = 3;
+  string window_id = 4;
+}

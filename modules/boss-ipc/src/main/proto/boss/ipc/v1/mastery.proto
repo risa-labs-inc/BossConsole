@@ -1,0 +1,189 @@
+syntax = "proto3";
+
+package boss.ipc.v1;
+
+import "boss/ipc/v1/common.proto";
+
+option java_package = "ai.rever.boss.ipc.proto";
+option java_multiple_files = true;
+
+// MasteryService orchestrates DAG workflows that compose plugin capabilities.
+// A Mastery is a directed acyclic graph of plugin invocations that automates multi-step tasks.
+service MasteryService {
+  // Create and persist a mastery definition
+  rpc CreateMastery(MasteryDefinition) returns (MasteryId);
+
+  // Execute a mastery with input, streaming progress events
+  rpc ExecuteMastery(ExecuteMasteryRequest) returns (stream MasteryProgress);
+
+  // Cancel a running mastery execution
+  rpc CancelMastery(MasteryExecutionId) returns (CancelMasteryResponse);
+
+  // Get the status of a running or completed mastery execution
+  rpc GetMasteryStatus(MasteryExecutionId) returns (MasteryStatus);
+
+  // AI-assisted: generate a mastery definition from a natural language task description
+  rpc GenerateMastery(GenerateMasteryRequest) returns (MasteryDefinition);
+
+  // List all saved mastery definitions
+  rpc ListMasteries(ListMasteriesRequest) returns (ListMasteriesResponse);
+
+  // Delete a saved mastery
+  rpc DeleteMastery(MasteryId) returns (Empty);
+}
+
+// ---- Mastery Definition (the DAG) ----
+
+message MasteryDefinition {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  string input_schema_json = 4;   // JSON Schema for mastery input
+  string output_schema_json = 5;  // JSON Schema for mastery output
+  repeated MasteryNode nodes = 6;
+  repeated MasteryEdge edges = 7;
+  string author = 8;
+  int64 created_at = 9;
+  int64 updated_at = 10;
+}
+
+message MasteryNode {
+  string id = 1;
+  string plugin_id = 2;       // Which plugin process to invoke
+  string action = 3;          // Which capability of that plugin (matches PluginCapability.action)
+  map<string, string> input_mapping = 4;  // Map: this node's input key -> source (e.g., "INPUT.url", "node1.output")
+  map<string, string> static_config = 5;  // Static configuration values
+  bool is_agent_call = 6;     // If true, this node invokes an AI agent
+  string agent_prompt = 7;    // Prompt template for agent calls (supports ${variable} interpolation)
+  int32 max_retries = 8;
+  int64 timeout_ms = 9;       // Per-node timeout (default: 300000 = 5 min)
+  string display_name = 10;
+}
+
+message MasteryEdge {
+  string from_node = 1;       // Source node ID (or "INPUT" for mastery input)
+  string to_node = 2;         // Target node ID
+  string output_key = 3;      // Which output field from source node
+  string input_key = 4;       // Which input field on target node
+  string condition = 5;       // Optional: expression that must be true to follow this edge
+}
+
+// ---- Execution ----
+
+message MasteryId {
+  string id = 1;
+}
+
+message MasteryExecutionId {
+  string execution_id = 1;
+}
+
+message ExecuteMasteryRequest {
+  string mastery_id = 1;
+  map<string, string> input = 2;  // Key-value input to the mastery
+  string source_window_id = 3;
+}
+
+message MasteryProgress {
+  string execution_id = 1;
+  int64 timestamp = 2;
+
+  oneof progress {
+    MasteryStarted started = 3;
+    NodeStarted node_started = 4;
+    NodeCompleted node_completed = 5;
+    NodeFailed node_failed = 6;
+    MasteryCompleted completed = 7;
+    MasteryFailed failed = 8;
+  }
+}
+
+message MasteryStarted {
+  string mastery_id = 1;
+  string mastery_name = 2;
+  int32 total_nodes = 3;
+}
+
+message NodeStarted {
+  string node_id = 1;
+  string display_name = 2;
+  string plugin_id = 3;
+  string action = 4;
+}
+
+message NodeCompleted {
+  string node_id = 1;
+  map<string, string> output = 2;
+  int64 duration_ms = 3;
+}
+
+message NodeFailed {
+  string node_id = 1;
+  string error_message = 2;
+  int32 retry_attempt = 3;
+  bool will_retry = 4;
+}
+
+message MasteryCompleted {
+  map<string, string> output = 1;
+  int64 total_duration_ms = 2;
+  int32 nodes_executed = 3;
+}
+
+message MasteryFailed {
+  string error_message = 1;
+  string failed_node_id = 2;
+  int64 total_duration_ms = 3;
+}
+
+message MasteryStatus {
+  string execution_id = 1;
+  string mastery_id = 2;
+  string state = 3;  // "running", "completed", "failed", "cancelled"
+  repeated NodeStatus node_statuses = 4;
+  int64 started_at = 5;
+  int64 completed_at = 6;
+}
+
+message NodeStatus {
+  string node_id = 1;
+  string state = 2;  // "pending", "running", "completed", "failed", "skipped"
+  int64 started_at = 3;
+  int64 completed_at = 4;
+  string error_message = 5;
+}
+
+// ---- AI Generation ----
+
+message GenerateMasteryRequest {
+  string task_description = 1;  // Natural language: "Set up a React project with auth"
+  repeated string preferred_plugins = 2;  // Optional: prefer specific plugins
+}
+
+// ---- Listing ----
+
+message ListMasteriesRequest {
+  string filter = 1;  // Optional search query
+  int32 limit = 2;
+  int32 offset = 3;
+}
+
+message ListMasteriesResponse {
+  repeated MasterySummary masteries = 1;
+  int32 total_count = 2;
+}
+
+message MasterySummary {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  int32 node_count = 4;
+  string author = 5;
+  int64 last_executed_at = 6;
+  int32 execution_count = 7;
+}
+
+message CancelMasteryResponse {
+  bool success = 1;
+  string message = 2;
+}

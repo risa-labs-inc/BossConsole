@@ -1,0 +1,110 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>boss-rtc-host</title></head>
+<body>
+<script>
+// BOSS co-browse WebRTC host peer. Served from http://127.0.0.1 (a secure
+// context, so getDisplayMedia works) inside a hidden JxBrowser page. The host
+// (Kotlin) injects window.__bossRtcBridge (an @JsAccessible object) after load,
+// then calls __bossRtcInit. The viewer is the offerer and creates the data
+// channels + a recvonly video transceiver; this peer answers, surfaces input,
+// streams DOM, and (on demand) attaches the captured tab as the video track.
+(function () {
+  var pc = null, domCh = null, videoTx = null, captureStream = null;
+  function B() { return window.__bossRtcBridge; }
+
+  function wire(ch) {
+    if (ch.label === 'dom') { domCh = ch; }
+    else if (ch.label === 'input') {
+      ch.onmessage = function (e) { try { if (typeof e.data === 'string') B().input(e.data); } catch (_) {} };
+    }
+    ch.onopen = function () { try { B().state(true); } catch (_) {} };
+    ch.onclose = function () { try { B().state(false); } catch (_) {} };
+  }
+
+  window.__bossRtcInit = function (iceJson) {
+    try {
+      pc = new RTCPeerConnection({ iceServers: JSON.parse(iceJson || '[]') });
+      pc.onicecandidate = function (ev) { if (ev.candidate) { try { B().ice(JSON.stringify(ev.candidate)); } catch (_) {} } };
+      pc.ondatachannel = function (ev) { wire(ev.channel); };
+      pc.onconnectionstatechange = function () {
+        var s = pc.connectionState;
+        if (s === 'failed' || s === 'closed' || s === 'disconnected') { try { B().state(false); } catch (_) {} }
+      };
+      return 'ok';
+    } catch (e) { try { B().state(false); } catch (_) {} return 'err'; }
+  };
+
+  window.__bossRtcOffer = function (sdp) {
+    if (!pc) return;
+    pc.setRemoteDescription({ type: 'offer', sdp: sdp }).then(function () {
+      // The viewer offers a recvonly video m-line. If we leave our matching
+      // transceiver at its default (recvonly), both sides are recvonly → the
+      // m-line goes inactive and no media flows. So mark it sendonly; we attach
+      // the captured track later via replaceTrack (no renegotiation).
+      var txs = pc.getTransceivers();
+      txs.forEach(function (t) {
+        var k = (t.receiver && t.receiver.track && t.receiver.track.kind) ||
+                (t.sender && t.sender.track && t.sender.track.kind);
+        if (k === 'video') videoTx = t;
+      });
+      // Fallback: a recvonly video offer creates exactly one (audio-less) transceiver.
+      if (!videoTx && txs.length === 1) videoTx = txs[0];
+      if (videoTx) { try { videoTx.direction = 'sendonly'; } catch (_) {} }
+      try { B().videoState('offer: txCount=' + txs.length + ' videoTx=' + (videoTx ? videoTx.direction : 'none')); } catch (_) {}
+      return pc.createAnswer();
+    }).then(function (ans) {
+      var m = /m=video[\s\S]*?(sendonly|recvonly|sendrecv|inactive)/.exec(ans.sdp || '');
+      try { B().videoState('answer video dir=' + (m ? m[1] : 'no-m-line')); } catch (_) {}
+      return pc.setLocalDescription(ans).then(function () { try { B().answer(ans.sdp); } catch (_) {} });
+    }).catch(function (e) { try { B().videoState('offer error: ' + (e && e.message || e)); } catch (_) {} try { B().state(false); } catch (_) {} });
+  };
+
+  window.__bossRtcAddIce = function (cand) {
+    if (!pc) return;
+    try { pc.addIceCandidate(JSON.parse(cand)); } catch (_) {}
+  };
+
+  // DOM frames: chunk past ~16KB (SCTP per-message cap); viewer reassembles 'C<id>:<i>:<n>:<data>'.
+  window.__bossRtcSendDom = function (json) {
+    try {
+      if (!domCh || domCh.readyState !== 'open') return;
+      var MAX = 16000;
+      if (json.length <= MAX) { domCh.send(json); return; }
+      var id = (window.__bossDomMsgId = (window.__bossDomMsgId || 0) + 1);
+      var n = Math.ceil(json.length / MAX);
+      for (var i = 0; i < n; i++) { domCh.send('C' + id + ':' + i + ':' + n + ':' + json.substr(i * MAX, MAX)); }
+    } catch (_) {}
+  };
+
+  // Capture the shared tab's pixels (host auto-selects it in StartCaptureSessionCallback)
+  // and push them onto the pre-negotiated video transceiver — no renegotiation.
+  window.__bossRtcStartVideo = function () {
+    if (!pc || !navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) { return 'unsupported'; }
+    navigator.mediaDevices.getDisplayMedia({ video: true, audio: false }).then(function (stream) {
+      captureStream = stream;
+      var track = stream.getVideoTracks()[0];
+      try { B().videoState('getDisplayMedia ok: track=' + (track ? track.kind : 'none') + ' videoTx=' + (videoTx ? 'yes' : 'no')); } catch (_) {}
+      if (!track) return;
+      if (videoTx && videoTx.sender) {
+        try { videoTx.direction = 'sendonly'; } catch (_) {}
+        videoTx.sender.replaceTrack(track);
+        try { B().videoState('replaceTrack done'); } catch (_) {}
+      } else {
+        pc.addTrack(track, stream);
+        try { B().videoState('addTrack fallback (no videoTx — needs renegotiation)'); } catch (_) {}
+      }
+    }).catch(function (e) { try { B().videoError(String(e && e.name || e)); } catch (_) {} });
+    return 'ok';
+  };
+
+  window.__bossRtcStopVideo = function () {
+    try {
+      if (captureStream) { captureStream.getTracks().forEach(function (t) { t.stop(); }); captureStream = null; }
+      if (videoTx && videoTx.sender) videoTx.sender.replaceTrack(null);
+    } catch (_) {}
+  };
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,1179 @@
+name: Build BOSS-Branded Chromium
+
+on:
+  workflow_dispatch:
+    inputs:
+      jxbrowser_version:
+        description: 'JxBrowser version (e.g., 9.3.0)'
+        required: true
+        default: '9.3.0'
+
+env:
+  JXBROWSER_VERSION: ${{ github.event.inputs.jxbrowser_version || '9.3.0' }}
+
+jobs:
+  # Build the Chromium branding tool first
+  build-branding-tool:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Chromium-Branding Tool
+        uses: actions/checkout@v7
+        with:
+          repository: TeamDev-IP/Chromium-Branding
+          path: chromium-branding-tool
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.21'
+          cache: false
+
+      - name: Patch out the (Plugin) helper
+        # Chromium 148+ no longer ships `Chromium Helper (Plugin).app`
+        # (NPAPI/PPAPI plugin support was removed years ago and the helper
+        # finally got dropped from the framework bundle), but the upstream
+        # branding tool still iterates over it in crHelperTypes and
+        # `return err`s on FindHelper failure. The branding step then
+        # exits 255 with:
+        #   "stat .../Helpers/Chromium Helper (Plugin).app: no such file"
+        # Drop the Plugin entries from the helper-type lists so the loop
+        # skips it. Track upstream:
+        #   https://github.com/TeamDev-IP/Chromium-Branding (no fix as of
+        #   2f9f16b2 / 2026-04-29).
+        run: |
+          set -euo pipefail
+          cd chromium-branding-tool
+          target="pkg/mac/chromium_app_bundle.go"
+          # POSIX character class — portable across BSD sed (macOS) and GNU sed (Linux).
+          if ! grep -qE '^[[:space:]]*CrBundleHelperPlugin,$' "$target"; then
+            echo "::error::Expected CrBundleHelperPlugin entry not found in $target — upstream may have already fixed this; remove the patch step."
+            exit 1
+          fi
+          # ONLY remove from crHelperTypes (the iteration list).
+          # crHelperTypeNames is indexed by the enum value (iota-2:
+          # Alerts=0, GPU=1, Plugin=2, Renderer=3). Removing "Plugin"
+          # from the names slice would shift Renderer to index 2 and panic
+          # `index out of range [3]` when getBrandedCrBundleExeName
+          # accesses crHelperTypeNames[CrBundleHelperRenderer]. The names
+          # slice must stay intact even though Plugin is no longer iterated.
+          sed -i.bak '/^[[:space:]]*CrBundleHelperPlugin,$/d' "$target"
+          rm -f "$target.bak"
+          echo "✓ Patched out (Plugin) helper from iteration. Resulting:"
+          awk '/^var crHelperTypes/,/^}/' "$target"
+          # Sanity: still compiles
+          go vet ./...
+
+      - name: Build Branding Tool (all platforms)
+        run: |
+          cd chromium-branding-tool
+          GOOS=linux GOARCH=amd64 go build -o chromium_branding_linux .
+          GOOS=darwin GOARCH=arm64 go build -o chromium_branding_macos_arm64 .
+          GOOS=darwin GOARCH=amd64 go build -o chromium_branding_macos_x64 .
+          GOOS=windows GOARCH=amd64 go build -o chromium_branding_windows.exe .
+          GOOS=windows GOARCH=arm64 go build -o chromium_branding_windows_arm64.exe .
+
+      - name: Upload Branding Tool
+        uses: actions/upload-artifact@v7
+        with:
+          name: branding-tool
+          path: |
+            chromium-branding-tool/chromium_branding_linux
+            chromium-branding-tool/chromium_branding_macos_arm64
+            chromium-branding-tool/chromium_branding_macos_x64
+            chromium-branding-tool/chromium_branding_windows.exe
+            chromium-branding-tool/chromium_branding_windows_arm64.exe
+
+  # macOS ARM64 build
+  build-macos-arm64:
+    needs: build-branding-tool
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download Branding Tool
+        uses: actions/download-artifact@v8
+        with:
+          name: branding-tool
+          path: tools
+
+      - name: Make tool executable
+        run: chmod +x tools/chromium_branding_macos_arm64
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Download JxBrowser Chromium
+        env:
+          JXBROWSER_LICENSE_KEY: ${{ secrets.JXBROWSER_LICENSE_KEY }}
+        run: |
+          CHROMIUM_DIR="$HOME/chromium-binaries"
+
+          # Use the main project's downloadChromium task (has proper license)
+          ./gradlew :composeApp:downloadChromium -PchromiumDir="$CHROMIUM_DIR" -PjxBrowserVersion="$JXBROWSER_VERSION" --no-daemon
+
+          echo "Chromium directory contents:"
+          ls -la "$CHROMIUM_DIR" || echo "Directory not found!"
+
+      - name: Import Code Signing Certificate
+        id: import-cert
+        continue-on-error: true
+        env:
+          MACOS_P12_CERTIFICATE: ${{ secrets.MACOS_P12_CERTIFICATE }}
+          MACOS_P12_PASSWORD: ${{ secrets.MACOS_P12_PASSWORD }}
+        run: |
+          if [ -z "$MACOS_P12_CERTIFICATE" ]; then
+            echo "::warning::No certificate provided, skipping signing"
+            exit 1
+          fi
+
+          echo "$MACOS_P12_CERTIFICATE" | base64 --decode > certificate.p12
+
+          security create-keychain -p "" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+
+          security import certificate.p12 -k build.keychain -P "$MACOS_P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" build.keychain
+
+          rm certificate.p12
+          echo "Certificate imported successfully"
+
+      - name: Apply BOSS Branding
+        env:
+          MACOS_DEVELOPER_ID: ${{ secrets.MACOS_DEVELOPER_ID }}
+          MACOS_TEAM_ID: ${{ secrets.MACOS_TEAM_ID }}
+          MACOS_PROVISIONING_PROFILE_B64: ${{ secrets.MACOS_PROVISIONING_PROFILE_B64 }}
+          SIGNING_AVAILABLE: ${{ steps.import-cert.outcome == 'success' }}
+        run: |
+          CHROMIUM_DIR="$HOME/chromium-binaries"
+
+          # The Touch ID provisioning profile is a signing asset and is not
+          # committed (public repo). Restore it from the base64 secret so the
+          # Touch ID entitlement path below activates.
+          if [ -n "$MACOS_PROVISIONING_PROFILE_B64" ]; then
+            echo "$MACOS_PROVISIONING_PROFILE_B64" | base64 --decode > chromium-branding/entitlements/boss-browser.provisionprofile
+            echo "Provisioning profile restored from secret"
+          fi
+
+          if [ ! -d "$CHROMIUM_DIR" ] || [ -z "$(ls -A $CHROMIUM_DIR 2>/dev/null)" ]; then
+            echo "::error::Chromium binaries not found at $CHROMIUM_DIR"
+            exit 1
+          fi
+
+          echo "Chromium binaries found:"
+          ls -la "$CHROMIUM_DIR"
+
+          # Copy branding config and assets
+          cp chromium-branding/params.json .
+          cp -r chromium-branding/assets .
+          cp -r chromium-branding/entitlements .
+
+          # Replace placeholders in params.json
+          sed -i '' "s|\${MACOS_DEVELOPER_ID}|$MACOS_DEVELOPER_ID|g" params.json
+          sed -i '' "s|\${MACOS_TEAM_ID}|$MACOS_TEAM_ID|g" params.json
+
+          # Touch ID: when an Apple Developer ID provisioning profile is present,
+          # sign with the keychain-access-groups entitlement it backs (see
+          # Chromium-Branding README, "Enabling Touch ID on macOS"). Without the
+          # profile, macOS refuses to LAUNCH a bundle carrying that entitlement,
+          # so fall back to the base entitlements file.
+          if [ -f "entitlements/boss-browser.provisionprofile" ]; then
+            sed -i '' "s|\${MACOS_TEAM_ID}|$MACOS_TEAM_ID|g" entitlements/boss-chromium-touchid.entitlements
+            python3 -c "
+          import json
+          with open('params.json', 'r') as f:
+              params = json.load(f)
+          params['mac']['codesignEntitlements'] = 'entitlements/boss-chromium-touchid.entitlements'
+          params['mac']['provisioningProfile'] = 'entitlements/boss-browser.provisionprofile'
+          with open('params.json', 'w') as f:
+              json.dump(params, f, indent=2)
+          "
+            echo "Touch ID signing enabled (provisioning profile found)"
+          else
+            echo "::notice::No entitlements/boss-browser.provisionprofile — Touch ID keychain entitlement skipped"
+          fi
+
+          # If signing is not available, remove the signCommand from params.json
+          if [ "$SIGNING_AVAILABLE" != "true" ]; then
+            echo "::warning::Signing not available, removing signCommand from params.json"
+            # Use Python to remove signCommand from the mac section
+            python3 -c "
+          import json
+          with open('params.json', 'r') as f:
+              params = json.load(f)
+          if 'mac' in params and 'signCommand' in params['mac']:
+              del params['mac']['signCommand']
+          with open('params.json', 'w') as f:
+              json.dump(params, f, indent=2)
+          "
+          fi
+
+          echo "params.json content:"
+          cat params.json
+
+          mkdir -p output
+
+          # Run branding tool
+          echo "Running branding tool..."
+          ./tools/chromium_branding_macos_arm64 \
+            -p params.json \
+            -b "$CHROMIUM_DIR" \
+            -o output
+
+          echo "Branding complete. Output:"
+          ls -la output/
+
+          # Replace product_logo_32.png in Chromium Framework (used for notifications)
+          # The branding tool doesn't replace this, causing Chrome icon in notifications
+          FRAMEWORK_RESOURCES="output/BOSS.app/Contents/Frameworks/Chromium Framework.framework/Resources"
+          if [ -f "$FRAMEWORK_RESOURCES/product_logo_32.png" ]; then
+            echo "Replacing product_logo_32.png with BOSS icon..."
+            cp assets/product_logo_32.png "$FRAMEWORK_RESOURCES/product_logo_32.png"
+            echo "product_logo_32.png replaced successfully"
+          else
+            echo "::warning::product_logo_32.png not found at expected location"
+          fi
+
+          # Fix notification icon: Remove Assets.car and CFBundleIconName
+          # Assets.car contains compiled AppIcon that overrides app.icns
+          # CFBundleIconName tells macOS to look in Asset Catalog instead of app.icns
+          echo "Fixing notification icon..."
+
+          # Delete all Assets.car files
+          find output/BOSS.app -name "Assets.car" -type f -delete
+          echo "Deleted all Assets.car files"
+
+          # Remove CFBundleIconName from Alerts helper Info.plist
+          ALERTS_PLIST="output/BOSS.app/Contents/Frameworks/Chromium Framework.framework/Helpers/BOSS Helper (Alerts).app/Contents/Info.plist"
+          if [ -f "$ALERTS_PLIST" ]; then
+            /usr/libexec/PlistBuddy -c "Delete :CFBundleIconName" "$ALERTS_PLIST" 2>/dev/null || true
+            echo "Removed CFBundleIconName from Alerts helper"
+          fi
+
+          # Chromium's WebAuthn hybrid transport ("use your phone as a passkey")
+          # probes Bluetooth via CoreBluetooth when a passkey ceremony starts.
+          # macOS TCC hard-crashes (SIGABRT, "privacy-sensitive data without a
+          # usage description") any process whose responsible bundle lacks
+          # NSBluetoothAlwaysUsageDescription — and neither the stock JxBrowser
+          # 9.3.0 bundle nor the branding tool ships one (Chrome does). Must be
+          # added BEFORE the re-sign below or the plist edit breaks the seal.
+          MAIN_PLIST="output/BOSS.app/Contents/Info.plist"
+          BT_USAGE="BOSS uses Bluetooth to let you sign in with a passkey stored on your phone or tablet."
+          /usr/libexec/PlistBuddy -c "Add :NSBluetoothAlwaysUsageDescription string $BT_USAGE" "$MAIN_PLIST" 2>/dev/null || \
+            /usr/libexec/PlistBuddy -c "Set :NSBluetoothAlwaysUsageDescription $BT_USAGE" "$MAIN_PLIST"
+          /usr/libexec/PlistBuddy -c "Add :NSBluetoothPeripheralUsageDescription string $BT_USAGE" "$MAIN_PLIST" 2>/dev/null || \
+            /usr/libexec/PlistBuddy -c "Set :NSBluetoothPeripheralUsageDescription $BT_USAGE" "$MAIN_PLIST"
+          echo "Added Bluetooth usage descriptions to Info.plist"
+
+          # Re-sign after modifications, PRESERVING identity + entitlements. A
+          # bare ad-hoc `codesign --force --sign -` here used to strip the
+          # Developer ID identity and every entitlement (JIT,
+          # keychain-access-groups) from the shipped engine — which silently
+          # disabled the Touch ID platform authenticator.
+          if [ "$SIGNING_AVAILABLE" = "true" ]; then
+            SIGN_ID="$MACOS_DEVELOPER_ID"
+          else
+            SIGN_ID="-"
+          fi
+          echo "Re-signing with identity: $SIGN_ID"
+          for helper in "output/BOSS.app/Contents/Frameworks/Chromium Framework.framework/Helpers"/*.app; do
+            if [ -d "$helper" ]; then
+              codesign --force --preserve-metadata=entitlements --sign "$SIGN_ID" "$helper" || true
+            fi
+          done
+          codesign --force --preserve-metadata=entitlements --sign "$SIGN_ID" "output/BOSS.app/Contents/Frameworks/Chromium Framework.framework" || true
+          ENTITLEMENTS_FILE=$(python3 -c "import json; print(json.load(open('params.json'))['mac'].get('codesignEntitlements',''))")
+          if [ -n "$ENTITLEMENTS_FILE" ] && [ -f "$ENTITLEMENTS_FILE" ]; then
+            codesign --force --entitlements "$ENTITLEMENTS_FILE" --sign "$SIGN_ID" "output/BOSS.app" || true
+          else
+            codesign --force --preserve-metadata=entitlements --sign "$SIGN_ID" "output/BOSS.app" || true
+          fi
+          echo "Re-signing complete"
+
+          # Guard the load-bearing re-sign. Every codesign above ends in `|| true`
+          # (a helper failing shouldn't abort mid-bundle), so a stripped entitlement
+          # or failed sign would otherwise ship SILENTLY — the exact failure this
+          # step exists to prevent (PR #852 review). Assert the END STATE and fail
+          # the job instead of publishing a mis-signed engine.
+          if [ "$SIGNING_AVAILABLE" = "true" ]; then
+            if ! codesign --verify --deep --strict "output/BOSS.app"; then
+              echo "::error::Re-signed BOSS.app fails codesign --verify --deep --strict"
+              exit 1
+            fi
+            # When the Touch ID profile is present the engine MUST end up with the
+            # embedded profile + keychain-access-groups, or the platform
+            # authenticator silently disappears (isUVPAA=false) on the shipped build.
+            if [ -f "entitlements/boss-browser.provisionprofile" ]; then
+              if [ ! -f "output/BOSS.app/Contents/embedded.provisionprofile" ]; then
+                echo "::error::Touch ID enabled but embedded.provisionprofile missing after signing"
+                exit 1
+              fi
+              if ! codesign -d --entitlements :- "output/BOSS.app" 2>/dev/null | grep -q "keychain-access-groups"; then
+                echo "::error::keychain-access-groups stripped by re-sign — Touch ID would silently break"
+                exit 1
+              fi
+              echo "✓ Verified Touch ID signing: valid signature + embedded profile + keychain-access-groups"
+            fi
+          fi
+
+          # Create executable.name if not present (required by JxBrowser)
+          if [ ! -f "output/executable.name" ]; then
+            # For macOS, find the .app bundle and extract the executable name
+            APP_BUNDLE=$(find output -maxdepth 1 -name "*.app" -type d | head -1)
+            if [ -n "$APP_BUNDLE" ]; then
+              # Get the executable name from Info.plist or use bundle name
+              BUNDLE_NAME=$(basename "$APP_BUNDLE" .app)
+              EXEC_PATH="$APP_BUNDLE/Contents/MacOS/$BUNDLE_NAME"
+              if [ -f "$EXEC_PATH" ]; then
+                echo "$BUNDLE_NAME" > output/executable.name
+                echo "Created executable.name with: $BUNDLE_NAME"
+              else
+                # Try to find the actual executable
+                EXEC_FILE=$(find "$APP_BUNDLE/Contents/MacOS" -type f -perm +111 | head -1)
+                if [ -n "$EXEC_FILE" ]; then
+                  EXEC_NAME=$(basename "$EXEC_FILE")
+                  echo "$EXEC_NAME" > output/executable.name
+                  echo "Created executable.name with: $EXEC_NAME"
+                fi
+              fi
+            fi
+          fi
+
+      - name: Verify executable.name
+        run: |
+          if [ -f "output/executable.name" ]; then
+            echo "executable.name content:"
+            cat output/executable.name
+          else
+            echo "::error::executable.name not found - branding may have failed"
+            exit 1
+          fi
+
+      - name: Create Archive
+        run: |
+          cd output
+          # -y/--symlinks STORES symlinks as symlinks. Without it, plain `zip -r`
+          # FOLLOWS them and writes the target's bytes, which flattens the macOS
+          # "Chromium Framework.framework" bundle: Versions/Current stops being a
+          # symlink to the versioned dir and the 238 MB framework binary + all of
+          # Resources/Libraries get duplicated at the top level. That breaks the
+          # code-signed bundle layout, and JxBrowser 9.3.0's new
+          # ChromiumProcessMac.isInAppleSandbox toolkit load then fails with
+          # UnsatisfiedLinkError ("Can't load library: …Framework.framework…").
+          zip -y -r ../boss-chromium-macos-arm64.zip .
+          cd ..
+          echo "Archive created:"
+          ls -la boss-chromium-macos-arm64.zip
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: boss-chromium-macos-arm64
+          path: boss-chromium-macos-arm64.zip
+
+  # macOS x64 build
+  build-macos-x64:
+    needs: build-branding-tool
+    runs-on: macos-15-large
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download Branding Tool
+        uses: actions/download-artifact@v8
+        with:
+          name: branding-tool
+          path: tools
+
+      - name: Make tool executable
+        run: chmod +x tools/chromium_branding_macos_x64
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Download JxBrowser Chromium
+        env:
+          JXBROWSER_LICENSE_KEY: ${{ secrets.JXBROWSER_LICENSE_KEY }}
+        run: |
+          CHROMIUM_DIR="$HOME/chromium-binaries"
+
+          # Use the main project's downloadChromium task (has proper license)
+          ./gradlew :composeApp:downloadChromium -PchromiumDir="$CHROMIUM_DIR" -PjxBrowserVersion="$JXBROWSER_VERSION" --no-daemon
+
+          echo "Chromium directory contents:"
+          ls -la "$CHROMIUM_DIR" || echo "Directory not found!"
+
+      - name: Import Code Signing Certificate
+        id: import-cert-x64
+        continue-on-error: true
+        env:
+          MACOS_P12_CERTIFICATE: ${{ secrets.MACOS_P12_CERTIFICATE }}
+          MACOS_P12_PASSWORD: ${{ secrets.MACOS_P12_PASSWORD }}
+        run: |
+          if [ -z "$MACOS_P12_CERTIFICATE" ]; then
+            echo "::warning::No certificate provided, skipping signing"
+            exit 1
+          fi
+
+          echo "$MACOS_P12_CERTIFICATE" | base64 --decode > certificate.p12
+
+          security create-keychain -p "" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+
+          security import certificate.p12 -k build.keychain -P "$MACOS_P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" build.keychain
+
+          rm certificate.p12
+          echo "Certificate imported successfully"
+
+      - name: Apply BOSS Branding
+        env:
+          MACOS_DEVELOPER_ID: ${{ secrets.MACOS_DEVELOPER_ID }}
+          MACOS_TEAM_ID: ${{ secrets.MACOS_TEAM_ID }}
+          MACOS_PROVISIONING_PROFILE_B64: ${{ secrets.MACOS_PROVISIONING_PROFILE_B64 }}
+          SIGNING_AVAILABLE: ${{ steps.import-cert-x64.outcome == 'success' }}
+        run: |
+          CHROMIUM_DIR="$HOME/chromium-binaries"
+
+          # The Touch ID provisioning profile is a signing asset and is not
+          # committed (public repo). Restore it from the base64 secret so the
+          # Touch ID entitlement path below activates.
+          if [ -n "$MACOS_PROVISIONING_PROFILE_B64" ]; then
+            echo "$MACOS_PROVISIONING_PROFILE_B64" | base64 --decode > chromium-branding/entitlements/boss-browser.provisionprofile
+            echo "Provisioning profile restored from secret"
+          fi
+
+          if [ ! -d "$CHROMIUM_DIR" ] || [ -z "$(ls -A $CHROMIUM_DIR 2>/dev/null)" ]; then
+            echo "::error::Chromium binaries not found at $CHROMIUM_DIR"
+            exit 1
+          fi
+
+          cp chromium-branding/params.json .
+          cp -r chromium-branding/assets .
+          cp -r chromium-branding/entitlements .
+
+          sed -i '' "s|\${MACOS_DEVELOPER_ID}|$MACOS_DEVELOPER_ID|g" params.json
+          sed -i '' "s|\${MACOS_TEAM_ID}|$MACOS_TEAM_ID|g" params.json
+
+          # Touch ID: when an Apple Developer ID provisioning profile is present,
+          # sign with the keychain-access-groups entitlement it backs (see
+          # Chromium-Branding README, "Enabling Touch ID on macOS"). Without the
+          # profile, macOS refuses to LAUNCH a bundle carrying that entitlement,
+          # so fall back to the base entitlements file.
+          if [ -f "entitlements/boss-browser.provisionprofile" ]; then
+            sed -i '' "s|\${MACOS_TEAM_ID}|$MACOS_TEAM_ID|g" entitlements/boss-chromium-touchid.entitlements
+            python3 -c "
+          import json
+          with open('params.json', 'r') as f:
+              params = json.load(f)
+          params['mac']['codesignEntitlements'] = 'entitlements/boss-chromium-touchid.entitlements'
+          params['mac']['provisioningProfile'] = 'entitlements/boss-browser.provisionprofile'
+          with open('params.json', 'w') as f:
+              json.dump(params, f, indent=2)
+          "
+            echo "Touch ID signing enabled (provisioning profile found)"
+          else
+            echo "::notice::No entitlements/boss-browser.provisionprofile — Touch ID keychain entitlement skipped"
+          fi
+
+          # If signing is not available, remove the signCommand from params.json
+          if [ "$SIGNING_AVAILABLE" != "true" ]; then
+            echo "::warning::Signing not available, removing signCommand from params.json"
+            python3 -c "
+          import json
+          with open('params.json', 'r') as f:
+              params = json.load(f)
+          if 'mac' in params and 'signCommand' in params['mac']:
+              del params['mac']['signCommand']
+          with open('params.json', 'w') as f:
+              json.dump(params, f, indent=2)
+          "
+          fi
+
+          echo "params.json content:"
+          cat params.json
+
+          mkdir -p output
+
+          ./tools/chromium_branding_macos_x64 \
+            -p params.json \
+            -b "$CHROMIUM_DIR" \
+            -o output
+
+          ls -la output/
+
+          # Replace product_logo_32.png in Chromium Framework (used for notifications)
+          # The branding tool doesn't replace this, causing Chrome icon in notifications
+          FRAMEWORK_RESOURCES="output/BOSS.app/Contents/Frameworks/Chromium Framework.framework/Resources"
+          if [ -f "$FRAMEWORK_RESOURCES/product_logo_32.png" ]; then
+            echo "Replacing product_logo_32.png with BOSS icon..."
+            cp assets/product_logo_32.png "$FRAMEWORK_RESOURCES/product_logo_32.png"
+            echo "product_logo_32.png replaced successfully"
+          else
+            echo "::warning::product_logo_32.png not found at expected location"
+          fi
+
+          # Fix notification icon: Remove Assets.car and CFBundleIconName
+          # Assets.car contains compiled AppIcon that overrides app.icns
+          # CFBundleIconName tells macOS to look in Asset Catalog instead of app.icns
+          echo "Fixing notification icon..."
+
+          # Delete all Assets.car files
+          find output/BOSS.app -name "Assets.car" -type f -delete
+          echo "Deleted all Assets.car files"
+
+          # Remove CFBundleIconName from Alerts helper Info.plist
+          ALERTS_PLIST="output/BOSS.app/Contents/Frameworks/Chromium Framework.framework/Helpers/BOSS Helper (Alerts).app/Contents/Info.plist"
+          if [ -f "$ALERTS_PLIST" ]; then
+            /usr/libexec/PlistBuddy -c "Delete :CFBundleIconName" "$ALERTS_PLIST" 2>/dev/null || true
+            echo "Removed CFBundleIconName from Alerts helper"
+          fi
+
+          # Chromium's WebAuthn hybrid transport ("use your phone as a passkey")
+          # probes Bluetooth via CoreBluetooth when a passkey ceremony starts.
+          # macOS TCC hard-crashes (SIGABRT, "privacy-sensitive data without a
+          # usage description") any process whose responsible bundle lacks
+          # NSBluetoothAlwaysUsageDescription — and neither the stock JxBrowser
+          # 9.3.0 bundle nor the branding tool ships one (Chrome does). Must be
+          # added BEFORE the re-sign below or the plist edit breaks the seal.
+          MAIN_PLIST="output/BOSS.app/Contents/Info.plist"
+          BT_USAGE="BOSS uses Bluetooth to let you sign in with a passkey stored on your phone or tablet."
+          /usr/libexec/PlistBuddy -c "Add :NSBluetoothAlwaysUsageDescription string $BT_USAGE" "$MAIN_PLIST" 2>/dev/null || \
+            /usr/libexec/PlistBuddy -c "Set :NSBluetoothAlwaysUsageDescription $BT_USAGE" "$MAIN_PLIST"
+          /usr/libexec/PlistBuddy -c "Add :NSBluetoothPeripheralUsageDescription string $BT_USAGE" "$MAIN_PLIST" 2>/dev/null || \
+            /usr/libexec/PlistBuddy -c "Set :NSBluetoothPeripheralUsageDescription $BT_USAGE" "$MAIN_PLIST"
+          echo "Added Bluetooth usage descriptions to Info.plist"
+
+          # Re-sign after modifications, PRESERVING identity + entitlements. A
+          # bare ad-hoc `codesign --force --sign -` here used to strip the
+          # Developer ID identity and every entitlement (JIT,
+          # keychain-access-groups) from the shipped engine — which silently
+          # disabled the Touch ID platform authenticator.
+          if [ "$SIGNING_AVAILABLE" = "true" ]; then
+            SIGN_ID="$MACOS_DEVELOPER_ID"
+          else
+            SIGN_ID="-"
+          fi
+          echo "Re-signing with identity: $SIGN_ID"
+          for helper in "output/BOSS.app/Contents/Frameworks/Chromium Framework.framework/Helpers"/*.app; do
+            if [ -d "$helper" ]; then
+              codesign --force --preserve-metadata=entitlements --sign "$SIGN_ID" "$helper" || true
+            fi
+          done
+          codesign --force --preserve-metadata=entitlements --sign "$SIGN_ID" "output/BOSS.app/Contents/Frameworks/Chromium Framework.framework" || true
+          ENTITLEMENTS_FILE=$(python3 -c "import json; print(json.load(open('params.json'))['mac'].get('codesignEntitlements',''))")
+          if [ -n "$ENTITLEMENTS_FILE" ] && [ -f "$ENTITLEMENTS_FILE" ]; then
+            codesign --force --entitlements "$ENTITLEMENTS_FILE" --sign "$SIGN_ID" "output/BOSS.app" || true
+          else
+            codesign --force --preserve-metadata=entitlements --sign "$SIGN_ID" "output/BOSS.app" || true
+          fi
+          echo "Re-signing complete"
+
+          # Guard the load-bearing re-sign. Every codesign above ends in `|| true`
+          # (a helper failing shouldn't abort mid-bundle), so a stripped entitlement
+          # or failed sign would otherwise ship SILENTLY — the exact failure this
+          # step exists to prevent (PR #852 review). Assert the END STATE and fail
+          # the job instead of publishing a mis-signed engine.
+          if [ "$SIGNING_AVAILABLE" = "true" ]; then
+            if ! codesign --verify --deep --strict "output/BOSS.app"; then
+              echo "::error::Re-signed BOSS.app fails codesign --verify --deep --strict"
+              exit 1
+            fi
+            # When the Touch ID profile is present the engine MUST end up with the
+            # embedded profile + keychain-access-groups, or the platform
+            # authenticator silently disappears (isUVPAA=false) on the shipped build.
+            if [ -f "entitlements/boss-browser.provisionprofile" ]; then
+              if [ ! -f "output/BOSS.app/Contents/embedded.provisionprofile" ]; then
+                echo "::error::Touch ID enabled but embedded.provisionprofile missing after signing"
+                exit 1
+              fi
+              if ! codesign -d --entitlements :- "output/BOSS.app" 2>/dev/null | grep -q "keychain-access-groups"; then
+                echo "::error::keychain-access-groups stripped by re-sign — Touch ID would silently break"
+                exit 1
+              fi
+              echo "✓ Verified Touch ID signing: valid signature + embedded profile + keychain-access-groups"
+            fi
+          fi
+
+          # Create executable.name if not present (required by JxBrowser)
+          if [ ! -f "output/executable.name" ]; then
+            APP_BUNDLE=$(find output -maxdepth 1 -name "*.app" -type d | head -1)
+            if [ -n "$APP_BUNDLE" ]; then
+              BUNDLE_NAME=$(basename "$APP_BUNDLE" .app)
+              EXEC_PATH="$APP_BUNDLE/Contents/MacOS/$BUNDLE_NAME"
+              if [ -f "$EXEC_PATH" ]; then
+                echo "$BUNDLE_NAME" > output/executable.name
+                echo "Created executable.name with: $BUNDLE_NAME"
+              else
+                EXEC_FILE=$(find "$APP_BUNDLE/Contents/MacOS" -type f -perm +111 | head -1)
+                if [ -n "$EXEC_FILE" ]; then
+                  EXEC_NAME=$(basename "$EXEC_FILE")
+                  echo "$EXEC_NAME" > output/executable.name
+                  echo "Created executable.name with: $EXEC_NAME"
+                fi
+              fi
+            fi
+          fi
+
+      - name: Verify executable.name
+        run: |
+          if [ -f "output/executable.name" ]; then
+            cat output/executable.name
+          else
+            echo "::error::executable.name not found"
+            exit 1
+          fi
+
+      - name: Create Archive
+        run: |
+          cd output
+          # -y preserves symlinks so the code-signed Chromium Framework.framework
+          # bundle isn't flattened (see the arm64 job for the full rationale —
+          # flattening breaks JxBrowser 9.3.0's isInAppleSandbox toolkit load).
+          zip -y -r ../boss-chromium-macos-x64.zip .
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: boss-chromium-macos-x64
+          path: boss-chromium-macos-x64.zip
+
+  # Windows x64 build
+  build-windows-x64:
+    needs: build-branding-tool
+    runs-on: windows-latest
+    # Backstop so a stalled step can't sit until GitHub's 6h limit and silently drop
+    # this platform from the release (which is exactly what happened for chromium-v9.1.2).
+    timeout-minutes: 50
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download Branding Tool
+        uses: actions/download-artifact@v8
+        with:
+          name: branding-tool
+          path: tools
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Download JxBrowser Chromium
+        # Cap the download: a transient stall here previously hung the job for ~6h
+        # (auto-cancelled at the runner limit), so windows-x64 never produced its zip
+        # and upload-to-releases shipped an incomplete release.
+        timeout-minutes: 30
+        env:
+          JXBROWSER_LICENSE_KEY: ${{ secrets.JXBROWSER_LICENSE_KEY }}
+        shell: pwsh
+        run: |
+          $chromiumDir = "$env:USERPROFILE\chromium-binaries"
+
+          # Retry transient failures (the download is large and occasionally flaky on
+          # the windows runner). The step timeout above bounds a hard hang.
+          $ok = $false
+          for ($i = 1; $i -le 3; $i++) {
+            Write-Host "downloadChromium attempt $i of 3..."
+            ./gradlew.bat :composeApp:downloadChromium "-PchromiumDir=$chromiumDir" "-PjxBrowserVersion=$env:JXBROWSER_VERSION" --no-daemon
+            if ($LASTEXITCODE -eq 0) { $ok = $true; break }
+            Write-Host "attempt $i failed (exit $LASTEXITCODE); retrying in 15s..."
+            Start-Sleep -Seconds 15
+          }
+          if (-not $ok) { Write-Error "downloadChromium failed after 3 attempts"; exit 1 }
+
+          Write-Host "Chromium directory contents:"
+          Get-ChildItem -Path $chromiumDir -ErrorAction SilentlyContinue
+
+      - name: Apply BOSS Branding
+        shell: pwsh
+        run: |
+          $chromiumDir = "$env:USERPROFILE\chromium-binaries"
+
+          if (-not (Test-Path $chromiumDir)) {
+            Write-Error "Chromium binaries not found at $chromiumDir"
+            exit 1
+          }
+
+          Copy-Item chromium-branding/params.json .
+          Copy-Item -Recurse chromium-branding/assets .
+
+          # No signing for now - Windows signing requires DigiCert setup
+          # Remove signCommand from params to avoid signing attempts
+          $params = Get-Content params.json | ConvertFrom-Json
+          $params.win.PSObject.Properties.Remove('signCommand')
+          $params | ConvertTo-Json -Depth 10 | Out-File params.json -Encoding utf8
+
+          New-Item -ItemType Directory -Force -Path output
+
+          Write-Host "Running branding tool..."
+          ./tools/chromium_branding_windows.exe -p params.json -b $chromiumDir -o output
+
+          Get-ChildItem output
+
+      - name: Verify executable.name
+        shell: pwsh
+        run: |
+          if (Test-Path "output/executable.name") {
+            Get-Content "output/executable.name"
+          } else {
+            Write-Error "executable.name not found"
+            exit 1
+          }
+
+      - name: Create Archive
+        shell: pwsh
+        run: |
+          Compress-Archive -Path output/* -DestinationPath boss-chromium-windows-x64.zip
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: boss-chromium-windows-x64
+          path: boss-chromium-windows-x64.zip
+
+  # Windows ARM64 build
+  build-windows-arm64:
+    needs: build-branding-tool
+    runs-on: windows_arm64
+    continue-on-error: true  # Graceful failure if ARM runners unavailable
+    # Bound it like windows-x64 — continue-on-error tolerates a FAILURE, but a 6h hang
+    # would still make upload-to-releases (which `needs` this job) wait the full limit.
+    timeout-minutes: 50
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download Branding Tool
+        uses: actions/download-artifact@v8
+        with:
+          name: branding-tool
+          path: tools
+
+      # Note: ARM64 binary is already built in build-branding-tool job via cross-compilation
+
+      - name: Install Windows SDK
+        shell: powershell
+        run: |
+          Write-Host "Installing Windows SDK..."
+          # Download Windows SDK installer
+          $sdkUrl = "https://go.microsoft.com/fwlink/?linkid=2272610"  # Windows SDK 10.0.26100
+          $installerPath = "$env:TEMP\winsdksetup.exe"
+          Invoke-WebRequest -Uri $sdkUrl -OutFile $installerPath
+
+          # Install SDK (only the tools we need for branding)
+          Write-Host "Running SDK installer..."
+          Start-Process -FilePath $installerPath -ArgumentList "/features OptionId.DesktopCPPx64 OptionId.DesktopCPParm64 /quiet /norestart" -Wait
+
+          Write-Host "Windows SDK installation complete"
+
+          # Verify installation
+          $sdkPath = "C:\Program Files (x86)\Windows Kits\10"
+          if (Test-Path $sdkPath) {
+            Write-Host "SDK installed at: $sdkPath"
+            Get-ChildItem "$sdkPath\bin" -Directory | Select-Object -First 3
+          } else {
+            Write-Error "SDK installation failed"
+            exit 1
+          }
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'microsoft'  # Microsoft OpenJDK has ARM64 builds
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Download JxBrowser Chromium
+        # Same bound + retry as windows-x64: a transient stall here must fail fast
+        # rather than hang until the runner limit.
+        timeout-minutes: 30
+        env:
+          JXBROWSER_LICENSE_KEY: ${{ secrets.JXBROWSER_LICENSE_KEY }}
+        shell: powershell
+        run: |
+          $chromiumDir = "$env:USERPROFILE\chromium-binaries"
+
+          $ok = $false
+          for ($i = 1; $i -le 3; $i++) {
+            Write-Host "downloadChromium attempt $i of 3..."
+            .\gradlew.bat :composeApp:downloadChromium "-PchromiumDir=$chromiumDir" "-PjxBrowserVersion=$env:JXBROWSER_VERSION" --no-daemon
+            if ($LASTEXITCODE -eq 0) { $ok = $true; break }
+            Write-Host "attempt $i failed (exit $LASTEXITCODE); retrying in 15s..."
+            Start-Sleep -Seconds 15
+          }
+          if (-not $ok) { Write-Error "downloadChromium failed after 3 attempts"; exit 1 }
+
+          Write-Host "Chromium directory contents:"
+          Get-ChildItem -Path $chromiumDir -ErrorAction SilentlyContinue
+
+      - name: Apply BOSS Branding
+        shell: powershell
+        run: |
+          $chromiumDir = "$env:USERPROFILE\chromium-binaries"
+
+          if (-not (Test-Path $chromiumDir)) {
+            Write-Error "Chromium binaries not found at $chromiumDir"
+            exit 1
+          }
+
+          Copy-Item chromium-branding/params.json .
+          Copy-Item -Recurse chromium-branding/assets .
+
+          # No signing for now - Windows signing requires DigiCert setup
+          # Remove signCommand from params to avoid signing attempts
+          $params = Get-Content params.json -Raw | ConvertFrom-Json
+          if ($params.win.PSObject.Properties['signCommand']) {
+            $params.win.PSObject.Properties.Remove('signCommand')
+          }
+          # Write without BOM (Out-File adds BOM which breaks JSON parsing)
+          $json = $params | ConvertTo-Json -Depth 10
+          [System.IO.File]::WriteAllText("$PWD\params.json", $json)
+
+          New-Item -ItemType Directory -Force -Path output
+
+          Write-Host "Running branding tool..."
+          .\tools\chromium_branding_windows_arm64.exe -p params.json -b $chromiumDir -o output
+
+          Get-ChildItem output
+
+      - name: Verify executable.name
+        shell: powershell
+        run: |
+          if (Test-Path "output/executable.name") {
+            Get-Content "output/executable.name"
+          } else {
+            Write-Error "executable.name not found"
+            exit 1
+          }
+
+      - name: Create Archive
+        shell: powershell
+        run: |
+          Compress-Archive -Path output\* -DestinationPath boss-chromium-windows-arm64.zip
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: boss-chromium-windows-arm64
+          path: boss-chromium-windows-arm64.zip
+
+  # Linux x64 build
+  build-linux-x64:
+    needs: build-branding-tool
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download Branding Tool
+        uses: actions/download-artifact@v8
+        with:
+          name: branding-tool
+          path: tools
+
+      - name: Make tool executable
+        run: chmod +x tools/chromium_branding_linux
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Download JxBrowser Chromium
+        env:
+          JXBROWSER_LICENSE_KEY: ${{ secrets.JXBROWSER_LICENSE_KEY }}
+        run: |
+          CHROMIUM_DIR="$HOME/chromium-binaries"
+
+          # Use the main project's downloadChromium task (has proper license)
+          ./gradlew :composeApp:downloadChromium -PchromiumDir="$CHROMIUM_DIR" -PjxBrowserVersion="$JXBROWSER_VERSION" --no-daemon
+
+          echo "Chromium directory contents:"
+          ls -la "$CHROMIUM_DIR" || echo "Directory not found!"
+
+      - name: Apply BOSS Branding
+        run: |
+          CHROMIUM_DIR="$HOME/chromium-binaries"
+
+          if [ ! -d "$CHROMIUM_DIR" ] || [ -z "$(ls -A $CHROMIUM_DIR 2>/dev/null)" ]; then
+            echo "::error::Chromium binaries not found at $CHROMIUM_DIR"
+            exit 1
+          fi
+
+          cp chromium-branding/params.json .
+
+          mkdir -p output
+
+          echo "Running branding tool..."
+          ./tools/chromium_branding_linux \
+            -p params.json \
+            -b "$CHROMIUM_DIR" \
+            -o output
+
+          ls -la output/
+
+          # Create executable.name if not present (required by JxBrowser)
+          if [ ! -f "output/executable.name" ]; then
+            # For Linux, look for executable binary
+            EXEC_FILE=$(find output -maxdepth 1 -type f -executable | head -1)
+            if [ -n "$EXEC_FILE" ]; then
+              EXEC_NAME=$(basename "$EXEC_FILE")
+              echo "$EXEC_NAME" > output/executable.name
+              echo "Created executable.name with: $EXEC_NAME"
+            else
+              # Fallback to params.json executableName
+              EXEC_NAME=$(python3 -c "import json; print(json.load(open('params.json'))['linux']['executableName'])" 2>/dev/null || echo "boss-browser")
+              echo "$EXEC_NAME" > output/executable.name
+              echo "Created executable.name with fallback: $EXEC_NAME"
+            fi
+          fi
+
+      - name: Verify executable.name
+        run: |
+          if [ -f "output/executable.name" ]; then
+            cat output/executable.name
+          else
+            echo "::error::executable.name not found"
+            exit 1
+          fi
+
+      - name: Create Archive
+        run: |
+          cd output
+          zip -r ../boss-chromium-linux-x64.zip .
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: boss-chromium-linux-x64
+          path: boss-chromium-linux-x64.zip
+
+  # Linux ARM64 build
+  build-linux-arm64:
+    needs: build-branding-tool
+    runs-on: linux_arm64
+    continue-on-error: true  # Graceful failure if ARM runners unavailable
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download Branding Tool
+        uses: actions/download-artifact@v8
+        with:
+          name: branding-tool
+          path: tools
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.21'
+          cache: false
+
+      - name: Build Branding Tool for ARM64
+        run: |
+          # The pre-built tool is for x64, need to build for ARM64
+          git clone https://github.com/TeamDev-IP/Chromium-Branding.git chromium-branding-tool
+          cd chromium-branding-tool
+          go build -o ../tools/chromium_branding_linux_arm64 .
+          cd ..
+          chmod +x tools/chromium_branding_linux_arm64
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Download JxBrowser Chromium
+        env:
+          JXBROWSER_LICENSE_KEY: ${{ secrets.JXBROWSER_LICENSE_KEY }}
+        run: |
+          CHROMIUM_DIR="$HOME/chromium-binaries"
+
+          # Use the main project's downloadChromium task (has proper license)
+          ./gradlew :composeApp:downloadChromium -PchromiumDir="$CHROMIUM_DIR" -PjxBrowserVersion="$JXBROWSER_VERSION" --no-daemon
+
+          echo "Chromium directory contents:"
+          ls -la "$CHROMIUM_DIR" || echo "Directory not found!"
+
+      - name: Apply BOSS Branding
+        run: |
+          CHROMIUM_DIR="$HOME/chromium-binaries"
+
+          if [ ! -d "$CHROMIUM_DIR" ] || [ -z "$(ls -A $CHROMIUM_DIR 2>/dev/null)" ]; then
+            echo "::error::Chromium binaries not found at $CHROMIUM_DIR"
+            exit 1
+          fi
+
+          cp chromium-branding/params.json .
+
+          mkdir -p output
+
+          echo "Running branding tool..."
+          ./tools/chromium_branding_linux_arm64 \
+            -p params.json \
+            -b "$CHROMIUM_DIR" \
+            -o output
+
+          ls -la output/
+
+          # Create executable.name if not present (required by JxBrowser)
+          if [ ! -f "output/executable.name" ]; then
+            EXEC_FILE=$(find output -maxdepth 1 -type f -executable | head -1)
+            if [ -n "$EXEC_FILE" ]; then
+              EXEC_NAME=$(basename "$EXEC_FILE")
+              echo "$EXEC_NAME" > output/executable.name
+              echo "Created executable.name with: $EXEC_NAME"
+            else
+              EXEC_NAME=$(python3 -c "import json; print(json.load(open('params.json'))['linux']['executableName'])" 2>/dev/null || echo "boss-browser")
+              echo "$EXEC_NAME" > output/executable.name
+              echo "Created executable.name with fallback: $EXEC_NAME"
+            fi
+          fi
+
+      - name: Verify executable.name
+        run: |
+          if [ -f "output/executable.name" ]; then
+            cat output/executable.name
+          else
+            echo "::error::executable.name not found"
+            exit 1
+          fi
+
+      - name: Create Archive
+        run: |
+          sudo apt-get update && sudo apt-get install -y zip
+          cd output
+          zip -r ../boss-chromium-linux-arm64.zip .
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: boss-chromium-linux-arm64
+          path: boss-chromium-linux-arm64.zip
+
+  # Upload to BossConsole-Releases
+  upload-to-releases:
+    needs: [build-macos-arm64, build-macos-x64, build-windows-x64, build-windows-arm64, build-linux-x64, build-linux-arm64]
+    # Require every MANDATORY platform to succeed. This job deletes + recreates the
+    # release from the artifacts present, so an OR-of-any here silently publishes an
+    # INCOMPLETE release when a platform fails — which is how chromium-v9.1.2 lost
+    # windows-x64. windows-arm64 is intentionally excluded: it's continue-on-error
+    # (the windows_arm64 runner may be unavailable), so it stays OPTIONAL — its zip is
+    # uploaded when present, but its absence must not block the release.
+    if: ${{ needs.build-macos-arm64.result == 'success' && needs.build-macos-x64.result == 'success' && needs.build-windows-x64.result == 'success' && needs.build-linux-x64.result == 'success' && needs.build-linux-arm64.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      # Checkout first: actions/checkout cleans the workspace, so it must run
+      # before artifacts are downloaded into it.
+      - name: Checkout (for publish script)
+        uses: actions/checkout@v7
+
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: |
+          echo "Downloaded artifacts:"
+          find artifacts -type f -name "*.zip" -exec ls -la {} \;
+
+      - name: Upload to BossConsole-Releases
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
+        run: |
+          TAG="chromium-v${{ env.JXBROWSER_VERSION }}"
+
+          # Delete existing release if present
+          gh release delete "$TAG" \
+            --repo risa-labs-inc/BossConsole-Releases \
+            --yes 2>/dev/null || true
+
+          # Create new release
+          gh release create "$TAG" \
+            --repo risa-labs-inc/BossConsole-Releases \
+            --title "BOSS Chromium v${{ env.JXBROWSER_VERSION }}" \
+            --notes "BOSS-branded Chromium binaries for JxBrowser ${{ env.JXBROWSER_VERSION }}
+
+          ## Downloads
+          - \`boss-chromium-macos-arm64.zip\` - macOS Apple Silicon
+          - \`boss-chromium-macos-x64.zip\` - macOS Intel
+          - \`boss-chromium-windows-x64.zip\` - Windows x64
+          - \`boss-chromium-windows-arm64.zip\` - Windows ARM64
+          - \`boss-chromium-linux-x64.zip\` - Linux x64
+          - \`boss-chromium-linux-arm64.zip\` - Linux ARM64
+
+          ## Changes
+          - Process name shows as 'BOSS' in Task Manager/Activity Monitor
+          - Custom BOSS icons
+          - Signed binaries (macOS)
+
+          ## Usage
+          These binaries are automatically bundled with BOSS releases.
+          The \`executable.name\` file must be preserved for JxBrowser."
+
+          # Upload all artifacts
+          for zip in artifacts/*/boss-chromium-*.zip; do
+            if [ -f "$zip" ]; then
+              echo "Uploading: $zip"
+              gh release upload "$TAG" "$zip" \
+                --repo risa-labs-inc/BossConsole-Releases \
+                --clobber || echo "Failed to upload $zip"
+            fi
+          done
+
+          echo "Release URL: https://github.com/risa-labs-inc/BossConsole-Releases/releases/tag/$TAG"
+
+      # Mirror the engine archives to Supabase (app id "boss-chromium" in the shared
+      # app_releases table/bucket) so clients download from Supabase first with the
+      # GitHub release above as backup. Large zips go via TUS chunks inside the script
+      # (Cloudflare caps single requests at ~100 MB).
+      - name: Publish to Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if [[ -z "${SUPABASE_SERVICE_ROLE_KEY:-}" ]]; then
+            echo "ℹ️  SUPABASE_SERVICE_ROLE_KEY not set; skipping Supabase publish."
+            exit 0
+          fi
+          export SUPABASE_URL="${SUPABASE_URL:-https://api.risaboss.com}"
+
+          mkdir -p chromium-assets
+          find artifacts -type f -name 'boss-chromium-*.zip' -exec cp {} chromium-assets/ \;
+          ls -la chromium-assets
+
+          bash scripts/publish-supabase-release.sh \
+            boss-chromium "$JXBROWSER_VERSION" stable chromium-assets app-releases

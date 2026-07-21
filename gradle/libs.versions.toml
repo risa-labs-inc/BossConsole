@@ -1,0 +1,138 @@
+[versions]
+# Updated for Gradle 9.2 compatibility
+agp = "8.13.0"
+android-compileSdk = "35"
+android-minSdk = "24"
+android-targetSdk = "34"
+androidx-activityCompose = "1.10.1"
+androidx-lifecycle = "2.10.0"
+compose-multiplatform = "1.11.1"
+compose-icons = "1.1.1"
+compose-ui = "1.8.2"
+compose-compiler = "1.5.8"
+decompose = "3.5.0"
+essenty = "2.5.0"
+kotlin = "2.4.0"
+kotlinx-coroutines = "1.11.0"
+kotlinx-datetime = "0.8.0-0.6.x-compat"
+# Pinned to the stack the MCP Kotlin SDK supports (ktor <= 3.3/3.4 → serialization 1.9.x).
+# The terminal-tab plugin bundles ktor 3.3 + mcp-sdk, but resolves kotlinx-serialization
+# parent-first from the host; ktor 3.5 / serialization 1.11 break the bundled MCP server
+# (encodeToSink / sse signature drift). Revert when the MCP SDK supports ktor 3.5+.
+# (ktor 3.5.0 was an automated bump in #736; 3.4.3 was the prior known-good version.)
+kotlinx-serialization = "1.11.0"
+ktor = "3.4.3"
+logback = "1.5.38"
+foundationLayoutAndroid = "1.8.2"
+precompose = "1.6.2"
+slf4j = "2.0.18"
+supabase = "3.6.0"
+uiAndroid = "1.8.2"
+zxing = "3.5.4"
+jxbrowser = "9.3.0"
+jxbrowser-gradle-plugin = "2.1.0"
+maven-publish = "0.37.0"
+jna = "5.19.1"
+# gRPC + Protobuf for IPC
+grpc = "1.82.2"
+grpc-kotlin = "1.5.0"
+protobuf = "4.35.1"
+protobuf-gradle-plugin = "0.10.0"
+graalvm-native-plugin = "1.1.3"
+# IntelliJ PSI for code navigation
+intellij-platform = "243.21565.199"
+# The plugin API contract (risa-labs-inc/boss-plugin-api releases). This pin
+# is the single source of truth for which API level the host implements —
+# bump it when consuming a new SDK release. Distribution is store/GitHub-
+# releases ONLY: plugin-platform/plugin-api-core downloads this release's jar and
+# filters the api package locally (no Maven registry involved).
+boss-plugin-api = "1.0.66"
+
+[libraries]
+kotlin-test-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin" }
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activityCompose" }
+androidx-lifecycle-viewmodel = { group = "org.jetbrains.androidx.lifecycle", name = "lifecycle-viewmodel", version.ref = "androidx-lifecycle" }
+androidx-lifecycle-runtime-compose = { group = "org.jetbrains.androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "androidx-lifecycle" }
+compose-ui = { module = "androidx.compose.ui:ui", version.ref = "compose-ui" }
+compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview", version.ref = "compose-ui" }
+compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling", version.ref = "compose-ui" }
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
+kotlinx-coroutines-swing = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-swing", version.ref = "kotlinx-coroutines" }
+kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
+kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "kotlinx-datetime" }
+logback = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
+ktor-server-core = { module = "io.ktor:ktor-server-core-jvm", version.ref = "ktor" }
+ktor-server-netty = { module = "io.ktor:ktor-server-netty-jvm", version.ref = "ktor" }
+ktor-server-tests = { module = "io.ktor:ktor-server-test-host", version.ref = "ktor" }
+ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
+ktor-client-cio = { module = "io.ktor:ktor-client-cio", version.ref = "ktor" }
+ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
+ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
+androidx-foundation-layout-android = { group = "androidx.compose.foundation", name = "foundation-layout-android", version.ref = "foundationLayoutAndroid" }
+androidx-ui-android = { group = "androidx.compose.ui", name = "ui-android", version.ref = "uiAndroid" }
+decompose = { module = "com.arkivanov.decompose:decompose", version.ref = "decompose" }
+decompose-extensions-compose = { module = "com.arkivanov.decompose:extensions-compose", version.ref = "decompose" }
+decompose-extensions-compose-experimental = { module = "com.arkivanov.decompose:extensions-compose-experimental", version.ref = "decompose" }
+essenty-lifecycle = { module = "com.arkivanov.essenty:lifecycle", version.ref = "essenty" }
+essenty-state-keeper = { module = "com.arkivanov.essenty:state-keeper", version.ref = "essenty" }
+precompose = { module = "moe.tlaster:precompose", version.ref = "precompose" }
+#precompose-molecule = { module = "moe.tlaster:precompose-molecule", version.ref = "precompose" }
+precompose-viewmodel = { module = "moe.tlaster:precompose-viewmodel", version.ref = "precompose" }
+kotlinx-serialization-core = { module = "org.jetbrains.kotlinx:kotlinx-serialization-core", version.ref = "kotlinx-serialization" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
+compose-icons-feather = { module = "br.com.devsrsouza.compose.icons:feather", version.ref = "compose-icons" }
+compose-icons-fontawesome = { module = "br.com.devsrsouza.compose.icons:font-awesome", version.ref = "compose-icons" }
+compose-icons-simpleicons = { module = "br.com.devsrsouza.compose.icons:simple-icons", version.ref = "compose-icons" }
+slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
+slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
+supabase-bom = { module = "io.github.jan-tennert.supabase:bom", version.ref = "supabase" }
+supabase-postgrest = { module = "io.github.jan-tennert.supabase:postgrest-kt", version.ref = "supabase" }
+supabase-auth = { module = "io.github.jan-tennert.supabase:auth-kt", version.ref = "supabase" }
+supabase-realtime = { module = "io.github.jan-tennert.supabase:realtime-kt", version.ref = "supabase" }
+supabase-storage = { module = "io.github.jan-tennert.supabase:storage-kt", version.ref = "supabase" }
+supabase-functions = { module = "io.github.jan-tennert.supabase:functions-kt", version.ref = "supabase" }
+zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
+zxing-javase = { module = "com.google.zxing:javase", version.ref = "zxing" }
+jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
+jna-platform = { module = "net.java.dev.jna:jna-platform", version.ref = "jna" }
+# Compose Multiplatform dependencies (replacing deprecated compose.* accessors)
+# Note: material3 and material-icons-extended don't have base KMP artifacts, must use compose.* accessors
+compose-mp-runtime = { module = "org.jetbrains.compose.runtime:runtime", version.ref = "compose-multiplatform" }
+compose-mp-foundation = { module = "org.jetbrains.compose.foundation:foundation", version.ref = "compose-multiplatform" }
+compose-mp-material = { module = "org.jetbrains.compose.material:material", version.ref = "compose-multiplatform" }
+compose-mp-ui = { module = "org.jetbrains.compose.ui:ui", version.ref = "compose-multiplatform" }
+compose-mp-components-resources = { module = "org.jetbrains.compose.components:components-resources", version.ref = "compose-multiplatform" }
+compose-mp-components-ui-tooling-preview = { module = "org.jetbrains.compose.components:components-ui-tooling-preview", version.ref = "compose-multiplatform" }
+
+# gRPC + Protobuf IPC dependencies
+grpc-netty = { module = "io.grpc:grpc-netty", version.ref = "grpc" }
+grpc-protobuf = { module = "io.grpc:grpc-protobuf", version.ref = "grpc" }
+grpc-stub = { module = "io.grpc:grpc-stub", version.ref = "grpc" }
+grpc-kotlin-stub = { module = "io.grpc:grpc-kotlin-stub", version.ref = "grpc-kotlin" }
+grpc-services = { module = "io.grpc:grpc-services", version.ref = "grpc" }
+protobuf-kotlin = { module = "com.google.protobuf:protobuf-kotlin", version.ref = "protobuf" }
+protobuf-java = { module = "com.google.protobuf:protobuf-java", version.ref = "protobuf" }
+# Netty transport for Unix domain sockets
+netty-transport-native-epoll = { module = "io.netty:netty-transport-native-epoll", version = "4.2.15.Final" }
+netty-transport-native-kqueue = { module = "io.netty:netty-transport-native-kqueue", version = "4.2.15.Final" }
+netty-transport-native-unix-common = { module = "io.netty:netty-transport-native-unix-common", version = "4.2.15.Final" }
+
+# K1 PSI dependencies for code navigation
+intellij-platform-core = { module = "com.jetbrains.intellij.platform:core", version.ref = "intellij-platform" }
+intellij-platform-core-impl = { module = "com.jetbrains.intellij.platform:core-impl", version.ref = "intellij-platform" }
+intellij-java-psi = { module = "com.jetbrains.intellij.java:java-psi", version.ref = "intellij-platform" }
+intellij-java-psi-impl = { module = "com.jetbrains.intellij.java:java-psi-impl", version.ref = "intellij-platform" }
+
+[plugins]
+androidApplication = { id = "com.android.application", version.ref = "agp" }
+androidLibrary = { id = "com.android.library", version.ref = "agp" }
+composeMultiplatform = { id = "org.jetbrains.compose", version.ref = "compose-multiplatform" }
+composeCompiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlinJvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlinSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+ktor = { id = "io.ktor.plugin", version.ref = "ktor" }
+kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+jxbrowser = { id = "com.teamdev.jxbrowser", version.ref = "jxbrowser-gradle-plugin" }
+mavenPublish = { id = "com.vanniktech.maven.publish", version.ref = "maven-publish" }
+protobuf = { id = "com.google.protobuf", version.ref = "protobuf-gradle-plugin" }
+graalvmNative = { id = "org.graalvm.buildtools.native", version.ref = "graalvm-native-plugin" }

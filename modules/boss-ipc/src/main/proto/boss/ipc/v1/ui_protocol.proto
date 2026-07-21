@@ -1,0 +1,212 @@
+syntax = "proto3";
+
+package boss.ipc.v1;
+
+import "boss/ipc/v1/common.proto";
+
+option java_package = "ai.rever.boss.ipc.proto";
+option java_multiple_files = true;
+
+// PluginUIService enables out-of-process plugins to render UI in the kernel's Compose window.
+// Plugins send declarative widget trees; the kernel renders them as Compose components.
+// User events flow back from kernel to plugin for handling.
+service PluginUIService {
+  // Register a UI surface (panel or tab) with the kernel
+  rpc RegisterUI(UIRegistration) returns (UIRegistrationResponse);
+
+  // Bidirectional stream: plugin sends widget updates, kernel sends user events
+  rpc StreamUI(stream WidgetUpdate) returns (stream UIEvent);
+
+  // Unregister a UI surface
+  rpc UnregisterUI(UIUnregistration) returns (Empty);
+}
+
+// ---- UI Registration ----
+
+message UIRegistration {
+  string surface_id = 1;       // Unique ID for this UI surface
+  string surface_type = 2;     // "panel" or "tab"
+  string display_name = 3;
+  string icon_name = 4;        // Icon identifier
+  string process_id = 5;
+  // Initial widget tree
+  WidgetTree initial_tree = 6;
+  // For panels: default slot position
+  string default_slot = 7;     // e.g., "left.top.top", "right.top.bottom"
+}
+
+message UIRegistrationResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+message UIUnregistration {
+  string surface_id = 1;
+}
+
+// ---- Widget Tree ----
+
+message WidgetTree {
+  string root_id = 1;
+  repeated WidgetNode nodes = 2;
+  int64 version = 3;  // Incremented on every update for diff tracking
+}
+
+message WidgetNode {
+  string id = 1;
+  WidgetType type = 2;
+  map<string, string> properties = 3;    // Type-specific properties (all as strings)
+  repeated string child_ids = 4;         // Ordered child node IDs
+  WidgetModifier modifier = 5;           // Layout/style modifiers
+}
+
+enum WidgetType {
+  WIDGET_TYPE_UNSPECIFIED = 0;
+  // Layout
+  WIDGET_TYPE_COLUMN = 1;
+  WIDGET_TYPE_ROW = 2;
+  WIDGET_TYPE_BOX = 3;
+  WIDGET_TYPE_SCROLL = 4;
+  // Content
+  WIDGET_TYPE_TEXT = 10;
+  WIDGET_TYPE_ICON = 11;
+  WIDGET_TYPE_IMAGE = 12;
+  WIDGET_TYPE_DIVIDER = 13;
+  WIDGET_TYPE_SPACER = 14;
+  WIDGET_TYPE_PROGRESS = 15;
+  // Interactive
+  WIDGET_TYPE_BUTTON = 20;
+  WIDGET_TYPE_TEXT_FIELD = 21;
+  WIDGET_TYPE_CHECKBOX = 22;
+  WIDGET_TYPE_DROPDOWN = 23;
+  WIDGET_TYPE_TOGGLE = 24;
+  // Collections
+  WIDGET_TYPE_LIST = 30;
+  WIDGET_TYPE_TREE = 31;
+  WIDGET_TYPE_TABLE = 32;
+  WIDGET_TYPE_TAB_ROW = 33;
+  // Special composites (mapped to host Compose components)
+  WIDGET_TYPE_CODE_EDITOR = 100;
+  WIDGET_TYPE_TERMINAL = 101;
+  WIDGET_TYPE_BROWSER = 102;
+  // Canvas for custom drawing
+  WIDGET_TYPE_CANVAS = 110;
+}
+
+message WidgetModifier {
+  int32 width = 1;         // 0 = wrap content, -1 = fill max
+  int32 height = 2;
+  int32 padding_start = 3;
+  int32 padding_top = 4;
+  int32 padding_end = 5;
+  int32 padding_bottom = 6;
+  string background_color = 7;  // Hex color string (e.g., "#FF0000") or theme token
+  float alpha = 8;              // 0.0-1.0
+  bool clickable = 9;
+  string click_event_id = 10;   // Event ID sent back on click
+}
+
+// ---- Widget Diff (incremental updates) ----
+
+message WidgetUpdate {
+  string surface_id = 1;
+
+  oneof update {
+    WidgetTree full_tree = 2;   // Full tree replacement
+    WidgetDiff diff = 3;        // Incremental diff
+  }
+}
+
+message WidgetDiff {
+  int64 base_version = 1;
+  int64 new_version = 2;
+  repeated DiffOperation operations = 3;
+}
+
+message DiffOperation {
+  oneof op {
+    NodeAdded added = 1;
+    NodeRemoved removed = 2;
+    NodeUpdated updated = 3;
+    NodeMoved moved = 4;
+  }
+}
+
+message NodeAdded {
+  WidgetNode node = 1;
+  string parent_id = 2;
+  int32 index = 3;  // Position within parent's children
+}
+
+message NodeRemoved {
+  string node_id = 1;
+}
+
+message NodeUpdated {
+  string node_id = 1;
+  map<string, string> changed_properties = 2;
+  WidgetModifier modifier = 3;  // Updated modifier (null = no change)
+}
+
+message NodeMoved {
+  string node_id = 1;
+  string new_parent_id = 2;
+  int32 new_index = 3;
+}
+
+// ---- UI Events (kernel -> plugin) ----
+
+message UIEvent {
+  string surface_id = 1;
+  string target_node_id = 2;
+  int64 timestamp = 3;
+
+  oneof event {
+    ClickEvent click = 4;
+    TextChangeEvent text_change = 5;
+    SelectionEvent selection = 6;
+    KeyEvent key = 7;
+    ScrollEvent scroll = 8;
+    FocusEvent focus = 9;
+    ToggleEvent toggle = 10;
+    LifecycleEvent lifecycle = 11;
+  }
+}
+
+message ClickEvent {
+  string event_id = 1;  // Custom event ID from widget properties
+}
+
+message TextChangeEvent {
+  string new_value = 1;
+}
+
+message SelectionEvent {
+  string selected_value = 1;
+  int32 selected_index = 2;
+}
+
+message KeyEvent {
+  int32 key_code = 1;
+  bool ctrl = 2;
+  bool alt = 3;
+  bool shift = 4;
+  bool meta = 5;
+}
+
+message ScrollEvent {
+  float delta_x = 1;
+  float delta_y = 2;
+}
+
+message FocusEvent {
+  bool has_focus = 1;
+}
+
+message ToggleEvent {
+  bool checked = 1;
+}
+
+message LifecycleEvent {
+  string lifecycle_state = 1;  // "created", "resumed", "paused", "destroyed"
+}

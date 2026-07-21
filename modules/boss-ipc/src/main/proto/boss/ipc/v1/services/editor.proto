@@ -1,0 +1,89 @@
+syntax = "proto3";
+
+package boss.ipc.v1.services;
+
+import "boss/ipc/v1/common.proto";
+
+option java_package = "ai.rever.boss.ipc.proto.services";
+option java_multiple_files = true;
+
+service EditorService {
+  rpc OpenFile(OpenFileRequest) returns (OpenFileResponse);
+  rpc SaveFile(SaveFileRequest) returns (boss.ipc.v1.Empty);
+  rpc GetTokens(GetTokensRequest) returns (GetTokensResponse);
+  rpc NavigateToDefinition(NavigateRequest) returns (NavigateResponse);
+  rpc DetectMainFunctions(DetectMainRequest) returns (DetectMainResponse);
+  rpc ListOpenFiles(boss.ipc.v1.Empty) returns (ListOpenFilesResponse);
+}
+
+message OpenFileRequest {
+  string path = 1;
+  int32 line = 2;
+  int32 column = 3;
+}
+
+message OpenFileResponse {
+  bool success = 1;
+  string content = 2;
+  string language = 3;
+  string error_message = 4;
+}
+
+message SaveFileRequest {
+  string path = 1;
+  string content = 2;
+}
+
+message GetTokensRequest {
+  string path = 1;
+  string content = 2;
+}
+
+message GetTokensResponse {
+  repeated SemanticToken tokens = 1;
+}
+
+message SemanticToken {
+  int32 line = 1;
+  int32 start_char = 2;
+  int32 length = 3;
+  string token_type = 4;
+  repeated string modifiers = 5;
+}
+
+message NavigateRequest {
+  string path = 1;
+  int32 line = 2;
+  int32 column = 3;
+}
+
+message NavigateResponse {
+  bool found = 1;
+  string target_path = 2;
+  int32 target_line = 3;
+  int32 target_column = 4;
+}
+
+message DetectMainRequest {
+  string path = 1;
+}
+
+message DetectMainResponse {
+  repeated MainFunctionInfo functions = 1;
+}
+
+message MainFunctionInfo {
+  string name = 1;
+  int32 line = 2;
+  string display_name = 3;
+  string qualified_name = 4;
+}
+
+message OpenFileInfo {
+  string path = 1;
+  bool is_modified = 2;
+}
+
+message ListOpenFilesResponse {
+  repeated OpenFileInfo files = 1;
+}

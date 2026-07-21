@@ -1,0 +1,84 @@
+syntax = "proto3";
+
+package boss.ipc.v1.services;
+
+import "boss/ipc/v1/common.proto";
+
+option java_package = "ai.rever.boss.ipc.proto.services";
+option java_multiple_files = true;
+
+// LogService exposes application log streaming and filtering to out-of-process plugins.
+// The kernel captures stdout/stderr output and allows plugins to watch, filter,
+// and export log entries.
+service LogService {
+  // Stream log entries as they arrive
+  rpc WatchLogs(boss.ipc.v1.Empty) returns (stream LogListResponse);
+
+  // Stream the current log filter as it changes
+  rpc WatchFilter(boss.ipc.v1.Empty) returns (stream LogFilterProto);
+
+  // Stream the current search query as it changes
+  rpc WatchSearchQuery(boss.ipc.v1.Empty) returns (stream LogStringResponse);
+
+  // Stream the auto-scroll setting as it changes
+  rpc WatchAutoScroll(boss.ipc.v1.Empty) returns (stream LogBoolResponse);
+
+  // Set the log filter (ALL, STDOUT, STDERR)
+  rpc SetFilter(LogFilterProto) returns (boss.ipc.v1.Empty);
+
+  // Set the search query for filtering logs
+  rpc SetSearchQuery(LogStringRequest) returns (boss.ipc.v1.Empty);
+
+  // Toggle the auto-scroll behavior
+  rpc ToggleAutoScroll(boss.ipc.v1.Empty) returns (boss.ipc.v1.Empty);
+
+  // Clear all log entries
+  rpc ClearLogs(boss.ipc.v1.Empty) returns (boss.ipc.v1.Empty);
+
+  // Export all logs as a formatted string
+  rpc ExportLogs(boss.ipc.v1.Empty) returns (LogStringResponse);
+}
+
+// ---- Log model ----
+
+message LogListResponse {
+  repeated LogEntryProto entries = 1;
+}
+
+message LogEntryProto {
+  int64 timestamp = 1;
+  string message = 2;
+  LogSourceProto source = 3;
+}
+
+enum LogSourceProto {
+  LOG_SOURCE_UNSPECIFIED = 0;
+  LOG_SOURCE_STDOUT = 1;
+  LOG_SOURCE_STDERR = 2;
+}
+
+// ---- Filter ----
+
+message LogFilterProto {
+  LogFilterType filter = 1;
+}
+
+enum LogFilterType {
+  LOG_FILTER_TYPE_ALL = 0;
+  LOG_FILTER_TYPE_STDOUT = 1;
+  LOG_FILTER_TYPE_STDERR = 2;
+}
+
+// ---- Shared types (scoped to log service) ----
+
+message LogStringResponse {
+  string value = 1;
+}
+
+message LogStringRequest {
+  string value = 1;
+}
+
+message LogBoolResponse {
+  bool value = 1;
+}

@@ -1,0 +1,114 @@
+{{/*
+  Dual-branded magic-link email (risa-labs-inc/BossConsole#787): BossTerm requests OTPs with
+  redirect_to=bossterm://auth/verify, flipping every brand string below; all other requests
+  render the original BOSS Console email. Keep "bossterm://auth/verify" in lockstep with the
+  redirect edge function and config.toml additional_redirect_urls. PRODUCTION: paste this file
+  into Supabase Dashboard -> Auth -> Email Templates -> Magic Link.
+  (Go-template comment + trailing trim so NOTHING renders before <!DOCTYPE html> — avoids
+  pushing mail clients into quirks mode.)
+*/}}{{ $bossterm := eq .RedirectTo "bossterm://auth/verify" -}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign in to {{ if $bossterm }}BossTerm{{ else }}BOSS{{ end }}</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #1a1a1a;">
+    <table role="presentation" style="width: 100%; border-collapse: collapse; background-color: #1a1a1a;">
+        <tr>
+            <td align="center" style="padding: 40px 20px;">
+                <table role="presentation" style="width: 100%; max-width: 600px; border-collapse: collapse; background-color: #2B2B2B; border-radius: 8px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);">
+                    <!-- Header -->
+                    <tr>
+                        <td style="padding: 40px 40px 30px; text-align: center; border-bottom: 1px solid #4D4D4D;">
+                            <h1 style="margin: 0; color: #F2F2F2; font-size: 28px; font-weight: 600; letter-spacing: -0.5px;">
+                                {{ if $bossterm }}BossTerm{{ else }}BOSS Console{{ end }}
+                            </h1>
+                            <p style="margin: 8px 0 0; color: #AAAAAA; font-size: 14px; letter-spacing: 0.5px;">
+                                {{ if $bossterm }}Modern Terminal Emulator{{ else }}Business Operating System as Service{{ end }}
+                            </p>
+                        </td>
+                    </tr>
+
+                    <!-- Content -->
+                    <tr>
+                        <td style="padding: 40px;">
+                            <h2 style="margin: 0 0 16px; color: #F2F2F2; font-size: 24px; font-weight: 600;">
+                                Sign in to your account
+                            </h2>
+                            <p style="margin: 0 0 24px; color: #AAAAAA; font-size: 16px; line-height: 1.5;">
+                                Click the button below to securely sign in to your {{ if $bossterm }}BossTerm{{ else }}BOSS{{ end }} account. This link will expire in 15 minutes.
+                            </p>
+
+                            <!-- Button -->
+                            <table role="presentation" style="width: 100%; border-collapse: collapse;">
+                                <tr>
+                                    <td align="center" style="padding: 16px 0;">
+                                        <a href="https://api.risaboss.com/functions/v1/redirect?url={{ .ConfirmationURL }}"
+                                           style="display: inline-block; padding: 16px 48px; background-color: #3592C4; color: #FFFFFF; text-decoration: none; border-radius: 6px; font-size: 16px; font-weight: 600; letter-spacing: 0.3px; box-shadow: 0 2px 8px rgba(53, 146, 196, 0.3);">
+                                            Sign In to {{ if $bossterm }}BossTerm{{ else }}BOSS{{ end }}
+                                        </a>
+                                    </td>
+                                </tr>
+                            </table>
+
+                            <!-- Alternative Link -->
+                            <p style="margin: 24px 0 0; color: #AAAAAA; font-size: 14px; line-height: 1.5;">
+                                If the button doesn't work, copy and paste this link into your browser:
+                            </p>
+                            <p style="margin: 12px 0 0; padding: 12px; background-color: #3C3F41; border-radius: 4px; word-break: break-all;">
+                                <a href="https://api.risaboss.com/functions/v1/redirect?url={{ .ConfirmationURL }}"
+                                   style="color: #3592C4; text-decoration: none; font-size: 13px;">
+                                    https://api.risaboss.com/functions/v1/redirect?url={{ .ConfirmationURL }}
+                                </a>
+                            </p>
+                        </td>
+                    </tr>
+
+                    <!-- Security Notice -->
+                    <tr>
+                        <td style="padding: 0 40px 30px;">
+                            <table role="presentation" style="width: 100%; border-collapse: collapse; background-color: #3C3F41; border-radius: 6px; border-left: 3px solid #43A047;">
+                                <tr>
+                                    <td style="padding: 16px 20px;">
+                                        <p style="margin: 0; color: #F2F2F2; font-size: 13px; font-weight: 600;">
+                                            🔒 Security Notice
+                                        </p>
+                                        <p style="margin: 8px 0 0; color: #AAAAAA; font-size: 13px; line-height: 1.5;">
+                                            If you didn't request this email, you can safely ignore it. This sign-in link will expire in 15 minutes and can only be used once.
+                                        </p>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <!-- Footer -->
+                    <tr>
+                        <td style="padding: 30px 40px; text-align: center; border-top: 1px solid #4D4D4D;">
+                            <p style="margin: 0; color: #AAAAAA; font-size: 13px; line-height: 1.5;">
+                                This email was sent by {{ if $bossterm }}BossTerm - by Risa Labs{{ else }}BOSS Console - Business Operating System as Service{{ end }}
+                            </p>
+                            <p style="margin: 12px 0 0; color: #666666; font-size: 12px;">
+                                {{ if $bossterm }}© 2025 Risa Labs. All rights reserved.{{ else }}© 2025 BOSS. All rights reserved.{{ end }}
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+
+                <!-- Spacer -->
+                <table role="presentation" style="width: 100%; max-width: 600px; border-collapse: collapse;">
+                    <tr>
+                        <td style="padding: 20px 0; text-align: center;">
+                            <p style="margin: 0; color: #666666; font-size: 12px;">
+                                Need help? Contact support or visit our documentation
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>

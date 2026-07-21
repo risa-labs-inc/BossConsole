@@ -1,0 +1,211 @@
+syntax = "proto3";
+
+package boss.ipc.v1;
+
+import "boss/ipc/v1/common.proto";
+import "boss/ipc/v1/kernel.proto";
+
+option java_package = "ai.rever.boss.ipc.proto";
+option java_multiple_files = true;
+
+// OrchestratorService is the AI-powered self-healing supervisor.
+// It receives failure reports, diagnoses root causes, and executes repair strategies.
+service OrchestratorService {
+  // Report a process failure for diagnosis and repair
+  rpc ReportFailure(ProcessFailureReport) returns (RepairAction);
+
+  // Get the health dashboard for all processes
+  rpc GetHealthDashboard(Empty) returns (HealthDashboard);
+
+  // Get the history of repair actions taken
+  rpc GetRepairHistory(RepairHistoryRequest) returns (RepairHistoryResponse);
+
+  // User approves or rejects a proposed repair (e.g., code patch)
+  rpc ApproveRepair(RepairApproval) returns (RepairApprovalResponse);
+
+  // Stream real-time health events
+  rpc WatchHealth(Empty) returns (stream HealthEvent);
+}
+
+// ---- Failure Reporting ----
+
+message ProcessFailureReport {
+  string process_id = 1;
+  string error_type = 2;           // Exception class name
+  string error_message = 3;
+  string stack_trace = 4;
+  int32 exit_code = 5;
+  int64 timestamp = 6;
+  int32 consecutive_failures = 7;
+  repeated string recent_log_lines = 8;
+  ProcessHealthMetrics last_metrics = 9;
+  // Process manifest for self-describing diagnosis
+  ProcessManifest manifest = 10;
+}
+
+// ---- Repair Actions ----
+
+message RepairAction {
+  string repair_id = 1;
+  RepairStrategy strategy = 2;
+  string description = 3;
+  bool requires_user_approval = 4;
+
+  oneof repair_detail {
+    RestartAction restart = 5;
+    ResetStateAction reset_state = 6;
+    PatchConfigAction patch_config = 7;
+    PatchSourceAction patch_source = 8;
+    RollbackAction rollback = 9;
+    EscalateAction escalate = 10;
+  }
+}
+
+message RestartAction {
+  repeated string jvm_args_override = 1;  // Modified JVM args (e.g., increased heap)
+  map<string, string> env_override = 2;
+}
+
+message ResetStateAction {
+  string state_directory = 1;
+  bool restore_snapshot = 2;
+  string snapshot_id = 3;
+}
+
+message PatchConfigAction {
+  string config_file = 1;
+  string original_content = 2;
+  string patched_content = 3;
+  string explanation = 4;  // AI-generated explanation of why this fix helps
+}
+
+message PatchSourceAction {
+  repeated FilePatch patches = 1;
+  string explanation = 2;
+  string root_cause_analysis = 3;
+}
+
+message FilePatch {
+  string file_path = 1;
+  string original_content = 2;
+  string patched_content = 3;
+  int32 start_line = 4;
+  int32 end_line = 5;
+}
+
+message RollbackAction {
+  string previous_version = 1;
+  string rollback_path = 2;
+}
+
+message EscalateAction {
+  DiagnosticReport report = 1;
+}
+
+// ---- Diagnostic Report (shown to user on escalation) ----
+
+message DiagnosticReport {
+  string process_id = 1;
+  string process_name = 2;
+  string root_cause_analysis = 3;    // AI-generated root cause
+  string suggested_fix = 4;          // AI-generated fix suggestion
+  repeated RepairAttempt attempts = 5;
+  repeated string relevant_source_files = 6;
+  repeated string relevant_log_lines = 7;
+  int64 first_failure_timestamp = 8;
+  int64 last_failure_timestamp = 9;
+  int32 total_failures = 10;
+}
+
+message RepairAttempt {
+  RepairStrategy strategy = 1;
+  string description = 2;
+  bool success = 3;
+  string failure_reason = 4;
+  int64 timestamp = 5;
+}
+
+// ---- Health Dashboard ----
+
+message HealthDashboard {
+  repeated ProcessHealthStatus processes = 1;
+  int32 total_processes = 2;
+  int32 healthy_count = 3;
+  int32 unhealthy_count = 4;
+  int32 crashed_count = 5;
+}
+
+message ProcessHealthStatus {
+  string process_id = 1;
+  string display_name = 2;
+  ProcessType process_type = 3;
+  ProcessState state = 4;
+  int64 uptime_ms = 5;
+  int32 restart_count = 6;
+  ProcessHealthMetrics metrics = 7;
+  string last_error = 8;
+  int64 last_error_timestamp = 9;
+}
+
+// ---- Repair History ----
+
+message RepairHistoryRequest {
+  string process_id = 1;  // Empty = all processes
+  int32 limit = 2;
+}
+
+message RepairHistoryResponse {
+  repeated RepairHistoryEntry entries = 1;
+}
+
+message RepairHistoryEntry {
+  string repair_id = 1;
+  string process_id = 2;
+  RepairStrategy strategy = 3;
+  bool success = 4;
+  string description = 5;
+  int64 timestamp = 6;
+}
+
+// ---- User Approval ----
+
+message RepairApproval {
+  string repair_id = 1;
+  bool approved = 2;
+  string user_notes = 3;
+}
+
+message RepairApprovalResponse {
+  bool applied = 1;
+  string result_message = 2;
+}
+
+// ---- Health Events (streamed) ----
+
+message HealthEvent {
+  string process_id = 1;
+  int64 timestamp = 2;
+
+  oneof event {
+    ProcessStateChanged state_changed = 3;
+    RepairAction repair_initiated = 4;
+    RepairCompleted repair_completed = 5;
+    EscalationRequired escalation = 6;
+  }
+}
+
+message ProcessStateChanged {
+  ProcessState old_state = 1;
+  ProcessState new_state = 2;
+  string reason = 3;
+}
+
+message RepairCompleted {
+  string repair_id = 1;
+  bool success = 2;
+  string description = 3;
+}
+
+message EscalationRequired {
+  DiagnosticReport report = 1;
+}

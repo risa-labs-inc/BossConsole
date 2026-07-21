@@ -1,0 +1,127 @@
+syntax = "proto3";
+
+package boss.ipc.v1.services;
+
+import "boss/ipc/v1/common.proto";
+
+option java_package = "ai.rever.boss.ipc.proto.services";
+option java_multiple_files = true;
+
+// GitService exposes Git repository operations to out-of-process plugins.
+// The kernel interacts with the local Git repository and streams status and
+// log information to plugin consumers.
+service GitService {
+  // Stream file status changes (staged, unstaged, untracked)
+  rpc WatchFileStatus(boss.ipc.v1.Empty) returns (stream GitFileStatusListResponse);
+
+  // Stream commit log updates
+  rpc WatchCommitLog(boss.ipc.v1.Empty) returns (stream GitCommitLogResponse);
+
+  // Stream whether the current project is a Git repository
+  rpc WatchIsGitRepo(boss.ipc.v1.Empty) returns (stream BoolResponse);
+
+  // Stream loading state of Git operations
+  rpc WatchIsLoading(boss.ipc.v1.Empty) returns (stream BoolResponse);
+
+  // Trigger a refresh of the file status
+  rpc RefreshStatus(boss.ipc.v1.Empty) returns (boss.ipc.v1.Empty);
+
+  // Trigger a refresh of the commit log
+  rpc RefreshLog(RefreshLogRequest) returns (boss.ipc.v1.Empty);
+
+  // Stage a file by path
+  rpc Stage(GitFilePathRequest) returns (GitOperationResultProto);
+
+  // Unstage a file by path
+  rpc Unstage(GitFilePathRequest) returns (GitOperationResultProto);
+
+  // Stage all modified files
+  rpc StageAll(boss.ipc.v1.Empty) returns (GitOperationResultProto);
+
+  // Unstage all staged files
+  rpc UnstageAll(boss.ipc.v1.Empty) returns (GitOperationResultProto);
+
+  // Discard changes in a working tree file
+  rpc DiscardChanges(GitFilePathRequest) returns (GitOperationResultProto);
+
+  // Cherry-pick a commit by hash
+  rpc CherryPick(GitHashRequest) returns (GitOperationResultProto);
+
+  // Revert a commit by hash
+  rpc Revert(GitHashRequest) returns (GitOperationResultProto);
+
+  // Checkout a branch or ref
+  rpc Checkout(GitRefRequest) returns (GitOperationResultProto);
+
+  // Get the current project path for the Git repository
+  rpc GetCurrentProjectPath(boss.ipc.v1.Empty) returns (StringResponse);
+
+  // Open a file from the Git status in the editor
+  rpc OpenFile(GitOpenFileRequest) returns (boss.ipc.v1.Empty);
+}
+
+// ---- Shared response types ----
+
+message BoolResponse {
+  bool value = 1;
+}
+
+message StringResponse {
+  string value = 1;
+}
+
+// ---- Git requests ----
+
+message RefreshLogRequest {
+  int32 limit = 1;
+}
+
+message GitFilePathRequest {
+  string path = 1;
+}
+
+message GitHashRequest {
+  string hash = 1;
+}
+
+message GitRefRequest {
+  string ref = 1;
+}
+
+message GitOpenFileRequest {
+  string file_path = 1;
+  string window_id = 2;
+}
+
+// ---- Git models ----
+
+message GitFileStatusListResponse {
+  repeated GitFileStatusProto files = 1;
+}
+
+message GitFileStatusProto {
+  string path = 1;
+  string index_status = 2;
+  string work_tree_status = 3;
+  bool is_staged = 4;
+  bool is_unstaged = 5;
+}
+
+message GitCommitLogResponse {
+  repeated GitCommitInfoProto commits = 1;
+}
+
+message GitCommitInfoProto {
+  string hash = 1;
+  string short_hash = 2;
+  string subject = 3;
+  string author = 4;
+  string author_email = 5;
+  int64 date = 6;
+  repeated string refs = 7;
+}
+
+message GitOperationResultProto {
+  bool success = 1;
+  string message = 2;
+}

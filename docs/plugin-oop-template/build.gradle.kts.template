@@ -1,0 +1,59 @@
+/**
+ * Template build.gradle.kts for out-of-process plugins.
+ *
+ * Copy this to your plugin module and adjust:
+ * - group, version
+ * - mainClass in shadowJar manifest
+ * - dependencies specific to your plugin
+ */
+plugins {
+    alias(libs.plugins.kotlinJvm)
+    alias(libs.plugins.kotlinSerialization)
+    // Shadow plugin for creating fat JARs
+    id("com.github.johnrengelman.shadow") version "8.1.1"
+}
+
+group = "ai.rever.boss.plugin.console"
+version = "1.0.0"
+
+java {
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(17))
+    }
+}
+
+dependencies {
+    // Plugin API (provided by boss-microkernel-runtime at runtime — don't bundle)
+    compileOnly(project(":plugin-platform:plugin-api-core")) {
+        targetConfiguration = "desktopRuntimeElements"
+    }
+
+    // Plugin runtime (provided — contains PluginStateHolder, RemotePluginContext, etc.)
+    compileOnly(project(":boss-microkernel-runtime"))
+
+    // Your plugin's own dependencies
+    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.kotlinx.coroutines.core)
+}
+
+tasks.shadowJar {
+    archiveClassifier.set("all")
+    mergeServiceFiles()
+
+    manifest {
+        attributes["Main-Class"] = "ai.rever.boss.plugin.runtime.PluginProcessMainKt"
+    }
+
+    // Exclude plugin-api-core and boss-microkernel-runtime (provided by the runtime)
+    dependencies {
+        exclude(dependency("ai.rever.boss.plugin:plugin-api-core"))
+        exclude(dependency("ai.rever.boss.microkernel.runtime:boss-microkernel-runtime"))
+    }
+}
+
+// Copy the fat JAR to the plugins directory for development
+tasks.register<Copy>("deployPlugin") {
+    dependsOn(tasks.shadowJar)
+    from(tasks.shadowJar.get().archiveFile)
+    into("${rootProject.projectDir}/composeApp/build/bundled-plugins")
+}

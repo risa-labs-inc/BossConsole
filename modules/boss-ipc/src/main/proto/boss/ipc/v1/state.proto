@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+package boss.ipc.v1;
+
+import "boss/ipc/v1/common.proto";
+
+option java_package = "ai.rever.boss.ipc.proto";
+option java_multiple_files = true;
+
+// StateService provides cross-process reactive state sharing.
+// Replaces in-process StateFlow singletons when running in kernel mode.
+service StateService {
+  // Get the current value of a state key
+  rpc GetState(StateKey) returns (StateValue);
+
+  // Watch a state key for changes (like StateFlow.collect across processes)
+  rpc WatchState(StateKey) returns (stream StateValue);
+
+  // Set/update a state value
+  rpc SetState(StateUpdate) returns (StateValue);
+
+  // List all available state keys
+  rpc ListStateKeys(Empty) returns (StateKeyList);
+}
+
+message StateKey {
+  // Hierarchical key (e.g., "auth.state", "auth.currentUser", "workspace.current")
+  string key = 1;
+}
+
+message StateValue {
+  string key = 1;
+  bytes value = 2;          // Serialized state value
+  string value_type = 3;    // Type hint for deserialization
+  int64 version = 4;        // Monotonically increasing version for conflict detection
+  int64 timestamp = 5;
+}
+
+message StateUpdate {
+  string key = 1;
+  bytes value = 2;
+  string value_type = 3;
+  string source_process = 4;
+  int64 expected_version = 5;  // Optimistic concurrency (0 = no check)
+}
+
+message StateKeyList {
+  repeated StateKeyInfo keys = 1;
+}
+
+message StateKeyInfo {
+  string key = 1;
+  string value_type = 2;
+  string owner_process = 3;  // Which process owns this state
+  int64 version = 4;
+}

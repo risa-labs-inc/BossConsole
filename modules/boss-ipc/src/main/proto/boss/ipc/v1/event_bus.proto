@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+package boss.ipc.v1;
+
+import "boss/ipc/v1/common.proto";
+
+option java_package = "ai.rever.boss.ipc.proto";
+option java_multiple_files = true;
+
+// EventBusService provides cross-process pub/sub event routing.
+// Replaces in-process SharedFlow event buses when running in kernel mode.
+service EventBusService {
+  // Subscribe to events of a specific type (or all events)
+  rpc Subscribe(SubscribeRequest) returns (stream EventEnvelope);
+
+  // Publish an event to all subscribers
+  rpc Publish(EventEnvelope) returns (PublishResponse);
+
+  // Publish a batch of events atomically
+  rpc PublishBatch(PublishBatchRequest) returns (PublishResponse);
+}
+
+message SubscribeRequest {
+  // Filter by event type (empty = subscribe to all)
+  repeated string event_types = 1;
+  // Filter by source window ID (empty = all windows)
+  string source_window_id = 2;
+  // Subscriber identification
+  string subscriber_id = 3;
+}
+
+message EventEnvelope {
+  // Fully qualified event type name (e.g., "boss.events.FileOpenEvent")
+  string event_type = 1;
+  // Protobuf-serialized or JSON-serialized event payload
+  bytes payload = 2;
+  // Process that published this event
+  string source_process = 3;
+  // Window ID for multi-window routing
+  string source_window_id = 4;
+  // Event timestamp
+  int64 timestamp = 5;
+  // Optional metadata
+  map<string, string> metadata = 6;
+}
+
+message PublishResponse {
+  bool success = 1;
+  int32 subscriber_count = 2;  // How many subscribers received this event
+}
+
+message PublishBatchRequest {
+  repeated EventEnvelope events = 1;
+}

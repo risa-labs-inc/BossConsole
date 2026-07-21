@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+package boss.ipc.v1.services;
+
+import "boss/ipc/v1/common.proto";
+
+option java_package = "ai.rever.boss.ipc.proto.services";
+option java_multiple_files = true;
+
+// NotificationService allows out-of-process plugins to display toast notifications
+// in the host application and manage their lifecycle.
+service NotificationService {
+  // Show a toast notification and return its identifier
+  rpc ShowToast(ShowToastRequest) returns (NotificationIdResponse);
+
+  // Dismiss a specific notification by its identifier
+  rpc Dismiss(NotificationIdRequest) returns (boss.ipc.v1.Empty);
+
+  // Dismiss all active notifications
+  rpc DismissAll(boss.ipc.v1.Empty) returns (boss.ipc.v1.Empty);
+}
+
+// ---- Enums ----
+
+enum NotificationType {
+  NOTIFICATION_TYPE_UNSPECIFIED = 0;
+  NOTIFICATION_TYPE_INFO = 1;
+  NOTIFICATION_TYPE_SUCCESS = 2;
+  NOTIFICATION_TYPE_WARNING = 3;
+  NOTIFICATION_TYPE_ERROR = 4;
+}
+
+enum NotificationDuration {
+  NOTIFICATION_DURATION_UNSPECIFIED = 0;
+  NOTIFICATION_DURATION_SHORT = 1;
+  NOTIFICATION_DURATION_LONG = 2;
+  NOTIFICATION_DURATION_INDEFINITE = 3;
+}
+
+// ---- Requests ----
+
+message ShowToastRequest {
+  string message = 1;
+  NotificationType type = 2;
+  NotificationDuration duration = 3;
+  string title = 4;
+  string action_label = 5;
+}
+
+message NotificationIdRequest {
+  string notification_id = 1;
+}
+
+// ---- Responses ----
+
+message NotificationIdResponse {
+  string notification_id = 1;
+}

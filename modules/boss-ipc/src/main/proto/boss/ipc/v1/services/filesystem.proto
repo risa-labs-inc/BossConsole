@@ -1,0 +1,134 @@
+syntax = "proto3";
+
+package boss.ipc.v1.services;
+
+import "boss/ipc/v1/common.proto";
+
+option java_package = "ai.rever.boss.ipc.proto.services";
+option java_multiple_files = true;
+
+// FileSystemService provides file and directory operations across process boundaries.
+// Out-of-process plugins use this instead of direct java.io.File access.
+service FileSystemService {
+  // Scan a directory (non-recursive by default)
+  rpc ScanDirectory(ScanDirectoryRequest) returns (ScanDirectoryResponse);
+
+  // Read file contents as bytes
+  rpc ReadFile(ReadFileRequest) returns (ReadFileResponse);
+
+  // Write (create or overwrite) a file
+  rpc WriteFile(WriteFileRequest) returns (WriteFileResponse);
+
+  // Create an empty file (fails if it already exists)
+  rpc CreateFile(CreateFileRequest) returns (boss.ipc.v1.Empty);
+
+  // Delete a file or empty directory
+  rpc DeleteFile(DeleteFileRequest) returns (boss.ipc.v1.Empty);
+
+  // Rename or move a file/directory
+  rpc RenameFile(RenameFileRequest) returns (boss.ipc.v1.Empty);
+
+  // Stream file system change events for a watched path
+  rpc WatchFileChanges(WatchFileChangesRequest) returns (stream FileChangeEvent);
+}
+
+// ---- File Model ----
+
+message FileEntry {
+  string path = 1;
+  string name = 2;
+  bool is_directory = 3;
+  int64 size_bytes = 4;
+  int64 modified_at = 5;
+  bool is_hidden = 6;
+  string mime_type = 7;
+}
+
+// ---- ScanDirectory ----
+
+message ScanDirectoryRequest {
+  string path = 1;
+  bool recursive = 2;           // If true, scan subdirectories too
+  bool include_hidden = 3;      // If true, include hidden files/dirs (starting with '.')
+  repeated string extensions = 4;  // Filter by extension (e.g., "kt", "ts"). Empty = all.
+  int32 max_depth = 5;          // Max recursion depth (0 = no limit)
+}
+
+message ScanDirectoryResponse {
+  repeated FileEntry entries = 1;
+  string error_message = 2;
+}
+
+// ---- ReadFile ----
+
+message ReadFileRequest {
+  string path = 1;
+  int64 offset_bytes = 2;       // 0 = start
+  int64 max_bytes = 3;          // 0 = read all
+}
+
+message ReadFileResponse {
+  bytes content = 1;
+  int64 total_size_bytes = 2;
+  bool truncated = 3;           // True if max_bytes was hit
+  string error_message = 4;
+}
+
+// ---- WriteFile ----
+
+message WriteFileRequest {
+  string path = 1;
+  bytes content = 2;
+  bool create_parents = 3;      // Create parent directories if they don't exist
+  bool overwrite = 4;           // Fail if file exists and this is false
+}
+
+message WriteFileResponse {
+  bool success = 1;
+  int64 bytes_written = 2;
+  string error_message = 3;
+}
+
+// ---- CreateFile ----
+
+message CreateFileRequest {
+  string path = 1;
+  bool is_directory = 2;        // Create a directory instead of a file
+  bool create_parents = 3;
+}
+
+// ---- DeleteFile ----
+
+message DeleteFileRequest {
+  string path = 1;
+  bool recursive = 2;           // Required to delete non-empty directories
+}
+
+// ---- RenameFile ----
+
+message RenameFileRequest {
+  string source_path = 1;
+  string destination_path = 2;
+  bool overwrite = 3;
+}
+
+// ---- WatchFileChanges ----
+
+message WatchFileChangesRequest {
+  string path = 1;
+  bool recursive = 2;
+}
+
+message FileChangeEvent {
+  string path = 1;
+  FileChangeType change_type = 2;
+  int64 timestamp = 3;
+}
+
+enum FileChangeType {
+  FILE_CHANGE_TYPE_UNSPECIFIED = 0;
+  FILE_CHANGE_TYPE_CREATED = 1;
+  FILE_CHANGE_TYPE_MODIFIED = 2;
+  FILE_CHANGE_TYPE_DELETED = 3;
+  FILE_CHANGE_TYPE_RENAMED = 4;
+}

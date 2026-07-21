@@ -1,0 +1,83 @@
+syntax = "proto3";
+
+package boss.ipc.v1.services;
+
+import "boss/ipc/v1/common.proto";
+
+option java_package = "ai.rever.boss.ipc.proto.services";
+option java_multiple_files = true;
+
+// DownloadService exposes download management to out-of-process plugins.
+// The kernel tracks browser downloads and streams state changes to consumers.
+service DownloadService {
+  // Stream the full download list as it updates
+  rpc WatchDownloads(boss.ipc.v1.Empty) returns (stream DownloadListResponse);
+
+  // Pause an active download
+  rpc PauseDownload(DownloadIdRequest) returns (OperationResult);
+
+  // Resume a paused download
+  rpc ResumeDownload(DownloadIdRequest) returns (OperationResult);
+
+  // Cancel a download
+  rpc CancelDownload(DownloadIdRequest) returns (OperationResult);
+
+  // Remove a download from the list
+  rpc RemoveDownload(DownloadIdRequest) returns (OperationResult);
+
+  // Clear all completed downloads from the list
+  rpc ClearCompleted(boss.ipc.v1.Empty) returns (OperationResult);
+
+  // Reveal the downloaded file in the native file manager
+  rpc RevealInFolder(PathRequest) returns (boss.ipc.v1.Empty);
+
+  // Open the downloaded file with the system default handler
+  rpc OpenFile(PathRequest) returns (boss.ipc.v1.Empty);
+}
+
+// ---- Shared request/response types ----
+
+message DownloadIdRequest {
+  string id = 1;
+}
+
+message PathRequest {
+  string path = 1;
+}
+
+message OperationResult {
+  bool success = 1;
+  string error_message = 2;
+}
+
+// ---- Download model ----
+
+message DownloadListResponse {
+  repeated DownloadItemProto downloads = 1;
+}
+
+message DownloadItemProto {
+  string id = 1;
+  string file_name = 2;
+  string destination_path = 3;
+  string url = 4;
+  DownloadStatusProto status = 5;
+  int64 received_bytes = 6;
+  int64 total_bytes = 7;
+  double speed = 8;
+  bool can_pause = 9;
+  bool can_resume = 10;
+  string error_reason = 11;
+  int64 start_time = 12;
+  int64 end_time = 13;
+}
+
+enum DownloadStatusProto {
+  DOWNLOAD_STATUS_UNSPECIFIED = 0;
+  DOWNLOAD_STATUS_QUEUED = 1;
+  DOWNLOAD_STATUS_DOWNLOADING = 2;
+  DOWNLOAD_STATUS_PAUSED = 3;
+  DOWNLOAD_STATUS_COMPLETED = 4;
+  DOWNLOAD_STATUS_FAILED = 5;
+  DOWNLOAD_STATUS_CANCELLED = 6;
+}

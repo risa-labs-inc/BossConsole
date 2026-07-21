@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RPA Recorder Test Page</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 30px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+        input[type="text"],
+        input[type="email"],
+        select,
+        textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+            font-size: 14px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-right: 10px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .success-message {
+            background-color: #d4edda;
+            color: #155724;
+            padding: 15px;
+            border-radius: 4px;
+            margin-top: 20px;
+            display: none;
+        }
+        .link-section {
+            margin-top: 30px;
+            padding-top: 30px;
+            border-top: 1px solid #eee;
+        }
+        a {
+            color: #007bff;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>RPA Recorder Test Page</h1>
+        
+        <form id="testForm">
+            <div class="form-group">
+                <label for="name">Name:</label>
+                <input type="text" id="name" name="name" placeholder="Enter your name">
+            </div>
+            
+            <div class="form-group">
+                <label for="email">Email:</label>
+                <input type="email" id="email" name="email" placeholder="Enter your email">
+            </div>
+            
+            <div class="form-group">
+                <label for="country">Country:</label>
+                <select id="country" name="country">
+                    <option value="">Select a country</option>
+                    <option value="us">United States</option>
+                    <option value="uk">United Kingdom</option>
+                    <option value="ca">Canada</option>
+                    <option value="au">Australia</option>
+                    <option value="jp">Japan</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="comments">Comments:</label>
+                <textarea id="comments" name="comments" rows="4" placeholder="Enter your comments"></textarea>
+            </div>
+            
+            <button type="submit">Submit Form</button>
+            <button type="button" onclick="clearForm()">Clear</button>
+            <button type="button" onclick="showAlert()">Show Alert</button>
+        </form>
+        
+        <div id="successMessage" class="success-message">
+            Form submitted successfully!
+        </div>
+        
+        <div class="link-section">
+            <h3>Navigation Links</h3>
+            <p>
+                <a href="#section1">Go to Section 1</a> | 
+                <a href="#section2">Go to Section 2</a> | 
+                <a href="https://www.example.com" target="_blank">External Link</a>
+            </p>
+        </div>
+        
+        <div id="section1" style="margin-top: 50px;">
+            <h2>Section 1</h2>
+            <p>This is section 1 content. Click the links above to navigate.</p>
+        </div>
+        
+        <div id="section2" style="margin-top: 50px;">
+            <h2>Section 2</h2>
+            <p>This is section 2 content. The RPA recorder should capture all interactions.</p>
+        </div>
+    </div>
+    
+    <script>
+        document.getElementById('testForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            document.getElementById('successMessage').style.display = 'block';
+            setTimeout(() => {
+                document.getElementById('successMessage').style.display = 'none';
+            }, 3000);
+        });
+        
+        function clearForm() {
+            document.getElementById('testForm').reset();
+        }
+        
+        function showAlert() {
+            alert('This is a test alert!');
+        }
+        
+        // Log all interactions for debugging
+        document.addEventListener('click', function(e) {
+            console.log('Clicked:', e.target.tagName, e.target.id || e.target.className || 'no-id');
+        });
+        
+        document.addEventListener('input', function(e) {
+            console.log('Input:', e.target.id, e.target.value);
+        });
+        
+        document.addEventListener('change', function(e) {
+            console.log('Change:', e.target.id, e.target.value);
+        });
+    </script>
+</body>
+</html>

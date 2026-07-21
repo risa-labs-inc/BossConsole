@@ -1,0 +1,503 @@
+#!/usr/bin/env bash
+#
+# BOSS Plugin Store Publisher
+# Publishes a plugin JAR to the BOSS Plugin Store
+#
+# Usage:
+#   publish-plugin <jar-path> [options]
+#
+# Options:
+#   --plugin-id <id>       Plugin ID (e.g., "ai.rever.boss.plugin.myplugin")
+#   --display-name <name>  Human-readable plugin name
+#   --version <version>    Semantic version (e.g., "1.0.0")
+#   --author <name>        Author name (optional)
+#   --description <desc>   Plugin description (optional)
+#   --changelog <text>     Changelog for this version (optional)
+#   --tags <tag1,tag2>     Comma-separated tags (optional)
+#   --token <token>        Authentication token (or set BOSS_PLUGIN_STORE_TOKEN)
+#   --url <url>            Store URL (or set BOSS_PLUGIN_STORE_URL)
+#   --help                 Show this help message
+#
+
+set -e
+
+# =============================================================================
+# Configuration
+# =============================================================================
+
+# Default store URL (production)
+DEFAULT_STORE_URL="https://api.risaboss.com/functions/v1/plugin-store"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+print_error() {
+    echo -e "${RED}Error:${NC} $1" >&2
+}
+
+print_success() {
+    echo -e "${GREEN}$1${NC}"
+}
+
+print_info() {
+    echo -e "${BLUE}$1${NC}"
+}
+
+print_warning() {
+    echo -e "${YELLOW}Warning:${NC} $1"
+}
+
+print_step() {
+    echo -e "${CYAN}[$1/$TOTAL_STEPS]${NC} $2"
+}
+
+show_help() {
+    cat <<EOF
+BOSS Plugin Store Publisher
+
+Publishes a plugin JAR to the BOSS Plugin Store.
+
+Usage:
+  $(basename "$0") <jar-path> [options]
+
+Arguments:
+  <jar-path>               Path to the plugin JAR file (required)
+
+Options:
+  --plugin-id <id>         Plugin ID (e.g., "ai.rever.boss.plugin.myplugin")
+  --display-name <name>    Human-readable plugin name
+  --version <version>      Semantic version (e.g., "1.0.0")
+  --author <name>          Author name (optional, defaults to logged-in user)
+  --description <desc>     Plugin description (optional)
+  --changelog <text>       Changelog for this version (optional)
+  --tags <tag1,tag2>       Comma-separated tags (optional)
+  --token <token>          Authentication token
+  --url <url>              Store URL (default: production)
+  --help, -h               Show this help message
+
+Environment Variables:
+  BOSS_PLUGIN_STORE_TOKEN  Authentication token (alternative to --token)
+  BOSS_PLUGIN_STORE_URL    Store URL (alternative to --url)
+
+Examples:
+  # Publish with all options
+  $(basename "$0") my-plugin.jar \\
+    --plugin-id "ai.rever.boss.plugin.myplugin" \\
+    --display-name "My Plugin" \\
+    --version "1.0.0" \\
+    --token "\$BOSS_PLUGIN_STORE_TOKEN"
+
+  # Using environment variables
+  export BOSS_PLUGIN_STORE_TOKEN=eyJ...
+  export BOSS_PLUGIN_STORE_URL=http://127.0.0.1:54321/functions/v1/plugin-store
+  $(basename "$0") my-plugin.jar --plugin-id my.plugin --version 1.0.0
+
+  # Extract metadata from JAR manifest
+  $(basename "$0") my-plugin.jar --token "\$TOKEN"
+
+EOF
+}
+
+# Calculate SHA256 hash of a file
+calculate_sha256() {
+    local file="$1"
+    if command -v shasum &> /dev/null; then
+        shasum -a 256 "$file" | cut -d' ' -f1
+    elif command -v sha256sum &> /dev/null; then
+        sha256sum "$file" | cut -d' ' -f1
+    else
+        print_error "Neither shasum nor sha256sum found. Please install one of them."
+        exit 1
+    fi
+}
+
+# Get file size in bytes
+get_file_size() {
+    local file="$1"
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        stat -f%z "$file"
+    else
+        stat -c%s "$file"
+    fi
+}
+
+# Extract value from JAR manifest
+extract_from_manifest() {
+    local jar="$1"
+    local key="$2"
+    unzip -p "$jar" META-INF/MANIFEST.MF 2>/dev/null | grep "^$key:" | cut -d':' -f2- | tr -d '\r' | xargs
+}
+
+# Make HTTP request with curl
+http_request() {
+    local method="$1"
+    local url="$2"
+    local data="$3"
+    local content_type="${4:-application/json}"
+    
+    local response
+    local http_code
+    
+    if [ -n "$data" ]; then
+        if [ "$content_type" = "application/octet-stream" ]; then
+            response=$(curl -s -w "\n%{http_code}" -X "$method" \
+                -H "Content-Type: $content_type" \
+                --data-binary "@$data" \
+                "$url")
+        else
+            response=$(curl -s -w "\n%{http_code}" -X "$method" \
+                -H "Content-Type: $content_type" \
+                -H "apikey: $ANON_KEY" \
+                -H "Authorization: Bearer $AUTH_TOKEN" \
+                -d "$data" \
+                "$url")
+        fi
+    else
+        response=$(curl -s -w "\n%{http_code}" -X "$method" \
+            -H "apikey: $ANON_KEY" \
+            -H "Authorization: Bearer $AUTH_TOKEN" \
+            "$url")
+    fi
+    
+    http_code=$(echo "$response" | tail -n1)
+    body=$(echo "$response" | sed '$d')
+    
+    echo "$body"
+    echo "$http_code"
+}
+
+# JSON helper - extract value (simple implementation)
+json_value() {
+    local json="$1"
+    local key="$2"
+    echo "$json" | grep -o "\"$key\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | head -1 | sed 's/.*:\s*"//' | sed 's/"$//' || echo ""
+}
+
+json_bool() {
+    local json="$1"
+    local key="$2"
+    echo "$json" | grep -o "\"$key\"[[:space:]]*:[[:space:]]*\(true\|false\)" | head -1 | sed 's/.*:\s*//' || echo ""
+}
+
+# =============================================================================
+# Main Script
+# =============================================================================
+
+TOTAL_STEPS=5
+
+# Parse arguments
+JAR_PATH=""
+PLUGIN_ID=""
+DISPLAY_NAME=""
+VERSION=""
+AUTHOR=""
+DESCRIPTION=""
+CHANGELOG=""
+TAGS=""
+AUTH_TOKEN="${BOSS_PLUGIN_STORE_TOKEN:-}"
+STORE_URL="${BOSS_PLUGIN_STORE_URL:-$DEFAULT_STORE_URL}"
+ANON_KEY=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --plugin-id)
+            PLUGIN_ID="$2"
+            shift 2
+            ;;
+        --display-name)
+            DISPLAY_NAME="$2"
+            shift 2
+            ;;
+        --version)
+            VERSION="$2"
+            shift 2
+            ;;
+        --author)
+            AUTHOR="$2"
+            shift 2
+            ;;
+        --description)
+            DESCRIPTION="$2"
+            shift 2
+            ;;
+        --changelog)
+            CHANGELOG="$2"
+            shift 2
+            ;;
+        --tags)
+            TAGS="$2"
+            shift 2
+            ;;
+        --token)
+            AUTH_TOKEN="$2"
+            shift 2
+            ;;
+        --url)
+            STORE_URL="$2"
+            shift 2
+            ;;
+        --anon-key)
+            ANON_KEY="$2"
+            shift 2
+            ;;
+        --help|-h)
+            show_help
+            exit 0
+            ;;
+        -*)
+            print_error "Unknown option: $1"
+            echo "Run '$(basename "$0") --help' for usage information."
+            exit 1
+            ;;
+        *)
+            if [ -z "$JAR_PATH" ]; then
+                JAR_PATH="$1"
+            else
+                print_error "Unexpected argument: $1"
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Validate required arguments
+if [ -z "$JAR_PATH" ]; then
+    print_error "JAR path is required"
+    echo "Run '$(basename "$0") --help' for usage information."
+    exit 1
+fi
+
+if [ ! -f "$JAR_PATH" ]; then
+    print_error "JAR file not found: $JAR_PATH"
+    exit 1
+fi
+
+if [ -z "$AUTH_TOKEN" ]; then
+    print_error "Authentication token is required"
+    echo "Set BOSS_PLUGIN_STORE_TOKEN environment variable or use --token option."
+    exit 1
+fi
+
+# If anon key not provided, try to extract from local.properties or use a default
+if [ -z "$ANON_KEY" ]; then
+    if [ -f "local.properties" ]; then
+        ANON_KEY=$(grep "SUPABASE_ANON_KEY" local.properties 2>/dev/null | cut -d'=' -f2 || echo "")
+    fi
+fi
+
+echo ""
+print_info "BOSS Plugin Store Publisher"
+echo "============================================"
+echo ""
+
+# Step 1: Extract metadata from JAR if not provided
+print_step 1 "Reading JAR metadata..."
+
+if [ -z "$PLUGIN_ID" ]; then
+    PLUGIN_ID=$(extract_from_manifest "$JAR_PATH" "Plugin-Id")
+    if [ -z "$PLUGIN_ID" ]; then
+        print_error "Plugin ID not found in manifest. Use --plugin-id option."
+        exit 1
+    fi
+    print_info "  Plugin ID: $PLUGIN_ID (from manifest)"
+else
+    print_info "  Plugin ID: $PLUGIN_ID"
+fi
+
+if [ -z "$DISPLAY_NAME" ]; then
+    DISPLAY_NAME=$(extract_from_manifest "$JAR_PATH" "Plugin-Name")
+    if [ -z "$DISPLAY_NAME" ]; then
+        DISPLAY_NAME="$PLUGIN_ID"
+        print_warning "Display name not found, using plugin ID"
+    else
+        print_info "  Display Name: $DISPLAY_NAME (from manifest)"
+    fi
+else
+    print_info "  Display Name: $DISPLAY_NAME"
+fi
+
+if [ -z "$VERSION" ]; then
+    VERSION=$(extract_from_manifest "$JAR_PATH" "Plugin-Version")
+    if [ -z "$VERSION" ]; then
+        print_error "Version not found in manifest. Use --version option."
+        exit 1
+    fi
+    print_info "  Version: $VERSION (from manifest)"
+else
+    print_info "  Version: $VERSION"
+fi
+
+# minBossVersion drives the host-side update gate (PluginUpdateManager) and the
+# loader check — hardcoding it would let old hosts pull updates they can't load.
+MIN_BOSS_VERSION=$(json_value "$(unzip -p "$JAR_PATH" META-INF/boss-plugin/plugin.json 2>/dev/null)" "minBossVersion")
+if [ -z "$MIN_BOSS_VERSION" ]; then
+    MIN_BOSS_VERSION="1.0.0"
+    print_warning "minBossVersion not found in plugin.json, defaulting to 1.0.0"
+else
+    print_info "  Min BOSS Version: $MIN_BOSS_VERSION (from plugin.json)"
+fi
+
+# Calculate SHA256 and file size
+JAR_SIZE=$(get_file_size "$JAR_PATH")
+JAR_SHA256=$(calculate_sha256 "$JAR_PATH")
+
+print_info "  JAR Size: $JAR_SIZE bytes"
+print_info "  SHA256: ${JAR_SHA256:0:16}..."
+
+echo ""
+
+# Step 2: Check if plugin exists
+print_step 2 "Checking plugin existence..."
+
+RESPONSE=$(http_request "GET" "$STORE_URL/$PLUGIN_ID")
+BODY=$(echo "$RESPONSE" | head -n -1)
+HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+
+PLUGIN_EXISTS=false
+if [ "$HTTP_CODE" = "200" ]; then
+    PLUGIN_EXISTS=true
+    print_info "  Plugin exists, publishing new version"
+else
+    print_info "  Plugin does not exist, will create new entry"
+fi
+
+echo ""
+
+# Step 3: Create plugin entry if needed
+if [ "$PLUGIN_EXISTS" = "false" ]; then
+    print_step 3 "Creating plugin entry..."
+    
+    # Build tags array
+    TAGS_JSON="[]"
+    if [ -n "$TAGS" ]; then
+        TAGS_JSON="[$(echo "$TAGS" | sed 's/,/","/g' | sed 's/^/"/' | sed 's/$/"/')]"
+    fi
+    
+    # Build JSON payload
+    PUBLISH_PAYLOAD=$(cat <<EOF
+{
+  "pluginId": "$PLUGIN_ID",
+  "displayName": "$DISPLAY_NAME",
+  "description": "$DESCRIPTION",
+  "authorName": $([ -n "$AUTHOR" ] && echo "\"$AUTHOR\"" || echo "null"),
+  "tags": $TAGS_JSON
+}
+EOF
+)
+    
+    RESPONSE=$(http_request "POST" "$STORE_URL/publish" "$PUBLISH_PAYLOAD")
+    BODY=$(echo "$RESPONSE" | head -n -1)
+    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+    
+    if [ "$HTTP_CODE" != "201" ] && [ "$HTTP_CODE" != "200" ]; then
+        ERROR_MSG=$(json_value "$BODY" "error")
+        print_error "Failed to create plugin entry: $ERROR_MSG"
+        print_error "HTTP Code: $HTTP_CODE"
+        exit 1
+    fi
+    
+    print_success "  Plugin entry created"
+else
+    print_step 3 "Skipping plugin creation (already exists)"
+fi
+
+echo ""
+
+# Step 4: Create version and get upload URL
+print_step 4 "Creating version entry..."
+
+VERSION_PAYLOAD=$(cat <<EOF
+{
+  "version": "$VERSION",
+  "changelog": "$CHANGELOG",
+  "minBossVersion": "$MIN_BOSS_VERSION"
+}
+EOF
+)
+
+RESPONSE=$(http_request "POST" "$STORE_URL/$PLUGIN_ID/version" "$VERSION_PAYLOAD")
+BODY=$(echo "$RESPONSE" | head -n -1)
+HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+
+if [ "$HTTP_CODE" != "201" ] && [ "$HTTP_CODE" != "200" ]; then
+    ERROR_MSG=$(json_value "$BODY" "error")
+    print_error "Failed to create version: $ERROR_MSG"
+    print_error "HTTP Code: $HTTP_CODE"
+    exit 1
+fi
+
+VERSION_ID=$(json_value "$BODY" "versionId")
+UPLOAD_URL=$(json_value "$BODY" "uploadUrl")
+
+if [ -z "$VERSION_ID" ] || [ -z "$UPLOAD_URL" ]; then
+    print_error "Failed to get version ID or upload URL from response"
+    print_error "Response: $BODY"
+    exit 1
+fi
+
+print_success "  Version created: $VERSION_ID"
+
+echo ""
+
+# Step 5: Upload JAR file
+print_step 5 "Uploading JAR file..."
+
+# Upload directly to the signed URL
+UPLOAD_RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT \
+    -H "Content-Type: application/octet-stream" \
+    --data-binary "@$JAR_PATH" \
+    "$UPLOAD_URL")
+UPLOAD_HTTP_CODE=$(echo "$UPLOAD_RESPONSE" | tail -n1)
+
+if [ "$UPLOAD_HTTP_CODE" != "200" ] && [ "$UPLOAD_HTTP_CODE" != "201" ]; then
+    print_error "Failed to upload JAR file"
+    print_error "HTTP Code: $UPLOAD_HTTP_CODE"
+    exit 1
+fi
+
+print_success "  JAR uploaded successfully"
+
+echo ""
+
+# Step 6: Finalize version
+print_step 5 "Finalizing version..."
+
+FINALIZE_PAYLOAD=$(cat <<EOF
+{
+  "versionId": "$VERSION_ID",
+  "sha256": "$JAR_SHA256",
+  "jarSize": $JAR_SIZE
+}
+EOF
+)
+
+RESPONSE=$(http_request "POST" "$STORE_URL/version/finalize" "$FINALIZE_PAYLOAD")
+BODY=$(echo "$RESPONSE" | head -n -1)
+HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+
+if [ "$HTTP_CODE" != "200" ]; then
+    ERROR_MSG=$(json_value "$BODY" "error")
+    print_error "Failed to finalize version: $ERROR_MSG"
+    exit 1
+fi
+
+print_success "  Version finalized"
+
+echo ""
+echo "============================================"
+print_success "Plugin published successfully!"
+echo ""
+echo "  Plugin ID: $PLUGIN_ID"
+echo "  Version:   $VERSION"
+echo "  SHA256:    ${JAR_SHA256:0:32}..."
+echo ""

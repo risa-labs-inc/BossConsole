@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package boss.ipc.v1.services;
+
+import "boss/ipc/v1/common.proto";
+
+option java_package = "ai.rever.boss.ipc.proto.services";
+option java_multiple_files = true;
+
+// ProjectDataService provides access to project management data for out-of-process
+// plugins. Plugins can watch, add, remove, and select recent projects via the kernel.
+service ProjectDataService {
+  // Stream the list of recent projects; emits on every change
+  rpc WatchRecentProjects(boss.ipc.v1.Empty) returns (stream ProjectListResponse);
+
+  // Add or update a project in the recent projects list
+  rpc UpdateRecentProjects(ProjectProto) returns (boss.ipc.v1.Empty);
+
+  // Remove a project from the recent projects list by path
+  rpc RemoveRecentProject(ProjectPathRequest) returns (boss.ipc.v1.Empty);
+
+  // Select a project as the active/current project
+  rpc SelectProject(ProjectProto) returns (boss.ipc.v1.Empty);
+}
+
+// ---- Model ----
+
+message ProjectProto {
+  string name = 1;
+  string path = 2;
+  int64 last_opened = 3;
+}
+
+// ---- Responses ----
+
+message ProjectListResponse {
+  repeated ProjectProto projects = 1;
+}
+
+// ---- Requests ----
+
+message ProjectPathRequest {
+  string path = 1;
+}

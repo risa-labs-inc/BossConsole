@@ -1,0 +1,117 @@
+syntax = "proto3";
+
+package boss.ipc.v1.services;
+
+import "boss/ipc/v1/common.proto";
+
+option java_package = "ai.rever.boss.ipc.proto.services";
+option java_multiple_files = true;
+
+// AuthService provides authentication and authorization functionality.
+// This is the first service to be extracted to its own process (Phase 2).
+service AuthService {
+  // Get the current authentication state
+  rpc GetAuthState(boss.ipc.v1.Empty) returns (AuthStateResponse);
+
+  // Watch for authentication state changes (like StateFlow.collect across processes)
+  rpc WatchAuthState(boss.ipc.v1.Empty) returns (stream AuthStateResponse);
+
+  // Sign in with email/password
+  rpc SignIn(SignInRequest) returns (SignInResponse);
+
+  // Sign out the current user
+  rpc SignOut(boss.ipc.v1.Empty) returns (SignOutResponse);
+
+  // Get the current user info
+  rpc GetCurrentUser(boss.ipc.v1.Empty) returns (UserInfoResponse);
+
+  // Watch for current user changes
+  rpc WatchCurrentUser(boss.ipc.v1.Empty) returns (stream UserInfoResponse);
+
+  // Check if the current user has a specific permission
+  rpc HasPermission(PermissionRequest) returns (PermissionResponse);
+
+  // Check if the current user has any of the specified permissions
+  rpc HasAnyPermission(HasAnyPermissionRequest) returns (PermissionResponse);
+
+  // Get all permissions for the current user
+  rpc GetUserPermissions(boss.ipc.v1.Empty) returns (UserPermissionsResponse);
+
+  // Check if the current user is an admin
+  rpc IsAdmin(boss.ipc.v1.Empty) returns (IsAdminResponse);
+}
+
+// ---- Auth State ----
+
+message AuthStateResponse {
+  AuthState state = 1;
+  UserInfo user = 2;  // Only set when state = AUTHENTICATED
+}
+
+enum AuthState {
+  AUTH_STATE_UNSPECIFIED = 0;
+  AUTH_STATE_LOADING = 1;
+  AUTH_STATE_NOT_AUTHENTICATED = 2;
+  AUTH_STATE_AUTHENTICATED = 3;
+}
+
+// ---- Sign In/Out ----
+
+message SignInRequest {
+  string email = 1;
+  string password = 2;
+  // Additional auth methods can be added here
+  string auth_method = 3;  // "password", "magic_link", "passkey"
+}
+
+message SignInResponse {
+  bool success = 1;
+  string error_message = 2;
+  UserInfo user = 3;
+  string session_token = 4;
+}
+
+message SignOutResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+// ---- User Info ----
+
+message UserInfo {
+  string user_id = 1;
+  string email = 2;
+  string display_name = 3;
+  bool is_admin = 4;
+  repeated string roles = 5;
+  repeated string permissions = 6;
+  int64 session_created_at = 7;
+  string avatar_url = 8;
+}
+
+message UserInfoResponse {
+  bool authenticated = 1;
+  UserInfo user = 2;
+}
+
+// ---- Permissions ----
+
+message PermissionRequest {
+  string permission = 1;
+}
+
+message HasAnyPermissionRequest {
+  repeated string permissions = 1;
+}
+
+message PermissionResponse {
+  bool granted = 1;
+}
+
+message UserPermissionsResponse {
+  repeated string permissions = 1;
+}
+
+message IsAdminResponse {
+  bool is_admin = 1;
+}

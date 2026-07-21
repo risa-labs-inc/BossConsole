@@ -1,0 +1,95 @@
+*.iml
+.kotlin
+.gradle
+**/build/
+xcuserdata
+!src/**/build/
+local.properties
+
+# Signing assets and build-time embedded config — never commit
+*.provisionprofile
+boss-build-config.properties
+.idea
+.DS_Store
+Thumbs.db
+captures
+.externalNativeBuild
+.cxx
+*.xcodeproj/*
+!*.xcodeproj/project.pbxproj
+!*.xcodeproj/xcshareddata/
+!*.xcodeproj/project.xcworkspace/
+!*.xcworkspace/contents.xcworkspacedata
+**/xcshareddata/WorkspaceSettings.xcsettings
+
+# Distribution files
+*.dmg
+*.zip
+*.msi
+*.jar
+distribution-final/
+distribution/
+BOSS-Standalone-Windows/
+BOSS-Standalone-*/
+
+# Claude workspace
+.claude/
+
+# Temporary JDK downloads
+zulu-jdk-*/
+jdk-*/
+
+# BossConsole-Releases public repository
+BossConsole-Releases/
+
+# Homebrew tap repository
+homebrew/
+
+# Homebrew cask fork  
+homebrew-cask/
+
+# Supabase/Deno dependencies
+supabase/node_modules/
+supabase/deno.lock
+supabase/.temp
+
+# Edge runtime fork
+supabase_v2/edge-runtime/
+
+# Terraform
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+**/.terraform/*
+.terraform/
+.terraform.lock.hcl
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# Detekt reports
+detekt-report.html
+detekt-report.txt
+detekt-report.xml
+detekt-report.sarif
+
+# Compilation logs
+compile.log
+
+# JVM crash logs
+hs_err_pid*.log
+
+# External tool configurations
+.serena/
+
+# Reference repositories (not tracked)
+homebrew-boss/
+boss-releases/
+firebase-debug.log

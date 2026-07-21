@@ -1,0 +1,68 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
+plugins {
+    kotlin("multiplatform")
+    id("org.jetbrains.compose")
+    id("org.jetbrains.kotlin.plugin.compose")
+}
+
+group = "ai.rever.boss.plugin"
+
+kotlin {
+    compilerOptions {
+        freeCompilerArgs.add("-Xexpect-actual-classes")
+    }
+
+    jvmToolchain(17)
+
+    jvm("desktop") {
+        compilations.all {
+            compileTaskProvider.configure {
+                compilerOptions {
+                    jvmTarget.set(JvmTarget.JVM_17)
+                }
+            }
+        }
+    }
+
+    sourceSets {
+        val commonMain by getting {
+            dependencies {
+                // Path utilities (shared with bosseditor)
+                implementation(projects.pluginPlatform.pluginPathUtils)
+
+                // UI core for colors (BossDarkTextSecondary)
+                implementation(projects.pluginPlatform.pluginUiCore)
+
+                // Compose dependencies
+                implementation(libs.compose.mp.runtime)
+                implementation(libs.compose.mp.ui)
+                implementation(libs.compose.mp.foundation)
+                implementation(libs.compose.mp.material)
+                implementation(compose.materialIconsExtended)
+
+                // Simple Icons for brand icons (Kotlin, Python, etc.)
+                implementation(libs.compose.icons.simpleicons)
+            }
+        }
+
+        val desktopMain by getting {
+            dependencies {
+                implementation(compose.desktop.currentOs)
+            }
+        }
+
+        val desktopTest by getting {
+            dependencies {
+                implementation(kotlin("test-junit5"))
+                implementation("org.junit.jupiter:junit-jupiter:6.1.0")
+            }
+        }
+    }
+}
+
+// Configure Test tasks
+tasks.withType<Test> {
+    useJUnitPlatform()
+}
+

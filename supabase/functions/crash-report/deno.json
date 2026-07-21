@@ -1,0 +1,9 @@
+{
+  "imports": {
+    "@hono/zod-openapi": "npm:@hono/zod-openapi@^0.18.4"
+  },
+  "compilerOptions": {
+    "lib": ["deno.window", "deno.unstable"],
+    "strict": true
+  }
+}
