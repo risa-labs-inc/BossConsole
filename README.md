@@ -32,6 +32,8 @@ The deeper difference: **BOSS is both the agent's home _and_ an agent-operable a
 
 And unlike most of the field, BOSS bundles a **real embedded browser — Fluck —** the agent can navigate, script, and automate (`browser_navigate`, `browser_run_js`, plus record-and-replay RPA), with logins filled from the **Secret Manager** and never handed to the model.
 
+It's also **native, not Electron.** BOSS runs on the JVM with true multithreading and **hot-reloads plugins at runtime** — so an agent can evolve a tool and see it live, without restarting the app — while Claude Desktop and the VS Code-fork IDEs (Cursor, Windsurf/Devin, Antigravity) run on a single-threaded JavaScript event loop.
+
 | | **BOSS** | Claude Desktop | Codex | Google Antigravity | Cursor | Windsurf / Devin |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|
 | **Open source** | ✅ Apache-2.0 | ❌ | △ CLI only¹ | ❌ | ❌ | ❌ |
@@ -42,9 +44,11 @@ And unlike most of the field, BOSS bundles a **real embedded browser — Fluck �
 | **Share terminal session** (QR / multi-user / E2E) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **Per-tool governance** (RBAC + kill-switch) | ✅ | △³ | △³ | △³ | △ Teams | △ Enterprise |
 | **Plugin ecosystem** | ✅ Toolbox store | △ MCP extensions | △ IDE ext. | ✅ VS Code ext. | ✅ VS Code ext. | ✅ VS Code ext. |
+| **Hot-reload / evolvable at runtime** | ✅ live plugins + Tool Evolver | ❌ | ❌ | △⁵ | △⁵ | △⁵ |
+| **Runtime** | ✅ JVM, multi-threaded | Electron / JS⁶ | Rust (CLI) | Electron / JS⁶ | Electron / JS⁶ | Electron / JS⁶ |
 | **Platforms** | mac · Win · Linux (x64+ARM64) | mac · Win · Linux (beta) | mac · Win · Linux⁴ | mac · Win · Linux | mac · Win · Linux | mac · Win · Linux |
 
-<sub>✅ yes · △ partial/limited · ❌ no. &nbsp;¹ Only OpenAI's Codex **CLI** is open source (Apache-2.0); the Codex desktop app is proprietary. &nbsp;² Claude Desktop's "Computer Use" controls the whole screen rather than bundling a scriptable in-app browser. &nbsp;³ Enterprise-plan admin controls exist, but fine-grained per-tool RBAC isn't documented. &nbsp;⁴ Codex CLI is cross-platform; the desktop app is macOS/Windows. &nbsp;Compiled from public sources, July 2026 — these products move fast, so corrections are welcome via issue or PR.</sub>
+<sub>✅ yes · △ partial/limited · ❌ no. &nbsp;¹ Only OpenAI's Codex **CLI** is open source (Apache-2.0); the Codex desktop app is proprietary. &nbsp;² Claude Desktop's "Computer Use" controls the whole screen rather than bundling a scriptable in-app browser. &nbsp;³ Enterprise-plan admin controls exist, but fine-grained per-tool RBAC isn't documented. &nbsp;⁴ Codex CLI is cross-platform; the desktop app is macOS/Windows. &nbsp;⁵ VS Code-fork IDEs reload extensions via a full window reload; none offers BOSS-style live plugin hot-reload + agent-driven tool evolution. &nbsp;⁶ Claude Desktop and the VS Code-fork IDEs run on Electron (Chromium + Node.js) — a single-threaded JavaScript event loop with worker/child-process offloading; BOSS runs natively on the JVM with true multithreading. &nbsp;Compiled from public sources, July 2026 — these products move fast, so corrections are welcome via issue or PR.</sub>
 
 ---
 
