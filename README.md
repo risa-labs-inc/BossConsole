@@ -6,15 +6,17 @@
 
 ### 🎛️ The operator's console for AI agents
 
-**Bring your own agent — Claude Code, Codex, Gemini, or OpenCode — and give it a real browser, terminal, editor, secrets, and automation. Then decide exactly what each one is allowed to touch.**
+**The first open-source, multi-platform harness for AI agents — an evolvable toolbox for agents and the humans they work with.**
 
-Run it on your own machine. Hand a live terminal to your phone with a QR code. Extend it with a Toolbox of plugins. Stay in control.
+_Built for enterprises, science, and research._
+
+Bring your own agent — Claude Code, Codex, Gemini, or OpenCode — and give it a real browser, terminal, editor, secrets, and automation. Then decide exactly what each one is allowed to touch. Run it on your own machine, hand a live terminal to your phone with a QR code, and reshape any tool — by hand or by the agent itself — while the app keeps running.
 
 [![BOSS Version](https://img.shields.io/github/v/release/risa-labs-inc/BossConsole-Releases.svg?label=BOSS&color=brightgreen)](https://github.com/risa-labs-inc/BossConsole-Releases/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-blue.svg)](https://github.com/risa-labs-inc/BossConsole-Releases/releases/latest)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-[**⬇ Download**](#downloads) · [🤖 Run an agent](#run-any-ai-coding-agent) · [🔐 Governance](#you-decide-what-your-agents-can-touch) · [🧰 Toolbox](#toolbox--an-app-store-inside-the-app) · [🖥️ BossTerm](#bossterm--a-terminal-you-can-share-to-any-device)
+[**⬇ Download**](#downloads) · [📊 Compare](#how-boss-compares) · [🤖 Run an agent](#run-any-ai-coding-agent) · [🔐 Governance](#you-decide-what-your-agents-can-touch) · [🧰 Toolbox](#toolbox--an-app-store-inside-the-app) · [🖥️ BossTerm](#bossterm--a-terminal-you-can-share-to-any-device)
 
 </div>
 
@@ -24,8 +26,33 @@ Built with Kotlin Multiplatform and Compose Multiplatform, BOSS unifies an embed
 
 ---
 
+## How BOSS compares
+
+Every other AI-agent desktop app and agentic IDE — **Claude Desktop, OpenAI Codex, Google Antigravity, Cursor, and Windsurf/Devin** — is closed source, and most lock you to a single vendor's model. **BOSS is the first open-source, multi-platform harness in the category:** Apache-2.0, cross-platform, and built to run *any* agent.
+
+The deeper difference: **BOSS is both the agent's home _and_ an agent-operable app.** The same MCP layer your agent uses to do work also exposes BOSS itself — its tabs, terminals, browser, editor, git, secrets, and automation — as **100+ `mcp__boss__*` tools**. Read-only tools (list tabs, read a pane's output, tail the console, snapshot performance, inspect git) give an agent live **situational awareness of the workspace**; action tools let it act on what it finds. So the agent doesn't just chat about your code — it perceives the running app and drives it, carrying out multi-step tasks **autonomously**.
+
+And unlike most of the field, BOSS bundles a **real embedded browser — Fluck —** the agent can navigate, script, and automate (`browser_navigate`, `browser_run_js`, plus record-and-replay RPA), with logins filled from the **Secret Manager** and never handed to the model.
+
+| | **BOSS** | Claude Desktop | Codex | Google Antigravity | Cursor | Windsurf / Devin |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|
+| **Open source** | ✅ Apache-2.0 | ❌ | △ CLI only¹ | ❌ | ❌ | ❌ |
+| **Bring any agent / model** | ✅ BYO agent | ❌ Claude only | ❌ OpenAI only | ✅ multi | ✅ multi + BYOK | ✅ multi + BYOK |
+| **MCP tools** | ✅ 100+ built-in | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Embedded browser (agent-driven)** | ✅ Fluck | △ Computer Use² | ❌ | ✅ + DevTools | ❌ | ❌ |
+| **Integrated terminal** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Share terminal session** (QR / multi-user / E2E) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Per-tool governance** (RBAC + kill-switch) | ✅ | △³ | △³ | △³ | △ Teams | △ Enterprise |
+| **Plugin ecosystem** | ✅ Toolbox store | △ MCP extensions | △ IDE ext. | ✅ VS Code ext. | ✅ VS Code ext. | ✅ VS Code ext. |
+| **Platforms** | mac · Win · Linux (x64+ARM64) | mac · Win · Linux (beta) | mac · Win · Linux⁴ | mac · Win · Linux | mac · Win · Linux | mac · Win · Linux |
+
+<sub>✅ yes · △ partial/limited · ❌ no. &nbsp;¹ Only OpenAI's Codex **CLI** is open source (Apache-2.0); the Codex desktop app is proprietary. &nbsp;² Claude Desktop's "Computer Use" controls the whole screen rather than bundling a scriptable in-app browser. &nbsp;³ Enterprise-plan admin controls exist, but fine-grained per-tool RBAC isn't documented. &nbsp;⁴ Codex CLI is cross-platform; the desktop app is macOS/Windows. &nbsp;Compiled from public sources, July 2026 — these products move fast, so corrections are welcome via issue or PR.</sub>
+
+---
+
 ## Contents
 
+- [How BOSS compares](#how-boss-compares)
 - [Downloads](#downloads)
 - [Why BOSS](#why-boss)
 - [Run any AI coding agent](#run-any-ai-coding-agent)
@@ -33,9 +60,10 @@ Built with Kotlin Multiplatform and Compose Multiplatform, BOSS unifies an embed
 - [MCP — give agents real tools](#mcp--give-agents-real-tools)
 - [Toolbox — an app store inside the app](#toolbox--an-app-store-inside-the-app)
 - [BossTerm — a terminal you can share to any device](#bossterm--a-terminal-you-can-share-to-any-device)
+- [Case study: the DNA Origami Inventor](#case-study-the-dna-origami-inventor)
 - [Design System](#design-system)
 - [Development](#development)
-- [CLI](#cli) · [CI/CD](#cicd) · [Documentation](#documentation) · [Related Repositories](#related-repositories)
+- [CLI](#cli) · [CI/CD](#cicd) · [Documentation](#documentation) · [Open source & ecosystem](#open-source--ecosystem)
 
 ---
 
@@ -73,6 +101,7 @@ iwr -useb https://raw.githubusercontent.com/risa-labs-inc/BossConsole-Releases/m
 - 🔐 **You stay in control** — server-enforced role-based access control, a per-user kill-switch for every agent tool, and user-scoped secrets. You decide exactly what an agent can call.
 - 🖥️ **A terminal built to share** — hand a live terminal session to your phone via QR, or to a teammate over an end-to-end-encrypted link, with view-only or full control.
 - ⚡ **Fast and native** — Compose Multiplatform desktop app with the built-in **Fluck** browser, on macOS, Windows, and Linux (x64 + ARM64).
+- ⚙️ **Built to scale** — multi-threaded by default, on an out-of-process microkernel architecture engineered to run from a laptop to a supercomputer.
 
 ---
 
@@ -191,6 +220,14 @@ Your machine *is* the server: BossTerm runs a small embedded web server and stre
 - **Inline images** in the terminal (iTerm2 OSC 1337), true color, full Unicode/emoji, Nerd Fonts, OSC 52 clipboard, and shell integration.
 - **Split panes & multiple windows**, per-pane titles, regex search, command-complete notifications.
 - **Optional session daemon** (tmux-style) with a tray icon, so sessions, shares, and the MCP server survive closing the GUI.
+
+---
+
+## Case study: the DNA Origami Inventor
+
+BOSS isn't only for shipping software. **DNA Origami Inventor** is a BOSS plugin for computational nanotechnology: a researcher describes a target nanostructure in a **chat-first UI**, and an agent designs the **DNA origami** and runs **oxDNA** molecular-dynamics simulations to validate it — orchestrating BOSS's terminal, editor, browser, and tools end to end.
+
+It's a concrete example of what BOSS is built for beyond coding: **enterprises, science, and research** — domains where an agent needs real tools, real compute, and governed access, not just a chat window.
 
 ---
 
@@ -326,11 +363,28 @@ boss --help                    # Show help
 
 ---
 
-## Related Repositories
+## Open source & ecosystem
 
-- [**boss-plugins**](https://github.com/risa-labs-inc/boss-plugins) — All BOSS plugins (git submodules) and the plugin development guide
-- [**BossTerm**](https://github.com/kshivang/BossTerm) — The terminal emulator library (`com.risaboss:bossterm-compose`)
-- [**BossConsole-Releases**](https://github.com/risa-labs-inc/BossConsole-Releases) — Pre-built installers for all platforms
+BOSS is developed in the open, end to end — the host app, the plugin platform, the terminal, and every tool is its own public repository.
+
+**Core & libraries**
+
+- [**BossConsole**](https://github.com/risa-labs-inc/BossConsole) — the host app (this repo)
+- [**boss-plugins**](https://github.com/risa-labs-inc/boss-plugins) — plugin umbrella + the [Plugin Development & MCP guide](https://github.com/risa-labs-inc/boss-plugins/blob/main/PLUGIN_DEVELOPMENT.md)
+- [**boss-plugin-api**](https://github.com/risa-labs-inc/boss-plugin-api) — the plugin API contract
+- [**boss-microkernel-runtime**](https://github.com/risa-labs-inc/boss-microkernel-runtime) — out-of-process plugin runtime
+- [**BossTerm**](https://github.com/kshivang/BossTerm) — the terminal library (`com.risaboss:bossterm-compose`)
+
+**Plugins** — each is its own repo:
+
+- **Tabs** — [terminal-tab](https://github.com/risa-labs-inc/boss-plugin-terminal-tab) · [editor-tab](https://github.com/risa-labs-inc/boss-plugin-editor-tab) · [fluck-browser](https://github.com/risa-labs-inc/boss-plugin-fluck-browser)
+- **Dev tools** — [codebase](https://github.com/risa-labs-inc/boss-plugin-codebase) · [console](https://github.com/risa-labs-inc/boss-plugin-console) · [git-status](https://github.com/risa-labs-inc/boss-plugin-git-status) · [git-log](https://github.com/risa-labs-inc/boss-plugin-git-log) · [run-configurations](https://github.com/risa-labs-inc/boss-plugin-run-configurations) · [performance](https://github.com/risa-labs-inc/boss-plugin-performance)
+- **AI & automation** — [tool-creator](https://github.com/risa-labs-inc/boss-plugin-tool-creator) · [tool-evolver](https://github.com/risa-labs-inc/boss-plugin-tool-evolver) · [llmrpa](https://github.com/risa-labs-inc/boss-plugin-llmrpa) · [rpaengine](https://github.com/risa-labs-inc/boss-plugin-rpaengine) · [rparecorder](https://github.com/risa-labs-inc/boss-plugin-rparecorder)
+- **Security** — [secret-manager](https://github.com/risa-labs-inc/boss-plugin-secret-manager) · [user-secret-list](https://github.com/risa-labs-inc/boss-plugin-user-secret-list)
+- **Productivity** — [bookmarks](https://github.com/risa-labs-inc/boss-plugin-bookmarks) · [downloads](https://github.com/risa-labs-inc/boss-plugin-downloads) · [topofmind](https://github.com/risa-labs-inc/boss-plugin-topofmind)
+- **Admin** — [admin-role-management](https://github.com/risa-labs-inc/boss-plugin-admin-role-management) · [role-creation](https://github.com/risa-labs-inc/boss-plugin-role-creation)
+
+**Releases** — [**BossConsole-Releases**](https://github.com/risa-labs-inc/BossConsole-Releases) hosts the pre-built installers for every platform.
 
 ---
 
