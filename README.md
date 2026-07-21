@@ -28,6 +28,7 @@ Built with Kotlin Multiplatform and Compose Multiplatform, BOSS unifies an embed
 
 - [Downloads](#downloads)
 - [Why BOSS](#why-boss)
+- [How BOSS compares](#how-boss-compares)
 - [Run any AI coding agent](#run-any-ai-coding-agent)
 - [You decide what your agents can touch](#you-decide-what-your-agents-can-touch)
 - [MCP — give agents real tools](#mcp--give-agents-real-tools)
@@ -73,6 +74,30 @@ iwr -useb https://raw.githubusercontent.com/risa-labs-inc/BossConsole-Releases/m
 - 🔐 **You stay in control** — server-enforced role-based access control, a per-user kill-switch for every agent tool, and user-scoped secrets. You decide exactly what an agent can call.
 - 🖥️ **A terminal built to share** — hand a live terminal session to your phone via QR, or to a teammate over an end-to-end-encrypted link, with view-only or full control.
 - ⚡ **Fast and native** — Compose Multiplatform desktop app with a BOSS-branded Chromium engine, on macOS, Windows, and Linux (x64 + ARM64).
+
+---
+
+## How BOSS compares
+
+BOSS is an **open-source, model-agnostic alternative** to the closed AI-agent desktop apps and agentic IDEs — **Claude Desktop, OpenAI Codex, Google Antigravity, Cursor, and Windsurf/Devin**. Each of those ties you to one vendor's app, and often one vendor's model. BOSS is **Apache-2.0** and lets you bring *any* agent.
+
+The deeper difference: **BOSS is both the agent's home _and_ an agent-operable app.** The same MCP layer your agent uses to do work also exposes BOSS itself — its tabs, terminals, browser, editor, git, secrets, and automation — as **100+ `mcp__boss__*` tools**. Read-only tools (list tabs, read a pane's output, tail the console, snapshot performance, inspect git) give an agent live **situational awareness of the workspace**; action tools let it act on what it finds. So the agent doesn't just chat about your code — it perceives the running app and drives it, carrying out multi-step tasks **autonomously**.
+
+And unlike most of the field, BOSS bundles a **real embedded browser** (BOSS-branded Chromium) the agent can navigate, script, and automate — `browser_navigate`, `browser_run_js`, plus record-and-replay RPA — with logins filled from the **Secret Manager** and never handed to the model.
+
+| | **BOSS** | Claude Desktop | Codex | Google Antigravity | Cursor | Windsurf / Devin |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|
+| **Open source** | ✅ Apache-2.0 | ❌ | △ CLI only¹ | ❌ | ❌ | ❌ |
+| **Bring any agent / model** | ✅ BYO agent | ❌ Claude only | ❌ OpenAI only | ✅ multi | ✅ multi + BYOK | ✅ multi + BYOK |
+| **MCP tools** | ✅ 100+ built-in | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Embedded browser (agent-driven)** | ✅ Chromium | △ Computer Use² | ❌ | ✅ + DevTools | ❌ | ❌ |
+| **Integrated terminal** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Share terminal session** (QR / multi-user / E2E) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Per-tool governance** (RBAC + kill-switch) | ✅ | △³ | △³ | △³ | △ Teams | △ Enterprise |
+| **Plugin ecosystem** | ✅ Toolbox store | △ MCP extensions | △ IDE ext. | ✅ VS Code ext. | ✅ VS Code ext. | ✅ VS Code ext. |
+| **Platforms** | mac · Win · Linux (x64+ARM64) | mac · Win · Linux (beta) | mac · Win · Linux⁴ | mac · Win · Linux | mac · Win · Linux | mac · Win · Linux |
+
+<sub>✅ yes · △ partial/limited · ❌ no. &nbsp;¹ Only OpenAI's Codex **CLI** is open source (Apache-2.0); the Codex desktop app is proprietary. &nbsp;² Claude Desktop's "Computer Use" controls the whole screen rather than bundling a scriptable in-app browser. &nbsp;³ Enterprise-plan admin controls exist, but fine-grained per-tool RBAC isn't documented. &nbsp;⁴ Codex CLI is cross-platform; the desktop app is macOS/Windows. &nbsp;Compiled from public sources, July 2026 — these products move fast, so corrections are welcome via issue or PR.</sub>
 
 ---
 
