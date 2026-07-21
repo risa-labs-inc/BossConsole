@@ -8,6 +8,8 @@
 
 _🧪 Built for enterprises, science, and research._
 
+**⚡ Natively multi-threaded — built on the JVM, not Electron — with live hot-reload and laptop-to-supercomputer scale.**
+
 Bring your own agent — Claude Code, Codex, Gemini, or OpenCode — and give it a real browser, terminal, editor, secrets, and automation. Then decide exactly what each one is allowed to touch. Run it on your own machine, hand a live terminal to your phone with a QR code, and reshape any tool — by hand or by the agent itself — while the app keeps running.
 
 [![BOSS Version](https://img.shields.io/github/v/release/risa-labs-inc/BossConsole-Releases.svg?label=BOSS&color=brightgreen)](https://github.com/risa-labs-inc/BossConsole-Releases/releases/latest)
@@ -103,7 +105,7 @@ iwr -useb https://raw.githubusercontent.com/risa-labs-inc/BossConsole-Releases/m
 - 🔐 **You stay in control** — server-enforced role-based access control, a per-user kill-switch for every agent tool, and user-scoped secrets. You decide exactly what an agent can call.
 - 🖥️ **A terminal built to share** — hand a live terminal session to your phone via QR, or to a teammate over an end-to-end-encrypted link, with view-only or full control.
 - ⚡ **Fast and native** — Compose Multiplatform desktop app with the built-in **Fluck** browser, on macOS, Windows, and Linux (x64 + ARM64).
-- ⚙️ **Built to scale** — multi-threaded by default, on an out-of-process microkernel architecture engineered to run from a laptop to a supercomputer.
+- ⚙️ **Multi-threaded, built to scale** — **truly multi-threaded** on the JVM (not a single-threaded Electron/JS event loop), with an out-of-process microkernel architecture engineered to run from a laptop to a supercomputer.
 
 ---
 
