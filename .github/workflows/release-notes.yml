@@ -138,8 +138,8 @@ jobs:
         run: |
           VERSION="${{ steps.release-info.outputs.version }}"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "Shivang"
+          git config user.email "shivang.iitk@gmail.com"
 
           if git diff --quiet docs/release-notes/; then
             echo "No changes to commit"

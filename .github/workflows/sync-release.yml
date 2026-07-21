@@ -394,8 +394,8 @@ jobs:
         cd public-repo
 
         # Configure git
-        git config user.name "BOSS Release Bot"
-        git config user.email "noreply@risa-labs.com"
+        git config user.name "Shivang"
+        git config user.email "shivang.iitk@gmail.com"
 
         # Create backup of README
         cp README.md README.md.backup
