@@ -52,6 +52,9 @@ jobs:
   # ── 1. Bump version in BossConsoleLite ───────────────────────────────────────
   prepare-version:
     runs-on: ubuntu-latest
+    # Owner-approval gate (mirrors release.yml / BossTerm): all jobs flow from
+    # this one, so the single environment review gates the whole run.
+    environment: release
     outputs:
       version: ${{ steps.get-version.outputs.version }}
       is-prerelease: ${{ steps.get-version.outputs.is-prerelease }}

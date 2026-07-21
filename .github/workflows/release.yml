@@ -81,6 +81,10 @@ env:
 jobs:
   prepare-version:
     runs-on: ubuntu-latest
+    # Owner-approval gate: the 'release' environment requires a review before
+    # this job starts, and every other job needs it — one approval gates the
+    # whole run. Mirrors the BossTerm release workflow.
+    environment: release
     outputs:
       version: ${{ steps.get-version.outputs.version }}
       is-prerelease: ${{ steps.get-version.outputs.is-prerelease }}
