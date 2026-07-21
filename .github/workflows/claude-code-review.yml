@@ -12,12 +12,14 @@ on:
 
 jobs:
   claude-review:
-    # Public repo: only run for same-repo PRs from org members/collaborators.
-    # Fork PRs don't receive secrets anyway — this gate skips the job cleanly
-    # instead of letting it fail, and keeps the review bot org-only.
+    # Public repo: only run for same-repo, non-bot PRs. A same-repo head
+    # branch already proves the author has write access, so no association
+    # check is needed (private org membership would report CONTRIBUTOR in
+    # the payload and wrongly skip). Fork PRs don't receive secrets anyway —
+    # this gate skips them cleanly instead of letting the job fail.
     if: |
       github.event.pull_request.head.repo.full_name == github.repository &&
-      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)
+      !endsWith(github.event.pull_request.user.login, '[bot]')
 
     runs-on: ubuntu-latest
     permissions:

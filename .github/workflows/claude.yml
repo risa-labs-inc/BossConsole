@@ -11,15 +11,40 @@ on:
     types: [submitted]
 
 jobs:
-  claude:
-    # Public repo: '@claude' alone is not enough — the author must be an org
-    # member/collaborator, or anyone could invoke the bot (and the org's API
-    # key) from a drive-by comment or issue.
+  # Public repo: '@claude' alone is not enough — anyone could invoke the bot
+  # (and the org's API key) from a drive-by comment or issue. We can't use
+  # author_association for this: private org membership reports CONTRIBUTOR,
+  # not MEMBER, in webhook payloads. Instead, ask the API whether the actor
+  # has write access (GITHUB_TOKEN's default metadata scope is sufficient).
+  check-write-access:
     if: |
-      ((github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude') && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)) ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude') && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.review.author_association)) ||
-      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.issue.author_association)))
+      ((github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude'))))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      authorized: ${{ steps.check.outputs.authorized }}
+    steps:
+      - name: Check actor repo permission
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PERM=$(gh api "repos/${{ github.repository }}/collaborators/${{ github.actor }}/permission" --jq '.permission' 2>/dev/null || echo "none")
+          echo "actor='${{ github.actor }}' permission='$PERM'"
+          if [ "$PERM" = "admin" ] || [ "$PERM" = "maintain" ] || [ "$PERM" = "write" ]; then
+            echo "authorized=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "authorized=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::@claude ignored: ${{ github.actor }} does not have write access"
+          fi
+
+  claude:
+    needs: check-write-access
+    if: needs.check-write-access.outputs.authorized == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
