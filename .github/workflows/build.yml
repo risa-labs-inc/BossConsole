@@ -235,7 +235,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: 🟩 Setup Supabase CLI
-        uses: supabase/setup-cli@v2
+        uses: supabase/setup-cli@v3
         with:
           # Pinned (not "latest"): resolving "latest" hits the unauthenticated GitHub
           # API from shared runners and intermittently fails with "rate limit exceeded".
