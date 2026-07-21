@@ -28,6 +28,9 @@ env:
 jobs:
   validate-and-prepare:
     runs-on: ubuntu-latest
+    # Owner-approval gate (mirrors release.yml / BossTerm): both promote jobs
+    # need this one, so the single environment review gates the whole run.
+    environment: release
     outputs:
       prerelease-version: ${{ steps.validate.outputs.prerelease-version }}
       target-version: ${{ steps.validate.outputs.target-version }}
