@@ -176,8 +176,8 @@ jobs:
           set -euo pipefail
 
           # Configure git
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "Shivang"
+          git config user.email "shivang.iitk@gmail.com"
 
           # Check if there are changes to commit
           if git diff --quiet version.properties; then

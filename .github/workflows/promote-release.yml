@@ -259,8 +259,8 @@ jobs:
           TARGET_CHANNEL: ${{ needs.validate-and-prepare.outputs.target-channel }}
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "Shivang"
+          git config user.email "shivang.iitk@gmail.com"
           git add version.properties
           if [[ "$TARGET_CHANNEL" == "stable" ]]; then
             git commit -m "🎉 Promote v$PRERELEASE_VERSION to stable v$TARGET_VERSION"
