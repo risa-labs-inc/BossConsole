@@ -4,7 +4,7 @@
 
 # BOSS — Business OS + Simulator
 
-### 🎛️ The operator's console for AI agents
+### 🎛️ The operator's console for AI agents — and the scientists who direct them
 
 **The first open-source, multi-platform harness for AI agents — an evolvable toolbox for agents and the humans they work with.**
 
@@ -119,6 +119,8 @@ BOSS is agent-agnostic. Open a terminal, launch your preferred CLI, and — once
 **How it works:** the `terminal-tab` plugin runs a small loopback MCP server named **`boss`**. You attach a CLI once (one click from **Toolbox → MCP**, or the BossTerm AI menu); BOSS then **re-attaches it automatically** on every restart and port change, and injects `BOSS_MCP_PORT` into each terminal so an agent launched inside BOSS always dials the right instance. If a CLI isn't scriptable, BOSS copies a ready-to-paste config snippet to your clipboard.
 
 **Scaffold a tool for any of them** — the built-in **Tool Creator** generates a new plugin (build files, manifest, skeleton UI, CI) and writes its skill in *all four* CLI formats (`.claude/`, `.codex/`, `.gemini/`, `.opencode/`), so the repo works with whichever agent you open it with — then launches that agent in a fresh terminal to start building.
+
+**A tool-creation framework for a reinforcement layer.** Together, Tool Creator and its companion **Tool Evolver** let an agent build *and continuously improve* its own capabilities: scaffold a tool, probe how it behaves (memory, leaks, logs, output), then evolve it — hot-reloaded into the running app and opened as a PR. Tools are created, measured, and reinforced in a loop, so the toolbox gets better with use.
 
 ---
 
