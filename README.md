@@ -2,7 +2,7 @@
 
 [![BOSS Version](https://img.shields.io/github/v/release/risa-labs-inc/BossConsole-Releases.svg?label=BOSS&color=brightgreen)](https://github.com/risa-labs-inc/BossConsole-Releases/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-blue.svg)](https://github.com/risa-labs-inc/BossConsole-Releases/releases/latest)
-[![License](https://img.shields.io/badge/license-Proprietary-red.svg)](https://github.com/risa-labs-inc/BossConsole-Releases/blob/main/LICENSE)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 BOSS (Business OS + Simulator) is a sophisticated, AI-powered desktop workspace built with Kotlin Multiplatform and Compose Multiplatform. It combines **AI automation**, **configurable layouts**, and **intelligent workflow management** into a unified platform designed for complex business operations.
 
@@ -43,6 +43,7 @@ For detailed installation instructions, system requirements, and troubleshooting
 
 - **Modular Workspace Architecture**: Configurable panels, multi-tab browser, code editor, terminal integration
 - **AI & Automation**: LLM integration with robotic process automation, smart workflows, browser automation
+- **Extensible via Plugins, Toolbox & MCP**: A dynamic plugin system with a built-in **Toolbox** plugin store; plugins expose `mcp__boss__*` tools to in-terminal AI agents (Claude Code, Codex, …) over the **Model Context Protocol** — see [Plugins, Toolbox & MCP](#plugins-toolbox--mcp)
 - **Healthcare Focus**: Prior authorization, patient triage, EHR management, compliance workflows
 - **Enterprise Ready**: Auto-updates, workspace configuration management, Git integration, cross-platform support
 
@@ -54,6 +55,26 @@ BOSS and BossTerm share one visual language — **"Operator's Console"**: an amb
 
 - 📖 **[Design System spec](docs/DESIGN_SYSTEM.md)** — tokens, themes, and where they ship in code
 - 🎨 **[Visual styleguide](docs/design-system.html)** — a self-contained HTML reference for colors / type / components (open it in a browser)
+
+---
+
+## Plugins, Toolbox & MCP
+
+BOSS is extensible through **dynamic plugins** — panels, tab types, and background tools loaded at runtime. The host-side loader and SDK live under [`plugin-platform/`](plugin-platform/README.md); the plugins themselves live in the separate [**boss-plugins**](https://github.com/risa-labs-inc/boss-plugins) repository (the terminal, editor, and browser tabs are themselves plugins).
+
+### Toolbox
+
+**Toolbox** is BOSS's built-in plugin store — a left-sidebar panel (internally the `plugin-manager` system plugin). From it you can:
+
+- **Browse, install & update** plugins from the BOSS Plugin Store (Installed / Available / Updates tabs)
+- **Manage MCP tools** — toggle individual `mcp__boss__*` tools on or off (MCP tab)
+- **Create** new plugins — admins/publishers can scaffold a plugin with an AI coding agent via the built-in **Tool Creator**: name the tool, pick permissions and a CLI (Claude Code, Codex, Gemini, or OpenCode), and it generates the repo + CI + a matching skill and opens a terminal running the agent
+
+### MCP (Model Context Protocol)
+
+BOSS plugins expose tools to AI agents running inside BOSS terminals over MCP. The `terminal-tab` plugin hosts a loopback **`boss`** MCP server (SSE transport, bound to `127.0.0.1:7677` with a fallback port walk if busy). Tools surface to agents as **`mcp__boss__<tool>`** and appear/disappear automatically with their plugin — roughly **100+ tools** across ~20 plugins today, for example `run_command`, `run_in_sidebar`, `codebase_read`, `git_status`, `browser_navigate`, `secret_get`, `flow_run`, and `rpa_run`.
+
+Every terminal session gets `BOSS_MCP_SERVER=boss` and `BOSS_MCP_PORT=<bound port>` injected, so an in-shell agent auto-connects to the right instance's toolset. Plugin authors add tools by implementing `McpToolProvider` (boss-plugin-api 1.0.51+). Full reference: [**PLUGIN_DEVELOPMENT.md**](https://github.com/risa-labs-inc/boss-plugins/blob/main/PLUGIN_DEVELOPMENT.md) in boss-plugins.
 
 ---
 
@@ -81,19 +102,18 @@ This repository contains the source code for BOSS. For building from source and 
 ### Project Structure
 
 ```
-/composeApp     # Main Compose Multiplatform UI application
-  /commonMain   # Cross-platform shared code
-  /desktopMain  # Desktop-specific code (JVM)
-/plugins        # Modular plugin system
-  /plugin-api   # Core plugin interfaces
-  /plugin-panel-*  # Panel plugins (git, console, performance, etc.)
-  /plugin-tab-*    # Tab type plugins (browser, editor, terminal)
-/bosseditor     # Standalone code editor with LSP and PSI support
-/server         # Minimal Ktor server component
-/shared         # Shared business logic
-/supabase       # Database migrations and Edge Functions
-/docs           # Documentation
+/composeApp        # Main Compose Multiplatform UI application
+  /commonMain      # Cross-platform shared code
+  /desktopMain     # Desktop-specific code (JVM)
+/plugin-platform   # Host-side plugin platform: loader, repository, SDK modules
+/modules           # Microkernel / out-of-process architecture (boss-ipc, boss-ui-sdk, …)
+/server            # Minimal Ktor server component
+/shared            # Shared business logic
+/supabase          # Database migrations and Edge Functions
+/docs              # Documentation
 ```
+
+> The dynamic plugins themselves (terminal, editor, browser, Toolbox, …) live in the separate [boss-plugins](https://github.com/risa-labs-inc/boss-plugins) repo. BossEditor and BossTerm are standalone libraries bundled inside the `editor-tab` and `terminal-tab` plugins respectively.
 
 ### Configuration
 
@@ -117,10 +137,11 @@ GITHUB_TOKEN=ghp_your_token_here
 ### Key Technologies
 
 - **Kotlin Multiplatform** + **Compose Multiplatform**
-- **JxBrowser 8.x** (BOSS-branded Chromium)
+- **JxBrowser 9.x** (BOSS-branded Chromium)
 - **Decompose** for navigation
 - **Supabase** + Edge Functions for backend
-- **BossTerm** for terminal integration
+- **BossTerm** for terminal integration (also hosts the `boss` MCP server)
+- **MCP (Model Context Protocol)** for exposing plugin tools to in-terminal AI agents
 - **kotlin-compiler-embeddable** for PSI code analysis
 
 ---
@@ -190,7 +211,8 @@ boss --help                    # Show help
 - [Keyboard Shortcuts](docs/KEYBOARD_SHORTCUTS.md) - Detailed shortcuts reference
 - [Threading Best Practices](docs/THREADING.md) - Threading patterns and pitfalls
 - [RBAC Guide](docs/RBAC_GUIDE.md) - Role-based access control
-- [Plugin System](plugin-platform/README.md) - Modular plugin architecture
+- [Plugin System](plugin-platform/README.md) - Host-side plugin platform / SDK
+- [Plugin Development & MCP](https://github.com/risa-labs-inc/boss-plugins/blob/main/PLUGIN_DEVELOPMENT.md) - Writing plugins, the manifest, RBAC, and exposing `mcp__boss__*` tools
 
 ---
 
@@ -210,4 +232,4 @@ boss --help                    # Show help
 
 ---
 
-**© 2025 Risa Labs Inc. All rights reserved.**
+© 2025 Risa Labs Inc. Licensed under the [Apache License 2.0](LICENSE).
