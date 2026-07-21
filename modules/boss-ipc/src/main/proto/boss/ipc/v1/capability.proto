@@ -1,0 +1,35 @@
+syntax = "proto3";
+package boss.ipc.v1;
+import "boss/ipc/v1/common.proto";
+option java_package = "ai.rever.boss.ipc.proto";
+option java_multiple_files = true;
+
+service CapabilityService {
+  rpc InvokeCapability(InvokeCapabilityRequest) returns (InvokeCapabilityResponse);
+  rpc ListCapabilities(Empty) returns (ListCapabilitiesResponse);
+}
+
+message InvokeCapabilityRequest {
+  string plugin_id = 1;
+  string action = 2;
+  map<string, string> input = 3;
+  int64 timeout_ms = 4;
+}
+
+message InvokeCapabilityResponse {
+  bool success = 1;
+  map<string, string> output = 2;
+  string error_message = 3;
+}
+
+message CapabilityDescriptor {
+  string plugin_id = 1;
+  string action = 2;
+  string description = 3;
+  string input_schema_json = 4;
+  string output_schema_json = 5;
+}
+
+message ListCapabilitiesResponse {
+  repeated CapabilityDescriptor capabilities = 1;
+}

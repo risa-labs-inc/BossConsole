@@ -1,0 +1,291 @@
+name: 🔨 Build & Test
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  JAVA_VERSION: '17'
+  JAVA_DISTRIBUTION: 'temurin'
+  GRADLE_OPTS: '-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.caching=true'
+  # Production credentials for build
+  JXBROWSER_LICENSE_KEY: ${{ secrets.JXBROWSER_LICENSE_KEY }}
+  SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_FUNCTION_URL: ${{ secrets.SUPABASE_FUNCTION_URL }}
+
+jobs:
+  script-tests:
+    name: 🐚 Shell Script Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: 🧪 Release publish — TUS slice tests
+        # Guards the byte-accurate chunk slicing in the release publish path
+        # (regressed twice: #877 misaligned resume, and the SIGPIPE status bug).
+        run: bash scripts/test/test-tus-slice.sh
+
+  version-check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+      build-number: ${{ steps.get-version.outputs.build-number }}
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: ☕ Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+
+      - name: 🔍 Version Information
+        id: get-version
+        run: |
+          # Get version info using our centralized system
+          VERSION=$(grep "^app.version=" version.properties | cut -d'=' -f2)
+          BUILD_NUMBER=$(grep "^app.build.number=" version.properties | cut -d'=' -f2)
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "build-number=$BUILD_NUMBER" >> $GITHUB_OUTPUT
+          
+          echo "📦 Version: $VERSION"
+          echo "🔢 Build Number: $BUILD_NUMBER"
+          
+          # Show detailed version info
+          ./gradlew showVersion
+
+  build-test:
+    needs: version-check
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: ☕ Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+
+      - name: 🎯 Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: false
+
+      - name: 🧹 Stop Kotlin Daemon (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          echo "Stopping any existing Kotlin daemons to avoid file handle issues"
+          ./gradlew --stop || true
+        shell: bash
+
+      - name: 🧪 Run Tests
+        run: |
+          echo "🧪 Running tests on ${{ matrix.os }}"
+          ./gradlew test --continue
+        env:
+          # boss-plugin-api-core resolution from GitHub Packages (settings/composeApp repos)
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Windows-specific: disable daemon to avoid file handle issues (KT-55959)
+          GRADLE_OPTS: ${{ matrix.os == 'windows-latest' && '-Dorg.gradle.daemon=false -Dorg.gradle.parallel=false -Dorg.gradle.caching=true -Dkotlin.daemon.jvm.options=-Xmx2g' || '-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.caching=true' }}
+
+      - name: 🔨 Build Application
+        run: |
+          echo "🔨 Building application for ${{ matrix.os }}"
+          ./gradlew build --stacktrace
+        env:
+          # boss-plugin-api-core resolution from GitHub Packages (settings/composeApp repos)
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Windows-specific: disable daemon to avoid file handle issues (KT-55959)
+          GRADLE_OPTS: ${{ matrix.os == 'windows-latest' && '-Dorg.gradle.daemon=false -Dorg.gradle.parallel=false -Dorg.gradle.caching=true -Dkotlin.daemon.jvm.options=-Xmx2g' || '-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.caching=true' }}
+
+      - name: 🏗️ Create Executable JAR
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          echo "🏗️ Creating executable JAR"
+          ./gradlew createExecutableJar
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 📊 Upload Test Results
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: test-results-${{ matrix.os }}
+          path: |
+            **/build/test-results/test/
+            **/build/reports/tests/test/
+          retention-days: 7
+
+      - name: 📦 Upload Build Artifacts
+        if: success() && matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v7
+        with:
+          name: boss-jar-${{ needs.version-check.outputs.version }}-build${{ github.run_number }}
+          path: composeApp/build/libs/*-all.jar
+          retention-days: 14
+
+  code-quality:
+    runs-on: ubuntu-latest
+    needs: version-check
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: ☕ Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+
+      - name: 🎯 Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: false
+
+      - name: 🔍 Lint Check
+        run: |
+          echo "🔍 Running lint checks"
+          # Add lint tasks if available
+          # ./gradlew ktlintCheck
+          echo "Lint check completed"
+
+      - name: 🔒 Dependency Check
+        run: |
+          echo "🔒 Checking dependencies"
+          ./gradlew :composeApp:dependencies
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 📊 Generate Build Report
+        run: |
+          echo "📊 Generating build report"
+          ./gradlew buildHealth || true
+
+  compatibility-test:
+    runs-on: ubuntu-latest
+    needs: version-check
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: ☕ Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+
+      - name: 🎯 Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: 🧪 Test Version System
+        run: |
+          echo "🧪 Testing centralized version system"
+          
+          # Test version increment tasks
+          echo "📋 Current version info:"
+          ./gradlew showVersion
+          
+          echo "🔄 Testing version increment (dry run):"
+          echo "- Patch increment test"
+          ORIGINAL_VERSION=$(grep "^app.version=" version.properties | cut -d'=' -f2)
+          echo "Original version: $ORIGINAL_VERSION"
+          
+          # Test that version system works
+          ./gradlew generateVersionConstants
+          
+          # Verify generated constants exist
+          if [ -f "composeApp/build/generated/source/version/ai/rever/boss/utils/VersionConstants.kt" ]; then
+            echo "✅ Version constants generated successfully"
+            cat composeApp/build/generated/source/version/ai/rever/boss/utils/VersionConstants.kt
+          else
+            echo "❌ Version constants not generated"
+            exit 1
+          fi
+
+      - name: 🔄 Test Auto-Update Integration
+        run: |
+          echo "🔄 Testing auto-update system integration"
+          
+          # Compile to ensure Version.CURRENT works with generated constants
+          ./gradlew :composeApp:compileKotlinDesktop
+          
+          echo "✅ Auto-update integration test passed"
+
+  database-tests:
+    name: 🧪 Database (pgTAP)
+    runs-on: ubuntu-latest
+    needs: version-check
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: 🟩 Setup Supabase CLI
+        uses: supabase/setup-cli@v2
+        with:
+          # Pinned (not "latest"): resolving "latest" hits the unauthenticated GitHub
+          # API from shared runners and intermittently fails with "rate limit exceeded".
+          # Pinning skips that lookup. Bump as needed.
+          version: 2.109.0
+
+      - name: 🚀 Start local Postgres (applies migrations)
+        run: supabase db start
+
+      - name: 🧪 Run pgTAP RBAC tests
+        run: supabase test db
+
+      - name: 🧹 Stop Supabase
+        if: always()
+        run: supabase stop --no-backup || true
+
+  build-summary:
+    if: always()
+    needs: [version-check, build-test, code-quality, compatibility-test, database-tests]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📊 Build Summary
+        run: |
+          echo "## 🔨 Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version**: ${{ needs.version-check.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Build Number**: ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Job status
+          echo "### 📋 Job Results" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version Check**: ${{ needs.version-check.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build & Test**: ${{ needs.build-test.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Code Quality**: ${{ needs.code-quality.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Compatibility Test**: ${{ needs.compatibility-test.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Database (pgTAP)**: ${{ needs.database-tests.result }}" >> $GITHUB_STEP_SUMMARY
+
+          # Overall status
+          if [[ "${{ needs.build-test.result }}" == "success" && "${{ needs.code-quality.result }}" == "success" && "${{ needs.compatibility-test.result }}" == "success" && "${{ needs.database-tests.result }}" == "success" ]]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "🎉 **Overall Status**: ✅ SUCCESS" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "❌ **Overall Status**: FAILED" >> $GITHUB_STEP_SUMMARY
+          fi
+
+# Temporarily disabled for debugging
+  # notify-build:
+  #   needs: [version-check, build-test, code-quality, compatibility-test]
+  #   if: always() && (success() || failure()) && github.event_name != 'pull_request'
+  #   uses: ./.github/workflows/notifications.yml

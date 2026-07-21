@@ -1,0 +1,35 @@
+{
+  "manifestVersion": 1,
+  "pluginId": "panel-console",
+  "displayName": "Console",
+  "version": "1.0.0",
+  "apiVersion": "1.0.0",
+  "mainClass": "ai.rever.boss.plugin.console.ConsolePanelPlugin",
+  "type": "panel",
+  "description": "Console log viewer panel",
+
+  "isolationMode": "out-of-process",
+  "fallback": "in-process",
+  "stateHolderClass": "ai.rever.boss.plugin.runtime.stateholders.ConsoleStateHolder",
+
+  "sandbox": {
+    "maxThreads": 4,
+    "maxRestartAttempts": 3,
+    "heartbeatIntervalMs": 5000
+  },
+
+  "healthContract": {
+    "heartbeatIntervalMs": 5000,
+    "startupTimeoutMs": 30000
+  },
+
+  "panel": {
+    "defaultSlot": "left.top.bottom",
+    "iconName": "terminal"
+  },
+
+  "systemPlugin": false,
+  "isDynamic": true,
+  "canUnload": true,
+  "loadPriority": 100
+}

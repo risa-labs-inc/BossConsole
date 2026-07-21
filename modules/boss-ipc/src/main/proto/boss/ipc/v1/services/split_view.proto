@@ -1,0 +1,78 @@
+syntax = "proto3";
+
+package boss.ipc.v1.services;
+
+import "boss/ipc/v1/common.proto";
+
+option java_package = "ai.rever.boss.ipc.proto.services";
+option java_multiple_files = true;
+
+// SplitViewService provides split-panel layout operations to out-of-process plugins.
+// The kernel manages the split view layout and allows plugins to open URLs, files,
+// and manage panel state across the multi-panel interface.
+service SplitViewService {
+  // Open a URL in the currently active panel
+  rpc OpenUrlInActivePanel(SplitViewOpenUrlRequest) returns (boss.ipc.v1.Empty);
+
+  // Open a file in the currently active panel
+  rpc OpenFileInActivePanel(SplitViewOpenFileRequest) returns (boss.ipc.v1.Empty);
+
+  // Open a file in the browser panel
+  rpc OpenFileInBrowser(SplitViewOpenFileRequest) returns (boss.ipc.v1.Empty);
+
+  // Open a file in the editor panel
+  rpc OpenFileInEditor(SplitViewOpenFileRequest) returns (boss.ipc.v1.Empty);
+
+  // Open a file at a specific line and column position
+  rpc OpenFileAtPosition(SplitViewOpenFileAtPositionRequest) returns (boss.ipc.v1.Empty);
+
+  // Set which panel is currently active
+  rpc SetActivePanel(SplitViewPanelIdRequest) returns (boss.ipc.v1.Empty);
+
+  // Preserve the current panel state for later restoration
+  rpc PreserveCurrentState(SplitViewPreserveStateRequest) returns (boss.ipc.v1.Empty);
+
+  // Select a specific tab within a panel
+  rpc SelectTabInPanel(SplitViewSelectTabInPanelRequest) returns (boss.ipc.v1.Empty);
+
+  // Apply a workspace layout to the split view
+  rpc ApplyWorkspace(SplitViewApplyWorkspaceRequest) returns (boss.ipc.v1.Empty);
+}
+
+// ---- Requests ----
+
+message SplitViewOpenUrlRequest {
+  string url = 1;
+  string title = 2;
+  bool force_new_tab = 3;
+}
+
+message SplitViewOpenFileRequest {
+  string file_path = 1;
+  string file_name = 2;
+}
+
+message SplitViewOpenFileAtPositionRequest {
+  string file_path = 1;
+  string file_name = 2;
+  int32 line = 3;
+  int32 column = 4;
+}
+
+message SplitViewPanelIdRequest {
+  string panel_id = 1;
+}
+
+message SplitViewPreserveStateRequest {
+  string workspace_id = 1;
+  string workspace_name = 2;
+}
+
+message SplitViewSelectTabInPanelRequest {
+  string panel_id = 1;
+  string tab_id = 2;
+}
+
+message SplitViewApplyWorkspaceRequest {
+  string workspace_json = 1;
+}

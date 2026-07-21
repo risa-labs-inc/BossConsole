@@ -1,0 +1,123 @@
+syntax = "proto3";
+
+package boss.ipc.v1.services;
+
+import "boss/ipc/v1/common.proto";
+
+option java_package = "ai.rever.boss.ipc.proto.services";
+option java_multiple_files = true;
+
+// RoleManagementService provides RBAC management capabilities to out-of-process plugins.
+// Plugins can query, create, and delete roles and permissions, as well as manage
+// role-permission assignments and validate names.
+service RoleManagementService {
+  // List all roles in the system
+  rpc GetAllRoles(boss.ipc.v1.Empty) returns (RoleListResponse);
+
+  // List all permissions in the system
+  rpc GetAllPermissions(boss.ipc.v1.Empty) returns (PermissionListResponse);
+
+  // Create a new role
+  rpc CreateRole(CreateRoleRequest) returns (RoleInfoResponse);
+
+  // Create a new permission
+  rpc CreatePermission(CreatePermissionRequest) returns (PermissionInfoResponse);
+
+  // Delete an existing role by name
+  rpc DeleteRole(RoleNameRequest) returns (RoleOperationResult);
+
+  // Delete an existing permission by name
+  rpc DeletePermission(PermissionNameRequest) returns (RoleOperationResult);
+
+  // Assign a permission to a role
+  rpc AssignPermissionToRole(RolePermissionRequest) returns (RoleOperationResult);
+
+  // Remove a permission from a role
+  rpc RemovePermissionFromRole(RolePermissionRequest) returns (RoleOperationResult);
+
+  // Get a role together with its assigned permissions
+  rpc GetRolePermissions(RoleNameRequest) returns (RoleWithPermissionsResponse);
+
+  // Validate whether a role name is acceptable
+  rpc ValidateRoleName(RoleNameRequest) returns (ValidationResponse);
+
+  // Validate whether a permission name is acceptable
+  rpc ValidatePermissionName(PermissionNameRequest) returns (ValidationResponse);
+}
+
+// ---- Models ----
+
+message RoleInfoProto {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  repeated string permissions = 4;
+  int64 created_at = 5;
+  bool is_system = 6;
+}
+
+message PermissionInfoProto {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  int64 created_at = 4;
+  bool is_system = 5;
+}
+
+// ---- Responses ----
+
+message RoleListResponse {
+  repeated RoleInfoProto roles = 1;
+}
+
+message PermissionListResponse {
+  repeated PermissionInfoProto permissions = 1;
+}
+
+message RoleInfoResponse {
+  RoleInfoProto role = 1;
+}
+
+message PermissionInfoResponse {
+  PermissionInfoProto permission = 1;
+}
+
+message RoleOperationResult {
+  bool success = 1;
+  string error_message = 2;
+}
+
+message RoleWithPermissionsResponse {
+  RoleInfoProto role = 1;
+  repeated PermissionInfoProto permissions = 2;
+}
+
+message ValidationResponse {
+  bool valid = 1;
+  string error_message = 2;
+}
+
+// ---- Requests ----
+
+message CreateRoleRequest {
+  string name = 1;
+  string description = 2;
+}
+
+message CreatePermissionRequest {
+  string name = 1;
+  string description = 2;
+}
+
+message RoleNameRequest {
+  string name = 1;
+}
+
+message PermissionNameRequest {
+  string name = 1;
+}
+
+message RolePermissionRequest {
+  string role_name = 1;
+  string permission_name = 2;
+}

@@ -1,0 +1,1680 @@
+# NOTE: The exact `name:` below is referenced by .github/workflows/sync-release.yml
+# in its `workflow_run.workflows` filter. If you rename this workflow, update the
+# sync-release trigger too — there is no compile-time check and a mismatch will
+# silently stop auto-syncing public releases.
+name: 🚀 Release Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_increment:
+        description: 'Version increment type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      release_type:
+        description: 'Release type'
+        required: true
+        default: 'stable'
+        type: choice
+        options:
+          - stable
+          - alpha
+          - beta
+          - rc
+      prerelease_number:
+        description: 'Prerelease number (for alpha/beta/rc)'
+        required: false
+        default: '1'
+      create_release:
+        description: 'Create GitHub release'
+        required: true
+        default: true
+        type: boolean
+  # Allow this workflow to be called from other workflows (e.g., promote-release)
+  workflow_call:
+    inputs:
+      version_increment:
+        description: 'Version increment type'
+        required: true
+        default: 'patch'
+        type: string
+      release_type:
+        description: 'Release type'
+        required: true
+        default: 'stable'
+        type: string
+      prerelease_number:
+        description: 'Prerelease number (for alpha/beta/rc)'
+        required: false
+        default: '1'
+        type: string
+      create_release:
+        description: 'Create GitHub release'
+        required: false
+        default: true
+        type: boolean
+      skip_version_increment:
+        description: 'Skip version increment (for promotion)'
+        required: false
+        default: false
+        type: boolean
+  push:
+    tags:
+      - 'v*.*.*'
+
+env:
+  GRADLE_OPTS: '-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.caching=true'
+  # Production credentials for release builds
+  JXBROWSER_LICENSE_KEY: ${{ secrets.JXBROWSER_LICENSE_KEY }}
+  SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_FUNCTION_URL: ${{ secrets.SUPABASE_FUNCTION_URL }}
+  # boss-plugin-api-core resolves from GitHub Packages during every gradle
+  # invocation; step-level GITHUB_TOKEN assignments still override this.
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  prepare-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+      is-prerelease: ${{ steps.get-version.outputs.is-prerelease }}
+      should-build: ${{ steps.check-changes.outputs.should-build }}
+      updated-sha: ${{ steps.commit-version.outputs.updated-sha }}
+      should-create-tag: ${{ steps.commit-version.outputs.should-create-tag }}
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.PUBLIC_REPO_TOKEN }}
+
+      - name: 🔄 Increment Version (Manual Trigger)
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call'
+        env:
+          # Pass inputs via environment variables to prevent script injection
+          INPUT_VERSION_INCREMENT: ${{ inputs.version_increment || github.event.inputs.version_increment }}
+          INPUT_RELEASE_TYPE: ${{ inputs.release_type || github.event.inputs.release_type }}
+          INPUT_PRERELEASE_NUM: ${{ inputs.prerelease_number || github.event.inputs.prerelease_number }}
+          INPUT_SKIP_INCREMENT: ${{ inputs.skip_version_increment }}
+        run: |
+          set -euo pipefail
+
+          # Source shared version utilities
+          source .github/scripts/version-utils.sh
+
+          # Validate version_increment is one of the allowed values
+          case "$INPUT_VERSION_INCREMENT" in
+            patch|minor|major) VERSION_INCREMENT="$INPUT_VERSION_INCREMENT" ;;
+            *) echo "❌ Invalid version_increment: $INPUT_VERSION_INCREMENT"; exit 1 ;;
+          esac
+
+          # Validate release_type using shared function
+          if ! validate_release_type "$INPUT_RELEASE_TYPE"; then
+            echo "❌ Invalid release_type: $INPUT_RELEASE_TYPE"
+            exit 1
+          fi
+          RELEASE_TYPE="$INPUT_RELEASE_TYPE"
+
+          # Validate prerelease_number using shared function
+          PRERELEASE_NUM="${INPUT_PRERELEASE_NUM:-1}"
+          if ! validate_prerelease_number "$PRERELEASE_NUM"; then
+            echo "❌ Invalid prerelease_number: '$PRERELEASE_NUM'"
+            echo "   Must be a positive integer (e.g., 1, 2, 3)"
+            exit 1
+          fi
+
+          SKIP_INCREMENT="${INPUT_SKIP_INCREMENT:-false}"
+
+          # Skip version increment if requested (for promotion scenarios)
+          if [[ "$SKIP_INCREMENT" != "true" ]]; then
+            # Increment version based on input
+            # Note: -PskipGitCheck=true because CI controls git state
+            case "$VERSION_INCREMENT" in
+              "patch")
+                ./gradlew incrementVersion -PskipGitCheck=true
+                ;;
+              "minor")
+                ./gradlew incrementMinor -PskipGitCheck=true
+                ;;
+              "major")
+                ./gradlew incrementMajor -PskipGitCheck=true
+                ;;
+            esac
+          else
+            echo "Skipping version increment (promotion mode)"
+          fi
+
+          # Set prerelease suffix if not stable
+          # Note: -PskipGitCheck=true because CI controls git state
+          if [[ "$RELEASE_TYPE" != "stable" ]] && [[ -n "$RELEASE_TYPE" ]]; then
+            echo "Setting prerelease suffix: ${RELEASE_TYPE}.${PRERELEASE_NUM}"
+            ./gradlew setPrereleaseSuffix -Psuffix="${RELEASE_TYPE}.${PRERELEASE_NUM}" -PskipGitCheck=true
+          else
+            # Ensure we clear any existing prerelease suffix for stable releases
+            ./gradlew clearPrereleaseSuffix -PskipGitCheck=true
+          fi
+
+          # Get the new version
+          NEW_VERSION=$(grep "^app.version=" version.properties | cut -d'=' -f2)
+          echo "New version: $NEW_VERSION"
+
+      - name: 📝 Commit Version Changes
+        id: commit-version
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call'
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Check if there are changes to commit
+          if git diff --quiet version.properties; then
+            echo "No version changes to commit"
+            echo "updated-sha=$GITHUB_SHA" >> $GITHUB_OUTPUT
+          else
+            # Commit version changes
+            NEW_VERSION=$(grep "^app.version=" version.properties | cut -d'=' -f2)
+            git add version.properties
+            git commit -m "🔖 Bump version to $NEW_VERSION" \
+                       -m "Auto-increment version for release build" \
+                       -m "🤖 Automated by release workflow"
+
+            # Handle race condition: pull --rebase and retry push up to 3 times
+            MAX_RETRIES=3
+            RETRY_COUNT=0
+            while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+              if git push; then
+                echo "✅ Successfully pushed version changes"
+                break
+              else
+                RETRY_COUNT=$((RETRY_COUNT + 1))
+                if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                  echo "⚠️ Push failed, attempting rebase and retry ($RETRY_COUNT/$MAX_RETRIES)..."
+                  git pull --rebase origin main
+                else
+                  echo "❌ Failed to push after $MAX_RETRIES attempts"
+                  exit 1
+                fi
+              fi
+            done
+
+            # DO NOT create tag here - will be created after successful builds
+            # Get the new commit SHA
+            NEW_SHA=$(git rev-parse HEAD)
+            echo "updated-sha=$NEW_SHA" >> $GITHUB_OUTPUT
+            echo "should-create-tag=true" >> $GITHUB_OUTPUT
+            echo "✅ Version committed: $NEW_VERSION (tag will be created after builds)"
+          fi
+
+      - name: 📋 Get Version
+        id: get-version
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF: ${{ github.ref }}
+          INPUT_RELEASE_TYPE: ${{ inputs.release_type || github.event.inputs.release_type }}
+        run: |
+          set -euo pipefail
+
+          # Source shared version utilities
+          source .github/scripts/version-utils.sh
+
+          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == refs/tags/* ]]; then
+            # Extract version from tag (e.g., refs/tags/v8.11.2 -> 8.11.2)
+            TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+
+            # Validate tag version format using shared function
+            if ! validate_version "$TAG_VERSION"; then
+              echo "❌ Invalid tag version format: $TAG_VERSION"
+              exit 1
+            fi
+
+            echo "version=$TAG_VERSION" >> $GITHUB_OUTPUT
+            echo "📦 Building version from tag: $TAG_VERSION"
+
+            # Detect prerelease from tag version string using shared function
+            if is_prerelease_version "$TAG_VERSION"; then
+              echo "is-prerelease=true" >> $GITHUB_OUTPUT
+              echo "🧪 Detected prerelease version"
+            else
+              echo "is-prerelease=false" >> $GITHUB_OUTPUT
+            fi
+
+            # Verify tag version matches version.properties
+            PROPS_VERSION=$(grep "^app.version=" version.properties | cut -d'=' -f2)
+            if [[ "$TAG_VERSION" != "$PROPS_VERSION" ]]; then
+              echo "⚠️ Warning: Tag version ($TAG_VERSION) differs from version.properties ($PROPS_VERSION)"
+              echo "Updating version.properties to match tag version for build consistency"
+
+              # Parse tag version using shared functions
+              BASE_VERSION=$(get_base_version "$TAG_VERSION")
+              IFS='.' read -r TAG_MAJOR TAG_MINOR TAG_PATCH <<< "$BASE_VERSION"
+              PRERELEASE_SUFFIX=$(get_prerelease_suffix "$TAG_VERSION")
+
+              # Validate parsed components
+              if ! [[ "$TAG_MAJOR" =~ ^[0-9]+$ ]] || ! [[ "$TAG_MINOR" =~ ^[0-9]+$ ]] || ! [[ "$TAG_PATCH" =~ ^[0-9]+$ ]]; then
+                echo "❌ Failed to parse version components from: $TAG_VERSION"
+                exit 1
+              fi
+
+              # Update version.properties to match tag
+              sed -i "s/^app.version.major=.*/app.version.major=$TAG_MAJOR/" version.properties
+              sed -i "s/^app.version.minor=.*/app.version.minor=$TAG_MINOR/" version.properties
+              sed -i "s/^app.version.patch=.*/app.version.patch=$TAG_PATCH/" version.properties
+              sed -i "s/^app.version=.*/app.version=$TAG_VERSION/" version.properties
+              sed -i "s/^app.bundle.version=.*/app.bundle.version=$TAG_VERSION/" version.properties
+              sed -i "s/^app.prerelease.suffix=.*/app.prerelease.suffix=$PRERELEASE_SUFFIX/" version.properties
+
+              echo "✅ Updated version.properties to match tag: $TAG_VERSION"
+            fi
+          else
+            # Use version from properties file
+            VERSION=$(grep "^app.version=" version.properties | cut -d'=' -f2)
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "📦 Building version from properties: $VERSION"
+
+            # Detect prerelease from version string or release_type input
+            RELEASE_TYPE="${INPUT_RELEASE_TYPE:-stable}"
+            if is_prerelease_version "$VERSION" || [[ "$RELEASE_TYPE" != "stable" && "$RELEASE_TYPE" != "" ]]; then
+              echo "is-prerelease=true" >> $GITHUB_OUTPUT
+              echo "🧪 This is a prerelease version"
+            else
+              echo "is-prerelease=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: 🔍 Check for Changes
+        id: check-changes
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+
+          # Build on both manual trigger and tag pushes
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]] || [[ "$GITHUB_EVENT_NAME" == "workflow_call" ]]; then
+            echo "should-build=true" >> $GITHUB_OUTPUT
+            echo "trigger=manual" >> $GITHUB_OUTPUT
+          elif [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "should-build=true" >> $GITHUB_OUTPUT
+            echo "trigger=tag" >> $GITHUB_OUTPUT
+          else
+            echo "should-build=false" >> $GITHUB_OUTPUT
+            echo "trigger=none" >> $GITHUB_OUTPUT
+          fi
+
+  build-macos-arm64:
+    needs: prepare-version
+    if: needs.prepare-version.outputs.should-build == 'true'
+    runs-on: macos-14  # Apple Silicon runner
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare-version.outputs.updated-sha }}
+
+      - name: ☕ Setup JDK
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: 🎯 Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: false
+
+      - name: 🔧 Setup Build Environment
+        shell: bash
+        run: |
+          echo "🔧 Setting up build environment for ${{ matrix.platform }}"
+          echo "📦 Version: ${{ needs.prepare-version.outputs.version }}"
+          
+          # Verify version consistency
+          ./gradlew showVersion
+
+      # macOS specific setup
+      - name: 🍎 Setup macOS Environment
+        run: |
+          # Install required dependencies for DMG creation
+          brew install --quiet create-dmg || true
+          
+          # Verify macOS build tools
+          xcode-select --print-path
+          
+          # Setup macOS code signing environment with P12 certificate
+          if [[ -n "${{ secrets.MACOS_P12_CERTIFICATE }}" ]]; then
+            echo "🔐 Setting up macOS code signing with P12 certificate..."
+            
+            # Decode and install P12 certificate
+            echo "${{ secrets.MACOS_P12_CERTIFICATE }}" | base64 --decode > certificate.p12
+            
+            # Create temporary keychain
+            security create-keychain -p temp_password temp_keychain
+            security default-keychain -s temp_keychain
+            security unlock-keychain -p temp_password temp_keychain
+            
+            # Set keychain settings
+            security set-keychain-settings -lut 3600 temp_keychain
+            
+            # Import certificate
+            security import certificate.p12 -k temp_keychain -P "${{ secrets.MACOS_P12_PASSWORD }}" -T /usr/bin/codesign -T /usr/bin/security
+            
+            # Allow codesign to access the key
+            security set-key-partition-list -S apple-tool:,apple: -s -k temp_password temp_keychain
+            
+            # Ensure keychain is available for subsequent steps
+            security list-keychains -s temp_keychain
+            
+            # Set up environment variables
+            echo "DEVELOPER_ID=${{ secrets.MACOS_DEVELOPER_ID }}" >> $GITHUB_ENV
+            echo "MACOS_DEVELOPER_ID=${{ secrets.MACOS_DEVELOPER_ID }}" >> $GITHUB_ENV
+            echo "TEAM_ID=${{ secrets.MACOS_TEAM_ID }}" >> $GITHUB_ENV
+            echo "APPLE_ID=${{ secrets.MACOS_APPLE_ID }}" >> $GITHUB_ENV
+            echo "APP_PASSWORD=${{ secrets.MACOS_APP_PASSWORD }}" >> $GITHUB_ENV
+            echo "DISABLE_MACOS_SIGNING=false" >> $GITHUB_ENV
+            
+            # Clean up certificate file
+            rm certificate.p12
+            
+            # Verify certificate installation
+            echo "🔍 Verifying certificate installation..."
+            security find-identity -v -p codesigning temp_keychain
+            
+            echo "✅ macOS code signing configured with P12 certificate"
+          else
+            echo "⚠️ MACOS_P12_CERTIFICATE not found"
+            echo "   Add your P12 certificate to GitHub secrets for production builds"
+            echo "   Creating unsigned DMG for testing..."
+            echo "DISABLE_MACOS_SIGNING=true" >> $GITHUB_ENV
+          fi
+
+
+      - name: 🔍 Get JxBrowser Version
+        run: |
+          # Extract JxBrowser version from libs.versions.toml for Chromium URL
+          JXBROWSER_VERSION=$(grep '^jxbrowser = "' gradle/libs.versions.toml | sed 's/.*= "\(.*\)"/\1/')
+          echo "JxBrowser version: $JXBROWSER_VERSION"
+          echo "JXBROWSER_VERSION=$JXBROWSER_VERSION" >> $GITHUB_ENV
+
+      - name: 📥 Download Branded Chromium (macOS)
+        run: |
+          echo "📥 Downloading BOSS-branded Chromium for macOS..."
+
+          # Determine architecture
+          ARCH=$(uname -m)
+          if [[ "$ARCH" == "arm64" ]]; then
+            CHROMIUM_ARCHIVE="boss-chromium-macos-arm64.zip"
+          else
+            CHROMIUM_ARCHIVE="boss-chromium-macos-x64.zip"
+          fi
+
+          # Try to download from BOSS-Chromium releases (version from libs.versions.toml)
+          CHROMIUM_URL="https://github.com/risa-labs-inc/BossConsole-Releases/releases/download/chromium-v$JXBROWSER_VERSION/$CHROMIUM_ARCHIVE"
+
+          mkdir -p branded-chromium
+          if curl -L --fail -o "branded-chromium/$CHROMIUM_ARCHIVE" "$CHROMIUM_URL"; then
+            echo "✅ Downloaded branded Chromium: $CHROMIUM_ARCHIVE"
+            unzip -o "branded-chromium/$CHROMIUM_ARCHIVE" -d branded-chromium/
+            echo "BRANDED_CHROMIUM_AVAILABLE=true" >> $GITHUB_ENV
+          else
+            echo "⚠️ Branded Chromium not available yet (repository may need initial release)"
+            echo "   App will fall back to default JxBrowser Chromium"
+            echo "BRANDED_CHROMIUM_AVAILABLE=false" >> $GITHUB_ENV
+          fi
+
+      - name: 🏗️ Build macOS App Bundle
+        env:
+          DISABLE_MACOS_SIGNING: ${{ env.DISABLE_MACOS_SIGNING }}
+        run: |
+          echo "🏗️ Building macOS app bundle..."
+
+          chmod +x ./gradlew
+
+          # First create the distributable app bundle
+          ./gradlew createDistributable
+
+          echo "✅ macOS app bundle created successfully"
+
+      - name: 📦 Bundle Branded Chromium
+        if: env.BRANDED_CHROMIUM_AVAILABLE == 'true'
+        run: |
+          echo "📦 Bundling BOSS-branded Chromium into app..."
+
+          # Find the app bundle
+          APP_PATH=$(find composeApp/build/compose/binaries/main/app -name "*.app" -type d | head -1)
+
+          if [[ -n "$APP_PATH" && -d "$APP_PATH" ]]; then
+            echo "Found app bundle: $APP_PATH"
+
+            # Create chromium directory in app resources
+            CHROMIUM_DIR="$APP_PATH/Contents/Resources/chromium"
+            mkdir -p "$CHROMIUM_DIR"
+
+            # Copy branded Chromium files (excluding the zip)
+            cp -r branded-chromium/* "$CHROMIUM_DIR/" 2>/dev/null || true
+            rm -f "$CHROMIUM_DIR"/*.zip 2>/dev/null || true
+
+            echo "✅ Branded Chromium bundled at: $CHROMIUM_DIR"
+            ls -la "$CHROMIUM_DIR"
+          else
+            echo "⚠️ App bundle not found, skipping Chromium bundling"
+          fi
+
+      - name: 🔐 Sign Bundled Chromium
+        if: env.BRANDED_CHROMIUM_AVAILABLE == 'true' && env.DISABLE_MACOS_SIGNING != 'true'
+        run: |
+          echo "🔐 Signing bundled Chromium binaries..."
+
+          APP_PATH=$(find composeApp/build/compose/binaries/main/app -name "*.app" -type d | head -1)
+          CHROMIUM_DIR="$APP_PATH/Contents/Resources/chromium"
+
+          if [[ -d "$CHROMIUM_DIR" ]]; then
+            # Sign all executables in Chromium directory
+            find "$CHROMIUM_DIR" -type f -perm +111 -exec \
+              codesign --force --options runtime \
+              --entitlements composeApp/src/desktopMain/resources/BOSS.entitlements \
+              --sign "$MACOS_DEVELOPER_ID" {} \; 2>/dev/null || true
+
+            echo "✅ Chromium binaries signed"
+          fi
+
+      - name: 🏗️ Package macOS DMG
+        env:
+          DISABLE_MACOS_SIGNING: ${{ env.DISABLE_MACOS_SIGNING }}
+        run: |
+          echo "🏗️ Packaging macOS DMG..."
+
+          # Package the DMG using the already-created app bundle
+          ./gradlew packageDmg
+
+          echo "✅ macOS DMG build completed successfully"
+
+      - name: 🔍 Verify Built Version (macOS)
+        env:
+          EXPECTED_VERSION: ${{ needs.prepare-version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          echo "🔍 Verifying version inside built artifacts..."
+          echo "Expected version: $EXPECTED_VERSION"
+
+          # Check generated VersionConstants.kt
+          GENERATED_FILE="composeApp/build/generated/source/version/ai/rever/boss/utils/VersionConstants.kt"
+          if [[ -f "$GENERATED_FILE" ]]; then
+            echo "Checking generated VersionConstants.kt..."
+
+            # Use anchored patterns to avoid matching comments or other lines
+            MAJOR=$(grep -E "^\s*const val MAJOR\s*=" "$GENERATED_FILE" | sed 's/.*= //;s/ .*//')
+            MINOR=$(grep -E "^\s*const val MINOR\s*=" "$GENERATED_FILE" | sed 's/.*= //;s/ .*//')
+            PATCH=$(grep -E "^\s*const val PATCH\s*=" "$GENERATED_FILE" | sed 's/.*= //;s/ .*//')
+            # Extract prerelease - handles both "null" and quoted string like "beta.1"
+            PRERELEASE=$(grep -E "^\s*(const\s+)?val\s+PRERELEASE" "$GENERATED_FILE" | sed 's/.*= //;s/"//g;s/ .*//')
+            if [[ "$PRERELEASE" == "null" ]]; then
+              PRERELEASE=""
+            fi
+
+            if [[ -n "$PRERELEASE" ]]; then
+              BUILT_VERSION="${MAJOR}.${MINOR}.${PATCH}-${PRERELEASE}"
+            else
+              BUILT_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+            fi
+            echo "Built version (from VersionConstants.kt): $BUILT_VERSION"
+
+            if [[ "$BUILT_VERSION" != "$EXPECTED_VERSION" ]]; then
+              echo "❌ VERSION MISMATCH DETECTED!"
+              echo "   Expected: $EXPECTED_VERSION"
+              echo "   Built: $BUILT_VERSION"
+              echo "   This is the root cause of Issue #111"
+              echo ""
+              echo "VersionConstants.kt contents:"
+              cat "$GENERATED_FILE"
+              exit 1
+            else
+              echo "✅ Version verification passed: $BUILT_VERSION"
+            fi
+          else
+            echo "⚠️ VersionConstants.kt not found - this indicates build issue"
+            exit 1
+          fi
+
+      # macOS notarization (only for signed DMGs)
+      - name: 🍎 Notarize macOS DMG
+        if: env.DISABLE_MACOS_SIGNING != 'true'
+        run: |
+          echo "🍎 Starting macOS notarization process..."
+
+          # Find the DMG file
+          DMG_PATH=$(find composeApp/build/compose/binaries/main/dmg -name "*.dmg" | head -1)
+
+          if [[ -n "$DMG_PATH" && -f "$DMG_PATH" ]]; then
+            echo "📦 Found DMG: $DMG_PATH"
+
+            # Submit for notarization and capture the submission ID.
+            # `|| true` is required because the surrounding shell runs
+            # under `bash -e`: without it, a non-zero exit from
+            # `notarytool submit` (e.g. auth failure, network error,
+            # rejected submission) propagates immediately at the
+            # command-substitution assignment, killing the step BEFORE
+            # we can echo NOTARIZATION_OUTPUT or fetch the detailed
+            # notarytool log. The exit-code is preserved separately so
+            # later checks can still distinguish success from failure.
+            echo "🔐 Submitting DMG for notarization..."
+            set +e
+            NOTARIZATION_OUTPUT=$(xcrun notarytool submit "$DMG_PATH" \
+              --apple-id "$APPLE_ID" \
+              --password "$APP_PASSWORD" \
+              --team-id "${{ secrets.MACOS_TEAM_ID }}" \
+              --wait 2>&1)
+            NOTARIZATION_EXIT_CODE=$?
+            set -e
+            echo "$NOTARIZATION_OUTPUT"
+            echo "📋 notarytool exit code: $NOTARIZATION_EXIT_CODE"
+
+            # Extract submission ID from output
+            SUBMISSION_ID=$(echo "$NOTARIZATION_OUTPUT" | grep "id:" | head -1 | awk '{print $2}')
+            echo "📋 Submission ID: $SUBMISSION_ID"
+
+            # Check if notarization succeeded
+            if echo "$NOTARIZATION_OUTPUT" | grep -q "status: Accepted"; then
+              echo "✅ Notarization accepted"
+
+              # Staple the notarization
+              echo "📎 Stapling notarization to DMG..."
+              xcrun stapler staple "$DMG_PATH"
+
+              echo "✅ macOS notarization completed successfully"
+            else
+              echo "❌ Notarization failed or returned non-Accepted status"
+
+              # Fetch detailed log if we have a submission ID
+              if [[ -n "$SUBMISSION_ID" ]]; then
+                echo "📜 Fetching detailed notarization log..."
+                xcrun notarytool log "$SUBMISSION_ID" \
+                  --apple-id "$APPLE_ID" \
+                  --password "$APP_PASSWORD" \
+                  --team-id "${{ secrets.MACOS_TEAM_ID }}"
+              fi
+
+              exit 1
+            fi
+          else
+            echo "❌ DMG file not found for notarization"
+            exit 1
+          fi
+
+      # Skip notarization info for unsigned builds
+      - name: 🍎 Skip Notarization (Unsigned Build)
+        if: env.DISABLE_MACOS_SIGNING == 'true'
+        run: |
+          echo "ℹ️ Skipping notarization for unsigned DMG"
+          echo "   This DMG is for development/testing only"
+          echo "   For distribution, add proper code signing certificates"
+
+      - name: 📊 Verify Build Artifacts
+        run: |
+          echo "📊 Verifying macOS DMG..."
+          
+          # Check if DMG exists
+          if ls composeApp/build/compose/binaries/main/dmg/*.dmg 1> /dev/null 2>&1; then
+            echo "✅ DMG found!"
+            ls -la composeApp/build/compose/binaries/main/dmg/
+          else
+            echo "❌ DMG not found!"
+            exit 1
+          fi
+
+      - name: 📤 Upload macOS DMG (ARM64)
+        uses: actions/upload-artifact@v7
+        with:
+          name: boss-macos-arm64-${{ needs.prepare-version.outputs.version }}
+          path: composeApp/build/compose/binaries/main/dmg/*.dmg
+          retention-days: 30
+
+  build-linux-amd64:
+    needs: prepare-version
+    if: needs.prepare-version.outputs.should-build == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare-version.outputs.updated-sha }}
+
+      - name: ☕ Setup JDK
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: 🎯 Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: false
+
+      - name: 🔧 Setup Build Environment
+        run: |
+          echo "🔧 Setting up build environment for Linux AMD64"
+          echo "📦 Version: ${{ needs.prepare-version.outputs.version }}"
+
+          # Verify version consistency
+          ./gradlew showVersion
+
+      - name: 🔍 Get JxBrowser Version
+        run: |
+          # Extract JxBrowser version from libs.versions.toml for Chromium URL
+          JXBROWSER_VERSION=$(grep '^jxbrowser = "' gradle/libs.versions.toml | sed 's/.*= "\(.*\)"/\1/')
+          echo "JxBrowser version: $JXBROWSER_VERSION"
+          echo "JXBROWSER_VERSION=$JXBROWSER_VERSION" >> $GITHUB_ENV
+
+      - name: 📥 Download Branded Chromium (Linux)
+        run: |
+          echo "📥 Downloading BOSS-branded Chromium for Linux..."
+
+          CHROMIUM_URL="https://github.com/risa-labs-inc/BossConsole-Releases/releases/download/chromium-v$JXBROWSER_VERSION/boss-chromium-linux-x64.zip"
+
+          mkdir -p branded-chromium
+          if curl -L --fail -o branded-chromium/boss-chromium-linux-x64.zip "$CHROMIUM_URL"; then
+            echo "✅ Downloaded branded Chromium"
+            unzip -o branded-chromium/boss-chromium-linux-x64.zip -d branded-chromium/
+            echo "BRANDED_CHROMIUM_AVAILABLE=true" >> $GITHUB_ENV
+          else
+            echo "⚠️ Branded Chromium not available yet"
+            echo "   Linux packages will use runtime Chromium download fallback"
+            echo "BRANDED_CHROMIUM_AVAILABLE=false" >> $GITHUB_ENV
+          fi
+
+      - name: 🏗️ Build Linux Packages (AMD64)
+        run: |
+          echo "🏗️ Building Linux AMD64 packages..."
+
+          # Step 1: Create distributable (unpacked app structure)
+          ./gradlew :composeApp:createDistributable
+          echo "✅ Distributable created"
+
+          # Step 2: Bundle Chromium into the app structure if available
+          if [[ "$BRANDED_CHROMIUM_AVAILABLE" == "true" ]]; then
+            APP_DIR="composeApp/build/compose/binaries/main/app/BOSS"
+            CHROMIUM_DIR="$APP_DIR/lib/chromium"
+
+            echo "📦 Bundling Chromium into Linux app at: $CHROMIUM_DIR"
+            mkdir -p "$CHROMIUM_DIR"
+            cp -r branded-chromium/* "$CHROMIUM_DIR/" 2>/dev/null || true
+            rm -f "$CHROMIUM_DIR"/*.zip 2>/dev/null || true
+
+            echo "✅ Chromium bundled into app structure"
+            ls -la "$CHROMIUM_DIR"
+          else
+            echo "⚠️ Branded Chromium not available, app will use auto-download fallback"
+          fi
+
+          # Step 3: Create DEB and RPM from the modified distributable
+          ./gradlew :composeApp:packageDeb :composeApp:packageRpm
+          echo "✅ Linux native packages (DEB, RPM) created successfully"
+
+          # Create executable JAR for universal Linux distribution
+          ./gradlew :composeApp:createExecutableJar
+          echo "✅ Executable JAR created successfully"
+
+      - name: 🔍 Verify Built Version (Linux AMD64)
+        env:
+          EXPECTED_VERSION: ${{ needs.prepare-version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          echo "🔍 Verifying version inside built artifacts..."
+          echo "Expected version: $EXPECTED_VERSION"
+
+          # Check generated VersionConstants.kt
+          GENERATED_FILE="composeApp/build/generated/source/version/ai/rever/boss/utils/VersionConstants.kt"
+          if [[ -f "$GENERATED_FILE" ]]; then
+            echo "Checking generated VersionConstants.kt..."
+
+            # Use anchored patterns to avoid matching comments or other lines
+            MAJOR=$(grep -E "^\s*const val MAJOR\s*=" "$GENERATED_FILE" | sed 's/.*= //;s/ .*//')
+            MINOR=$(grep -E "^\s*const val MINOR\s*=" "$GENERATED_FILE" | sed 's/.*= //;s/ .*//')
+            PATCH=$(grep -E "^\s*const val PATCH\s*=" "$GENERATED_FILE" | sed 's/.*= //;s/ .*//')
+            # Extract prerelease - handles both "null" and quoted string like "beta.1"
+            PRERELEASE=$(grep -E "^\s*(const\s+)?val\s+PRERELEASE" "$GENERATED_FILE" | sed 's/.*= //;s/"//g;s/ .*//')
+            if [[ "$PRERELEASE" == "null" ]]; then
+              PRERELEASE=""
+            fi
+
+            if [[ -n "$PRERELEASE" ]]; then
+              BUILT_VERSION="${MAJOR}.${MINOR}.${PATCH}-${PRERELEASE}"
+            else
+              BUILT_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+            fi
+            echo "Built version (from VersionConstants.kt): $BUILT_VERSION"
+
+            if [[ "$BUILT_VERSION" != "$EXPECTED_VERSION" ]]; then
+              echo "❌ VERSION MISMATCH DETECTED!"
+              echo "   Expected: $EXPECTED_VERSION"
+              echo "   Built: $BUILT_VERSION"
+              echo "   This is the root cause of Issue #111"
+              echo ""
+              echo "VersionConstants.kt contents:"
+              cat "$GENERATED_FILE"
+              exit 1
+            else
+              echo "✅ Version verification passed: $BUILT_VERSION"
+            fi
+          else
+            echo "⚠️ VersionConstants.kt not found - this indicates build issue"
+            exit 1
+          fi
+
+      - name: 📊 Verify Linux Build Artifacts (AMD64)
+        run: |
+          echo "📊 Verifying Linux AMD64 packages..."
+
+          # Check for DEB files
+          if ls composeApp/build/compose/binaries/main/deb/*.deb 1> /dev/null 2>&1; then
+            echo "✅ DEB package found!"
+            ls -la composeApp/build/compose/binaries/main/deb/
+          else
+            echo "⚠️ DEB package not found"
+          fi
+
+          # Check for RPM files
+          if ls composeApp/build/compose/binaries/main/rpm/*.rpm 1> /dev/null 2>&1; then
+            echo "✅ RPM package found!"
+            ls -la composeApp/build/compose/binaries/main/rpm/
+          else
+            echo "⚠️ RPM package not found"
+          fi
+
+          # Check for JAR files
+          if ls composeApp/build/libs/*-all.jar 1> /dev/null 2>&1; then
+            echo "✅ Executable JAR found!"
+            ls -la composeApp/build/libs/*-all.jar
+          else
+            echo "⚠️ Executable JAR not found"
+          fi
+
+      - name: 📤 Upload Linux Packages (AMD64)
+        uses: actions/upload-artifact@v7
+        with:
+          name: boss-linux-amd64-${{ needs.prepare-version.outputs.version }}
+          path: |
+            composeApp/build/compose/binaries/main/deb/
+            composeApp/build/compose/binaries/main/rpm/
+            composeApp/build/libs/*-all.jar
+          retention-days: 30
+
+  build-linux-arm64:
+    needs: prepare-version
+    if: needs.prepare-version.outputs.should-build == 'true'
+    runs-on: linux_arm64
+    continue-on-error: true  # Graceful failure if ARM runners unavailable
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare-version.outputs.updated-sha }}
+
+      - name: ☕ Setup JDK
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: 🎯 Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: false
+
+      - name: 🔧 Setup Build Environment
+        run: |
+          echo "🔧 Setting up build environment for Linux ARM64"
+          echo "📦 Version: ${{ needs.prepare-version.outputs.version }}"
+
+          # Verify version consistency
+          ./gradlew showVersion
+
+      - name: 📦 Install Linux Packaging Dependencies
+        run: |
+          echo "📦 Installing dependencies required for jpackage..."
+          sudo apt-get update
+          sudo apt-get install -y fakeroot dpkg rpm unzip
+
+          # Verify installations
+          echo "✅ Installed packages:"
+          dpkg-deb --version || echo "dpkg-deb not found"
+          fakeroot --version || echo "fakeroot not found"
+          rpm --version || echo "rpm not found"
+          unzip -v | head -1 || echo "unzip not found"
+
+      - name: 🔍 Get JxBrowser Version
+        run: |
+          # Extract JxBrowser version from libs.versions.toml for Chromium URL
+          JXBROWSER_VERSION=$(grep '^jxbrowser = "' gradle/libs.versions.toml | sed 's/.*= "\(.*\)"/\1/')
+          echo "JxBrowser version: $JXBROWSER_VERSION"
+          echo "JXBROWSER_VERSION=$JXBROWSER_VERSION" >> $GITHUB_ENV
+
+      - name: 📥 Download Branded Chromium (Linux ARM64)
+        run: |
+          echo "📥 Downloading BOSS-branded Chromium for Linux ARM64..."
+
+          CHROMIUM_URL="https://github.com/risa-labs-inc/BossConsole-Releases/releases/download/chromium-v$JXBROWSER_VERSION/boss-chromium-linux-arm64.zip"
+
+          mkdir -p branded-chromium
+          if curl -L --fail -o branded-chromium/boss-chromium-linux-arm64.zip "$CHROMIUM_URL"; then
+            echo "✅ Downloaded branded Chromium"
+            unzip -o branded-chromium/boss-chromium-linux-arm64.zip -d branded-chromium/
+            echo "BRANDED_CHROMIUM_AVAILABLE=true" >> $GITHUB_ENV
+          else
+            echo "⚠️ Branded Chromium not available yet"
+            echo "   Linux ARM64 packages will use runtime Chromium download fallback"
+            echo "BRANDED_CHROMIUM_AVAILABLE=false" >> $GITHUB_ENV
+          fi
+
+      - name: 🏗️ Build Linux Packages (ARM64)
+        run: |
+          echo "🏗️ Building Linux ARM64 packages..."
+
+          # Step 1: Create distributable (unpacked app structure)
+          ./gradlew :composeApp:createDistributable
+          echo "✅ Distributable created"
+
+          # Step 2: Bundle Chromium into the app structure if available
+          if [[ "$BRANDED_CHROMIUM_AVAILABLE" == "true" ]]; then
+            APP_DIR="composeApp/build/compose/binaries/main/app/BOSS"
+            CHROMIUM_DIR="$APP_DIR/lib/chromium"
+
+            echo "📦 Bundling Chromium into Linux app at: $CHROMIUM_DIR"
+            mkdir -p "$CHROMIUM_DIR"
+            cp -r branded-chromium/* "$CHROMIUM_DIR/" 2>/dev/null || true
+            rm -f "$CHROMIUM_DIR"/*.zip 2>/dev/null || true
+
+            echo "✅ Chromium bundled into app structure"
+            ls -la "$CHROMIUM_DIR"
+          else
+            echo "⚠️ Branded Chromium not available, app will use auto-download fallback"
+          fi
+
+          # Step 3: Create DEB and RPM from the modified distributable
+          ./gradlew :composeApp:packageDeb :composeApp:packageRpm
+          echo "✅ Linux native packages (DEB, RPM) created successfully"
+
+          # Create executable JAR for ARM64 Linux distribution
+          ./gradlew :composeApp:createExecutableJar
+          echo "✅ Executable JAR created successfully"
+
+      - name: 🔍 Verify Built Version (Linux ARM64)
+        env:
+          EXPECTED_VERSION: ${{ needs.prepare-version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          echo "🔍 Verifying version inside built artifacts..."
+          echo "Expected version: $EXPECTED_VERSION"
+
+          # Check generated VersionConstants.kt
+          GENERATED_FILE="composeApp/build/generated/source/version/ai/rever/boss/utils/VersionConstants.kt"
+          if [[ -f "$GENERATED_FILE" ]]; then
+            echo "Checking generated VersionConstants.kt..."
+
+            # Use anchored patterns to avoid matching comments or other lines
+            MAJOR=$(grep -E "^\s*const val MAJOR\s*=" "$GENERATED_FILE" | sed 's/.*= //;s/ .*//')
+            MINOR=$(grep -E "^\s*const val MINOR\s*=" "$GENERATED_FILE" | sed 's/.*= //;s/ .*//')
+            PATCH=$(grep -E "^\s*const val PATCH\s*=" "$GENERATED_FILE" | sed 's/.*= //;s/ .*//')
+            # Extract prerelease - handles both "null" and quoted string like "beta.1"
+            PRERELEASE=$(grep -E "^\s*(const\s+)?val\s+PRERELEASE" "$GENERATED_FILE" | sed 's/.*= //;s/"//g;s/ .*//')
+            if [[ "$PRERELEASE" == "null" ]]; then
+              PRERELEASE=""
+            fi
+
+            if [[ -n "$PRERELEASE" ]]; then
+              BUILT_VERSION="${MAJOR}.${MINOR}.${PATCH}-${PRERELEASE}"
+            else
+              BUILT_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+            fi
+            echo "Built version (from VersionConstants.kt): $BUILT_VERSION"
+
+            if [[ "$BUILT_VERSION" != "$EXPECTED_VERSION" ]]; then
+              echo "❌ VERSION MISMATCH DETECTED!"
+              echo "   Expected: $EXPECTED_VERSION"
+              echo "   Built: $BUILT_VERSION"
+              echo "   This is the root cause of Issue #111"
+              echo ""
+              echo "VersionConstants.kt contents:"
+              cat "$GENERATED_FILE"
+              exit 1
+            else
+              echo "✅ Version verification passed: $BUILT_VERSION"
+            fi
+          else
+            echo "⚠️ VersionConstants.kt not found - this indicates build issue"
+            exit 1
+          fi
+
+      - name: 📊 Verify Linux Build Artifacts (ARM64)
+        run: |
+          echo "📊 Verifying Linux ARM64 packages..."
+
+          # Check for DEB files
+          if ls composeApp/build/compose/binaries/main/deb/*.deb 1> /dev/null 2>&1; then
+            echo "✅ DEB package found!"
+            ls -la composeApp/build/compose/binaries/main/deb/
+          else
+            echo "⚠️ DEB package not found"
+          fi
+
+          # Check for RPM files
+          if ls composeApp/build/compose/binaries/main/rpm/*.rpm 1> /dev/null 2>&1; then
+            echo "✅ RPM package found!"
+            ls -la composeApp/build/compose/binaries/main/rpm/
+          else
+            echo "⚠️ RPM package not found"
+          fi
+
+          # Check for JAR files
+          if ls composeApp/build/libs/*-all.jar 1> /dev/null 2>&1; then
+            echo "✅ Executable JAR found!"
+            ls -la composeApp/build/libs/*-all.jar
+          else
+            echo "⚠️ Executable JAR not found"
+          fi
+
+      - name: 📤 Upload Linux Packages (ARM64)
+        uses: actions/upload-artifact@v7
+        with:
+          name: boss-linux-arm64-${{ needs.prepare-version.outputs.version }}
+          path: |
+            composeApp/build/compose/binaries/main/deb/
+            composeApp/build/compose/binaries/main/rpm/
+            composeApp/build/libs/*-all.jar
+          retention-days: 30
+
+  build-windows:
+    needs: prepare-version
+    if: needs.prepare-version.outputs.should-build == 'true'
+    runs-on: windows-latest
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare-version.outputs.updated-sha }}
+
+      - name: ☕ Setup JDK
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: 🎯 Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: 🔧 Setup Build Environment
+        run: |
+          echo "🔧 Setting up build environment for Windows"
+          echo "📦 Version: ${{ needs.prepare-version.outputs.version }}"
+
+          # Verify version consistency
+          ./gradlew showVersion
+
+      - name: 🔍 Get JxBrowser Version
+        shell: bash
+        run: |
+          # Extract JxBrowser version from libs.versions.toml for Chromium URL
+          JXBROWSER_VERSION=$(grep '^jxbrowser = "' gradle/libs.versions.toml | sed 's/.*= "\(.*\)"/\1/')
+          echo "JxBrowser version: $JXBROWSER_VERSION"
+          echo "JXBROWSER_VERSION=$JXBROWSER_VERSION" >> $GITHUB_ENV
+
+      - name: 📥 Download Branded Chromium (Windows)
+        shell: bash
+        run: |
+          echo "📥 Downloading BOSS-branded Chromium for Windows..."
+
+          CHROMIUM_URL="https://github.com/risa-labs-inc/BossConsole-Releases/releases/download/chromium-v$JXBROWSER_VERSION/boss-chromium-windows-x64.zip"
+
+          mkdir -p branded-chromium
+          if curl -L --fail -o branded-chromium/boss-chromium-windows-x64.zip "$CHROMIUM_URL"; then
+            echo "✅ Downloaded branded Chromium"
+            unzip -o branded-chromium/boss-chromium-windows-x64.zip -d branded-chromium/
+            echo "BRANDED_CHROMIUM_AVAILABLE=true" >> $GITHUB_ENV
+          else
+            echo "⚠️ Branded Chromium not available yet"
+            echo "BRANDED_CHROMIUM_AVAILABLE=false" >> $GITHUB_ENV
+          fi
+
+      - name: 🏗️ Build Windows App
+        run: |
+          echo "🏗️ Building Windows app..."
+          ./gradlew createDistributable
+          echo "✅ Windows app build completed"
+
+      - name: 📦 Bundle Branded Chromium (Windows)
+        if: env.BRANDED_CHROMIUM_AVAILABLE == 'true'
+        shell: bash
+        run: |
+          echo "📦 Bundling BOSS-branded Chromium into Windows app..."
+
+          # Find the app directory
+          APP_DIR=$(find composeApp/build/compose/binaries/main/app -type d -name "BOSS" | head -1)
+
+          if [[ -n "$APP_DIR" && -d "$APP_DIR" ]]; then
+            echo "Found app directory: $APP_DIR"
+
+            # Create chromium directory alongside the app
+            CHROMIUM_DIR="$APP_DIR/chromium"
+            mkdir -p "$CHROMIUM_DIR"
+
+            # Copy branded Chromium files
+            cp -r branded-chromium/* "$CHROMIUM_DIR/" 2>/dev/null || true
+            rm -f "$CHROMIUM_DIR"/*.zip 2>/dev/null || true
+
+            echo "✅ Branded Chromium bundled at: $CHROMIUM_DIR"
+            ls -la "$CHROMIUM_DIR"
+          else
+            echo "⚠️ App directory not found, skipping Chromium bundling"
+          fi
+
+      - name: 🏗️ Package Windows MSI
+        run: |
+          echo "🏗️ Packaging Windows MSI..."
+          ./gradlew packageMsi
+          echo "✅ Windows MSI build completed successfully"
+
+      - name: 🔍 Verify Built Version (Windows)
+        env:
+          EXPECTED_VERSION: ${{ needs.prepare-version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          echo "🔍 Verifying version inside built artifacts..."
+          echo "Expected version: $EXPECTED_VERSION"
+
+          # Check generated VersionConstants.kt
+          GENERATED_FILE="composeApp/build/generated/source/version/ai/rever/boss/utils/VersionConstants.kt"
+          if [[ -f "$GENERATED_FILE" ]]; then
+            echo "Checking generated VersionConstants.kt..."
+
+            # Use anchored patterns to avoid matching comments or other lines
+            MAJOR=$(grep -E "^\s*const val MAJOR\s*=" "$GENERATED_FILE" | sed 's/.*= //;s/ .*//')
+            MINOR=$(grep -E "^\s*const val MINOR\s*=" "$GENERATED_FILE" | sed 's/.*= //;s/ .*//')
+            PATCH=$(grep -E "^\s*const val PATCH\s*=" "$GENERATED_FILE" | sed 's/.*= //;s/ .*//')
+            # Extract prerelease - handles both "null" and quoted string like "beta.1"
+            PRERELEASE=$(grep -E "^\s*(const\s+)?val\s+PRERELEASE" "$GENERATED_FILE" | sed 's/.*= //;s/"//g;s/ .*//')
+            if [[ "$PRERELEASE" == "null" ]]; then
+              PRERELEASE=""
+            fi
+
+            if [[ -n "$PRERELEASE" ]]; then
+              BUILT_VERSION="${MAJOR}.${MINOR}.${PATCH}-${PRERELEASE}"
+            else
+              BUILT_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+            fi
+            echo "Built version (from VersionConstants.kt): $BUILT_VERSION"
+
+            if [[ "$BUILT_VERSION" != "$EXPECTED_VERSION" ]]; then
+              echo "❌ VERSION MISMATCH DETECTED!"
+              echo "   Expected: $EXPECTED_VERSION"
+              echo "   Built: $BUILT_VERSION"
+              echo "   This is the root cause of Issue #111"
+              echo ""
+              echo "VersionConstants.kt contents:"
+              cat "$GENERATED_FILE"
+              exit 1
+            else
+              echo "✅ Version verification passed: $BUILT_VERSION"
+            fi
+          else
+            echo "⚠️ VersionConstants.kt not found - this indicates build issue"
+            exit 1
+          fi
+        shell: bash
+
+      - name: Check if signing secret is available
+        id: check-secret
+        run: |
+          if [ -n "$CERT_HOST" ]; then
+            echo "can_sign=true" >> $GITHUB_OUTPUT
+          else
+            echo "can_sign=false" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
+        env:
+          CERT_HOST: ${{ secrets.CODE_SIGNING_CERT_HOST }}
+
+      - name: Find MSI File
+        id: find-msi
+        run: |
+          $msiFiles = Get-ChildItem "composeApp/build/compose/binaries/main/msi/BOSS-*.msi" -ErrorAction SilentlyContinue
+          if ($msiFiles) {
+            $msiPath = $msiFiles[0].FullName
+            Write-Host "Found MSI: $msiPath"
+            echo "msi-path=$msiPath" >> $env:GITHUB_OUTPUT
+          } else {
+            Write-Host "MSI file not found!"
+            exit 1
+          }
+        shell: powershell
+
+      - name: Decode Client Certificate
+        if: ${{ steps.check-secret.outputs.can_sign == 'true' }}
+        run: |
+          try {
+            $certContent = "${{ secrets.CODE_SIGNING_CLIENT_CERT }}"
+            $certBytes = [System.Convert]::FromBase64String($certContent)
+            $certPath = "${{ runner.temp }}\Certificate_pkcs12.p12"
+            [System.IO.File]::WriteAllBytes($certPath, $certBytes)
+            Write-Host "Client cert decoded successfully to $certPath"
+          } catch {
+            Write-Host "Error decoding client cert: $_"
+            exit 1
+          }
+        shell: powershell
+
+      - name: Verify Client Cert File Exists
+        if: ${{ steps.check-secret.outputs.can_sign == 'true' }}
+        run: |
+          $certPath = "${{ runner.temp }}\Certificate_pkcs12.p12"
+          if (Test-Path $certPath) {
+            Write-Host "[OK] Cert file exists at $certPath"
+            Write-Host "File size: $((Get-Item $certPath).Length) bytes"
+          } else {
+            Write-Host "[ERROR] Cert file MISSING at $certPath"
+            exit 1
+          }
+        shell: powershell
+
+      - name: Install DigiCert STM Client Tools
+        if: ${{ steps.check-secret.outputs.can_sign == 'true' }}
+        uses: digicert/ssm-code-signing@v1.2.1
+        env:
+          SM_HOST: ${{ secrets.CODE_SIGNING_CERT_HOST }}
+          SM_API_KEY: ${{ secrets.CODE_SIGNING_CERT_HOST_API_KEY }}
+          SM_CLIENT_CERT_FILE: ${{ runner.temp }}\Certificate_pkcs12.p12
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.CODE_SIGNING_CLIENT_CERT_PASSWORD }}
+          SM_TRACE: true
+
+      - name: Reset SMCTL Credentials
+        if: ${{ steps.check-secret.outputs.can_sign == 'true' }}
+        run: |
+          smctl credentials delete
+          smctl credentials save ${{ secrets.CODE_SIGNING_CERT_HOST_API_KEY }} ${{ secrets.CODE_SIGNING_CLIENT_CERT_PASSWORD }}
+        shell: cmd
+        env:
+          SM_HOST: ${{ secrets.CODE_SIGNING_CERT_HOST }}
+          SM_API_KEY: ${{ secrets.CODE_SIGNING_CERT_HOST_API_KEY }}
+          SM_CLIENT_CERT_FILE: ${{ runner.temp }}\Certificate_pkcs12.p12
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.CODE_SIGNING_CLIENT_CERT_PASSWORD }}
+          SM_TRACE: true
+
+      - name: Run SMCTL Healthcheck
+        if: ${{ steps.check-secret.outputs.can_sign == 'true' }}
+        run: |
+          smctl healthcheck
+        shell: cmd
+        env:
+          SM_HOST: ${{ secrets.CODE_SIGNING_CERT_HOST }}
+          SM_API_KEY: ${{ secrets.CODE_SIGNING_CERT_HOST_API_KEY }}
+          SM_CLIENT_CERT_FILE: ${{ runner.temp }}\Certificate_pkcs12.p12
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.CODE_SIGNING_CLIENT_CERT_PASSWORD }}
+          SM_TRACE: true
+
+      - name: Sign Windows MSI with DigiCert KeyLocker
+        if: ${{ steps.check-secret.outputs.can_sign == 'true' }}
+        run: |
+          echo "Signing MSI: ${{ steps.find-msi.outputs.msi-path }}"
+          echo "Using keypair: ${{ secrets.CODE_SIGNING_KEYPAIR_ALIAS }}"
+          smctl sign --keypair-alias "${{ secrets.CODE_SIGNING_KEYPAIR_ALIAS }}" --input "${{ steps.find-msi.outputs.msi-path }}" --verbose
+        shell: bash
+        env:
+          SM_HOST: ${{ secrets.CODE_SIGNING_CERT_HOST }}
+          SM_API_KEY: ${{ secrets.CODE_SIGNING_CERT_HOST_API_KEY }}
+          SM_CLIENT_CERT_FILE: ${{ runner.temp }}\Certificate_pkcs12.p12
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.CODE_SIGNING_CLIENT_CERT_PASSWORD }}
+          SM_TRACE: true
+
+      - name: Check SMKSP Log (for diagnostics)
+        if: always()  # Runs even if signing fails
+        run: |
+          $logPath = "$env:USERPROFILE\.signingmanager\logs\smksp.log"
+          if (Test-Path $logPath) {
+            Write-Host "SMKSP Log Contents:"
+            Get-Content $logPath -Tail 50  # Last 50 lines for recent errors
+          } else {
+            Write-Host "SMKSP log not found."
+          }
+        shell: powershell
+
+      - name: 📊 Verify Build Artifacts
+        run: |
+          $msiPath = "composeApp/build/compose/binaries/main/msi/BOSS-*.msi"
+          $msiFiles = Get-ChildItem $msiPath -ErrorAction SilentlyContinue
+          if ($msiFiles) {
+            Write-Host "✅ MSI found: $($msiFiles[0].FullName)"
+            Write-Host "   Size: $([math]::Round($msiFiles[0].Length/1MB,2)) MB"
+          } else {
+            Write-Host "❌ MSI not found at expected location"
+            Write-Host "Searching for MSI files recursively..."
+            $allMsi = Get-ChildItem "composeApp/build" -Recurse -Filter "*.msi" -ErrorAction SilentlyContinue
+            if ($allMsi) {
+              Write-Host "Found MSI at: $($allMsi[0].FullName)"
+            } else {
+              Write-Host "No MSI files found anywhere in build directory"
+              exit 1
+            }
+          }
+        shell: powershell
+
+      - name: 📤 Upload Windows MSI
+        uses: actions/upload-artifact@v7
+        with:
+          name: boss-windows-${{ needs.prepare-version.outputs.version }}
+          path: composeApp/build/compose/binaries/main/msi/
+          retention-days: 30
+
+  build-windows-arm64:
+    needs: prepare-version
+    if: needs.prepare-version.outputs.should-build == 'true'
+    runs-on: windows_arm64
+    continue-on-error: true  # Graceful failure if ARM runner unavailable
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare-version.outputs.updated-sha }}
+
+      - name: ☕ Setup JDK
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'microsoft'  # Temurin doesn't have JDK 17 for Windows ARM64
+
+      - name: 🎯 Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: 🔧 Setup Build Environment
+        shell: powershell
+        run: |
+          Write-Host "Setting up build environment for Windows ARM64"
+          Write-Host "Version: ${{ needs.prepare-version.outputs.version }}"
+          ./gradlew showVersion
+
+      - name: 🔍 Get JxBrowser Version
+        shell: powershell
+        run: |
+          $content = Get-Content 'gradle/libs.versions.toml' -Raw
+          if ($content -match 'jxbrowser = "([^"]+)"') {
+            $JXBROWSER_VERSION = $matches[1]
+            Write-Host "JxBrowser version: $JXBROWSER_VERSION"
+            "JXBROWSER_VERSION=$JXBROWSER_VERSION" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          }
+
+      - name: 📥 Download Branded Chromium (Windows ARM64)
+        shell: powershell
+        run: |
+          Write-Host "Downloading BOSS-branded Chromium for Windows ARM64..."
+          $CHROMIUM_URL = "https://github.com/risa-labs-inc/BossConsole-Releases/releases/download/chromium-v$env:JXBROWSER_VERSION/boss-chromium-windows-arm64.zip"
+          New-Item -ItemType Directory -Force -Path 'branded-chromium' | Out-Null
+          try {
+            Invoke-WebRequest -Uri $CHROMIUM_URL -OutFile 'branded-chromium/boss-chromium-windows-arm64.zip' -ErrorAction Stop
+            Write-Host "Downloaded branded Chromium"
+            Expand-Archive -Path 'branded-chromium/boss-chromium-windows-arm64.zip' -DestinationPath 'branded-chromium' -Force
+            "BRANDED_CHROMIUM_AVAILABLE=true" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          } catch {
+            Write-Host "Branded Chromium not available yet"
+            "BRANDED_CHROMIUM_AVAILABLE=false" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          }
+
+      - name: 🏗️ Build Windows ARM64 App
+        shell: powershell
+        run: |
+          Write-Host "Building Windows ARM64 app..."
+          ./gradlew createDistributable
+          Write-Host "Windows ARM64 app build completed"
+
+      - name: 📦 Bundle Branded Chromium (Windows ARM64)
+        if: env.BRANDED_CHROMIUM_AVAILABLE == 'true'
+        shell: powershell
+        run: |
+          Write-Host "Bundling BOSS-branded Chromium into Windows ARM64 app..."
+          $APP_DIR = Get-ChildItem -Path 'composeApp/build/compose/binaries/main/app' -Directory -Recurse | Where-Object { $_.Name -eq 'BOSS' } | Select-Object -First 1
+          if ($APP_DIR) {
+            Write-Host "Found app directory: $($APP_DIR.FullName)"
+            $CHROMIUM_DIR = Join-Path $APP_DIR.FullName 'chromium'
+            New-Item -ItemType Directory -Force -Path $CHROMIUM_DIR | Out-Null
+            Copy-Item -Path 'branded-chromium/*' -Destination $CHROMIUM_DIR -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -Path "$CHROMIUM_DIR/*.zip" -Force -ErrorAction SilentlyContinue
+            Write-Host "Branded Chromium bundled at: $CHROMIUM_DIR"
+            Get-ChildItem $CHROMIUM_DIR
+          } else {
+            Write-Host "App directory not found, skipping Chromium bundling"
+          }
+
+      - name: 🏗️ Package Windows ARM64 MSI
+        shell: powershell
+        run: |
+          Write-Host "Packaging Windows ARM64 MSI..."
+          ./gradlew packageMsi
+          Write-Host "Windows ARM64 MSI build completed successfully"
+
+      - name: 🔍 Verify Built Version (Windows ARM64)
+        shell: powershell
+        env:
+          EXPECTED_VERSION: ${{ needs.prepare-version.outputs.version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "Verifying version inside built artifacts..."
+          Write-Host "Expected version: $env:EXPECTED_VERSION"
+          $GENERATED_FILE = 'composeApp/build/generated/source/version/ai/rever/boss/utils/VersionConstants.kt'
+          if (Test-Path $GENERATED_FILE) {
+            Write-Host "Checking generated VersionConstants.kt..."
+            $content = Get-Content $GENERATED_FILE -Raw
+            # Use multiline mode (?m) so ^ matches start of each line
+            $MAJOR = if ($content -match '(?m)^\s*const val MAJOR\s*=\s*(\d+)') { $matches[1] } else { '' }
+            $MINOR = if ($content -match '(?m)^\s*const val MINOR\s*=\s*(\d+)') { $matches[1] } else { '' }
+            $PATCH = if ($content -match '(?m)^\s*const val PATCH\s*=\s*(\d+)') { $matches[1] } else { '' }
+            # Extract prerelease - handles both null and quoted string like "beta.1"
+            $PRERELEASE = ''
+            if ($content -match '(?m)^\s*(const\s+)?val\s+PRERELEASE[^=]*=\s*"([^"]+)"') {
+              $PRERELEASE = $matches[2]
+            }
+            if ($PRERELEASE) {
+              $BUILT_VERSION = "$MAJOR.$MINOR.$PATCH-$PRERELEASE"
+            } else {
+              $BUILT_VERSION = "$MAJOR.$MINOR.$PATCH"
+            }
+            Write-Host "Built version (from VersionConstants.kt): $BUILT_VERSION"
+            if ($BUILT_VERSION -ne $env:EXPECTED_VERSION) {
+              Write-Host "VERSION MISMATCH DETECTED!"
+              Write-Host "Expected: $env:EXPECTED_VERSION"
+              Write-Host "Built: $BUILT_VERSION"
+              exit 1
+            } else {
+              Write-Host "Version verification passed: $BUILT_VERSION"
+            }
+          } else {
+            Write-Host "VersionConstants.kt not found - this indicates build issue"
+            exit 1
+          }
+
+      - name: 📊 Verify Build Artifacts (Windows ARM64)
+        shell: powershell
+        run: |
+          $msiPath = 'composeApp/build/compose/binaries/main/msi/BOSS-*.msi'
+          $msiFiles = Get-ChildItem $msiPath -ErrorAction SilentlyContinue
+          if ($msiFiles) {
+            Write-Host "MSI found: $($msiFiles[0].FullName)"
+            Write-Host "Size: $([math]::Round($msiFiles[0].Length/1MB,2)) MB"
+          } else {
+            Write-Host "MSI not found at expected location"
+            Write-Host "Searching for MSI files recursively..."
+            $allMsi = Get-ChildItem 'composeApp/build' -Recurse -Filter '*.msi' -ErrorAction SilentlyContinue
+            if ($allMsi) {
+              Write-Host "Found MSI at: $($allMsi[0].FullName)"
+            } else {
+              Write-Host "No MSI files found anywhere in build directory"
+              exit 1
+            }
+          }
+
+      - name: 📤 Upload Windows ARM64 MSI
+        uses: actions/upload-artifact@v7
+        with:
+          name: boss-windows-arm64-${{ needs.prepare-version.outputs.version }}
+          path: composeApp/build/compose/binaries/main/msi/
+          retention-days: 30
+
+  create-release:
+    needs: [prepare-version, build-macos-arm64, build-linux-amd64, build-linux-arm64, build-windows, build-windows-arm64]
+    # Run if required builds succeed, even if ARM64 fails/is cancelled (ARM64 is optional)
+    if: |
+      always() &&
+      needs.prepare-version.outputs.should-build == 'true' &&
+      needs.build-macos-arm64.result == 'success' &&
+      needs.build-linux-amd64.result == 'success' &&
+      needs.build-windows.result == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare-version.outputs.updated-sha }}
+
+      - name: 📥 Download All Artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: ./artifacts
+
+      - name: ☕ Setup JDK 17 (for upstream-jar assembly)
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: 🎯 Setup Gradle (for upstream-jar assembly)
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: 📦 Assemble upstream IPC JARs
+        run: |
+          set -euo pipefail
+          # Phase 1 of microkernel-runtime extraction. Produces
+          # boss-ipc-<ipcVersion>.jar, boss-ui-sdk-<ipcVersion>.jar,
+          # plugin-api-ipc-<ipcVersion>.jar, plugin-api-core-<ipcVersion>.jar
+          # under build/upstream-artifacts/. The standalone runtime repo
+          # downloads these at build time.
+          ./gradlew assembleUpstreamJars --no-daemon
+          echo "Upstream IPC artifacts:"
+          ls -lh build/upstream-artifacts/
+
+      - name: 📋 Prepare Release Assets
+        env:
+          VERSION: ${{ needs.prepare-version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          echo "📋 Preparing release assets..."
+          mkdir -p ./release-assets
+
+          # Upstream IPC jars — appended to every BossConsole release.
+          # File names are <module>-<ipcVersion>.jar (independent of
+          # BossConsole's app version) so consumers can pin by IPC version.
+          cp build/upstream-artifacts/*.jar ./release-assets/ 2>/dev/null || true
+
+          # Copy and rename artifacts with consistent naming
+
+          # macOS Universal (ARM64, works on Intel via Rosetta 2)
+          find ./artifacts -name "*.dmg" -path "*macos-arm64*" -exec cp {} ./release-assets/BOSS-${VERSION}-Universal.dmg \; 2>/dev/null || true
+
+          # Windows x64
+          find ./artifacts -name "*.msi" -path "*boss-windows-$VERSION*" -exec cp {} ./release-assets/BOSS-${VERSION}.msi \; 2>/dev/null || true
+
+          # Windows ARM64 (tolerate missing - ARM64 build may fail)
+          find ./artifacts -name "*.msi" -path "*arm64*" -exec cp {} ./release-assets/BOSS-${VERSION}-arm64.msi \; 2>/dev/null || true
+
+          # Linux AMD64 artifacts (use path matching)
+          find ./artifacts -name "*.deb" -path "*amd64*" -exec cp {} ./release-assets/BOSS-${VERSION}-amd64.deb \; 2>/dev/null || true
+          find ./artifacts -name "*.rpm" -path "*amd64*" -exec cp {} ./release-assets/BOSS-${VERSION}-amd64.rpm \; 2>/dev/null || true
+          find ./artifacts -name "*-all.jar" -path "*amd64*" -exec cp {} ./release-assets/BOSS-${VERSION}-amd64.jar \; 2>/dev/null || true
+
+          # Linux ARM64 artifacts (tolerate missing - ARM64 build may fail)
+          find ./artifacts -name "*.deb" -path "*linux-arm64*" -exec cp {} ./release-assets/BOSS-${VERSION}-arm64.deb \; 2>/dev/null || true
+          find ./artifacts -name "*.rpm" -path "*linux-arm64*" -exec cp {} ./release-assets/BOSS-${VERSION}-arm64.rpm \; 2>/dev/null || true
+          find ./artifacts -name "*-all.jar" -path "*linux-arm64*" -exec cp {} ./release-assets/BOSS-${VERSION}-arm64.jar \; 2>/dev/null || true
+
+          # List final artifacts
+          echo "📦 Release assets:"
+          ls -la ./release-assets/
+
+      - name: 📝 Generate Release Notes
+        id: release-notes
+        env:
+          VERSION: ${{ needs.prepare-version.outputs.version }}
+          IS_PRERELEASE: ${{ needs.prepare-version.outputs.is-prerelease }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # Generate release notes with prerelease indicator
+          if [[ "$IS_PRERELEASE" == "true" ]]; then
+            RELEASE_TITLE="🧪 BOSS $VERSION (Pre-release)"
+            PRERELEASE_WARNING="
+          > ⚠️ **This is a pre-release version.** It may contain bugs or incomplete features.
+          > Pre-releases are intended for testing and feedback. For production use, please use the latest stable release.
+          "
+          else
+            RELEASE_TITLE="🚀 BOSS $VERSION"
+            PRERELEASE_WARNING=""
+          fi
+
+          cat > release-notes.md << EOF
+          # $RELEASE_TITLE
+          $PRERELEASE_WARNING
+
+          ## 📦 Downloads
+
+          | Platform | Architecture | Package |
+          |----------|--------------|---------|
+          | **macOS** | Universal (Apple Silicon + Intel via Rosetta) | \`BOSS-${VERSION}-Universal.dmg\` |
+          | **Windows** | x64 | \`BOSS-${VERSION}.msi\` |
+          | **Windows** | ARM64 | \`BOSS-${VERSION}-arm64.msi\` |
+          | **Linux DEB** | AMD64 (x86_64) | \`BOSS-${VERSION}-amd64.deb\` |
+          | **Linux DEB** | ARM64 (aarch64) | \`BOSS-${VERSION}-arm64.deb\` |
+          | **Linux RPM** | AMD64 (x86_64) | \`BOSS-${VERSION}-amd64.rpm\` |
+          | **Linux RPM** | ARM64 (aarch64) | \`BOSS-${VERSION}-arm64.rpm\` |
+          | **Linux JAR** | AMD64 (x86_64) | \`BOSS-${VERSION}-amd64.jar\` |
+          | **Linux JAR** | ARM64 (aarch64) | \`BOSS-${VERSION}-arm64.jar\` |
+
+          ## ✨ What's New
+
+          - Auto-generated release for version $VERSION
+          - Built with centralized version management system
+          - All platforms synchronized and tested
+          - Full Linux support with native packages (AMD64 and ARM64)
+
+          ## 🔧 System Requirements
+
+          - **macOS**: macOS 11.0+ (Big Sur)
+          - **Windows**: Windows 10+ (64-bit)
+          - **Linux**: Any modern distribution (AMD64 or ARM64)
+
+          ## 🛠️ Installation
+
+          ### macOS
+          1. Download \`BOSS-${VERSION}-Universal.dmg\`
+          2. Open the DMG and drag BOSS to Applications
+          3. Launch from Applications folder
+
+          > Works on both Apple Silicon and Intel Macs (Intel via Rosetta 2)
+
+          ### Windows (x64)
+          1. Download \`BOSS-${VERSION}.msi\`
+          2. Run the installer as Administrator
+          3. Launch from Start Menu or Desktop
+
+          ### Windows (ARM64)
+          1. Download \`BOSS-${VERSION}-arm64.msi\`
+          2. Run the installer as Administrator
+          3. Launch from Start Menu or Desktop
+
+          ### Linux (AMD64 / x86_64)
+
+          **Ubuntu/Debian:**
+          \`\`\`bash
+          wget https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/BOSS-${VERSION}-amd64.deb
+          sudo dpkg -i BOSS-${VERSION}-amd64.deb
+          sudo apt-get install -f  # Fix any missing dependencies
+          \`\`\`
+
+          **RHEL/Fedora/openSUSE:**
+          \`\`\`bash
+          wget https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/BOSS-${VERSION}-amd64.rpm
+          sudo rpm -i BOSS-${VERSION}-amd64.rpm
+          \`\`\`
+
+          **JAR (requires Java 17+):**
+          \`\`\`bash
+          wget https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/BOSS-${VERSION}-amd64.jar
+          java -jar BOSS-${VERSION}-amd64.jar
+          \`\`\`
+
+          ### Linux (ARM64 / aarch64)
+
+          **Ubuntu/Debian:**
+          \`\`\`bash
+          wget https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/BOSS-${VERSION}-arm64.deb
+          sudo dpkg -i BOSS-${VERSION}-arm64.deb
+          sudo apt-get install -f  # Fix any missing dependencies
+          \`\`\`
+
+          **RHEL/Fedora/openSUSE:**
+          \`\`\`bash
+          wget https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/BOSS-${VERSION}-arm64.rpm
+          sudo rpm -i BOSS-${VERSION}-arm64.rpm
+          \`\`\`
+
+          **JAR (requires Java 17+):**
+          \`\`\`bash
+          wget https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/BOSS-${VERSION}-arm64.jar
+          java -jar BOSS-${VERSION}-arm64.jar
+          \`\`\`
+
+          ---
+
+          🤖 *This release was automatically built and published by GitHub Actions*
+          EOF
+
+          # Set output for release creation
+          echo "notes-file=release-notes.md" >> $GITHUB_OUTPUT
+
+      - name: 🎉 Create GitHub Release
+        # Handle different trigger types:
+        # - push (tag): always create release
+        # - workflow_call: check inputs.create_release (boolean)
+        # - workflow_dispatch: check github.event.inputs.create_release (string)
+        if: |
+          github.event_name == 'push' ||
+          (github.event_name == 'workflow_call' && inputs.create_release != false) ||
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release != 'false')
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ needs.prepare-version.outputs.version }}
+          name: ${{ needs.prepare-version.outputs.is-prerelease == 'true' && '🧪 Pre-release' || '🚀 Release' }} BOSS ${{ needs.prepare-version.outputs.version }}
+          body_path: ${{ steps.release-notes.outputs.notes-file }}
+          files: ./release-assets/*
+          draft: false
+          prerelease: ${{ needs.prepare-version.outputs.is-prerelease == 'true' }}
+          make_latest: ${{ needs.prepare-version.outputs.is-prerelease != 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
+
+      - name: 📢 Release Summary
+        env:
+          VERSION: ${{ needs.prepare-version.outputs.version }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          echo "## 🎉 Release Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Version**: ${VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Trigger**: ${GITHUB_EVENT_NAME}" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Platforms Built**: macOS, Linux (AMD64 + ARM64), Windows (x64 + ARM64)" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Release Created**: https://github.com/${GITHUB_REPOSITORY}/releases/tag/v${VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📦 Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "- 🍎 macOS DMG (Universal - Apple Silicon & Intel)" >> $GITHUB_STEP_SUMMARY
+          echo "- 🐧 Linux DEB (AMD64 + ARM64)" >> $GITHUB_STEP_SUMMARY
+          echo "- 🐧 Linux RPM (AMD64 + ARM64)" >> $GITHUB_STEP_SUMMARY
+          echo "- 🐧 Linux JAR (AMD64 + ARM64)" >> $GITHUB_STEP_SUMMARY
+          echo "- 🪟 Windows MSI (x64 + ARM64)" >> $GITHUB_STEP_SUMMARY

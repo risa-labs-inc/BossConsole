@@ -1,0 +1,11 @@
+{
+  "imports": {
+    "hono/cors": "npm:hono@^4.9.9/cors",
+    "@hono/zod-openapi": "npm:@hono/zod-openapi@^0.18.4",
+    "@supabase/supabase-js": "jsr:@supabase/supabase-js@^2.58.0"
+  },
+  "compilerOptions": {
+    "lib": ["deno.window", "deno.unstable"],
+    "strict": true
+  }
+}

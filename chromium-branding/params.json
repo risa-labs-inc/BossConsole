@@ -1,0 +1,25 @@
+{
+  "version": "9.3.0",
+  "win": {
+    "executableName": "boss-browser",
+    "processDisplayName": "BOSS",
+    "legalCopyright": "2024 Risa Labs Inc. All rights reserved.",
+    "author": "Risa Labs Inc.",
+    "productName": "BOSS",
+    "icoPath": "assets/boss_icon.ico",
+    "signCommand": "signtool sign /tr http://timestamp.digicert.com /td sha256 /fd sha256 /sha1 ${WINDOWS_CERT_THUMBPRINT} \"@@BINARY_PATH@@\""
+  },
+  "mac": {
+    "bundle": {
+      "name": "BOSS",
+      "id": "ai.rever.boss.browser"
+    },
+    "icnsPath": "assets/boss_icon.icns",
+    "codesignIdentity": "${MACOS_DEVELOPER_ID}",
+    "codesignEntitlements": "entitlements/boss-chromium.entitlements",
+    "teamID": "${MACOS_TEAM_ID}"
+  },
+  "linux": {
+    "executableName": "boss-browser"
+  }
+}

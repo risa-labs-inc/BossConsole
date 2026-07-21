@@ -1,0 +1,16 @@
+[
+  {
+    "_comment": "Placeholder for protobuf reflection config. Generate full config by running native-image-agent during integration tests:",
+    "_command": "java -agentlib:native-image-agent=config-output-dir=src/main/resources/META-INF/native-image/ai.rever.boss/boss-ipc/ -jar boss-ipc-all.jar",
+    "name": "com.google.protobuf.GeneratedMessageV3",
+    "allDeclaredConstructors": true,
+    "allPublicConstructors": true,
+    "allDeclaredMethods": true,
+    "allPublicMethods": true
+  },
+  {
+    "name": "com.google.protobuf.Descriptors$FileDescriptor",
+    "allDeclaredMethods": true,
+    "allPublicMethods": true
+  }
+]

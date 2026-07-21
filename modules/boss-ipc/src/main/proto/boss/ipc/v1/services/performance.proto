@@ -1,0 +1,99 @@
+syntax = "proto3";
+
+package boss.ipc.v1.services;
+
+import "boss/ipc/v1/common.proto";
+
+option java_package = "ai.rever.boss.ipc.proto.services";
+option java_multiple_files = true;
+
+// PerformanceService exposes runtime performance metrics and settings to plugins.
+// Kernel-side implementation collects JVM, CPU, and resource metrics and streams
+// them to out-of-process consumers.
+service PerformanceService {
+  // Stream the latest performance snapshot as it updates
+  rpc WatchCurrentSnapshot(boss.ipc.v1.Empty) returns (stream PerformanceSnapshotProto);
+
+  // Stream historical performance data
+  rpc WatchHistory(boss.ipc.v1.Empty) returns (stream PerformanceHistoryResponse);
+
+  // Stream performance settings as they change
+  rpc WatchSettings(boss.ipc.v1.Empty) returns (stream PerformanceSettingsProto);
+
+  // Request a garbage collection cycle
+  rpc RequestGC(boss.ipc.v1.Empty) returns (boss.ipc.v1.Empty);
+
+  // Export current metrics as a formatted string
+  rpc ExportMetrics(boss.ipc.v1.Empty) returns (ExportMetricsResponse);
+
+  // Update performance monitoring settings
+  rpc UpdateSettings(PerformanceSettingsProto) returns (boss.ipc.v1.Empty);
+}
+
+// ---- Snapshot ----
+
+message PerformanceSnapshotProto {
+  int64 timestamp = 1;
+  int64 heap_used_bytes = 2;
+  int64 heap_max_bytes = 3;
+  int64 heap_committed_bytes = 4;
+  float heap_usage_percent = 5;
+  int64 non_heap_used_bytes = 6;
+  int64 non_heap_committed_bytes = 7;
+  float process_load_percent = 8;
+  float system_load_percent = 9;
+  int32 active_thread_count = 10;
+  int32 available_processors = 11;
+  int64 gc_collection_count = 12;
+  int64 gc_collection_time_ms = 13;
+  int32 browser_tab_count = 14;
+  int32 terminal_count = 15;
+  int32 editor_tab_count = 16;
+  int32 panel_count = 17;
+  int32 window_count = 18;
+  repeated ChildProcessProto child_processes = 19;
+}
+
+message ChildProcessProto {
+  string process_id = 1;
+  string plugin_id = 2;
+  string display_name = 3;
+  int64 pid = 4;
+  string state = 5;
+  int64 heap_used_bytes = 6;
+  int64 heap_max_bytes = 7;
+  int32 active_threads = 8;
+  int64 uptime_ms = 9;
+  int32 restart_count = 10;
+  bool bridge_connected = 11;
+}
+
+// ---- History ----
+
+message PerformanceHistoryResponse {
+  repeated PerformanceSnapshotProto snapshots = 1;
+}
+
+// ---- Settings ----
+
+message PerformanceSettingsProto {
+  bool enabled = 1;
+  bool show_indicator = 2;
+  int32 memory_warning_threshold_percent = 3;
+  int32 memory_critical_threshold_percent = 4;
+  int32 cpu_warning_threshold_percent = 5;
+  int32 cpu_critical_threshold_percent = 6;
+  int64 memory_sample_interval_ms = 7;
+  int64 cpu_sample_interval_ms = 8;
+  int32 history_retention_minutes = 9;
+  int32 plugin_jvm_heap_mb = 10;
+  int32 plugin_jvm_initial_heap_mb = 11;
+}
+
+// ---- Export ----
+
+message ExportMetricsResponse {
+  bool success = 1;
+  string file_path = 2;
+  string error_message = 3;
+}

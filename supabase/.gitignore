@@ -1,0 +1,53 @@
+# Supabase
+.branches
+.temp
+seed.sql
+
+# Deno
+.deno/
+vendor/
+deno.lock
+
+# Environment
+.env
+.env.keys
+.env.local
+.env.*.local
+*.env
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+supabase/.logs/
+
+# Test files
+coverage/
+
+# Build/Cache
+dist/
+build/
+.cache/
+
+# Temporary
+*.tmp
+*.temp
+tmp/
+temp/
+
+# Private keys
+*.pem
+*.key
+*.cert
+
+# Function-specific
+functions/*/node_modules/
+functions/*/.npmrc

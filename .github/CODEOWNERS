@@ -1,0 +1,183 @@
+# 👥 BOSS Code Owners
+# 
+# This file defines code owners for different parts of the BOSS repository.
+# Code owners are automatically requested for review when changes are made
+# to their respective areas of the codebase.
+#
+# Learn more: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# ================================================
+# 🌟 Global Owners - Default reviewers for all changes
+# ================================================
+
+* @kshivang
+
+# ================================================
+# 🔧 Build & Configuration
+# ================================================
+
+# Version management - Critical for releases
+version.properties @kshivang
+gradle/version.gradle @kshivang
+
+# Build scripts - Platform-specific builds
+build-dmg.sh @kshivang
+build-msi.bat @kshivang
+build-windows-standalone.bat @kshivang
+*.gradle* @kshivang
+gradle.properties @kshivang
+settings.gradle.kts @kshivang
+
+# Gradle wrapper - Security critical
+gradle/wrapper/ @kshivang
+gradlew @kshivang
+gradlew.bat @kshivang
+
+# ================================================
+# 🚀 CI/CD & Automation
+# ================================================
+
+# GitHub Actions workflows
+.github/workflows/ @kshivang
+.github/dependabot.yml @kshivang
+.github/CODEOWNERS @kshivang
+
+# Release and deployment
+.github/branch-protection-setup.md @kshivang
+
+# ================================================
+# 🏗️ Core Application Architecture
+# ================================================
+
+# Main application entry points
+composeApp/src/commonMain/kotlin/ai/rever/boss/BossApp.kt @kshivang
+composeApp/src/desktopMain/kotlin/ai/rever/boss/main.kt @kshivang
+
+# Version and update system - Critical for auto-updates
+composeApp/src/commonMain/kotlin/ai/rever/boss/utils/Version.kt @kshivang
+composeApp/src/commonMain/kotlin/ai/rever/boss/updater/ @kshivang
+composeApp/src/desktopMain/kotlin/ai/rever/boss/updater/ @kshivang
+
+# Configuration system
+composeApp/src/commonMain/kotlin/ai/rever/boss/components/configuration/ @kshivang
+composeApp/src/desktopMain/kotlin/ai/rever/boss/components/configuration/ @kshivang
+
+# ================================================
+# 🖥️ Platform-Specific Code
+# ================================================
+
+# Desktop platform (macOS, Windows, Linux)
+composeApp/src/desktopMain/ @kshivang
+
+# Android platform
+composeApp/src/androidMain/ @kshivang
+
+# iOS platform  
+composeApp/src/iosMain/ @kshivang
+iosApp/ @kshivang
+
+# Web platform
+composeApp/src/wasmJsMain/ @kshivang
+
+# ================================================
+# 🔧 Core Components & Systems
+# ================================================
+
+# Window management and UI framework
+composeApp/src/commonMain/kotlin/ai/rever/boss/components/windows/ @kshivang
+composeApp/src/desktopMain/kotlin/ai/rever/boss/components/windows/ @kshivang
+
+# Plugin system and panels
+composeApp/src/commonMain/kotlin/ai/rever/boss/components/plugin/ @kshivang
+
+# Terminal integration
+composeApp/src/commonMain/kotlin/ai/rever/boss/components/plugin/panels/bottom/terminal/ @kshivang
+composeApp/src/desktopMain/kotlin/ai/rever/boss/components/plugin/panels/bottom/terminal/ @kshivang
+
+# LLM and AI integration
+composeApp/src/commonMain/kotlin/ai/rever/boss/components/plugin/panels/right_top/LLM* @kshivang
+composeApp/src/desktopMain/kotlin/ai/rever/boss/components/plugin/panels/right_top/Desktop*LLM* @kshivang
+
+# RPA (Robotic Process Automation)
+composeApp/src/commonMain/kotlin/ai/rever/boss/components/plugin/panels/right_top/Rpa* @kshivang
+composeApp/src/desktopMain/kotlin/ai/rever/boss/components/plugin/panels/right_top/Desktop*Rpa* @kshivang
+
+# Browser integration (Fluck)
+composeApp/src/commonMain/kotlin/ai/rever/boss/components/plugin/tab_types/fluck/ @kshivang
+composeApp/src/desktopMain/kotlin/ai/rever/boss/components/plugin/tab_types/fluck/ @kshivang
+
+# ================================================
+# 🛠️ Utilities & System Integration
+# ================================================
+
+# System utilities and platform abstraction
+composeApp/src/commonMain/kotlin/ai/rever/boss/utils/ @kshivang
+composeApp/src/desktopMain/kotlin/ai/rever/boss/utils/ @kshivang
+
+# Platform-specific integrations
+composeApp/src/commonMain/kotlin/ai/rever/boss/platform/ @kshivang
+composeApp/src/desktopMain/kotlin/ai/rever/boss/platform/ @kshivang
+
+# ================================================
+# 📚 Documentation & Configuration
+# ================================================
+
+# Main documentation
+README.md @kshivang
+*.md @kshivang
+
+# License and legal
+LICENSE* @kshivang
+
+# Configuration files
+*.properties @kshivang
+local.properties @kshivang
+
+# IDE configuration
+.idea/ @kshivang
+
+# ================================================
+# 🧪 Testing & Quality
+# ================================================
+
+# Test files
+**/src/*Test*/ @kshivang
+**/src/**/*Test.kt @kshivang
+**/test/ @kshivang
+
+# ================================================
+# 📦 Dependencies & External
+# ================================================
+
+# Dependency management
+gradle/libs.versions.toml @kshivang
+
+# Server component
+server/ @kshivang
+
+# Shared libraries
+shared/ @kshivang
+
+# ================================================
+# 🔒 Security & Credentials
+# ================================================
+
+# JxBrowser configuration (contains license handling)
+composeApp/src/desktopMain/kotlin/ai/rever/boss/config/ @kshivang
+
+# Resource files with potential sensitive data
+composeApp/src/desktopMain/resources/ @kshivang
+
+# Entitlements and signing
+*.entitlements @kshivang
+
+# ================================================
+# 📝 Notes for Code Owners
+# ================================================
+
+# When reviewing PRs, please check:
+# 1. Version consistency if version-related files are changed
+# 2. Cross-platform compatibility for platform-specific changes
+# 3. Security implications for configuration and build changes
+# 4. Performance impact for core component changes
+# 5. Documentation updates for API/feature changes

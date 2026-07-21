@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+package boss.ipc.v1.services;
+
+import "boss/ipc/v1/common.proto";
+
+option java_package = "ai.rever.boss.ipc.proto.services";
+option java_multiple_files = true;
+
+service BrowserService {
+  rpc Navigate(NavigateBrowserRequest) returns (NavigateBrowserResponse);
+  rpc ExecuteJS(ExecuteJSRequest) returns (ExecuteJSResponse);
+  rpc OnNavigationEvent(boss.ipc.v1.Empty) returns (stream BrowserNavigationEvent);
+  rpc GetFavicon(GetFaviconRequest) returns (GetFaviconResponse);
+  rpc GetPageInfo(boss.ipc.v1.Empty) returns (PageInfoResponse);
+  rpc GoBack(boss.ipc.v1.Empty) returns (boss.ipc.v1.Empty);
+  rpc GoForward(boss.ipc.v1.Empty) returns (boss.ipc.v1.Empty);
+  rpc Reload(boss.ipc.v1.Empty) returns (boss.ipc.v1.Empty);
+}
+
+message NavigateBrowserRequest {
+  string url = 1;
+  string window_id = 2;
+}
+
+message NavigateBrowserResponse {
+  bool success = 1;
+  string final_url = 2;
+  string title = 3;
+  string error_message = 4;
+}
+
+message ExecuteJSRequest {
+  string script = 1;
+  string window_id = 2;
+}
+
+message ExecuteJSResponse {
+  bool success = 1;
+  string result = 2;
+  string error_message = 3;
+}
+
+message BrowserNavigationEvent {
+  string url = 1;
+  string title = 2;
+  string window_id = 3;
+  NavigationEventType event_type = 4;
+  int64 timestamp = 5;
+}
+
+enum NavigationEventType {
+  NAVIGATION_EVENT_TYPE_UNSPECIFIED = 0;
+  NAVIGATION_EVENT_TYPE_STARTED = 1;
+  NAVIGATION_EVENT_TYPE_COMMITTED = 2;
+  NAVIGATION_EVENT_TYPE_COMPLETED = 3;
+  NAVIGATION_EVENT_TYPE_FAILED = 4;
+}
+
+message GetFaviconRequest {
+  string url = 1;
+}
+
+message GetFaviconResponse {
+  bytes favicon_bytes = 1;
+  string content_type = 2;
+}
+
+message PageInfoResponse {
+  string url = 1;
+  string title = 2;
+  bool can_go_back = 3;
+  bool can_go_forward = 4;
+  bool is_loading = 5;
+}

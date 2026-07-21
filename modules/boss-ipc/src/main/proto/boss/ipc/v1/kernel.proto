@@ -1,0 +1,176 @@
+syntax = "proto3";
+
+package boss.ipc.v1;
+
+import "boss/ipc/v1/common.proto";
+
+option java_package = "ai.rever.boss.ipc.proto";
+option java_multiple_files = true;
+
+// KernelService is the central hub that all child processes connect to on startup.
+// It handles process registration, heartbeat monitoring, and lifecycle management.
+service KernelService {
+  // Register a newly started process with the kernel
+  rpc RegisterProcess(RegisterProcessRequest) returns (RegisterProcessResponse);
+
+  // Bidirectional heartbeat stream — kernel sends pings, process responds with pongs
+  rpc Heartbeat(stream HeartbeatPing) returns (stream HeartbeatPong);
+
+  // Request graceful shutdown of a process
+  rpc RequestShutdown(ShutdownRequest) returns (ShutdownResponse);
+
+  // Query the status of a specific process
+  rpc GetProcessStatus(ProcessStatusRequest) returns (ProcessStatusResponse);
+
+  // List all registered processes
+  rpc ListProcesses(Empty) returns (ListProcessesResponse);
+}
+
+// ---- Process Manifest (Quine Self-Description) ----
+
+// Every process carries a manifest describing itself — its source, behavior, health contract,
+// capabilities, and repair hints. This is the "quine" property: each process is self-describing
+// enough for the orchestrator to introspect, diagnose, and heal it.
+message ProcessManifest {
+  string process_id = 1;
+  ProcessType process_type = 2;
+  string display_name = 3;
+  string version = 4;
+  string main_class = 5;
+
+  // Quine: paths to this process's own source code files
+  repeated string source_files = 6;
+  // Paths to configuration files this process reads
+  repeated string config_files = 7;
+  // Natural language description of what this process does
+  string behavior_spec = 8;
+
+  // Services this process exposes and consumes
+  repeated string exposed_services = 9;
+  repeated string consumed_services = 10;
+  // Process IDs that must start before this one
+  repeated string dependencies = 11;
+
+  // Capabilities this process offers (used by Mastery DAG workflows)
+  repeated PluginCapability capabilities = 12;
+
+  // Health monitoring contract
+  HealthContract health_contract = 13;
+
+  // Known failure modes and how to fix them
+  repeated RepairHint repair_hints = 14;
+
+  // JSON Schema describing this process's config format (for automated config repair)
+  string config_schema_json = 15;
+
+  // Whether this process supports state snapshots for rollback
+  bool state_snapshot_enabled = 16;
+
+  // Native image binary path (for GraalVM native-image processes)
+  string native_image_path = 17;
+}
+
+// A capability that a plugin/process exposes for use in Mastery DAG workflows
+message PluginCapability {
+  string action = 1;              // e.g., "run_command", "open_file", "navigate"
+  string input_schema_json = 2;   // JSON Schema for input
+  string output_schema_json = 3;  // JSON Schema for output
+  string description = 4;         // Human-readable description
+}
+
+// Defines how the kernel should monitor this process's health
+message HealthContract {
+  int64 heartbeat_interval_ms = 1;  // How often heartbeats are expected (default: 5000)
+  int64 startup_timeout_ms = 2;     // Max time to wait for process to register (default: 30000)
+  repeated LivenessCheck liveness_checks = 3;
+  repeated ReadinessCheck readiness_checks = 4;
+}
+
+message LivenessCheck {
+  string name = 1;
+  string check_type = 2;   // "grpc_health", "http", "tcp"
+  string target = 3;       // Address/path to check
+  int64 interval_ms = 4;
+  int64 timeout_ms = 5;
+}
+
+message ReadinessCheck {
+  string name = 1;
+  string check_type = 2;
+  string target = 3;
+}
+
+// Describes a known failure mode and how to repair it
+message RepairHint {
+  string failure_pattern = 1;       // Regex matching stack trace or error message
+  FailureSeverity severity = 2;
+  RepairStrategy repair_strategy = 3;
+  string description = 4;           // Human-readable description
+  string suggested_fix = 5;         // For user escalation
+}
+
+// ---- RPC Messages ----
+
+message RegisterProcessRequest {
+  ProcessManifest manifest = 1;
+  string ipc_address = 2;  // UDS path or TCP address where this process listens
+}
+
+message RegisterProcessResponse {
+  bool success = 1;
+  string error_message = 2;
+  // Kernel provides these to the child process
+  string assigned_process_id = 3;
+  map<string, string> service_addresses = 4;  // Map of service name -> IPC address
+}
+
+message HeartbeatPing {
+  string process_id = 1;
+  int64 timestamp = 2;
+  // Optional health metrics sent with each heartbeat
+  ProcessHealthMetrics metrics = 3;
+}
+
+message HeartbeatPong {
+  string process_id = 1;
+  int64 timestamp = 2;
+  bool acknowledged = 3;
+}
+
+message ProcessHealthMetrics {
+  int64 heap_used_bytes = 1;
+  int64 heap_max_bytes = 2;
+  int32 active_threads = 3;
+  int64 uptime_ms = 4;
+  int32 error_count = 5;
+  int64 last_error_timestamp = 6;
+}
+
+message ShutdownRequest {
+  string process_id = 1;
+  bool force = 2;
+  string reason = 3;
+  int64 timeout_ms = 4;  // How long to wait for graceful shutdown before force-kill
+}
+
+message ShutdownResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+message ProcessStatusRequest {
+  string process_id = 1;
+}
+
+message ProcessStatusResponse {
+  string process_id = 1;
+  ProcessState state = 2;
+  ProcessHealthMetrics metrics = 3;
+  int64 start_time = 4;
+  int32 restart_count = 5;
+  string last_error = 6;
+}
+
+message ListProcessesResponse {
+  repeated ProcessStatusResponse processes = 1;
+}

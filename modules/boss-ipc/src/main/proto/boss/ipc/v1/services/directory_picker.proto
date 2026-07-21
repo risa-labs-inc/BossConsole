@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package boss.ipc.v1.services;
+
+import "boss/ipc/v1/common.proto";
+
+option java_package = "ai.rever.boss.ipc.proto.services";
+option java_multiple_files = true;
+
+// DirectoryPickerService exposes the native OS directory chooser dialog to
+// out-of-process plugins. The kernel displays the dialog on behalf of the plugin
+// and returns the selected path.
+service DirectoryPickerService {
+  // Open a native directory picker dialog and return the selected path
+  rpc PickDirectory(boss.ipc.v1.Empty) returns (DirectoryPickerResponse);
+}
+
+// ---- Messages ----
+
+message DirectoryPickerResponse {
+  bool selected = 1;   // True if the user chose a directory; false if cancelled
+  string path = 2;     // Absolute path to the selected directory (empty if not selected)
+}

@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+package boss.ipc.v1.services;
+
+import "boss/ipc/v1/common.proto";
+
+option java_package = "ai.rever.boss.ipc.proto.services";
+option java_multiple_files = true;
+
+// SettingsService provides persistent key-value settings storage across processes.
+// Out-of-process plugins use this to read, write, and watch application settings
+// without direct access to the host's storage layer.
+service SettingsService {
+  // Get a single setting by key
+  rpc GetSetting(GetSettingRequest) returns (SettingValue);
+
+  // Set (create or update) a setting
+  rpc SetSetting(SetSettingRequest) returns (SettingValue);
+
+  // Stream setting changes for a specific key
+  rpc WatchSetting(GetSettingRequest) returns (stream SettingValue);
+
+  // List all settings, optionally filtered by namespace prefix
+  rpc ListSettings(ListSettingsRequest) returns (SettingsListResponse);
+}
+
+// ---- Setting model ----
+
+message SettingValue {
+  string key = 1;
+  string value = 2;         // All values are stored as strings; parseable by the consumer
+  string namespace = 3;     // e.g., "boss.editor", "plugin.fluck-browser"
+  int64 updated_at = 4;
+  bool found = 5;           // False if the key does not exist (value will be empty)
+}
+
+// ---- Requests ----
+
+message GetSettingRequest {
+  string key = 1;
+  string namespace = 2;     // Optional; empty = global namespace
+  string default_value = 3; // Returned in SettingValue.value if key not found
+}
+
+message SetSettingRequest {
+  string key = 1;
+  string value = 2;
+  string namespace = 3;
+}
+
+message ListSettingsRequest {
+  string namespace_prefix = 1;  // Filter by namespace prefix. Empty = all namespaces.
+  int32 limit = 2;
+  int32 offset = 3;
+}
+
+message SettingsListResponse {
+  repeated SettingValue settings = 1;
+  int32 total_count = 2;
+}

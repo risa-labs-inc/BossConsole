@@ -1,0 +1,348 @@
+syntax = "proto3";
+
+package boss.ipc.v1.services;
+
+import "boss/ipc/v1/common.proto";
+
+option java_package = "ai.rever.boss.ipc.proto.services";
+option java_multiple_files = true;
+
+service TerminalService {
+  rpc CreateSession(CreateSessionRequest) returns (CreateSessionResponse);
+  rpc SendInput(SendInputRequest) returns (boss.ipc.v1.Empty);
+  rpc StreamOutput(StreamOutputRequest) returns (stream TerminalOutputChunk);
+  rpc Resize(ResizeRequest) returns (boss.ipc.v1.Empty);
+  rpc CloseSession(CloseSessionRequest) returns (boss.ipc.v1.Empty);
+  rpc ListSessions(boss.ipc.v1.Empty) returns (ListSessionsResponse);
+
+  // ---- Rendering RPCs (reserved scaffolding) ----
+  // Originally added for an out-of-process terminal plugin: child JVM owns
+  // the cell grid (TerminalTextBuffer + IncrementalSnapshotBuilder from
+  // bossterm-core); host subscribes to deltas and renders with a pure-Compose
+  // widget. PR #742 pivoted terminal-tab back to in-process, so the host
+  // does not implement any of the RPCs below today and IpcVersion.CURRENT
+  // stays at 1.0.0. The messages and RPC declarations are kept generated
+  // (proto3 additive) so a future minor bump can re-enable them without
+  // re-running the proto changes. Do not rely on these from a plugin until
+  // IpcVersion.CURRENT advances to at least 1.1.0 and the host gains a
+  // concrete TerminalService implementation.
+
+  // Server-stream of cell deltas for the session's screen + visible viewport.
+  // Each TerminalGridDelta carries either an incremental change set or a
+  // full redraw (is_full_redraw=true), tagged with a monotonically increasing
+  // revision so the host can detect drops.
+  rpc StreamGrid(StreamGridRequest) returns (stream TerminalGridDelta);
+
+  // Server-stream of cursor position + shape + visibility. Split from
+  // StreamGrid so cursor blink does not replay cells.
+  rpc StreamCursor(StreamCursorRequest) returns (stream CursorState);
+
+  // Server-stream of windowed scrollback (history) deltas. Host requests a
+  // row range; child streams matching lines as they enter/exit the window.
+  // Windowed by design — host must not pull entire scrollback eagerly.
+  rpc StreamScrollback(StreamScrollbackRequest) returns (stream ScrollbackDelta);
+
+  // Server-stream of shell-integration events sourced from bossterm-core's
+  // CommandStateListener (OSC-133 equivalents).
+  rpc StreamShellEvents(StreamShellEventsRequest) returns (stream ShellEvent);
+
+  // Modifier-aware key event forwarding. Raw bytes (paste, programmatic
+  // input) continue to flow through SendInput; this RPC carries semantic
+  // key events captured by the host's input layer.
+  rpc SendKeyEvent(SendKeyEventRequest) returns (boss.ipc.v1.Empty);
+
+  // IME composition events (pre-commit composition string, cursor offset,
+  // commit flag). Separate from SendKeyEvent so composition state can be
+  // updated without firing keystrokes.
+  rpc SendComposition(SendCompositionRequest) returns (boss.ipc.v1.Empty);
+
+  // Mouse events (selection, click-to-focus, scroll). Cell coordinates are
+  // host-derived; child applies them to its grid/selection model.
+  rpc SendMouseEvent(SendMouseEventRequest) returns (boss.ipc.v1.Empty);
+
+  // Push the active host theme palette to the child so its renderer can
+  // resolve ANSI color indices to RGBA in the same way the host expects.
+  rpc SetTheme(SetThemeRequest) returns (boss.ipc.v1.Empty);
+}
+
+message CreateSessionRequest {
+  string working_directory = 1;
+  repeated string command = 2;
+  map<string, string> environment = 3;
+  int32 cols = 4;
+  int32 rows = 5;
+}
+
+message CreateSessionResponse {
+  string session_id = 1;
+  bool success = 2;
+  string error_message = 3;
+}
+
+message SendInputRequest {
+  string session_id = 1;
+  bytes data = 2;
+}
+
+message StreamOutputRequest {
+  string session_id = 1;
+}
+
+message TerminalOutputChunk {
+  string session_id = 1;
+  bytes data = 2;
+  int64 timestamp = 3;
+  bool is_exit = 4;
+  int32 exit_code = 5;
+}
+
+message ResizeRequest {
+  string session_id = 1;
+  int32 cols = 2;
+  int32 rows = 3;
+}
+
+message CloseSessionRequest {
+  string session_id = 1;
+}
+
+message TerminalSessionInfo {
+  string session_id = 1;
+  string working_directory = 2;
+  repeated string command = 3;
+  int64 created_at = 4;
+  bool is_alive = 5;
+}
+
+message ListSessionsResponse {
+  repeated TerminalSessionInfo sessions = 1;
+}
+
+// ---- Grid streaming (IPC v1.1.0) ----
+
+message StreamGridRequest {
+  string session_id = 1;
+  // Suggested max frames-per-second the host can render. Child may emit
+  // fewer (idle backoff) but should not exceed. 0 = "use child default".
+  int32 max_fps_hint = 2;
+}
+
+// One delta carries the changes for one frame. The child diffs the current
+// VersionedBufferSnapshot against the previous one (using per-line versions
+// from IncrementalSnapshotBuilder) and emits only the changed rows as
+// CellRuns. On stream start, on resize, or on alt-buffer switch the child
+// sets is_full_redraw=true and ships every visible row.
+message TerminalGridDelta {
+  string session_id = 1;
+  // Monotonically increasing per stream. Host uses it to detect drops; a
+  // gap means the host should request a full redraw (close + reopen stream).
+  int64 revision = 2;
+  // Viewport size at the time this delta was produced. Host MUST resize its
+  // mirror to match before applying rows_changed.
+  int32 cols = 3;
+  int32 rows = 4;
+  // If true, rows_changed describes the complete screen (rows 0..rows-1)
+  // and the host should clear its mirror first.
+  bool is_full_redraw = 5;
+  // True while the terminal is in alt-buffer mode (vim, less, htop).
+  // Scrollback is paused while true.
+  bool is_alternate_buffer = 6;
+  // Changed rows. May be empty (idle frame — used as a keepalive).
+  repeated CellRun rows_changed = 7;
+}
+
+// A run of styled cells. Typically one CellRun per changed row, but the
+// child may split a single row into multiple runs at style boundaries to
+// reduce client decode work.
+message CellRun {
+  int32 row = 1;
+  int32 col = 2;
+  // Visible text for this run, UTF-8. Cell count is derived from grapheme
+  // segmentation, not byte length.
+  string text = 3;
+  // Start offsets (within `text`, in bytes) of each grapheme cluster.
+  // Lets the host render wide chars / ligatures / emoji without rerunning
+  // UAX-29 segmentation. Always begins with 0.
+  repeated int32 grapheme_starts = 4;
+  CellStyle style = 5;
+}
+
+message CellStyle {
+  // 0xRRGGBBAA. 0 = use theme default foreground.
+  uint32 fg_rgba = 1;
+  // 0xRRGGBBAA. 0 = use theme default background.
+  uint32 bg_rgba = 2;
+  // Bitmask of CellAttr bits.
+  uint32 attrs = 3;
+}
+
+// Cell attribute bits. Combine via bitwise OR into CellStyle.attrs.
+enum CellAttr {
+  CELL_ATTR_UNSPECIFIED = 0;
+  CELL_ATTR_BOLD = 1;
+  CELL_ATTR_DIM = 2;
+  CELL_ATTR_ITALIC = 4;
+  CELL_ATTR_UNDERLINE = 8;
+  CELL_ATTR_BLINK = 16;
+  CELL_ATTR_REVERSE = 32;
+  CELL_ATTR_STRIKETHROUGH = 64;
+  CELL_ATTR_INVISIBLE = 128;
+  CELL_ATTR_DOUBLE_UNDERLINE = 256;
+  CELL_ATTR_CURLY_UNDERLINE = 512;
+}
+
+// ---- Cursor streaming (IPC v1.1.0) ----
+
+message StreamCursorRequest {
+  string session_id = 1;
+}
+
+message CursorState {
+  string session_id = 1;
+  int32 row = 2;
+  int32 col = 3;
+  bool visible = 4;
+  CursorShape shape = 5;
+  // Indicates the child wants a blinking cursor (host renderer drives the
+  // blink locally to avoid IPC chatter).
+  bool blink = 6;
+}
+
+enum CursorShape {
+  CURSOR_SHAPE_UNSPECIFIED = 0;
+  CURSOR_SHAPE_BLOCK = 1;
+  CURSOR_SHAPE_UNDERLINE = 2;
+  CURSOR_SHAPE_BAR = 3;
+}
+
+// ---- Scrollback streaming (IPC v1.1.0) ----
+
+// Host subscribes with a row range relative to "0 = oldest line still in
+// scrollback". To pan, the host closes and re-opens the stream with a new
+// range. start_row and end_row are inclusive of `start_row`, exclusive of
+// `end_row`.
+message StreamScrollbackRequest {
+  string session_id = 1;
+  int32 start_row = 2;
+  int32 end_row = 3;
+}
+
+message ScrollbackDelta {
+  string session_id = 1;
+  // Total history line count. Host uses this to size its scrollbar.
+  int64 total_history_lines = 2;
+  // base_row is the absolute row index of the first line in `lines`.
+  int32 base_row = 3;
+  repeated CellRun lines = 4;
+  // True if scrollback was cleared since the last delta (host must drop
+  // its cached lines outside the new range).
+  bool history_cleared = 5;
+}
+
+// ---- Shell-integration events (IPC v1.1.0) ----
+
+message StreamShellEventsRequest {
+  string session_id = 1;
+}
+
+message ShellEvent {
+  string session_id = 1;
+  ShellEventType type = 2;
+  // Only set when type == SHELL_EVENT_TYPE_COMMAND_FINISHED.
+  int32 exit_code = 3;
+  // Monotonic ms timestamp at the child for ordering.
+  int64 timestamp_ms = 4;
+}
+
+enum ShellEventType {
+  SHELL_EVENT_TYPE_UNSPECIFIED = 0;
+  SHELL_EVENT_TYPE_PROMPT_STARTED = 1;
+  SHELL_EVENT_TYPE_COMMAND_STARTED = 2;
+  SHELL_EVENT_TYPE_COMMAND_OUTPUT_ENDED = 3;
+  SHELL_EVENT_TYPE_COMMAND_FINISHED = 4;
+}
+
+// ---- Input RPCs (IPC v1.1.0) ----
+
+message SendKeyEventRequest {
+  string session_id = 1;
+  // Platform-neutral key code (mirrors Compose Key.keyCode long bits
+  // truncated to int32; the encoder lives in the host's KeyEventEncoder).
+  int32 key_code = 2;
+  // Bitmask of KeyModifier bits.
+  uint32 modifiers = 3;
+  // Optional text the key would produce (e.g. "a", "A", "é"). Empty
+  // for modifier-only or special keys.
+  string text = 4;
+  // True for press, false for release.
+  bool is_press = 5;
+  // OS key-repeat count (1 for a normal press).
+  int32 repeat_count = 6;
+}
+
+enum KeyModifier {
+  KEY_MODIFIER_UNSPECIFIED = 0;
+  KEY_MODIFIER_SHIFT = 1;
+  KEY_MODIFIER_CTRL = 2;
+  KEY_MODIFIER_ALT = 4;
+  KEY_MODIFIER_META = 8;
+}
+
+message SendCompositionRequest {
+  string session_id = 1;
+  // The current composition string. Empty + committed=true means the
+  // composition was cancelled.
+  string composition_text = 2;
+  // Caret offset within composition_text, in bytes.
+  int32 cursor_offset = 3;
+  // True on commit; false during active composition.
+  bool committed = 4;
+}
+
+message SendMouseEventRequest {
+  string session_id = 1;
+  int32 row = 2;
+  int32 col = 3;
+  MouseButton button = 4;
+  MouseAction action = 5;
+  uint32 modifiers = 6;
+  // Wheel delta in lines (positive = scroll down). Ignored unless
+  // action == MOUSE_ACTION_WHEEL.
+  int32 wheel_delta = 7;
+}
+
+enum MouseButton {
+  MOUSE_BUTTON_UNSPECIFIED = 0;
+  MOUSE_BUTTON_LEFT = 1;
+  MOUSE_BUTTON_RIGHT = 2;
+  MOUSE_BUTTON_MIDDLE = 3;
+}
+
+enum MouseAction {
+  MOUSE_ACTION_UNSPECIFIED = 0;
+  MOUSE_ACTION_PRESS = 1;
+  MOUSE_ACTION_RELEASE = 2;
+  MOUSE_ACTION_MOVE = 3;
+  MOUSE_ACTION_WHEEL = 4;
+}
+
+// ---- Theming (IPC v1.1.0) ----
+
+message SetThemeRequest {
+  string session_id = 1;
+  ThemePalette palette = 2;
+}
+
+message ThemePalette {
+  uint32 default_fg_rgba = 1;
+  uint32 default_bg_rgba = 2;
+  uint32 cursor_fg_rgba = 3;
+  uint32 cursor_bg_rgba = 4;
+  uint32 selection_fg_rgba = 5;
+  uint32 selection_bg_rgba = 6;
+  // ANSI 16-color palette (indices 0..15 in standard SGR order:
+  // black, red, green, yellow, blue, magenta, cyan, white,
+  // bright_black, bright_red, ..., bright_white).
+  // Must be exactly 16 entries; empty = child keeps its current palette.
+  repeated uint32 ansi_colors = 7;
+}

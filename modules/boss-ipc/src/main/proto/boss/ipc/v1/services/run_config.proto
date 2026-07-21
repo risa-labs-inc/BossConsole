@@ -1,0 +1,96 @@
+syntax = "proto3";
+
+package boss.ipc.v1.services;
+
+import "boss/ipc/v1/common.proto";
+
+option java_package = "ai.rever.boss.ipc.proto.services";
+option java_multiple_files = true;
+
+// RunConfigurationService exposes detected run configurations (main functions, scripts,
+// tests, etc.) to out-of-process plugins. Plugins can watch for configuration changes,
+// trigger project scans, and execute configurations via the kernel.
+service RunConfigurationService {
+  // Stream the current list of detected run configurations; emits on every change
+  rpc WatchDetectedConfigurations(boss.ipc.v1.Empty) returns (stream RunConfigListResponse);
+
+  // Stream whether a project scan is currently in progress
+  rpc WatchIsScanning(boss.ipc.v1.Empty) returns (stream RunConfigBoolResponse);
+
+  // Stream the last scan error, if any
+  rpc WatchLastError(boss.ipc.v1.Empty) returns (stream RunConfigStringResponse);
+
+  // Trigger a project scan for run configurations
+  rpc ScanProject(ScanProjectRequest) returns (boss.ipc.v1.Empty);
+
+  // Execute a specific run configuration
+  rpc Execute(ExecuteConfigRequest) returns (boss.ipc.v1.Empty);
+
+  // Clear the last scan error
+  rpc ClearError(boss.ipc.v1.Empty) returns (boss.ipc.v1.Empty);
+}
+
+// ---- Enums ----
+
+enum RunConfigType {
+  RUN_CONFIG_TYPE_UNSPECIFIED = 0;
+  RUN_CONFIG_TYPE_MAIN_FUNCTION = 1;
+  RUN_CONFIG_TYPE_SCRIPT = 2;
+  RUN_CONFIG_TYPE_TEST = 3;
+  RUN_CONFIG_TYPE_CUSTOM = 4;
+}
+
+enum RunConfigLanguage {
+  RUN_CONFIG_LANGUAGE_UNSPECIFIED = 0;
+  RUN_CONFIG_LANGUAGE_KOTLIN = 1;
+  RUN_CONFIG_LANGUAGE_JAVA = 2;
+  RUN_CONFIG_LANGUAGE_PYTHON = 3;
+  RUN_CONFIG_LANGUAGE_JAVASCRIPT = 4;
+  RUN_CONFIG_LANGUAGE_TYPESCRIPT = 5;
+  RUN_CONFIG_LANGUAGE_GO = 6;
+  RUN_CONFIG_LANGUAGE_RUST = 7;
+  RUN_CONFIG_LANGUAGE_UNKNOWN = 8;
+}
+
+// ---- Model ----
+
+message RunConfigurationProto {
+  string id = 1;
+  string name = 2;
+  RunConfigType type = 3;
+  string file_path = 4;
+  int32 line_number = 5;
+  RunConfigLanguage language = 6;
+  string command = 7;
+  string working_directory = 8;
+  map<string, string> environment_variables = 9;
+  string arguments = 10;
+  bool is_auto_detected = 11;
+  int64 timestamp = 12;
+}
+
+// ---- Responses ----
+
+message RunConfigListResponse {
+  repeated RunConfigurationProto configurations = 1;
+}
+
+message RunConfigBoolResponse {
+  bool value = 1;
+}
+
+message RunConfigStringResponse {
+  string value = 1;
+}
+
+// ---- Requests ----
+
+message ScanProjectRequest {
+  string project_path = 1;
+  string window_id = 2;
+}
+
+message ExecuteConfigRequest {
+  RunConfigurationProto configuration = 1;
+  string window_id = 2;
+}

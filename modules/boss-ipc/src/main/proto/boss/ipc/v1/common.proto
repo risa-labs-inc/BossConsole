@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package boss.ipc.v1;
+
+option java_package = "ai.rever.boss.ipc.proto";
+option java_multiple_files = true;
+
+// Empty message for RPCs with no request/response payload
+message Empty {}
+
+// Generic key-value metadata
+message Metadata {
+  map<string, string> entries = 1;
+}
+
+// Timestamp in milliseconds since epoch
+message Timestamp {
+  int64 millis = 1;
+}
+
+// Process types
+enum ProcessType {
+  PROCESS_TYPE_UNSPECIFIED = 0;
+  PROCESS_TYPE_KERNEL = 1;
+  PROCESS_TYPE_SERVICE = 2;
+  PROCESS_TYPE_APP = 3;
+  PROCESS_TYPE_PLUGIN = 4;
+  PROCESS_TYPE_ORCHESTRATOR = 5;
+}
+
+// Process states
+enum ProcessState {
+  PROCESS_STATE_UNSPECIFIED = 0;
+  PROCESS_STATE_STARTING = 1;
+  PROCESS_STATE_RUNNING = 2;
+  PROCESS_STATE_UNHEALTHY = 3;
+  PROCESS_STATE_CRASHED = 4;
+  PROCESS_STATE_RESTARTING = 5;
+  PROCESS_STATE_STOPPED = 6;
+  PROCESS_STATE_DISABLED = 7;
+}
+
+// Repair strategies for the self-healing orchestrator
+enum RepairStrategy {
+  REPAIR_STRATEGY_UNSPECIFIED = 0;
+  REPAIR_STRATEGY_RESTART = 1;
+  REPAIR_STRATEGY_RESTART_TUNED = 2;
+  REPAIR_STRATEGY_RESET_STATE = 3;
+  REPAIR_STRATEGY_PATCH_CONFIG = 4;
+  REPAIR_STRATEGY_PATCH_SOURCE = 5;
+  REPAIR_STRATEGY_ROLLBACK = 6;
+  REPAIR_STRATEGY_ESCALATE = 7;
+}
+
+// Severity of a failure
+enum FailureSeverity {
+  FAILURE_SEVERITY_UNSPECIFIED = 0;
+  FAILURE_SEVERITY_TRANSIENT = 1;
+  FAILURE_SEVERITY_DEGRADED = 2;
+  FAILURE_SEVERITY_FATAL = 3;
+}

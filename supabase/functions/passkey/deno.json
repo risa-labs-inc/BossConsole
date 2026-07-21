@@ -1,0 +1,15 @@
+{
+  "imports": {
+    "hono/cors": "npm:hono@^4.9.9/cors",
+    "@hono/zod-openapi": "npm:@hono/zod-openapi@^0.18.4",
+    "@hono/swagger-ui": "npm:@hono/swagger-ui@^0.4.1",
+    "@supabase/supabase-js": "jsr:@supabase/supabase-js@^2.58.0",
+    "@std/encoding/base64url": "jsr:@std/encoding@^1.0.0/base64url",
+    "zod": "npm:zod@^3.24.1",
+    "jose": "npm:jose@^5.2.0"
+  },
+  "compilerOptions": {
+    "lib": ["deno.window", "deno.unstable"],
+    "strict": true
+  }
+}

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Allow JIT for Chromium JavaScript execution -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+
+    <!-- Allow unsigned executable memory for Chromium -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+
+    <!-- Disable library validation for Chromium native libraries -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+
+    <!-- Network access for browser functionality -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.network.server</key>
+    <true/>
+
+    <!-- Allow DYLD environment variables for Chromium -->
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+
+    <!-- Inherit entitlements from parent process -->
+    <key>com.apple.security.inherit</key>
+    <true/>
+
+    <!-- Touch ID / WebAuthn platform authenticator (Chromium keychain-backed
+         credential store). Pattern per Chromium-Branding README "Enabling
+         Touch ID on macOS": <TeamID>.<BundleID>.webauthn. REQUIRES an Apple
+         Developer ID provisioning profile embedded in the bundle — signing
+         with this file but without the profile makes macOS refuse to launch
+         the browser. The workflow only selects this variant when
+         entitlements/boss-browser.provisionprofile exists. -->
+    <key>keychain-access-groups</key>
+    <array>
+        <string>${MACOS_TEAM_ID}.ai.rever.boss.browser.webauthn</string>
+    </array>
+</dict>
+</plist>

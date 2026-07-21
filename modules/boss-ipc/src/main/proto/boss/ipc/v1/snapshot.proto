@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package boss.ipc.v1;
+
+import "boss/ipc/v1/common.proto";
+
+option java_package = "ai.rever.boss.ipc.proto";
+option java_multiple_files = true;
+
+// SnapshotService enables processes to checkpoint their state for rollback.
+// The orchestrator uses this to restore last-known-good state before restarting.
+service SnapshotService {
+  rpc SaveSnapshot(SaveSnapshotRequest) returns (SaveSnapshotResponse);
+  rpc LoadSnapshot(LoadSnapshotRequest) returns (LoadSnapshotResponse);
+  rpc ListSnapshots(ListSnapshotsRequest) returns (ListSnapshotsResponse);
+  rpc DeleteSnapshot(DeleteSnapshotRequest) returns (Empty);
+}
+
+message SaveSnapshotRequest {
+  string process_id = 1;
+  bytes state_data = 2;
+  string description = 3;
+  map<string, string> metadata = 4;
+}
+
+message SaveSnapshotResponse {
+  string snapshot_id = 1;
+  int64 timestamp = 2;
+  int64 size_bytes = 3;
+}
+
+message LoadSnapshotRequest {
+  string process_id = 1;
+  string snapshot_id = 2;  // Empty = load latest
+}
+
+message LoadSnapshotResponse {
+  string snapshot_id = 1;
+  bytes state_data = 2;
+  int64 timestamp = 3;
+  map<string, string> metadata = 4;
+}
+
+message ListSnapshotsRequest {
+  string process_id = 1;
+  int32 limit = 2;  // Max snapshots to return (default: 10)
+}
+
+message ListSnapshotsResponse {
+  repeated SnapshotInfo snapshots = 1;
+}
+
+message SnapshotInfo {
+  string snapshot_id = 1;
+  string process_id = 2;
+  int64 timestamp = 3;
+  int64 size_bytes = 4;
+  string description = 5;
+}
+
+message DeleteSnapshotRequest {
+  string snapshot_id = 1;
+}

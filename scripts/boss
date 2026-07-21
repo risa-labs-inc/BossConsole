@@ -1,0 +1,245 @@
+#!/usr/bin/env bash
+#
+# BOSS CLI Launcher Script
+# Version: {{VERSION}}
+# Generated: {{BUILD_DATE}}
+#
+# Converts CLI commands to boss:// deep links and opens them
+#
+# Usage:
+#   boss url <url>                    # Opens URL in browser
+#   boss workspace <config>           # Loads workspace
+#   boss file <path>                  # Opens file in editor
+#   boss folder <path>                # Opens folder in codebase
+#   boss terminal                     # Opens terminal
+#   boss terminal -c <command>        # Opens terminal with command
+#
+
+# URL encode function
+urlencode() {
+    local string="$1"
+    local strlen=${#string}
+    local encoded=""
+    local pos c o
+
+    for (( pos=0 ; pos<strlen ; pos++ )); do
+        c=${string:$pos:1}
+        case "$c" in
+            [-_.~a-zA-Z0-9] ) o="${c}" ;;
+            * ) printf -v o '%%%02x' "'$c"
+        esac
+        encoded+="${o}"
+    done
+    echo "${encoded}"
+}
+
+# Detect OS for URL opening
+open_url() {
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS
+        open "$1"
+    elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        # Linux
+        if command -v xdg-open &> /dev/null; then
+            xdg-open "$1"
+        else
+            echo "Error: xdg-open not found. Please install xdg-utils."
+            exit 1
+        fi
+    else
+        echo "Error: Unsupported operating system: $OSTYPE"
+        exit 1
+    fi
+}
+
+# Smart detection for argument type
+detect_and_route() {
+    local arg="$1"
+
+    # Check if it's a URL (has protocol or common TLD)
+    if [[ "$arg" =~ ^https?:// ]]; then
+        # Has http:// or https:// prefix
+        encoded_url=$(urlencode "$arg")
+        deep_link="boss://url?url=${encoded_url}"
+        open_url "$deep_link"
+        return 0
+    elif [[ "$arg" =~ \.(com|org|net|edu|gov|io|co|dev|app|ai|tech|cloud|xyz|me)(/|$) ]]; then
+        # Looks like a domain, add https://
+        encoded_url=$(urlencode "https://$arg")
+        deep_link="boss://url?url=${encoded_url}"
+        open_url "$deep_link"
+        return 0
+    fi
+
+    # Expand tilde and relative paths
+    local expanded_path="${arg/#\~/$HOME}"
+    if [[ ! "$expanded_path" =~ ^/ ]]; then
+        expanded_path="$(pwd)/$expanded_path"
+    fi
+
+    # Check if it's a file or directory
+    if [ -e "$expanded_path" ]; then
+        if [ -f "$expanded_path" ]; then
+            # It's a file - resolve to absolute path
+            expanded_path="$(cd "$(dirname "$expanded_path")" 2>/dev/null && pwd)/$(basename "$expanded_path")"
+            encoded_path=$(urlencode "$expanded_path")
+            deep_link="boss://file?path=${encoded_path}"
+            open_url "$deep_link"
+            return 0
+        elif [ -d "$expanded_path" ]; then
+            # It's a directory - resolve to absolute path
+            expanded_path="$(cd "$expanded_path" 2>/dev/null && pwd || echo "$expanded_path")"
+            encoded_path=$(urlencode "$expanded_path")
+            deep_link="boss://folder?path=${encoded_path}"
+            open_url "$deep_link"
+            return 0
+        fi
+    fi
+
+    # Could not detect type
+    echo "Error: Could not determine type for: $arg"
+    echo ""
+    echo "Did you mean:"
+    echo "  boss url $arg      - Open as URL"
+    echo "  boss file $arg     - Open as file"
+    echo "  boss folder $arg   - Open as folder"
+    echo ""
+    echo "Run 'boss --help' for usage information"
+    exit 1
+}
+
+# Main command handling
+case "$1" in
+    url)
+        if [ -z "$2" ]; then
+            echo "Error: URL argument required"
+            echo "Usage: boss url <url>"
+            exit 1
+        fi
+        encoded_url=$(urlencode "$2")
+        deep_link="boss://url?url=${encoded_url}"
+        open_url "$deep_link"
+        ;;
+
+    workspace)
+        if [ -z "$2" ]; then
+            echo "Error: Workspace config path required"
+            echo "Usage: boss workspace <config>"
+            exit 1
+        fi
+        encoded_path=$(urlencode "$2")
+        deep_link="boss://workspace?config=${encoded_path}"
+        open_url "$deep_link"
+        ;;
+
+    file)
+        if [ -z "$2" ]; then
+            echo "Error: File path required"
+            echo "Usage: boss file <path>"
+            exit 1
+        fi
+        encoded_path=$(urlencode "$2")
+        deep_link="boss://file?path=${encoded_path}"
+        open_url "$deep_link"
+        ;;
+
+    folder)
+        # Use HOME directory as default if no path provided
+        if [ -z "$2" ]; then
+            folder_path="$HOME"
+        else
+            # Expand tilde and relative paths (., .., etc.)
+            folder_path="${2/#\~/$HOME}"
+            if [[ ! "$folder_path" =~ ^/ ]]; then
+                folder_path="$(cd "$folder_path" 2>/dev/null && pwd || echo "$folder_path")"
+            fi
+        fi
+        encoded_path=$(urlencode "$folder_path")
+        deep_link="boss://folder?path=${encoded_path}"
+        open_url "$deep_link"
+        ;;
+
+    terminal)
+        # Handle optional -c or --command flag
+        if [ "$2" = "-c" ] || [ "$2" = "--command" ]; then
+            if [ -z "$3" ]; then
+                echo "Error: Command argument required after -c"
+                echo "Usage: boss terminal -c <command>"
+                exit 1
+            fi
+            encoded_command=$(urlencode "$3")
+            deep_link="boss://terminal?command=${encoded_command}"
+        else
+            deep_link="boss://terminal"
+        fi
+        open_url "$deep_link"
+        ;;
+
+    plugin)
+        if [ -z "$2" ]; then
+            echo "Error: Plugin ID required"
+            echo "Usage: boss plugin <id>"
+            exit 1
+        fi
+        encoded_id=$(urlencode "$2")
+        deep_link="boss://plugin?id=${encoded_id}"
+        open_url "$deep_link"
+        ;;
+
+    --version|-v|version)
+        echo "BOSS CLI version {{VERSION}}"
+        echo "Built: {{BUILD_DATE}}"
+        ;;
+
+    --help|-h|help)
+        cat <<EOF
+BOSS CLI - Business Operating System Service
+Version: {{VERSION}}
+
+Usage:
+  boss <url-or-path>             Auto-detect and open URL, file, or folder
+  boss <command> [arguments]     Run explicit command
+
+Commands:
+  url <url>              Opens a URL in Fluck browser
+  workspace <config>     Loads a workspace configuration
+  file <path>            Opens a file in the editor
+  folder [path]          Opens a folder in codebase (defaults to home)
+  terminal               Opens a terminal tab
+  terminal -c <command>  Opens a terminal tab with command
+  plugin <id>            Opens any plugin/panel by ID
+  version                Show CLI version information
+  help                   Show this help message
+
+Smart Detection Examples:
+  boss google.com                 # Auto-detects as URL (adds https://)
+  boss https://github.com         # Auto-detects as URL
+  boss file.txt                   # Auto-detects as file (if exists)
+  boss ~/Downloads                # Auto-detects as folder
+  boss .                          # Auto-detects current directory
+
+Explicit Command Examples:
+  boss url https://example.com
+  boss workspace ~/myworkspace.json
+  boss file /path/to/file.kt
+  boss folder                     # Opens home directory
+  boss folder /path/to/project    # Opens specific directory
+  boss terminal
+  boss terminal -c "ls -la"
+  boss plugin bookmarks
+  boss plugin secret-manager
+
+EOF
+        ;;
+
+    "")
+        echo "Error: No command specified"
+        echo "Run 'boss --help' for usage information"
+        exit 1
+        ;;
+
+    *)
+        # Try smart detection for URL, file, or folder
+        detect_and_route "$1"
+        ;;
+esac

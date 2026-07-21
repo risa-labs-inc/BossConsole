@@ -1,0 +1,876 @@
+<title>BOSS — Operator's Console Design System</title>
+<meta name="description" content="The BOSS visual identity: tokens, type, and every UI element across BossConsole and BossTerm, built on the amber signal and the character cell.">
+
+<style>
+  :root {
+    /* ---- Core surface ---- */
+    --ink:        #0E1217;   /* base floor — host AND terminal share it */
+    --panel:      #161D26;   /* chrome / raised surface */
+    --raised:     #1E2731;   /* menus, popovers, elevated */
+    --line:       #2A3744;   /* hairline border / divider */
+    --line-2:     #3A4B5C;   /* stronger border */
+    /* ---- Ink on surface ---- */
+    --chalk:      #E9EEF3;   /* primary text */
+    --mist:       #8593A3;   /* secondary text */
+    --muted:      #5C6977;   /* tertiary / disabled */
+    /* ---- Signals ---- */
+    --signal:     #F2A93B;   /* AMBER — live / active / primary action */
+    --signal-dim: #C98A2E;   /* pressed / variant */
+    --signal-wash:#2A2113;   /* amber at home on ink */
+    --data:       #56C7E0;   /* cyan — links / info / data */
+    --ok:         #6FD08C;
+    --warn:       #F0B429;
+    --alert:      #F2685F;
+
+    --mono: 'Berkeley Mono', ui-monospace, 'SF Mono', 'JetBrains Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+    --sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+    --cell-w: 8.4px;   /* terminal char cell, MesloLGS @14sp */
+    --cell-h: 17px;
+
+    --r-grid: 0px;  --r-sm: 3px;  --r-md: 5px;  --r-lg: 8px;
+    --pad: clamp(16px, 4vw, 56px);
+    --ease: cubic-bezier(0.2, 0, 0, 1);
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--ink);
+    color: var(--chalk);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    /* faint instrument grid — the character cell, made structural */
+    background-image:
+      linear-gradient(var(--line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size: calc(var(--cell-w) * 8) calc(var(--cell-h) * 2),
+                     calc(var(--cell-w) * 8) calc(var(--cell-h) * 2);
+    background-position: 0 0;
+    background-blend-mode: normal;
+  }
+  body::before {
+    /* dim the grid so it reads as texture, not a table */
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background: var(--ink); opacity: 0.93;
+  }
+  .wrap { position: relative; z-index: 1; max-width: 1180px; margin: 0 auto; padding: 0 var(--pad); }
+
+  a { color: var(--data); text-decoration: none; }
+  a:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+  /* ---------- type ---------- */
+  .eyebrow {
+    font-family: var(--mono); font-size: 11px; font-weight: 600;
+    letter-spacing: 0.18em; text-transform: uppercase; color: var(--signal);
+    display: inline-flex; align-items: center; gap: 8px; margin: 0 0 14px;
+  }
+  .eyebrow::before {
+    content: ""; width: 9px; height: 15px; background: var(--signal);
+    display: inline-block; box-shadow: 0 0 12px -1px var(--signal);
+  }
+  h1, h2, h3 { font-family: var(--mono); font-weight: 600; letter-spacing: -0.01em; line-height: 1.05; }
+  h2 { font-size: clamp(26px, 4vw, 38px); margin: 0 0 10px; }
+  h3 { font-size: 17px; margin: 0 0 4px; letter-spacing: 0; }
+  .lede { color: var(--mist); font-size: 16px; max-width: 60ch; }
+  .mono { font-family: var(--mono); }
+  code { font-family: var(--mono); font-size: 0.88em; color: var(--data); background: #0a0d11; padding: 1px 6px; border-radius: var(--r-sm); border: 1px solid var(--line); }
+
+  /* ---------- section scaffold ---------- */
+  section { padding: clamp(54px, 8vw, 100px) 0; border-top: 1px solid var(--line); }
+  section:first-of-type { border-top: none; }
+  .sec-head { margin-bottom: 40px; }
+
+  /* =========================================================
+     HERO
+  ========================================================= */
+  .hero { padding: clamp(70px, 12vh, 150px) 0 clamp(50px, 8vw, 90px); border-top: none; }
+  .hero h1 {
+    font-size: clamp(44px, 9vw, 104px); line-height: 0.92; margin: 0;
+    letter-spacing: -0.03em;
+  }
+  .hero h1 .amber { color: var(--signal); }
+  .hero .sub { margin-top: 26px; max-width: 56ch; font-size: clamp(17px, 2vw, 21px); color: var(--mist); line-height: 1.45; }
+  .hero .sub b { color: var(--chalk); font-weight: 600; }
+
+  /* the live cursor — signature */
+  .cursor {
+    display: inline-block; width: 0.62em; height: 1.05em; background: var(--signal);
+    transform: translateY(0.12em); margin-left: 0.06em;
+    box-shadow: 0 0 18px -2px var(--signal);
+    animation: blink 1.06s steps(1) infinite;
+  }
+  @keyframes blink { 0%,50% { opacity: 1; } 50.01%,100% { opacity: 0; } }
+
+  /* hero terminal demo */
+  .term-demo {
+    margin-top: 46px; background: var(--ink); border: 1px solid var(--line-2);
+    border-radius: var(--r-lg); overflow: hidden; max-width: 680px;
+    box-shadow: 0 28px 80px -30px #000, 0 0 0 1px #00000060;
+  }
+  .term-bar { display: flex; align-items: center; gap: 8px; padding: 9px 14px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  .term-bar .lamp { width: 9px; height: 9px; border-radius: 50%; background: var(--line-2); }
+  .term-bar .lamp.live { background: var(--signal); box-shadow: 0 0 8px -1px var(--signal); }
+  .term-bar .ttl { font-family: var(--mono); font-size: 12px; color: var(--mist); margin-left: 6px; }
+  .term-body { font-family: var(--mono); font-size: 14px; line-height: 1.55; padding: 18px 18px 26px; color: #D7DEE6; }
+  .prompt .u { color: var(--ok); } .prompt .p { color: var(--data); } .prompt .g { color: var(--signal); }
+  .term-body .out { color: var(--mist); }
+  #typed { color: var(--chalk); }
+
+  /* =========================================================
+     reusable layout
+  ========================================================= */
+  .grid { display: grid; gap: 16px; }
+  .cols-2 { grid-template-columns: repeat(2, 1fr); }
+  .cols-3 { grid-template-columns: repeat(3, 1fr); }
+  .cols-4 { grid-template-columns: repeat(4, 1fr); }
+  @media (max-width: 860px) { .cols-3, .cols-4 { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .cols-2, .cols-3, .cols-4 { grid-template-columns: 1fr; } }
+
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-md); }
+  .specimen { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-md); padding: 26px; }
+  .specimen .label { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); margin-bottom: 18px; }
+
+  /* ---- color swatches ---- */
+  .sw { border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden; background: var(--panel); }
+  .sw .chip { height: 78px; }
+  .sw .meta { padding: 10px 12px; }
+  .sw .nm { font-family: var(--mono); font-size: 13px; font-weight: 600; }
+  .sw .hx { font-family: var(--mono); font-size: 11.5px; color: var(--mist); }
+  .sw .role { font-size: 11.5px; color: var(--muted); margin-top: 3px; line-height: 1.35; }
+
+  /* ANSI grid */
+  .ansi { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
+  .ansi .a { aspect-ratio: 1.6; border-radius: var(--r-sm); display: flex; align-items: flex-end; padding: 5px 6px; font-family: var(--mono); font-size: 9.5px; color: #00000099; font-weight: 700; }
+
+  /* ---- type scale ---- */
+  .type-row { display: flex; align-items: baseline; gap: 22px; padding: 16px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .type-row:last-child { border-bottom: none; }
+  .type-row .tk { font-family: var(--mono); font-size: 11px; color: var(--muted); min-width: 120px; letter-spacing: 0.04em; }
+  .type-row .spec { color: var(--mist); font-family: var(--mono); font-size: 11px; }
+
+  /* ---- spacing scale ---- */
+  .space-row { display: flex; align-items: center; gap: 16px; margin-bottom: 10px; }
+  .space-row .bar { height: 14px; background: var(--signal); border-radius: 2px; }
+  .space-row .v { font-family: var(--mono); font-size: 12px; color: var(--mist); }
+
+  /* =========================================================
+     component specimens (Compose approximations)
+  ========================================================= */
+  /* buttons */
+  .btn { font-family: var(--sans); font-size: 13px; font-weight: 600; border-radius: var(--r-md);
+    padding: 9px 16px; border: 1px solid transparent; cursor: pointer; display: inline-flex; align-items: center; gap: 8px;
+    transition: background .09s var(--ease), border-color .09s var(--ease), transform .09s var(--ease); }
+  .btn:active { transform: translateY(1px); }
+  .btn-primary { background: var(--signal); color: #1a1206; }
+  .btn-primary:hover { background: #ffb84d; }
+  .btn-secondary { background: transparent; color: var(--chalk); border-color: var(--line-2); }
+  .btn-secondary:hover { border-color: var(--mist); background: #ffffff08; }
+  .btn-ghost { background: transparent; color: var(--mist); }
+  .btn-ghost:hover { color: var(--chalk); background: #ffffff08; }
+  .btn-danger { background: transparent; color: var(--alert); border-color: #4a2522; }
+  .btn-danger:hover { background: var(--alert); color: #1a0a09; border-color: var(--alert); }
+  .gi { width: 14px; height: 14px; display: inline-block; }
+
+  /* field */
+  .field { background: var(--ink); border: 1px solid var(--line-2); border-radius: var(--r-sm);
+    padding: 9px 12px; font-family: var(--sans); font-size: 13px; color: var(--chalk); width: 100%; }
+  .field::placeholder { color: var(--muted); }
+  .field:focus { outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px #f2a93b30; }
+  .flabel { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--mist); display: block; margin-bottom: 7px; }
+
+  /* toggle */
+  .switch { width: 38px; height: 21px; border-radius: 11px; background: var(--line-2); position: relative; cursor: pointer; transition: background .14s var(--ease); flex: none; }
+  .switch.on { background: var(--signal); }
+  .switch .knob { position: absolute; top: 2.5px; left: 2.5px; width: 16px; height: 16px; border-radius: 50%; background: var(--chalk); transition: left .14s var(--ease); }
+  .switch.on .knob { left: 19.5px; background: #1a1206; }
+
+  /* slider */
+  .slider { height: 4px; background: var(--line-2); border-radius: 2px; position: relative; margin: 14px 0; }
+  .slider .fill { position: absolute; left: 0; top: 0; height: 100%; width: 62%; background: var(--signal); border-radius: 2px; }
+  .slider .thumb { position: absolute; top: 50%; left: 62%; width: 13px; height: 13px; border-radius: 50%; background: var(--signal); transform: translate(-50%,-50%); box-shadow: 0 0 0 4px #f2a93b25; }
+
+  /* tabs */
+  .tabbar { display: flex; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-md) var(--r-md) 0 0; overflow: hidden; }
+  .tab { font-family: var(--sans); font-size: 13px; color: var(--mist); padding: 10px 16px; display: flex; align-items: center; gap: 9px;
+    border-right: 1px solid var(--line); position: relative; cursor: pointer; white-space: nowrap; }
+  .tab .dot { width: 7px; height: 7px; border-radius: 2px; background: var(--mist); }
+  .tab.active { color: var(--chalk); background: var(--ink); }
+  .tab.active::after { content: ""; position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; background: var(--signal); box-shadow: 0 0 10px -1px var(--signal); }
+  .tab.active .dot { background: var(--signal); }
+  .tab .x { color: var(--muted); font-size: 14px; line-height: 1; }
+  .tab .x:hover { color: var(--alert); }
+
+  /* context menu */
+  .menu { background: var(--raised); border: 1px solid var(--line-2); border-radius: var(--r-md); padding: 5px; width: 230px; box-shadow: 0 18px 50px -20px #000; }
+  .mi { display: flex; align-items: center; gap: 10px; padding: 7px 9px; border-radius: var(--r-sm); font-size: 13px; color: var(--chalk); cursor: pointer; }
+  .mi:hover { background: var(--signal-wash); }
+  .mi .k { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .mi.sel { background: var(--signal-wash); }
+  .mi.sel::before { content: ""; position: absolute; }
+  .msep { height: 1px; background: var(--line); margin: 5px 6px; }
+  .mi.danger { color: var(--alert); }
+
+  /* dialog */
+  .dialog { background: var(--panel); border: 1px solid var(--line-2); border-radius: var(--r-lg); padding: 22px; max-width: 400px; box-shadow: 0 30px 80px -30px #000; }
+  .dialog .dt { font-family: var(--mono); font-size: 16px; font-weight: 600; margin-bottom: 8px; display: flex; gap: 10px; align-items: center; }
+  .dialog .dtxt { color: var(--mist); font-size: 13px; margin-bottom: 20px; }
+  .dialog .drow { display: flex; justify-content: flex-end; gap: 10px; }
+  .warn-glyph { width: 18px; height: 18px; color: var(--warn); }
+
+  /* cards (dashboard) */
+  .pcard { padding: 16px; display: flex; flex-direction: column; gap: 12px; border-radius: var(--r-lg); cursor: pointer; transition: border-color .12s var(--ease), background .12s var(--ease); }
+  .pcard:hover { border-color: var(--line-2); background: var(--raised); }
+  .badge { width: 36px; height: 36px; border-radius: var(--r-sm); background: var(--signal); color: #1a1206; display: flex; align-items: center; justify-content: center; font-family: var(--mono); font-weight: 700; font-size: 15px; }
+  .pcard .nm { font-size: 13.5px; font-weight: 600; }
+  .pcard .pth { font-family: var(--mono); font-size: 11px; color: var(--muted); word-break: break-all; }
+
+  /* scrollbar demo */
+  .scroll-demo { position: relative; height: 132px; background: var(--ink); border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden; padding: 12px 22px 12px 14px; font-family: var(--mono); font-size: 12px; color: var(--mist); }
+  .scroll-demo .track { position: absolute; right: 5px; top: 8px; bottom: 8px; width: 8px; }
+  .scroll-demo .thumb { position: absolute; right: 5px; top: 14px; width: 8px; height: 46px; background: #ffffff30; border-radius: 4px; }
+  .scroll-demo .mk { position: absolute; right: 4px; width: 10px; height: 2px; }
+
+  /* terminal big demo */
+  .terminal { background: var(--ink); border: 1px solid var(--line-2); border-radius: var(--r-lg); overflow: hidden; }
+  .terminal .tb { display: flex; align-items: center; padding: 9px 13px; background: var(--panel); border-bottom: 1px solid var(--line); gap: 8px; }
+  .terminal .body { font-family: var(--mono); font-size: 13.5px; line-height: 1.55; padding: 16px; white-space: pre-wrap; position: relative; }
+  .sel { background: #21405A; border-radius: 2px; }
+  .match { background: #5a4a1c; color: #ffe9a8; border-radius: 2px; }
+  .blk { display: inline-block; width: 0.6em; height: 1.05em; background: var(--signal); transform: translateY(0.16em); animation: blink 1.06s steps(1) infinite; }
+
+  /* cursor styles row */
+  .cur-cell { background: var(--ink); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 18px; font-family: var(--mono); font-size: 22px; color: #D7DEE6; text-align: center; position: relative; }
+  .cur-cell .lab { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-top: 14px; }
+  .cur-block { background: var(--signal); color: var(--ink); padding: 0 2px; }
+  .cur-ul { border-bottom: 3px solid var(--signal); }
+  .cur-bar { border-left: 3px solid var(--signal); padding-left: 1px; }
+
+  /* token table */
+  .tok-tbl-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r-md); }
+  table.tok { border-collapse: collapse; width: 100%; min-width: 520px; font-size: 13px; }
+  table.tok th, table.tok td { text-align: left; padding: 11px 16px; border-bottom: 1px solid var(--line); }
+  table.tok th { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--mist); background: var(--panel); }
+  table.tok td.k { font-family: var(--mono); color: var(--signal); }
+  table.tok td.v { font-family: var(--mono); color: var(--data); }
+  table.tok tr:last-child td { border-bottom: none; }
+
+  /* misc */
+  .pills { display: flex; flex-wrap: wrap; gap: 8px; }
+  .pill { font-family: var(--mono); font-size: 11px; padding: 4px 10px; border: 1px solid var(--line-2); border-radius: 20px; color: var(--mist); }
+  .note { color: var(--muted); font-size: 12.5px; font-family: var(--mono); margin-top: 18px; }
+  .stack { display: flex; flex-direction: column; gap: 14px; }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .divider-h { height: 1px; background: var(--line); margin: 4px 0; }
+  hr.v { width: 1px; height: 22px; background: var(--line); border: none; margin: 0 2px; }
+
+  footer { border-top: 1px solid var(--line); padding: 40px 0 70px; color: var(--muted); font-family: var(--mono); font-size: 12px; }
+
+  /* ===== 06 · In context — toggled full screens ===== */
+  .incontext .seg { display:inline-flex; background:var(--panel); border:1px solid var(--line); border-radius:var(--r-md); padding:4px; gap:4px; margin-bottom:28px; }
+  .incontext .seg button { font-family:var(--mono); font-size:12.5px; letter-spacing:.03em; color:var(--mist); background:transparent; border:none; padding:9px 20px; border-radius:var(--r-sm); cursor:pointer; display:inline-flex; align-items:center; gap:9px; transition: color .12s var(--ease), background .12s var(--ease); }
+  .incontext .seg button .pip { width:8px; height:13px; background:currentColor; opacity:.5; }
+  .incontext .seg button[aria-selected="true"] { color:var(--ink); background:var(--signal); font-weight:700; }
+  .incontext .seg button[aria-selected="true"] .pip { opacity:1; }
+  .incontext .seg button:focus-visible { outline:2px solid var(--signal); outline-offset:3px; }
+
+  .incontext .scr { display:none; }
+  .incontext .scr.show { display:block; animation: scrIn .26s var(--ease); }
+  @keyframes scrIn { from { opacity:0; transform: translateY(8px);} to { opacity:1; transform:none;} }
+  .incontext .cap { margin-top:16px; color:var(--muted); font-family:var(--mono); font-size:12px; line-height:1.65; }
+  .incontext .cap b { color:var(--mist); font-weight:600; }
+
+  .incontext .win { background:var(--ink); border:1px solid var(--line-2); border-radius:var(--r-lg); overflow:hidden; box-shadow:0 30px 90px -42px #000; }
+  .incontext .winbar { display:flex; align-items:center; gap:11px; height:36px; padding:0 13px; background:var(--panel); border-bottom:1px solid var(--line); }
+  .incontext .tl { display:flex; gap:7px; }
+  .incontext .tl i { width:11px; height:11px; border-radius:50%; background:var(--line-2); display:block; }
+  .incontext .wt { font-family:var(--mono); font-size:12px; color:var(--mist); }
+  .incontext .wt .cur { display:inline-block; width:7px; height:12px; background:var(--signal); transform:translateY(2px); margin-right:8px; }
+  .incontext .winr { margin-left:auto; font-family:var(--mono); font-size:11px; color:var(--muted); }
+
+  /* host */
+  .incontext .hostbody { display:flex; height:430px; }
+  .incontext .rail { width:46px; background:var(--panel); border-right:1px solid var(--line); display:flex; flex-direction:column; align-items:center; padding-top:10px; gap:4px; flex:none; }
+  .incontext .ri { width:30px; height:30px; border-radius:var(--r-sm); display:flex; align-items:center; justify-content:center; color:var(--mist); font-size:15px; }
+  .incontext .ri.on { color:var(--signal); background:var(--signal-wash); }
+  .incontext .grow { flex:1; }
+  .incontext .hostmain { flex:1; display:flex; flex-direction:column; min-width:0; }
+  .incontext .hostsplit { flex:1; display:flex; min-height:0; }
+  .incontext .explorer { width:210px; background:#10151b; border-right:1px solid var(--line); padding:12px 0; flex:none; }
+  .incontext .eb { font-family:var(--mono); font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:var(--muted); padding:0 14px 9px; }
+  .incontext .frow { display:flex; align-items:center; gap:8px; padding:4px 14px; font-size:12.5px; color:var(--mist); font-family:var(--mono); white-space:nowrap; }
+  .incontext .frow .fd { width:7px; height:7px; border-radius:2px; flex:none; }
+  .incontext .frow.i1 { padding-left:28px; } .incontext .frow.i2 { padding-left:44px; }
+  .incontext .frow.active { color:var(--chalk); background:var(--signal-wash); box-shadow: inset 2px 0 0 var(--signal); }
+  .incontext .editor { flex:1; display:flex; flex-direction:column; min-width:0; }
+  .incontext .code { flex:1; padding:14px 16px; font-family:var(--mono); font-size:12.5px; line-height:1.7; overflow:hidden; }
+  .incontext .code .ln { color:var(--muted); display:inline-block; width:24px; user-select:none; }
+  .incontext .kw{color:#5C9FE0;} .incontext .st{color:#6FD08C;} .incontext .cm{color:var(--muted);} .incontext .nx{color:#C792EA;} .incontext .fn{color:#56C7E0;}
+  .incontext .am{color:var(--signal);} .incontext .ok{color:var(--ok);} .incontext .er{color:var(--alert);} .incontext .cy{color:var(--data);} .incontext .gn{color:var(--ok);} .incontext .mut{color:var(--mist);}
+  .incontext .hostterm { height:120px; border-top:1px solid var(--line); background:var(--ink); padding:10px 14px; font-family:var(--mono); font-size:12px; line-height:1.6; color:var(--mist); }
+  .incontext .hb { font-family:var(--mono); font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); margin-bottom:7px; }
+  .incontext .statusbar { display:flex; align-items:center; gap:16px; height:26px; padding:0 13px; background:var(--panel); border-top:1px solid var(--line); font-family:var(--mono); font-size:11px; color:var(--mist); }
+  .incontext .statusbar .sg { color:var(--signal); }
+  .incontext .statusbar .sr { margin-left:auto; }
+
+  /* terminal */
+  .incontext .btprog { height:4px; background:var(--signal); width:46%; box-shadow:0 0 10px -1px var(--signal); }
+  .incontext .bttabs { display:flex; gap:3px; padding:6px 8px; background:var(--panel); border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  .incontext .bchip { font-family:var(--mono); font-size:12px; color:var(--mist); padding:6px 12px; border-radius:var(--r-sm); display:flex; align-items:center; gap:8px; border:1px solid transparent; }
+  .incontext .bchip .bd { width:7px;height:7px;border-radius:50%; background:var(--mist); }
+  .incontext .bchip.on { color:var(--chalk); background:var(--ink); border-color:var(--line); }
+  .incontext .bchip.on .bd { background:var(--signal); }
+  .incontext .bchip.rem { color:#4FC3F7; } .incontext .bchip.rem .bd{ background:#4FC3F7; }
+  .incontext .btbody { display:flex; height:384px; }
+  .incontext .btpane { flex:1; padding:14px 16px; font-family:var(--mono); font-size:13px; line-height:1.6; color:#D7DEE6; position:relative; overflow:hidden; }
+  .incontext .btpane.main { border-right:1px solid var(--line); flex:1.7; }
+  .incontext .btsearch { position:absolute; top:12px; right:14px; background:var(--raised); border:1px solid var(--line-2); border-radius:var(--r-sm); padding:7px 11px; display:flex; align-items:center; gap:12px; font-size:12px; box-shadow:0 14px 34px -18px #000; }
+  .incontext .btsearch .q { color:var(--chalk); } .incontext .btsearch .nn { color:var(--muted); }
+  .incontext .cbk { padding-left:11px; margin:3px 0; }
+  .incontext .gut-ok{ box-shadow: inset 3px 0 0 var(--ok);} .incontext .gut-err{ box-shadow: inset 3px 0 0 var(--alert);} .incontext .gut-run{ box-shadow: inset 3px 0 0 var(--muted);}
+
+  @media (max-width: 760px){
+    .incontext .hostbody, .incontext .btbody { height:auto; min-height:300px; }
+    .incontext .explorer, .incontext .btpane.aux { display:none; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cursor, .blk { animation: none; }
+    .incontext .scr.show { animation: none; }
+    html { scroll-behavior: auto; }
+  }
+</style>
+
+<div class="wrap">
+
+  <!-- ================= HERO ================= -->
+  <header class="hero">
+    <div class="eyebrow">BOSS Design System · v1</div>
+    <h1>Operator's<br>Console<span class="cursor" aria-hidden="true"></span></h1>
+    <p class="sub">A single visual language for <b>BossConsole</b> and <b>BossTerm</b>. Built on the character cell and one amber <b>signal</b> — the lamp that tells an operator what is live, right now.</p>
+
+    <div class="term-demo" role="img" aria-label="Terminal demo showing the amber block cursor">
+      <div class="term-bar">
+        <span class="lamp"></span><span class="lamp"></span><span class="lamp live"></span>
+        <span class="ttl">boss · ~/Development/Boss</span>
+      </div>
+      <div class="term-body">
+<span class="prompt"><span class="u">operator</span><span class="out">@</span><span class="p">boss</span> <span class="g">~/Boss</span> <span class="out">$</span></span> <span id="typed"></span><span class="blk" aria-hidden="true"></span>
+<span class="out" id="termout"></span></div>
+    </div>
+  </header>
+
+  <!-- ================= PRINCIPLES ================= -->
+  <section>
+    <div class="sec-head">
+      <div class="eyebrow">00 · Direction</div>
+      <h2>Three rules</h2>
+      <p class="lede">Everything below derives from these. When a choice is unclear, return here.</p>
+    </div>
+    <div class="grid cols-3">
+      <div class="specimen">
+        <h3 style="color:var(--signal)">The cell is the unit</h3>
+        <p style="color:var(--mist); font-size:14px; margin:8px 0 0">The terminal character cell (~8.4×17px at 14sp Meslo) is the grid the whole UI snaps to. Chrome borrows the terminal's discipline, not the other way around.</p>
+      </div>
+      <div class="specimen">
+        <h3 style="color:var(--signal)">One amber signal</h3>
+        <p style="color:var(--mist); font-size:14px; margin:8px 0 0">Amber means <i>live / active / now</i> — the primary action, the focused field, the selected tab, the blinking cursor. Nothing else competes for it. Cyan carries data and links.</p>
+      </div>
+      <div class="specimen">
+        <h3 style="color:var(--signal)">Quiet everywhere else</h3>
+        <p style="color:var(--mist); font-size:14px; margin:8px 0 0">Surfaces separate by tint, not shadow. Borders are hairlines. Density is high and calm so the content — your output — is the loudest thing on screen.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= COLOR ================= -->
+  <section id="color">
+    <div class="sec-head">
+      <div class="eyebrow">01 · Color</div>
+      <h2>Surface &amp; signal</h2>
+      <p class="lede">Host chrome and terminal share one floor (<code>ink</code>), so a panel and the shell it wraps feel continuous. Amber and cyan are the only saturated colors that appear in chrome.</p>
+    </div>
+
+    <div class="grid cols-4" style="margin-bottom:16px">
+      <div class="sw"><div class="chip" style="background:#0E1217"></div><div class="meta"><div class="nm">ink</div><div class="hx">#0E1217</div><div class="role">Base floor — host + terminal</div></div></div>
+      <div class="sw"><div class="chip" style="background:#161D26"></div><div class="meta"><div class="nm">panel</div><div class="hx">#161D26</div><div class="role">Chrome, raised surface</div></div></div>
+      <div class="sw"><div class="chip" style="background:#1E2731"></div><div class="meta"><div class="nm">raised</div><div class="hx">#1E2731</div><div class="role">Menus, popovers, hover</div></div></div>
+      <div class="sw"><div class="chip" style="background:#2A3744"></div><div class="meta"><div class="nm">line</div><div class="hx">#2A3744</div><div class="role">Hairline border / divider</div></div></div>
+    </div>
+    <div class="grid cols-4" style="margin-bottom:16px">
+      <div class="sw"><div class="chip" style="background:#E9EEF3"></div><div class="meta"><div class="nm" style="color:#0E1217">chalk</div><div class="hx" style="color:#5C6977">#E9EEF3</div><div class="role">Primary text</div></div></div>
+      <div class="sw"><div class="chip" style="background:#8593A3"></div><div class="meta"><div class="nm">mist</div><div class="hx">#8593A3</div><div class="role">Secondary text</div></div></div>
+      <div class="sw"><div class="chip" style="background:#5C6977"></div><div class="meta"><div class="nm">muted</div><div class="hx">#5C6977</div><div class="role">Tertiary / disabled</div></div></div>
+      <div class="sw"><div class="chip" style="background:#3A4B5C"></div><div class="meta"><div class="nm">line-2</div><div class="hx">#3A4B5C</div><div class="role">Strong border, input edge</div></div></div>
+    </div>
+    <div class="grid cols-4">
+      <div class="sw"><div class="chip" style="background:#F2A93B; box-shadow:inset 0 0 30px -6px #fff6"></div><div class="meta"><div class="nm" style="color:#1a1206">signal</div><div class="hx" style="color:#7a5a18">#F2A93B</div><div class="role">Amber — live / primary action</div></div></div>
+      <div class="sw"><div class="chip" style="background:#56C7E0"></div><div class="meta"><div class="nm" style="color:#06222a">data</div><div class="hx" style="color:#1d5f70">#56C7E0</div><div class="role">Cyan — links / info</div></div></div>
+      <div class="sw"><div class="chip" style="background:#6FD08C"></div><div class="meta"><div class="nm" style="color:#06220f">ok</div><div class="hx" style="color:#1f5e36">#6FD08C</div><div class="role">Success / running clean</div></div></div>
+      <div class="sw"><div class="chip" style="background:#F2685F"></div><div class="meta"><div class="nm" style="color:#2a0a08">alert</div><div class="hx" style="color:#7a221d">#F2685F</div><div class="role">Error / destructive</div></div></div>
+    </div>
+
+    <div style="margin-top:40px" class="specimen">
+      <div class="label">BossTerm · "Operator" theme — ANSI 16 + terminal colors</div>
+      <div class="ansi" style="margin-bottom:16px">
+        <div class="a" style="background:#15202B; color:#888">0</div>
+        <div class="a" style="background:#F2685F">1</div>
+        <div class="a" style="background:#6FD08C">2</div>
+        <div class="a" style="background:#F2A93B">3</div>
+        <div class="a" style="background:#5C9FE0">4</div>
+        <div class="a" style="background:#C792EA">5</div>
+        <div class="a" style="background:#56C7E0">6</div>
+        <div class="a" style="background:#C7D1DB">7</div>
+        <div class="a" style="background:#3A4B5C">8</div>
+        <div class="a" style="background:#FF8A80">9</div>
+        <div class="a" style="background:#8FE0A6">10</div>
+        <div class="a" style="background:#FFC560">11</div>
+        <div class="a" style="background:#82B7F0">12</div>
+        <div class="a" style="background:#DDB0F5">13</div>
+        <div class="a" style="background:#7FD9EE">14</div>
+        <div class="a" style="background:#E9EEF3">15</div>
+      </div>
+      <div class="pills">
+        <span class="pill">fg #D7DEE6</span>
+        <span class="pill">bg #0E1217</span>
+        <span class="pill" style="border-color:var(--signal); color:var(--signal)">cursor #F2A93B</span>
+        <span class="pill">selection #21405A</span>
+        <span class="pill">search #F0B429</span>
+        <span class="pill" style="border-color:var(--data); color:var(--data)">link #56C7E0</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= TYPE ================= -->
+  <section id="type">
+    <div class="sec-head">
+      <div class="eyebrow">02 · Type</div>
+      <h2>Mono speaks first</h2>
+      <p class="lede">Monospace is the brand voice — display headings, eyebrows, labels, every number and path. A humanist sans carries running UI copy where reading speed matters. The app bundles <b style="color:var(--chalk)">MesloLGS Nerd Font</b> for the mono role.</p>
+    </div>
+    <div class="specimen">
+      <div class="type-row"><span class="tk">display / L</span><span style="font-family:var(--mono); font-weight:600; font-size:34px; letter-spacing:-0.02em">Take command</span><span class="spec">mono · 28–34 · 600 · -2%</span></div>
+      <div class="type-row"><span class="tk">display / S</span><span style="font-family:var(--mono); font-weight:600; font-size:22px">Session restored</span><span class="spec">mono · 22 · 600</span></div>
+      <div class="type-row"><span class="tk">title</span><span style="font-family:var(--sans); font-weight:600; font-size:16px">Workspace settings</span><span class="spec">sans · 16 · 600</span></div>
+      <div class="type-row"><span class="tk">body</span><span style="font-family:var(--sans); font-size:13px">The quick brown fox prints to stdout.</span><span class="spec">sans · 13 · 400</span></div>
+      <div class="type-row"><span class="tk">data / mono</span><span style="font-family:var(--mono); font-size:14px; color:#D7DEE6">~/dev/boss · 1,284 ms · exit 0</span><span class="spec">mono · 14 · 400</span></div>
+      <div class="type-row"><span class="tk">label</span><span style="font-family:var(--mono); font-size:11px; letter-spacing:0.14em; text-transform:uppercase; color:var(--signal)">Recent projects</span><span class="spec">mono · 11 · 600 · +14% · UPPER</span></div>
+      <div class="type-row"><span class="tk">micro</span><span style="font-family:var(--mono); font-size:10px; letter-spacing:0.1em; text-transform:uppercase; color:var(--muted)">Auto-saved</span><span class="spec">mono · 10 · 500 · UPPER</span></div>
+    </div>
+  </section>
+
+  <!-- ================= SPACE / RADIUS / MOTION ================= -->
+  <section id="space">
+    <div class="sec-head">
+      <div class="eyebrow">03 · Space, shape, motion</div>
+      <h2>Measured in cells</h2>
+    </div>
+    <div class="grid cols-3">
+      <div class="specimen">
+        <div class="label">Spacing — 4px half-step, 8px base</div>
+        <div class="space-row"><span class="bar" style="width:2px"></span><span class="v">2 · hairline gap</span></div>
+        <div class="space-row"><span class="bar" style="width:4px"></span><span class="v">4 · icon padding</span></div>
+        <div class="space-row"><span class="bar" style="width:8px"></span><span class="v">8 · base unit</span></div>
+        <div class="space-row"><span class="bar" style="width:12px"></span><span class="v">12 · component gap</span></div>
+        <div class="space-row"><span class="bar" style="width:16px"></span><span class="v">16 · section pad</span></div>
+        <div class="space-row"><span class="bar" style="width:24px"></span><span class="v">24 · dialog pad</span></div>
+        <div class="space-row"><span class="bar" style="width:32px"></span><span class="v">32 · major gap</span></div>
+      </div>
+      <div class="specimen">
+        <div class="label">Radius &amp; elevation</div>
+        <div class="row" style="gap:14px; margin-bottom:18px">
+          <div style="text-align:center"><div style="width:52px;height:40px;background:var(--ink);border:1px solid var(--line-2);border-radius:0"></div><div class="note" style="margin-top:6px">0 · grid/term</div></div>
+          <div style="text-align:center"><div style="width:52px;height:40px;background:var(--ink);border:1px solid var(--line-2);border-radius:3px"></div><div class="note" style="margin-top:6px">3 · inputs</div></div>
+          <div style="text-align:center"><div style="width:52px;height:40px;background:var(--ink);border:1px solid var(--line-2);border-radius:5px"></div><div class="note" style="margin-top:6px">5 · buttons</div></div>
+          <div style="text-align:center"><div style="width:52px;height:40px;background:var(--ink);border:1px solid var(--line-2);border-radius:8px"></div><div class="note" style="margin-top:6px">8 · dialogs</div></div>
+        </div>
+        <div class="divider-h"></div>
+        <div class="stack" style="margin-top:14px; gap:8px">
+          <div style="background:var(--ink); padding:8px 12px; border-radius:4px; font-family:var(--mono); font-size:11px; color:var(--mist)">e0 · ink (floor)</div>
+          <div style="background:var(--panel); padding:8px 12px; border-radius:4px; font-family:var(--mono); font-size:11px; color:var(--mist)">e1 · panel + 1px line</div>
+          <div style="background:var(--raised); padding:8px 12px; border-radius:4px; font-family:var(--mono); font-size:11px; color:var(--mist); box-shadow:0 12px 30px -16px #000">e2 · raised + soft shadow</div>
+        </div>
+      </div>
+      <div class="specimen">
+        <div class="label">Motion</div>
+        <table class="tok" style="min-width:0">
+          <tr><td class="k">instant</td><td class="v">0ms</td><td style="color:var(--mist); font-size:12px">cursor, key echo</td></tr>
+          <tr><td class="k">fast</td><td class="v">90ms</td><td style="color:var(--mist); font-size:12px">hover, press</td></tr>
+          <tr><td class="k">base</td><td class="v">160ms</td><td style="color:var(--mist); font-size:12px">menus, panels</td></tr>
+          <tr><td class="k">blink</td><td class="v">530ms</td><td style="color:var(--mist); font-size:12px">cursor cadence</td></tr>
+        </table>
+        <p class="note">Easing <code>cubic-bezier(.2,0,0,1)</code>. Motion respects <code>prefers-reduced-motion</code> — the cursor stops blinking, panels cut instead of slide.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= COMPONENTS — HOST ================= -->
+  <section id="host">
+    <div class="sec-head">
+      <div class="eyebrow">04 · BossConsole — chrome</div>
+      <h2>Host elements</h2>
+      <p class="lede">The frame around the work: title bar, tabs, controls, overlays. The active item always wears amber.</p>
+    </div>
+
+    <!-- title + tab bar -->
+    <div class="specimen" style="padding:0; overflow:hidden; margin-bottom:24px">
+      <div style="display:flex; align-items:center; height:30px; background:var(--panel); border-bottom:1px solid var(--line); padding:0 12px; gap:10px">
+        <span class="blk" style="height:13px; width:7px; animation:none; transform:none"></span>
+        <span style="font-family:var(--mono); font-size:12px; color:var(--mist)">BOSS — operator@boss</span>
+        <span style="margin-left:auto; color:var(--muted); font-family:var(--mono); font-size:13px">— ▢ ✕</span>
+      </div>
+      <div class="tabbar" style="border:none; border-radius:0">
+        <div class="tab active"><span class="dot"></span>terminal — zsh<span class="x">✕</span></div>
+        <div class="tab"><span class="dot"></span>main.kt<span class="x">✕</span></div>
+        <div class="tab"><span class="dot" style="background:var(--ok)"></span>server · :8080<span class="x">✕</span></div>
+        <div class="tab" style="color:var(--muted)">＋</div>
+      </div>
+      <div style="background:var(--ink); padding:14px 16px; font-family:var(--mono); font-size:12px; color:var(--muted)">active tab marked by amber underline + amber cell-dot · panel content area</div>
+    </div>
+
+    <div class="grid cols-2">
+      <!-- buttons -->
+      <div class="specimen">
+        <div class="label">Buttons</div>
+        <div class="row" style="margin-bottom:12px">
+          <button class="btn btn-primary"><span class="gi">▶</span>Run</button>
+          <button class="btn btn-secondary">Cancel</button>
+          <button class="btn btn-ghost">Skip</button>
+          <button class="btn btn-danger">Delete</button>
+        </div>
+        <p class="note">Primary = amber, used once per view. Destructive stays outlined until hover, then commits to alert-red.</p>
+      </div>
+
+      <!-- fields -->
+      <div class="specimen">
+        <div class="label">Text field &amp; focus</div>
+        <label class="flabel">Workspace name</label>
+        <input class="field" value="operator-console" />
+        <div style="height:12px"></div>
+        <label class="flabel">Search (focused)</label>
+        <input class="field" style="border-color:var(--signal); box-shadow:0 0 0 3px #f2a93b30" placeholder="type to filter…" value="" />
+        <p class="note">Focus ring is always amber — the field is "live."</p>
+      </div>
+
+      <!-- toggle + slider -->
+      <div class="specimen">
+        <div class="label">Toggle &amp; slider</div>
+        <div class="row" style="justify-content:space-between; margin-bottom:8px"><span style="font-size:13px">Restore tabs on launch</span><span class="switch on"><span class="knob"></span></span></div>
+        <div class="row" style="justify-content:space-between; margin-bottom:6px"><span style="font-size:13px; color:var(--mist)">Telemetry</span><span class="switch"><span class="knob"></span></span></div>
+        <div class="divider-h" style="margin:14px 0"></div>
+        <label class="flabel">Font size — 14</label>
+        <div class="slider"><span class="fill"></span><span class="thumb"></span></div>
+      </div>
+
+      <!-- context menu -->
+      <div class="specimen">
+        <div class="label">Context menu</div>
+        <div class="menu">
+          <div class="mi"><span class="gi">⧉</span>Split right<span class="k">⌘D</span></div>
+          <div class="mi sel"><span class="gi">▦</span>Split down<span class="k">⌘⇧D</span></div>
+          <div class="mi"><span class="gi">⟳</span>Reload<span class="k">⌘R</span></div>
+          <div class="msep"></div>
+          <div class="mi"><span class="gi">⧉</span>Copy path</div>
+          <div class="mi danger"><span class="gi">🗑</span>Close tab<span class="k">⌘W</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- dialog + cards + scrollbar -->
+    <div class="grid cols-2" style="margin-top:16px">
+      <div class="specimen">
+        <div class="label">Confirmation dialog</div>
+        <div class="dialog">
+          <div class="dt"><svg class="warn-glyph" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 1 21h22L12 2zm0 6 7 12H5l7-12zm-1 4h2v4h-2v-4zm0 5h2v2h-2v-2z"/></svg>Discard session?</div>
+          <div class="dtxt">This terminal has unsaved scrollback. Closing it can't be undone.</div>
+          <div class="drow"><button class="btn btn-secondary">Keep</button><button class="btn btn-danger" style="background:var(--alert); color:#1a0a09; border-color:var(--alert)">Discard</button></div>
+        </div>
+      </div>
+      <div class="specimen">
+        <div class="label">Project cards</div>
+        <div class="grid cols-2" style="gap:12px">
+          <div class="card pcard"><div class="badge">BC</div><div class="nm">BossConsole</div><div class="pth">~/Development/Boss/BossConsole</div></div>
+          <div class="card pcard"><div class="badge" style="background:var(--data); color:#06222a">BT</div><div class="nm">BossTerm</div><div class="pth">~/Development/Boss/BossTerm</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="specimen" style="margin-top:16px">
+      <div class="label">Scrollbar — auto-hide, with markers</div>
+      <div class="scroll-demo">
+        $ grep -rn "signal" .<br>
+        <span style="color:var(--match, #ffe9a8)" class="match">src/Theme.kt:42</span>: val signal = Color(0xFFF2A93B)<br>
+        src/Tab.kt:18: // active marker uses signal<br>
+        <span class="match">docs/design.md:7</span>: the amber signal …<br>
+        build/out.log: done in 1.2s
+        <div class="thumb"></div>
+        <div class="mk" style="top:26px; background:var(--signal)"></div>
+        <div class="mk" style="top:64px; background:var(--warn)"></div>
+        <div class="mk" style="top:96px; background:var(--ok)"></div>
+      </div>
+      <p class="note">Thumb <code>#ffffff30</code> over a 12%-white track · search hits = amber markers · command-block status = ok/alert markers on the right gutter.</p>
+    </div>
+  </section>
+
+  <!-- ================= COMPONENTS — TERMINAL ================= -->
+  <section id="term">
+    <div class="sec-head">
+      <div class="eyebrow">05 · BossTerm — the surface</div>
+      <h2>Terminal elements</h2>
+      <p class="lede">Where the operator actually works. The cursor is amber; ANSI colors are tuned to sit calmly on the shared <code>ink</code> floor.</p>
+    </div>
+
+    <div class="terminal" style="margin-bottom:24px">
+      <div class="tb">
+        <span class="lamp" style="width:9px;height:9px;border-radius:50%;background:var(--signal); box-shadow:0 0 8px -1px var(--signal)"></span>
+        <span style="font-family:var(--mono); font-size:12px; color:var(--mist)">zsh — ~/Development/Boss</span>
+        <span style="margin-left:auto; font-family:var(--mono); font-size:11px; color:var(--muted)">120×32</span>
+      </div>
+      <div class="body" style="color:#D7DEE6">
+<span style="color:#6FD08C">operator</span>@<span style="color:#56C7E0">boss</span> <span style="color:#F2A93B">~/Boss</span> $ git status
+<span style="color:#8593A3">On branch </span><span style="color:#56C7E0">dev</span>
+Changes not staged: <span style="color:#F2685F">M  BossColors.kt</span>   <span style="color:#6FD08C">A  BossDesignSystem.kt</span>
+<span style="color:#F2A93B">⚠ 2 untracked files</span>  ·  search hit → <span class="match">signal</span>  ·  <span class="sel">selected range</span>
+operator@boss ~/Boss $ <span class="blk" aria-hidden="true"></span>
+      </div>
+    </div>
+
+    <div class="grid cols-3">
+      <div class="specimen">
+        <div class="label">Cursor styles (× steady / blink)</div>
+        <div class="grid cols-3" style="gap:10px">
+          <div class="cur-cell"><span class="cur-block">A</span><div class="lab">Block</div></div>
+          <div class="cur-cell"><span class="cur-ul">A</span><div class="lab">Underline</div></div>
+          <div class="cur-cell"><span class="cur-bar">A</span><div class="lab">Bar</div></div>
+        </div>
+        <p class="note">Focused 0.7 alpha · unfocused 0.3 · blink 530ms.</p>
+      </div>
+      <div class="specimen">
+        <div class="label">Tab chips (BossTerm)</div>
+        <div class="stack" style="gap:8px">
+          <div class="row" style="gap:6px">
+            <span class="pill" style="border-color:var(--signal); color:var(--signal)">● zsh</span>
+            <span class="pill">● ssh prod</span>
+            <span class="pill" style="border-color:#4FC3F7; color:#4FC3F7">⇆ mirror</span>
+          </div>
+          <p class="note">7 color presets for grouping · cyan <code>#4FC3F7</code> marks mirrored / remote sessions · active chip wears the amber signal.</p>
+        </div>
+      </div>
+      <div class="specimen">
+        <div class="label">Command-block gutter &amp; progress</div>
+        <div style="font-family:var(--mono); font-size:12px; line-height:1.7">
+          <div style="border-left:3px solid var(--ok); padding-left:10px; color:var(--mist)">npm run build <span style="color:var(--ok)">✓ exit 0</span></div>
+          <div style="border-left:3px solid var(--alert); padding-left:10px; color:var(--mist); margin-top:6px">npm test <span style="color:var(--alert)">✕ exit 1</span></div>
+          <div style="border-left:3px solid var(--muted); padding-left:10px; color:var(--mist); margin-top:6px">deploy … <span style="color:var(--mist)">running</span></div>
+        </div>
+        <div class="slider" style="margin-top:16px; height:6px"><span class="fill" style="width:44%; background:var(--signal)"></span></div>
+        <p class="note">OSC 9;4 progress bar — amber, 6dp, top or bottom edge.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= IN CONTEXT (TOGGLE) ================= -->
+  <section id="context">
+    <div class="sec-head">
+      <div class="eyebrow">06 · In context</div>
+      <h2>The template, applied</h2>
+      <p class="lede">The same tokens composed into real product surfaces. Toggle between the two BOSS apps — each is a different screen built entirely from this design language.</p>
+    </div>
+
+    <div class="incontext">
+      <div class="seg" role="tablist" aria-label="Choose a surface">
+        <button type="button" role="tab" id="tab-console" aria-controls="scr-console" aria-selected="true" data-scr="console"><span class="pip"></span>BossConsole</button>
+        <button type="button" role="tab" id="tab-term" aria-controls="scr-term" aria-selected="false" data-scr="term"><span class="pip"></span>BossTerm</button>
+      </div>
+
+      <!-- ===== CONSOLE SCREEN ===== -->
+      <div class="scr show" id="scr-console" role="tabpanel" aria-labelledby="tab-console">
+        <div class="win">
+          <div class="winbar">
+            <span class="tl"><i></i><i></i><i></i></span>
+            <span class="wt"><span class="cur" aria-hidden="true"></span>BOSS — operator@boss · ~/Development/Boss</span>
+            <span class="winr">⌘K · RBAC: operator</span>
+          </div>
+          <div class="hostbody">
+            <div class="rail">
+              <span class="ri">▤</span>
+              <span class="ri on">⌗</span>
+              <span class="ri">⎇</span>
+              <span class="ri">▮</span>
+              <span class="grow"></span>
+              <span class="ri">⚙</span>
+            </div>
+            <div class="hostmain">
+              <div class="tabbar" style="border-radius:0; border:none; border-bottom:1px solid var(--line)">
+                <div class="tab active"><span class="dot"></span>BossDesignSystem.kt<span class="x">✕</span></div>
+                <div class="tab"><span class="dot" style="background:#5C9FE0"></span>BossTheme.kt<span class="x">✕</span></div>
+                <div class="tab"><span class="dot" style="background:var(--ok)"></span>terminal — zsh<span class="x">✕</span></div>
+                <div class="tab" style="color:var(--muted)">＋</div>
+              </div>
+              <div class="hostsplit">
+                <div class="explorer">
+                  <div class="eb">Explorer · BOSS</div>
+                  <div class="frow"><span class="fd" style="background:var(--mist)"></span>▾ BossConsole</div>
+                  <div class="frow i1"><span class="fd" style="background:var(--mist)"></span>▾ plugin-ui-core</div>
+                  <div class="frow i2 active"><span class="fd" style="background:var(--signal)"></span>BossDesignSystem.kt</div>
+                  <div class="frow i2"><span class="fd" style="background:#5C9FE0"></span>BossColors.kt</div>
+                  <div class="frow i1"><span class="fd" style="background:var(--mist)"></span>▸ composeApp</div>
+                  <div class="frow"><span class="fd" style="background:var(--mist)"></span>▾ docs</div>
+                  <div class="frow i1"><span class="fd" style="background:var(--data)"></span>DESIGN_SYSTEM.md</div>
+                </div>
+                <div class="editor">
+                  <div class="code">
+<div><span class="ln">38</span><span class="kw">object</span> <span class="fn">BossPalette</span> {</div>
+<div><span class="ln">39</span>  <span class="kw">val</span> ink    = <span class="fn">Color</span>(<span class="nx">0xFF0E1217</span>)  <span class="cm">// shared floor</span></div>
+<div><span class="ln">40</span>  <span class="kw">val</span> signal = <span class="fn">Color</span>(<span class="am">0xFFF2A93B</span>)  <span class="cm">// the live signal</span></div>
+<div><span class="ln">41</span>  <span class="kw">val</span> data   = <span class="fn">Color</span>(<span class="nx">0xFF56C7E0</span>)</div>
+<div><span class="ln">42</span>}</div>
+<div><span class="ln">43</span>&nbsp;</div>
+<div><span class="ln">44</span><span class="cm">// amber = "now": primary action, focus, cursor</span></div>
+                  </div>
+                  <div class="hostterm">
+                    <div class="hb">Terminal · split below editor</div>
+                    <div><span class="gn">operator</span>@<span class="cy">boss</span> <span class="am">~/Boss</span> $ ./gradlew :composeApp:compileKotlinDesktop</div>
+                    <div class="cbk gut-ok"><span class="ok">BUILD SUCCESSFUL</span> in 26s · design re-skin applied</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="statusbar">
+            <span class="sg">⎇ design/operators-console</span>
+            <span>Kotlin</span>
+            <span>UTF-8</span>
+            <span class="sr">Ln 40 · Col 18 · ◆ amber #F2A93B</span>
+          </div>
+        </div>
+        <p class="cap"><b>Host UX</b> — left rail, file tree, an editor with semantic syntax colors, and a split terminal. The active tab, the selected file's marker, and the current rail tool all wear the amber signal; everything else stays graphite-quiet.</p>
+      </div>
+
+      <!-- ===== TERMINAL SCREEN ===== -->
+      <div class="scr" id="scr-term" role="tabpanel" aria-labelledby="tab-term" hidden>
+        <div class="win">
+          <div class="btprog"></div>
+          <div class="winbar">
+            <span class="tl"><i></i><i></i><i></i></span>
+            <span class="wt">zsh — ~/Development/Boss · 120×32</span>
+            <span class="winr">⌘F search · ⌘D split</span>
+          </div>
+          <div class="bttabs">
+            <span class="bchip on"><span class="bd"></span>zsh</span>
+            <span class="bchip"><span class="bd" style="background:var(--ok)"></span>server :8080</span>
+            <span class="bchip rem"><span class="bd"></span>⇆ ssh prod</span>
+            <span class="bchip" style="color:var(--muted)">＋</span>
+          </div>
+          <div class="btbody">
+            <div class="btpane main">
+              <div class="btsearch"><span>⌕ <span class="q">signal</span></span><span class="nn">2 / 5</span></div>
+              <div><span class="gn">operator</span>@<span class="cy">boss</span> <span class="am">~/Boss</span> $ git status</div>
+              <div class="mut">On branch <span class="cy">design/operators-console</span></div>
+              <div class="cbk gut-ok"><span class="ok">✓</span> <span class="mut">working tree clean</span></div>
+              <div><span class="gn">operator</span>@<span class="cy">boss</span> <span class="am">~/Boss</span> $ rg "<span class="match">signal</span>" -n</div>
+              <div class="mut">BossDesignSystem.kt:40: val <span class="match">signal</span> = …F2A93B</div>
+              <div class="mut">BossTabButton.kt:18: // marker uses <span class="match">signal</span></div>
+              <div class="cbk gut-err"><span class="er">✕</span> <span class="mut">npm test — 1 failing (exit 1)</span></div>
+              <div style="margin-top:2px"><span class="sel">selection highlight</span> <span class="mut">· the amber block cursor →</span></div>
+              <div><span class="gn">operator</span>@<span class="cy">boss</span> <span class="am">~/Boss</span> $ <span class="blk" aria-hidden="true"></span></div>
+            </div>
+            <div class="btpane aux">
+              <div class="hb">split · deploy log</div>
+              <div class="cbk gut-run mut">deploy … <span class="am">running</span></div>
+              <div class="mut">→ build image</div>
+              <div class="mut">→ push registry <span class="cy">94%</span></div>
+              <div class="mut" style="margin-top:10px">cpu <span class="ok">▆▆▃▂</span> 12%</div>
+              <div class="mut">mem <span class="am">▆▆▆▅</span> 61%</div>
+            </div>
+          </div>
+        </div>
+        <p class="cap"><b>Terminal UX</b> — tab chips (cyan marks a mirrored/remote session), a split pane, the floating search overlay with amber match highlights, command-block gutters (green ok / red error / running), selection, and the amber block cursor. Same <code>ink</code> floor as the host, so the window reads as one continuous surface.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= TOKEN MAP ================= -->
+  <section id="tokens">
+    <div class="sec-head">
+      <div class="eyebrow">07 · Implementation</div>
+      <h2>Token → Kotlin</h2>
+      <p class="lede">These tokens ship as <code>BossDesignSystem.kt</code> (host, exposed via <code>BossTheme</code> CompositionLocals) and as the <b style="color:var(--chalk)">"BOSS Operator"</b> builtin <code>Theme</code> + <code>ColorPalette</code> in BossTerm.</p>
+    </div>
+    <div class="tok-tbl-wrap">
+      <table class="tok">
+        <thead><tr><th>Token</th><th>Value</th><th>Host (BossColors)</th><th>BossTerm</th></tr></thead>
+        <tbody>
+          <tr><td class="k">color.ink</td><td class="v">#0E1217</td><td>darkContentBackground</td><td>background</td></tr>
+          <tr><td class="k">color.panel</td><td class="v">#161D26</td><td>darkBackground / Surface</td><td>—</td></tr>
+          <tr><td class="k">color.raised</td><td class="v">#1E2731</td><td>contextMenuHover / raised</td><td>—</td></tr>
+          <tr><td class="k">color.line</td><td class="v">#2A3744</td><td>darkBorder</td><td>—</td></tr>
+          <tr><td class="k">color.chalk</td><td class="v">#E9EEF3</td><td>darkTextPrimary</td><td>foreground (#D7DEE6)</td></tr>
+          <tr><td class="k">color.mist</td><td class="v">#8593A3</td><td>darkTextSecondary</td><td>—</td></tr>
+          <tr><td class="k">color.signal</td><td class="v">#F2A93B</td><td>darkAccent</td><td>cursor</td></tr>
+          <tr><td class="k">color.data</td><td class="v">#56C7E0</td><td>(link)</td><td>hyperlink</td></tr>
+          <tr><td class="k">color.ok</td><td class="v">#6FD08C</td><td>darkSuccess / darkSecondary</td><td>ansi.green</td></tr>
+          <tr><td class="k">color.alert</td><td class="v">#F2685F</td><td>darkError</td><td>ansi.red</td></tr>
+          <tr><td class="k">radius.button</td><td class="v">5dp</td><td>RoundedCornerShape(5)</td><td>—</td></tr>
+          <tr><td class="k">font.mono</td><td class="v">MesloLGS NF</td><td>display + data</td><td>terminal</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">Full token set — spacing, elevation, motion, type scale — lives in the generated Kotlin alongside these colors.</p>
+  </section>
+
+  <footer>
+    BOSS Design System · "Operator's Console" · one floor, one signal, the cell as the unit. <span style="color:var(--signal)">█</span>
+  </footer>
+</div>
+
+<script>
+  (function () {
+    var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var cmd = 'boss launch --workspace operator-console';
+    var out = '→ session live · amber means now';
+    var typed = document.getElementById('typed');
+    var termout = document.getElementById('termout');
+    if (!typed) return;
+    if (reduce) { typed.textContent = cmd; termout.textContent = out; return; }
+    var i = 0;
+    function step() {
+      typed.textContent = cmd.slice(0, i);
+      i++;
+      if (i <= cmd.length) { setTimeout(step, 46); }
+      else { setTimeout(function(){ termout.textContent = out; }, 360); }
+    }
+    setTimeout(step, 650);
+  })();
+</script>
+
+<script>
+  // In-context surface toggle (BossConsole / BossTerm)
+  (function () {
+    var tabs = Array.prototype.slice.call(document.querySelectorAll('.incontext .seg button'));
+    if (!tabs.length) return;
+    function select(name) {
+      tabs.forEach(function (b) {
+        b.setAttribute('aria-selected', b.getAttribute('data-scr') === name ? 'true' : 'false');
+      });
+      document.querySelectorAll('.incontext .scr').forEach(function (s) {
+        var on = s.id === 'scr-' + name;
+        s.classList.toggle('show', on);
+        if (on) s.removeAttribute('hidden'); else s.setAttribute('hidden', '');
+      });
+    }
+    tabs.forEach(function (b, i) {
+      b.addEventListener('click', function () { select(b.getAttribute('data-scr')); });
+      b.addEventListener('keydown', function (e) {
+        if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+        e.preventDefault();
+        var n = e.key === 'ArrowRight' ? (i + 1) % tabs.length : (i - 1 + tabs.length) % tabs.length;
+        tabs[n].focus();
+        select(tabs[n].getAttribute('data-scr'));
+      });
+    });
+  })();
+</script>

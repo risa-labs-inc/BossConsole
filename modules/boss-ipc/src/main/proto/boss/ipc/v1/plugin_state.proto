@@ -1,0 +1,79 @@
+syntax = "proto3";
+
+package boss.ipc.v1;
+
+import "boss/ipc/v1/common.proto";
+
+option java_package = "ai.rever.boss.ipc.proto";
+option java_multiple_files = true;
+
+// PluginStateService enables split-brain state synchronization between
+// out-of-process plugin logic (child JVM) and the kernel's UI renderer.
+//
+// The child process owns state and sends state updates.
+// The kernel UI sends intents (user actions) and receives state + effects.
+service PluginStateService {
+  // Bidirectional state sync stream.
+  // Client (kernel) sends intents; server (plugin) sends state updates and effects.
+  rpc SyncState(stream PluginIntentEnvelope) returns (stream PluginStateUpdate);
+
+  // One-shot: get the current state snapshot (used on reconnection).
+  rpc GetCurrentState(PluginStateRequest) returns (PluginStateEnvelope);
+}
+
+// ---- State Envelopes ----
+
+// Full state snapshot sent from plugin process to kernel.
+message PluginStateEnvelope {
+  string plugin_id = 1;
+  string instance_id = 2;
+  bytes state_bytes = 3;       // Serialized plugin state (kotlinx.serialization JSON)
+  int64 version = 4;           // Monotonically increasing version number
+  int64 timestamp = 5;         // Epoch millis when state was produced
+  string state_type = 6;       // Fully qualified class name of the state type
+}
+
+// Intent sent from kernel UI to plugin process.
+message PluginIntentEnvelope {
+  string plugin_id = 1;
+  string instance_id = 2;
+  string intent_type = 3;      // Intent discriminator (e.g., "SetFilter", "Refresh")
+  bytes payload_bytes = 4;     // Serialized intent payload
+  int64 timestamp = 5;
+}
+
+// Side effect sent from plugin process to kernel (e.g., show toast, navigate).
+message PluginEffectEnvelope {
+  string effect_type = 1;      // Effect discriminator (e.g., "ShowToast", "OpenFile")
+  bytes payload_bytes = 2;     // Serialized effect payload
+  int64 timestamp = 3;
+}
+
+// ---- Stream Messages ----
+
+// Wrapper for state updates streamed from plugin to kernel.
+// Can be a full state snapshot, a delta, or a side effect.
+message PluginStateUpdate {
+  oneof update {
+    PluginStateEnvelope full_state = 1;    // Full state replacement
+    PluginStateDelta delta_state = 2;      // Incremental state patch
+    PluginEffectEnvelope effect = 3;       // Side effect to handle in kernel
+  }
+}
+
+// Incremental state delta (JSON Merge Patch format).
+message PluginStateDelta {
+  string plugin_id = 1;
+  string instance_id = 2;
+  int64 base_version = 3;     // Version this delta applies to
+  int64 new_version = 4;      // Resulting version after applying
+  bytes patch_bytes = 5;      // JSON Merge Patch bytes
+  int64 timestamp = 6;
+}
+
+// ---- Request Messages ----
+
+message PluginStateRequest {
+  string plugin_id = 1;
+  string instance_id = 2;
+}

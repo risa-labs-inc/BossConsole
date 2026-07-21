@@ -1,0 +1,80 @@
+syntax = "proto3";
+
+package boss.ipc.v1.services;
+
+import "boss/ipc/v1/common.proto";
+
+option java_package = "ai.rever.boss.ipc.proto.services";
+option java_multiple_files = true;
+
+// ActiveTabsService exposes tab management to out-of-process plugins.
+// The kernel tracks all open tabs across browser, editor, and terminal panels
+// and allows plugins to query, select, create, and close tabs.
+service ActiveTabsService {
+  // Stream the active tab list as it updates
+  rpc WatchActiveTabs(boss.ipc.v1.Empty) returns (stream ActiveTabListResponse);
+
+  // Force a refresh of the tab list
+  rpc RefreshTabs(boss.ipc.v1.Empty) returns (boss.ipc.v1.Empty);
+
+  // Select (activate) a specific tab
+  rpc SelectTab(SelectTabRequest) returns (boss.ipc.v1.Empty);
+
+  // Get the URL associated with a tab
+  rpc GetTabUrl(TabIdRequest) returns (ActiveTabStringResponse);
+
+  // Get the favicon cache key for a tab
+  rpc GetFaviconCacheKey(TabIdRequest) returns (ActiveTabStringResponse);
+
+  // Create a new browser tab with the given URL
+  rpc CreateBrowserTab(CreateBrowserTabRequest) returns (ActiveTabStringResponse);
+
+  // Close a tab by ID
+  rpc CloseTab(TabIdRequest) returns (ActiveTabBoolResponse);
+}
+
+// ---- Tab model ----
+
+message ActiveTabListResponse {
+  repeated ActiveTabProto tabs = 1;
+}
+
+message ActiveTabProto {
+  string tab_id = 1;
+  string type_id = 2;
+  string title = 3;
+  string workspace_id = 4;
+  string workspace_name = 5;
+  string panel_id = 6;
+  string window_id = 7;
+  string split_position = 8;
+  string url = 9;
+  string favicon_cache_key = 10;
+}
+
+// ---- Requests ----
+
+message SelectTabRequest {
+  string tab_id = 1;
+  string panel_id = 2;
+}
+
+message TabIdRequest {
+  string tab_id = 1;
+}
+
+message CreateBrowserTabRequest {
+  string url = 1;
+  string panel_id = 2;
+  string title = 3;
+}
+
+// ---- Shared types (scoped to active tabs service) ----
+
+message ActiveTabStringResponse {
+  string value = 1;
+}
+
+message ActiveTabBoolResponse {
+  bool value = 1;
+}

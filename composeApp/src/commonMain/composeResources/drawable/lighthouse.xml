@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="1200dp"
+    android:height="1200dp"
+    android:viewportWidth="1200"
+    android:viewportHeight="1200">
+    
+    <!-- Base foundation -->
+    <path
+        android:pathData="M300,1000L900,1000L900,1100L300,1100Z"
+        android:fillColor="#2C3E50"
+        android:fillType="nonZero"/>
+    
+    <!-- Main tower body (tapered) -->
+    <path
+        android:pathData="M400,400L800,400L800,1000L400,1000Z"
+        android:fillColor="#34495E"
+        android:fillType="nonZero"/>
+    
+    <!-- Lantern room (much larger) -->
+    <path
+        android:pathData="M300,200L900,200L900,400L300,400Z"
+        android:fillColor="#3498DB"
+        android:fillType="nonZero"/>
+    
+    <!-- Light beams -->
+    <!-- Right beam layers -->
+    <path
+        android:pathData="M900,300L2000,-400L2000,1000L900,300Z"
+        android:fillColor="#FFF8E7"
+        android:fillType="nonZero"
+        android:fillAlpha="0.3"/>
+    <path
+        android:pathData="M900,300L1800,-300L1800,900L900,300Z"
+        android:fillColor="#FFF0A3"
+        android:fillType="nonZero"
+        android:fillAlpha="0.5"/>
+    <path
+        android:pathData="M900,300L1600,-200L1600,800L900,300Z"
+        android:fillColor="#FFE55C"
+        android:fillType="nonZero"
+        android:fillAlpha="0.7"/>
+    <path
+        android:pathData="M900,300L1400,-100L1400,700L900,300Z"
+        android:fillColor="#FFD700"
+        android:fillType="nonZero"/>
+    
+    <!-- Left beam layers -->
+    <path
+        android:pathData="M300,300L-800,-400L-800,1000L300,300Z"
+        android:fillColor="#FFF8E7"
+        android:fillType="nonZero"
+        android:fillAlpha="0.3"/>
+    <path
+        android:pathData="M300,300L-600,-300L-600,900L300,300Z"
+        android:fillColor="#FFF0A3"
+        android:fillType="nonZero"
+        android:fillAlpha="0.5"/>
+    <path
+        android:pathData="M300,300L-400,-200L-400,800L300,300Z"
+        android:fillColor="#FFE55C"
+        android:fillType="nonZero"
+        android:fillAlpha="0.7"/>
+    <path
+        android:pathData="M300,300L-200,-100L-200,700L300,300Z"
+        android:fillColor="#FFD700"
+        android:fillType="nonZero"/>
+    
+    <!-- Windows (two large windows) -->
+    <path
+        android:pathData="M450,250L550,250L550,350L450,350Z"
+        android:fillColor="#FFFFFF"
+        android:fillType="nonZero"/>
+    <path
+        android:pathData="M650,250L750,250L750,350L650,350Z"
+        android:fillColor="#FFFFFF"
+        android:fillType="nonZero"/>
+    
+    <!-- Door -->
+    <path
+        android:pathData="M550,800L650,800L650,1000L550,1000Z"
+        android:fillColor="#FFFFFF"
+        android:fillType="nonZero"/>
+    
+    <!-- Decorative stripes (three levels) -->
+    <path
+        android:pathData="M400,500L800,500L800,520L400,520Z"
+        android:fillColor="#FFFFFF"
+        android:fillType="nonZero"/>
+    <path
+        android:pathData="M400,650L800,650L800,670L400,670Z"
+        android:fillColor="#FFFFFF"
+        android:fillType="nonZero"/>
+    <path
+        android:pathData="M400,800L800,800L800,820L400,820Z"
+        android:fillColor="#FFFFFF"
+        android:fillType="nonZero"/>
+</vector> 

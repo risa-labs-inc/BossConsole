@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package boss.ipc.v1.services;
+
+import "boss/ipc/v1/common.proto";
+
+option java_package = "ai.rever.boss.ipc.proto.services";
+option java_multiple_files = true;
+
+// SupabaseService provides a proxied interface to the Supabase backend.
+// Out-of-process plugins use this to execute select queries and RPC calls
+// without direct database credentials.
+service SupabaseService {
+  // Execute a select query on a Supabase table
+  rpc Select(SupabaseSelectRequest) returns (SupabaseJsonResponse);
+
+  // Call a Supabase RPC (remote procedure call / Edge Function)
+  rpc Rpc(SupabaseRpcRequest) returns (SupabaseJsonResponse);
+}
+
+// ---- Query filter ----
+
+message QueryFilterProto {
+  string column = 1;
+  QueryOperatorProto operator = 2;
+  string value = 3;
+}
+
+enum QueryOperatorProto {
+  QUERY_OPERATOR_UNSPECIFIED = 0;
+  QUERY_OPERATOR_EQ = 1;
+  QUERY_OPERATOR_NEQ = 2;
+  QUERY_OPERATOR_GT = 3;
+  QUERY_OPERATOR_GTE = 4;
+  QUERY_OPERATOR_LT = 5;
+  QUERY_OPERATOR_LTE = 6;
+  QUERY_OPERATOR_LIKE = 7;
+  QUERY_OPERATOR_ILIKE = 8;
+  QUERY_OPERATOR_IS = 9;
+  QUERY_OPERATOR_IN = 10;
+  QUERY_OPERATOR_CONTAINS = 11;
+  QUERY_OPERATOR_CONTAINED_BY = 12;
+  QUERY_OPERATOR_OVERLAPS = 13;
+}
+
+// ---- Requests ----
+
+message SupabaseSelectRequest {
+  string table = 1;
+  string columns = 2;
+  repeated QueryFilterProto filters = 3;
+  int32 range_from = 4;
+  int32 range_to = 5;
+}
+
+message SupabaseRpcRequest {
+  string function = 1;
+  string parameters_json = 2;
+}
+
+// ---- Responses ----
+
+message SupabaseJsonResponse {
+  bool success = 1;
+  string json_data = 2;
+  string error_message = 3;
+}

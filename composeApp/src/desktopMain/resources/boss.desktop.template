@@ -1,0 +1,19 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=BOSS Console
+Comment=Business Operating System Service - Intelligent service automation platform
+GenericName=Web Browser
+Exec={{EXEC_PATH}} %u
+Icon={{ICON_PATH}}
+Terminal=false
+Categories=Network;WebBrowser;
+MimeType=x-scheme-handler/http;x-scheme-handler/https;x-scheme-handler/boss;text/html;application/xhtml+xml;
+StartupNotify=true
+StartupWMClass=BOSS
+Keywords=browser;web;internet;
+Actions=NewWindow;
+
+[Desktop Action NewWindow]
+Name=Open New Window
+Exec={{EXEC_PATH}}

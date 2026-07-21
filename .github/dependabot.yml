@@ -1,0 +1,36 @@
+# 📦 GitHub Dependabot configuration for BOSS
+# Automatically updates dependencies and keeps the project secure
+
+version: 2
+updates:
+  # Gradle dependencies
+  - package-ecosystem: "gradle"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "⬆️ deps:"
+      include: "scope"
+    reviewers:
+      - "kshivang"  # Replace with your GitHub username
+    assignees:
+      - "kshivang"  # Replace with your GitHub username
+
+  # GitHub Actions workflows
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "⬆️ actions:"
+      include: "scope"
+    reviewers:
+      - "kshivang"  # Replace with your GitHub username
+    assignees:
+      - "kshivang"  # Replace with your GitHub username

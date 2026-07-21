@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Allow JIT for JxBrowser JavaScript execution -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    
+    <!-- Allow unsigned executable memory for JxBrowser -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    
+    <!-- Disable library validation for JxBrowser native libraries -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    
+    <!-- Network access for browser functionality -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.network.server</key>
+    <true/>
+    
+    <!-- File access for code editor -->
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+    
+    <!-- Terminal access -->
+    <key>com.apple.security.device.serial</key>
+    <true/>
+    
+    <!-- Allow debugging -->
+    <key>com.apple.security.cs.debugger</key>
+    <true/>
+    
+    <!-- App Sandbox disabled for full system access -->
+    <key>com.apple.security.app-sandbox</key>
+    <false/>
+    
+    <!-- Camera access for video conferencing -->
+    <key>com.apple.security.device.camera</key>
+    <true/>
+    
+    <!-- Microphone access for video conferencing -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    
+    <!-- Additional entitlements for Chromium -->
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+    
+    <!-- Allow spawning subprocesses -->
+    <key>com.apple.security.inherit</key>
+    <true/>
+
+    <!-- Platform passkeys (Touch ID) are handled natively by JxBrowser 9.3.0+ inside
+         the (branded) Chromium processes, so the app itself needs no WebAuthn
+         entitlement. Historical note: the custom in-process authenticator removed in
+         July 2026 would have required com.apple.developer.web-browser.public-key-credential
+         (Apple entitlement request YWD6D3446V) — a managed capability that must never
+         be declared here without an embedded provisioning profile, or macOS refuses
+         to launch the app. -->
+</dict>
+</plist>

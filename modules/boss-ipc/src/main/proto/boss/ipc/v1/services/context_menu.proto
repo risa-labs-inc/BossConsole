@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package boss.ipc.v1.services;
+
+import "boss/ipc/v1/common.proto";
+
+option java_package = "ai.rever.boss.ipc.proto.services";
+option java_multiple_files = true;
+
+// ContextMenuService allows out-of-process plugins to register and manage context menu
+// items. Since Compose modifiers cannot be serialized over gRPC, plugins register menu
+// item descriptors and the kernel applies them to the appropriate UI nodes.
+service ContextMenuService {
+  // Register a context menu with one or more items for a given UI node
+  rpc RegisterContextMenu(RegisterContextMenuRequest) returns (boss.ipc.v1.Empty);
+
+  // Unregister a previously registered context menu
+  rpc UnregisterContextMenu(ContextMenuIdRequest) returns (boss.ipc.v1.Empty);
+
+  // Notify the plugin that a context menu action was triggered by the user
+  rpc OnContextMenuAction(ContextMenuActionRequest) returns (boss.ipc.v1.Empty);
+}
+
+// ---- Messages ----
+
+message RegisterContextMenuRequest {
+  string context_menu_id = 1;
+  string node_id = 2;
+  repeated ContextMenuItemProto items = 3;
+}
+
+message ContextMenuItemProto {
+  string label = 1;
+  string action_id = 2;
+  string icon_name = 3;
+  bool enabled = 4;
+  bool separator_before = 5;
+}
+
+message ContextMenuIdRequest {
+  string context_menu_id = 1;
+}
+
+message ContextMenuActionRequest {
+  string context_menu_id = 1;
+  string action_id = 2;
+}

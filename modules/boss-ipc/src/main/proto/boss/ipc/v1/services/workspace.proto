@@ -1,0 +1,76 @@
+syntax = "proto3";
+
+package boss.ipc.v1.services;
+
+import "boss/ipc/v1/common.proto";
+
+option java_package = "ai.rever.boss.ipc.proto.services";
+option java_multiple_files = true;
+
+// WorkspaceService provides workspace lifecycle and persistence operations.
+// Plugins and UI components use this to read and watch workspace state across processes.
+service WorkspaceService {
+  // Get all available workspaces
+  rpc GetWorkspaces(boss.ipc.v1.Empty) returns (WorkspacesResponse);
+
+  // Stream workspace list changes in real time
+  rpc WatchWorkspaces(boss.ipc.v1.Empty) returns (stream WorkspacesResponse);
+
+  // Get the currently active workspace
+  rpc GetCurrentWorkspace(boss.ipc.v1.Empty) returns (WorkspaceResponse);
+
+  // Stream the currently active workspace as it changes
+  rpc WatchCurrentWorkspace(boss.ipc.v1.Empty) returns (stream WorkspaceResponse);
+
+  // Load (activate) a workspace by ID or path
+  rpc LoadWorkspace(LoadWorkspaceRequest) returns (WorkspaceResponse);
+
+  // Persist workspace state (tabs, layout, scroll positions, etc.)
+  rpc SaveWorkspace(SaveWorkspaceRequest) returns (WorkspaceResponse);
+
+  // Delete a saved workspace
+  rpc DeleteWorkspace(DeleteWorkspaceRequest) returns (boss.ipc.v1.Empty);
+}
+
+// ---- Workspace Model ----
+
+message WorkspaceInfo {
+  string id = 1;
+  string name = 2;
+  string project_path = 3;        // Root directory of the project
+  string description = 4;
+  int64 created_at = 5;
+  int64 last_opened_at = 6;
+  int32 tab_count = 7;
+  map<string, string> metadata = 8;  // Arbitrary plugin-stored metadata
+}
+
+// ---- Responses ----
+
+message WorkspacesResponse {
+  repeated WorkspaceInfo workspaces = 1;
+}
+
+message WorkspaceResponse {
+  bool found = 1;
+  WorkspaceInfo workspace = 2;
+  string error_message = 3;
+}
+
+// ---- Requests ----
+
+message LoadWorkspaceRequest {
+  string workspace_id = 1;    // Load by ID
+  string project_path = 2;    // Or load by path (creates new if not found)
+}
+
+message SaveWorkspaceRequest {
+  string workspace_id = 1;
+  string name = 2;
+  string project_path = 3;
+  map<string, string> metadata = 4;
+}
+
+message DeleteWorkspaceRequest {
+  string workspace_id = 1;
+}

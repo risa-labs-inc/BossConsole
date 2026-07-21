@@ -1,0 +1,611 @@
+name: 🚀 BOSS Lite Release
+
+# Builds and publishes BOSS Lite using BossConsole's signing secrets.
+# Checks out risa-labs-inc/BossConsoleLite, builds with full code signing,
+# and publishes to risa-labs-inc/BossConsole-Lite-Releases.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_increment:
+        description: 'Version increment type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      release_type:
+        description: 'Release type'
+        required: true
+        default: 'stable'
+        type: choice
+        options:
+          - stable
+          - alpha
+          - beta
+          - rc
+      prerelease_number:
+        description: 'Prerelease number (for alpha/beta/rc)'
+        required: false
+        default: '1'
+      create_release:
+        description: 'Create GitHub release in BossConsole-Lite-Releases'
+        required: true
+        default: true
+        type: boolean
+
+env:
+  GRADLE_OPTS: '-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.caching=true'
+  JXBROWSER_LICENSE_KEY: ${{ secrets.JXBROWSER_LICENSE_KEY }}
+  SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_FUNCTION_URL: ${{ secrets.SUPABASE_FUNCTION_URL }}
+
+# Prevent concurrent releases from racing to bump the version in BossConsoleLite
+concurrency:
+  group: boss-lite-release
+  cancel-in-progress: false
+
+jobs:
+  # ── 1. Bump version in BossConsoleLite ───────────────────────────────────────
+  prepare-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+      is-prerelease: ${{ steps.get-version.outputs.is-prerelease }}
+      updated-sha: ${{ steps.commit-version.outputs.updated-sha }}
+
+    steps:
+      - name: 📥 Checkout BossConsoleLite
+        uses: actions/checkout@v7
+        with:
+          repository: risa-labs-inc/BossConsoleLite
+          token: ${{ secrets.PROJECT_TOKEN }}
+          fetch-depth: 0
+
+      - name: 🔄 Increment Lite Version
+        env:
+          INPUT_VERSION_INCREMENT: ${{ github.event.inputs.version_increment }}
+          INPUT_RELEASE_TYPE: ${{ github.event.inputs.release_type }}
+          INPUT_PRERELEASE_NUM: ${{ github.event.inputs.prerelease_number }}
+        run: |
+          set -euo pipefail
+
+          case "$INPUT_VERSION_INCREMENT" in
+            patch|minor|major) ;;
+            *) echo "❌ Invalid version_increment: $INPUT_VERSION_INCREMENT"; exit 1 ;;
+          esac
+          case "$INPUT_RELEASE_TYPE" in
+            stable|alpha|beta|rc) ;;
+            *) echo "❌ Invalid release_type: $INPUT_RELEASE_TYPE"; exit 1 ;;
+          esac
+
+          MAJOR=$(grep "^app.version.major=" version.properties | cut -d'=' -f2)
+          MINOR=$(grep "^app.version.minor=" version.properties | cut -d'=' -f2)
+          PATCH=$(grep "^app.version.patch=" version.properties | cut -d'=' -f2)
+
+          case "$INPUT_VERSION_INCREMENT" in
+            major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR+1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH+1)) ;;
+          esac
+
+          BASE_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          PRERELEASE_NUM="${INPUT_PRERELEASE_NUM:-1}"
+          if [[ "$INPUT_RELEASE_TYPE" != "stable" ]]; then
+            FULL_VERSION="${BASE_VERSION}-${INPUT_RELEASE_TYPE}.${PRERELEASE_NUM}"
+            PRERELEASE_SUFFIX="${INPUT_RELEASE_TYPE}.${PRERELEASE_NUM}"
+          else
+            FULL_VERSION="$BASE_VERSION"
+            PRERELEASE_SUFFIX=""
+          fi
+
+          echo "📦 New BOSS Lite version: $FULL_VERSION"
+
+          sed -i "s/^app.version.major=.*/app.version.major=${MAJOR}/" version.properties
+          sed -i "s/^app.version.minor=.*/app.version.minor=${MINOR}/" version.properties
+          sed -i "s/^app.version.patch=.*/app.version.patch=${PATCH}/" version.properties
+          sed -i "s/^app.version=.*/app.version=${FULL_VERSION}/" version.properties
+          sed -i "s/^app.bundle.version=.*/app.bundle.version=${FULL_VERSION}/" version.properties
+          sed -i "s/^app.prerelease.suffix=.*/app.prerelease.suffix=${PRERELEASE_SUFFIX}/" version.properties
+          grep -q "^app.lite.build=" version.properties \
+            && sed -i "s/^app.lite.build=.*/app.lite.build=true/" version.properties \
+            || echo "app.lite.build=true" >> version.properties
+
+          grep "^app\." version.properties
+
+      - name: 📝 Commit Lite Version
+        id: commit-version
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet version.properties; then
+            echo "No version changes to commit"
+            echo "updated-sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          else
+            LITE_VERSION=$(grep "^app.version=" version.properties | cut -d'=' -f2)
+            git add version.properties
+            git commit -m "🔖 Bump BOSS Lite version to $LITE_VERSION" \
+                       -m "Auto-increment lite version for release build" \
+                       -m "🤖 Automated by BossConsole release-lite workflow"
+
+            MAX_RETRIES=3; RETRY_COUNT=0
+            while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+              if git push; then break; fi
+              RETRY_COUNT=$((RETRY_COUNT+1))
+              if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                git pull --rebase origin main
+              else
+                echo "❌ Failed to push after $MAX_RETRIES attempts"; exit 1
+              fi
+            done
+
+            echo "updated-sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 📋 Get Version
+        id: get-version
+        run: |
+          set -euo pipefail
+          VERSION=$(grep "^app.version=" version.properties | cut -d'=' -f2)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "📦 BOSS Lite version: $VERSION"
+
+          PRERELEASE_SUFFIX=$(grep "^app.prerelease.suffix=" version.properties | cut -d'=' -f2)
+          if [[ -n "$PRERELEASE_SUFFIX" ]]; then
+            echo "is-prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "is-prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
+  # ── 2. macOS Build (signed + notarized) ─────────────────────────────────────
+  build-macos:
+    needs: prepare-version
+    runs-on: macos-14
+
+    steps:
+      - name: 📥 Checkout BossConsoleLite
+        uses: actions/checkout@v7
+        with:
+          repository: risa-labs-inc/BossConsoleLite
+          token: ${{ secrets.PROJECT_TOKEN }}
+          ref: ${{ needs.prepare-version.outputs.updated-sha }}
+
+      - name: ☕ Setup JDK
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: 🎯 Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: false
+
+      - name: 🍎 Setup macOS Environment
+        run: |
+          brew install --quiet create-dmg || true
+
+          if [[ -n "${{ secrets.MACOS_P12_CERTIFICATE }}" ]]; then
+            echo "🔐 Setting up macOS code signing..."
+            echo "${{ secrets.MACOS_P12_CERTIFICATE }}" | base64 --decode > certificate.p12
+
+            # Use .keychain-db extension — required by Keychain Services API on modern macOS
+            KEYCHAIN_NAME="build.keychain-db"
+            KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+
+            security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
+            security default-keychain -s "$KEYCHAIN_NAME"
+            security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
+            security set-keychain-settings -lut 3600 "$KEYCHAIN_NAME"
+            security import certificate.p12 -k "$KEYCHAIN_NAME" -P "${{ secrets.MACOS_P12_PASSWORD }}" -T /usr/bin/codesign -T /usr/bin/security
+            security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
+
+            # Append to search list — do NOT replace (Compose Desktop JVM signing needs login.keychain-db present)
+            security list-keychains -d user -s "$KEYCHAIN_NAME" login.keychain-db
+
+            echo "DEVELOPER_ID=${{ secrets.MACOS_DEVELOPER_ID }}" >> $GITHUB_ENV
+            echo "MACOS_DEVELOPER_ID=${{ secrets.MACOS_DEVELOPER_ID }}" >> $GITHUB_ENV
+            echo "TEAM_ID=${{ secrets.MACOS_TEAM_ID }}" >> $GITHUB_ENV
+            echo "APPLE_ID=${{ secrets.MACOS_APPLE_ID }}" >> $GITHUB_ENV
+            echo "APP_PASSWORD=${{ secrets.MACOS_APP_PASSWORD }}" >> $GITHUB_ENV
+            echo "DISABLE_MACOS_SIGNING=false" >> $GITHUB_ENV
+            rm certificate.p12
+            security find-identity -v -p codesigning "$KEYCHAIN_NAME"
+            echo "✅ macOS code signing configured"
+          else
+            echo "⚠️ MACOS_P12_CERTIFICATE not found — building unsigned"
+            echo "DISABLE_MACOS_SIGNING=true" >> $GITHUB_ENV
+          fi
+
+      - name: 🔍 Get JxBrowser Version
+        run: |
+          JXBROWSER_VERSION=$(grep '^jxbrowser = "' gradle/libs.versions.toml | sed 's/.*= "\(.*\)"/\1/')
+          echo "JXBROWSER_VERSION=$JXBROWSER_VERSION" >> $GITHUB_ENV
+
+      - name: 📥 Download Branded Chromium (macOS)
+        run: |
+          ARCH=$(uname -m)
+          CHROMIUM_ARCHIVE="boss-chromium-macos-$([[ $ARCH == arm64 ]] && echo arm64 || echo x64).zip"
+          CHROMIUM_URL="https://github.com/risa-labs-inc/BossConsole-Releases/releases/download/chromium-v$JXBROWSER_VERSION/$CHROMIUM_ARCHIVE"
+          mkdir -p branded-chromium
+          if curl -L --fail -o "branded-chromium/$CHROMIUM_ARCHIVE" "$CHROMIUM_URL"; then
+            unzip -o "branded-chromium/$CHROMIUM_ARCHIVE" -d branded-chromium/
+            echo "BRANDED_CHROMIUM_AVAILABLE=true" >> $GITHUB_ENV
+          else
+            echo "BRANDED_CHROMIUM_AVAILABLE=false" >> $GITHUB_ENV
+          fi
+
+      - name: 🏗️ Build macOS App Bundle
+        env:
+          DISABLE_MACOS_SIGNING: ${{ env.DISABLE_MACOS_SIGNING }}
+        run: ./gradlew createDistributable
+
+      - name: 📦 Bundle Branded Chromium
+        if: env.BRANDED_CHROMIUM_AVAILABLE == 'true'
+        run: |
+          APP_PATH=$(find composeApp/build/compose/binaries/main/app -name "*.app" -type d | head -1)
+          if [[ -n "$APP_PATH" ]]; then
+            CHROMIUM_DIR="$APP_PATH/Contents/Resources/chromium"
+            mkdir -p "$CHROMIUM_DIR"
+            cp -r branded-chromium/* "$CHROMIUM_DIR/" 2>/dev/null || true
+            rm -f "$CHROMIUM_DIR"/*.zip 2>/dev/null || true
+          fi
+
+      - name: 🔐 Sign Bundled Chromium
+        if: env.BRANDED_CHROMIUM_AVAILABLE == 'true' && env.DISABLE_MACOS_SIGNING != 'true'
+        run: |
+          APP_PATH=$(find composeApp/build/compose/binaries/main/app -name "*.app" -type d | head -1)
+          CHROMIUM_DIR="$APP_PATH/Contents/Resources/chromium"
+          if [[ -d "$CHROMIUM_DIR" ]]; then
+            find "$CHROMIUM_DIR" -type f -perm +111 -exec \
+              codesign --force --options runtime \
+              --entitlements composeApp/src/desktopMain/resources/BOSS.entitlements \
+              --sign "$MACOS_DEVELOPER_ID" {} \; 2>/dev/null || true
+          fi
+
+      - name: 🏗️ Package macOS DMG
+        env:
+          DISABLE_MACOS_SIGNING: ${{ env.DISABLE_MACOS_SIGNING }}
+        run: ./gradlew packageDmg
+
+      - name: 🍎 Notarize macOS DMG
+        if: env.DISABLE_MACOS_SIGNING != 'true'
+        run: |
+          DMG_PATH=$(find composeApp/build/compose/binaries/main/dmg -name "*.dmg" | head -1)
+          echo "📦 Notarizing: $DMG_PATH"
+          NOTARIZATION_OUTPUT=$(xcrun notarytool submit "$DMG_PATH" \
+            --apple-id "$APPLE_ID" \
+            --password "$APP_PASSWORD" \
+            --team-id "${{ secrets.MACOS_TEAM_ID }}" \
+            --wait 2>&1)
+          echo "$NOTARIZATION_OUTPUT"
+          SUBMISSION_ID=$(echo "$NOTARIZATION_OUTPUT" | grep "id:" | head -1 | awk '{print $2}')
+          if echo "$NOTARIZATION_OUTPUT" | grep -q "status: Accepted"; then
+            xcrun stapler staple "$DMG_PATH"
+            echo "✅ Notarization complete"
+          else
+            if [[ -n "$SUBMISSION_ID" ]]; then
+              xcrun notarytool log "$SUBMISSION_ID" \
+                --apple-id "$APPLE_ID" --password "$APP_PASSWORD" \
+                --team-id "${{ secrets.MACOS_TEAM_ID }}"
+            fi
+            exit 1
+          fi
+
+      - name: 📋 Rename DMG to Lite convention
+        env:
+          VERSION: ${{ needs.prepare-version.outputs.version }}
+        run: |
+          DMG_SRC=$(find composeApp/build/compose/binaries/main/dmg -name "*.dmg" | head -1)
+          DMG_DST="composeApp/build/compose/binaries/main/dmg/BOSS-Lite-${VERSION}-Universal.dmg"
+          [[ "$DMG_SRC" != "$DMG_DST" ]] && mv "$DMG_SRC" "$DMG_DST"
+          ls -lh composeApp/build/compose/binaries/main/dmg/
+
+      - name: 📤 Upload macOS DMG
+        uses: actions/upload-artifact@v7
+        with:
+          name: boss-lite-macos-${{ needs.prepare-version.outputs.version }}
+          path: composeApp/build/compose/binaries/main/dmg/BOSS-Lite-*.dmg
+          retention-days: 30
+
+  # ── 3. Windows Build (signed via DigiCert KeyLocker) ─────────────────────────
+  build-windows:
+    needs: prepare-version
+    runs-on: windows-latest
+
+    steps:
+      - name: 📥 Checkout BossConsoleLite
+        uses: actions/checkout@v7
+        with:
+          repository: risa-labs-inc/BossConsoleLite
+          token: ${{ secrets.PROJECT_TOKEN }}
+          ref: ${{ needs.prepare-version.outputs.updated-sha }}
+
+      - name: ☕ Setup JDK
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: 🎯 Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: 🔍 Get JxBrowser Version
+        shell: bash
+        run: |
+          JXBROWSER_VERSION=$(grep '^jxbrowser = "' gradle/libs.versions.toml | sed 's/.*= "\(.*\)"/\1/')
+          echo "JXBROWSER_VERSION=$JXBROWSER_VERSION" >> $GITHUB_ENV
+
+      - name: 📥 Download Branded Chromium (Windows)
+        shell: bash
+        run: |
+          CHROMIUM_URL="https://github.com/risa-labs-inc/BossConsole-Releases/releases/download/chromium-v$JXBROWSER_VERSION/boss-chromium-windows-x64.zip"
+          mkdir -p branded-chromium
+          if curl -L --fail -o branded-chromium/boss-chromium-windows-x64.zip "$CHROMIUM_URL"; then
+            unzip -o branded-chromium/boss-chromium-windows-x64.zip -d branded-chromium/
+            echo "BRANDED_CHROMIUM_AVAILABLE=true" >> $GITHUB_ENV
+          else
+            echo "BRANDED_CHROMIUM_AVAILABLE=false" >> $GITHUB_ENV
+          fi
+
+      - name: 🏗️ Build Windows App
+        run: ./gradlew createDistributable
+
+      - name: 📦 Bundle Branded Chromium (Windows)
+        if: env.BRANDED_CHROMIUM_AVAILABLE == 'true'
+        shell: bash
+        run: |
+          APP_DIR=$(find composeApp/build/compose/binaries/main/app -type d -name "BOSS*" | head -1)
+          if [[ -n "$APP_DIR" ]]; then
+            mkdir -p "$APP_DIR/chromium"
+            cp -r branded-chromium/* "$APP_DIR/chromium/" 2>/dev/null || true
+            rm -f "$APP_DIR/chromium"/*.zip 2>/dev/null || true
+          fi
+
+      - name: 🏗️ Package Windows MSI
+        run: ./gradlew packageMsi
+
+      - name: 🔍 Find MSI File
+        id: find-msi
+        run: |
+          $msiFiles = Get-ChildItem "composeApp/build/compose/binaries/main/msi/*.msi" -ErrorAction SilentlyContinue
+          if ($msiFiles) {
+            echo "msi-path=$($msiFiles[0].FullName)" >> $env:GITHUB_OUTPUT
+          } else {
+            Write-Host "❌ MSI not found"; exit 1
+          }
+        shell: powershell
+
+      - name: Check if DigiCert signing is available
+        id: check-secret
+        run: |
+          if [ -n "$CERT_HOST" ]; then
+            echo "can_sign=true" >> $GITHUB_OUTPUT
+          else
+            echo "can_sign=false" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
+        env:
+          CERT_HOST: ${{ secrets.CODE_SIGNING_CERT_HOST }}
+
+      - name: Decode Client Certificate
+        if: steps.check-secret.outputs.can_sign == 'true'
+        run: |
+          $certBytes = [System.Convert]::FromBase64String("${{ secrets.CODE_SIGNING_CLIENT_CERT }}")
+          [System.IO.File]::WriteAllBytes("${{ runner.temp }}\Certificate_pkcs12.p12", $certBytes)
+        shell: powershell
+
+      - name: Install DigiCert STM Client Tools
+        if: steps.check-secret.outputs.can_sign == 'true'
+        uses: digicert/ssm-code-signing@v1.2.1
+        env:
+          SM_HOST: ${{ secrets.CODE_SIGNING_CERT_HOST }}
+          SM_API_KEY: ${{ secrets.CODE_SIGNING_CERT_HOST_API_KEY }}
+          SM_CLIENT_CERT_FILE: ${{ runner.temp }}\Certificate_pkcs12.p12
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.CODE_SIGNING_CLIENT_CERT_PASSWORD }}
+
+      - name: Reset SMCTL Credentials
+        if: steps.check-secret.outputs.can_sign == 'true'
+        run: smctl credentials delete && smctl credentials save ${{ secrets.CODE_SIGNING_CERT_HOST_API_KEY }} ${{ secrets.CODE_SIGNING_CLIENT_CERT_PASSWORD }}
+        shell: cmd
+        env:
+          SM_HOST: ${{ secrets.CODE_SIGNING_CERT_HOST }}
+
+      - name: Sign Windows MSI
+        if: steps.check-secret.outputs.can_sign == 'true'
+        run: smctl sign --keypair-alias "${{ secrets.CODE_SIGNING_KEYPAIR_ALIAS }}" --input "${{ steps.find-msi.outputs.msi-path }}" --verbose
+        shell: bash
+        env:
+          SM_HOST: ${{ secrets.CODE_SIGNING_CERT_HOST }}
+          SM_API_KEY: ${{ secrets.CODE_SIGNING_CERT_HOST_API_KEY }}
+          SM_CLIENT_CERT_FILE: ${{ runner.temp }}\Certificate_pkcs12.p12
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.CODE_SIGNING_CLIENT_CERT_PASSWORD }}
+
+      - name: 📋 Rename MSI to Lite convention
+        env:
+          VERSION: ${{ needs.prepare-version.outputs.version }}
+        shell: bash
+        run: |
+          mkdir -p ./release-windows
+          find composeApp/build/compose/binaries/main/msi -name "*.msi" -exec cp {} ./release-windows/BOSS-Lite-${VERSION}.msi \;
+          ls -lh ./release-windows/
+
+      - name: 📤 Upload Windows MSI
+        uses: actions/upload-artifact@v7
+        with:
+          name: boss-lite-windows-${{ needs.prepare-version.outputs.version }}
+          path: ./release-windows/
+          retention-days: 30
+
+  # ── 4. Linux Build ───────────────────────────────────────────────────────────
+  build-linux:
+    needs: prepare-version
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout BossConsoleLite
+        uses: actions/checkout@v7
+        with:
+          repository: risa-labs-inc/BossConsoleLite
+          token: ${{ secrets.PROJECT_TOKEN }}
+          ref: ${{ needs.prepare-version.outputs.updated-sha }}
+
+      - name: ☕ Setup JDK
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: 🎯 Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: false
+
+      - name: 🔍 Get JxBrowser Version
+        run: |
+          JXBROWSER_VERSION=$(grep '^jxbrowser = "' gradle/libs.versions.toml | sed 's/.*= "\(.*\)"/\1/')
+          echo "JXBROWSER_VERSION=$JXBROWSER_VERSION" >> $GITHUB_ENV
+
+      - name: 📥 Download Branded Chromium (Linux)
+        run: |
+          CHROMIUM_URL="https://github.com/risa-labs-inc/BossConsole-Releases/releases/download/chromium-v$JXBROWSER_VERSION/boss-chromium-linux-x64.zip"
+          mkdir -p branded-chromium
+          if curl -L --fail -o branded-chromium/boss-chromium-linux-x64.zip "$CHROMIUM_URL"; then
+            unzip -o branded-chromium/boss-chromium-linux-x64.zip -d branded-chromium/
+            echo "BRANDED_CHROMIUM_AVAILABLE=true" >> $GITHUB_ENV
+          else
+            echo "BRANDED_CHROMIUM_AVAILABLE=false" >> $GITHUB_ENV
+          fi
+
+      - name: 🏗️ Build Linux Packages
+        run: |
+          ./gradlew :composeApp:createDistributable
+
+          if [[ "$BRANDED_CHROMIUM_AVAILABLE" == "true" ]]; then
+            APP_DIR=$(find composeApp/build/compose/binaries/main/app -type d -name "BOSS*" | head -1)
+            if [[ -n "$APP_DIR" ]]; then
+              mkdir -p "$APP_DIR/lib/chromium"
+              cp -r branded-chromium/* "$APP_DIR/lib/chromium/" 2>/dev/null || true
+              rm -f "$APP_DIR/lib/chromium"/*.zip 2>/dev/null || true
+            fi
+          fi
+
+          ./gradlew :composeApp:packageDeb :composeApp:packageRpm
+          ./gradlew :composeApp:createExecutableJar
+
+      - name: 📋 Rename Linux packages to Lite convention
+        env:
+          VERSION: ${{ needs.prepare-version.outputs.version }}
+        run: |
+          mkdir -p ./release-linux
+          find composeApp/build/compose/binaries/main/deb -name "*.deb" -exec cp {} ./release-linux/BOSS-Lite-${VERSION}-amd64.deb \; 2>/dev/null || true
+          find composeApp/build/compose/binaries/main/rpm -name "*.rpm" -exec cp {} ./release-linux/BOSS-Lite-${VERSION}-amd64.rpm \; 2>/dev/null || true
+          find composeApp/build/libs -name "*-all.jar" -exec cp {} ./release-linux/BOSS-Lite-${VERSION}-amd64.jar \; 2>/dev/null || true
+          ls -lh ./release-linux/
+
+      - name: 📤 Upload Linux Packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: boss-lite-linux-${{ needs.prepare-version.outputs.version }}
+          path: ./release-linux/
+          retention-days: 30
+
+  # ── 5. Publish to BossConsole-Lite-Releases ──────────────────────────────────
+  create-release:
+    needs: [prepare-version, build-macos, build-linux, build-windows]
+    if: |
+      always() &&
+      needs.build-macos.result == 'success' &&
+      needs.build-linux.result == 'success' &&
+      needs.build-windows.result == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Download All Artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: ./artifacts
+
+      - name: 📋 Collect Release Assets
+        env:
+          VERSION: ${{ needs.prepare-version.outputs.version }}
+        run: |
+          mkdir -p ./release-assets
+          find ./artifacts -name "BOSS-Lite-*.dmg" -exec cp {} ./release-assets/ \; 2>/dev/null || true
+          find ./artifacts -name "BOSS-Lite-*.msi" -exec cp {} ./release-assets/ \; 2>/dev/null || true
+          find ./artifacts -name "BOSS-Lite-*.deb" -exec cp {} ./release-assets/ \; 2>/dev/null || true
+          find ./artifacts -name "BOSS-Lite-*.rpm" -exec cp {} ./release-assets/ \; 2>/dev/null || true
+          find ./artifacts -name "BOSS-Lite-*.jar" -exec cp {} ./release-assets/ \; 2>/dev/null || true
+          ls -lh ./release-assets/
+
+      - name: 📝 Generate Release Notes
+        id: release-notes
+        env:
+          VERSION: ${{ needs.prepare-version.outputs.version }}
+          IS_PRERELEASE: ${{ needs.prepare-version.outputs.is-prerelease }}
+        run: |
+          if [[ "$IS_PRERELEASE" == "true" ]]; then
+            TITLE="🧪 BOSS Lite $VERSION (Pre-release)"
+            PRE_NOTE="> ⚠️ **Pre-release** — may contain bugs."
+          else
+            TITLE="🚀 BOSS Lite $VERSION"
+            PRE_NOTE=""
+          fi
+
+          cat > release-notes.md << EOF
+          # $TITLE
+          $PRE_NOTE
+
+          BOSS Lite is the browser-focused build of BOSS — designed for non-technical users.
+          It includes the integrated browser, bookmarks, ChatGPT, and downloads, without
+          the developer tooling (terminal, editor, run configs).
+
+          ## 📦 Downloads
+
+          | Platform | Package |
+          |----------|---------|
+          | macOS (Apple Silicon + Intel) | \`BOSS-Lite-${VERSION}-Universal.dmg\` |
+          | Windows x64 | \`BOSS-Lite-${VERSION}.msi\` |
+          | Linux DEB (AMD64) | \`BOSS-Lite-${VERSION}-amd64.deb\` |
+          | Linux RPM (AMD64) | \`BOSS-Lite-${VERSION}-amd64.rpm\` |
+          | Linux JAR (AMD64) | \`BOSS-Lite-${VERSION}-amd64.jar\` |
+
+          ---
+          🤖 *Automatically built and published by GitHub Actions (BossConsole)*
+          EOF
+
+      - name: 🎉 Publish to BossConsole-Lite-Releases
+        if: github.event.inputs.create_release != 'false'
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
+          VERSION: ${{ needs.prepare-version.outputs.version }}
+          IS_PRERELEASE: ${{ needs.prepare-version.outputs.is-prerelease }}
+        run: |
+          PRERELEASE_FLAG=""
+          LATEST_FLAG="--latest"
+          if [[ "$IS_PRERELEASE" == "true" ]]; then
+            PRERELEASE_FLAG="--prerelease"
+            LATEST_FLAG=""
+          fi
+
+          gh release create "v${VERSION}" \
+            --repo risa-labs-inc/BossConsole-Lite-Releases \
+            --title "BOSS Lite ${VERSION}" \
+            --notes-file release-notes.md \
+            $PRERELEASE_FLAG $LATEST_FLAG \
+            ./release-assets/*
+
+      - name: 📢 Summary
+        env:
+          VERSION: ${{ needs.prepare-version.outputs.version }}
+        run: |
+          echo "## 🎉 BOSS Lite Release $VERSION" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Published to [BossConsole-Lite-Releases](https://github.com/risa-labs-inc/BossConsole-Lite-Releases/releases/tag/v$VERSION)" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Signed: macOS (Developer ID + notarized), Windows (DigiCert KeyLocker)" >> $GITHUB_STEP_SUMMARY

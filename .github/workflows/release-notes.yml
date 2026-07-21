@@ -1,0 +1,224 @@
+name: 📝 Generate Release Notes
+
+on:
+  # Trigger after Release Build workflow completes successfully
+  workflow_run:
+    workflows: ["🚀 Release Build"]
+    types:
+      - completed
+
+  # Trigger on release publication
+  release:
+    types: [published]
+
+  # Manual trigger for regenerating notes
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v8.15.9). Leave empty for latest.'
+        required: false
+        type: string
+      force_regenerate:
+        description: 'Force regenerate even if notes exist'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: release-notes
+  cancel-in-progress: false
+
+jobs:
+  generate-release-notes:
+    if: |
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: read
+      id-token: write
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PUBLIC_REPO_TOKEN }}
+
+      - name: 🏷️ Determine Release Tag
+        id: release-info
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.tag }}" ]]; then
+            RELEASE_TAG="${{ github.event.inputs.tag }}"
+          elif [[ "${{ github.event_name }}" == "release" ]]; then
+            RELEASE_TAG="${{ github.event.release.tag_name }}"
+          else
+            RELEASE_TAG=$(git describe --tags --abbrev=0)
+          fi
+
+          VERSION="${RELEASE_TAG#v}"
+          PREV_TAG=$(git describe --tags --abbrev=0 ${RELEASE_TAG}^ 2>/dev/null || echo "")
+
+          echo "release_tag=${RELEASE_TAG}" >> $GITHUB_OUTPUT
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "prev_tag=${PREV_TAG}" >> $GITHUB_OUTPUT
+
+      - name: 📋 Extract Commit Information
+        id: commits
+        run: |
+          RELEASE_TAG="${{ steps.release-info.outputs.release_tag }}"
+          PREV_TAG="${{ steps.release-info.outputs.prev_tag }}"
+
+          if [[ -n "$PREV_TAG" ]]; then
+            COMMIT_RANGE="${PREV_TAG}..${RELEASE_TAG}"
+          else
+            COMMIT_RANGE="${RELEASE_TAG}"
+          fi
+
+          git log ${COMMIT_RANGE} --pretty=format:"- %h: %s (%an)" > /tmp/commits.txt
+          COMMIT_COUNT=$(wc -l < /tmp/commits.txt)
+
+          echo "commit_count=${COMMIT_COUNT}" >> $GITHUB_OUTPUT
+          echo "commit_range=${COMMIT_RANGE}" >> $GITHUB_OUTPUT
+
+      - name: 🔍 Check for Existing Release Notes
+        id: check-existing
+        run: |
+          VERSION="${{ steps.release-info.outputs.version }}"
+          NOTES_FILE="docs/release-notes/v${VERSION}.md"
+
+          if [[ -f "$NOTES_FILE" && "${{ github.event.inputs.force_regenerate }}" != "true" ]]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 📁 Ensure Release Notes Directory
+        if: steps.check-existing.outputs.exists != 'true'
+        run: mkdir -p docs/release-notes
+
+      - name: 🤖 Generate Release Notes with Claude
+        if: steps.check-existing.outputs.exists != 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: "--allowedTools 'Bash(git:*)' 'Bash(cat:*)' 'Bash(ls:*)' 'Read' 'Write' 'Edit' 'Glob' 'Grep'"
+          prompt: |
+            Generate release notes for BOSS version ${{ steps.release-info.outputs.version }}.
+
+            ## Context
+            - Release Tag: ${{ steps.release-info.outputs.release_tag }}
+            - Previous Tag: ${{ steps.release-info.outputs.prev_tag }}
+            - Commit Range: ${{ steps.commits.outputs.commit_range }}
+
+            ## Tasks
+
+            1. Run `git log ${{ steps.commits.outputs.commit_range }} --pretty=format:"%h %s"` to see commits
+
+            2. Create `docs/release-notes/v${{ steps.release-info.outputs.version }}.md`:
+               - Summary (1-2 sentences)
+               - Highlights (2-4 key changes)
+               - Changes grouped by: Features, Bug Fixes, Improvements, Dependencies
+               - Download table with platform links to BossConsole-Releases
+
+            3. Update `docs/release-notes/README.md` index between RELEASE_INDEX markers
+
+            Guidelines:
+            - Exclude 🔖 version bump commits
+            - Use conventional commit scopes: browser, terminal, tabs, panel, etc.
+            - Link PR numbers: (#123)
+            - Omit empty sections
+
+      - name: 📤 Commit and Push
+        if: steps.check-existing.outputs.exists != 'true'
+        run: |
+          VERSION="${{ steps.release-info.outputs.version }}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet docs/release-notes/; then
+            echo "No changes to commit"
+            exit 0
+          fi
+
+          git add docs/release-notes/
+          git commit -m "📝 Add release notes for v${VERSION}" \
+                     -m "Co-Authored-By: Claude Code <noreply@anthropic.com>"
+
+          # Retry push with rebase up to 5 times
+          for i in 1 2 3 4 5; do
+            if git push origin HEAD:main; then
+              echo "✅ Push successful"
+              exit 0
+            fi
+            echo "⚠️ Push failed, attempt $i/5. Pulling and rebasing..."
+            git pull --rebase origin main
+            sleep $((i * 2))
+          done
+          echo "❌ Push failed after 5 attempts"
+          exit 1
+
+      - name: 🏷️ Update GitHub Release Body (Private Repo)
+        if: steps.check-existing.outputs.exists != 'true'
+        run: |
+          VERSION="${{ steps.release-info.outputs.version }}"
+          RELEASE_TAG="${{ steps.release-info.outputs.release_tag }}"
+          NOTES_FILE="docs/release-notes/v${VERSION}.md"
+
+          if [[ -f "$NOTES_FILE" ]]; then
+            gh release edit "${RELEASE_TAG}" --notes-file "${NOTES_FILE}"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
+
+      - name: 🏷️ Update GitHub Release Body (Public Repo)
+        if: steps.check-existing.outputs.exists != 'true'
+        run: |
+          VERSION="${{ steps.release-info.outputs.version }}"
+          RELEASE_TAG="${{ steps.release-info.outputs.release_tag }}"
+          NOTES_FILE="docs/release-notes/v${VERSION}.md"
+
+          if [[ -f "$NOTES_FILE" ]]; then
+            # Update the public BossConsole-Releases repository
+            gh release edit "${RELEASE_TAG}" \
+              --repo risa-labs-inc/BossConsole-Releases \
+              --notes-file "${NOTES_FILE}"
+            echo "✅ Updated public release body for ${RELEASE_TAG}"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
+
+      # The Supabase app_releases row is the client's PRIMARY release-notes
+      # source (the update dialog's "What's new"), and sync-release seeds it
+      # with the auto-generated GitHub release body. Overwrite that with the
+      # curated notes. Deliberately not gated on check-existing so a manual
+      # dispatch for an already-documented tag repairs its row.
+      - name: 📡 Sync Release Notes to Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # The row only appears after sync-release finishes uploading every
+          # installer (the DMG alone can take many minutes via TUS), so allow
+          # a generous wait: 40 × 30s = 20 minutes.
+          SYNC_MAX_ATTEMPTS: "40"
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${SUPABASE_SERVICE_ROLE_KEY:-}" ]]; then
+            echo "ℹ️  SUPABASE_SERVICE_ROLE_KEY not set; skipping Supabase notes sync."
+            exit 0
+          fi
+          export SUPABASE_URL="${SUPABASE_URL:-https://api.risaboss.com}"
+
+          VERSION="${{ steps.release-info.outputs.version }}"
+          NOTES_FILE="docs/release-notes/v${VERSION}.md"
+          if [[ ! -f "$NOTES_FILE" ]]; then
+            echo "ℹ️  $NOTES_FILE not found; nothing to sync."
+            exit 0
+          fi
+          bash scripts/sync-supabase-release-notes.sh boss "$VERSION" "$NOTES_FILE"
