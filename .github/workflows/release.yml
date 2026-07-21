@@ -818,7 +818,7 @@ jobs:
   build-linux-arm64:
     needs: prepare-version
     if: needs.prepare-version.outputs.should-build == 'true'
-    runs-on: linux_arm64
+    runs-on: ubuntu-24.04-arm
     continue-on-error: true  # Graceful failure if ARM runners unavailable
 
     steps:
@@ -1286,7 +1286,7 @@ jobs:
   build-windows-arm64:
     needs: prepare-version
     if: needs.prepare-version.outputs.should-build == 'true'
-    runs-on: windows_arm64
+    runs-on: windows-11-arm
     continue-on-error: true  # Graceful failure if ARM runner unavailable
 
     steps:
