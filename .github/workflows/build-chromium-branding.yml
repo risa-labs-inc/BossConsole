@@ -756,7 +756,7 @@ jobs:
   # Windows ARM64 build
   build-windows-arm64:
     needs: build-branding-tool
-    runs-on: windows_arm64
+    runs-on: windows-11-arm
     continue-on-error: true  # Graceful failure if ARM runners unavailable
     # Bound it like windows-x64 — continue-on-error tolerates a FAILURE, but a 6h hang
     # would still make upload-to-releases (which `needs` this job) wait the full limit.
@@ -979,7 +979,7 @@ jobs:
   # Linux ARM64 build
   build-linux-arm64:
     needs: build-branding-tool
-    runs-on: linux_arm64
+    runs-on: ubuntu-24.04-arm
     continue-on-error: true  # Graceful failure if ARM runners unavailable
     steps:
       - name: Checkout
