@@ -73,7 +73,7 @@ iwr -useb https://raw.githubusercontent.com/risa-labs-inc/BossConsole-Releases/m
 - 🧰 **Extensible by design** — a built-in **Toolbox** plugin store; the terminal, editor, and browser are themselves hot-loadable plugins, and you can scaffold your own with an AI agent.
 - 🔐 **You stay in control** — server-enforced role-based access control, a per-user kill-switch for every agent tool, and user-scoped secrets. You decide exactly what an agent can call.
 - 🖥️ **A terminal built to share** — hand a live terminal session to your phone via QR, or to a teammate over an end-to-end-encrypted link, with view-only or full control.
-- ⚡ **Fast and native** — Compose Multiplatform desktop app with a BOSS-branded Chromium engine, on macOS, Windows, and Linux (x64 + ARM64).
+- ⚡ **Fast and native** — Compose Multiplatform desktop app with the built-in **Fluck** browser, on macOS, Windows, and Linux (x64 + ARM64).
 
 ---
 
@@ -83,14 +83,14 @@ BOSS is an **open-source, model-agnostic alternative** to the closed AI-agent de
 
 The deeper difference: **BOSS is both the agent's home _and_ an agent-operable app.** The same MCP layer your agent uses to do work also exposes BOSS itself — its tabs, terminals, browser, editor, git, secrets, and automation — as **100+ `mcp__boss__*` tools**. Read-only tools (list tabs, read a pane's output, tail the console, snapshot performance, inspect git) give an agent live **situational awareness of the workspace**; action tools let it act on what it finds. So the agent doesn't just chat about your code — it perceives the running app and drives it, carrying out multi-step tasks **autonomously**.
 
-And unlike most of the field, BOSS bundles a **real embedded browser** (BOSS-branded Chromium) the agent can navigate, script, and automate — `browser_navigate`, `browser_run_js`, plus record-and-replay RPA — with logins filled from the **Secret Manager** and never handed to the model.
+And unlike most of the field, BOSS bundles a **real embedded browser — Fluck —** the agent can navigate, script, and automate — `browser_navigate`, `browser_run_js`, plus record-and-replay RPA — with logins filled from the **Secret Manager** and never handed to the model.
 
 | | **BOSS** | Claude Desktop | Codex | Google Antigravity | Cursor | Windsurf / Devin |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|
 | **Open source** | ✅ Apache-2.0 | ❌ | △ CLI only¹ | ❌ | ❌ | ❌ |
 | **Bring any agent / model** | ✅ BYO agent | ❌ Claude only | ❌ OpenAI only | ✅ multi | ✅ multi + BYOK | ✅ multi + BYOK |
 | **MCP tools** | ✅ 100+ built-in | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Embedded browser (agent-driven)** | ✅ Chromium | △ Computer Use² | ❌ | ✅ + DevTools | ❌ | ❌ |
+| **Embedded browser (agent-driven)** | ✅ Fluck | △ Computer Use² | ❌ | ✅ + DevTools | ❌ | ❌ |
 | **Integrated terminal** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Share terminal session** (QR / multi-user / E2E) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **Per-tool governance** (RBAC + kill-switch) | ✅ | △³ | △³ | △³ | △ Teams | △ Enterprise |
@@ -285,7 +285,7 @@ GITHUB_TOKEN=ghp_your_token_here
 
 ### Key Technologies
 - **Kotlin Multiplatform** + **Compose Multiplatform**
-- **JxBrowser 9.x** (BOSS-branded Chromium)
+- **Fluck** — BOSS's built-in browser (JxBrowser 9.x engine)
 - **Decompose** for navigation
 - **Supabase** + Edge Functions for backend and RBAC
 - **BossTerm** for terminal integration (also hosts the `boss` MCP server)
