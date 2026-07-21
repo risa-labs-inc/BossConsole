@@ -2,13 +2,11 @@
 
 <img src="docs/boss-logo.png" alt="BOSS" width="128" height="128" />
 
-# BOSS — Business OS + Simulator
-
-### 🎛️ The operator's console for AI agents — and the scientists who direct them
+### 🔬 The operator's console for AI agents — and the scientists who direct them
 
 **The first open-source, multi-platform harness for AI agents — an evolvable toolbox for agents and the humans they work with.**
 
-_Built for enterprises, science, and research._
+_🧪 Built for enterprises, science, and research._
 
 Bring your own agent — Claude Code, Codex, Gemini, or OpenCode — and give it a real browser, terminal, editor, secrets, and automation. Then decide exactly what each one is allowed to touch. Run it on your own machine, hand a live terminal to your phone with a QR code, and reshape any tool — by hand or by the agent itself — while the app keeps running.
 
@@ -227,7 +225,7 @@ Your machine *is* the server: BossTerm runs a small embedded web server and stre
 
 ## Case study: the DNA Origami Inventor
 
-BOSS isn't only for shipping software. **DNA Origami Inventor** is a BOSS plugin for computational nanotechnology: a researcher describes a target nanostructure in a **chat-first UI**, and an agent designs the **DNA origami** and runs **oxDNA** molecular-dynamics simulations to validate it — orchestrating BOSS's terminal, editor, browser, and tools end to end.
+BOSS isn't only for shipping software. **🧬 DNA Origami Inventor** is a BOSS plugin for computational nanotechnology: a researcher describes a target nanostructure in a **chat-first UI**, and an agent designs the **DNA origami** and runs **oxDNA** molecular-dynamics simulations to validate it — orchestrating BOSS's terminal, editor, browser, and tools end to end.
 
 It's a concrete example of what BOSS is built for beyond coding: **enterprises, science, and research** — domains where an agent needs real tools, real compute, and governed access, not just a chat window.
 
