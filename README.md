@@ -63,7 +63,7 @@ And unlike most of the field, BOSS bundles a **real embedded browser — Fluck �
 - [Case study: the DNA Origami Inventor](#case-study-the-dna-origami-inventor)
 - [Design System](#design-system)
 - [Development](#development)
-- [CLI](#cli) · [CI/CD](#cicd) · [Documentation](#documentation) · [Related Repositories](#related-repositories)
+- [CLI](#cli) · [CI/CD](#cicd) · [Documentation](#documentation) · [Open source & ecosystem](#open-source--ecosystem)
 
 ---
 
