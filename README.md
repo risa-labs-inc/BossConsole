@@ -8,6 +8,8 @@
 
 **The first open-source, multi-platform harness for AI agents — an evolvable toolbox for agents and the humans they work with.**
 
+_Built for enterprises, science, and research._
+
 Bring your own agent — Claude Code, Codex, Gemini, or OpenCode — and give it a real browser, terminal, editor, secrets, and automation. Then decide exactly what each one is allowed to touch. Run it on your own machine, hand a live terminal to your phone with a QR code, and reshape any tool — by hand or by the agent itself — while the app keeps running.
 
 [![BOSS Version](https://img.shields.io/github/v/release/risa-labs-inc/BossConsole-Releases.svg?label=BOSS&color=brightgreen)](https://github.com/risa-labs-inc/BossConsole-Releases/releases/latest)
@@ -58,6 +60,7 @@ And unlike most of the field, BOSS bundles a **real embedded browser — Fluck �
 - [MCP — give agents real tools](#mcp--give-agents-real-tools)
 - [Toolbox — an app store inside the app](#toolbox--an-app-store-inside-the-app)
 - [BossTerm — a terminal you can share to any device](#bossterm--a-terminal-you-can-share-to-any-device)
+- [Case study: the DNA Origami Inventor](#case-study-the-dna-origami-inventor)
 - [Design System](#design-system)
 - [Development](#development)
 - [CLI](#cli) · [CI/CD](#cicd) · [Documentation](#documentation) · [Related Repositories](#related-repositories)
@@ -217,6 +220,14 @@ Your machine *is* the server: BossTerm runs a small embedded web server and stre
 - **Inline images** in the terminal (iTerm2 OSC 1337), true color, full Unicode/emoji, Nerd Fonts, OSC 52 clipboard, and shell integration.
 - **Split panes & multiple windows**, per-pane titles, regex search, command-complete notifications.
 - **Optional session daemon** (tmux-style) with a tray icon, so sessions, shares, and the MCP server survive closing the GUI.
+
+---
+
+## Case study: the DNA Origami Inventor
+
+BOSS isn't only for shipping software. **DNA Origami Inventor** is a BOSS plugin for computational nanotechnology: a researcher describes a target nanostructure in a **chat-first UI**, and an agent designs the **DNA origami** and runs **oxDNA** molecular-dynamics simulations to validate it — orchestrating BOSS's terminal, editor, browser, and tools end to end.
+
+It's a concrete example of what BOSS is built for beyond coding: **enterprises, science, and research** — domains where an agent needs real tools, real compute, and governed access, not just a chat window.
 
 ---
 
