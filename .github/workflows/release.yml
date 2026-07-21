@@ -1203,7 +1203,6 @@ jobs:
           SM_API_KEY: ${{ secrets.CODE_SIGNING_CERT_HOST_API_KEY }}
           SM_CLIENT_CERT_FILE: ${{ runner.temp }}\Certificate_pkcs12.p12
           SM_CLIENT_CERT_PASSWORD: ${{ secrets.CODE_SIGNING_CLIENT_CERT_PASSWORD }}
-          SM_TRACE: true
 
       - name: Reset SMCTL Credentials
         if: ${{ steps.check-secret.outputs.can_sign == 'true' }}
@@ -1216,33 +1215,19 @@ jobs:
           SM_API_KEY: ${{ secrets.CODE_SIGNING_CERT_HOST_API_KEY }}
           SM_CLIENT_CERT_FILE: ${{ runner.temp }}\Certificate_pkcs12.p12
           SM_CLIENT_CERT_PASSWORD: ${{ secrets.CODE_SIGNING_CLIENT_CERT_PASSWORD }}
-          SM_TRACE: true
-
-      - name: Run SMCTL Healthcheck
-        if: ${{ steps.check-secret.outputs.can_sign == 'true' }}
-        run: |
-          smctl healthcheck
-        shell: cmd
-        env:
-          SM_HOST: ${{ secrets.CODE_SIGNING_CERT_HOST }}
-          SM_API_KEY: ${{ secrets.CODE_SIGNING_CERT_HOST_API_KEY }}
-          SM_CLIENT_CERT_FILE: ${{ runner.temp }}\Certificate_pkcs12.p12
-          SM_CLIENT_CERT_PASSWORD: ${{ secrets.CODE_SIGNING_CLIENT_CERT_PASSWORD }}
-          SM_TRACE: true
 
       - name: Sign Windows MSI with DigiCert KeyLocker
         if: ${{ steps.check-secret.outputs.can_sign == 'true' }}
         run: |
           echo "Signing MSI: ${{ steps.find-msi.outputs.msi-path }}"
           echo "Using keypair: ${{ secrets.CODE_SIGNING_KEYPAIR_ALIAS }}"
-          smctl sign --keypair-alias "${{ secrets.CODE_SIGNING_KEYPAIR_ALIAS }}" --input "${{ steps.find-msi.outputs.msi-path }}" --verbose
+          smctl sign --keypair-alias "${{ secrets.CODE_SIGNING_KEYPAIR_ALIAS }}" --input "${{ steps.find-msi.outputs.msi-path }}"
         shell: bash
         env:
           SM_HOST: ${{ secrets.CODE_SIGNING_CERT_HOST }}
           SM_API_KEY: ${{ secrets.CODE_SIGNING_CERT_HOST_API_KEY }}
           SM_CLIENT_CERT_FILE: ${{ runner.temp }}\Certificate_pkcs12.p12
           SM_CLIENT_CERT_PASSWORD: ${{ secrets.CODE_SIGNING_CLIENT_CERT_PASSWORD }}
-          SM_TRACE: true
 
       - name: Check SMKSP Log (for diagnostics)
         if: always()  # Runs even if signing fails

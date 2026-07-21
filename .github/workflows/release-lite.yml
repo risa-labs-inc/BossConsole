@@ -422,7 +422,7 @@ jobs:
 
       - name: Sign Windows MSI
         if: steps.check-secret.outputs.can_sign == 'true'
-        run: smctl sign --keypair-alias "${{ secrets.CODE_SIGNING_KEYPAIR_ALIAS }}" --input "${{ steps.find-msi.outputs.msi-path }}" --verbose
+        run: smctl sign --keypair-alias "${{ secrets.CODE_SIGNING_KEYPAIR_ALIAS }}" --input "${{ steps.find-msi.outputs.msi-path }}"
         shell: bash
         env:
           SM_HOST: ${{ secrets.CODE_SIGNING_CERT_HOST }}

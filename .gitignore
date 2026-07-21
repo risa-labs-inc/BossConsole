@@ -8,6 +8,14 @@ local.properties
 
 # Signing assets and build-time embedded config — never commit
 *.provisionprofile
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.p8
+*.pem
+*.cer
+*.crt
 boss-build-config.properties
 .idea
 .DS_Store
