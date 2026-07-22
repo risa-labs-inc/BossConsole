@@ -34,6 +34,20 @@ class UpdateInstallerPathResolutionTest {
     }
 
     @Test
+    fun `bundle suffix is matched at path segment boundary`() {
+        val path = "/private/var/folders/xx/T/AppTranslocation/uuid/d/My.application.app/Contents/MacOS/App"
+        val expectedPath = "/Applications/My.application.app"
+
+        val resolvedPath = realAppPathFor(
+            path = path,
+            appExists = { it == expectedPath },
+            installedAppLookup = { fail("Applications path should be preferred over Spotlight") }
+        )
+
+        assertEquals(expectedPath, resolvedPath)
+    }
+
+    @Test
     fun `translocated path falls back to installed app lookup`() {
         val path = "/private/var/folders/xx/T/AppTranslocation/uuid/d/BOSS.app"
         val spotlightPath = "/Users/test/Applications/BOSS.app"

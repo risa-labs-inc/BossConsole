@@ -29,13 +29,15 @@ internal fun realAppPathFor(
 ): String {
     if (!path.contains(APP_TRANSLOCATION_PATH_SEGMENT)) return path
 
-    val bundleEnd = path.indexOf(MACOS_APP_BUNDLE_SUFFIX)
-    if (bundleEnd < 0) return path
-
+    // Match the suffix at a path-segment boundary. Searching the raw path for
+    // the first ".app" would misparse names such as "My.application.app".
     val bundleName = path
-        .substring(0, bundleEnd + MACOS_APP_BUNDLE_SUFFIX.length)
-        .substringAfterLast('/')
-        .takeIf { it.isNotBlank() }
+        .substringAfter(APP_TRANSLOCATION_PATH_SEGMENT)
+        .split('/')
+        .firstOrNull {
+            it.length > MACOS_APP_BUNDLE_SUFFIX.length &&
+                it.endsWith(MACOS_APP_BUNDLE_SUFFIX)
+        }
         ?: return path
 
     val applicationsPath = "$MACOS_APPLICATIONS_DIRECTORY/$bundleName"

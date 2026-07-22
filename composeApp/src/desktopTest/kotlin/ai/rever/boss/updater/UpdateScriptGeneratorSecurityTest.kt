@@ -240,9 +240,17 @@ class UpdateScriptGeneratorSecurityTest {
         )
 
         val scriptContent = scriptFile.readText()
+        val expectedRetryBlock = """
+            open '/Applications/BOSS.app'
+            if [ ${'$'}? -ne 0 ]; then
+                echo "First relaunch attempt failed - retrying in 2s..."
+                sleep 2
+                open '/Applications/BOSS.app' || echo "Relaunch failed - please start BOSS manually"
+            fi
+        """.trimIndent()
         assertTrue(
-            scriptContent.contains("please start BOSS manually"),
-            "Script should fall back to a manual-launch message if relaunch keeps failing"
+            scriptContent.contains(expectedRetryBlock),
+            "Script should retry the escaped app path after two seconds and provide a manual-launch fallback"
         )
 
         // Cleanup
