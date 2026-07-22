@@ -20,7 +20,6 @@ private val logger = BossLogger.forComponent("MacOSDefaultBrowserHandler")
  * - Set BOSS as the default browser
  */
 object MacOSDefaultBrowserHandler {
-    private const val BUNDLE_ID = "ai.rever.boss"
     private const val PROCESS_TIMEOUT_SECONDS = 30L
 
     /**
@@ -38,8 +37,8 @@ object MacOSDefaultBrowserHandler {
             logger.debug(LogCategory.BROWSER, "macOS default browser check", mapOf("httpHandler" to (httpDefault ?: "none"), "httpsHandler" to (httpsDefault ?: "none")))
 
             // BOSS is default if both schemes point to our bundle ID
-            val isDefault = BUNDLE_ID.equals(httpDefault, ignoreCase = true) &&
-                BUNDLE_ID.equals(httpsDefault, ignoreCase = true)
+            val isDefault = BOSS_MACOS_BUNDLE_ID.equals(httpDefault, ignoreCase = true) &&
+                BOSS_MACOS_BUNDLE_ID.equals(httpsDefault, ignoreCase = true)
 
             Result.success(isDefault)
         } catch (e: Exception) {
@@ -148,7 +147,7 @@ object MacOSDefaultBrowserHandler {
                 import AppKit
                 import ApplicationServices
 
-                let bundleId = "$BUNDLE_ID"
+                let bundleId = "$BOSS_MACOS_BUNDLE_ID"
                 let scheme = "$scheme"
 
                 let status = LSSetDefaultHandlerForURLScheme(scheme as CFString, bundleId as CFString)
