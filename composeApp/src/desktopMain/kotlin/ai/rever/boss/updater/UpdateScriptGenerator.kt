@@ -199,7 +199,7 @@ object UpdateScriptGenerator {
             if [ -d $escapedTargetAppPath ]; then
                 rm -rf $escapedTargetAppPath
                 if [ ${'$'}? -ne 0 ]; then
-                    echo "Failed to remove old app (may need admin permissions)"
+                    echo "Failed to remove old app at $escapedTargetAppPath (path may be read-only or need admin permissions)"
                     hdiutil detach "${'$'}VOLUME" -quiet
                     exit 1
                 fi
@@ -216,6 +216,14 @@ object UpdateScriptGenerator {
 
             echo "Installation successful!"
 
+            # Clear the quarantine attribute on the freshly installed bundle.
+            # A quarantined, not-yet-moved app is launched by Gatekeeper via App
+            # Translocation from a read-only randomized mount, which breaks in-place
+            # updates and the relaunch below. BOSS is notarized, so stripping the
+            # attribute here is safe and mirrors what Sparkle does.
+            echo "Clearing quarantine attribute..."
+            xattr -dr com.apple.quarantine $escapedTargetAppPath 2>/dev/null || true
+
             # Unmount DMG
             echo "Cleaning up..."
             hdiutil detach "${'$'}VOLUME" -quiet
@@ -223,6 +231,11 @@ object UpdateScriptGenerator {
             # Launch the updated app (using escaped path for security)
             echo "Launching new BOSS..."
             open $escapedTargetAppPath
+            if [ ${'$'}? -ne 0 ]; then
+                echo "First relaunch attempt failed - retrying in 2s..."
+                sleep 2
+                open $escapedTargetAppPath || echo "Relaunch failed - please start BOSS manually"
+            fi
 
             # Give the app time to start
             sleep 2

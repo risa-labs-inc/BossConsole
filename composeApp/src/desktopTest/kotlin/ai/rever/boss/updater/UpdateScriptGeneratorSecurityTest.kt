@@ -205,6 +205,51 @@ class UpdateScriptGeneratorSecurityTest {
     }
 
     /**
+     * Test that generated script strips the quarantine attribute after install so
+     * the relaunched app is not App-Translocated by Gatekeeper (which would break
+     * future in-place updates). Regression test for the "update does not restart" bug.
+     */
+    @Test
+    fun `test generated script strips quarantine attribute`() {
+        val scriptFile = UpdateScriptGenerator.generateMacOSUpdateScript(
+            dmgPath = "/tmp/update.dmg",
+            targetAppPath = "/Applications/BOSS.app",
+            appPid = 12345
+        )
+
+        val scriptContent = scriptFile.readText()
+        assertTrue(
+            scriptContent.contains("xattr -dr com.apple.quarantine '/Applications/BOSS.app'"),
+            "Script should strip the quarantine attribute from the installed bundle"
+        )
+
+        // Cleanup
+        scriptFile.delete()
+    }
+
+    /**
+     * Test that the generated script retries the relaunch if the first `open` fails,
+     * so a transient LaunchServices failure does not leave the app un-restarted.
+     */
+    @Test
+    fun `test generated script retries relaunch on failure`() {
+        val scriptFile = UpdateScriptGenerator.generateMacOSUpdateScript(
+            dmgPath = "/tmp/update.dmg",
+            targetAppPath = "/Applications/BOSS.app",
+            appPid = 12345
+        )
+
+        val scriptContent = scriptFile.readText()
+        assertTrue(
+            scriptContent.contains("please start BOSS manually"),
+            "Script should fall back to a manual-launch message if relaunch keeps failing"
+        )
+
+        // Cleanup
+        scriptFile.delete()
+    }
+
+    /**
      * Test that generated script waits for PID termination
      */
     @Test

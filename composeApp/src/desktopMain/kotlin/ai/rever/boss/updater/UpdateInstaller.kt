@@ -498,7 +498,7 @@ object UpdateInstaller {
 
             if (bundlePath?.contains(".app") == true && File(bundlePath).exists()) {
                 logger.debug(LogCategory.SYSTEM, "Found app bundle via library path", mapOf("path" to bundlePath))
-                return bundlePath
+                return resolveRealAppPath(bundlePath)
             }
 
             // Method 2: Try to find app bundle from current JAR/class location
@@ -511,7 +511,7 @@ object UpdateInstaller {
                 logger.trace(LogCategory.SYSTEM, "Checking parent", mapOf("index" to i, "path" to currentFile.absolutePath))
                 if (currentFile.name.endsWith(".app")) {
                     logger.debug(LogCategory.SYSTEM, "Found app bundle via directory traversal", mapOf("path" to currentFile.absolutePath))
-                    return currentFile.absolutePath
+                    return resolveRealAppPath(currentFile.absolutePath)
                 }
                 currentFile = currentFile.parentFile ?: break
             }
@@ -528,6 +528,76 @@ object UpdateInstaller {
 
         } catch (e: Exception) {
             logger.error(LogCategory.SYSTEM, "Error getting application path", error = e)
+            null
+        }
+    }
+
+    /**
+     * Resolve a possibly *translocated* app path back to the real install location.
+     *
+     * macOS App Translocation (Gatekeeper path randomization) runs a quarantined,
+     * "not-yet-moved-by-Finder" app from a **read-only, randomized, ephemeral** mount
+     * under `/private/var/folders/.../T/AppTranslocation/<uuid>/d/<App>.app`. If we feed
+     * that path to the update script it will:
+     *   - `rm -rf` / `cp -R` into a read-only volume (every write fails), and
+     *   - relaunch a path that no longer exists (macOS auto-unmounts the translocation
+     *     mount the moment the app quits),
+     * so the update silently fails and the app never restarts. See the update helper
+     * script in [UpdateScriptGenerator] which also strips the quarantine attribute so
+     * future launches are not translocated.
+     *
+     * When the given path is not translocated it is returned unchanged.
+     */
+    private fun resolveRealAppPath(path: String): String {
+        if (!path.contains("/AppTranslocation/")) return path
+
+        logger.warn(
+            LogCategory.SYSTEM,
+            "App is running translocated by Gatekeeper - resolving real install path",
+            mapOf("translocatedPath" to path)
+        )
+
+        // Bundle name from the translocated path, e.g. "BOSS.app"
+        val bundleName = path.substringBeforeLast(".app").substringAfterLast('/') + ".app"
+
+        // 1. Standard install location (covers the overwhelming majority of installs).
+        val applicationsPath = "/Applications/$bundleName"
+        if (File(applicationsPath).exists()) {
+            logger.info(LogCategory.SYSTEM, "Resolved real app path in /Applications", mapOf("path" to applicationsPath))
+            return applicationsPath
+        }
+
+        // 2. Non-standard install location: ask Spotlight for the installed bundle.
+        findInstalledAppViaSpotlight()?.let {
+            logger.info(LogCategory.SYSTEM, "Resolved real app path via mdfind", mapOf("path" to it))
+            return it
+        }
+
+        // 3. Give up and keep the translocated path (update will likely still fail, but
+        //    we have logged exactly why).
+        logger.warn(LogCategory.SYSTEM, "Could not resolve real app path - falling back to translocated path")
+        return path
+    }
+
+    /**
+     * Locate the installed BOSS.app by its bundle identifier via Spotlight (`mdfind`),
+     * skipping translocated mounts and nested helper/framework bundles.
+     */
+    private fun findInstalledAppViaSpotlight(): String? {
+        return try {
+            val process = ProcessBuilder(
+                "mdfind", "kMDItemCFBundleIdentifier == 'ai.rever.boss'"
+            ).start()
+            val output = process.inputStream.bufferedReader().readText()
+            process.waitFor()
+            output.lineSequence()
+                .map { it.trim() }
+                .filter { it.endsWith(".app") }
+                .filterNot { it.contains("/AppTranslocation/") }
+                .filterNot { it.contains("/Frameworks/") || it.contains("/Helpers/") }
+                .firstOrNull { File(it).exists() }
+        } catch (e: Exception) {
+            logger.warn(LogCategory.SYSTEM, "mdfind lookup for installed app failed", error = e)
             null
         }
     }
