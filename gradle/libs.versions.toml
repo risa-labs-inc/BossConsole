@@ -46,7 +46,7 @@ intellij-platform = "243.21565.199"
 # bump it when consuming a new SDK release. Distribution is store/GitHub-
 # releases ONLY: plugin-platform/plugin-api-core downloads this release's jar and
 # filters the api package locally (no Maven registry involved).
-boss-plugin-api = "1.0.66"
+boss-plugin-api = "1.0.68"
 
 [libraries]
 kotlin-test-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin" }
