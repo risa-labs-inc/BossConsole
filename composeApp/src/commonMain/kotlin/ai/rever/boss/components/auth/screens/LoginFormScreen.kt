@@ -22,10 +22,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import BossDarkBorder
-import BossDarkTextPrimary
-import BossDarkTextSecondary
-import BossDarkAccent
 import ai.rever.boss.components.auth.forms.*
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.viewmodels.LoginViewModel
@@ -158,7 +154,7 @@ fun LoginFormScreen(
                         // Show error message
                         Text(
                             text = options.message,
-                            color = BossDarkTextPrimary,
+                            color = BossTheme.colors.textPrimary,
                             fontSize = 12.sp,
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -190,14 +186,14 @@ fun LoginFormScreen(
                             enabled = !isLoading && !passkeyAuthLoading,
                             shape = RoundedCornerShape(4.dp),
                             colors = ButtonDefaults.buttonColors(
-                                backgroundColor = BossDarkAccent,
+                                backgroundColor = BossTheme.colors.signal,
                                 contentColor = BossTheme.colors.onSignal
                             )
                         ) {
                             if (passkeyAuthLoading) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(18.dp),
-                                    color = BossDarkTextPrimary,
+                                    color = BossTheme.colors.textPrimary,
                                     strokeWidth = 2.dp
                                 )
                             } else {
@@ -229,9 +225,9 @@ fun LoginFormScreen(
                             enabled = !isLoading,
                             shape = RoundedCornerShape(4.dp),
                             colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = BossDarkTextPrimary
+                                contentColor = BossTheme.colors.textPrimary
                             ),
-                            border = BorderStroke(1.dp, BossDarkBorder)
+                            border = BorderStroke(1.dp, BossTheme.colors.line)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Lock,
@@ -251,7 +247,7 @@ fun LoginFormScreen(
                         // User exists but no passkeys - show magic link authentication only
                         Text(
                             "We'll send you a secure magic link to sign in - no password needed!",
-                            color = BossDarkTextSecondary,
+                            color = BossTheme.colors.textSecondary,
                             fontSize = 14.sp,
                             textAlign = TextAlign.Center,
                             modifier = Modifier.padding(vertical = 8.dp)

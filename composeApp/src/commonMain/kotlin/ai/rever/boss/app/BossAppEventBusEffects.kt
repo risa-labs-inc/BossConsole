@@ -260,6 +260,9 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                         applyWorkspace(workspace, splitViewState, windowProjectState)
                     }
                 } catch (e: Exception) {
+                    logger.warn(LogCategory.WORKSPACE, "Workspace load from CLI failed", mapOf(
+                        "path" to event.workspacePath
+                    ), error = e)
                 }
             }
             .launchIn(this)
@@ -331,6 +334,9 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                         }
                     }
                 } catch (e: Exception) {
+                    logger.warn(LogCategory.UI, "Panel open event handling failed", mapOf(
+                        "panelId" to event.panelId.panelId
+                    ), error = e)
                 }
             }
             .launchIn(this)
@@ -414,6 +420,9 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                         }
                     }
                 } catch (e: Exception) {
+                    logger.warn(LogCategory.UI, "Panel toggle event handling failed", mapOf(
+                        "panelId" to event.panelId.panelId
+                    ), error = e)
                 }
             }
             .launchIn(this)

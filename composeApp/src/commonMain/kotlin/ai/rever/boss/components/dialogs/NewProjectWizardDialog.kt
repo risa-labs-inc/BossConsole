@@ -1,14 +1,7 @@
 package ai.rever.boss.components.dialogs
 
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkBorder
-import BossDarkError
-import BossDarkSuccess
-import BossDarkSurface
-import BossDarkTextPrimary
-import BossDarkTextSecondary
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.plugin.ui.BossThemeController
 import ai.rever.boss.window.Project
 import ai.rever.boss.platform.rememberDirectoryPicker
 import ai.rever.boss.project.ProjectCreationService
@@ -52,10 +45,10 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 
 // Dashboard-style accent color
-private val AccentBlue get() = BossDarkAccent
-private val HoverBackground get() = BossDarkSurface
-private val SuccessGreen get() = BossDarkSuccess
-private val ErrorRed get() = BossDarkError
+private val AccentBlue get() = BossThemeController.current.colors.signal
+private val HoverBackground get() = BossThemeController.current.colors.raised
+private val SuccessGreen get() = BossThemeController.current.colors.ok
+private val ErrorRed get() = BossThemeController.current.colors.alert
 
 /**
  * Multi-step wizard dialog for creating new projects from templates.
@@ -89,7 +82,7 @@ fun NewProjectWizardDialog(
                 .width(700.dp)
                 .heightIn(min = 500.dp, max = 650.dp)
                 .clip(RoundedCornerShape(16.dp))
-                .background(BossDarkBackground)
+                .background(BossTheme.colors.panel)
         ) {
             when (val step = wizardStep) {
                 is WizardStep.TemplateSelection -> TemplateSelectionStep(
@@ -163,12 +156,12 @@ private fun TemplateSelectionStep(
                     text = "New Project",
                     fontSize = 20.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = BossDarkTextPrimary
+                    color = BossTheme.colors.textPrimary
                 )
                 Text(
                     text = "Select a project template to get started",
                     fontSize = 13.sp,
-                    color = BossDarkTextSecondary
+                    color = BossTheme.colors.textSecondary
                 )
             }
 
@@ -179,7 +172,7 @@ private fun TemplateSelectionStep(
                 Icon(
                     imageVector = Icons.Outlined.Close,
                     contentDescription = "Close",
-                    tint = BossDarkTextSecondary
+                    tint = BossTheme.colors.textSecondary
                 )
             }
         }
@@ -213,7 +206,7 @@ private fun TemplateSelectionStep(
             TextButton(
                 onClick = onDismiss,
                 colors = ButtonDefaults.textButtonColors(
-                    contentColor = BossDarkTextSecondary
+                    contentColor = BossTheme.colors.textSecondary
                 )
             ) {
                 Text("Cancel")
@@ -227,8 +220,8 @@ private fun TemplateSelectionStep(
                 colors = ButtonDefaults.buttonColors(
                     backgroundColor = AccentBlue,
                     contentColor = BossTheme.colors.onSignal,
-                    disabledBackgroundColor = BossDarkBorder,
-                    disabledContentColor = BossDarkTextSecondary
+                    disabledBackgroundColor = BossTheme.colors.line,
+                    disabledContentColor = BossTheme.colors.textSecondary
                 ),
                 shape = RoundedCornerShape(8.dp),
                 modifier = Modifier.height(40.dp)
@@ -259,19 +252,19 @@ private fun TemplateCard(
     val backgroundColor = when {
         isSelected -> AccentBlue.copy(alpha = 0.15f)
         isHovered -> HoverBackground
-        else -> BossDarkSurface
+        else -> BossTheme.colors.raised
     }
 
     val borderColor = when {
         isSelected -> AccentBlue
-        isHovered -> BossDarkBorder.copy(alpha = 0.8f)
+        isHovered -> BossTheme.colors.line.copy(alpha = 0.8f)
         else -> Color.Transparent
     }
 
     val iconColor = when {
         isSelected -> AccentBlue
-        isHovered -> BossDarkTextPrimary
-        else -> BossDarkTextSecondary
+        isHovered -> BossTheme.colors.textPrimary
+        else -> BossTheme.colors.textSecondary
     }
 
     Box(
@@ -326,7 +319,7 @@ private fun TemplateCard(
                 text = template.name,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Medium,
-                color = if (isSelected || isHovered) BossDarkTextPrimary else BossDarkTextSecondary,
+                color = if (isSelected || isHovered) BossTheme.colors.textPrimary else BossTheme.colors.textSecondary,
                 textAlign = TextAlign.Center,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -337,7 +330,7 @@ private fun TemplateCard(
             Text(
                 text = template.description,
                 fontSize = 12.sp,
-                color = BossDarkTextSecondary.copy(alpha = 0.8f),
+                color = BossTheme.colors.textSecondary.copy(alpha = 0.8f),
                 textAlign = TextAlign.Center,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
@@ -399,7 +392,7 @@ private fun ConfigurationStep(
                 Icon(
                     imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
                     contentDescription = "Back",
-                    tint = BossDarkTextSecondary
+                    tint = BossTheme.colors.textSecondary
                 )
             }
 
@@ -410,12 +403,12 @@ private fun ConfigurationStep(
                     text = "New ${template.name} Project",
                     fontSize = 20.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = BossDarkTextPrimary
+                    color = BossTheme.colors.textPrimary
                 )
                 Text(
                     text = template.description,
                     fontSize = 13.sp,
-                    color = BossDarkTextSecondary
+                    color = BossTheme.colors.textSecondary
                 )
             }
         }
@@ -427,7 +420,7 @@ private fun ConfigurationStep(
             text = "Project Name",
             fontSize = 14.sp,
             fontWeight = FontWeight.Medium,
-            color = BossDarkTextPrimary
+            color = BossTheme.colors.textPrimary
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -435,15 +428,15 @@ private fun ConfigurationStep(
         OutlinedTextField(
             value = projectName,
             onValueChange = { projectName = it },
-            placeholder = { Text("my-project", color = BossDarkTextSecondary.copy(alpha = 0.5f)) },
+            placeholder = { Text("my-project", color = BossTheme.colors.textSecondary.copy(alpha = 0.5f)) },
             modifier = Modifier.fillMaxWidth(),
             colors = TextFieldDefaults.outlinedTextFieldColors(
-                textColor = BossDarkTextPrimary,
+                textColor = BossTheme.colors.textPrimary,
                 cursorColor = AccentBlue,
                 focusedBorderColor = AccentBlue,
-                unfocusedBorderColor = BossDarkBorder,
+                unfocusedBorderColor = BossTheme.colors.line,
                 errorBorderColor = ErrorRed,
-                backgroundColor = BossDarkSurface
+                backgroundColor = BossTheme.colors.raised
             ),
             singleLine = true,
             isError = validationError != null && projectName.isNotBlank(),
@@ -457,7 +450,7 @@ private fun ConfigurationStep(
             text = "Location",
             fontSize = 14.sp,
             fontWeight = FontWeight.Medium,
-            color = BossDarkTextPrimary
+            color = BossTheme.colors.textPrimary
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -471,11 +464,11 @@ private fun ConfigurationStep(
                 onValueChange = { projectLocation = it },
                 modifier = Modifier.weight(1f),
                 colors = TextFieldDefaults.outlinedTextFieldColors(
-                    textColor = BossDarkTextPrimary,
+                    textColor = BossTheme.colors.textPrimary,
                     cursorColor = AccentBlue,
                     focusedBorderColor = AccentBlue,
-                    unfocusedBorderColor = BossDarkBorder,
-                    backgroundColor = BossDarkSurface
+                    unfocusedBorderColor = BossTheme.colors.line,
+                    backgroundColor = BossTheme.colors.raised
                 ),
                 singleLine = true,
                 shape = RoundedCornerShape(8.dp)
@@ -486,8 +479,8 @@ private fun ConfigurationStep(
             Button(
                 onClick = { directoryPicker.pickDirectory() },
                 colors = ButtonDefaults.buttonColors(
-                    backgroundColor = BossDarkSurface,
-                    contentColor = BossDarkTextPrimary
+                    backgroundColor = BossTheme.colors.raised,
+                    contentColor = BossTheme.colors.textPrimary
                 ),
                 shape = RoundedCornerShape(8.dp),
                 modifier = Modifier.height(56.dp)
@@ -495,7 +488,7 @@ private fun ConfigurationStep(
                 Icon(
                     imageVector = Icons.Default.FolderOpen,
                     contentDescription = "Browse",
-                    tint = BossDarkTextSecondary
+                    tint = BossTheme.colors.textSecondary
                 )
             }
         }
@@ -506,7 +499,7 @@ private fun ConfigurationStep(
         Text(
             text = "Project will be created at: $projectLocation/$projectName",
             fontSize = 12.sp,
-            color = BossDarkTextSecondary,
+            color = BossTheme.colors.textSecondary,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
@@ -532,7 +525,7 @@ private fun ConfigurationStep(
             TextButton(
                 onClick = onBack,
                 colors = ButtonDefaults.textButtonColors(
-                    contentColor = BossDarkTextSecondary
+                    contentColor = BossTheme.colors.textSecondary
                 )
             ) {
                 Text("Back")
@@ -546,8 +539,8 @@ private fun ConfigurationStep(
                 colors = ButtonDefaults.buttonColors(
                     backgroundColor = AccentBlue,
                     contentColor = BossTheme.colors.onSignal,
-                    disabledBackgroundColor = BossDarkBorder,
-                    disabledContentColor = BossDarkTextSecondary
+                    disabledBackgroundColor = BossTheme.colors.line,
+                    disabledContentColor = BossTheme.colors.textSecondary
                 ),
                 shape = RoundedCornerShape(8.dp),
                 modifier = Modifier.height(40.dp)
@@ -610,7 +603,7 @@ private fun CreatingStep(
             text = "Creating Project",
             fontSize = 20.sp,
             fontWeight = FontWeight.SemiBold,
-            color = BossDarkTextPrimary
+            color = BossTheme.colors.textPrimary
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -618,7 +611,7 @@ private fun CreatingStep(
         Text(
             text = statusMessage,
             fontSize = 14.sp,
-            color = BossDarkTextSecondary
+            color = BossTheme.colors.textSecondary
         )
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -630,7 +623,7 @@ private fun CreatingStep(
                 .height(4.dp)
                 .clip(RoundedCornerShape(2.dp)),
             color = AccentBlue,
-            backgroundColor = BossDarkSurface
+            backgroundColor = BossTheme.colors.raised
         )
     }
 }
@@ -663,7 +656,7 @@ private fun SuccessStep(
             text = "Project Created!",
             fontSize = 20.sp,
             fontWeight = FontWeight.SemiBold,
-            color = BossDarkTextPrimary
+            color = BossTheme.colors.textPrimary
         )
 
         Spacer(modifier = Modifier.height(12.dp))
@@ -672,7 +665,7 @@ private fun SuccessStep(
             text = project.name,
             fontSize = 16.sp,
             fontWeight = FontWeight.Medium,
-            color = BossDarkTextPrimary
+            color = BossTheme.colors.textPrimary
         )
 
         Spacer(modifier = Modifier.height(4.dp))
@@ -680,7 +673,7 @@ private fun SuccessStep(
         Text(
             text = project.path,
             fontSize = 13.sp,
-            color = BossDarkTextSecondary
+            color = BossTheme.colors.textSecondary
         )
 
         Spacer(modifier = Modifier.height(36.dp))
@@ -730,7 +723,7 @@ private fun ErrorStep(
             text = "Project Creation Failed",
             fontSize = 20.sp,
             fontWeight = FontWeight.SemiBold,
-            color = BossDarkTextPrimary
+            color = BossTheme.colors.textPrimary
         )
 
         Spacer(modifier = Modifier.height(20.dp))
@@ -739,13 +732,13 @@ private fun ErrorStep(
             modifier = Modifier
                 .fillMaxWidth(0.8f)
                 .clip(RoundedCornerShape(8.dp))
-                .background(BossDarkSurface)
+                .background(BossTheme.colors.raised)
                 .padding(16.dp)
         ) {
             Text(
                 text = message,
                 fontSize = 13.sp,
-                color = BossDarkTextPrimary.copy(alpha = 0.9f),
+                color = BossTheme.colors.textPrimary.copy(alpha = 0.9f),
                 lineHeight = 20.sp
             )
         }
@@ -759,7 +752,7 @@ private fun ErrorStep(
             OutlinedButton(
                 onClick = onClose,
                 colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = BossDarkTextSecondary
+                    contentColor = BossTheme.colors.textSecondary
                 ),
                 shape = RoundedCornerShape(8.dp),
                 modifier = Modifier

@@ -348,6 +348,10 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                     workspaceManager.saveCurrentWorkspace("Last Session")
                 }
             } catch (e: Exception) {
+                // Shutdown path: never block window teardown, but leave a breadcrumb —
+                // a silently lost "Last Session" is exactly what users report as
+                // "my layout disappeared".
+                logger.warn(LogCategory.WORKSPACE, "Last Session save on window close failed", error = e)
             }
 
             // Cleanup plugin coroutines
@@ -370,7 +374,8 @@ internal fun BossAppStartupEffects(state: BossAppState) {
         try {
             LLMSettingsManager.loadSettings()
         } catch (e: Exception) {
-            // Ignore errors during settings load to prevent app crash
+            // Non-fatal: app runs with default LLM settings
+            logger.warn(LogCategory.SYSTEM, "LLM settings load failed - using defaults", error = e)
         }
     }
 
@@ -490,6 +495,8 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                 }
             }
         } catch (e: Exception) {
+            // Non-fatal: user can still check for updates manually
+            logger.warn(LogCategory.SYSTEM, "Update manager startup check failed", error = e)
         }
     }
 
@@ -501,6 +508,8 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                     CLIInstaller.installCLI()
                 }
             } catch (e: Exception) {
+                // Non-fatal: the bundled CLI keeps working at its current version
+                logger.warn(LogCategory.SYSTEM, "CLI auto-update failed", error = e)
             }
         }
     }

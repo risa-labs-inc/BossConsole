@@ -1,12 +1,6 @@
 package ai.rever.boss.components.window_panel.components.main_window_panels
 
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkContentBackground
-import BossDarkSurface
-import BossDarkTextMuted
-import BossDarkTextPrimary
-import BossDarkTextSecondary
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -117,7 +111,7 @@ fun EmptyContent(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(BossDarkBackground),
+            .background(BossTheme.colors.panel),
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -132,7 +126,7 @@ fun EmptyContent(
                 Icon(
                     imageVector = Icons.Outlined.Dashboard,
                     contentDescription = "BOSS",
-                    tint = BossDarkAccent,
+                    tint = BossTheme.colors.signal,
                     modifier = Modifier.size(80.dp)
                 )
             }
@@ -142,8 +136,8 @@ fun EmptyContent(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text("Welcome to BOSS", color = BossDarkTextPrimary, fontSize = 28.sp, fontWeight = FontWeight.Bold)
-                Text("Multi-panel development environment", color = BossDarkTextSecondary, fontSize = 16.sp)
+                Text("Welcome to BOSS", color = BossTheme.colors.textPrimary, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+                Text("Multi-panel development environment", color = BossTheme.colors.textSecondary, fontSize = 16.sp)
             }
 
             // Quick tips with interactive cards
@@ -151,7 +145,7 @@ fun EmptyContent(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Text("Quick Tips", color = BossDarkAccent, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Text("Quick Tips", color = BossTheme.colors.signal, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     tips.forEachIndexed { index, tip ->
                         Card(
@@ -187,7 +181,7 @@ fun EmptyContent(
             }
             Text(
                 text = messages[messageIndex],
-                color = BossDarkTextSecondary.copy(alpha = 0.7f),
+                color = BossTheme.colors.textSecondary.copy(alpha = 0.7f),
                 fontSize = 14.sp,
                 modifier = Modifier.padding(top = 16.dp)
             )
@@ -225,21 +219,21 @@ private fun Card(
 
     // Colors based on state
     val backgroundColor = when {
-        !enabled -> BossDarkContentBackground  // Darker for disabled
-        isSelected -> BossDarkSurface
-        else -> BossDarkBackground
+        !enabled -> BossTheme.colors.ink  // Darker for disabled
+        isSelected -> BossTheme.colors.raised
+        else -> BossTheme.colors.panel
     }
 
     val iconTint = when {
-        !enabled -> BossDarkTextMuted  // Muted for disabled
-        isSelected -> BossDarkAccent
-        else -> BossDarkTextSecondary
+        !enabled -> BossTheme.colors.textMuted  // Muted for disabled
+        isSelected -> BossTheme.colors.signal
+        else -> BossTheme.colors.textSecondary
     }
 
     val textColor = when {
-        !enabled -> BossDarkTextMuted  // Dim text for disabled
-        isSelected -> BossDarkTextPrimary
-        else -> BossDarkTextSecondary
+        !enabled -> BossTheme.colors.textMuted  // Dim text for disabled
+        isSelected -> BossTheme.colors.textPrimary
+        else -> BossTheme.colors.textSecondary
     }
 
     Column(
@@ -284,7 +278,7 @@ private fun Card(
         ) {
             Text(
                 text = description,
-                color = BossDarkTextSecondary,
+                color = BossTheme.colors.textSecondary,
                 fontSize = 12.sp,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(top = 4.dp)

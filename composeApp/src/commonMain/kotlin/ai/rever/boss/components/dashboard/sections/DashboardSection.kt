@@ -1,6 +1,5 @@
 package ai.rever.boss.components.dashboard.sections
 
-import BossDarkTextSecondary
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -49,7 +48,7 @@ fun DashboardSection(
                 if (subtitle != null) {
                     Text(
                         text = subtitle,
-                        color = BossDarkTextSecondary,
+                        color = BossTheme.colors.textSecondary,
                         fontSize = 12.sp
                     )
                 }

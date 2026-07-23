@@ -35,7 +35,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.SupervisorJob
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.graphics.toArgb
-import ai.rever.boss.plugin.ui.BossColors
 import ai.rever.boss.plugin.ui.BossThemeController
 import ai.rever.boss.plugin.ui.BossThemes
 import java.awt.Toolkit
@@ -182,10 +181,10 @@ object FluckEngine {
                         val current = result.selectedMatch()
                         if (total > 0) {
                             infoLabel?.text = "$current/$total"
-                            infoLabel?.foreground = java.awt.Color(BossColors.darkTextPrimary.toArgb(), true)
+                            infoLabel?.foreground = java.awt.Color(BossThemeController.current.colors.textPrimary.toArgb(), true)
                         } else {
                             infoLabel?.text = "0/0"
-                            infoLabel?.foreground = java.awt.Color(BossColors.darkError.toArgb(), true)
+                            infoLabel?.foreground = java.awt.Color(BossThemeController.current.colors.alert.toArgb(), true)
                         }
                     }
                 }
@@ -204,10 +203,14 @@ object FluckEngine {
 
         private fun createDialog(owner: java.awt.Window) {
             // Colors resolve from the active BOSS theme at dialog build time.
-            val bg = java.awt.Color(BossColors.darkBackground.toArgb(), true)
-            val inputBg = java.awt.Color(BossColors.darkSurface.toArgb(), true)
-            val fg = java.awt.Color(BossColors.darkTextPrimary.toArgb(), true)
-            val mutedFg = java.awt.Color(BossColors.darkTextSecondary.toArgb(), true)
+            // Known asymmetry with the Compose UI: this Swing dialog SNAPSHOTS
+            // the tokens at construction, so a live theme switch restyles it
+            // only on the next createDialog(), not while it is open.
+            val colors = BossThemeController.current.colors
+            val bg = java.awt.Color(colors.panel.toArgb(), true)
+            val inputBg = java.awt.Color(colors.raised.toArgb(), true)
+            val fg = java.awt.Color(colors.textPrimary.toArgb(), true)
+            val mutedFg = java.awt.Color(colors.textSecondary.toArgb(), true)
             fun cssHex(c: java.awt.Color) = "#%06x".format(c.rgb and 0xFFFFFF)
             val font = java.awt.Font("SansSerif", java.awt.Font.PLAIN, 13)
             val smallFont = java.awt.Font("SansSerif", java.awt.Font.PLAIN, 11)
@@ -223,7 +226,7 @@ object FluckEngine {
             content.background = bg
             content.layout = java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 2, 4)
             content.border = javax.swing.BorderFactory.createCompoundBorder(
-                javax.swing.BorderFactory.createLineBorder(java.awt.Color(BossColors.darkBorder.toArgb(), true)),
+                javax.swing.BorderFactory.createLineBorder(java.awt.Color(colors.line.toArgb(), true)),
                 javax.swing.BorderFactory.createEmptyBorder(2, 6, 2, 6)
             )
 
@@ -233,7 +236,7 @@ object FluckEngine {
             tf.background = inputBg
             tf.caretColor = fg
             tf.border = javax.swing.BorderFactory.createCompoundBorder(
-                javax.swing.BorderFactory.createLineBorder(java.awt.Color(BossThemeController.current.colors.lineStrong.toArgb(), true)),
+                javax.swing.BorderFactory.createLineBorder(java.awt.Color(colors.lineStrong.toArgb(), true)),
                 javax.swing.BorderFactory.createEmptyBorder(2, 6, 2, 6)
             )
             tf.preferredSize = java.awt.Dimension(160, 28)
@@ -273,7 +276,7 @@ object FluckEngine {
             nextBtn.addActionListener { performFind(false) }
             caseBtn.addActionListener {
                 caseSensitive = !caseSensitive
-                val color = if (caseSensitive) cssHex(java.awt.Color(BossColors.darkAccent.toArgb(), true)) else cssHex(mutedFg)
+                val color = if (caseSensitive) cssHex(java.awt.Color(BossThemeController.current.colors.signal.toArgb(), true)) else cssHex(mutedFg)
                 val weight = if (caseSensitive) "bold" else "normal"
                 caseBtn.text = "<html><span style='font-size:12px;color:$color;font-weight:$weight;'>Aa</span></html>"
                 performFind(false)

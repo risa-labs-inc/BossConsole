@@ -1,7 +1,6 @@
 package ai.rever.boss.logging
 
-import BossDarkError
-import BossDarkTextPrimary
+import ai.rever.boss.plugin.ui.BossThemeController
 import androidx.compose.ui.graphics.Color
 
 /**
@@ -22,8 +21,8 @@ data class LogEntry(
      */
     val color: Color
         get() = when (source) {
-            LogSource.STDOUT -> BossDarkTextPrimary
-            LogSource.STDERR -> BossDarkError
+            LogSource.STDOUT -> BossThemeController.current.colors.textPrimary
+            LogSource.STDERR -> BossThemeController.current.colors.alert
         }
 
     /**

@@ -1,7 +1,5 @@
 package ai.rever.boss.components.wizard.plugin
 
-import BossDarkSurface
-import BossDarkTextSecondary
 import ai.rever.boss.components.wizard.CheckboxCard
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.components.wizard.WizardNote
@@ -61,7 +59,7 @@ internal fun WizardHeader(
                 Icon(
                     imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
                     contentDescription = "Back",
-                    tint = BossDarkTextSecondary
+                    tint = BossTheme.colors.textSecondary
                 )
             }
         }
@@ -77,7 +75,7 @@ internal fun WizardHeader(
                 Text(
                     text = category.description,
                     fontSize = 13.sp,
-                    color = BossDarkTextSecondary
+                    color = BossTheme.colors.textSecondary
                 )
             }
         }
@@ -87,7 +85,7 @@ internal fun WizardHeader(
                 Icon(
                     imageVector = Icons.Outlined.Close,
                     contentDescription = "Close",
-                    tint = BossDarkTextSecondary
+                    tint = BossTheme.colors.textSecondary
                 )
             }
         }
@@ -123,7 +121,7 @@ internal fun WelcomeStepContent() {
         Text(
             text = "Customize your workspace by selecting the tools you need.\nWe'll help you get started with some recommended essentials.",
             fontSize = 14.sp,
-            color = BossDarkTextSecondary,
+            color = BossTheme.colors.textSecondary,
             textAlign = TextAlign.Center,
             lineHeight = 22.sp,
             modifier = Modifier.padding(horizontal = 32.dp)
@@ -134,7 +132,7 @@ internal fun WelcomeStepContent() {
         Row(
             modifier = Modifier
                 .clip(RoundedCornerShape(8.dp))
-                .background(BossDarkSurface)
+                .background(BossTheme.colors.raised)
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -148,7 +146,7 @@ internal fun WelcomeStepContent() {
             Text(
                 text = "Essential tools will be pre-selected for you",
                 fontSize = 13.sp,
-                color = BossDarkTextSecondary
+                color = BossTheme.colors.textSecondary
             )
         }
     }
@@ -178,7 +176,7 @@ internal fun CategoryStepContent(
                 }
                 TextButton(
                     onClick = onDeselectAll,
-                    colors = ButtonDefaults.textButtonColors(contentColor = BossDarkTextSecondary)
+                    colors = ButtonDefaults.textButtonColors(contentColor = BossTheme.colors.textSecondary)
                 ) {
                     Text("Deselect All", fontSize = 12.sp)
                 }
@@ -195,7 +193,7 @@ internal fun CategoryStepContent(
             ) {
                 Text(
                     text = "No tools available in this category",
-                    color = BossDarkTextSecondary,
+                    color = BossTheme.colors.textSecondary,
                     fontSize = 14.sp
                 )
             }
@@ -253,7 +251,7 @@ internal fun InstallingStepContent(
                 modifier = Modifier
                     .fillMaxWidth(0.8f)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(BossDarkSurface)
+                    .background(BossTheme.colors.raised)
                     .padding(16.dp)
             ) {
                 Text(
@@ -298,7 +296,7 @@ internal fun InstallingStepContent(
             Text(
                 text = status,
                 fontSize = 14.sp,
-                color = BossDarkTextSecondary
+                color = BossTheme.colors.textSecondary
             )
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -310,7 +308,7 @@ internal fun InstallingStepContent(
                     .height(4.dp)
                     .clip(RoundedCornerShape(2.dp)),
                 color = BossTheme.colors.signal,
-                backgroundColor = BossDarkSurface
+                backgroundColor = BossTheme.colors.raised
             )
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -318,7 +316,7 @@ internal fun InstallingStepContent(
             Text(
                 text = "${(progress * 100).toInt()}%",
                 fontSize = 12.sp,
-                color = BossDarkTextSecondary
+                color = BossTheme.colors.textSecondary
             )
         }
     }
@@ -361,7 +359,7 @@ internal fun CompleteStepContent(
                 "No tools were selected for installation"
             },
             fontSize = 14.sp,
-            color = BossDarkTextSecondary,
+            color = BossTheme.colors.textSecondary,
             textAlign = TextAlign.Center
         )
 
@@ -373,7 +371,7 @@ internal fun CompleteStepContent(
                 modifier = Modifier
                     .fillMaxWidth(0.85f)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(BossDarkSurface)
+                    .background(BossTheme.colors.raised)
                     .padding(12.dp)
             ) {
                 Column {
@@ -388,7 +386,7 @@ internal fun CompleteStepContent(
                         Text(
                             text = "\u2022 $pluginId: $error",
                             fontSize = 12.sp,
-                            color = BossDarkTextSecondary,
+                            color = BossTheme.colors.textSecondary,
                             lineHeight = 18.sp
                         )
                     }
@@ -400,7 +398,7 @@ internal fun CompleteStepContent(
             Text(
                 text = "You can retry installing these tools from the Toolbox",
                 fontSize = 13.sp,
-                color = BossDarkTextSecondary.copy(alpha = 0.8f),
+                color = BossTheme.colors.textSecondary.copy(alpha = 0.8f),
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(horizontal = 32.dp)
             )
@@ -410,7 +408,7 @@ internal fun CompleteStepContent(
             Text(
                 text = "You can install more tools anytime from the Toolbox",
                 fontSize = 13.sp,
-                color = BossDarkTextSecondary.copy(alpha = 0.8f),
+                color = BossTheme.colors.textSecondary.copy(alpha = 0.8f),
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(horizontal = 32.dp)
             )
@@ -459,7 +457,7 @@ internal fun WizardNavigation(
                     TextButton(
                         onClick = onSkip,
                         colors = ButtonDefaults.textButtonColors(
-                            contentColor = BossDarkTextSecondary
+                            contentColor = BossTheme.colors.textSecondary
                         )
                     ) {
                         Text("Skip to Install")

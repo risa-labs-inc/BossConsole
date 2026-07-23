@@ -1,8 +1,8 @@
 package ai.rever.boss.window
 
-import BossDarkSurface
 import ai.rever.boss.BossAppWithAuth
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.plugin.ui.BossThemeController
 import ai.rever.boss.components.dialogs.CLIInstallationDialog
 import ai.rever.boss.components.window_panel.components.main_window_panels.createBossAppContext
 import ai.rever.boss.utils.CLIInstaller
@@ -23,6 +23,7 @@ import ai.rever.boss.services.terminal.TerminalAPIAccess
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.material.AlertDialog
 import androidx.compose.material.Button
 import androidx.compose.material.ButtonDefaults
@@ -215,8 +216,10 @@ fun ApplicationScope.BossWindow(
             }
         }
 
-        // Set window appearance - using native OS title bar
-        window.background = Color(BossDarkSurface.value.toInt())
+        // Set window appearance - using native OS title bar.
+        // toArgb(), not value.toInt(): Compose Color.value packs ARGB in the
+        // UPPER 32 bits of a ULong, so value.toInt() reads the empty low bits.
+        window.background = Color(BossThemeController.current.colors.raised.toArgb())
 
         // Enable native macOS fullscreen support and extend content into title bar
         // This allows the green traffic light button to enter proper native fullscreen,

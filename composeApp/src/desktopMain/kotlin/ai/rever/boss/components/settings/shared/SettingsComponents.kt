@@ -30,7 +30,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogWindow
 import androidx.compose.ui.window.rememberDialogState
-import BossDarkError
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.components.settings.shared.SettingsTheme.AccentColor
 import ai.rever.boss.components.settings.shared.SettingsTheme.BackgroundColor
@@ -883,7 +882,7 @@ fun SettingsButtonRow(
             onClick = onClick,
             enabled = enabled,
             colors = ButtonDefaults.textButtonColors(
-                contentColor = if (isDestructive) BossDarkError else AccentColor,
+                contentColor = if (isDestructive) BossTheme.colors.alert else AccentColor,
                 disabledContentColor = TextMuted
             )
         ) {

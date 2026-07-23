@@ -1,7 +1,5 @@
 package ai.rever.boss.components.dashboard.cards
 
-import BossDarkSurface
-import BossDarkTextSecondary
 import ai.rever.boss.dashboard.RecentFile
 import ai.rever.boss.icons.FileIcons
 import ai.rever.boss.plugin.ui.BossTheme
@@ -58,7 +56,7 @@ fun FileCard(
         animationSpec = spring(dampingRatio = 0.6f)
     )
 
-    val backgroundColor = if (isHovered) BossTheme.colors.signalWash else BossDarkSurface
+    val backgroundColor = if (isHovered) BossTheme.colors.signalWash else BossTheme.colors.raised
     val fileIconInfo = FileIcons.forFile(file.name)
     val cardShape = RoundedCornerShape(12.dp)
 
@@ -113,7 +111,7 @@ fun FileCard(
                 if (parentFolder.isNotEmpty()) {
                     Text(
                         text = parentFolder,
-                        color = BossDarkTextSecondary,
+                        color = BossTheme.colors.textSecondary,
                         fontSize = 10.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -140,7 +138,7 @@ fun FileCard(
                 Icon(
                     imageVector = Icons.Filled.Close,
                     contentDescription = "Remove",
-                    tint = BossDarkTextSecondary,
+                    tint = BossTheme.colors.textSecondary,
                     modifier = Modifier.size(10.dp)
                 )
             }

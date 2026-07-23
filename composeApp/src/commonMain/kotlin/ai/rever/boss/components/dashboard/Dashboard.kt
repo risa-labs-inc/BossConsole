@@ -1,8 +1,5 @@
 package ai.rever.boss.components.dashboard
 
-import BossDarkBackground
-import BossDarkSurface
-import BossDarkTextSecondary
 import ai.rever.boss.components.dashboard.cards.ActionCard
 import ai.rever.boss.components.dashboard.cards.BrowserPageCard
 import ai.rever.boss.components.dashboard.cards.FileCard
@@ -145,7 +142,7 @@ fun Dashboard(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(BossDarkBackground)
+            .background(BossTheme.colors.panel)
     ) {
         Column(
             modifier = Modifier
@@ -602,7 +599,7 @@ private fun WelcomeMessage(modifier: Modifier = Modifier) {
         )
         Text(
             text = "What would you like to work on today?",
-            color = BossDarkTextSecondary,
+            color = BossTheme.colors.textSecondary,
             fontSize = 14.sp
         )
     }
@@ -618,7 +615,7 @@ private fun StatsSummary(
         modifier = Modifier
             .horizontalScroll(rememberScrollState())
             .background(
-                color = BossDarkSurface,
+                color = BossTheme.colors.raised,
                 shape = RoundedCornerShape(8.dp)
             )
             .padding(horizontal = 16.dp, vertical = 12.dp),
@@ -646,7 +643,7 @@ private fun StatItem(label: String, value: String) {
         )
         Text(
             text = label,
-            color = BossDarkTextSecondary,
+            color = BossTheme.colors.textSecondary,
             fontSize = 11.sp,
             maxLines = 1,
             softWrap = false
@@ -660,6 +657,6 @@ private fun StatDivider() {
         modifier = Modifier
             .width(1.dp)
             .height(24.dp)
-            .background(BossDarkTextSecondary.copy(alpha = 0.3f))
+            .background(BossTheme.colors.textSecondary.copy(alpha = 0.3f))
     )
 }

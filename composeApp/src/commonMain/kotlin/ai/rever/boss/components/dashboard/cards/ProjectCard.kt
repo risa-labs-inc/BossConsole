@@ -1,8 +1,5 @@
 package ai.rever.boss.components.dashboard.cards
 
-import BossDarkAccent
-import BossDarkSurface
-import BossDarkTextSecondary
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.window.Project
 import androidx.compose.animation.AnimatedVisibility
@@ -62,7 +59,7 @@ fun ProjectCard(
         animationSpec = spring(dampingRatio = 0.6f)
     )
 
-    val backgroundColor = if (isHovered) BossTheme.colors.signalWash else BossDarkSurface
+    val backgroundColor = if (isHovered) BossTheme.colors.signalWash else BossTheme.colors.raised
     val cardShape = RoundedCornerShape(12.dp)
 
     Box(
@@ -87,7 +84,7 @@ fun ProjectCard(
                     .padding(2.dp)
                     .size(32.dp),
                 shape = RoundedCornerShape(4.dp),
-                color = BossDarkAccent,
+                color = BossTheme.colors.signal,
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     val initials = when {
@@ -116,7 +113,7 @@ fun ProjectCard(
 
             Text(
                 text = formatRelativeTime(project.lastOpened),
-                color = BossDarkTextSecondary,
+                color = BossTheme.colors.textSecondary,
                 fontSize = 11.sp,
                 maxLines = 1
             )
@@ -145,7 +142,7 @@ fun ProjectCard(
                     Icon(
                         imageVector = Icons.Filled.Close,
                         contentDescription = "Remove",
-                        tint = BossDarkTextSecondary,
+                        tint = BossTheme.colors.textSecondary,
                         modifier = Modifier.size(12.dp)
                     )
                 }

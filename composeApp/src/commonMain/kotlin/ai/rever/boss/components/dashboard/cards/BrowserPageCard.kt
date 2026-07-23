@@ -1,7 +1,5 @@
 package ai.rever.boss.components.dashboard.cards
 
-import BossDarkSurface
-import BossDarkTextSecondary
 import ai.rever.boss.cache.loadHighQualityFavicon
 import ai.rever.boss.plugin.api.TabIcon
 import ai.rever.boss.plugin.ui.BossTheme
@@ -65,7 +63,7 @@ fun BrowserPageCard(
         animationSpec = spring(dampingRatio = 0.6f)
     )
 
-    val backgroundColor = if (isHovered) BossTheme.colors.signalWash else BossDarkSurface
+    val backgroundColor = if (isHovered) BossTheme.colors.signalWash else BossTheme.colors.raised
     val domain = RecentBrowserPagesManager.getDomain(page.url)
     val iconColor = getDomainColor(domain)
     val cardShape = RoundedCornerShape(12.dp)
@@ -138,7 +136,7 @@ fun BrowserPageCard(
 
             Text(
                 text = domain,
-                color = BossDarkTextSecondary,
+                color = BossTheme.colors.textSecondary,
                 fontSize = 10.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -162,7 +160,7 @@ fun BrowserPageCard(
                 Icon(
                     imageVector = Icons.Filled.Close,
                     contentDescription = "Remove",
-                    tint = BossDarkTextSecondary,
+                    tint = BossTheme.colors.textSecondary,
                     modifier = Modifier.size(10.dp)
                 )
             }

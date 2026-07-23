@@ -1,7 +1,5 @@
 package ai.rever.boss.components.dashboard.cards
 
-import BossDarkSurface
-import BossDarkTextSecondary
 import ai.rever.boss.dashboard.SplitTemplate
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.animation.core.animateFloatAsState
@@ -59,7 +57,7 @@ fun SplitTemplateCard(
         animationSpec = spring(dampingRatio = 0.6f)
     )
 
-    val backgroundColor = if (isHovered) BossTheme.colors.signalWash else BossDarkSurface
+    val backgroundColor = if (isHovered) BossTheme.colors.signalWash else BossTheme.colors.raised
     val borderColor = if (isHovered) BossTheme.colors.signal.copy(alpha = 0.5f) else Color.Transparent
 
     val cardShape = RoundedCornerShape(12.dp)
@@ -110,7 +108,7 @@ fun SplitTemplateCard(
         ) {
             Text(
                 text = template.description,
-                color = BossDarkTextSecondary,
+                color = BossTheme.colors.textSecondary,
                 fontSize = 10.sp,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
@@ -166,7 +164,7 @@ private fun PanelPreview(
         "browser" -> Triple(Icons.Outlined.Language, BossTheme.colors.data, "Web")
         // Deliberate one-off: the design system has no purple token (editor identity color).
         "editor" -> Triple(Icons.Outlined.Code, Color(0xFFB877DB), "Code")
-        else -> Triple(Icons.Outlined.Code, BossDarkTextSecondary, type)
+        else -> Triple(Icons.Outlined.Code, BossTheme.colors.textSecondary, type)
     }
 
     Box(
