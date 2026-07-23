@@ -17,6 +17,25 @@ private const val MACOS_APP_BUNDLE_SUFFIX = ".app"
 private const val MACOS_APPLICATIONS_DIRECTORY = "/Applications"
 private const val SPOTLIGHT_LOOKUP_TIMEOUT_SECONDS = 5L
 
+/** Return the outermost complete `.app` path segment in [path]. */
+internal fun macOSAppBundlePathIn(path: String): String? {
+    val pathSegments = path.split('/')
+    val bundleIndex = pathSegments.indexOfFirst {
+        it.length > MACOS_APP_BUNDLE_SUFFIX.length &&
+            it.endsWith(MACOS_APP_BUNDLE_SUFFIX)
+    }
+    if (bundleIndex < 0) return null
+
+    return pathSegments.take(bundleIndex + 1).joinToString("/")
+}
+
+/** Extract the first app bundle represented in `java.library.path`. */
+internal fun macOSAppBundlePathFromLibraryPath(libraryPath: String): String? {
+    return libraryPath
+        .split(File.pathSeparatorChar)
+        .firstNotNullOfOrNull(::macOSAppBundlePathIn)
+}
+
 /**
  * Resolve a macOS app bundle path without coupling the decision logic to the
  * filesystem or Spotlight. The injected functions keep App Translocation path
@@ -29,15 +48,10 @@ internal fun realAppPathFor(
 ): String {
     if (!path.contains(APP_TRANSLOCATION_PATH_SEGMENT)) return path
 
-    // Match the suffix at a path-segment boundary. Searching the raw path for
-    // the first ".app" would misparse names such as "My.application.app".
-    val bundleName = path
-        .substringAfter(APP_TRANSLOCATION_PATH_SEGMENT)
-        .split('/')
-        .firstOrNull {
-            it.length > MACOS_APP_BUNDLE_SUFFIX.length &&
-                it.endsWith(MACOS_APP_BUNDLE_SUFFIX)
-        }
+    val bundleName = macOSAppBundlePathIn(
+        path.substringAfter(APP_TRANSLOCATION_PATH_SEGMENT)
+    )
+        ?.substringAfterLast('/')
         ?: return path
 
     val applicationsPath = "$MACOS_APPLICATIONS_DIRECTORY/$bundleName"
@@ -527,12 +541,9 @@ object UpdateInstaller {
             val libraryPath = System.getProperty("java.library.path")
             logger.trace(LogCategory.SYSTEM, "java.library.path", mapOf("path" to (libraryPath ?: "null")))
 
-            val bundlePath = libraryPath
-                ?.split(":")
-                ?.find { it.contains(".app") }
-                ?.let { "${it.substringBefore(".app")}.app" }
+            val bundlePath = libraryPath?.let(::macOSAppBundlePathFromLibraryPath)
 
-            if (bundlePath?.contains(".app") == true && File(bundlePath).exists()) {
+            if (bundlePath != null && File(bundlePath).exists()) {
                 logger.debug(LogCategory.SYSTEM, "Found app bundle via library path", mapOf("path" to bundlePath))
                 return resolveRealAppPath(bundlePath)
             }

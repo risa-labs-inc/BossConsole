@@ -228,7 +228,9 @@ object UpdateScriptGenerator {
             echo "Cleaning up..."
             hdiutil detach "${'$'}VOLUME" -quiet
 
-            # Launch the updated app (using escaped path for security)
+            # Ask LaunchServices to launch the updated app (using the escaped path).
+            # A successful `open` only means the request was accepted; it does not
+            # verify that the app stayed running after launch.
             echo "Launching new BOSS..."
             open $escapedTargetAppPath
             if [ ${'$'}? -ne 0 ]; then

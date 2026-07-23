@@ -1,6 +1,7 @@
 package ai.rever.boss.updater
 
 import org.junit.jupiter.api.Test
+import java.io.File
 import kotlin.test.assertEquals
 import kotlin.test.fail
 
@@ -45,6 +46,19 @@ class UpdateInstallerPathResolutionTest {
         )
 
         assertEquals(expectedPath, resolvedPath)
+    }
+
+    @Test
+    fun `library path preserves app substring inside bundle name`() {
+        val libraryPath = listOf(
+            "/usr/local/lib",
+            "/Applications/My.application.app/Contents/runtime/Contents/Home/lib"
+        ).joinToString(File.pathSeparator)
+
+        assertEquals(
+            "/Applications/My.application.app",
+            macOSAppBundlePathFromLibraryPath(libraryPath)
+        )
     }
 
     @Test

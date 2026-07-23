@@ -228,8 +228,8 @@ class UpdateScriptGeneratorSecurityTest {
     }
 
     /**
-     * Test that the generated script retries the relaunch if the first `open` fails,
-     * so a transient LaunchServices failure does not leave the app un-restarted.
+     * Test that the generated script retries when LaunchServices rejects the first
+     * `open` request. A successful request does not prove the app stayed running.
      */
     @Test
     fun `test generated script retries relaunch on failure`() {
