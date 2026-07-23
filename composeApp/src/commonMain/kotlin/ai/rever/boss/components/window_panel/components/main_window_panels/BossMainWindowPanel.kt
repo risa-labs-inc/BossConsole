@@ -165,6 +165,37 @@ private fun BossTabButtonWithFavicon(
     )
 }
 
+/**
+ * The "+" (new tab) button. Rendered either as a LazyRow item hugging the
+ * last tab (legacy FIXED sizing while everything fits) or as a fixed sibling
+ * at the right edge of the tab strip — see the call sites in BossMainTabBar.
+ */
+@Composable
+private fun NewTabButton(
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = modifier
+            .height(32.dp)
+            .width(32.dp)
+            .padding(4.dp)
+            .background(
+                color = BossDarkSurface,
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp)
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = Icons.Default.Add,
+            contentDescription = "New Tab",
+            tint = BossDarkTextSecondary,
+            modifier = Modifier.size(16.dp)
+        )
+    }
+}
+
 @Composable
 fun BossTabsComponent.BossMainTabBar(
     splitViewState: ai.rever.boss.components.window_panel.SplitViewState? = null,
@@ -197,6 +228,16 @@ fun BossTabsComponent.BossMainTabBar(
     // FIXED passes null, which falls back to the legacy intrinsic sizing.
     val appearanceSettings by WindowAppearanceSettingsManager.currentSettings.collectAsState()
     val shrinkTabsToFit = appearanceSettings.tabWidthMode == TabWidthMode.SHRINK_TO_FIT
+
+    // Legacy FIXED mode only: drives whether the "+" button renders inside
+    // the row (hugging the last tab) or outside (fixed at the right edge).
+    // SHRINK_TO_FIT ignores this — its tabs always fill the bar, so the
+    // outside placement is both natural and race-free.
+    val isScrollable by remember {
+        derivedStateOf {
+            listState.canScrollForward || listState.canScrollBackward
+        }
+    }
 
     // Coroutine scope for edge scroll animation
     val edgeScrollScope = rememberCoroutineScope()
@@ -466,9 +507,11 @@ fun BossTabsComponent.BossMainTabBar(
                         }
                     )
 
-                    // Vertical divider after tab (only if not the last tab)
+                    // Vertical divider after tab (only if not the last tab).
+                    // Horizontal padding is shared with BossTabBar's width
+                    // budget — change it there, not here.
                     if (index < tabsState.value.tabs.size - 1) {
-                        VDivider(modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp))
+                        VDivider(modifier = Modifier.padding(vertical = 8.dp, horizontal = INTER_TAB_DIVIDER_PADDING))
                     }
 
                     // Show reorder indicator after the last tab if dropping at the end
@@ -489,42 +532,45 @@ fun BossTabsComponent.BossMainTabBar(
                     }
                 }
 
+                // Legacy FIXED mode keeps its historical "+" placement:
+                // inside the row, hugging the last tab, while everything
+                // fits. This reintroduces the known one-frame glitch when
+                // isScrollable flips mid-drag, but that trade-off is what
+                // FIXED users always had — FIXED means legacy, glitch
+                // included.
+                if (!shrinkTabsToFit && !isScrollable) {
+                    item {
+                        NewTabButton(
+                            onClick = {
+                                showNewTabDialog = true
+                                // Track panel interaction when plus button is clicked
+                                if (splitViewState != null && currentPanelId != null) {
+                                    splitViewState.setActivePanel(currentPanelId)
+                                }
+                            }
+                        )
+                    }
+                }
             }
 
-            // Plus button — always rendered outside the LazyRow as a sibling
-            // of BossLeftTabBar, so it stays put when the tab strip scrolls.
-            // Previously this had inside/outside variants gated on `isScrollable`;
-            // the inside variant (a LazyRow `item { }`) scrolled off-screen the
-            // moment the user dragged the tab strip, before isScrollable could
-            // flip and the outside fallback could paint.
+            // Plus button outside the LazyRow, fixed at the right edge of the
+            // strip: always in SHRINK_TO_FIT (tabs fill the bar, so this is
+            // both natural and immune to the isScrollable race), and in FIXED
+            // mode once the row scrolls (so the button can't scroll away).
             //
             // `padding(end = 12.dp)` reserves extra breathing room on the right
             // edge so the icon doesn't feel jammed against the next bar
             // element (the right tab-bar section / window-control area).
-            Box(
-                modifier = Modifier
-                    .padding(end = 12.dp)
-                    .height(32.dp)
-                    .width(32.dp)
-                    .padding(4.dp)
-                    .background(
-                        color = BossDarkSurface,
-                        shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp)
-                    )
-                    .clickable {
+            if (shrinkTabsToFit || isScrollable) {
+                NewTabButton(
+                    modifier = Modifier.padding(end = 12.dp),
+                    onClick = {
                         showNewTabDialog = true
                         // Track panel interaction when plus button is clicked
                         if (splitViewState != null && currentPanelId != null) {
                             splitViewState.setActivePanel(currentPanelId)
                         }
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = "New Tab",
-                    tint = BossDarkTextSecondary,
-                    modifier = Modifier.size(16.dp)
+                    }
                 )
             }
 

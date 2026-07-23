@@ -30,15 +30,20 @@ private val MIN_TAB_WIDTH = 36.dp
 private val MAX_TAB_WIDTH = 240.dp
 
 /**
- * Width consumed between adjacent tabs by the inter-tab VDivider
- * (Modifier.padding(horizontal = 4.dp) + the 1.dp line itself). Must be
- * subtracted from the available width before dividing, otherwise the rendered
- * row is wider than the viewport and the LazyRow scrolls even when every tab
- * is well below [MAX_TAB_WIDTH].
- *
- * Keep in sync with the VDivider in BossMainWindowPanel.kt's itemsIndexed block.
+ * Horizontal padding on each side of the inter-tab VDivider. Referenced by
+ * both the divider in BossMainWindowPanel.kt's itemsIndexed block and the
+ * width budget below, so the two can't drift apart.
  */
-private val INTER_TAB_DIVIDER_WIDTH = 9.dp
+internal val INTER_TAB_DIVIDER_PADDING = 4.dp
+
+/**
+ * Width consumed between adjacent tabs by the inter-tab VDivider: padding on
+ * both sides plus VDivider's fixed 1.dp line. Must be subtracted from the
+ * available width before dividing, otherwise the rendered row is wider than
+ * the viewport and the LazyRow scrolls even when every tab is well below
+ * [MAX_TAB_WIDTH].
+ */
+private val INTER_TAB_DIVIDER_WIDTH = INTER_TAB_DIVIDER_PADDING * 2 + 1.dp
 
 /**
  * Per-tab width in INTEGER PIXELS, not Dp. A Dp-space division produces a
@@ -59,6 +64,11 @@ private val INTER_TAB_DIVIDER_WIDTH = 9.dp
  * - Over-cramped (so many tabs that the dividers alone exceed the row and
  *   the division goes ≤ 0) → the coercion clamps to [minTabPx] and the row
  *   scrolls, same as any other below-floor result.
+ *
+ * Deliberately NOT budgeted: the 3.dp reorder indicator injected into the
+ * row during a tab drag. Including it would resize every tab the moment a
+ * drag starts; a transient 3px overflow near the fit boundary mid-drag is
+ * the lesser evil.
  */
 internal fun computeTabWidthPx(
     rowWidthPx: Int,
