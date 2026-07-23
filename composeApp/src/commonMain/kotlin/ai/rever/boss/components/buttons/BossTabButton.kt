@@ -48,6 +48,7 @@ import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -70,6 +71,13 @@ fun BossTabButton(
     onClick: () -> Unit,
     onClose: () -> Unit = {},
     contextMenuItems: List<ContextMenuItem> = emptyList(),
+    /**
+     * Explicit width for this tab. When provided, the tab is sized exactly to this value
+     * (no min/max content sizing). Callers compute this from available row width to get
+     * Safari-style "shrink to fit, then scroll" behaviour. Defaults to null which falls
+     * back to the legacy intrinsic-min sizing with a 180–450 dp width clamp.
+     */
+    tabWidth: Dp? = null,
     // Drag-related parameters
     tabDragComponent: TabDraggableComponent? = null,
     tabInfo: TabInfo? = null,
@@ -198,8 +206,15 @@ fun BossTabButton(
     Box(
         modifier = modifier
             .fillMaxHeight()
-            .width(IntrinsicSize.Min)
-            .widthIn(min = 180.dp, max = 450.dp)
+            .let { base ->
+                if (tabWidth != null) {
+                    // Explicit width from the parent (Safari-style shrink-to-fit).
+                    base.width(tabWidth)
+                } else {
+                    // Legacy sizing: content-driven width clamped to 180–450 dp.
+                    base.width(IntrinsicSize.Min).widthIn(min = 180.dp, max = 450.dp)
+                }
+            }
             .hoverable(interactionSource)
             .onGloballyPositioned { coordinates ->
                 val pos = coordinates.positionInParent()
