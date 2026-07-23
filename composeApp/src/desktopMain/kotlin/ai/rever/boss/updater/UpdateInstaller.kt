@@ -1,6 +1,8 @@
 package ai.rever.boss.updater
 
 import ai.rever.boss.utils.AppVersion
+import ai.rever.boss.utils.BOSS_MACOS_APP_BUNDLE_NAME
+import ai.rever.boss.utils.BOSS_MACOS_BUNDLE_ID
 import ai.rever.boss.utils.Version
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -8,7 +10,57 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.file.Paths
-import java.util.*
+import java.util.Locale
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.TimeUnit
+
+private const val APP_TRANSLOCATION_PATH_SEGMENT = "/AppTranslocation/"
+private const val MACOS_APP_BUNDLE_SUFFIX = ".app"
+private const val MACOS_APPLICATIONS_DIRECTORY = "/Applications"
+private const val SPOTLIGHT_LOOKUP_TIMEOUT_SECONDS = 5L
+
+/** Return the outermost complete `.app` path segment in [path]. */
+internal fun macOSAppBundlePathIn(path: String): String? {
+    val pathSegments = path.split('/')
+    val bundleIndex = pathSegments.indexOfFirst {
+        it.length > MACOS_APP_BUNDLE_SUFFIX.length &&
+            it.endsWith(MACOS_APP_BUNDLE_SUFFIX)
+    }
+    if (bundleIndex < 0) return null
+
+    return pathSegments.take(bundleIndex + 1).joinToString("/")
+}
+
+/** Extract the first app bundle represented in `java.library.path`. */
+internal fun macOSAppBundlePathFromLibraryPath(libraryPath: String): String? {
+    return libraryPath
+        .split(File.pathSeparatorChar)
+        .firstNotNullOfOrNull(::macOSAppBundlePathIn)
+}
+
+/**
+ * Resolve a macOS app bundle path without coupling the decision logic to the
+ * filesystem or Spotlight. The injected functions keep App Translocation path
+ * parsing and fallback ordering directly unit-testable.
+ */
+internal fun realAppPathFor(
+    path: String,
+    appExists: (String) -> Boolean,
+    installedAppLookup: () -> String?
+): String {
+    if (!path.contains(APP_TRANSLOCATION_PATH_SEGMENT)) return path
+
+    val bundleName = macOSAppBundlePathIn(
+        path.substringAfter(APP_TRANSLOCATION_PATH_SEGMENT)
+    )
+        ?.substringAfterLast('/')
+        ?: return path
+
+    val applicationsPath = "$MACOS_APPLICATIONS_DIRECTORY/$bundleName"
+    if (appExists(applicationsPath)) return applicationsPath
+
+    return installedAppLookup()?.takeIf(appExists) ?: path
+}
 
 /**
  * Platform-specific update installation logic
@@ -491,14 +543,11 @@ object UpdateInstaller {
             val libraryPath = System.getProperty("java.library.path")
             logger.trace(LogCategory.SYSTEM, "java.library.path", mapOf("path" to (libraryPath ?: "null")))
 
-            val bundlePath = libraryPath
-                ?.split(":")
-                ?.find { it.contains(".app") }
-                ?.let { "${it.substringBefore(".app")}.app" }
+            val bundlePath = libraryPath?.let(::macOSAppBundlePathFromLibraryPath)
 
-            if (bundlePath?.contains(".app") == true && File(bundlePath).exists()) {
+            if (bundlePath != null && File(bundlePath).exists()) {
                 logger.debug(LogCategory.SYSTEM, "Found app bundle via library path", mapOf("path" to bundlePath))
-                return bundlePath
+                return resolveRealAppPath(bundlePath)
             }
 
             // Method 2: Try to find app bundle from current JAR/class location
@@ -511,13 +560,13 @@ object UpdateInstaller {
                 logger.trace(LogCategory.SYSTEM, "Checking parent", mapOf("index" to i, "path" to currentFile.absolutePath))
                 if (currentFile.name.endsWith(".app")) {
                     logger.debug(LogCategory.SYSTEM, "Found app bundle via directory traversal", mapOf("path" to currentFile.absolutePath))
-                    return currentFile.absolutePath
+                    return resolveRealAppPath(currentFile.absolutePath)
                 }
                 currentFile = currentFile.parentFile ?: break
             }
 
             // Method 3: Check if running from Applications folder
-            val applicationsPath = "/Applications/BOSS.app"
+            val applicationsPath = "$MACOS_APPLICATIONS_DIRECTORY/$BOSS_MACOS_APP_BUNDLE_NAME"
             if (File(applicationsPath).exists()) {
                 logger.debug(LogCategory.SYSTEM, "Found BOSS in Applications folder", mapOf("path" to applicationsPath))
                 return applicationsPath
@@ -528,6 +577,100 @@ object UpdateInstaller {
 
         } catch (e: Exception) {
             logger.error(LogCategory.SYSTEM, "Error getting application path", error = e)
+            null
+        }
+    }
+
+    /**
+     * Resolve a possibly *translocated* app path back to the real install location.
+     *
+     * macOS App Translocation (Gatekeeper path randomization) runs a quarantined,
+     * "not-yet-moved-by-Finder" app from a **read-only, randomized, ephemeral** mount
+     * under `/private/var/folders/.../T/AppTranslocation/<uuid>/d/<App>.app`. If we feed
+     * that path to the update script it will:
+     *   - `rm -rf` / `cp -R` into a read-only volume (every write fails), and
+     *   - relaunch a path that no longer exists (macOS auto-unmounts the translocation
+     *     mount the moment the app quits),
+     * so the update silently fails and the app never restarts. See the update helper
+     * script in [UpdateScriptGenerator] which also strips the quarantine attribute so
+     * future launches are not translocated.
+     *
+     * When the given path is not translocated it is returned unchanged.
+     */
+    private fun resolveRealAppPath(path: String): String {
+        if (!path.contains(APP_TRANSLOCATION_PATH_SEGMENT)) return path
+
+        logger.warn(
+            LogCategory.SYSTEM,
+            "App is running translocated by Gatekeeper - resolving real install path",
+            mapOf("translocatedPath" to path)
+        )
+
+        val resolvedPath = realAppPathFor(
+            path = path,
+            appExists = { File(it).exists() },
+            installedAppLookup = ::findInstalledAppViaSpotlight
+        )
+
+        if (resolvedPath != path) {
+            logger.info(LogCategory.SYSTEM, "Resolved real app path", mapOf("path" to resolvedPath))
+            return resolvedPath
+        }
+
+        // 3. Give up and keep the translocated path (update will likely still fail, but
+        //    we have logged exactly why).
+        logger.warn(LogCategory.SYSTEM, "Could not resolve real app path - falling back to translocated path")
+        return path
+    }
+
+    /**
+     * Locate the installed BOSS.app by its bundle identifier via Spotlight (`mdfind`),
+     * skipping translocated mounts and nested helper/framework bundles.
+     */
+    private fun findInstalledAppViaSpotlight(): String? {
+        return try {
+            val process = ProcessBuilder(
+                "mdfind", "kMDItemCFBundleIdentifier == '$BOSS_MACOS_BUNDLE_ID'"
+            )
+                .redirectErrorStream(true)
+                .start()
+
+            // Drain output while mdfind runs so a full OS pipe buffer cannot
+            // block the child and turn a successful lookup into a timeout.
+            val outputFuture = CompletableFuture.supplyAsync {
+                process.inputStream.bufferedReader().use { it.readText() }
+            }
+
+            if (!process.waitFor(SPOTLIGHT_LOOKUP_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                process.destroyForcibly()
+                outputFuture.cancel(true)
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "mdfind lookup for installed app timed out",
+                    mapOf("timeoutSeconds" to SPOTLIGHT_LOOKUP_TIMEOUT_SECONDS)
+                )
+                return null
+            }
+
+            val output = outputFuture.get(1, TimeUnit.SECONDS)
+
+            if (process.exitValue() != 0) {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "mdfind lookup for installed app failed",
+                    mapOf("exitCode" to process.exitValue())
+                )
+                return null
+            }
+
+            output.lineSequence()
+                .map { it.trim() }
+                .filter { it.endsWith(MACOS_APP_BUNDLE_SUFFIX) }
+                .filterNot { it.contains(APP_TRANSLOCATION_PATH_SEGMENT) }
+                .filterNot { it.contains("/Frameworks/") || it.contains("/Helpers/") }
+                .firstOrNull { File(it).exists() }
+        } catch (e: Exception) {
+            logger.warn(LogCategory.SYSTEM, "mdfind lookup for installed app failed", error = e)
             null
         }
     }

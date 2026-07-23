@@ -205,6 +205,63 @@ class UpdateScriptGeneratorSecurityTest {
     }
 
     /**
+     * Test that generated script strips the quarantine attribute after install so
+     * the relaunched app is not App-Translocated by Gatekeeper (which would break
+     * future in-place updates). Regression test for the "update does not restart" bug.
+     */
+    @Test
+    fun `test generated script strips quarantine attribute`() {
+        val scriptFile = UpdateScriptGenerator.generateMacOSUpdateScript(
+            dmgPath = "/tmp/update.dmg",
+            targetAppPath = "/Applications/BOSS.app",
+            appPid = 12345
+        )
+
+        val scriptContent = scriptFile.readText()
+        assertTrue(
+            scriptContent.contains("xattr -dr com.apple.quarantine '/Applications/BOSS.app'"),
+            "Script should strip the quarantine attribute from the installed bundle"
+        )
+        assertTrue(
+            scriptContent.contains("Warning: failed to clear quarantine attribute"),
+            "Script should keep quarantine-removal failures visible without aborting the update"
+        )
+
+        // Cleanup
+        scriptFile.delete()
+    }
+
+    /**
+     * Test that the generated script retries when LaunchServices rejects the first
+     * `open` request. A successful request does not prove the app stayed running.
+     */
+    @Test
+    fun `test generated script retries relaunch on failure`() {
+        val scriptFile = UpdateScriptGenerator.generateMacOSUpdateScript(
+            dmgPath = "/tmp/update.dmg",
+            targetAppPath = "/Applications/BOSS.app",
+            appPid = 12345
+        )
+
+        val scriptContent = scriptFile.readText()
+        val expectedRetryBlock = """
+            open '/Applications/BOSS.app'
+            if [ ${'$'}? -ne 0 ]; then
+                echo "First relaunch attempt failed - retrying in 2s..."
+                sleep 2
+                open '/Applications/BOSS.app' || echo "Relaunch failed - please start BOSS manually"
+            fi
+        """.trimIndent()
+        assertTrue(
+            scriptContent.contains(expectedRetryBlock),
+            "Script should retry the escaped app path after two seconds and provide a manual-launch fallback"
+        )
+
+        // Cleanup
+        scriptFile.delete()
+    }
+
+    /**
      * Test that generated script waits for PID termination
      */
     @Test
