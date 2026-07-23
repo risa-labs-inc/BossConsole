@@ -1,6 +1,7 @@
 package ai.rever.boss.updater
 
 import ai.rever.boss.utils.AppVersion
+import ai.rever.boss.utils.BOSS_MACOS_APP_BUNDLE_NAME
 import ai.rever.boss.utils.BOSS_MACOS_BUNDLE_ID
 import ai.rever.boss.utils.Version
 import ai.rever.boss.utils.logging.BossLogger
@@ -564,7 +565,7 @@ object UpdateInstaller {
             }
 
             // Method 3: Check if running from Applications folder
-            val applicationsPath = "/Applications/BOSS.app"
+            val applicationsPath = "$MACOS_APPLICATIONS_DIRECTORY/$BOSS_MACOS_APP_BUNDLE_NAME"
             if (File(applicationsPath).exists()) {
                 logger.debug(LogCategory.SYSTEM, "Found BOSS in Applications folder", mapOf("path" to applicationsPath))
                 return applicationsPath
