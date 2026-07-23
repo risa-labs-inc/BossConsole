@@ -11,6 +11,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.file.Paths
 import java.util.Locale
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 
 private const val APP_TRANSLOCATION_PATH_SEGMENT = "/AppTranslocation/"
@@ -634,8 +635,15 @@ object UpdateInstaller {
                 .redirectErrorStream(true)
                 .start()
 
+            // Drain output while mdfind runs so a full OS pipe buffer cannot
+            // block the child and turn a successful lookup into a timeout.
+            val outputFuture = CompletableFuture.supplyAsync {
+                process.inputStream.bufferedReader().use { it.readText() }
+            }
+
             if (!process.waitFor(SPOTLIGHT_LOOKUP_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 process.destroyForcibly()
+                outputFuture.cancel(true)
                 logger.warn(
                     LogCategory.SYSTEM,
                     "mdfind lookup for installed app timed out",
@@ -643,6 +651,8 @@ object UpdateInstaller {
                 )
                 return null
             }
+
+            val output = outputFuture.get(1, TimeUnit.SECONDS)
 
             if (process.exitValue() != 0) {
                 logger.warn(
@@ -653,7 +663,6 @@ object UpdateInstaller {
                 return null
             }
 
-            val output = process.inputStream.bufferedReader().use { it.readText() }
             output.lineSequence()
                 .map { it.trim() }
                 .filter { it.endsWith(MACOS_APP_BUNDLE_SUFFIX) }

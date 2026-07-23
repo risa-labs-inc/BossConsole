@@ -222,7 +222,9 @@ object UpdateScriptGenerator {
             # updates and the relaunch below. BOSS is notarized, so stripping the
             # attribute here is safe and mirrors what Sparkle does.
             echo "Clearing quarantine attribute..."
-            xattr -dr com.apple.quarantine $escapedTargetAppPath 2>/dev/null || true
+            if ! xattr -dr com.apple.quarantine $escapedTargetAppPath; then
+                echo "Warning: failed to clear quarantine attribute; future launches may be translocated"
+            fi
 
             # Unmount DMG
             echo "Cleaning up..."

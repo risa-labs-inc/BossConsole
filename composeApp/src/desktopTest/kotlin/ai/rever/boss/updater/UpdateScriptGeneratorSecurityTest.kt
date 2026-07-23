@@ -222,6 +222,10 @@ class UpdateScriptGeneratorSecurityTest {
             scriptContent.contains("xattr -dr com.apple.quarantine '/Applications/BOSS.app'"),
             "Script should strip the quarantine attribute from the installed bundle"
         )
+        assertTrue(
+            scriptContent.contains("Warning: failed to clear quarantine attribute"),
+            "Script should keep quarantine-removal failures visible without aborting the update"
+        )
 
         // Cleanup
         scriptFile.delete()
