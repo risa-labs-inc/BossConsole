@@ -27,7 +27,7 @@ kotlin {
     }
 
     sourceSets {
-        val commonMain by getting {
+        commonMain {
             dependencies {
                 // Plugin API (interfaces we're implementing proxies for)
                 api(projects.pluginPlatform.pluginApiCore)
@@ -37,7 +37,7 @@ kotlin {
             }
         }
 
-        val desktopMain by getting {
+        named("desktopMain") {
             dependencies {
                 // IPC protocol and connection management
                 implementation(project(":boss-ipc"))
@@ -46,7 +46,7 @@ kotlin {
             }
         }
 
-        val desktopTest by getting {
+        named("desktopTest") {
             dependencies {
                 implementation(kotlin("test"))
             }

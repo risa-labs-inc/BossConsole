@@ -26,7 +26,7 @@ kotlin {
     }
 
     sourceSets {
-        val commonMain by getting {
+        commonMain {
             dependencies {
                 // Path utilities (shared with bosseditor)
                 implementation(projects.pluginPlatform.pluginPathUtils)
@@ -46,13 +46,13 @@ kotlin {
             }
         }
 
-        val desktopMain by getting {
+        named("desktopMain") {
             dependencies {
                 implementation(compose.desktop.currentOs)
             }
         }
 
-        val desktopTest by getting {
+        named("desktopTest") {
             dependencies {
                 implementation(kotlin("test-junit5"))
                 implementation(libs.junit.jupiter)

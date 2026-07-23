@@ -29,7 +29,7 @@ kotlin {
     }
 
     sourceSets {
-        val commonMain by getting {
+        commonMain {
             dependencies {
                 implementation(libs.compose.mp.runtime)
                 implementation(libs.compose.mp.ui)
@@ -39,7 +39,7 @@ kotlin {
             }
         }
 
-        val desktopMain by getting {
+        named("desktopMain") {
             dependencies {
                 implementation(compose.desktop.currentOs)
             }

@@ -598,7 +598,7 @@ kotlin {
     */
     
     sourceSets {
-        val desktopMain by getting {
+        val desktopMain = getByName("desktopMain") {
             if (isWindowsArm64Build) {
                 // Exclude kernel/OOP source files that depend on boss-ipc (unavailable on Windows ARM64)
                 kotlin.srcDirs.forEach { srcDir ->
@@ -611,7 +611,7 @@ kotlin {
                 }
             }
         }
-        val desktopTest by getting
+        val desktopTest = getByName("desktopTest")
 
         // Add generated source directory to commonMain
         commonMain {
@@ -1744,11 +1744,10 @@ tasks.register("createExecutableJarWithIncrement") {
 
 // Task to download Chromium binaries for branding
 // Uses desktop runtime classpath since this is a Kotlin Multiplatform project
-val desktopMain by kotlin.sourceSets.getting
 
 // Detached configuration for the JxBrowser platform binary needed by downloadChromium.
 // This is NOT included in the app runtime (branded Chromium is used instead).
-val jxBrowserPlatformBinary: Configuration by configurations.creating
+val jxBrowserPlatformBinary: Configuration = configurations.create("jxBrowserPlatformBinary")
 
 dependencies {
     jxBrowserPlatformBinary(jxbrowser.currentPlatform)

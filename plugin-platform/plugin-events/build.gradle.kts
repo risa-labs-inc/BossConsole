@@ -23,14 +23,14 @@ kotlin {
     }
 
     sourceSets {
-        val commonMain by getting {
+        commonMain {
             dependencies {
                 implementation(project(":plugin-platform:plugin-logging"))
                 implementation(libs.compose.mp.runtime)
                 implementation(libs.kotlinx.coroutines.core)
             }
         }
-        val desktopMain by getting {
+        named("desktopMain") {
             dependencies {
                 implementation(compose.desktop.currentOs)
             }

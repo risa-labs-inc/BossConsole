@@ -27,13 +27,13 @@ kotlin {
     }
 
     sourceSets {
-        val commonMain by getting {
+        commonMain {
             dependencies {
                 implementation(libs.kotlinx.coroutines.core)
             }
         }
 
-        val desktopMain by getting {
+        named("desktopMain") {
             dependencies {
                 implementation(libs.slf4j.api)
                 implementation(libs.kotlinx.coroutines.core)

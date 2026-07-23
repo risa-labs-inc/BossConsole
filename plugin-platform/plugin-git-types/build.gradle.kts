@@ -21,12 +21,12 @@ kotlin {
     }
 
     sourceSets {
-        val commonMain by getting {
+        commonMain {
             dependencies {
                 // No dependencies - pure data types
             }
         }
-        val desktopMain by getting {
+        named("desktopMain") {
             dependencies {
                 // No dependencies
             }
