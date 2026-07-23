@@ -6,16 +6,12 @@ import ai.rever.boss.plugin.api.QueryFilter
 import ai.rever.boss.plugin.api.QueryRange
 import ai.rever.boss.plugin.api.SupabaseDataProvider
 import io.grpc.ManagedChannel
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 
 /**
  * IPC proxy implementation of SupabaseDataProvider.
  */
 class SupabaseDataProviderProxy(
     channel: ManagedChannel,
-    private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
 ) : SupabaseDataProvider {
 
     private val stub = SupabaseServiceGrpcKt.SupabaseServiceCoroutineStub(channel)

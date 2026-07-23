@@ -203,7 +203,6 @@ fun ApplicationScope.BossWindow(
         if (shouldTriggerTestCrash) {
             shouldTriggerTestCrash = false
             val testException = RuntimeException("Test crash - main window crash simulation (Issue #543)")
-            val currentWindow = window
             javax.swing.SwingUtilities.invokeLater {
                 // First trigger crash handler - this shows dialog in separate window
                 // The dialog must be shown BEFORE we dispose the main window,

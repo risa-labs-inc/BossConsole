@@ -13,7 +13,6 @@ actual object CLIInstaller {
 
     private val isWindows = System.getProperty("os.name").lowercase().contains("windows")
     private val isMacOS = System.getProperty("os.name").lowercase().contains("mac")
-    private val isLinux = System.getProperty("os.name").lowercase().contains("linux")
 
     private val homeDir = System.getProperty("user.home")
 
@@ -220,7 +219,7 @@ actual object CLIInstaller {
         makeExecutable(installPath)
 
         // Update shell configuration
-        val shellConfigResult = updateShellConfig(binDir.absolutePath)
+        val shellConfigResult = updateShellConfig()
 
         val message = if (shellConfigResult.success) {
             "Successfully installed to: ${installPath.absolutePath}\n\n" +
@@ -285,7 +284,7 @@ actual object CLIInstaller {
     /**
      * Update shell configuration to add PATH
      */
-    private fun updateShellConfig(binPath: String): ShellConfigResult {
+    private fun updateShellConfig(): ShellConfigResult {
         // Detect shell configuration files
         val shellConfigs = listOf(
             "$homeDir/.zshrc" to "zsh",

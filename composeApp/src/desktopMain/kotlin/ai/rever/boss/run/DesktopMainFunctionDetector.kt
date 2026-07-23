@@ -135,7 +135,7 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
             Language.KOTLIN -> detectKotlinMain(filePath, content)
             Language.JAVA -> detectJavaMain(filePath, content)
             Language.PYTHON -> detectPythonMain(filePath, content)
-            Language.JAVASCRIPT, Language.TYPESCRIPT -> detectJsMain(filePath, content, detectedLanguage)
+            Language.JAVASCRIPT, Language.TYPESCRIPT -> detectJsMain(filePath, detectedLanguage)
             Language.GO -> detectGoMain(filePath, content)
             Language.RUST -> detectRustMain(filePath, content)
             Language.UNKNOWN -> emptyList()
@@ -237,7 +237,6 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
 
     private fun detectJsMain(
         filePath: String,
-        content: String,
         language: Language
     ): List<DetectedMainFunction> {
         // For JS/TS, we consider files with certain patterns as entry points

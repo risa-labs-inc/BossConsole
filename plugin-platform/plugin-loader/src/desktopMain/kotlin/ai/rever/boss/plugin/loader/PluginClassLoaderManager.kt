@@ -25,8 +25,6 @@ class PluginClassLoaderManager(
     private val logger = BossLogger.forComponent("PluginClassLoaderManager")
 
     companion object {
-        private val companionLogger = BossLogger.forComponent("PluginClassLoaderManager")
-
         /**
          * Shared API layer inserted between each manager's parent classloader
          * and every plugin classloader once installed. PROCESS-WIDE on

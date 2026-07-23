@@ -94,7 +94,7 @@ abstract class VersionPropertyWriteTask : DefaultTask() {
                 val stagedProcess = ProcessBuilder("git", "diff", "--cached", "--quiet", "version.properties")
                     .directory(project.rootDir)
                     .start()
-                val stagedExitCode = stagedProcess.waitFor()
+                stagedProcess.waitFor()
 
                 val message = buildString {
                     append("⚠️ version.properties has uncommitted changes.\n")

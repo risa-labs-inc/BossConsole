@@ -20,7 +20,6 @@ class DesktopLogCapture {
 
     // Thread-safe buffer for captured logs (circular buffer implemented via pruning)
     private val buffer = ConcurrentLinkedQueue<LogEntry>()
-    private val maxSize = 10000
 
     // Listeners for new log entries
     private val listeners = mutableListOf<(LogEntry) -> Unit>()

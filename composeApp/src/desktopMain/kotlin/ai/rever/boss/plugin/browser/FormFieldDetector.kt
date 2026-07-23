@@ -361,7 +361,7 @@ object FormFieldDetector {
                         })();
                     """.trimIndent()
 
-                    val jsResult = frame.executeJavaScript<Any>(script)
+                    frame.executeJavaScript<Any>(script)
                     // Parse result array (simplified)
                     result.complete(fields)
                 } catch (e: Exception) {
