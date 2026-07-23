@@ -1,11 +1,5 @@
 package ai.rever.boss.updater
 
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkBorder
-import BossDarkContentBackground
-import BossDarkTextPrimary
-import BossDarkTextSecondary
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -19,23 +13,14 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.utils.Version
 import kotlinx.coroutines.launch
 import kotlin.time.Clock
-
-// Banner colors matching BossTerm's dark theme
-private val BannerBackground = Color(0xFF1E1E1E)
-private val AccentBlue = Color(0xFF4A90E2)
-private val AccentGreen = Color(0xFF4CAF50)
-private val AccentOrange = Color(0xFFFF9800)
-private val AccentRed = Color(0xFFF44336)
-private val TextGray = Color(0xFF808080)
-private val ProgressBackground = Color(0xFF404040)
 
 /**
  * Update notification banner that appears at the top of the application.
@@ -87,7 +72,7 @@ private fun UpdateAvailableBanner(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = BannerBackground
+        color = BossTheme.colors.panel
     ) {
         Row(
             modifier = Modifier
@@ -103,19 +88,19 @@ private fun UpdateAvailableBanner(
                 Icon(
                     Icons.Default.KeyboardArrowDown,
                     contentDescription = "Update Available",
-                    tint = AccentBlue,
+                    tint = BossTheme.colors.signal,
                     modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     "Update v${updateInfo.latestVersion} available",
-                    color = Color.White,
+                    color = BossTheme.colors.textPrimary,
                     fontSize = 12.sp
                 )
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(
                     "(current: v${updateInfo.currentVersion})",
-                    color = TextGray,
+                    color = BossTheme.colors.textSecondary,
                     fontSize = 12.sp
                 )
             }
@@ -123,7 +108,7 @@ private fun UpdateAvailableBanner(
             Row {
                 TextButton(
                     onClick = onDownload,
-                    colors = ButtonDefaults.textButtonColors(contentColor = AccentBlue),
+                    colors = ButtonDefaults.textButtonColors(contentColor = BossTheme.colors.signal),
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                     modifier = Modifier.height(28.dp)
                 ) {
@@ -131,7 +116,7 @@ private fun UpdateAvailableBanner(
                 }
                 TextButton(
                     onClick = onDismiss,
-                    colors = ButtonDefaults.textButtonColors(contentColor = TextGray),
+                    colors = ButtonDefaults.textButtonColors(contentColor = BossTheme.colors.textSecondary),
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                     modifier = Modifier.height(28.dp)
                 ) {
@@ -146,7 +131,7 @@ private fun UpdateAvailableBanner(
 private fun DownloadProgressBanner(progress: Float) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = BannerBackground
+        color = BossTheme.colors.panel
     ) {
         Row(
             modifier = Modifier
@@ -157,13 +142,13 @@ private fun DownloadProgressBanner(progress: Float) {
             Icon(
                 Icons.Default.KeyboardArrowDown,
                 contentDescription = "Downloading",
-                tint = AccentGreen,
+                tint = BossTheme.colors.ok,
                 modifier = Modifier.size(16.dp)
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
                 "Downloading... ${(progress * 100).toInt()}%",
-                color = Color.White,
+                color = BossTheme.colors.textPrimary,
                 fontSize = 12.sp
             )
             Spacer(modifier = Modifier.width(12.dp))
@@ -172,8 +157,8 @@ private fun DownloadProgressBanner(progress: Float) {
                 modifier = Modifier
                     .weight(1f)
                     .height(4.dp),
-                color = AccentGreen,
-                backgroundColor = ProgressBackground
+                color = BossTheme.colors.ok,
+                backgroundColor = BossTheme.colors.raised
             )
         }
     }
@@ -185,7 +170,7 @@ private fun ReadyToInstallBanner(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = BannerBackground
+        color = BossTheme.colors.panel
     ) {
         Row(
             modifier = Modifier
@@ -200,20 +185,20 @@ private fun ReadyToInstallBanner(
                 Icon(
                     Icons.Default.Info,
                     contentDescription = "Ready to Install",
-                    tint = AccentOrange,
+                    tint = BossTheme.colors.warn,
                     modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     "Update ready to install",
-                    color = Color.White,
+                    color = BossTheme.colors.textPrimary,
                     fontSize = 12.sp
                 )
             }
 
             TextButton(
                 onClick = onInstall,
-                colors = ButtonDefaults.textButtonColors(contentColor = AccentOrange),
+                colors = ButtonDefaults.textButtonColors(contentColor = BossTheme.colors.warn),
                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                 modifier = Modifier.height(28.dp)
             ) {
@@ -227,7 +212,7 @@ private fun ReadyToInstallBanner(
 private fun RestartRequiredBanner() {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = BannerBackground
+        color = BossTheme.colors.panel
     ) {
         Row(
             modifier = Modifier
@@ -238,13 +223,13 @@ private fun RestartRequiredBanner() {
             Icon(
                 Icons.Default.Refresh,
                 contentDescription = "Installing",
-                tint = AccentBlue,
+                tint = BossTheme.colors.signal,
                 modifier = Modifier.size(16.dp)
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
                 "Installing update... Please wait.",
-                color = Color.White,
+                color = BossTheme.colors.textPrimary,
                 fontSize = 12.sp
             )
         }
@@ -259,7 +244,7 @@ private fun ErrorBanner(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = BannerBackground
+        color = BossTheme.colors.panel
     ) {
         Row(
             modifier = Modifier
@@ -275,13 +260,13 @@ private fun ErrorBanner(
                 Icon(
                     Icons.Default.Warning,
                     contentDescription = "Error",
-                    tint = AccentRed,
+                    tint = BossTheme.colors.alert,
                     modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     "Update error: $message",
-                    color = Color.White,
+                    color = BossTheme.colors.textPrimary,
                     fontSize = 12.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -291,7 +276,7 @@ private fun ErrorBanner(
             Row {
                 TextButton(
                     onClick = onRetry,
-                    colors = ButtonDefaults.textButtonColors(contentColor = AccentBlue),
+                    colors = ButtonDefaults.textButtonColors(contentColor = BossTheme.colors.signal),
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                     modifier = Modifier.height(28.dp)
                 ) {
@@ -299,7 +284,7 @@ private fun ErrorBanner(
                 }
                 TextButton(
                     onClick = onDismiss,
-                    colors = ButtonDefaults.textButtonColors(contentColor = TextGray),
+                    colors = ButtonDefaults.textButtonColors(contentColor = BossTheme.colors.textSecondary),
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                     modifier = Modifier.height(28.dp)
                 ) {
@@ -349,10 +334,10 @@ fun UpdateSettingsSection(
         // Version Information
         Card(
             modifier = Modifier.fillMaxWidth(),
-            backgroundColor = BossDarkContentBackground,
+            backgroundColor = BossTheme.colors.ink,
             shape = RoundedCornerShape(8.dp),
             elevation = 0.dp,
-            border = BorderStroke(1.dp, BossDarkBorder)
+            border = BorderStroke(1.dp, BossTheme.colors.line)
         ) {
             Column(
                 modifier = Modifier.padding(16.dp)
@@ -361,21 +346,21 @@ fun UpdateSettingsSection(
                     "Version Information",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Medium,
-                    color = BossDarkTextPrimary
+                    color = BossTheme.colors.textPrimary
                 )
                 Spacer(modifier = Modifier.height(12.dp))
 
                 Text(
                     "Current Version: v$currentVersion",
                     fontSize = 14.sp,
-                    color = BossDarkTextPrimary
+                    color = BossTheme.colors.textPrimary
                 )
 
                 lastCheckTime?.let { checkTime ->
                     Text(
                         "Last checked: ${formatTime(checkTime)}",
                         fontSize = 12.sp,
-                        color = BossDarkTextSecondary
+                        color = BossTheme.colors.textSecondary
                     )
                 }
             }
@@ -386,10 +371,10 @@ fun UpdateSettingsSection(
         // Update Controls
         Card(
             modifier = Modifier.fillMaxWidth(),
-            backgroundColor = BossDarkContentBackground,
+            backgroundColor = BossTheme.colors.ink,
             shape = RoundedCornerShape(8.dp),
             elevation = 0.dp,
-            border = BorderStroke(1.dp, BossDarkBorder)
+            border = BorderStroke(1.dp, BossTheme.colors.line)
         ) {
             Column(
                 modifier = Modifier.padding(16.dp)
@@ -398,7 +383,7 @@ fun UpdateSettingsSection(
                     "Update Settings",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Medium,
-                    color = BossDarkTextPrimary
+                    color = BossTheme.colors.textPrimary
                 )
                 Spacer(modifier = Modifier.height(12.dp))
 
@@ -414,12 +399,12 @@ fun UpdateSettingsSection(
                         Text(
                             "Automatic Update Checks",
                             fontSize = 14.sp,
-                            color = BossDarkTextPrimary
+                            color = BossTheme.colors.textPrimary
                         )
                         Text(
                             "Check for updates every 6 hours",
                             fontSize = 12.sp,
-                            color = BossDarkTextSecondary
+                            color = BossTheme.colors.textSecondary
                         )
                     }
                     Switch(
@@ -438,8 +423,8 @@ fun UpdateSettingsSection(
                             }
                         },
                         colors = SwitchDefaults.colors(
-                            checkedThumbColor = BossDarkAccent,
-                            checkedTrackColor = BossDarkAccent.copy(alpha = 0.5f)
+                            checkedThumbColor = BossTheme.colors.signal,
+                            checkedTrackColor = BossTheme.colors.signal.copy(alpha = 0.5f)
                         )
                     )
                 }
@@ -458,12 +443,12 @@ fun UpdateSettingsSection(
                         Text(
                             "Include Pre-release Versions",
                             fontSize = 14.sp,
-                            color = BossDarkTextPrimary
+                            color = BossTheme.colors.textPrimary
                         )
                         Text(
                             "Receive alpha, beta, and RC updates",
                             fontSize = 12.sp,
-                            color = BossDarkTextSecondary
+                            color = BossTheme.colors.textSecondary
                         )
                     }
                     Switch(
@@ -476,8 +461,8 @@ fun UpdateSettingsSection(
                             }
                         },
                         colors = SwitchDefaults.colors(
-                            checkedThumbColor = BossDarkAccent,
-                            checkedTrackColor = BossDarkAccent.copy(alpha = 0.5f)
+                            checkedThumbColor = BossTheme.colors.signal,
+                            checkedTrackColor = BossTheme.colors.signal.copy(alpha = 0.5f)
                         )
                     )
                 }
@@ -499,12 +484,12 @@ fun UpdateSettingsSection(
                             }
                         },
                         enabled = updateState !is UpdateState.CheckingForUpdates,
-                        colors = ButtonDefaults.textButtonColors(contentColor = BossDarkAccent)
+                        colors = ButtonDefaults.textButtonColors(contentColor = BossTheme.colors.signal)
                     ) {
                         if (updateState is UpdateState.CheckingForUpdates) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(16.dp),
-                                color = BossDarkAccent,
+                                color = BossTheme.colors.signal,
                                 strokeWidth = 2.dp
                             )
                             Spacer(modifier = Modifier.width(4.dp))
@@ -530,7 +515,7 @@ fun UpdateSettingsSection(
                                 showVersionDialog = true
                             }
                         },
-                        colors = ButtonDefaults.textButtonColors(contentColor = BossDarkAccent)
+                        colors = ButtonDefaults.textButtonColors(contentColor = BossTheme.colors.signal)
                     ) {
                         Icon(
                             Icons.Default.ArrowDropDown,
@@ -549,7 +534,7 @@ fun UpdateSettingsSection(
                     is UpdateState.UpToDate -> {
                         Text(
                             "You're running the latest version",
-                            color = Color(0xFF4CAF50),
+                            color = BossTheme.colors.ok,
                             fontSize = 14.sp
                         )
                     }
@@ -561,7 +546,7 @@ fun UpdateSettingsSection(
                         ) {
                             Text(
                                 "Update available: v${currentState.updateInfo.latestVersion}",
-                                color = Color(0xFFFF9800),
+                                color = BossTheme.colors.warn,
                                 fontSize = 14.sp
                             )
                             TextButton(
@@ -569,7 +554,7 @@ fun UpdateSettingsSection(
                                     // Manager-owned scope: survives the settings window closing
                                     updateManager.downloadUpdateInBackground(currentState.updateInfo)
                                 },
-                                colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFF4CAF50))
+                                colors = ButtonDefaults.textButtonColors(contentColor = BossTheme.colors.ok)
                             ) {
                                 Icon(
                                     Icons.Default.KeyboardArrowDown,
@@ -585,18 +570,18 @@ fun UpdateSettingsSection(
                         Column {
                             Text(
                                 "Downloading update...",
-                                color = BossDarkAccent,
+                                color = BossTheme.colors.signal,
                                 fontSize = 14.sp
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             LinearProgressIndicator(
                                 progress = currentState.progress,
                                 modifier = Modifier.fillMaxWidth(),
-                                color = BossDarkAccent
+                                color = BossTheme.colors.signal
                             )
                             Text(
                                 "${(currentState.progress * 100).toInt()}%",
-                                color = BossDarkTextSecondary,
+                                color = BossTheme.colors.textSecondary,
                                 fontSize = 12.sp,
                                 modifier = Modifier.align(Alignment.End)
                             )
@@ -610,7 +595,7 @@ fun UpdateSettingsSection(
                         ) {
                             Text(
                                 "Update downloaded successfully",
-                                color = Color(0xFF4CAF50),
+                                color = BossTheme.colors.ok,
                                 fontSize = 14.sp
                             )
                             TextButton(
@@ -619,7 +604,7 @@ fun UpdateSettingsSection(
                                         updateManager.installUpdate(currentState.downloadPath)
                                     }
                                 },
-                                colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFFF5722))
+                                colors = ButtonDefaults.textButtonColors(contentColor = BossTheme.colors.warn)
                             ) {
                                 Icon(
                                     Icons.Default.Info,
@@ -635,13 +620,13 @@ fun UpdateSettingsSection(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(16.dp),
-                                color = Color(0xFFFF5722),
+                                color = BossTheme.colors.warn,
                                 strokeWidth = 2.dp
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 "Installing update...",
-                                color = Color(0xFFFF5722),
+                                color = BossTheme.colors.warn,
                                 fontSize = 14.sp
                             )
                         }
@@ -654,7 +639,7 @@ fun UpdateSettingsSection(
                         ) {
                             Text(
                                 "Update installed! Restart required.",
-                                color = Color(0xFF4CAF50),
+                                color = BossTheme.colors.ok,
                                 fontSize = 14.sp
                             )
                             TextButton(
@@ -663,7 +648,7 @@ fun UpdateSettingsSection(
                                         restartApplication()
                                     }
                                 },
-                                colors = ButtonDefaults.textButtonColors(contentColor = BossDarkAccent)
+                                colors = ButtonDefaults.textButtonColors(contentColor = BossTheme.colors.signal)
                             ) {
                                 Icon(
                                     Icons.Default.Refresh,
@@ -678,7 +663,7 @@ fun UpdateSettingsSection(
                     is UpdateState.Error -> {
                         Text(
                             currentState.message,
-                            color = Color(0xFFF44336),
+                            color = BossTheme.colors.alert,
                             fontSize = 14.sp
                         )
                     }

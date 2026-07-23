@@ -1,14 +1,6 @@
 package ai.rever.boss.crash
 
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkBorder
-import BossDarkError
-import BossDarkSuccess
-import BossDarkSurface
-import BossDarkTextMuted
-import BossDarkTextPrimary
-import BossDarkTextSecondary
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
@@ -28,7 +20,6 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
@@ -88,7 +79,7 @@ fun CrashReportDialog(
                 }
             },
         shape = RoundedCornerShape(0.dp),
-        backgroundColor = BossDarkBackground,
+        backgroundColor = BossTheme.colors.panel,
         elevation = 0.dp
     ) {
         Column(
@@ -102,7 +93,7 @@ fun CrashReportDialog(
                 Icon(
                     imageVector = Icons.Filled.Error,
                     contentDescription = "Error",
-                    tint = BossDarkError,
+                    tint = BossTheme.colors.alert,
                     modifier = Modifier.size(32.dp)
                 )
                 Spacer(modifier = Modifier.width(12.dp))
@@ -110,7 +101,7 @@ fun CrashReportDialog(
                     text = "BOSS Has Crashed",
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
-                    color = BossDarkTextPrimary
+                    color = BossTheme.colors.textPrimary
                 )
             }
 
@@ -118,7 +109,7 @@ fun CrashReportDialog(
 
             // Error summary
             Card(
-                backgroundColor = BossDarkSurface,
+                backgroundColor = BossTheme.colors.raised,
                 shape = RoundedCornerShape(8.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -127,13 +118,13 @@ fun CrashReportDialog(
                         text = crashReport.exceptionType,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = BossDarkError
+                        color = BossTheme.colors.alert
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = crashReport.exceptionMessage,
                         fontSize = 13.sp,
-                        color = BossDarkTextPrimary,
+                        color = BossTheme.colors.textPrimary,
                         maxLines = 3,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -144,7 +135,7 @@ fun CrashReportDialog(
 
             // Expandable technical details
             Card(
-                backgroundColor = BossDarkSurface,
+                backgroundColor = BossTheme.colors.raised,
                 shape = RoundedCornerShape(8.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -161,13 +152,13 @@ fun CrashReportDialog(
                             text = "Technical Details",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Medium,
-                            color = BossDarkTextPrimary,
+                            color = BossTheme.colors.textPrimary,
                             modifier = Modifier.weight(1f)
                         )
                         Icon(
                             imageVector = if (showDetails) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
                             contentDescription = if (showDetails) "Collapse" else "Expand",
-                            tint = BossDarkTextSecondary
+                            tint = BossTheme.colors.textSecondary
                         )
                     }
 
@@ -193,7 +184,7 @@ fun CrashReportDialog(
                                         clipboardManager.setText(AnnotatedString(crashReport.stackTrace))
                                     },
                                     colors = ButtonDefaults.textButtonColors(
-                                        contentColor = BossDarkAccent
+                                        contentColor = BossTheme.colors.signal
                                     )
                                 ) {
                                     Icon(
@@ -215,7 +206,7 @@ fun CrashReportDialog(
                                         .fillMaxWidth()
                                         .heightIn(max = 200.dp)
                                         .background(
-                                            BossDarkBackground,
+                                            BossTheme.colors.panel,
                                             RoundedCornerShape(4.dp)
                                         )
                                         .padding(8.dp)
@@ -225,7 +216,7 @@ fun CrashReportDialog(
                                         text = crashReport.stackTrace,
                                         fontSize = 11.sp,
                                         fontFamily = FontFamily.Monospace,
-                                        color = BossDarkTextPrimary,
+                                        color = BossTheme.colors.textPrimary,
                                         lineHeight = 14.sp
                                     )
                                 }
@@ -241,7 +232,7 @@ fun CrashReportDialog(
             Text(
                 text = "What were you doing when this happened? (optional)",
                 fontSize = 13.sp,
-                color = BossDarkTextPrimary
+                color = BossTheme.colors.textPrimary
             )
             Spacer(modifier = Modifier.height(8.dp))
             OutlinedTextField(
@@ -253,15 +244,15 @@ fun CrashReportDialog(
                 placeholder = {
                     Text(
                         "Describe what you were doing...",
-                        color = BossDarkTextMuted
+                        color = BossTheme.colors.textMuted
                     )
                 },
                 colors = TextFieldDefaults.outlinedTextFieldColors(
-                    textColor = BossDarkTextPrimary,
-                    backgroundColor = BossDarkSurface,
-                    focusedBorderColor = BossDarkAccent,
-                    unfocusedBorderColor = BossDarkBorder,
-                    cursorColor = BossDarkAccent
+                    textColor = BossTheme.colors.textPrimary,
+                    backgroundColor = BossTheme.colors.raised,
+                    focusedBorderColor = BossTheme.colors.signal,
+                    unfocusedBorderColor = BossTheme.colors.line,
+                    cursorColor = BossTheme.colors.signal
                 ),
                 enabled = !isSubmitting
             )
@@ -280,9 +271,9 @@ fun CrashReportDialog(
                     checked = includeLogs,
                     onCheckedChange = null,
                     colors = CheckboxDefaults.colors(
-                        checkedColor = BossDarkAccent,
-                        uncheckedColor = BossDarkTextMuted,
-                        checkmarkColor = Color.White
+                        checkedColor = BossTheme.colors.signal,
+                        uncheckedColor = BossTheme.colors.textMuted,
+                        checkmarkColor = BossTheme.colors.onSignal
                     ),
                     enabled = !isSubmitting
                 )
@@ -291,12 +282,12 @@ fun CrashReportDialog(
                     Text(
                         text = "Include recent activity logs",
                         fontSize = 14.sp,
-                        color = BossDarkTextPrimary
+                        color = BossTheme.colors.textPrimary
                     )
                     Text(
                         text = "Helps with debugging (logs are sanitized)",
                         fontSize = 11.sp,
-                        color = BossDarkTextMuted
+                        color = BossTheme.colors.textMuted
                     )
                 }
             }
@@ -307,8 +298,8 @@ fun CrashReportDialog(
             submitResult?.let { result ->
                 Card(
                     backgroundColor = when (result) {
-                        is CrashReportService.SubmitResult.Success -> BossDarkSuccess
-                        is CrashReportService.SubmitResult.Error -> BossDarkError
+                        is CrashReportService.SubmitResult.Success -> BossTheme.colors.ok
+                        is CrashReportService.SubmitResult.Error -> BossTheme.colors.alert
                     },
                     shape = RoundedCornerShape(6.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -321,7 +312,7 @@ fun CrashReportDialog(
                             is CrashReportService.SubmitResult.Error -> result.message
                         },
                         fontSize = 13.sp,
-                        color = Color.White,
+                        color = BossTheme.colors.onSignal,
                         modifier = Modifier.padding(12.dp)
                     )
                 }
@@ -339,10 +330,10 @@ fun CrashReportDialog(
                         onClick = onCleanAndRestart,
                         enabled = !isSubmitting,
                         colors = ButtonDefaults.buttonColors(
-                            backgroundColor = BossDarkError,
-                            contentColor = Color.White,
-                            disabledBackgroundColor = BossDarkSurface,
-                            disabledContentColor = BossDarkTextMuted
+                            backgroundColor = BossTheme.colors.alert,
+                            contentColor = BossTheme.colors.onSignal,
+                            disabledBackgroundColor = BossTheme.colors.raised,
+                            disabledContentColor = BossTheme.colors.textMuted
                         ),
                         shape = RoundedCornerShape(6.dp)
                     ) {
@@ -356,7 +347,7 @@ fun CrashReportDialog(
                     onClick = onDismiss,
                     enabled = !isSubmitting,
                     colors = ButtonDefaults.textButtonColors(
-                        contentColor = BossDarkTextSecondary
+                        contentColor = BossTheme.colors.textSecondary
                     )
                 ) {
                     Text("Don't Send")
@@ -391,17 +382,17 @@ fun CrashReportDialog(
                     },
                     enabled = !isSubmitting && submitResult !is CrashReportService.SubmitResult.Success,
                     colors = ButtonDefaults.buttonColors(
-                        backgroundColor = BossDarkAccent,
-                        contentColor = Color.White,
-                        disabledBackgroundColor = BossDarkSurface,
-                        disabledContentColor = BossDarkTextMuted
+                        backgroundColor = BossTheme.colors.signal,
+                        contentColor = BossTheme.colors.onSignal,
+                        disabledBackgroundColor = BossTheme.colors.raised,
+                        disabledContentColor = BossTheme.colors.textMuted
                     ),
                     shape = RoundedCornerShape(6.dp)
                 ) {
                     if (isSubmitting) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(16.dp),
-                            color = Color.White,
+                            color = BossTheme.colors.textPrimary,
                             strokeWidth = 2.dp
                         )
                         Spacer(modifier = Modifier.width(8.dp))
@@ -422,8 +413,8 @@ fun CrashReportDialog(
                     Button(
                         onClick = onDismiss,
                         colors = ButtonDefaults.buttonColors(
-                            backgroundColor = BossDarkSurface,
-                            contentColor = Color.White
+                            backgroundColor = BossTheme.colors.raised,
+                            contentColor = BossTheme.colors.textPrimary
                         ),
                         shape = RoundedCornerShape(6.dp)
                     ) {

@@ -1,7 +1,6 @@
 package ai.rever.boss.components.bars.horizontal
 
-import BossDarkTextSecondary
-import BossDarkBorder
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.components.buttons.BossActionButton
 import ai.rever.boss.components.events.PanelEventBus
 import ai.rever.boss.window.LocalWindowId
@@ -47,7 +46,7 @@ import com.arkivanov.decompose.extensions.compose.subscribeAsState
 
 @Composable
 fun BossBottomBar(tabsComponent: BossTabsComponent? = null) {
-    Divider(color = BossDarkBorder)
+    Divider(color = BossTheme.colors.line)
     HorizontalBar(height = 30.dp) {
         HorizontalBarRow {
             BossLeftBottomBar(tabsComponent)
@@ -90,7 +89,7 @@ fun RightArrow() {
     Icon(imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
         modifier = Modifier.size(18.dp),
         contentDescription = "Right Arrow",
-        tint = BossDarkTextSecondary)
+        tint = BossTheme.colors.textSecondary)
 }
 
 @Composable
@@ -127,7 +126,7 @@ fun RowScope.BossLeftBottomBar(tabsComponent: BossTabsComponent? = null) {
                             if (part.isNotEmpty()) {
                                 BossActionButton(
                                     text = part,
-                                    color = BossDarkTextSecondary,
+                                    color = BossTheme.colors.textSecondary,
                                     onClick = {}
                                 )
                                 if (index < pathParts.lastIndex && pathParts[index + 1].isNotEmpty()) {
@@ -140,7 +139,7 @@ fun RowScope.BossLeftBottomBar(tabsComponent: BossTabsComponent? = null) {
                         // Show current URL
                         Text(
                             text = activeTab.currentUrl,
-                            color = BossDarkTextSecondary,
+                            color = BossTheme.colors.textSecondary,
                             fontSize = 12.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -151,7 +150,7 @@ fun RowScope.BossLeftBottomBar(tabsComponent: BossTabsComponent? = null) {
                         // Show terminal title (e.g., "user@hostname:/path")
                         Text(
                             text = activeTab.title,
-                            color = BossDarkTextSecondary,
+                            color = BossTheme.colors.textSecondary,
                             fontSize = 12.sp,
                             modifier = Modifier.padding(horizontal = 4.dp)
                         )
@@ -160,7 +159,7 @@ fun RowScope.BossLeftBottomBar(tabsComponent: BossTabsComponent? = null) {
                         // Explicitly handle null case (no tab active)
                         Text(
                             text = "${currentProject.name} | Ready",
-                            color = BossDarkTextSecondary,
+                            color = BossTheme.colors.textSecondary,
                             fontSize = 12.sp,
                             modifier = Modifier.padding(horizontal = 4.dp)
                         )
@@ -169,7 +168,7 @@ fun RowScope.BossLeftBottomBar(tabsComponent: BossTabsComponent? = null) {
                         // Handle unknown tab types
                         Text(
                             text = "${currentProject.name} | ${activeTab.title}",
-                            color = BossDarkTextSecondary,
+                            color = BossTheme.colors.textSecondary,
                             fontSize = 12.sp,
                             modifier = Modifier.padding(horizontal = 4.dp)
                         )
@@ -179,7 +178,7 @@ fun RowScope.BossLeftBottomBar(tabsComponent: BossTabsComponent? = null) {
                 // Show minimal content if no tabs component (shouldn't happen in normal use)
                 Text(
                     text = "Ready",
-                    color = BossDarkTextSecondary,
+                    color = BossTheme.colors.textSecondary,
                     fontSize = 12.sp,
                     modifier = Modifier.padding(horizontal = 4.dp)
                 )
@@ -198,7 +197,7 @@ fun BossRightBottomBar() {
     statusMessage?.let { message ->
         Text(
             text = message,
-            color = androidx.compose.ui.graphics.Color(0xFF4CAF50), // Green color for success
+            color = BossTheme.colors.ok, // Green color for success
             fontSize = 12.sp,
             modifier = Modifier.padding(horizontal = 8.dp)
         )
@@ -219,7 +218,7 @@ fun BossRightBottomBar() {
     BossActionButton(
         imageVector = Icons.Outlined.Info,
         text = "Console",
-        color = BossDarkTextSecondary,
+        color = BossTheme.colors.textSecondary,
         onClick = {
             // Toggle Console panel (PanelId "console" with order 14)
             windowId?.let { wid ->

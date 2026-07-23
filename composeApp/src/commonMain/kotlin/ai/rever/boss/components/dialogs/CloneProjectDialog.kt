@@ -1,17 +1,10 @@
 package ai.rever.boss.components.dialogs
 
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkBorder
-import BossDarkError
-import BossDarkSuccess
-import BossDarkSurface
-import BossDarkTextPrimary
-import BossDarkTextSecondary
 import ai.rever.boss.git.GitOperationResult
 import ai.rever.boss.plugin.git.GitOperationResult.Success as GitSuccess
 import ai.rever.boss.plugin.git.GitOperationResult.Error as GitError
 import ai.rever.boss.git.GitService
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.platform.rememberDirectoryPicker
@@ -28,7 +21,6 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -74,7 +66,7 @@ fun CloneProjectDialog(
                 .width(600.dp)
                 .wrapContentHeight(),
             shape = RoundedCornerShape(8.dp),
-            color = BossDarkBackground,
+            color = BossTheme.colors.panel,
             elevation = 8.dp
         ) {
             when (val step = cloneStep) {
@@ -215,7 +207,7 @@ private fun ConfigurationStep(
         ) {
             Text(
                 text = "Clone Git Repository",
-                color = BossDarkTextPrimary,
+                color = BossTheme.colors.textPrimary,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.SemiBold
             )
@@ -226,7 +218,7 @@ private fun ConfigurationStep(
                 Icon(
                     imageVector = Icons.Outlined.Close,
                     contentDescription = "Close",
-                    tint = BossDarkTextSecondary
+                    tint = BossTheme.colors.textSecondary
                 )
             }
         }
@@ -238,7 +230,7 @@ private fun ConfigurationStep(
             text = "Repository URL",
             fontSize = 13.sp,
             fontWeight = FontWeight.Medium,
-            color = BossDarkTextPrimary,
+            color = BossTheme.colors.textPrimary,
             modifier = Modifier.padding(bottom = 6.dp)
         )
 
@@ -248,17 +240,17 @@ private fun ConfigurationStep(
             placeholder = {
                 Text(
                     "https://github.com/username/repo.git",
-                    color = BossDarkTextSecondary.copy(alpha = 0.5f),
+                    color = BossTheme.colors.textSecondary.copy(alpha = 0.5f),
                     fontSize = 13.sp
                 )
             },
             modifier = Modifier.fillMaxWidth(),
             colors = TextFieldDefaults.outlinedTextFieldColors(
-                textColor = BossDarkTextPrimary,
-                cursorColor = BossDarkAccent,
-                focusedBorderColor = if (urlError != null) BossDarkError else BossDarkAccent,
-                unfocusedBorderColor = if (urlError != null) BossDarkError else BossDarkBorder,
-                backgroundColor = BossDarkSurface
+                textColor = BossTheme.colors.textPrimary,
+                cursorColor = BossTheme.colors.signal,
+                focusedBorderColor = if (urlError != null) BossTheme.colors.alert else BossTheme.colors.signal,
+                unfocusedBorderColor = if (urlError != null) BossTheme.colors.alert else BossTheme.colors.line,
+                backgroundColor = BossTheme.colors.raised
             ),
             singleLine = true,
             isError = urlError != null,
@@ -272,7 +264,7 @@ private fun ConfigurationStep(
             Text(
                 text = error,
                 fontSize = 12.sp,
-                color = BossDarkError
+                color = BossTheme.colors.alert
             )
         }
 
@@ -283,7 +275,7 @@ private fun ConfigurationStep(
             text = "Directory Name",
             fontSize = 13.sp,
             fontWeight = FontWeight.Medium,
-            color = BossDarkTextPrimary,
+            color = BossTheme.colors.textPrimary,
             modifier = Modifier.padding(bottom = 6.dp)
         )
 
@@ -299,17 +291,17 @@ private fun ConfigurationStep(
             placeholder = {
                 Text(
                     "my-project",
-                    color = BossDarkTextSecondary.copy(alpha = 0.5f),
+                    color = BossTheme.colors.textSecondary.copy(alpha = 0.5f),
                     fontSize = 13.sp
                 )
             },
             modifier = Modifier.fillMaxWidth(),
             colors = TextFieldDefaults.outlinedTextFieldColors(
-                textColor = BossDarkTextPrimary,
-                cursorColor = BossDarkAccent,
-                focusedBorderColor = if (directoryExists) BossDarkError else BossDarkAccent,
-                unfocusedBorderColor = if (directoryExists) BossDarkError else BossDarkBorder,
-                backgroundColor = BossDarkSurface
+                textColor = BossTheme.colors.textPrimary,
+                cursorColor = BossTheme.colors.signal,
+                focusedBorderColor = if (directoryExists) BossTheme.colors.alert else BossTheme.colors.signal,
+                unfocusedBorderColor = if (directoryExists) BossTheme.colors.alert else BossTheme.colors.line,
+                backgroundColor = BossTheme.colors.raised
             ),
             singleLine = true,
             isError = directoryExists,
@@ -324,7 +316,7 @@ private fun ConfigurationStep(
             text = "Parent Directory",
             fontSize = 13.sp,
             fontWeight = FontWeight.Medium,
-            color = BossDarkTextPrimary,
+            color = BossTheme.colors.textPrimary,
             modifier = Modifier.padding(bottom = 6.dp)
         )
 
@@ -337,11 +329,11 @@ private fun ConfigurationStep(
                 onValueChange = { targetDirectory = it },
                 modifier = Modifier.weight(1f),
                 colors = TextFieldDefaults.outlinedTextFieldColors(
-                    textColor = BossDarkTextPrimary,
-                    cursorColor = BossDarkAccent,
-                    focusedBorderColor = BossDarkAccent,
-                    unfocusedBorderColor = BossDarkBorder,
-                    backgroundColor = BossDarkSurface
+                    textColor = BossTheme.colors.textPrimary,
+                    cursorColor = BossTheme.colors.signal,
+                    focusedBorderColor = BossTheme.colors.signal,
+                    unfocusedBorderColor = BossTheme.colors.line,
+                    backgroundColor = BossTheme.colors.raised
                 ),
                 singleLine = true,
                 shape = RoundedCornerShape(4.dp),
@@ -357,7 +349,7 @@ private fun ConfigurationStep(
                 Icon(
                     imageVector = Icons.Default.FolderOpen,
                     contentDescription = "Browse",
-                    tint = BossDarkTextSecondary
+                    tint = BossTheme.colors.textSecondary
                 )
             }
         }
@@ -369,7 +361,7 @@ private fun ConfigurationStep(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(
-                    if (directoryExists) BossDarkError.copy(alpha = 0.1f) else BossDarkSurface,
+                    if (directoryExists) BossTheme.colors.alert.copy(alpha = 0.1f) else BossTheme.colors.raised,
                     RoundedCornerShape(4.dp)
                 )
                 .padding(12.dp)
@@ -378,13 +370,13 @@ private fun ConfigurationStep(
                 Text(
                     text = "Clone destination:",
                     fontSize = 12.sp,
-                    color = BossDarkTextSecondary.copy(alpha = 0.7f)
+                    color = BossTheme.colors.textSecondary.copy(alpha = 0.7f)
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = finalClonePath,
                     fontSize = 13.sp,
-                    color = if (directoryExists) BossDarkError else BossDarkTextPrimary,
+                    color = if (directoryExists) BossTheme.colors.alert else BossTheme.colors.textPrimary,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -393,7 +385,7 @@ private fun ConfigurationStep(
                     Text(
                         text = "⚠ Directory already exists",
                         fontSize = 12.sp,
-                        color = BossDarkError,
+                        color = BossTheme.colors.alert,
                         fontWeight = FontWeight.Medium
                     )
                 }
@@ -411,7 +403,7 @@ private fun ConfigurationStep(
             TextButton(
                 onClick = onDismiss,
                 colors = ButtonDefaults.textButtonColors(
-                    contentColor = BossDarkTextSecondary
+                    contentColor = BossTheme.colors.textSecondary
                 )
             ) {
                 Text("Cancel", fontSize = 13.sp)
@@ -423,10 +415,10 @@ private fun ConfigurationStep(
                 onClick = { onClone(repositoryUrl.trim(), finalClonePath) },
                 enabled = isValidUrl && customDirectoryName.isNotBlank() && !directoryExists,
                 colors = ButtonDefaults.buttonColors(
-                    backgroundColor = BossDarkAccent,
-                    contentColor = Color.Black,
-                    disabledBackgroundColor = BossDarkBorder,
-                    disabledContentColor = BossDarkTextSecondary
+                    backgroundColor = BossTheme.colors.signal,
+                    contentColor = BossTheme.colors.onSignal,
+                    disabledBackgroundColor = BossTheme.colors.line,
+                    disabledContentColor = BossTheme.colors.textSecondary
                 ),
                 shape = RoundedCornerShape(4.dp)
             ) {
@@ -487,7 +479,7 @@ private fun CloningStep(
     ) {
         CircularProgressIndicator(
             modifier = Modifier.size(48.dp),
-            color = BossDarkAccent,
+            color = BossTheme.colors.signal,
             strokeWidth = 3.dp
         )
 
@@ -497,7 +489,7 @@ private fun CloningStep(
             text = "Cloning Repository",
             fontSize = 15.sp,
             fontWeight = FontWeight.SemiBold,
-            color = BossDarkTextPrimary
+            color = BossTheme.colors.textPrimary
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -505,7 +497,7 @@ private fun CloningStep(
         Text(
             text = progressMessage,
             fontSize = 13.sp,
-            color = BossDarkTextSecondary
+            color = BossTheme.colors.textSecondary
         )
 
         Spacer(modifier = Modifier.height(12.dp))
@@ -513,7 +505,7 @@ private fun CloningStep(
         Text(
             text = "This may take a few moments...",
             fontSize = 12.sp,
-            color = BossDarkTextSecondary.copy(alpha = 0.6f)
+            color = BossTheme.colors.textSecondary.copy(alpha = 0.6f)
         )
     }
 }
@@ -538,7 +530,7 @@ private fun SuccessStep(
             imageVector = Icons.Default.CheckCircle,
             contentDescription = "Success",
             modifier = Modifier.size(48.dp),
-            tint = BossDarkSuccess
+            tint = BossTheme.colors.ok
         )
 
         Spacer(modifier = Modifier.height(20.dp))
@@ -547,7 +539,7 @@ private fun SuccessStep(
             text = "Repository Cloned Successfully",
             fontSize = 15.sp,
             fontWeight = FontWeight.SemiBold,
-            color = BossDarkTextPrimary
+            color = BossTheme.colors.textPrimary
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -555,7 +547,7 @@ private fun SuccessStep(
         Text(
             text = projectPath,
             fontSize = 12.sp,
-            color = BossDarkTextSecondary,
+            color = BossTheme.colors.textSecondary,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
@@ -568,7 +560,7 @@ private fun SuccessStep(
             TextButton(
                 onClick = onClose,
                 colors = ButtonDefaults.textButtonColors(
-                    contentColor = BossDarkTextSecondary
+                    contentColor = BossTheme.colors.textSecondary
                 )
             ) {
                 Text("Close", fontSize = 13.sp)
@@ -577,8 +569,8 @@ private fun SuccessStep(
             Button(
                 onClick = onOpenProject,
                 colors = ButtonDefaults.buttonColors(
-                    backgroundColor = BossDarkAccent,
-                    contentColor = Color.Black
+                    backgroundColor = BossTheme.colors.signal,
+                    contentColor = BossTheme.colors.onSignal
                 ),
                 shape = RoundedCornerShape(4.dp)
             ) {
@@ -613,13 +605,13 @@ private fun ErrorStep(
                     imageVector = Icons.Default.Error,
                     contentDescription = "Error",
                     modifier = Modifier.size(20.dp),
-                    tint = BossDarkError
+                    tint = BossTheme.colors.alert
                 )
                 Text(
                     text = "Clone Failed",
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = BossDarkTextPrimary
+                    color = BossTheme.colors.textPrimary
                 )
             }
             IconButton(
@@ -629,7 +621,7 @@ private fun ErrorStep(
                 Icon(
                     imageVector = Icons.Outlined.Close,
                     contentDescription = "Close",
-                    tint = BossDarkTextSecondary
+                    tint = BossTheme.colors.textSecondary
                 )
             }
         }
@@ -639,13 +631,13 @@ private fun ErrorStep(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(BossDarkSurface, RoundedCornerShape(4.dp))
+                .background(BossTheme.colors.raised, RoundedCornerShape(4.dp))
                 .padding(12.dp)
         ) {
             Text(
                 text = message,
                 fontSize = 13.sp,
-                color = BossDarkTextPrimary.copy(alpha = 0.9f),
+                color = BossTheme.colors.textPrimary.copy(alpha = 0.9f),
                 lineHeight = 18.sp
             )
         }
@@ -660,7 +652,7 @@ private fun ErrorStep(
             TextButton(
                 onClick = onClose,
                 colors = ButtonDefaults.textButtonColors(
-                    contentColor = BossDarkTextSecondary
+                    contentColor = BossTheme.colors.textSecondary
                 )
             ) {
                 Text("Close", fontSize = 13.sp)
@@ -671,8 +663,8 @@ private fun ErrorStep(
             Button(
                 onClick = onRetry,
                 colors = ButtonDefaults.buttonColors(
-                    backgroundColor = BossDarkAccent,
-                    contentColor = Color.Black
+                    backgroundColor = BossTheme.colors.signal,
+                    contentColor = BossTheme.colors.onSignal
                 ),
                 shape = RoundedCornerShape(4.dp)
             ) {

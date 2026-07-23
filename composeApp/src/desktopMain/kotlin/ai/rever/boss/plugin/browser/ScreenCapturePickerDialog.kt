@@ -2,15 +2,10 @@ package ai.rever.boss.plugin.browser
 
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
 
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkBorder
-import BossDarkSurface
-import BossDarkTextPrimary
-import BossDarkTextSecondary
 import ai.rever.boss.cache.loadHighQualityFavicon
 import ai.rever.boss.components.common.rememberFaviconLoader
 import ai.rever.boss.plugin.api.TabIcon
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
@@ -69,7 +64,7 @@ fun ScreenCapturePickerDialog(
         Surface(
             modifier = Modifier.width(500.dp).heightIn(min = 350.dp, max = 520.dp),
             shape = RoundedCornerShape(12.dp),
-            color = BossDarkBackground,
+            color = BossTheme.colors.panel,
             elevation = 8.dp
         ) {
             Column {
@@ -88,7 +83,7 @@ fun ScreenCapturePickerDialog(
                     screenCount = screens.size
                 )
 
-                Divider(color = BossDarkBorder, thickness = 1.dp)
+                Divider(color = BossTheme.colors.line, thickness = 1.dp)
 
                 // Content based on selected tab
                 Box(
@@ -119,7 +114,7 @@ fun ScreenCapturePickerDialog(
                     }
                 }
 
-                Divider(color = BossDarkBorder, thickness = 1.dp)
+                Divider(color = BossTheme.colors.line, thickness = 1.dp)
 
                 // Footer
                 DialogFooter(
@@ -149,11 +144,11 @@ private fun DialogHeader(title: String, subtitle: String, onDismiss: () -> Unit)
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column {
-            Text(text = title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = BossDarkTextPrimary)
-            Text(text = subtitle, fontSize = 13.sp, color = BossDarkTextSecondary, modifier = Modifier.padding(top = 2.dp))
+            Text(text = title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = BossTheme.colors.textPrimary)
+            Text(text = subtitle, fontSize = 13.sp, color = BossTheme.colors.textSecondary, modifier = Modifier.padding(top = 2.dp))
         }
         IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
-            Icon(imageVector = Icons.Default.Close, contentDescription = "Close", tint = BossDarkTextSecondary, modifier = Modifier.size(20.dp))
+            Icon(imageVector = Icons.Default.Close, contentDescription = "Close", tint = BossTheme.colors.textSecondary, modifier = Modifier.size(20.dp))
         }
     }
 }
@@ -180,9 +175,9 @@ private fun TabBar(
 
 @Composable
 private fun TabItem(title: String, count: Int, isSelected: Boolean, onClick: () -> Unit) {
-    val backgroundColor = if (isSelected) BossDarkAccent else Color.Transparent
-    val textColor = if (isSelected) Color.Black else BossDarkTextSecondary
-    val borderColor = if (isSelected) BossDarkAccent else BossDarkBorder
+    val backgroundColor = if (isSelected) BossTheme.colors.signal else Color.Transparent
+    val textColor = if (isSelected) BossTheme.colors.onSignal else BossTheme.colors.textSecondary
+    val borderColor = if (isSelected) BossTheme.colors.signal else BossTheme.colors.line
 
     Surface(
         modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable(onClick = onClick),
@@ -194,7 +189,7 @@ private fun TabItem(title: String, count: Int, isSelected: Boolean, onClick: () 
             Text(text = title, fontSize = 14.sp, fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal, color = textColor)
             if (count > 0) {
                 Spacer(modifier = Modifier.width(6.dp))
-                Surface(shape = RoundedCornerShape(10.dp), color = if (isSelected) Color.Black.copy(alpha = 0.2f) else BossDarkSurface) {
+                Surface(shape = RoundedCornerShape(10.dp), color = if (isSelected) BossTheme.colors.onSignal.copy(alpha = 0.2f) else BossTheme.colors.raised) {
                     Text(text = count.toString(), fontSize = 12.sp, color = textColor, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
                 }
             }
@@ -225,8 +220,8 @@ private fun SourceListItem(
     isSelected: Boolean,
     onClick: () -> Unit
 ) {
-    val backgroundColor = if (isSelected) BossDarkAccent.copy(alpha = 0.15f) else Color.Transparent
-    val borderColor = if (isSelected) BossDarkAccent else BossDarkBorder
+    val backgroundColor = if (isSelected) BossTheme.colors.signal.copy(alpha = 0.15f) else Color.Transparent
+    val borderColor = if (isSelected) BossTheme.colors.signal else BossTheme.colors.line
     val isLoading = source.name == "Loading..."
 
     // Get favicon cache key from FluckTabInfo
@@ -242,15 +237,15 @@ private fun SourceListItem(
 
     // Determine fallback icon
     val (fallbackIcon, fallbackTint) = when (source.category) {
-        ScreenCaptureNotifier.CaptureSourceItem.Category.SCREEN -> Icons.Default.Monitor to Color(0xFF8B5CF6)
-        ScreenCaptureNotifier.CaptureSourceItem.Category.WINDOW -> Icons.Default.Window to Color(0xFF10B981)
+        ScreenCaptureNotifier.CaptureSourceItem.Category.SCREEN -> Icons.Default.Monitor to BossTheme.colors.signal
+        ScreenCaptureNotifier.CaptureSourceItem.Category.WINDOW -> Icons.Default.Window to BossTheme.colors.ok
         ScreenCaptureNotifier.CaptureSourceItem.Category.BROWSER_TAB -> {
-            if (isLoading) Icons.Default.Refresh to Color(0xFF9CA3AF)
-            else Icons.Default.Tab to Color(0xFF3B82F6)
+            if (isLoading) Icons.Default.Refresh to BossTheme.colors.textSecondary
+            else Icons.Default.Tab to BossTheme.colors.data
         }
     }
 
-    val textColor = if (isLoading) BossDarkTextSecondary else BossDarkTextPrimary
+    val textColor = if (isLoading) BossTheme.colors.textSecondary else BossTheme.colors.textPrimary
 
     Surface(
         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick),
@@ -273,7 +268,7 @@ private fun SourceListItem(
             Text(text = source.name, fontSize = 14.sp, color = textColor, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             if (isSelected) {
                 Spacer(modifier = Modifier.width(8.dp))
-                Icon(imageVector = Icons.Default.CheckCircle, contentDescription = "Selected", tint = BossDarkAccent, modifier = Modifier.size(20.dp))
+                Icon(imageVector = Icons.Default.CheckCircle, contentDescription = "Selected", tint = BossTheme.colors.signal, modifier = Modifier.size(20.dp))
             }
         }
     }
@@ -283,9 +278,9 @@ private fun SourceListItem(
 private fun EmptyState(icon: ImageVector, message: String) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(imageVector = icon, contentDescription = null, tint = BossDarkTextSecondary.copy(alpha = 0.5f), modifier = Modifier.size(48.dp))
+            Icon(imageVector = icon, contentDescription = null, tint = BossTheme.colors.textSecondary.copy(alpha = 0.5f), modifier = Modifier.size(48.dp))
             Spacer(modifier = Modifier.height(12.dp))
-            Text(text = message, fontSize = 14.sp, color = BossDarkTextSecondary, textAlign = TextAlign.Center, lineHeight = 20.sp)
+            Text(text = message, fontSize = 14.sp, color = BossTheme.colors.textSecondary, textAlign = TextAlign.Center, lineHeight = 20.sp)
         }
     }
 }
@@ -307,12 +302,12 @@ private fun DialogFooter(
             Checkbox(
                 checked = includeAudio,
                 onCheckedChange = onAudioToggle,
-                colors = CheckboxDefaults.colors(checkedColor = BossDarkAccent, uncheckedColor = BossDarkTextSecondary, checkmarkColor = Color.Black)
+                colors = CheckboxDefaults.colors(checkedColor = BossTheme.colors.signal, uncheckedColor = BossTheme.colors.textSecondary, checkmarkColor = BossTheme.colors.onSignal)
             )
-            Text(text = "Share audio", fontSize = 14.sp, color = BossDarkTextPrimary)
+            Text(text = "Share audio", fontSize = 14.sp, color = BossTheme.colors.textPrimary)
         }
         Row {
-            TextButton(onClick = onDismiss, colors = ButtonDefaults.textButtonColors(contentColor = BossDarkTextSecondary)) {
+            TextButton(onClick = onDismiss, colors = ButtonDefaults.textButtonColors(contentColor = BossTheme.colors.textSecondary)) {
                 Text("Cancel")
             }
             Spacer(modifier = Modifier.width(8.dp))
@@ -320,10 +315,10 @@ private fun DialogFooter(
                 onClick = onShare,
                 enabled = selectedSource != null,
                 colors = ButtonDefaults.buttonColors(
-                    backgroundColor = BossDarkAccent,
-                    contentColor = Color.Black,
-                    disabledBackgroundColor = BossDarkSurface,
-                    disabledContentColor = BossDarkTextSecondary
+                    backgroundColor = BossTheme.colors.signal,
+                    contentColor = BossTheme.colors.onSignal,
+                    disabledBackgroundColor = BossTheme.colors.raised,
+                    disabledContentColor = BossTheme.colors.textSecondary
                 ),
                 shape = RoundedCornerShape(6.dp)
             ) {

@@ -2,6 +2,7 @@ package ai.rever.boss.components.plugin.tab_types
 
 import ai.rever.boss.components.overlays.ContextMenu
 import ai.rever.boss.components.overlays.ContextMenuItem
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.run.DetectedMainFunction
 import ai.rever.boss.run.Language
 import androidx.compose.foundation.clickable
@@ -23,7 +24,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerButton
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
@@ -46,9 +46,9 @@ fun GutterRunIcon(
     var showContextMenu by remember { mutableStateOf(false) }
 
     val iconColor = if (isHovered) {
-        Color(0xFF6BBF78) // Brighter green when hovered
+        BossTheme.colors.ok // Full-strength run green when hovered
     } else {
-        Color(0xFF59A869) // IntelliJ's run icon green
+        BossTheme.colors.ok.copy(alpha = 0.85f) // run green
     }
 
     Icon(

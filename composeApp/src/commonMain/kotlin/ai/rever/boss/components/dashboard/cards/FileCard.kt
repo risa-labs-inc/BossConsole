@@ -1,9 +1,8 @@
 package ai.rever.boss.components.dashboard.cards
 
-import BossDarkSurface
-import BossDarkTextSecondary
 import ai.rever.boss.dashboard.RecentFile
 import ai.rever.boss.icons.FileIcons
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.utils.extractParentName
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -33,7 +32,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -58,7 +56,7 @@ fun FileCard(
         animationSpec = spring(dampingRatio = 0.6f)
     )
 
-    val backgroundColor = if (isHovered) Color(0xFF2A2D30) else BossDarkSurface
+    val backgroundColor = if (isHovered) BossTheme.colors.signalWash else BossTheme.colors.raised
     val fileIconInfo = FileIcons.forFile(file.name)
     val cardShape = RoundedCornerShape(12.dp)
 
@@ -93,7 +91,7 @@ fun FileCard(
             ) {
                 Text(
                     text = file.name,
-                    color = Color.White,
+                    color = BossTheme.colors.textPrimary,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
@@ -113,7 +111,7 @@ fun FileCard(
                 if (parentFolder.isNotEmpty()) {
                     Text(
                         text = parentFolder,
-                        color = BossDarkTextSecondary,
+                        color = BossTheme.colors.textSecondary,
                         fontSize = 10.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -131,7 +129,7 @@ fun FileCard(
                     .padding(4.dp)
                     .size(16.dp)
                     .background(
-                        color = Color(0xFF3A3D40),
+                        color = BossTheme.colors.lineStrong,
                         shape = CircleShape
                     )
                     .clickable { onRemove() },
@@ -140,7 +138,7 @@ fun FileCard(
                 Icon(
                     imageVector = Icons.Filled.Close,
                     contentDescription = "Remove",
-                    tint = BossDarkTextSecondary,
+                    tint = BossTheme.colors.textSecondary,
                     modifier = Modifier.size(10.dp)
                 )
             }

@@ -1,6 +1,7 @@
 package ai.rever.boss.components.bars.horizontal
 
 import ai.rever.boss.components.buttons.BossActionButton
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.components.events.RunEventBus
 import ai.rever.boss.icons.LanguageIcons
 import ai.rever.boss.components.overlays.ContextMenuItem
@@ -120,7 +121,7 @@ fun BossTopRunBar() {
         // Run/Re-run button (square, green)
         RunSquareButton(
             icon = if (isSelectedConfigRunning) Icons.Outlined.Refresh else Icons.Outlined.PlayArrow,
-            backgroundColor = Color(0xFF59A869), // IntelliJ's run icon green
+            backgroundColor = BossTheme.colors.ok, // run green
             enabled = selectedConfig != null,
             contentDescription = if (isSelectedConfigRunning) "Re-run" else "Run",
             onClick = {
@@ -145,7 +146,7 @@ fun BossTopRunBar() {
         // Stop button (square, red when active, gray when disabled)
         RunSquareButton(
             icon = Icons.Outlined.Stop,
-            backgroundColor = Color(0xFFE05555), // Red stop color
+            backgroundColor = BossTheme.colors.alert, // stop red
             enabled = isSelectedConfigRunning,
             contentDescription = "Stop",
             onClick = {
@@ -176,13 +177,13 @@ private fun RunSquareButton(
 
     // Calculate colors based on state
     val bgColor = when {
-        !enabled -> Color(0xFF3C3C3C) // Gray background when disabled
+        !enabled -> BossTheme.colors.raised // Muted background when disabled
         isHovered -> backgroundColor.copy(alpha = 0.9f) // Slightly darker on hover
         else -> backgroundColor
     }
     val iconColor = when {
-        !enabled -> Color(0xFF808080) // Gray icon when disabled
-        else -> Color.White
+        !enabled -> BossTheme.colors.textMuted // Muted icon when disabled
+        else -> BossTheme.colors.onSignal
     }
 
     Box(
@@ -245,11 +246,11 @@ private fun RunConfigurationSelector(
                     onClick = { onSelect(config) },
                     // Primary action: Play (not running) or Rerun (running)
                     trailingIcon = if (isRunning) Icons.Outlined.Refresh else Icons.Outlined.PlayArrow,
-                    trailingIconColor = Color(0xFF59A869), // Green for both play and rerun
+                    trailingIconColor = BossTheme.colors.ok, // Green for both play and rerun
                     onTrailingClick = { if (isRunning) onRerun(config) else onRun(config) },
                     // Secondary action: Delete (not running) or Stop (running)
                     secondaryTrailingIcon = if (isRunning) Icons.Outlined.Stop else Icons.Outlined.Close,
-                    secondaryTrailingIconColor = if (isRunning) Color(0xFFE05555) else Color(0xFF888888),
+                    secondaryTrailingIconColor = if (isRunning) BossTheme.colors.alert else BossTheme.colors.textSecondary,
                     onSecondaryTrailingClick = { if (isRunning) onStop(config) else onDelete(config) }
                 ))
             }

@@ -1,5 +1,6 @@
 package ai.rever.boss.components.plugin.tab_types
 
+import ai.rever.boss.plugin.ui.BossColors
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.runtime.Composable
@@ -59,16 +60,18 @@ actual fun writeFileContent(filePath: String, content: String): Boolean {
     }
 }
 
-// Hardcoded defaults matching non-desktop actuals (these are only used by the
-// commonMain CodeEditorUI composable which is never rendered on desktop).
+// Editor chrome follows the active BOSS theme (reactive BossColors getters —
+// never cache); syntax colors come from the shared fixed palette. These are
+// only used by the commonMain CodeEditorUI composable, which is a fallback
+// rarely rendered on desktop (the editor-tab plugin provides the real editor).
 actual fun getCodeEditorFontSize(): Int = 14
 actual fun getCodeEditorFontFamily(): FontFamily = FontFamily.Monospace
-actual fun getCodeEditorBackgroundColor(): Color = Color(0xFF_1E1E1E)
-actual fun getCodeEditorTextColor(): Color = Color(0xFF_D4D4D4)
-actual fun getCodeEditorLineNumberColor(): Color = Color(0xFF_858585)
-actual fun getCodeEditorLineNumberBgColor(): Color = Color(0xFF_2D2D30)
-actual fun getCodeEditorKeywordColor(): Color = Color(0xFF_569CD6)
-actual fun getCodeEditorCommentColor(): Color = Color(0xFF_6A9955)
+actual fun getCodeEditorBackgroundColor(): Color = BossColors.darkContentBackground
+actual fun getCodeEditorTextColor(): Color = BossColors.darkTextPrimary
+actual fun getCodeEditorLineNumberColor(): Color = BossColors.darkTextMuted
+actual fun getCodeEditorLineNumberBgColor(): Color = BossColors.darkBackground
+actual fun getCodeEditorKeywordColor(): Color = EditorSyntaxColors.keyword
+actual fun getCodeEditorCommentColor(): Color = EditorSyntaxColors.comment
 
 /**
  * Desktop delegates to the shared basic editor, like the other platforms.

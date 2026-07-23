@@ -1,5 +1,6 @@
 package ai.rever.boss.components.plugin.remote
 
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.ui.sdk.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -205,15 +206,15 @@ private fun RenderNode(
             }
             Text(
                 text = message,
-                modifier = modifier.background(Color.DarkGray).padding(8.dp),
-                color = Color.White,
+                modifier = modifier.background(BossTheme.colors.raised).padding(8.dp),
+                color = BossTheme.colors.textPrimary,
             )
         }
         // Remaining types render as placeholders
         else -> {
             val typeName = node.type.name
             Box(modifier = modifier) {
-                Text(text = "[$typeName]", fontSize = 10.sp, color = Color.Gray)
+                Text(text = "[$typeName]", fontSize = 10.sp, color = BossTheme.colors.textMuted)
             }
         }
     }

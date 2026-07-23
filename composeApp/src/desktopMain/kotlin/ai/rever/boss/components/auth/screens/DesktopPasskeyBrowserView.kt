@@ -8,10 +8,10 @@ import androidx.compose.material.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import ai.rever.boss.plugin.browser.FluckEngine
 import ai.rever.boss.plugin.browser.LocalAwtWindow
+import ai.rever.boss.plugin.ui.BossTheme
 import com.teamdev.jxbrowser.browser.Browser
 import com.teamdev.jxbrowser.navigation.event.LoadFinished
 import com.teamdev.jxbrowser.navigation.event.LoadStarted
@@ -93,12 +93,12 @@ actual fun PasskeyBrowserView(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xFF1E1E1E)),
+                .background(BossTheme.colors.ink),
             contentAlignment = Alignment.Center
         ) {
             Text(
                 text = initError ?: "Failed to initialize browser",
-                color = Color.White
+                color = BossTheme.colors.textPrimary
             )
         }
     } else if (browser != null) {
@@ -122,12 +122,12 @@ actual fun PasskeyBrowserView(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xFF1E1E1E)),
+                .background(BossTheme.colors.ink),
             contentAlignment = Alignment.Center
         ) {
             Text(
                 text = "Initializing browser...",
-                color = Color.White
+                color = BossTheme.colors.textPrimary
             )
         }
     }

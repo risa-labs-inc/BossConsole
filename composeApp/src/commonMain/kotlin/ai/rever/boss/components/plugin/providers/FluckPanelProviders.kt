@@ -4,6 +4,7 @@ import ai.rever.boss.components.plugin.tab_types.fluck.FluckView
 import ai.rever.boss.components.plugin.tab_types.fluck.createBrowser
 import ai.rever.boss.components.plugin.tab_types.fluck.createBrowserViewState
 import ai.rever.boss.plugin.api.FluckPanelContentProvider
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.foundation.background
@@ -13,7 +14,6 @@ import androidx.compose.material.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -54,7 +54,7 @@ class FluckPanelContentProviderImpl : FluckPanelContentProvider {
             when {
                 browserError != null -> {
                     Box(
-                        modifier = Modifier.fillMaxSize().background(Color(0xFF2B2D30)),
+                        modifier = Modifier.fillMaxSize().background(BossTheme.colors.panel),
                         contentAlignment = Alignment.Center
                     ) {
                         FluckPanelErrorView(error = browserError!!)
@@ -79,7 +79,7 @@ class FluckPanelContentProviderImpl : FluckPanelContentProvider {
                 }
                 else -> {
                     Box(
-                        modifier = Modifier.fillMaxSize().background(Color(0xFF2B2D30)),
+                        modifier = Modifier.fillMaxSize().background(BossTheme.colors.panel),
                         contentAlignment = Alignment.Center
                     ) {
                         CircularProgressIndicator()
@@ -101,7 +101,7 @@ private fun FluckPanelErrorView(error: Throwable) {
             text = "Browser Not Available",
             fontSize = 16.sp,
             fontWeight = FontWeight.Bold,
-            color = Color.White
+            color = BossTheme.colors.textPrimary
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -116,7 +116,7 @@ private fun FluckPanelErrorView(error: Throwable) {
         Text(
             text = errorMessage,
             fontSize = 12.sp,
-            color = Color(0xFFCCCCCC),
+            color = BossTheme.colors.textPrimary,
             textAlign = TextAlign.Center
         )
 
@@ -125,7 +125,7 @@ private fun FluckPanelErrorView(error: Throwable) {
             Text(
                 text = "Tip: The browser will automatically try alternative\nprofiles on next restart.",
                 fontSize = 11.sp,
-                color = Color(0xFF999999),
+                color = BossTheme.colors.textSecondary,
                 textAlign = TextAlign.Center
             )
         }

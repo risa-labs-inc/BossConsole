@@ -2,6 +2,7 @@ package ai.rever.boss.plugin.sandbox.ui
 
 import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
@@ -12,7 +13,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -44,7 +44,7 @@ fun PluginExtensionBoundary(
     fallback: @Composable (Throwable) -> Unit = { error ->
         Text(
             text = "⚠ $surface failed: ${error.message ?: error::class.simpleName}",
-            color = Color(0xFFE57373),
+            color = BossTheme.colors.alert,
             fontSize = 11.sp,
             modifier = Modifier.padding(horizontal = 6.dp)
         )

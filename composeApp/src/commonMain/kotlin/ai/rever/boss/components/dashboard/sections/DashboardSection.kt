@@ -1,6 +1,6 @@
 package ai.rever.boss.components.dashboard.sections
 
-import BossDarkTextSecondary
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -11,7 +11,6 @@ import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -42,14 +41,14 @@ fun DashboardSection(
             Column {
                 Text(
                     text = title,
-                    color = Color.White,
+                    color = BossTheme.colors.textPrimary,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold
                 )
                 if (subtitle != null) {
                     Text(
                         text = subtitle,
-                        color = BossDarkTextSecondary,
+                        color = BossTheme.colors.textSecondary,
                         fontSize = 12.sp
                     )
                 }
@@ -58,7 +57,7 @@ fun DashboardSection(
             if (actionText != null && onAction != null) {
                 Text(
                     text = actionText,
-                    color = Color(0xFF4A9EFF),
+                    color = BossTheme.colors.data,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier

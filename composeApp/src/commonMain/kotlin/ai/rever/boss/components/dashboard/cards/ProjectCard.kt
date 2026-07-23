@@ -1,8 +1,6 @@
 package ai.rever.boss.components.dashboard.cards
 
-import BossDarkAccent
-import BossDarkSurface
-import BossDarkTextSecondary
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.window.Project
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
@@ -36,7 +34,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -62,7 +59,7 @@ fun ProjectCard(
         animationSpec = spring(dampingRatio = 0.6f)
     )
 
-    val backgroundColor = if (isHovered) Color(0xFF2A2D30) else BossDarkSurface
+    val backgroundColor = if (isHovered) BossTheme.colors.signalWash else BossTheme.colors.raised
     val cardShape = RoundedCornerShape(12.dp)
 
     Box(
@@ -87,7 +84,7 @@ fun ProjectCard(
                     .padding(2.dp)
                     .size(32.dp),
                 shape = RoundedCornerShape(4.dp),
-                color = BossDarkAccent,
+                color = BossTheme.colors.signal,
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     val initials = when {
@@ -99,7 +96,7 @@ fun ProjectCard(
                         text = initials.uppercase(),
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Color.White,
+                        color = BossTheme.colors.onSignal,
                         modifier = Modifier.align(Alignment.Center)
                     )
                 }
@@ -107,7 +104,7 @@ fun ProjectCard(
 
             Text(
                 text = project.name,
-                color = Color.White,
+                color = BossTheme.colors.textPrimary,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
@@ -116,7 +113,7 @@ fun ProjectCard(
 
             Text(
                 text = formatRelativeTime(project.lastOpened),
-                color = BossDarkTextSecondary,
+                color = BossTheme.colors.textSecondary,
                 fontSize = 11.sp,
                 maxLines = 1
             )
@@ -135,7 +132,7 @@ fun ProjectCard(
                         .padding(4.dp)
                         .size(18.dp)
                         .clip(CircleShape)
-                        .background(Color(0xFF3A3D40))
+                        .background(BossTheme.colors.lineStrong)
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
@@ -145,7 +142,7 @@ fun ProjectCard(
                     Icon(
                         imageVector = Icons.Filled.Close,
                         contentDescription = "Remove",
-                        tint = BossDarkTextSecondary,
+                        tint = BossTheme.colors.textSecondary,
                         modifier = Modifier.size(12.dp)
                     )
                 }

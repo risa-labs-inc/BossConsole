@@ -4,6 +4,7 @@ import ai.rever.boss.components.registery.*
 import ai.rever.boss.dashboard.DashboardStatsManager
 import ai.rever.boss.dashboard.RecentBrowserPagesManager
 import ai.rever.boss.plugin.tab.fluck.FluckTabType
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.tabfullscreen.TabFullscreenStateManager
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -22,7 +23,6 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -750,13 +750,13 @@ open class FluckTabComponent(
                     // Loading state - show URL and give user control
                     Column(
                         modifier = Modifier.fillMaxSize()
-                            .background(Color(0xFF1E1E1E))
+                            .background(BossTheme.colors.ink)
                     ) {
                         // URL bar with controls
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(Color(0xFF2D2D2D))
+                                .background(BossTheme.colors.panel)
                                 .padding(horizontal = 8.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -768,7 +768,7 @@ open class FluckTabComponent(
                                 Icon(
                                     imageVector = Icons.Default.Close,
                                     contentDescription = "Stop and close tab",
-                                    tint = Color(0xFF999999),
+                                    tint = BossTheme.colors.textSecondary,
                                     modifier = Modifier.size(16.dp)
                                 )
                             }
@@ -786,7 +786,7 @@ open class FluckTabComponent(
                                 Icon(
                                     imageVector = Icons.Default.Refresh,
                                     contentDescription = "Retry",
-                                    tint = Color(0xFF999999),
+                                    tint = BossTheme.colors.textSecondary,
                                     modifier = Modifier.size(16.dp)
                                 )
                             }
@@ -797,20 +797,20 @@ open class FluckTabComponent(
                             Row(
                                 modifier = Modifier
                                     .weight(1f)
-                                    .background(Color(0xFF1E1E1E))
+                                    .background(BossTheme.colors.ink)
                                     .padding(horizontal = 10.dp, vertical = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(12.dp),
                                     strokeWidth = 1.5.dp,
-                                    color = Color(0xFF4A90E2)
+                                    color = BossTheme.colors.signal
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = currentUrlForBrowser.ifEmpty { "New Tab" },
                                     fontSize = 13.sp,
-                                    color = Color(0xFFAAAAAA),
+                                    color = BossTheme.colors.textSecondary,
                                     maxLines = 1
                                 )
                             }
@@ -921,7 +921,7 @@ fun BrowserErrorView(
         Card(
             modifier = Modifier.fillMaxWidth(),
             elevation = 4.dp,
-            backgroundColor = Color(0xFF2B2D30)
+            backgroundColor = BossTheme.colors.panel
         ) {
             Column(
                 modifier = Modifier
@@ -932,7 +932,7 @@ fun BrowserErrorView(
                 Icon(
                     imageVector = Icons.Outlined.Warning,
                     contentDescription = "Error",
-                    tint = if (isNetworkError) Color(0xFFFFB347) else Color(0xFFFF6B6B),
+                    tint = if (isNetworkError) BossTheme.colors.warn else BossTheme.colors.alert,
                     modifier = Modifier.size(48.dp)
                 )
 
@@ -942,7 +942,7 @@ fun BrowserErrorView(
                     text = if (isNetworkError) "Connection Required" else "Browser Not Available",
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color.White
+                    color = BossTheme.colors.textPrimary
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -953,7 +953,7 @@ fun BrowserErrorView(
                         text = "Please check your internet connection",
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Medium,
-                        color = Color(0xFFFFB347),
+                        color = BossTheme.colors.warn,
                         textAlign = TextAlign.Center
                     )
 
@@ -962,14 +962,14 @@ fun BrowserErrorView(
                     Text(
                         text = "The browser requires an internet connection for license validation.",
                         fontSize = 14.sp,
-                        color = Color(0xFFCCCCCC),
+                        color = BossTheme.colors.textPrimary,
                         textAlign = TextAlign.Center
                     )
                 } else {
                     Text(
                         text = "Unable to initialize the web browser component.",
                         fontSize = 14.sp,
-                        color = Color(0xFFCCCCCC)
+                        color = BossTheme.colors.textPrimary
                     )
                 }
 
@@ -978,7 +978,7 @@ fun BrowserErrorView(
                 Text(
                     text = "URL: $url",
                     fontSize = 12.sp,
-                    color = Color(0xFF999999)
+                    color = BossTheme.colors.textSecondary
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -986,7 +986,7 @@ fun BrowserErrorView(
                 Text(
                     text = "Error: ${error.message ?: error.toString()}",
                     fontSize = 12.sp,
-                    color = Color(0xFF999999),
+                    color = BossTheme.colors.textSecondary,
                     modifier = Modifier.padding(horizontal = 16.dp),
                     textAlign = TextAlign.Center
                 )
@@ -997,7 +997,7 @@ fun BrowserErrorView(
                     Text(
                         text = "Attempted $retryCount/$maxRetries times with exponential backoff",
                         fontSize = 12.sp,
-                        color = Color(0xFF888888),
+                        color = BossTheme.colors.textSecondary,
                         fontStyle = FontStyle.Italic
                     )
                 }
@@ -1008,7 +1008,10 @@ fun BrowserErrorView(
                 if (isNetworkError && onRetryEngine != null) {
                     Button(
                         onClick = onRetryEngine,
-                        colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF4A90E2))
+                        colors = ButtonDefaults.buttonColors(
+                            backgroundColor = BossTheme.colors.signal,
+                            contentColor = BossTheme.colors.onSignal
+                        )
                     ) {
                         Icon(
                             imageVector = Icons.Default.Refresh,
@@ -1024,14 +1027,17 @@ fun BrowserErrorView(
                     Text(
                         text = "Ensure you have an active internet connection, then try again",
                         fontSize = 11.sp,
-                        color = Color(0xFF888888),
+                        color = BossTheme.colors.textSecondary,
                         textAlign = TextAlign.Center
                     )
                 } else if (retryCount < maxRetries && onRetry != null) {
                     // Still have retries left - show Retry button
                     Button(
                         onClick = onRetry,
-                        colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF4A90E2))
+                        colors = ButtonDefaults.buttonColors(
+                            backgroundColor = BossTheme.colors.signal,
+                            contentColor = BossTheme.colors.onSignal
+                        )
                     ) {
                         Icon(
                             imageVector = Icons.Default.Refresh,
@@ -1045,7 +1051,7 @@ fun BrowserErrorView(
                     // Max retries exhausted - show Reset Tab button
                     Button(
                         onClick = onReset,
-                        colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFFE2724A))
+                        colors = ButtonDefaults.buttonColors(backgroundColor = BossTheme.colors.alert)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Refresh,
@@ -1061,7 +1067,7 @@ fun BrowserErrorView(
                     Text(
                         text = "Resets retry counter and attempts to load the browser again",
                         fontSize = 11.sp,
-                        color = Color(0xFF888888),
+                        color = BossTheme.colors.textSecondary,
                         textAlign = TextAlign.Center
                     )
 
@@ -1072,7 +1078,7 @@ fun BrowserErrorView(
                         Text(
                             text = "If the issue persists, try resetting the browser:",
                             fontSize = 12.sp,
-                            color = Color(0xFFAAAAAA),
+                            color = BossTheme.colors.textSecondary,
                             textAlign = TextAlign.Center
                         )
 
@@ -1080,9 +1086,9 @@ fun BrowserErrorView(
 
                         Button(
                             onClick = onResetBrowser,
-                            colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFFE05555))
+                            colors = ButtonDefaults.buttonColors(backgroundColor = BossTheme.colors.alert)
                         ) {
-                            Text("Reset Browser", color = Color.White)
+                            Text("Reset Browser", color = BossTheme.colors.onSignal)
                         }
 
                         Spacer(modifier = Modifier.height(8.dp))
@@ -1090,7 +1096,7 @@ fun BrowserErrorView(
                         Text(
                             text = "This clears browser cache, cookies, and sessions",
                             fontSize = 10.sp,
-                            color = Color(0xFF777777),
+                            color = BossTheme.colors.textMuted,
                             textAlign = TextAlign.Center
                         )
                     }
@@ -1099,7 +1105,7 @@ fun BrowserErrorView(
                     Text(
                         text = "Try using the code editor or terminal tabs instead.",
                         fontSize = 14.sp,
-                        color = Color(0xFFCCCCCC)
+                        color = BossTheme.colors.textPrimary
                     )
                 }
             }
@@ -1122,7 +1128,7 @@ fun BrowserRecoveryView(url: String) {
         Card(
             modifier = Modifier.fillMaxWidth(),
             elevation = 4.dp,
-            backgroundColor = Color(0xFF2B2D30)
+            backgroundColor = BossTheme.colors.panel
         ) {
             Column(
                 modifier = Modifier.padding(24.dp),
@@ -1130,7 +1136,7 @@ fun BrowserRecoveryView(url: String) {
             ) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(48.dp),
-                    color = Color(0xFF4A90E2)
+                    color = BossTheme.colors.signal
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -1139,7 +1145,7 @@ fun BrowserRecoveryView(url: String) {
                     text = "Reconnecting Browser",
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color.White
+                    color = BossTheme.colors.textPrimary
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -1147,7 +1153,7 @@ fun BrowserRecoveryView(url: String) {
                 Text(
                     text = "The browser connection was lost. Reinitializing...",
                     fontSize = 14.sp,
-                    color = Color(0xFFCCCCCC),
+                    color = BossTheme.colors.textPrimary,
                     textAlign = TextAlign.Center
                 )
 
@@ -1156,7 +1162,7 @@ fun BrowserRecoveryView(url: String) {
                 Text(
                     text = url,
                     fontSize = 12.sp,
-                    color = Color(0xFF999999),
+                    color = BossTheme.colors.textSecondary,
                     textAlign = TextAlign.Center
                 )
             }

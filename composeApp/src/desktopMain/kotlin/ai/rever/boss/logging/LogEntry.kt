@@ -1,7 +1,5 @@
 package ai.rever.boss.logging
 
-import androidx.compose.ui.graphics.Color
-
 /**
  * Represents a single log entry captured from stdout or stderr.
  *
@@ -14,16 +12,6 @@ data class LogEntry(
     val message: String,
     val source: LogSource
 ) {
-    /**
-     * Get the color to display this log entry.
-     * stdout = light gray, stderr = red
-     */
-    val color: Color
-        get() = when (source) {
-            LogSource.STDOUT -> Color(0xFFCCCCCC) // Light gray
-            LogSource.STDERR -> Color(0xFFFF6B6B) // Red
-        }
-
     /**
      * Format timestamp as HH:mm:ss.SSS
      */

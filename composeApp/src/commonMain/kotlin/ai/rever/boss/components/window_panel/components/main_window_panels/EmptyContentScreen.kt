@@ -1,7 +1,6 @@
 package ai.rever.boss.components.window_panel.components.main_window_panels
 
-import BossDarkBackground
-import BossDarkTextSecondary
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -18,7 +17,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -113,7 +111,7 @@ fun EmptyContent(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(BossDarkBackground),
+            .background(BossTheme.colors.panel),
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -128,7 +126,7 @@ fun EmptyContent(
                 Icon(
                     imageVector = Icons.Outlined.Dashboard,
                     contentDescription = "BOSS",
-                    tint = Color(0xFF4A9EFF),
+                    tint = BossTheme.colors.signal,
                     modifier = Modifier.size(80.dp)
                 )
             }
@@ -138,8 +136,8 @@ fun EmptyContent(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text("Welcome to BOSS", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
-                Text("Multi-panel development environment", color = BossDarkTextSecondary, fontSize = 16.sp)
+                Text("Welcome to BOSS", color = BossTheme.colors.textPrimary, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+                Text("Multi-panel development environment", color = BossTheme.colors.textSecondary, fontSize = 16.sp)
             }
 
             // Quick tips with interactive cards
@@ -147,7 +145,7 @@ fun EmptyContent(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Text("Quick Tips", color = Color(0xFF4A9EFF), fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Text("Quick Tips", color = BossTheme.colors.signal, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     tips.forEachIndexed { index, tip ->
                         Card(
@@ -183,7 +181,7 @@ fun EmptyContent(
             }
             Text(
                 text = messages[messageIndex],
-                color = BossDarkTextSecondary.copy(alpha = 0.7f),
+                color = BossTheme.colors.textSecondary.copy(alpha = 0.7f),
                 fontSize = 14.sp,
                 modifier = Modifier.padding(top = 16.dp)
             )
@@ -221,21 +219,21 @@ private fun Card(
 
     // Colors based on state
     val backgroundColor = when {
-        !enabled -> Color(0xFF1A1B1E)  // Darker for disabled
-        isSelected -> Color(0xFF2A2D30)
-        else -> Color(0xFF1E1F22)
+        !enabled -> BossTheme.colors.ink  // Darker for disabled
+        isSelected -> BossTheme.colors.raised
+        else -> BossTheme.colors.panel
     }
 
     val iconTint = when {
-        !enabled -> Color(0xFF4A4A4A)  // Muted gray for disabled
-        isSelected -> Color(0xFF4A9EFF)
-        else -> BossDarkTextSecondary
+        !enabled -> BossTheme.colors.textMuted  // Muted for disabled
+        isSelected -> BossTheme.colors.signal
+        else -> BossTheme.colors.textSecondary
     }
 
     val textColor = when {
-        !enabled -> Color(0xFF666666)  // Dim text for disabled
-        isSelected -> Color.White
-        else -> BossDarkTextSecondary
+        !enabled -> BossTheme.colors.textMuted  // Dim text for disabled
+        isSelected -> BossTheme.colors.textPrimary
+        else -> BossTheme.colors.textSecondary
     }
 
     Column(
@@ -280,7 +278,7 @@ private fun Card(
         ) {
             Text(
                 text = description,
-                color = BossDarkTextSecondary,
+                color = BossTheme.colors.textSecondary,
                 fontSize = 12.sp,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(top = 4.dp)

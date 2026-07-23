@@ -1,8 +1,5 @@
 package ai.rever.boss.components.dashboard
 
-import BossDarkBackground
-import BossDarkSurface
-import BossDarkTextSecondary
 import ai.rever.boss.components.dashboard.cards.ActionCard
 import ai.rever.boss.components.dashboard.cards.BrowserPageCard
 import ai.rever.boss.components.dashboard.cards.FileCard
@@ -14,6 +11,7 @@ import ai.rever.boss.components.events.PanelEventBus
 import ai.rever.boss.components.events.TerminalEventBus
 import ai.rever.boss.components.events.URLEventBus
 import ai.rever.boss.components.plugin.PanelIds
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.window.Project
 import ai.rever.boss.components.plugin.panels.left_top.ProjectState
 import ai.rever.boss.dashboard.DashboardStatsManager
@@ -71,7 +69,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -145,7 +142,7 @@ fun Dashboard(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(BossDarkBackground)
+            .background(BossTheme.colors.panel)
     ) {
         Column(
             modifier = Modifier
@@ -210,8 +207,8 @@ fun Dashboard(
                         androidx.compose.material.Button(
                             onClick = onOpenProjectDialog,
                             colors = androidx.compose.material.ButtonDefaults.buttonColors(
-                                backgroundColor = Color(0xFF4A9EFF),
-                                contentColor = Color.White
+                                backgroundColor = BossTheme.colors.signal,
+                                contentColor = BossTheme.colors.onSignal
                             ),
                             shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.padding(16.dp)
@@ -596,13 +593,13 @@ private fun WelcomeMessage(modifier: Modifier = Modifier) {
     Column(modifier = modifier) {
         Text(
             text = "Welcome To Boss Console",
-            color = Color.White,
+            color = BossTheme.colors.textPrimary,
             fontSize = 28.sp,
             fontWeight = FontWeight.Bold
         )
         Text(
             text = "What would you like to work on today?",
-            color = BossDarkTextSecondary,
+            color = BossTheme.colors.textSecondary,
             fontSize = 14.sp
         )
     }
@@ -618,7 +615,7 @@ private fun StatsSummary(
         modifier = Modifier
             .horizontalScroll(rememberScrollState())
             .background(
-                color = BossDarkSurface,
+                color = BossTheme.colors.raised,
                 shape = RoundedCornerShape(8.dp)
             )
             .padding(horizontal = 16.dp, vertical = 12.dp),
@@ -638,7 +635,7 @@ private fun StatItem(label: String, value: String) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
             text = value,
-            color = Color(0xFF4A9EFF),
+            color = BossTheme.colors.data,
             fontSize = 16.sp,
             fontWeight = FontWeight.Bold,
             maxLines = 1,
@@ -646,7 +643,7 @@ private fun StatItem(label: String, value: String) {
         )
         Text(
             text = label,
-            color = BossDarkTextSecondary,
+            color = BossTheme.colors.textSecondary,
             fontSize = 11.sp,
             maxLines = 1,
             softWrap = false
@@ -660,6 +657,6 @@ private fun StatDivider() {
         modifier = Modifier
             .width(1.dp)
             .height(24.dp)
-            .background(BossDarkTextSecondary.copy(alpha = 0.3f))
+            .background(BossTheme.colors.textSecondary.copy(alpha = 0.3f))
     )
 }

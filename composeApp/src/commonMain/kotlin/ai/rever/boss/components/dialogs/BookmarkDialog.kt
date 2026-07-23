@@ -1,13 +1,8 @@
 package ai.rever.boss.components.dialogs
 
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkBorder
-import BossDarkSurface
-import BossDarkTextPrimary
-import BossDarkTextSecondary
 import ai.rever.boss.components.bookmarks.BookmarkCollection
 import ai.rever.boss.components.workspaces.extractPanels
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -76,7 +71,7 @@ fun BookmarkDialog(
                 .width(700.dp)
                 .heightIn(max = 500.dp),
             shape = RoundedCornerShape(8.dp),
-            color = BossDarkBackground
+            color = BossTheme.colors.panel
         ) {
             Column(
                 modifier = Modifier.padding(20.dp)
@@ -89,7 +84,7 @@ fun BookmarkDialog(
                     Icon(
                         imageVector = Icons.Outlined.Star,
                         contentDescription = "Bookmark",
-                        tint = BossDarkAccent,
+                        tint = BossTheme.colors.signal,
                         modifier = Modifier.size(24.dp)
                     )
                     Spacer(modifier = Modifier.width(12.dp))
@@ -98,12 +93,12 @@ fun BookmarkDialog(
                             text = "Add to Bookmarks",
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold,
-                            color = BossDarkTextPrimary
+                            color = BossTheme.colors.textPrimary
                         )
                         Text(
                             text = tabTitle,
                             fontSize = 13.sp,
-                            color = BossDarkTextSecondary,
+                            color = BossTheme.colors.textSecondary,
                             modifier = Modifier.padding(top = 2.dp),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -124,7 +119,7 @@ fun BookmarkDialog(
                         text = "Select Collections",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
-                        color = BossDarkTextPrimary
+                        color = BossTheme.colors.textPrimary
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
@@ -133,7 +128,7 @@ fun BookmarkDialog(
                         Text(
                             text = "No collections available",
                             fontSize = 13.sp,
-                            color = BossDarkTextSecondary
+                            color = BossTheme.colors.textSecondary
                         )
                     } else {
                         // Simple wrapping layout for pills
@@ -157,7 +152,7 @@ fun BookmarkDialog(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(1.dp)
-                            .background(BossDarkBorder)
+                            .background(BossTheme.colors.line)
                     )
 
                     Spacer(modifier = Modifier.height(20.dp))
@@ -174,21 +169,21 @@ fun BookmarkDialog(
                             imageVector = if (workspacesSectionExpanded) Icons.Filled.ExpandMore else Icons.Filled.ChevronRight,
                             contentDescription = if (workspacesSectionExpanded) "Collapse" else "Expand",
                             modifier = Modifier.size(16.dp),
-                            tint = BossDarkTextSecondary
+                            tint = BossTheme.colors.textSecondary
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Icon(
                             imageVector = Icons.Outlined.WorkOutline,
                             contentDescription = "Workspaces",
                             modifier = Modifier.size(16.dp),
-                            tint = BossDarkTextSecondary
+                            tint = BossTheme.colors.textSecondary
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = "Open In Workspaces",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Medium,
-                            color = BossDarkTextPrimary
+                            color = BossTheme.colors.textPrimary
                         )
                     }
 
@@ -199,7 +194,7 @@ fun BookmarkDialog(
                             Text(
                                 text = "No workspaces available",
                                 fontSize = 13.sp,
-                                color = BossDarkTextSecondary
+                                color = BossTheme.colors.textSecondary
                             )
                         } else {
                             // Workspace pills with inline panel selection
@@ -222,7 +217,7 @@ fun BookmarkDialog(
                         Text(
                             text = "Leave empty to use current workspace",
                             fontSize = 11.sp,
-                            color = BossDarkTextSecondary,
+                            color = BossTheme.colors.textSecondary,
                             modifier = Modifier.padding(top = 8.dp)
                         )
                     }
@@ -238,7 +233,7 @@ fun BookmarkDialog(
                     TextButton(
                         onClick = onDismiss,
                         colors = ButtonDefaults.textButtonColors(
-                            contentColor = BossDarkTextSecondary
+                            contentColor = BossTheme.colors.textSecondary
                         )
                     ) {
                         Text("Cancel")
@@ -250,10 +245,10 @@ fun BookmarkDialog(
                         onClick = { onConfirm(selectedCollections, workspacePanelSelections) },
                         enabled = selectedCollections.isNotEmpty(),
                         colors = ButtonDefaults.buttonColors(
-                            backgroundColor = BossDarkAccent,
-                            contentColor = Color.Black,
-                            disabledBackgroundColor = BossDarkBorder,
-                            disabledContentColor = BossDarkTextSecondary
+                            backgroundColor = BossTheme.colors.signal,
+                            contentColor = BossTheme.colors.onSignal,
+                            disabledBackgroundColor = BossTheme.colors.line,
+                            disabledContentColor = BossTheme.colors.textSecondary
                         ),
                         shape = RoundedCornerShape(6.dp)
                     ) {
@@ -307,8 +302,8 @@ private fun CollectionPill(
         modifier = Modifier
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(16.dp),
-        color = if (isSelected) BossDarkAccent else BossDarkSurface,
-        border = if (isSelected) null else androidx.compose.foundation.BorderStroke(1.dp, BossDarkBorder)
+        color = if (isSelected) BossTheme.colors.signal else BossTheme.colors.raised,
+        border = if (isSelected) null else androidx.compose.foundation.BorderStroke(1.dp, BossTheme.colors.line)
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
@@ -319,7 +314,7 @@ private fun CollectionPill(
                     imageVector = Icons.Filled.Star,
                     contentDescription = "Favorite",
                     modifier = Modifier.size(14.dp),
-                    tint = if (isSelected) Color.Black else BossDarkAccent
+                    tint = if (isSelected) BossTheme.colors.onSignal else BossTheme.colors.signal
                 )
                 Spacer(modifier = Modifier.width(4.dp))
             }
@@ -327,7 +322,7 @@ private fun CollectionPill(
                 text = collection.name,
                 fontSize = 13.sp,
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                color = if (isSelected) Color.Black else BossDarkTextPrimary
+                color = if (isSelected) BossTheme.colors.onSignal else BossTheme.colors.textPrimary
             )
         }
     }
@@ -389,8 +384,8 @@ private fun WorkspacePill(
                 .fillMaxWidth()
                 .clickable(onClick = onToggle),
             shape = RoundedCornerShape(16.dp),
-            color = if (isSelected) BossDarkAccent else BossDarkSurface,
-            border = if (isSelected) null else androidx.compose.foundation.BorderStroke(1.dp, BossDarkBorder)
+            color = if (isSelected) BossTheme.colors.signal else BossTheme.colors.raised,
+            border = if (isSelected) null else androidx.compose.foundation.BorderStroke(1.dp, BossTheme.colors.line)
         ) {
             Row(
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
@@ -405,7 +400,7 @@ private fun WorkspacePill(
                     },
                     fontSize = 13.sp,
                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                    color = if (isSelected) Color.Black else BossDarkTextPrimary
+                    color = if (isSelected) BossTheme.colors.onSignal else BossTheme.colors.textPrimary
                 )
 
                 if (isSelected) {
@@ -417,7 +412,7 @@ private fun WorkspacePill(
                         Icon(
                             imageVector = Icons.Filled.ArrowDropDown,
                             contentDescription = "Select Panel",
-                            tint = Color.Black
+                            tint = BossTheme.colors.onSignal
                         )
                     }
                 }
@@ -431,8 +426,8 @@ private fun WorkspacePill(
                     .fillMaxWidth()
                     .padding(start = 16.dp, top = 4.dp),
                 shape = RoundedCornerShape(8.dp),
-                color = BossDarkSurface,
-                border = androidx.compose.foundation.BorderStroke(1.dp, BossDarkBorder)
+                color = BossTheme.colors.raised,
+                border = androidx.compose.foundation.BorderStroke(1.dp, BossTheme.colors.line)
             ) {
                 Column(modifier = Modifier.padding(8.dp)) {
                     // Auto option
@@ -476,7 +471,7 @@ private fun PanelOption(
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .background(
-                color = if (isSelected) BossDarkSurface.copy(alpha = 0.6f) else Color.Transparent,
+                color = if (isSelected) BossTheme.colors.raised.copy(alpha = 0.6f) else Color.Transparent,
                 shape = RoundedCornerShape(4.dp)
             )
             .padding(horizontal = 8.dp, vertical = 6.dp),
@@ -486,7 +481,7 @@ private fun PanelOption(
             text = displayName,
             fontSize = 12.sp,
             fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal,
-            color = if (isSelected) BossDarkAccent else BossDarkTextPrimary
+            color = if (isSelected) BossTheme.colors.signal else BossTheme.colors.textPrimary
         )
     }
 }

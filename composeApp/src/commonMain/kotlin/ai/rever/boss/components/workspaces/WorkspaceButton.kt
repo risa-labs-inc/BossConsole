@@ -3,6 +3,7 @@ package ai.rever.boss.components.workspaces
 import ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel
 import ai.rever.boss.components.buttons.BossActionButton
 import ai.rever.boss.components.overlays.ContextMenuItem
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Circle
@@ -19,7 +20,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.graphics.Color
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Briefcase
 
@@ -128,7 +128,7 @@ fun WorkspaceButton(
                 icon = null,
                 // Show green dot only for currently active workspace
                 trailingIcon = if (isCurrentWorkspace) Icons.Filled.Circle else null,
-                trailingIconColor = if (isCurrentWorkspace) Color(0xFF4CAF50) else null, // Green color
+                trailingIconColor = if (isCurrentWorkspace) BossTheme.colors.ok else null, // Green color
                 onClick = {
                     workspaceManager.loadWorkspace(workspace)
                     onOpenWorkspace(workspace)
