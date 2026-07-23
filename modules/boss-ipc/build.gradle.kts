@@ -72,7 +72,10 @@ if (protocAvailable) {
                 artifact = "io.grpc:protoc-gen-grpc-java:1.82.2"
             }
             create("grpckt") {
-                artifact = "io.grpc:protoc-gen-grpc-kotlin:1.4.3:jdk8@jar"
+                // Keep in lockstep with the grpc-kotlin-stub runtime version
+                // (libs.versions.toml `grpc-kotlin`) — codegen/runtime skew can
+                // generate stubs against APIs the runtime doesn't ship.
+                artifact = "io.grpc:protoc-gen-grpc-kotlin:1.5.0:jdk8@jar"
             }
         }
         generateProtoTasks {
