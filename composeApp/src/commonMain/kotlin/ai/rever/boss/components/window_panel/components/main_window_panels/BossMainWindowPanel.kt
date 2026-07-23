@@ -63,6 +63,8 @@ import ai.rever.boss.components.window_panel.SplitOrientation
 import ai.rever.boss.components.dashboard.Dashboard
 import ai.rever.boss.window.LocalWindowProjectState
 import ai.rever.boss.window.Project
+import ai.rever.boss.window.TabWidthMode
+import ai.rever.boss.window.WindowAppearanceSettingsManager
 import ai.rever.boss.window.selectProjectInWindow
 import ai.rever.boss.dashboard.SplitTemplate
 import ai.rever.boss.dashboard.SplitTemplatesManager
@@ -96,6 +98,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
@@ -130,6 +133,7 @@ private fun BossTabButtonWithFavicon(
     onClick: () -> Unit,
     onClose: () -> Unit,
     contextMenuItems: List<ContextMenuItem>,
+    tabWidth: Dp?,
     // Drag-related parameters
     tabDragComponent: TabDraggableComponent? = null,
     panelId: String? = null,
@@ -152,12 +156,44 @@ private fun BossTabButtonWithFavicon(
         onClick = onClick,
         onClose = onClose,
         contextMenuItems = contextMenuItems,
+        tabWidth = tabWidth,
         tabDragComponent = tabDragComponent,
         tabInfo = config,
         panelId = panelId,
         tabIndex = tabIndex,
         onDragEnd = onDragEnd
     )
+}
+
+/**
+ * The "+" (new tab) button. Rendered either as a LazyRow item hugging the
+ * last tab (legacy FIXED sizing while everything fits) or as a fixed sibling
+ * at the right edge of the tab strip — see the call sites in BossMainTabBar.
+ */
+@Composable
+private fun NewTabButton(
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = modifier
+            .height(32.dp)
+            .width(32.dp)
+            .padding(4.dp)
+            .background(
+                color = BossDarkSurface,
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp)
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = Icons.Default.Add,
+            contentDescription = "New Tab",
+            tint = BossDarkTextSecondary,
+            modifier = Modifier.size(16.dp)
+        )
+    }
 }
 
 @Composable
@@ -187,7 +223,16 @@ fun BossTabsComponent.BossMainTabBar(
     // LazyListState for tab bar scrolling
     val listState = rememberLazyListState()
 
-    // Track if tab bar is scrollable to determine plus button placement
+    // Tab sizing behaviour (Settings → Window Appearance → Tab Bar).
+    // SHRINK_TO_FIT passes the computed per-tab width down to each button;
+    // FIXED passes null, which falls back to the legacy intrinsic sizing.
+    val appearanceSettings by WindowAppearanceSettingsManager.currentSettings.collectAsState()
+    val shrinkTabsToFit = appearanceSettings.tabWidthMode == TabWidthMode.SHRINK_TO_FIT
+
+    // Legacy FIXED mode only: drives whether the "+" button renders inside
+    // the row (hugging the last tab) or outside (fixed at the right edge).
+    // SHRINK_TO_FIT ignores this — its tabs always fill the bar, so the
+    // outside placement is both natural and race-free.
     val isScrollable by remember {
         derivedStateOf {
             listState.canScrollForward || listState.canScrollBackward
@@ -277,7 +322,7 @@ fun BossTabsComponent.BossMainTabBar(
                 }
             }
         ) {
-            BossLeftTabBar(listState) {
+            BossLeftTabBar(listState, tabCount = tabsState.value.tabs.size) { tabWidth ->
                 // Render tab buttons as lazy items
                 itemsIndexed(tabsState.value.tabs) { index, config ->
                     val isSelected = index == tabsState.value.activeIndex
@@ -302,6 +347,7 @@ fun BossTabsComponent.BossMainTabBar(
                         config = config,
                         isSelected = isSelected,
                         isFocused = true, // Tab bars are always considered focused when window is active
+                        tabWidth = if (shrinkTabsToFit) tabWidth else null,
                         onClick = {
                             selectTab(index)
                             // Track this tab interaction for Cmd+R/Cmd+N
@@ -461,9 +507,11 @@ fun BossTabsComponent.BossMainTabBar(
                         }
                     )
 
-                    // Vertical divider after tab (only if not the last tab)
+                    // Vertical divider after tab (only if not the last tab).
+                    // Horizontal padding is shared with BossTabBar's width
+                    // budget — change it there, not here.
                     if (index < tabsState.value.tabs.size - 1) {
-                        VDivider(modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp))
+                        VDivider(modifier = Modifier.padding(vertical = 8.dp, horizontal = INTER_TAB_DIVIDER_PADDING))
                     }
 
                     // Show reorder indicator after the last tab if dropping at the end
@@ -484,65 +532,46 @@ fun BossTabsComponent.BossMainTabBar(
                     }
                 }
 
-                // Plus button as item when not scrollable (appears right after last tab)
-                if (!isScrollable) {
+                // Legacy FIXED mode keeps its historical "+" placement:
+                // inside the row, hugging the last tab, while everything
+                // fits. This reintroduces the known one-frame glitch when
+                // isScrollable flips mid-drag, but that trade-off is what
+                // FIXED users always had — FIXED means legacy, glitch
+                // included.
+                if (!shrinkTabsToFit && !isScrollable) {
                     item {
-                        Box(
-                            modifier = Modifier
-                                .height(32.dp)
-                                .width(32.dp)
-                                .padding(4.dp)
-                                .background(
-                                    color = BossDarkSurface,
-                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp)
-                                )
-                                .clickable {
-                                    showNewTabDialog = true
-                                    // Track panel interaction when plus button is clicked
-                                    if (splitViewState != null && currentPanelId != null) {
-                                        splitViewState.setActivePanel(currentPanelId)
-                                    }
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = "New Tab",
-                                tint = BossDarkTextSecondary,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
+                        NewTabButton(
+                            onClick = {
+                                showNewTabDialog = true
+                                // Track panel interaction when plus button is clicked
+                                if (splitViewState != null && currentPanelId != null) {
+                                    splitViewState.setActivePanel(currentPanelId)
+                                }
+                            }
+                        )
                     }
                 }
             }
 
-            // Fixed plus button (stays visible when tabs scroll - only when scrollable)
-            if (isScrollable) {
-                Box(
-                    modifier = Modifier
-                        .height(32.dp)
-                        .width(32.dp)
-                        .padding(4.dp)
-                        .background(
-                            color = BossDarkSurface,
-                            shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp)
-                        )
-                        .clickable {
-                            showNewTabDialog = true
-                            // Track panel interaction when plus button is clicked
-                            if (splitViewState != null && currentPanelId != null) {
-                                splitViewState.setActivePanel(currentPanelId)
-                            }
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "New Tab",
-                        tint = BossDarkTextSecondary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
+            // Plus button outside the LazyRow, fixed at the right edge of the
+            // strip: always in SHRINK_TO_FIT (tabs fill the bar, so this is
+            // both natural and immune to the isScrollable race), and in FIXED
+            // mode once the row scrolls (so the button can't scroll away).
+            //
+            // `padding(end = 12.dp)` reserves extra breathing room on the right
+            // edge so the icon doesn't feel jammed against the next bar
+            // element (the right tab-bar section / window-control area).
+            if (shrinkTabsToFit || isScrollable) {
+                NewTabButton(
+                    modifier = Modifier.padding(end = 12.dp),
+                    onClick = {
+                        showNewTabDialog = true
+                        // Track panel interaction when plus button is clicked
+                        if (splitViewState != null && currentPanelId != null) {
+                            splitViewState.setActivePanel(currentPanelId)
+                        }
+                    }
+                )
             }
 
             Spacer(
