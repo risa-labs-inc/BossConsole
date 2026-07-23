@@ -579,7 +579,6 @@ kotlin {
             implementation(libs.compose.mp.components.ui.tooling.preview)
             implementation(libs.androidx.lifecycle.viewmodel)
             implementation(libs.androidx.lifecycle.runtime.compose)
-            implementation(projects.shared)
             // NOTE: BossEditor is not a host dependency. The editor-tab plugin
             // bundles bosseditor-compose-desktop (and its kotlin-compiler-embeddable
             // PSI stack) privately inside its own JAR; the plugin's classloader

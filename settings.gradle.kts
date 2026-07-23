@@ -36,7 +36,6 @@ dependencyResolutionManagement {
 
 include(":composeApp")
 include(":server")
-include(":shared")
 // Microkernel architecture modules
 // protoc and protoc-gen-grpc-java do not publish Windows ARM64 binaries,
 // so all microkernel modules (which depend on boss-ipc proto generation)
