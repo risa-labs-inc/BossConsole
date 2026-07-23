@@ -98,6 +98,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
@@ -132,7 +133,7 @@ private fun BossTabButtonWithFavicon(
     onClick: () -> Unit,
     onClose: () -> Unit,
     contextMenuItems: List<ContextMenuItem>,
-    tabWidth: androidx.compose.ui.unit.Dp?,
+    tabWidth: Dp?,
     // Drag-related parameters
     tabDragComponent: TabDraggableComponent? = null,
     panelId: String? = null,

@@ -41,6 +41,38 @@ private val MAX_TAB_WIDTH = 240.dp
 private val INTER_TAB_DIVIDER_WIDTH = 9.dp
 
 /**
+ * Per-tab width in INTEGER PIXELS, not Dp. A Dp-space division produces a
+ * fractional Dp that Compose rounds to the nearest pixel when it measures
+ * each tab. With N tabs the rounding can go up, making total content >
+ * [rowWidthPx] by a couple of pixels, which triggers the LazyRow scrollbar
+ * even when every tab is far below the max. Adding a tab swings the rounding
+ * the other way, so the bar flickers in and out.
+ *
+ * Integer-pixel division floors naturally, so total tab pixels
+ * (result * tabCount + dividersPx) is always ≤ [rowWidthPx], with at most
+ * `tabCount - 1` pixels of slack on the right — invisible and, crucially,
+ * stable.
+ *
+ * Two distinct fallbacks:
+ * - Not yet measured ([rowWidthPx] ≤ 0) or nothing to lay out
+ *   ([tabCount] ≤ 0) → [maxTabPx], the first-paint fallback.
+ * - Over-cramped (so many tabs that the dividers alone exceed the row and
+ *   the division goes ≤ 0) → the coercion clamps to [minTabPx] and the row
+ *   scrolls, same as any other below-floor result.
+ */
+internal fun computeTabWidthPx(
+    rowWidthPx: Int,
+    tabCount: Int,
+    dividerPx: Int,
+    minTabPx: Int,
+    maxTabPx: Int
+): Int {
+    if (rowWidthPx <= 0 || tabCount <= 0) return maxTabPx
+    val totalDividersPx = dividerPx * (tabCount - 1)
+    return ((rowWidthPx - totalDividersPx) / tabCount).coerceIn(minTabPx, maxTabPx)
+}
+
+/**
  * Horizontal scrollable tab bar for the left section of the main tab bar.
  *
  * Tabs shrink uniformly to fit the available width (Safari behaviour). When they
@@ -72,29 +104,16 @@ fun RowScope.BossLeftTabBar(
     val density = LocalDensity.current
 
     Column(modifier = Modifier.weight(1f).padding(horizontal = 8.dp)) {
-        // Compute tab width in INTEGER PIXELS, not Dp. A Dp-space division
-        // produces a fractional Dp that Compose rounds to the nearest pixel
-        // when it measures each tab. With N tabs the rounding can go up,
-        // making total content > rowWidthPx by a couple of pixels, which
-        // triggers the LazyRow scrollbar even when every tab is far below
-        // MAX_TAB_WIDTH. Adding a tab swings the rounding the other way, so
-        // the bar flickers in and out.
-        //
-        // Integer-pixel division floors naturally, so total tab pixels
-        // (perTabPx * tabCount + dividersPx) is always ≤ rowWidthPx, with
-        // at most `tabCount - 1` pixels of slack on the right — invisible
-        // and, crucially, stable.
-        val dividerPx = with(density) { INTER_TAB_DIVIDER_WIDTH.toPx().toInt() }
-        val totalDividersPx = if (tabCount > 1) dividerPx * (tabCount - 1) else 0
-        val perTabPx = if (tabCount > 0 && rowWidthPx > 0) {
-            (rowWidthPx - totalDividersPx) / tabCount
-        } else {
-            -1
-        }
-        val tabWidth = if (perTabPx >= 0) {
-            with(density) { perTabPx.toDp() }.coerceIn(MIN_TAB_WIDTH, MAX_TAB_WIDTH)
-        } else {
-            MAX_TAB_WIDTH
+        // All arithmetic lives in computeTabWidthPx (pure, unit-tested);
+        // here we only convert the Dp constants to pixels and back.
+        val tabWidth = with(density) {
+            computeTabWidthPx(
+                rowWidthPx = rowWidthPx,
+                tabCount = tabCount,
+                dividerPx = INTER_TAB_DIVIDER_WIDTH.toPx().toInt(),
+                minTabPx = MIN_TAB_WIDTH.roundToPx(),
+                maxTabPx = MAX_TAB_WIDTH.roundToPx()
+            ).toDp()
         }
 
         LazyRow(
