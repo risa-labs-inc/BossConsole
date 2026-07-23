@@ -99,7 +99,7 @@ enum class SettingsSection(
     ),
     WINDOW_APPEARANCE(
         displayName = "Appearance",
-        description = "Title bar, window decorations, and theming",
+        description = "Title bar, tab sizing, and window decorations",
         icon = Icons.Outlined.DesktopWindows
     ),
     SIDEBAR(
