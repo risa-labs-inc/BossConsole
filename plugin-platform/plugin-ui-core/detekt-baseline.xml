@@ -1,0 +1,28 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>LongMethod:BossComponents.kt$@Composable fun BossTextField( value: String, onValueChange: (String) -&gt; Unit, label: String, modifier: Modifier = Modifier, placeholder: String = "", enabled: Boolean = true, isError: Boolean = false, errorMessage: String? = null, singleLine: Boolean = true, required: Boolean = false )</ID>
+    <ID>LongParameterList:BossComponents.kt$( label: String, buttonText: String, onClick: () -&gt; Unit, modifier: Modifier = Modifier, description: String? = null, enabled: Boolean = true, isDestructive: Boolean = false )</ID>
+    <ID>LongParameterList:BossComponents.kt$( label: String, checked: Boolean, onCheckedChange: (Boolean) -&gt; Unit, modifier: Modifier = Modifier, description: String? = null, enabled: Boolean = true )</ID>
+    <ID>LongParameterList:BossComponents.kt$( text: String, onClick: () -&gt; Unit, modifier: Modifier = Modifier, enabled: Boolean = true, isDestructive: Boolean = false, icon: ImageVector? = null )</ID>
+    <ID>LongParameterList:BossComponents.kt$( value: String, onValueChange: (String) -&gt; Unit, label: String, modifier: Modifier = Modifier, placeholder: String = "", enabled: Boolean = true, isError: Boolean = false, errorMessage: String? = null, minLines: Int = 3, maxLines: Int = 5 )</ID>
+    <ID>LongParameterList:BossComponents.kt$( value: String, onValueChange: (String) -&gt; Unit, label: String, modifier: Modifier = Modifier, placeholder: String = "", enabled: Boolean = true, isError: Boolean = false, errorMessage: String? = null, singleLine: Boolean = true, required: Boolean = false )</ID>
+    <ID>MatchingDeclarationName:BossTheme.kt$BossThemeColors</ID>
+    <ID>MaxLineLength:BossColors.kt$@Deprecated(DARK_ALIAS_DEPRECATION, ReplaceWith("BossThemeController.current.colors.alert", "ai.rever.boss.plugin.ui.BossThemeController"))</ID>
+    <ID>MaxLineLength:BossColors.kt$@Deprecated(DARK_ALIAS_DEPRECATION, ReplaceWith("BossThemeController.current.colors.data", "ai.rever.boss.plugin.ui.BossThemeController"))</ID>
+    <ID>MaxLineLength:BossColors.kt$@Deprecated(DARK_ALIAS_DEPRECATION, ReplaceWith("BossThemeController.current.colors.ink", "ai.rever.boss.plugin.ui.BossThemeController"))</ID>
+    <ID>MaxLineLength:BossColors.kt$@Deprecated(DARK_ALIAS_DEPRECATION, ReplaceWith("BossThemeController.current.colors.line", "ai.rever.boss.plugin.ui.BossThemeController"))</ID>
+    <ID>MaxLineLength:BossColors.kt$@Deprecated(DARK_ALIAS_DEPRECATION, ReplaceWith("BossThemeController.current.colors.ok", "ai.rever.boss.plugin.ui.BossThemeController"))</ID>
+    <ID>MaxLineLength:BossColors.kt$@Deprecated(DARK_ALIAS_DEPRECATION, ReplaceWith("BossThemeController.current.colors.panel", "ai.rever.boss.plugin.ui.BossThemeController"))</ID>
+    <ID>MaxLineLength:BossColors.kt$@Deprecated(DARK_ALIAS_DEPRECATION, ReplaceWith("BossThemeController.current.colors.raised", "ai.rever.boss.plugin.ui.BossThemeController"))</ID>
+    <ID>MaxLineLength:BossColors.kt$@Deprecated(DARK_ALIAS_DEPRECATION, ReplaceWith("BossThemeController.current.colors.signal", "ai.rever.boss.plugin.ui.BossThemeController"))</ID>
+    <ID>MaxLineLength:BossColors.kt$@Deprecated(DARK_ALIAS_DEPRECATION, ReplaceWith("BossThemeController.current.colors.textMuted", "ai.rever.boss.plugin.ui.BossThemeController"))</ID>
+    <ID>MaxLineLength:BossColors.kt$@Deprecated(DARK_ALIAS_DEPRECATION, ReplaceWith("BossThemeController.current.colors.textPrimary", "ai.rever.boss.plugin.ui.BossThemeController"))</ID>
+    <ID>MaxLineLength:BossColors.kt$@Deprecated(DARK_ALIAS_DEPRECATION, ReplaceWith("BossThemeController.current.colors.textSecondary", "ai.rever.boss.plugin.ui.BossThemeController"))</ID>
+    <ID>MaxLineLength:BossColors.kt$@Deprecated(DARK_ALIAS_DEPRECATION, ReplaceWith("BossThemeController.current.colors.warn", "ai.rever.boss.plugin.ui.BossThemeController"))</ID>
+    <ID>MaxLineLength:BossComponents.kt$if (enabled) BossThemeColors.SurfaceColor else BossThemeColors.SurfaceColor.copy(alpha = 0.5f)</ID>
+    <ID>MaxLineLength:BossDesignSystem.kt$displayLarge = TextStyle(fontFamily = mono, fontWeight = FontWeight.SemiBold, fontSize = 28.sp, letterSpacing = (-0.5).sp)</ID>
+    <ID>TooManyFunctions:BossComponents.kt$ai.rever.boss.plugin.ui.BossComponents.kt</ID>
+  </CurrentIssues>
+</SmellBaseline>

@@ -1,0 +1,10 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>MaxLineLength:FileEventBus.kt$FileEventBus$logger.debug(LogCategory.FILE, "Opening file", mapOf("path" to cleanPath, "line" to line, "column" to column, "window" to sourceWindowId))</ID>
+    <ID>MaxLineLength:FileEventBus.kt$FileEventBus$suspend</ID>
+    <ID>SwallowedException:FileEventBus.kt$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:FileEventBus.kt$e: Exception</ID>
+  </CurrentIssues>
+</SmellBaseline>

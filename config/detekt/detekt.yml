@@ -1,0 +1,28 @@
+# BossConsole detekt configuration.
+#
+# Applied with buildUponDefaultConfig = true, so this file only contains
+# deliberate deviations from detekt's default ruleset — everything not listed
+# here runs with default settings.
+#
+# Existing debt is frozen in per-module detekt-baseline.xml files; only new
+# violations fail the build. Regenerate with `./gradlew detektBaseline`.
+
+naming:
+  FunctionNaming:
+    # Composable functions are PascalCase by convention.
+    ignoreAnnotated: ['Composable']
+
+style:
+  MagicNumber:
+    # Disabled for now: ~1,400 findings, almost all Compose dp/sp/weight UI
+    # values where extracting a constant hurts readability. A targeted policy
+    # (ignore UI literals, keep logic/protocol constants) comes in a follow-up.
+    active: false
+
+exceptions:
+  TooGenericExceptionCaught:
+    # Kept active on purpose — catching Exception/Throwable hides real error
+    # handling. Existing catches are baselined; new ones should catch the
+    # narrowest type that makes sense.
+    active: true
+    severity: warning

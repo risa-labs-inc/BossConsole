@@ -1,0 +1,8 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ReturnCount:BrowserConfig.kt$private fun ByteArray?.contentEqualsOrNull(other: ByteArray?): Boolean</ID>
+    <ID>TooManyFunctions:BrowserHandle.kt$BrowserHandle</ID>
+  </CurrentIssues>
+</SmellBaseline>

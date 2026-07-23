@@ -1,0 +1,27 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>FunctionNaming:BossDirectoriesTest.kt$BossDirectoriesTest.IsDevModeTests$@Test fun `isDevMode reflects current runtime state`()</ID>
+    <ID>FunctionNaming:BossDirectoriesTest.kt$BossDirectoriesTest.IsTruthyTests$@Test fun `0 is not truthy`()</ID>
+    <ID>FunctionNaming:BossDirectoriesTest.kt$BossDirectoriesTest.IsTruthyTests$@Test fun `1 is truthy`()</ID>
+    <ID>FunctionNaming:BossDirectoriesTest.kt$BossDirectoriesTest.IsTruthyTests$@Test fun `arbitrary strings are not truthy`()</ID>
+    <ID>FunctionNaming:BossDirectoriesTest.kt$BossDirectoriesTest.IsTruthyTests$@Test fun `false string variants are not truthy`()</ID>
+    <ID>FunctionNaming:BossDirectoriesTest.kt$BossDirectoriesTest.IsTruthyTests$@Test fun `null and empty are not truthy`()</ID>
+    <ID>FunctionNaming:BossDirectoriesTest.kt$BossDirectoriesTest.IsTruthyTests$@Test fun `true string variants are truthy`()</ID>
+    <ID>FunctionNaming:BossDirectoriesTest.kt$BossDirectoriesTest.IsTruthyTests$@Test fun `yes is truthy`()</ID>
+    <ID>FunctionNaming:BossDirectoriesTest.kt$BossDirectoriesTest.ResolveTests$@Test fun `resolve handles nested paths`()</ID>
+    <ID>FunctionNaming:BossDirectoriesTest.kt$BossDirectoriesTest.ResolveTests$@Test fun `resolve produces path under rootDir`()</ID>
+    <ID>FunctionNaming:BossDirectoriesTest.kt$BossDirectoriesTest.RootDirTests$@Test fun `rootDir is under user home`()</ID>
+    <ID>FunctionNaming:BossDirectoriesTest.kt$BossDirectoriesTest.RootDirTests$@Test fun `rootDir name matches dev mode state`()</ID>
+    <ID>FunctionNaming:PathUtilsTest.kt$PathUtilsTest.ExtractFileNameTests$@Test fun `handles Unix paths`()</ID>
+    <ID>FunctionNaming:PathUtilsTest.kt$PathUtilsTest.ExtractFileNameTests$@Test fun `handles Windows paths`()</ID>
+    <ID>FunctionNaming:PathUtilsTest.kt$PathUtilsTest.ExtractFileNameTests$@Test fun `handles edge cases`()</ID>
+    <ID>FunctionNaming:PathUtilsTest.kt$PathUtilsTest.ExtractFileNameTests$@Test fun `handles files without path`()</ID>
+    <ID>FunctionNaming:PathUtilsTest.kt$PathUtilsTest.ExtractFileNameTests$@Test fun `handles mixed separators`()</ID>
+    <ID>FunctionNaming:PathUtilsTest.kt$PathUtilsTest.ExtractParentNameTests$@Test fun `handles Unix paths`()</ID>
+    <ID>FunctionNaming:PathUtilsTest.kt$PathUtilsTest.ExtractParentNameTests$@Test fun `handles Windows paths`()</ID>
+    <ID>FunctionNaming:PathUtilsTest.kt$PathUtilsTest.ExtractParentNameTests$@Test fun `handles edge cases`()</ID>
+    <ID>FunctionNaming:PathUtilsTest.kt$PathUtilsTest.ExtractParentNameTests$@Test fun `handles mixed separators`()</ID>
+  </CurrentIssues>
+</SmellBaseline>

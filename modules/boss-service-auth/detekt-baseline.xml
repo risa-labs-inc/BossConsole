@@ -1,0 +1,12 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>LongMethod:AuthServiceMain.kt$fun main()</ID>
+    <ID>MaxLineLength:AuthServiceMain.kt$.</ID>
+    <ID>TooGenericExceptionCaught:SupabaseAuthClient.kt$SupabaseAuthClient$e: Exception</ID>
+    <ID>TooManyFunctions:AuthServiceGrpcImpl.kt$AuthServiceGrpcImpl : AuthServiceCoroutineImplBase</ID>
+    <ID>WildcardImport:AuthServiceGrpcImpl.kt$import ai.rever.boss.ipc.proto.services.*</ID>
+    <ID>WildcardImport:AuthServiceMain.kt$import ai.rever.boss.ipc.proto.*</ID>
+  </CurrentIssues>
+</SmellBaseline>

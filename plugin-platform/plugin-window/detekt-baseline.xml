@@ -1,0 +1,7 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>MaxLineLength:WindowProjectState.kt$WindowProjectState$logger.debug(LogCategory.FILE, "Selected project", mapOf("windowId" to windowId, "name" to project.name, "path" to project.path))</ID>
+  </CurrentIssues>
+</SmellBaseline>

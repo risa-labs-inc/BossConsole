@@ -1,0 +1,14 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>CyclomaticComplexMethod:WidgetDiffEngine.kt$WidgetDiffEngine$fun apply(base: WidgetTree, operations: List&lt;DiffOperation&gt;): WidgetTree</ID>
+    <ID>CyclomaticComplexMethod:WidgetDiffEngine.kt$WidgetDiffEngine$fun diff(old: WidgetTree, new: WidgetTree): List&lt;DiffOperation&gt;</ID>
+    <ID>CyclomaticComplexMethod:WidgetProtoConverter.kt$WidgetProtoConverter$private fun ProtoWidgetType.toKotlin(): WidgetType</ID>
+    <ID>CyclomaticComplexMethod:WidgetProtoConverter.kt$WidgetProtoConverter$private fun WidgetType.toProto(): ProtoWidgetType</ID>
+    <ID>NestedBlockDepth:WidgetDiffEngine.kt$WidgetDiffEngine$fun apply(base: WidgetTree, operations: List&lt;DiffOperation&gt;): WidgetTree</ID>
+    <ID>NestedBlockDepth:WidgetProtoConverter.kt$WidgetProtoConverter$fun List&lt;DiffOperation&gt;.toProtoDiff(baseVersion: Long, newVersion: Long): ProtoWidgetDiff</ID>
+    <ID>TooManyFunctions:WidgetTreeBuilder.kt$WidgetTreeBuilder</ID>
+    <ID>UseCheckOrError:WidgetTreeBuilder.kt$WidgetTreeBuilder$throw IllegalStateException("No root widget defined")</ID>
+  </CurrentIssues>
+</SmellBaseline>

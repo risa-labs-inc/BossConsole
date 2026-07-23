@@ -1,0 +1,9 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>NestedBlockDepth:TopologicalSort.kt$TopologicalSort$fun &lt;T : Any&gt; sort( nodes: List&lt;T&gt;, getId: (T) -&gt; String, getDeps: (T) -&gt; List&lt;String&gt;, ): List&lt;List&lt;T&gt;&gt;</ID>
+    <ID>TooGenericExceptionCaught:MasteryExecutor.kt$MasteryExecutor$e: Exception</ID>
+    <ID>UnusedParameter:MasteryExecutor.kt$MasteryExecutor$mastery: MasteryDefinition</ID>
+  </CurrentIssues>
+</SmellBaseline>

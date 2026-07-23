@@ -1,0 +1,21 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>CyclomaticComplexMethod:CrashAnalyzer.kt$CrashAnalyzer$fun analyze(report: ProcessFailureReport, manifest: ProcessManifest?): DiagnosticResult</ID>
+    <ID>LongMethod:CrashAnalyzer.kt$CrashAnalyzer$fun analyze(report: ProcessFailureReport, manifest: ProcessManifest?): DiagnosticResult</ID>
+    <ID>LongMethod:OrchestratorMain.kt$fun main()</ID>
+    <ID>LongMethod:RepairEngine.kt$RepairEngine$private suspend fun executeStrategy( processId: String, strategy: RepairStrategy, report: ProcessFailureReport, manifest: ProcessManifest?, diagnostic: DiagnosticResult, ): RepairOutcome</ID>
+    <ID>LoopWithTooManyJumpStatements:CrashAnalyzer.kt$CrashAnalyzer$for</ID>
+    <ID>MaxLineLength:HttpAiRepairClient.kt$HttpAiRepairClient$"""{"explanation":"&lt;why this fix works&gt;","patches":[{"filePath":"&lt;path&gt;","description":"&lt;what changed&gt;","originalSnippet":"&lt;exact lines to replace&gt;","patchedSnippet":"&lt;replacement lines&gt;"}]}"""</ID>
+    <ID>MaxLineLength:HttpAiRepairClient.kt$HttpAiRepairClient$appendLine("You are an AI code repair assistant. Analyze the process failure below and propose a minimal surgical fix.")</ID>
+    <ID>MaxLineLength:HttpAiRepairClient.kt$HttpAiRepairClient$appendLine("You are an AI configuration repair assistant. Suggest configuration changes for the failing process.")</ID>
+    <ID>MaxLineLength:HttpAiRepairClient.kt$HttpAiRepairClient$put("content", "You are a precise code repair assistant. Always respond with valid JSON only. Do not include markdown code fences.")</ID>
+    <ID>TooGenericExceptionCaught:HttpAiRepairClient.kt$HttpAiRepairClient$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:OrchestratorServiceImpl.kt$OrchestratorServiceImpl$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:RepairEngine.kt$RepairEngine$e: Exception</ID>
+    <ID>WildcardImport:CrashAnalyzerTest.kt$import ai.rever.boss.ipc.proto.*</ID>
+    <ID>WildcardImport:OrchestratorMain.kt$import ai.rever.boss.ipc.proto.*</ID>
+    <ID>WildcardImport:OrchestratorServiceImpl.kt$import ai.rever.boss.ipc.proto.*</ID>
+  </CurrentIssues>
+</SmellBaseline>

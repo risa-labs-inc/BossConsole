@@ -1,0 +1,9 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>TooGenericExceptionCaught:SettingsServiceImpl.kt$SettingsServiceImpl$e: Exception</ID>
+    <ID>WildcardImport:SettingsServiceImpl.kt$import ai.rever.boss.ipc.proto.services.*</ID>
+    <ID>WildcardImport:SettingsServiceMain.kt$import ai.rever.boss.ipc.proto.*</ID>
+  </CurrentIssues>
+</SmellBaseline>

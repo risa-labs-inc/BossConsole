@@ -1,0 +1,11 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>LongMethod:BrowserServiceMain.kt$fun main()</ID>
+    <ID>MaxLineLength:BrowserServiceImpl.kt$BrowserServiceImpl$logger.warn("getPageInfo called with {} windows tracked — returning first window only; use a window-specific RPC for multi-window support", windowStates.size)</ID>
+    <ID>MaxLineLength:BrowserServiceMain.kt$.</ID>
+    <ID>WildcardImport:BrowserServiceImpl.kt$import ai.rever.boss.ipc.proto.services.*</ID>
+    <ID>WildcardImport:BrowserServiceMain.kt$import ai.rever.boss.ipc.proto.*</ID>
+  </CurrentIssues>
+</SmellBaseline>

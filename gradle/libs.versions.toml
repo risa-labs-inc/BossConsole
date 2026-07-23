@@ -9,11 +9,13 @@ androidx-lifecycle = "2.10.0"
 compose-multiplatform = "1.11.1"
 compose-icons = "1.1.1"
 decompose = "3.5.0"
+detekt = "1.23.8"
 essenty = "2.5.0"
 junit-jupiter = "6.1.0"
 clikt = "5.1.0"
 kotlin = "2.4.0"
 kotlinx-coroutines = "1.11.0"
+ktlint-gradle = "14.2.0"
 kotlinx-datetime = "0.8.0-0.6.x-compat"
 # Pinned to the stack the MCP Kotlin SDK supports (ktor <= 3.3/3.4 → serialization 1.9.x).
 # The terminal-tab plugin bundles ktor 3.3 + mcp-sdk, but resolves kotlinx-serialization
@@ -123,6 +125,8 @@ androidApplication = { id = "com.android.application", version.ref = "agp" }
 androidLibrary = { id = "com.android.library", version.ref = "agp" }
 composeMultiplatform = { id = "org.jetbrains.compose", version.ref = "compose-multiplatform" }
 composeCompiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detekt" }
+ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlint-gradle" }
 kotlinJvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlinSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 ktor = { id = "io.ktor.plugin", version.ref = "ktor" }
