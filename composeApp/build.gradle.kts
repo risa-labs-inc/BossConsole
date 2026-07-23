@@ -764,7 +764,12 @@ kotlin {
             // accessor: the module is excluded from the build on Windows ARM64
             // (settings.gradle.kts — boss-ipc's protoc ships no win-arm64
             // binaries), where the generated accessor wouldn't even compile.
-            findProject(":plugin-platform:plugin-api-ipc")?.let { implementation(it) }
+            // findProject only guards presence; the dependency itself must use
+            // project(path) string notation — passing the Project OBJECT to
+            // implementation() is an error in Gradle 10.
+            if (findProject(":plugin-platform:plugin-api-ipc") != null) {
+                implementation(project(":plugin-platform:plugin-api-ipc"))
+            }
         }
         // Without the IPC module (Windows ARM64) the drift test can't compile;
         // drop it from the source set — every other platform still enforces it.
