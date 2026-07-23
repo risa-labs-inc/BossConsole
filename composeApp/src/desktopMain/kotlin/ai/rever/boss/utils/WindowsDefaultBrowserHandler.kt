@@ -267,6 +267,7 @@ object WindowsDefaultBrowserHandler {
             process.waitFor()
             process.exitValue() == 0
         } catch (e: Exception) {
+            logger.debug(LogCategory.BROWSER, "reg query failed - treating browser candidate as unregistered", mapOf("error" to e.toString()))
             false
         }
     }

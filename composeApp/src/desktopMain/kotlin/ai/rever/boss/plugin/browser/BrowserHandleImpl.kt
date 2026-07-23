@@ -356,6 +356,7 @@ internal class BrowserHandleImpl(
                 val pageUrl = try {
                     params.browser().url()
                 } catch (e: Exception) {
+                    logger.debug(LogCategory.BROWSER, "Could not read page URL for context menu - using empty", mapOf("error" to e.toString()))
                     ""
                 }
 
@@ -398,6 +399,7 @@ internal class BrowserHandleImpl(
                     }
                 } catch (e: Exception) {
                     // JavaScript execution failed - proceed with defaults
+                    logger.debug(LogCategory.BROWSER, "Context-menu JS inspection failed - proceeding with defaults", mapOf("error" to e.toString()))
                 }
 
                 val info = BrowserContextMenuInfo(
@@ -1330,6 +1332,8 @@ internal class BrowserHandleImpl(
                     try {
                         window.isDisplayable && window.isShowing
                     } catch (e: Exception) {
+                        // Window can be mid-disposal - treat as not a candidate
+                        logger.debug(LogCategory.BROWSER, "Window state probe failed - skipping window", mapOf("error" to e.toString()))
                         false
                     }
                 }

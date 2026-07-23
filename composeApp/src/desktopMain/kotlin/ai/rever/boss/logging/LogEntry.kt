@@ -28,7 +28,10 @@ data class LogEntry(
             } else {
                 "00:00:00.000"
             }
-        } catch (e: Exception) {
+        } catch (ignored: Exception) {
+            // Deliberately unlogged: this formatter runs inside the stdout/stderr
+            // capture pipeline, so logging here could feed back into the capture
+            // loop. A placeholder timestamp is the safe fallback.
             "00:00:00.000"
         }
     }

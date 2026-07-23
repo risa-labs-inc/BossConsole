@@ -424,7 +424,7 @@ object SplitTemplatesManager {
             // Convert SSH URL to HTTPS if needed
             convertGitUrlToWebUrl(url)
         } catch (e: Exception) {
-            logger.debug(LogCategory.SYSTEM, "Error getting git remote")
+            logger.debug(LogCategory.SYSTEM, "Error getting git remote", mapOf("error" to e.toString()))
             "https://google.com"
         }
     }
@@ -475,7 +475,7 @@ object SplitTemplatesManager {
                 file.length() > 0
             } ?: false
         } catch (e: Exception) {
-            logger.debug(LogCategory.SYSTEM, "Error checking Claude session")
+            logger.debug(LogCategory.SYSTEM, "Error checking Claude session", mapOf("error" to e.toString()))
             false
         }
     }

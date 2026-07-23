@@ -728,6 +728,7 @@ private fun extractRepoName(url: String): String {
 
         repoName
     } catch (e: Exception) {
+        logger.debug(LogCategory.WORKSPACE, "Could not derive repo name from URL - using default", mapOf("error" to e.toString()))
         "cloned-repo"
     }
 }

@@ -948,7 +948,7 @@ class DynamicPluginManager(
                     } catch (e: Exception) {
                         logger.warn(LogCategory.SYSTEM, "Error preparing component for unload", mapOf(
                             "pluginId" to pluginId
-                        ))
+                        ), error = e)
                     }
                 }
 

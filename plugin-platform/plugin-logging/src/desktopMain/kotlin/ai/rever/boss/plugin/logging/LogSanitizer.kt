@@ -56,7 +56,9 @@ object LogSanitizer {
             }
 
             "$maskedLocal@$maskedDomain"
-        } catch (e: Exception) {
+        } catch (ignored: Exception) {
+            // Deliberately unlogged: LogSanitizer runs inside the logging pipeline,
+            // so logging from here could recurse. The placeholder marks the failure.
             "[email-mask-error]"
         }
     }
@@ -203,7 +205,9 @@ object LogSanitizer {
             }
 
             base + suffix
-        } catch (e: Exception) {
+        } catch (ignored: Exception) {
+            // Deliberately unlogged: LogSanitizer runs inside the logging pipeline,
+            // so logging from here could recurse. The placeholder marks the failure.
             "[uri-parse-error]"
         }
     }
@@ -269,7 +273,9 @@ object LogSanitizer {
                 .replace(filePathPattern, "[PATH]")
                 .replace(urlPattern, "[URL]")
                 .replace(emailPattern, "[EMAIL]")
-        } catch (e: Exception) {
+        } catch (ignored: Exception) {
+            // Deliberately unlogged: LogSanitizer runs inside the logging pipeline,
+            // so logging from here could recurse. The placeholder marks the failure.
             "[sanitization-error]"
         }
     }
@@ -299,7 +305,9 @@ object LogSanitizer {
                 .replace(filePathPattern, "[PATH]")
                 .replace(urlPattern, "[URL]")
                 .replace(emailPattern, "[EMAIL]")
-        } catch (e: Exception) {
+        } catch (ignored: Exception) {
+            // Deliberately unlogged: LogSanitizer runs inside the logging pipeline,
+            // so logging from here could recurse. The placeholder marks the failure.
             "[sanitization-error]"
         }
     }

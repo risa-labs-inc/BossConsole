@@ -177,6 +177,7 @@ object FileSystemUtils {
             val dir = File(directoryPath)
             dir.isDirectory && dir.canWrite()
         } catch (e: Exception) {
+            logger.debug(LogCategory.FILE, "Writability check failed - treating directory as not writable", mapOf("path" to directoryPath, "error" to e.toString()))
             false
         }
     }

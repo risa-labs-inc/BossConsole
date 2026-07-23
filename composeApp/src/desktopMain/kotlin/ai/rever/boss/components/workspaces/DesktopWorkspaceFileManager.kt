@@ -1,6 +1,8 @@
 package ai.rever.boss.components.workspaces
 
 import ai.rever.boss.utils.SystemUtils
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -12,6 +14,7 @@ import java.nio.file.StandardOpenOption
  * Desktop implementation of WorkspaceFileManager
  */
 actual class WorkspaceFileManager {
+    private val logger = BossLogger.forComponent("WorkspaceFileManager")
     private val workspaceDirectory: String by lazy {
         val userHome = SystemUtils.getUserHome()
         val documentsPath = Paths.get(userHome, "Documents", WorkspaceFileManagerCommon.getDefaultWorkspaceDirectoryName())
@@ -28,6 +31,7 @@ actual class WorkspaceFileManager {
             }
             dir.exists() && dir.isDirectory
         } catch (e: Exception) {
+            logger.warn(LogCategory.WORKSPACE, "Failed to create workspace directory", error = e)
             false
         }
     }
@@ -51,6 +55,7 @@ actual class WorkspaceFileManager {
             
             filePath
         } catch (e: Exception) {
+            logger.warn(LogCategory.WORKSPACE, "Failed to save workspace to disk", mapOf("workspace" to workspace.name), error = e)
             null
         }
     }
@@ -67,6 +72,7 @@ actual class WorkspaceFileManager {
             val json = file.readText()
             WorkspaceSerializer.deserialize(json)
         } catch (e: Exception) {
+            logger.warn(LogCategory.WORKSPACE, "Failed to load workspace file", mapOf("fileName" to fileName), error = e)
             null
         }
     }
@@ -89,6 +95,7 @@ actual class WorkspaceFileManager {
                 )
             } ?: emptyList()
         } catch (e: Exception) {
+            logger.warn(LogCategory.WORKSPACE, "Failed to list workspace files", error = e)
             emptyList()
         }
     }
@@ -104,6 +111,7 @@ actual class WorkspaceFileManager {
                 false
             }
         } catch (e: Exception) {
+            logger.warn(LogCategory.WORKSPACE, "Failed to delete workspace file", mapOf("fileName" to fileName), error = e)
             false
         }
     }

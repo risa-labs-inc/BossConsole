@@ -122,6 +122,7 @@ object WindowsProtocolHandler {
             process.waitFor()
             process.exitValue() == 0
         } catch (e: Exception) {
+            logger.debug(LogCategory.SYSTEM, "reg query failed - treating boss:// protocol as unregistered", mapOf("error" to e.toString()))
             false
         }
     }
@@ -203,6 +204,7 @@ object WindowsProtocolHandler {
             val match = Regex("""REG_SZ\s+(.+)$""", RegexOption.MULTILINE).find(output)
             match?.groupValues?.get(1)?.trim()
         } catch (e: Exception) {
+            logger.debug(LogCategory.SYSTEM, "Could not read protocol handler command from registry", mapOf("error" to e.toString()))
             null
         }
     }

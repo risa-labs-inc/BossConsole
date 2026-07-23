@@ -31,6 +31,7 @@ class IpcEventBridgeImpl(
                 .toByteArray(Charsets.UTF_8)
         } catch (e: Exception) {
             // Fall back to toString() if serialization fails — for debugging
+            logger.debug("Payload serialization failed for event {} - forwarding toString(): {}", eventType, e.toString())
             payload.toString().toByteArray(Charsets.UTF_8)
         }
 

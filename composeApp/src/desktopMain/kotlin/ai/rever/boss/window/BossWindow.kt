@@ -49,8 +49,12 @@ import org.jetbrains.compose.resources.painterResource
 import boss_kotlin.composeapp.generated.resources.Res
 import boss_kotlin.composeapp.generated.resources.boss_icon
 import androidx.compose.ui.window.*
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import java.awt.Color
 import java.awt.Frame
+
+private val bossWindowLogger = BossLogger.forComponent("BossWindow")
 
 /** Floor for a programmatic window fit ("Fit host to my screen"), in dp. Keeps a
  *  fit from collapsing the window below a usable size if a remote viewer reports a
@@ -1032,6 +1036,7 @@ fun ApplicationScope.BossWindow(
                                             }
                                             resetTerminalResult = true
                                         } catch (e: Exception) {
+                                            bossWindowLogger.warn(LogCategory.TERMINAL, "Terminal reset failed - dialog shows failure state", error = e)
                                             resetTerminalResult = false
                                         }
                                         isResetting = false

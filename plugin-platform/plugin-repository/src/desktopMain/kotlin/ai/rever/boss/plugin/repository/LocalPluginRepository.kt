@@ -200,6 +200,8 @@ class LocalPluginRepository(
                 manifest.pluginId
             }
         } catch (e: Exception) {
+            // Not a readable BOSS plugin JAR - callers treat null as "skip this file"
+            logger.debug(LogCategory.SYSTEM, "Could not read pluginId from JAR", mapOf("jar" to jarFile.name, "error" to e.toString()))
             null
         }
     }

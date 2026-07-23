@@ -111,6 +111,7 @@ object PluginPersistence {
                 null
             }
         } catch (e: Exception) {
+            logger.debug(LogCategory.SYSTEM, "Could not extract version from plugin JAR", mapOf("jarPath" to jarPath, "error" to e.toString()))
             null
         }
     }

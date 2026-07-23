@@ -154,6 +154,7 @@ object BinaryCompatibilityValidator {
                 logger.debug(LogCategory.SYSTEM, "Soft-skipping runtime-package ref", mapOf(
                     "sourceClass" to sourceClass,
                     "ref" to ref.ownerClassName,
+                    "error" to e.toString(),
                 ))
             } else if (ref.ownerClassName.startsWith("ai.rever.boss.plugin.")) {
                 errors.add("$sourceClass -> ${ref.ownerClassName}: class not found")

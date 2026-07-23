@@ -48,6 +48,7 @@ class DesktopFilePicker(
                 onFileSelected(null, null)
             }
         } catch (e: Exception) {
+            filePickerLogger.warn(LogCategory.FILE, "Failed to read picked file - reporting no selection", error = e)
             onFileSelected(null, null)
         }
     }

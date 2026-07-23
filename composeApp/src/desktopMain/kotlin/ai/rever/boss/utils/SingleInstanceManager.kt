@@ -235,7 +235,7 @@ object SingleInstanceManager {
                     writer.println("OK")
                 }
             } catch (e: SocketTimeoutException) {
-                logger.warn(LogCategory.SYSTEM, "Client connection timeout")
+                logger.warn(LogCategory.SYSTEM, "Client connection timeout", error = e)
             } catch (e: Exception) {
                 logger.error(LogCategory.SYSTEM, "Error handling client", error = e)
             }
@@ -325,6 +325,7 @@ object SingleInstanceManager {
                 .map { it.isAlive }
                 .orElse(false)
         } catch (e: Exception) {
+            logger.debug(LogCategory.SYSTEM, "Process liveness check failed - assuming dead", mapOf("pid" to pid, "error" to e.toString()))
             false
         }
     }

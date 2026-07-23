@@ -820,7 +820,7 @@ ASKPASS_EOF
             logger.debug(LogCategory.SYSTEM, "Set executable permissions", mapOf("file" to file.name))
         } catch (e: Exception) {
             // Not a POSIX system (Windows) - ignore
-            logger.debug(LogCategory.SYSTEM, "Could not set POSIX permissions (probably Windows)")
+            logger.debug(LogCategory.SYSTEM, "Could not set POSIX permissions (probably Windows)", mapOf("error" to e.toString()))
         }
     }
 }

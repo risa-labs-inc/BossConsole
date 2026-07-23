@@ -31,6 +31,7 @@ fun rememberFaviconLoader(tabInfo: TabInfo): ai.rever.boss.plugin.api.TabIcon.Im
                 val property = tabInfo::class.members.find { it.name == "faviconCacheKey" }
                 property?.call(tabInfo) as? String
             } catch (e: Exception) {
+                faviconLogger.debug(LogCategory.BROWSER, "faviconCacheKey reflection probe failed - tab has no favicon", mapOf("error" to e.toString()))
                 null
             }
         }
@@ -48,7 +49,7 @@ fun rememberFaviconLoader(tabInfo: TabInfo): ai.rever.boss.plugin.api.TabIcon.Im
                 try {
                     ai.rever.boss.cache.loadFaviconFromCache(faviconCacheKey)
                 } catch (e: Exception) {
-                    faviconLogger.debug(LogCategory.BROWSER, "Error loading favicon", mapOf("key" to faviconCacheKey))
+                    faviconLogger.debug(LogCategory.BROWSER, "Error loading favicon", mapOf("key" to faviconCacheKey, "error" to e.toString()))
                     null
                 }
             }

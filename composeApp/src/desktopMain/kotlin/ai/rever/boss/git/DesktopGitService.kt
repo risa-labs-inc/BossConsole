@@ -512,6 +512,7 @@ actual object GitService {
                 null
             }
         } catch (e: Exception) {
+            logger.debug(LogCategory.SYSTEM, "Could not read last commit message", mapOf("error" to e.toString()))
             null
         }
     }
@@ -559,6 +560,7 @@ actual object GitService {
                 refs = parts.getOrNull(7)?.split(", ")?.filter { it.isNotBlank() } ?: emptyList()
             )
         } catch (e: Exception) {
+            logger.debug(LogCategory.SYSTEM, "Skipping unparsable git log line", mapOf("error" to e.toString()))
             null
         }
     }
@@ -811,6 +813,7 @@ actual object GitService {
             val result = runGitCommand(projectPath, "rev-parse", "--is-inside-work-tree")
             result.exitCode == 0 && result.output.trim() == "true"
         } catch (e: Exception) {
+            logger.debug(LogCategory.SYSTEM, "git rev-parse failed - treating path as non-repo", mapOf("error" to e.toString()))
             false
         }
     }
@@ -835,6 +838,7 @@ actual object GitService {
                 null
             }
         } catch (e: Exception) {
+            logger.debug(LogCategory.SYSTEM, "Could not determine current branch", mapOf("error" to e.toString()))
             null
         }
     }
@@ -859,6 +863,7 @@ actual object GitService {
                 }
                 .sortedWith(compareBy({ !it.isCurrent }, { it.name })) // Current branch first
         } catch (e: Exception) {
+            logger.debug(LogCategory.SYSTEM, "Could not list local branches", mapOf("error" to e.toString()))
             emptyList()
         }
     }
@@ -881,6 +886,7 @@ actual object GitService {
                 }
                 .sortedBy { it.name }
         } catch (e: Exception) {
+            logger.debug(LogCategory.SYSTEM, "Could not list remote branches", mapOf("error" to e.toString()))
             emptyList()
         }
     }
@@ -946,6 +952,7 @@ actual object GitService {
                 else -> null
             }
         } catch (e: Exception) {
+            logger.debug(LogCategory.SYSTEM, "Could not resolve remote URL to web URL", mapOf("error" to e.toString()))
             null
         }
     }

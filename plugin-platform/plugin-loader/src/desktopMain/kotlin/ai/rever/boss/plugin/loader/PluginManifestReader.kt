@@ -201,6 +201,7 @@ object PluginManifestReader {
             readFromJar(jarPath)
             true
         } catch (e: Exception) {
+            logger.debug(LogCategory.SYSTEM, "JAR has no valid plugin manifest", mapOf("jarPath" to jarPath, "error" to e.toString()))
             false
         }
     }

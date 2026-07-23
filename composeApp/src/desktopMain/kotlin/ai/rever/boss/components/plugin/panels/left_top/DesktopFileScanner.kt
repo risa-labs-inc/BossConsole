@@ -2,9 +2,13 @@ package ai.rever.boss.components.plugin.panels.left_top
 
 import ai.rever.boss.plugin.api.FileNodeData
 import ai.rever.boss.plugin.api.NodeLoadingStateData
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Paths
+
+private val logger = BossLogger.forComponent("DesktopFileScanner")
 
 actual fun scanDirectory(path: String): FileNodeData? = scanDirectory(path, showHidden = false)
 
@@ -46,6 +50,7 @@ actual fun directoryHasChildren(path: String, showHidden: Boolean): Boolean {
     } catch (e: Exception) {
         // Covers InvalidPathException (malformed input, e.g. a NUL byte) as well as
         // I/O errors -- File(path) never threw here, so callers rely on false-on-error.
+        logger.debug(LogCategory.FILE, "Directory children probe failed - reporting none", mapOf("path" to path, "error" to e.toString()))
         false
     }
 }

@@ -242,6 +242,8 @@ class DynamicPluginLoaderImpl(
                 val instanceField = try {
                     pluginClass.getDeclaredField("INSTANCE")
                 } catch (e: NoSuchFieldException) {
+                    // Not a Kotlin object - fall through to constructor instantiation
+                    logger.debug(LogCategory.SYSTEM, "Plugin class has no INSTANCE field - using constructor", mapOf("error" to e.toString()))
                     null
                 }
 

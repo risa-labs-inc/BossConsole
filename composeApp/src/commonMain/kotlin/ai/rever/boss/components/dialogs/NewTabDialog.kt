@@ -115,7 +115,7 @@ private fun validateFilePath(path: String, basePath: String? = null): String? {
 
         canonicalPath
     } catch (e: Exception) {
-        newTabDialogLogger.debug(LogCategory.FILE, "Invalid path", mapOf("path" to path))
+        newTabDialogLogger.debug(LogCategory.FILE, "Invalid path", mapOf("path" to path, "error" to e.toString()))
         null
     }
 }
@@ -782,6 +782,7 @@ fun NewTabDialog(
                                                                                 val hasKids = try {
                                                                                     directoryHasChildren(child.path)
                                                                                 } catch (e: Exception) {
+                                                                                    newTabDialogLogger.debug(LogCategory.FILE, "Cannot probe directory for children", mapOf("path" to child.path, "error" to e.toString()))
                                                                                     false
                                                                                 }
                                                                                 child.copy(hasChildren = hasKids)

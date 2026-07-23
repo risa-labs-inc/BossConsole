@@ -1152,6 +1152,7 @@ private class ApiActiveTabsProviderAdapter(
             val component = splitViewState.getActiveTabsComponent() ?: return null
             openFluckTabIn(component, url, title)
         } catch (e: Exception) {
+            tabsLogger.warn(LogCategory.BROWSER, "createBrowserTab failed - returning null", error = e)
             null
         }
     }
@@ -1173,6 +1174,7 @@ private class ApiActiveTabsProviderAdapter(
             }
             tabId
         } catch (e: Exception) {
+            tabsLogger.warn(LogCategory.BROWSER, "createBrowserTabInRightSplit failed - returning null", error = e)
             null
         }
     }
@@ -1219,6 +1221,7 @@ private class ApiActiveTabsProviderAdapter(
             }
             false
         } catch (e: Exception) {
+            tabsLogger.warn(LogCategory.UI, "closeTab failed", mapOf("tabId" to tabId), error = e)
             false
         }
     }
@@ -1310,6 +1313,7 @@ private class BrowserIntegrationAdapter(
  * Uses ~/.boss/plugin-cache/{pluginId}/ for cache storage.
  */
 private class DefaultCacheProvider : CacheProvider {
+    private val cacheLogger = BossLogger.forComponent("DefaultCacheProvider")
     private val cacheBaseDir = BossDirectories.resolve("plugin-cache")
 
     override fun clearPluginCache(pluginId: String): Boolean {
@@ -1320,6 +1324,7 @@ private class DefaultCacheProvider : CacheProvider {
             }
             true
         } catch (e: Exception) {
+            cacheLogger.warn(LogCategory.SYSTEM, "Failed to clear plugin cache", mapOf("pluginId" to pluginId), error = e)
             false
         }
     }
@@ -1333,6 +1338,7 @@ private class DefaultCacheProvider : CacheProvider {
                 0L
             }
         } catch (e: Exception) {
+            cacheLogger.warn(LogCategory.SYSTEM, "Failed to compute plugin cache size", mapOf("pluginId" to pluginId), error = e)
             -1L
         }
     }
@@ -1351,6 +1357,7 @@ private class DefaultCacheProvider : CacheProvider {
 private class DefaultBackgroundTaskProvider(
     private val scope: kotlinx.coroutines.CoroutineScope
 ) : BackgroundTaskProvider {
+    private val taskLogger = BossLogger.forComponent("DefaultBackgroundTaskProvider")
     private val activeTasks = java.util.concurrent.ConcurrentHashMap<String, DefaultBackgroundTaskHandle>()
 
     override fun launchTask(name: String, task: suspend () -> Unit): BackgroundTaskHandle? {
@@ -1367,6 +1374,7 @@ private class DefaultBackgroundTaskProvider(
             activeTasks[taskId] = handle
             handle
         } catch (e: Exception) {
+            taskLogger.warn(LogCategory.SYSTEM, "Failed to launch background task", mapOf("task" to name), error = e)
             null
         }
     }

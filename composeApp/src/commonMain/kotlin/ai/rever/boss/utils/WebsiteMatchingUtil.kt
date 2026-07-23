@@ -98,7 +98,7 @@ object WebsiteMatchingUtil {
 
             host
         } catch (e: Exception) {
-            logger.debug(LogCategory.BROWSER, "Failed to extract domain", mapOf("url" to url))
+            logger.debug(LogCategory.BROWSER, "Failed to extract domain", mapOf("url" to url, "error" to e.toString()))
             null
         }
     }
@@ -263,6 +263,7 @@ object WebsiteMatchingUtil {
                 null
             }
         } catch (e: Exception) {
+            logger.debug(LogCategory.BROWSER, "Failed to extract subdomain - treating as none", mapOf("url" to url, "error" to e.toString()))
             null
         }
     }

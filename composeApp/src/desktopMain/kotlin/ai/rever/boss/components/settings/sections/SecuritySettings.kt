@@ -57,14 +57,18 @@ private suspend fun detectWebAuthnCapabilities(): WebAuthnCapabilities {
             // This is a simplified check - we assume JxBrowser is available if passkeys are supported
             AuthService.isPasskeySupported()
         } catch (e: Exception) {
+            securitySettingsLogger.debug(LogCategory.PASSKEY, "Passkey support probe failed - assuming no JxBrowser", mapOf("error" to e.toString()))
             false
         }
-        
+
         val hasTouchId = when {
             os.contains("mac") -> {
                 try {
                     AuthService.isPasskeySupported()
-                } catch (e: Exception) { false }
+                } catch (e: Exception) {
+                    securitySettingsLogger.debug(LogCategory.PASSKEY, "Passkey support probe failed - assuming no Touch ID", mapOf("error" to e.toString()))
+                    false
+                }
             }
             else -> false
         }
@@ -104,6 +108,7 @@ private suspend fun detectWebAuthnCapabilities(): WebAuthnCapabilities {
         
     } catch (e: Exception) {
         // Fallback capabilities
+        securitySettingsLogger.warn(LogCategory.PASSKEY, "WebAuthn capability detection failed - using fallback capabilities", error = e)
         val os = System.getProperty("os.name").lowercase()
         WebAuthnCapabilities(
             hasJxBrowserEngine = false,
@@ -167,6 +172,7 @@ fun SecuritySettings() {
                     touchIDSupported = AuthService.isPasskeySupported()
                     webAuthnCapabilities = detectWebAuthnCapabilities()
                 } catch (e: Exception) {
+                    securitySettingsLogger.warn(LogCategory.PASSKEY, "Passkey capability detection failed - showing as unsupported", error = e)
                     touchIDSupported = false
                     webAuthnCapabilities = null
                 }
@@ -909,6 +915,7 @@ private fun formatPasskeyDetails(passkey: PasskeyInfo): String {
         val date = java.util.Date(passkey.createdAt)
         java.text.SimpleDateFormat("MMM dd, yyyy", java.util.Locale.getDefault()).format(date)
     } catch (e: Exception) {
+        securitySettingsLogger.debug(LogCategory.UI, "Failed to format passkey creation date", mapOf("error" to e.toString()))
         "Unknown date"
     }
     
@@ -924,6 +931,7 @@ private fun formatPasskeyDetails(passkey: PasskeyInfo): String {
                 else -> java.text.SimpleDateFormat("MMM dd", java.util.Locale.getDefault()).format(date)
             }
         } catch (e: Exception) {
+            securitySettingsLogger.debug(LogCategory.UI, "Failed to format passkey last-used date", mapOf("error" to e.toString()))
             "recently"
         }
     } else {
@@ -942,6 +950,7 @@ private fun formatTimestamp(timestamp: Long): String {
         val format = java.text.SimpleDateFormat("MMM dd, yyyy", java.util.Locale.getDefault())
         format.format(date)
     } catch (e: Exception) {
+        securitySettingsLogger.debug(LogCategory.UI, "Failed to format credential timestamp", mapOf("error" to e.toString()))
         "Unknown"
     }
 }

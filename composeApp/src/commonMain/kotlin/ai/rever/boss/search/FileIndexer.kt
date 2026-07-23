@@ -190,6 +190,7 @@ class FileIndexer {
                 child.canonicalPath
             } catch (e: Exception) {
                 // Skip files we can't resolve (broken symlinks, permission issues)
+                logger.debug(LogCategory.FILE, "Skipping unresolvable path", mapOf("path" to child.path, "error" to e.toString()))
                 continue
             }
             if (!childCanonicalPath.startsWith(rootCanonicalPath)) {

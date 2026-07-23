@@ -94,6 +94,7 @@ object LLMSettings {
         get() = try {
             LLMProvider.valueOf(settings.selectedProvider)
         } catch (e: Exception) {
+            logger.debug(LogCategory.GENERAL, "Unknown LLM provider in settings - defaulting to ANTHROPIC", mapOf("error" to e.toString()))
             LLMProvider.ANTHROPIC
         }
         set(value) {
@@ -104,6 +105,7 @@ object LLMSettings {
         get() = try {
             LLMModel.valueOf(settings.selectedModel)
         } catch (e: Exception) {
+            logger.debug(LogCategory.GENERAL, "Unknown LLM model in settings - using default", mapOf("error" to e.toString()))
             LLMModel.CLAUDE_3_5_SONNET_V2
         }
         set(value) {
@@ -179,6 +181,7 @@ object LLMSettings {
             settings = Json.decodeFromString(json)
         } catch (e: Exception) {
             // Keep default settings if parsing fails
+            logger.warn(LogCategory.GENERAL, "Failed to parse LLM settings JSON - keeping defaults", error = e)
         }
     }
     

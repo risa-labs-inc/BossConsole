@@ -141,6 +141,7 @@ object BrowserZoomSettingsManager {
         return try {
             java.net.URL(url).host.let { normalizeDomain(it) }
         } catch (e: Exception) {
+            logger.debug(LogCategory.BROWSER, "URL has no parsable host - no per-domain zoom", mapOf("error" to e.toString()))
             null
         }
     }

@@ -614,7 +614,8 @@ object FormFieldInjector {
             val stringSelection = java.awt.datatransfer.StringSelection(text)
             clipboard.setContents(stringSelection, null)
         } catch (e: Exception) {
-            // Clipboard copy failed
+            // Clipboard copy failed - never log the text itself (may be a secret)
+            logger.warn(LogCategory.BROWSER, "Failed to copy value to clipboard", error = e)
         }
     }
 

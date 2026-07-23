@@ -1,5 +1,7 @@
 package ai.rever.boss.utils
 
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import java.awt.Component
 import javax.swing.JComponent
 import javax.swing.SwingUtilities
@@ -14,6 +16,8 @@ import javax.swing.SwingUtilities
  * since they are NOT delivered as Ctrl+Wheel events to Java applications.
  */
 object MacOSGestureHandler {
+
+    private val logger = BossLogger.forComponent("MacOSGestureHandler")
 
     private var isAvailable: Boolean? = null
 
@@ -36,6 +40,7 @@ object MacOSGestureHandler {
                 true
             }
         } catch (e: Exception) {
+            logger.debug(LogCategory.UI, "GestureUtilities unavailable - trackpad pinch gestures disabled", mapOf("error" to e.toString()))
             false
         }
 
@@ -129,6 +134,7 @@ object MacOSGestureHandler {
                 null
             }
         } catch (e: Exception) {
+            logger.debug(LogCategory.UI, "Failed to register magnification listener via reflection - pinch zoom disabled for component", mapOf("error" to e.toString()))
             null
         }
     }

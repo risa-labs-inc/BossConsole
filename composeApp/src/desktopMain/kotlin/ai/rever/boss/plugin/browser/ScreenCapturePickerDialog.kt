@@ -35,6 +35,10 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.teamdev.jxbrowser.capture.AudioCaptureMode
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
+
+private val logger = BossLogger.forComponent("ScreenCapturePickerDialog")
 
 /**
  * Screen capture picker dialog with Tab/Window/Screen tabs.
@@ -345,6 +349,7 @@ private fun rememberHighQualityFavicon(
             hqFavicon = try {
                 loadHighQualityFavicon(url, standardCacheKey)
             } catch (e: Exception) {
+                logger.debug(LogCategory.BROWSER, "HQ favicon load failed - using fallback icon", mapOf("error" to e.toString()))
                 null
             }
         }

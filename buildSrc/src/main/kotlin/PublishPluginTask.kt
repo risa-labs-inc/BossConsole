@@ -242,6 +242,8 @@ abstract class PublishPluginTask : DefaultTask() {
             val response = httpGet("$baseUrl/$pluginId", token, apiKey)
             response.statusCode == 200
         } catch (e: Exception) {
+            // Treat as "not yet published" so the task falls through to create
+            logger.info("Plugin existence check failed (${e.message}) - assuming plugin does not exist yet")
             false
         }
     }

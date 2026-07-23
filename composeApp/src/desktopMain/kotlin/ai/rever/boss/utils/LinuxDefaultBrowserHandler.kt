@@ -210,6 +210,7 @@ object LinuxDefaultBrowserHandler {
 
             possiblePaths.firstOrNull { it.exists() }?.absolutePath ?: "boss"
         } catch (e: Exception) {
+            logger.debug(LogCategory.BROWSER, "Icon path lookup failed - using default icon name", mapOf("error" to e.toString()))
             "boss"
         }
     }
@@ -232,7 +233,7 @@ object LinuxDefaultBrowserHandler {
                 logger.debug(LogCategory.BROWSER, "update-desktop-database may have failed (non-critical)")
             }
         } catch (e: Exception) {
-            logger.debug(LogCategory.BROWSER, "update-desktop-database not available or failed")
+            logger.debug(LogCategory.BROWSER, "update-desktop-database not available or failed", mapOf("error" to e.toString()))
         }
     }
 
@@ -311,6 +312,7 @@ object LinuxDefaultBrowserHandler {
             process.waitFor()
             process.exitValue() == 0
         } catch (e: Exception) {
+            logger.debug(LogCategory.BROWSER, "which xdg-settings failed - assuming unavailable", mapOf("error" to e.toString()))
             false
         }
     }

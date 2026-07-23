@@ -123,7 +123,7 @@ object NetworkMonitorService {
             connection.disconnect()
             responseCode in 200..399
         } catch (e: Exception) {
-            logger.debug(LogCategory.NETWORK, "Connectivity check failed", mapOf("url" to urlString))
+            logger.debug(LogCategory.NETWORK, "Connectivity check failed", mapOf("url" to urlString, "error" to e.toString()))
             false
         }
     }

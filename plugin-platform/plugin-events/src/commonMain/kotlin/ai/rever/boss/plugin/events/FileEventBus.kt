@@ -6,6 +6,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 
+private val fileRefLogger = BossLogger.forComponent("FileEventBus")
+
 /**
  * Event emitted when a file should be opened in the editor.
  *
@@ -110,7 +112,9 @@ fun parseFileReference(fileUrl: String): ParsedFileReference {
     val decoded = try {
         java.net.URLDecoder.decode(fileUrl, "UTF-8")
     } catch (e: Exception) {
-        fileUrl // Fall back to original if decoding fails
+        // Fall back to original if decoding fails
+        fileRefLogger.debug(LogCategory.FILE, "URL-decode of file reference failed - using raw value", mapOf("error" to e.toString()))
+        fileUrl
     }
 
     // Check for Windows drive letter pattern (e.g., C:\)

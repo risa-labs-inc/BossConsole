@@ -68,6 +68,7 @@ class DesktopBrowserIntegration(
                 null
             }
         } catch (e: Exception) {
+            browserAccessorLogger.debug(LogCategory.BROWSER, "executeJavaScript failed - returning null", mapOf("error" to e.toString()))
             null
         }
     }
@@ -87,6 +88,7 @@ class DesktopBrowserIntegration(
             !browser.isClosed
         } catch (e: Exception) {
             // Browser was disposed or became inaccessible
+            browserAccessorLogger.debug(LogCategory.BROWSER, "Browser liveness check failed - treating as unavailable", mapOf("error" to e.toString()))
             false
         }
     }
@@ -95,6 +97,7 @@ class DesktopBrowserIntegration(
         try {
             browser.url()
         } catch (e: Exception) {
+            browserAccessorLogger.debug(LogCategory.BROWSER, "Could not read current URL - browser likely disposed", mapOf("error" to e.toString()))
             null
         }
     }
@@ -137,6 +140,7 @@ private fun findBrowserForTab(
                                 null
                             }
                         } catch (e: Exception) {
+                            browserAccessorLogger.debug(LogCategory.BROWSER, "Browser handle unavailable for Fluck tab - skipping", mapOf("error" to e.toString()))
                             null
                         }
                     } else {
@@ -152,6 +156,7 @@ private fun findBrowserForTab(
                             null
                         }
                     } catch (e: Exception) {
+                        browserAccessorLogger.debug(LogCategory.BROWSER, "Browser handle unavailable for tab component - skipping", mapOf("error" to e.toString()))
                         null
                     }
                 }

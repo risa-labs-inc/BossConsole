@@ -118,7 +118,7 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
                             )
                         }
                     } catch (e: Exception) {
-                        logger.debug(LogCategory.EDITOR, "Error scanning file", mapOf("path" to file.absolutePath))
+                        logger.debug(LogCategory.EDITOR, "Error scanning file", mapOf("path" to file.absolutePath, "error" to e.toString()))
                     }
                 }
             }
