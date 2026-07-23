@@ -63,12 +63,12 @@ private val globalSearchLogger = BossLogger.forComponent("GlobalSearchDialog")
 
 // Theme colors — reactive getters into the BOSS design system tokens
 // (getters, not cached vals, so theme switches re-skin the dialog).
-private val AccentBlue get() = BossThemeController.current.colors.signal      // signal — selection / primary
-private val AccentGreen get() = BossThemeController.current.colors.ok    // ok — tabs
-private val AccentOrange get() = BossThemeController.current.colors.warn   // warn — bookmarks
+private val SelectionAccent get() = BossThemeController.current.colors.signal      // signal — selection / primary
+private val TabsAccent get() = BossThemeController.current.colors.ok    // ok — tabs
+private val BookmarksAccent get() = BossThemeController.current.colors.warn   // warn — bookmarks
 // Deliberate one-off: the design system has no purple token (run-config identity color).
-private val AccentPurple = Color(0xFF9C27B0)
-private val AccentCyan get() = BossThemeController.current.colors.data   // data — commands
+private val RunConfigAccent = Color(0xFF9C27B0)
+private val CommandsAccent get() = BossThemeController.current.colors.data   // data — commands
 private val HoverBackground get() = BossThemeController.current.colors.raised
 private val CardShape = RoundedCornerShape(12.dp)
 private val SmallCardShape = RoundedCornerShape(8.dp)
@@ -426,13 +426,13 @@ private fun SearchDialogHeader(
                 modifier = Modifier
                     .size(36.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(AccentBlue.copy(alpha = 0.15f)),
+                    .background(SelectionAccent.copy(alpha = 0.15f)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = Icons.Outlined.Search,
                     contentDescription = null,
-                    tint = AccentBlue,
+                    tint = SelectionAccent,
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -531,8 +531,8 @@ private fun CategoryTab(
     isActive: Boolean,
     onClick: () -> Unit
 ) {
-    val backgroundColor = if (isActive) AccentBlue.copy(alpha = 0.2f) else Color.Transparent
-    val textColor = if (isActive) AccentBlue else BossTheme.colors.textSecondary
+    val backgroundColor = if (isActive) SelectionAccent.copy(alpha = 0.2f) else Color.Transparent
+    val textColor = if (isActive) SelectionAccent else BossTheme.colors.textSecondary
 
     val icon = when (category) {
         SearchCategory.ALL -> Icons.Outlined.Apps
@@ -598,7 +598,7 @@ private fun SearchInputField(
         Icon(
             imageVector = Icons.Outlined.Search,
             contentDescription = "Search",
-            tint = if (query.isNotEmpty()) AccentBlue else BossTheme.colors.textSecondary,
+            tint = if (query.isNotEmpty()) SelectionAccent else BossTheme.colors.textSecondary,
             modifier = Modifier.size(22.dp)
         )
 
@@ -615,7 +615,7 @@ private fun SearchInputField(
                 fontSize = 16.sp
             ),
             singleLine = true,
-            cursorBrush = SolidColor(AccentBlue),
+            cursorBrush = SolidColor(SelectionAccent),
             decorationBox = { innerTextField ->
                 Box {
                     if (query.isEmpty()) {
@@ -633,7 +633,7 @@ private fun SearchInputField(
         if (isSearching) {
             CircularProgressIndicator(
                 modifier = Modifier.size(18.dp),
-                color = AccentBlue,
+                color = SelectionAccent,
                 strokeWidth = 2.dp
             )
         } else if (query.isNotEmpty()) {
@@ -666,11 +666,11 @@ private fun EmptySearchState() {
         Row(
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            SearchCategoryPreview(Icons.Outlined.Tab, "Tabs", AccentGreen)
-            SearchCategoryPreview(Icons.Outlined.Description, "Files", AccentBlue)
-            SearchCategoryPreview(Icons.Outlined.Terminal, "Commands", AccentCyan)
-            SearchCategoryPreview(Icons.Outlined.Bookmark, "Bookmarks", AccentOrange)
-            SearchCategoryPreview(Icons.Outlined.PlayArrow, "Run", AccentPurple)
+            SearchCategoryPreview(Icons.Outlined.Tab, "Tabs", TabsAccent)
+            SearchCategoryPreview(Icons.Outlined.Description, "Files", SelectionAccent)
+            SearchCategoryPreview(Icons.Outlined.Terminal, "Commands", CommandsAccent)
+            SearchCategoryPreview(Icons.Outlined.Bookmark, "Bookmarks", BookmarksAccent)
+            SearchCategoryPreview(Icons.Outlined.PlayArrow, "Run", RunConfigAccent)
         }
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -704,7 +704,7 @@ private fun EmptySearchState() {
         ) {
             Text(
                 text = "Tip:",
-                color = AccentBlue,
+                color = SelectionAccent,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium
             )
@@ -761,7 +761,7 @@ private fun IndexingState() {
     ) {
         CircularProgressIndicator(
             modifier = Modifier.size(40.dp),
-            color = AccentBlue,
+            color = SelectionAccent,
             strokeWidth = 3.dp
         )
 
@@ -822,7 +822,7 @@ private fun NoResultsState(query: String, category: SearchCategory) {
             Spacer(modifier = Modifier.height(12.dp))
             Text(
                 text = "Try searching in \"All\" categories",
-                color = AccentBlue,
+                color = SelectionAccent,
                 fontSize = 12.sp
             )
         }
@@ -964,7 +964,7 @@ private fun SearchResultItem(
     )
 
     val backgroundColor = when {
-        isSelected -> AccentBlue.copy(alpha = 0.15f)
+        isSelected -> SelectionAccent.copy(alpha = 0.15f)
         isHovered -> HoverBackground
         else -> BossTheme.colors.raised
     }
@@ -1068,7 +1068,7 @@ private fun TabResultItem(
         Icon(
             imageVector = Icons.Outlined.Tab,
             contentDescription = null,
-            tint = AccentGreen,
+            tint = TabsAccent,
             modifier = Modifier.size(22.dp)
         )
 
@@ -1093,13 +1093,13 @@ private fun TabResultItem(
         Box(
             modifier = Modifier
                 .clip(RoundedCornerShape(4.dp))
-                .background(AccentGreen.copy(alpha = 0.15f))
+                .background(TabsAccent.copy(alpha = 0.15f))
                 .padding(horizontal = 6.dp, vertical = 3.dp)
         ) {
             Text(
                 text = "Open",
                 fontSize = 10.sp,
-                color = AccentGreen
+                color = TabsAccent
             )
         }
     }
@@ -1129,7 +1129,7 @@ private fun BookmarkResultItem(
         Icon(
             imageVector = Icons.Outlined.Bookmark,
             contentDescription = null,
-            tint = AccentOrange,
+            tint = BookmarksAccent,
             modifier = Modifier.size(22.dp)
         )
 
@@ -1154,13 +1154,13 @@ private fun BookmarkResultItem(
         Box(
             modifier = Modifier
                 .clip(RoundedCornerShape(4.dp))
-                .background(AccentOrange.copy(alpha = 0.15f))
+                .background(BookmarksAccent.copy(alpha = 0.15f))
                 .padding(horizontal = 6.dp, vertical = 3.dp)
         ) {
             Text(
                 text = result.collectionName,
                 fontSize = 10.sp,
-                color = AccentOrange,
+                color = BookmarksAccent,
                 maxLines = 1
             )
         }
@@ -1191,7 +1191,7 @@ private fun RunConfigResultItem(
         Icon(
             imageVector = Icons.Outlined.PlayArrow,
             contentDescription = null,
-            tint = AccentPurple,
+            tint = RunConfigAccent,
             modifier = Modifier.size(22.dp)
         )
 
@@ -1216,13 +1216,13 @@ private fun RunConfigResultItem(
         Box(
             modifier = Modifier
                 .clip(RoundedCornerShape(4.dp))
-                .background(AccentPurple.copy(alpha = 0.15f))
+                .background(RunConfigAccent.copy(alpha = 0.15f))
                 .padding(horizontal = 6.dp, vertical = 3.dp)
         ) {
             Text(
                 text = "Run",
                 fontSize = 10.sp,
-                color = AccentPurple
+                color = RunConfigAccent
             )
         }
     }
@@ -1252,7 +1252,7 @@ private fun CommandResultItem(
         Icon(
             imageVector = Icons.Outlined.Terminal,
             contentDescription = null,
-            tint = AccentCyan,
+            tint = CommandsAccent,
             modifier = Modifier.size(22.dp)
         )
 
@@ -1272,13 +1272,13 @@ private fun CommandResultItem(
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(4.dp))
-                    .background(AccentCyan.copy(alpha = 0.15f))
+                    .background(CommandsAccent.copy(alpha = 0.15f))
                     .padding(horizontal = 6.dp, vertical = 3.dp)
             ) {
                 Text(
                     text = result.shortcut,
                     fontSize = 10.sp,
-                    color = AccentCyan
+                    color = CommandsAccent
                 )
             }
         }
@@ -1368,7 +1368,7 @@ private fun highlightMatches(
             }
 
             if (end > start) {
-                withStyle(SpanStyle(color = AccentBlue, fontWeight = FontWeight.Bold)) {
+                withStyle(SpanStyle(color = SelectionAccent, fontWeight = FontWeight.Bold)) {
                     append(text.substring(start, end))
                 }
             }

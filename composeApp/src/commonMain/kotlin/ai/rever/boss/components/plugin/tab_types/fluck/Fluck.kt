@@ -23,7 +23,6 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -1089,7 +1088,7 @@ fun BrowserErrorView(
                             onClick = onResetBrowser,
                             colors = ButtonDefaults.buttonColors(backgroundColor = BossTheme.colors.alert)
                         ) {
-                            Text("Reset Browser", color = Color.White)
+                            Text("Reset Browser", color = BossTheme.colors.onSignal)
                         }
 
                         Spacer(modifier = Modifier.height(8.dp))

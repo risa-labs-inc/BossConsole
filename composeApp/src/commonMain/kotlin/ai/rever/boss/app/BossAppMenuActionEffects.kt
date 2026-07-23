@@ -26,6 +26,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import com.arkivanov.decompose.extensions.compose.subscribeAsState
 import kotlin.random.Random
 import kotlin.time.Clock
 import kotlinx.coroutines.Dispatchers
@@ -311,10 +312,21 @@ internal fun BossAppMenuActionEffects(state: BossAppState, reveal: FocusModeReve
             .launchIn(this)
     }
 
-    // Track whether split is enabled (has tabs in active panel)
+    // Track whether split is enabled (has tabs in active panel).
+    // tabsState is a Decompose Value, not snapshot state — reading .value in
+    // composition subscribes to nothing, and this small extracted scope no
+    // longer recomposes incidentally the way the old monolithic BossApp body
+    // did. subscribeAsState() keeps the menu enablement live when tabs are
+    // added/removed with no other recomposition trigger (e.g. first tab
+    // created purely via the OS menu).
     val activePanelId by splitViewState.activePanelIdState
     val activeTabsComponent = splitViewState.getActiveTabsComponent()
-    val hasActiveTabs = activeTabsComponent?.tabsState?.value?.tabs?.isNotEmpty() == true
+    val hasActiveTabs = if (activeTabsComponent != null) {
+        val activeTabsState by activeTabsComponent.tabsState.subscribeAsState()
+        activeTabsState.tabs.isNotEmpty()
+    } else {
+        false
+    }
     LaunchedEffect(windowId, activePanelId, hasActiveTabs) {
         MenuActionsHandler.updateSplitEnabled(windowId, hasActiveTabs)
     }

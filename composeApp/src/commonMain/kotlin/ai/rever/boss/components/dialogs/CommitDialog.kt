@@ -330,20 +330,20 @@ fun CommitDialog(
                         enabled = commitMessage.isNotBlank() && (hasChangesToCommit || amendCommit) && !isLoading,
                         colors = ButtonDefaults.buttonColors(
                             backgroundColor = BossTheme.colors.signal,
-                            disabledBackgroundColor = BossTheme.colors.line
+                            contentColor = BossTheme.colors.onSignal,
+                            disabledBackgroundColor = BossTheme.colors.line,
+                            disabledContentColor = BossTheme.colors.textMuted
                         )
                     ) {
                         if (isLoading) {
+                            // Renders on the disabled `line` background, not amber
                             CircularProgressIndicator(
                                 modifier = Modifier.size(16.dp),
                                 color = BossTheme.colors.textPrimary,
                                 strokeWidth = 2.dp
                             )
                         } else {
-                            Text(
-                                text = if (amendCommit) "Amend" else "Commit",
-                                color = BossTheme.colors.textPrimary
-                            )
+                            Text(text = if (amendCommit) "Amend" else "Commit")
                         }
                     }
                 }

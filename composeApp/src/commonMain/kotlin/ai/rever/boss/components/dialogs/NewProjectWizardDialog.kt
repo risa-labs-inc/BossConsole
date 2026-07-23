@@ -45,14 +45,14 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 
 // Dashboard-style accent color
-private val AccentBlue get() = BossThemeController.current.colors.signal
+private val Accent get() = BossThemeController.current.colors.signal
 private val HoverBackground get() = BossThemeController.current.colors.raised
-private val SuccessGreen get() = BossThemeController.current.colors.ok
-private val ErrorRed get() = BossThemeController.current.colors.alert
+private val SuccessColor get() = BossThemeController.current.colors.ok
+private val ErrorColor get() = BossThemeController.current.colors.alert
 
 /**
  * Multi-step wizard dialog for creating new projects from templates.
- * Styled to match the Dashboard theme with hover animations and blue accents.
+ * Styled to match the Dashboard theme with hover animations and signal accents.
  *
  * @param onDismiss Callback when the dialog is dismissed
  * @param onProjectCreated Callback when a project is successfully created
@@ -218,7 +218,7 @@ private fun TemplateSelectionStep(
                 onClick = { selectedTemplate?.let { onTemplateSelected(it) } },
                 enabled = selectedTemplate != null,
                 colors = ButtonDefaults.buttonColors(
-                    backgroundColor = AccentBlue,
+                    backgroundColor = Accent,
                     contentColor = BossTheme.colors.onSignal,
                     disabledBackgroundColor = BossTheme.colors.line,
                     disabledContentColor = BossTheme.colors.textSecondary
@@ -250,19 +250,19 @@ private fun TemplateCard(
     )
 
     val backgroundColor = when {
-        isSelected -> AccentBlue.copy(alpha = 0.15f)
+        isSelected -> Accent.copy(alpha = 0.15f)
         isHovered -> HoverBackground
         else -> BossTheme.colors.raised
     }
 
     val borderColor = when {
-        isSelected -> AccentBlue
+        isSelected -> Accent
         isHovered -> BossTheme.colors.line.copy(alpha = 0.8f)
         else -> Color.Transparent
     }
 
     val iconColor = when {
-        isSelected -> AccentBlue
+        isSelected -> Accent
         isHovered -> BossTheme.colors.textPrimary
         else -> BossTheme.colors.textSecondary
     }
@@ -293,7 +293,7 @@ private fun TemplateCard(
                     .fillMaxSize()
                     .clip(RoundedCornerShape(12.dp))
                     .background(
-                        color = AccentBlue.copy(alpha = 0.3f),
+                        color = Accent.copy(alpha = 0.3f),
                         shape = RoundedCornerShape(12.dp)
                     )
             )
@@ -432,10 +432,10 @@ private fun ConfigurationStep(
             modifier = Modifier.fillMaxWidth(),
             colors = TextFieldDefaults.outlinedTextFieldColors(
                 textColor = BossTheme.colors.textPrimary,
-                cursorColor = AccentBlue,
-                focusedBorderColor = AccentBlue,
+                cursorColor = Accent,
+                focusedBorderColor = Accent,
                 unfocusedBorderColor = BossTheme.colors.line,
-                errorBorderColor = ErrorRed,
+                errorBorderColor = ErrorColor,
                 backgroundColor = BossTheme.colors.raised
             ),
             singleLine = true,
@@ -465,8 +465,8 @@ private fun ConfigurationStep(
                 modifier = Modifier.weight(1f),
                 colors = TextFieldDefaults.outlinedTextFieldColors(
                     textColor = BossTheme.colors.textPrimary,
-                    cursorColor = AccentBlue,
-                    focusedBorderColor = AccentBlue,
+                    cursorColor = Accent,
+                    focusedBorderColor = Accent,
                     unfocusedBorderColor = BossTheme.colors.line,
                     backgroundColor = BossTheme.colors.raised
                 ),
@@ -510,7 +510,7 @@ private fun ConfigurationStep(
             Text(
                 text = error,
                 fontSize = 12.sp,
-                color = ErrorRed
+                color = ErrorColor
             )
         }
 
@@ -537,7 +537,7 @@ private fun ConfigurationStep(
                 onClick = { onCreate(projectName.trim(), projectLocation) },
                 enabled = projectName.isNotBlank() && validationError == null,
                 colors = ButtonDefaults.buttonColors(
-                    backgroundColor = AccentBlue,
+                    backgroundColor = Accent,
                     contentColor = BossTheme.colors.onSignal,
                     disabledBackgroundColor = BossTheme.colors.line,
                     disabledContentColor = BossTheme.colors.textSecondary
@@ -593,7 +593,7 @@ private fun CreatingStep(
     ) {
         CircularProgressIndicator(
             modifier = Modifier.size(72.dp),
-            color = AccentBlue,
+            color = Accent,
             strokeWidth = 4.dp
         )
 
@@ -622,7 +622,7 @@ private fun CreatingStep(
                 .fillMaxWidth(0.6f)
                 .height(4.dp)
                 .clip(RoundedCornerShape(2.dp)),
-            color = AccentBlue,
+            color = Accent,
             backgroundColor = BossTheme.colors.raised
         )
     }
@@ -647,7 +647,7 @@ private fun SuccessStep(
             imageVector = Icons.Default.CheckCircle,
             contentDescription = "Success",
             modifier = Modifier.size(72.dp),
-            tint = SuccessGreen
+            tint = SuccessColor
         )
 
         Spacer(modifier = Modifier.height(28.dp))
@@ -681,7 +681,7 @@ private fun SuccessStep(
         Button(
             onClick = onOpenProject,
             colors = ButtonDefaults.buttonColors(
-                backgroundColor = AccentBlue,
+                backgroundColor = Accent,
                 contentColor = BossTheme.colors.onSignal
             ),
             shape = RoundedCornerShape(8.dp),
@@ -714,7 +714,7 @@ private fun ErrorStep(
             imageVector = Icons.Default.Error,
             contentDescription = "Error",
             modifier = Modifier.size(72.dp),
-            tint = ErrorRed
+            tint = ErrorColor
         )
 
         Spacer(modifier = Modifier.height(28.dp))
@@ -765,7 +765,7 @@ private fun ErrorStep(
             Button(
                 onClick = onRetry,
                 colors = ButtonDefaults.buttonColors(
-                    backgroundColor = AccentBlue,
+                    backgroundColor = Accent,
                     contentColor = BossTheme.colors.onSignal
                 ),
                 shape = RoundedCornerShape(8.dp),
