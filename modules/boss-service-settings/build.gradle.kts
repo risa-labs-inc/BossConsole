@@ -1,7 +1,7 @@
 plugins {
     alias(libs.plugins.kotlinJvm)
     alias(libs.plugins.kotlinSerialization)
-    id("org.graalvm.buildtools.native") version "1.1.3"
+    alias(libs.plugins.graalvmNative)
 }
 
 group = "ai.rever.boss.service.settings"

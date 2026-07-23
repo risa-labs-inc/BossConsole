@@ -67,8 +67,8 @@ kotlin {
             dependencies {
                 implementation(kotlin("test"))
                 implementation(kotlin("test-junit5"))
-                implementation("org.junit.jupiter:junit-jupiter:6.1.0")
-                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
+                implementation(libs.junit.jupiter)
+                implementation(libs.kotlinx.coroutines.test)
             }
         }
     }
