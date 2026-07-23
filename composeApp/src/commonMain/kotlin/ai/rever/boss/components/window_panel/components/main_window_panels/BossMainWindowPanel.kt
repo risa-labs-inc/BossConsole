@@ -63,6 +63,8 @@ import ai.rever.boss.components.window_panel.SplitOrientation
 import ai.rever.boss.components.dashboard.Dashboard
 import ai.rever.boss.window.LocalWindowProjectState
 import ai.rever.boss.window.Project
+import ai.rever.boss.window.TabWidthMode
+import ai.rever.boss.window.WindowAppearanceSettingsManager
 import ai.rever.boss.window.selectProjectInWindow
 import ai.rever.boss.dashboard.SplitTemplate
 import ai.rever.boss.dashboard.SplitTemplatesManager
@@ -130,7 +132,7 @@ private fun BossTabButtonWithFavicon(
     onClick: () -> Unit,
     onClose: () -> Unit,
     contextMenuItems: List<ContextMenuItem>,
-    tabWidth: androidx.compose.ui.unit.Dp,
+    tabWidth: androidx.compose.ui.unit.Dp?,
     // Drag-related parameters
     tabDragComponent: TabDraggableComponent? = null,
     panelId: String? = null,
@@ -188,6 +190,12 @@ fun BossTabsComponent.BossMainTabBar(
 
     // LazyListState for tab bar scrolling
     val listState = rememberLazyListState()
+
+    // Tab sizing behaviour (Settings → Window Appearance → Tab Bar).
+    // SHRINK_TO_FIT passes the computed per-tab width down to each button;
+    // FIXED passes null, which falls back to the legacy intrinsic sizing.
+    val appearanceSettings by WindowAppearanceSettingsManager.currentSettings.collectAsState()
+    val shrinkTabsToFit = appearanceSettings.tabWidthMode == TabWidthMode.SHRINK_TO_FIT
 
     // Coroutine scope for edge scroll animation
     val edgeScrollScope = rememberCoroutineScope()
@@ -297,7 +305,7 @@ fun BossTabsComponent.BossMainTabBar(
                         config = config,
                         isSelected = isSelected,
                         isFocused = true, // Tab bars are always considered focused when window is active
-                        tabWidth = tabWidth,
+                        tabWidth = if (shrinkTabsToFit) tabWidth else null,
                         onClick = {
                             selectTab(index)
                             // Track this tab interaction for Cmd+R/Cmd+N

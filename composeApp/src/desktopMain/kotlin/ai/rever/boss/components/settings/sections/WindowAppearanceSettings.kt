@@ -1,8 +1,10 @@
 package ai.rever.boss.components.settings.sections
 
+import ai.rever.boss.components.settings.shared.SettingsDropdown
 import ai.rever.boss.components.settings.shared.SettingsSection
 import ai.rever.boss.components.settings.shared.SettingsToggle
 import ai.rever.boss.components.settings.shared.SettingsInfoRow
+import ai.rever.boss.window.TabWidthMode
 import ai.rever.boss.window.WindowAppearanceSettingsManager
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
@@ -48,5 +50,30 @@ fun WindowAppearanceSettings() {
                 description = "The default setting for your operating system"
             )
         }
+
+        SettingsSection(title = "Tab Bar") {
+            SettingsDropdown(
+                label = "Tab Sizing",
+                options = TabWidthMode.entries.map { it.displayName },
+                selectedOption = settings.tabWidthMode.displayName,
+                onOptionSelected = { selected ->
+                    val mode = TabWidthMode.entries.first { it.displayName == selected }
+                    coroutineScope.launch {
+                        WindowAppearanceSettingsManager.updateSettings(
+                            settings.copy(tabWidthMode = mode)
+                        )
+                    }
+                },
+                description = "Shrink to Fit: tabs shrink evenly so they all stay visible, scrolling only " +
+                    "when each is favicon-sized (Safari style). Fixed Width: tabs keep their natural width " +
+                    "and the bar scrolls when they overflow."
+            )
+        }
     }
 }
+
+private val TabWidthMode.displayName: String
+    get() = when (this) {
+        TabWidthMode.SHRINK_TO_FIT -> "Shrink to Fit"
+        TabWidthMode.FIXED -> "Fixed Width"
+    }
