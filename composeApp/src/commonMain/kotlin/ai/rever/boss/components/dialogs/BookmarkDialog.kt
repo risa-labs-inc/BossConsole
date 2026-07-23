@@ -8,6 +8,7 @@ import BossDarkTextPrimary
 import BossDarkTextSecondary
 import ai.rever.boss.components.bookmarks.BookmarkCollection
 import ai.rever.boss.components.workspaces.extractPanels
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -251,7 +252,7 @@ fun BookmarkDialog(
                         enabled = selectedCollections.isNotEmpty(),
                         colors = ButtonDefaults.buttonColors(
                             backgroundColor = BossDarkAccent,
-                            contentColor = Color.Black,
+                            contentColor = BossTheme.colors.onSignal,
                             disabledBackgroundColor = BossDarkBorder,
                             disabledContentColor = BossDarkTextSecondary
                         ),
@@ -319,7 +320,7 @@ private fun CollectionPill(
                     imageVector = Icons.Filled.Star,
                     contentDescription = "Favorite",
                     modifier = Modifier.size(14.dp),
-                    tint = if (isSelected) Color.Black else BossDarkAccent
+                    tint = if (isSelected) BossTheme.colors.onSignal else BossDarkAccent
                 )
                 Spacer(modifier = Modifier.width(4.dp))
             }
@@ -327,7 +328,7 @@ private fun CollectionPill(
                 text = collection.name,
                 fontSize = 13.sp,
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                color = if (isSelected) Color.Black else BossDarkTextPrimary
+                color = if (isSelected) BossTheme.colors.onSignal else BossDarkTextPrimary
             )
         }
     }
@@ -405,7 +406,7 @@ private fun WorkspacePill(
                     },
                     fontSize = 13.sp,
                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                    color = if (isSelected) Color.Black else BossDarkTextPrimary
+                    color = if (isSelected) BossTheme.colors.onSignal else BossDarkTextPrimary
                 )
 
                 if (isSelected) {
@@ -417,7 +418,7 @@ private fun WorkspacePill(
                         Icon(
                             imageVector = Icons.Filled.ArrowDropDown,
                             contentDescription = "Select Panel",
-                            tint = Color.Black
+                            tint = BossTheme.colors.onSignal
                         )
                     }
                 }

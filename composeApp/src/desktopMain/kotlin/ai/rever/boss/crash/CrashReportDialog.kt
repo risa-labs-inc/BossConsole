@@ -9,6 +9,7 @@ import BossDarkSurface
 import BossDarkTextMuted
 import BossDarkTextPrimary
 import BossDarkTextSecondary
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
@@ -28,7 +29,6 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
@@ -282,7 +282,7 @@ fun CrashReportDialog(
                     colors = CheckboxDefaults.colors(
                         checkedColor = BossDarkAccent,
                         uncheckedColor = BossDarkTextMuted,
-                        checkmarkColor = Color.White
+                        checkmarkColor = BossTheme.colors.onSignal
                     ),
                     enabled = !isSubmitting
                 )
@@ -321,7 +321,7 @@ fun CrashReportDialog(
                             is CrashReportService.SubmitResult.Error -> result.message
                         },
                         fontSize = 13.sp,
-                        color = Color.White,
+                        color = BossTheme.colors.onSignal,
                         modifier = Modifier.padding(12.dp)
                     )
                 }
@@ -340,7 +340,7 @@ fun CrashReportDialog(
                         enabled = !isSubmitting,
                         colors = ButtonDefaults.buttonColors(
                             backgroundColor = BossDarkError,
-                            contentColor = Color.White,
+                            contentColor = BossTheme.colors.onSignal,
                             disabledBackgroundColor = BossDarkSurface,
                             disabledContentColor = BossDarkTextMuted
                         ),
@@ -392,7 +392,7 @@ fun CrashReportDialog(
                     enabled = !isSubmitting && submitResult !is CrashReportService.SubmitResult.Success,
                     colors = ButtonDefaults.buttonColors(
                         backgroundColor = BossDarkAccent,
-                        contentColor = Color.White,
+                        contentColor = BossTheme.colors.onSignal,
                         disabledBackgroundColor = BossDarkSurface,
                         disabledContentColor = BossDarkTextMuted
                     ),
@@ -401,7 +401,7 @@ fun CrashReportDialog(
                     if (isSubmitting) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(16.dp),
-                            color = Color.White,
+                            color = BossDarkTextPrimary,
                             strokeWidth = 2.dp
                         )
                         Spacer(modifier = Modifier.width(8.dp))
@@ -423,7 +423,7 @@ fun CrashReportDialog(
                         onClick = onDismiss,
                         colors = ButtonDefaults.buttonColors(
                             backgroundColor = BossDarkSurface,
-                            contentColor = Color.White
+                            contentColor = BossDarkTextPrimary
                         ),
                         shape = RoundedCornerShape(6.dp)
                     ) {

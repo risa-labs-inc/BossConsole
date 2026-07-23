@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogWindow
 import androidx.compose.ui.window.rememberDialogState
 import BossDarkError
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.components.settings.shared.SettingsTheme.AccentColor
 import ai.rever.boss.components.settings.shared.SettingsTheme.BackgroundColor
 import ai.rever.boss.components.settings.shared.SettingsTheme.BorderColor
@@ -779,7 +780,7 @@ fun SettingsFilePicker(
                 enabled = enabled,
                 colors = ButtonDefaults.buttonColors(
                     backgroundColor = AccentColor,
-                    contentColor = Color.White
+                    contentColor = BossTheme.colors.onSignal
                 ),
                 modifier = Modifier.height(36.dp)
             ) {
@@ -1075,7 +1076,7 @@ fun ColorPickerDialog(
                         ),
                         modifier = Modifier.width(100.dp)
                     ) {
-                        Text("OK", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        Text("OK", color = BossTheme.colors.onSignal, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                     }
                 }
             }

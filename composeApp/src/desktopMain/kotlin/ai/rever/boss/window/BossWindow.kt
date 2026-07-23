@@ -2,6 +2,7 @@ package ai.rever.boss.window
 
 import BossDarkSurface
 import ai.rever.boss.BossAppWithAuth
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.components.dialogs.CLIInstallationDialog
 import ai.rever.boss.components.window_panel.components.main_window_panels.createBossAppContext
 import ai.rever.boss.utils.CLIInstaller
@@ -935,10 +936,10 @@ fun ApplicationScope.BossWindow(
                                     }
                                 },
                                 colors = ButtonDefaults.buttonColors(
-                                    backgroundColor = androidx.compose.ui.graphics.Color(0xFFE05555)
+                                    backgroundColor = BossTheme.colors.alert
                                 )
                             ) {
-                                Text("Reset Browser", color = androidx.compose.ui.graphics.Color.White)
+                                Text("Reset Browser", color = BossTheme.colors.onSignal)
                             }
                         }
                         else -> {
@@ -1035,10 +1036,10 @@ fun ApplicationScope.BossWindow(
                                     }
                                 },
                                 colors = ButtonDefaults.buttonColors(
-                                    backgroundColor = androidx.compose.ui.graphics.Color(0xFFE05555)
+                                    backgroundColor = BossTheme.colors.alert
                                 )
                             ) {
-                                Text("Reset Terminal", color = androidx.compose.ui.graphics.Color.White)
+                                Text("Reset Terminal", color = BossTheme.colors.onSignal)
                             }
                         }
                         else -> {

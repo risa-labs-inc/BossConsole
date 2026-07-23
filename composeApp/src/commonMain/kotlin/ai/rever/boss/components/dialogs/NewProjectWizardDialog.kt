@@ -8,6 +8,7 @@ import BossDarkSuccess
 import BossDarkSurface
 import BossDarkTextPrimary
 import BossDarkTextSecondary
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.window.Project
 import ai.rever.boss.platform.rememberDirectoryPicker
 import ai.rever.boss.project.ProjectCreationService
@@ -225,7 +226,7 @@ private fun TemplateSelectionStep(
                 enabled = selectedTemplate != null,
                 colors = ButtonDefaults.buttonColors(
                     backgroundColor = AccentBlue,
-                    contentColor = Color.White,
+                    contentColor = BossTheme.colors.onSignal,
                     disabledBackgroundColor = BossDarkBorder,
                     disabledContentColor = BossDarkTextSecondary
                 ),
@@ -544,7 +545,7 @@ private fun ConfigurationStep(
                 enabled = projectName.isNotBlank() && validationError == null,
                 colors = ButtonDefaults.buttonColors(
                     backgroundColor = AccentBlue,
-                    contentColor = Color.White,
+                    contentColor = BossTheme.colors.onSignal,
                     disabledBackgroundColor = BossDarkBorder,
                     disabledContentColor = BossDarkTextSecondary
                 ),
@@ -688,7 +689,7 @@ private fun SuccessStep(
             onClick = onOpenProject,
             colors = ButtonDefaults.buttonColors(
                 backgroundColor = AccentBlue,
-                contentColor = Color.White
+                contentColor = BossTheme.colors.onSignal
             ),
             shape = RoundedCornerShape(8.dp),
             modifier = Modifier
@@ -772,7 +773,7 @@ private fun ErrorStep(
                 onClick = onRetry,
                 colors = ButtonDefaults.buttonColors(
                     backgroundColor = AccentBlue,
-                    contentColor = Color.White
+                    contentColor = BossTheme.colors.onSignal
                 ),
                 shape = RoundedCornerShape(8.dp),
                 modifier = Modifier

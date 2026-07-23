@@ -3,6 +3,7 @@ package ai.rever.boss.components.wizard
 import BossDarkBorder
 import BossDarkSurface
 import BossDarkTextSecondary
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -44,11 +45,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-// Dashboard-style colors
-private val AccentBlue = Color(0xFF4A9EFF)
-private val HoverBackground = Color(0xFF2A2D30)
-private val SuccessGreen = Color(0xFF4CAF50)
-
 /**
  * Visual step indicator showing progress through the wizard.
  *
@@ -73,8 +69,8 @@ fun WizardStepIndicator(
 
             val backgroundColor by animateColorAsState(
                 targetValue = when {
-                    isCompleted -> SuccessGreen
-                    isCurrent -> AccentBlue
+                    isCompleted -> BossTheme.colors.ok
+                    isCurrent -> BossTheme.colors.signal
                     else -> BossDarkSurface
                 },
                 label = "step_bg_$step"
@@ -102,14 +98,14 @@ fun WizardStepIndicator(
                         imageVector = Icons.Default.Check,
                         contentDescription = "Completed",
                         modifier = Modifier.size(16.dp),
-                        tint = Color.White
+                        tint = BossTheme.colors.onSignal
                     )
                 } else {
                     Text(
                         text = step.toString(),
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
-                        color = if (isCurrent) Color.White else BossDarkTextSecondary
+                        color = if (isCurrent) BossTheme.colors.onSignal else BossDarkTextSecondary
                     )
                 }
             }
@@ -117,7 +113,7 @@ fun WizardStepIndicator(
             // Connector line (except after last step)
             if (step < totalSteps) {
                 val lineColor by animateColorAsState(
-                    targetValue = if (isCompleted) SuccessGreen else BossDarkBorder,
+                    targetValue = if (isCompleted) BossTheme.colors.ok else BossDarkBorder,
                     label = "line_$step"
                 )
                 Box(
@@ -161,8 +157,8 @@ fun SelectionCard(
 
     val backgroundColor by animateColorAsState(
         targetValue = when {
-            isSelected -> AccentBlue.copy(alpha = 0.15f)
-            isHovered -> HoverBackground
+            isSelected -> BossTheme.colors.signalWash
+            isHovered -> BossTheme.colors.signalWash
             else -> BossDarkSurface
         },
         label = "selection_card_bg"
@@ -170,7 +166,7 @@ fun SelectionCard(
 
     val borderColor by animateColorAsState(
         targetValue = when {
-            isSelected -> AccentBlue
+            isSelected -> BossTheme.colors.signal
             isHovered -> BossDarkBorder.copy(alpha = 0.8f)
             else -> Color.Transparent
         },
@@ -195,7 +191,7 @@ fun SelectionCard(
                     imageVector = icon,
                     contentDescription = null,
                     modifier = Modifier.size(24.dp),
-                    tint = if (isSelected) AccentBlue else BossDarkTextSecondary
+                    tint = if (isSelected) BossTheme.colors.signal else BossDarkTextSecondary
                 )
                 Spacer(modifier = Modifier.width(12.dp))
             }
@@ -205,7 +201,7 @@ fun SelectionCard(
                     text = title,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
-                    color = if (isSelected || isHovered) Color.White else BossDarkTextSecondary,
+                    color = if (isSelected || isHovered) BossTheme.colors.textPrimary else BossDarkTextSecondary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -228,14 +224,14 @@ fun SelectionCard(
                     modifier = Modifier
                         .size(20.dp)
                         .clip(CircleShape)
-                        .background(AccentBlue),
+                        .background(BossTheme.colors.signal),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.Check,
                         contentDescription = "Selected",
                         modifier = Modifier.size(14.dp),
-                        tint = Color.White
+                        tint = BossTheme.colors.onSignal
                     )
                 }
             }
@@ -270,8 +266,8 @@ fun CheckboxCard(
     val backgroundColor by animateColorAsState(
         targetValue = when {
             !enabled -> BossDarkSurface.copy(alpha = 0.5f)
-            isChecked -> AccentBlue.copy(alpha = 0.1f)
-            isHovered -> HoverBackground
+            isChecked -> BossTheme.colors.signalWash
+            isHovered -> BossTheme.colors.signalWash
             else -> BossDarkSurface
         },
         label = "checkbox_card_bg"
@@ -280,7 +276,7 @@ fun CheckboxCard(
     val borderColor by animateColorAsState(
         targetValue = when {
             !enabled -> Color.Transparent
-            isChecked -> AccentBlue.copy(alpha = 0.5f)
+            isChecked -> BossTheme.colors.signal.copy(alpha = 0.5f)
             isHovered -> BossDarkBorder.copy(alpha = 0.8f)
             else -> Color.Transparent
         },
@@ -304,10 +300,10 @@ fun CheckboxCard(
                 onCheckedChange = if (enabled) onCheckedChange else null,
                 enabled = enabled,
                 colors = CheckboxDefaults.colors(
-                    checkedColor = AccentBlue,
+                    checkedColor = BossTheme.colors.signal,
                     uncheckedColor = BossDarkBorder,
                     disabledColor = BossDarkBorder.copy(alpha = 0.5f),
-                    checkmarkColor = Color.White
+                    checkmarkColor = BossTheme.colors.onSignal
                 )
             )
 
@@ -319,7 +315,7 @@ fun CheckboxCard(
                     contentDescription = null,
                     modifier = Modifier.size(20.dp),
                     tint = if (enabled) {
-                        if (isChecked) AccentBlue else BossDarkTextSecondary
+                        if (isChecked) BossTheme.colors.signal else BossDarkTextSecondary
                     } else {
                         BossDarkTextSecondary.copy(alpha = 0.5f)
                     }
@@ -333,7 +329,7 @@ fun CheckboxCard(
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
                     color = if (enabled) {
-                        if (isChecked || isHovered) Color.White else BossDarkTextSecondary
+                        if (isChecked || isHovered) BossTheme.colors.textPrimary else BossDarkTextSecondary
                     } else {
                         BossDarkTextSecondary.copy(alpha = 0.5f)
                     },

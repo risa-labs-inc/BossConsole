@@ -1,5 +1,7 @@
 package ai.rever.boss.logging
 
+import BossDarkError
+import BossDarkTextPrimary
 import androidx.compose.ui.graphics.Color
 
 /**
@@ -16,12 +18,12 @@ data class LogEntry(
 ) {
     /**
      * Get the color to display this log entry.
-     * stdout = light gray, stderr = red
+     * stdout = primary text, stderr = alert red
      */
     val color: Color
         get() = when (source) {
-            LogSource.STDOUT -> Color(0xFFCCCCCC) // Light gray
-            LogSource.STDERR -> Color(0xFFFF6B6B) // Red
+            LogSource.STDOUT -> BossDarkTextPrimary
+            LogSource.STDERR -> BossDarkError
         }
 
     /**

@@ -12,6 +12,7 @@ import ai.rever.boss.plugin.api.FileChangeEvent
 import ai.rever.boss.plugin.api.FileChangeType
 import ai.rever.boss.components.plugin.providers.publishSystemEvent
 import ai.rever.boss.plugin.api.TabIcon
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.tab.codeeditor.CodeEditorTabType
 import ai.rever.boss.plugin.tab.codeeditor.EditorTabInfo
 import ai.rever.boss.run.DetectedMainFunction
@@ -190,7 +191,7 @@ fun CodeEditorUI(
                 modifier = Modifier
                     .fillMaxHeight()
                     .width(1.dp)
-                    .background(Color(0xFF3C3C3C))
+                    .background(BossTheme.colors.line)
             )
 
             // Editor content
@@ -208,7 +209,7 @@ fun CodeEditorUI(
                         onContentChange(newValue.text)
                     },
                     textStyle = textStyle.copy(color = textColor),
-                    cursorBrush = SolidColor(Color.White),
+                    cursorBrush = SolidColor(BossTheme.colors.signal),
                     modifier = Modifier.fillMaxSize(),
                     visualTransformation = SyntaxHighlightTransformation(
                         language,
@@ -295,7 +296,7 @@ class SyntaxHighlightTransformation(
                 val pattern = "\\b$type\\b".toRegex()
                 pattern.findAll(text).forEach { match ->
                     addStyle(
-                        SpanStyle(color = Color(0xFF_4EC9B0)),
+                        SpanStyle(color = EditorSyntaxColors.type),
                         match.range.first,
                         match.range.last + 1
                     )
@@ -314,7 +315,7 @@ class SyntaxHighlightTransformation(
             // Highlight strings
             "\".*?\"".toRegex().findAll(text).forEach { match ->
                 addStyle(
-                    SpanStyle(color = Color(0xFF_CE9178)),
+                    SpanStyle(color = EditorSyntaxColors.string),
                     match.range.first,
                     match.range.last + 1
                 )
@@ -323,7 +324,7 @@ class SyntaxHighlightTransformation(
             // Highlight numbers
             "\\b\\d+(\\.\\d+)?\\b".toRegex().findAll(text).forEach { match ->
                 addStyle(
-                    SpanStyle(color = Color(0xFF_B5CEA8)),
+                    SpanStyle(color = EditorSyntaxColors.number),
                     match.range.first,
                     match.range.last + 1
                 )
@@ -338,7 +339,7 @@ class SyntaxHighlightTransformation(
             // Highlight section headers [section]
             "\\[.*?]".toRegex().findAll(text).forEach { match ->
                 addStyle(
-                    SpanStyle(color = Color(0xFF_4EC9B0), fontWeight = FontWeight.Bold),
+                    SpanStyle(color = EditorSyntaxColors.type, fontWeight = FontWeight.Bold),
                     match.range.first,
                     match.range.last + 1
                 )
@@ -349,7 +350,7 @@ class SyntaxHighlightTransformation(
                 match.groupValues.getOrNull(1)?.let { key ->
                     val keyStart = match.range.first + match.value.indexOf(key)
                     addStyle(
-                        SpanStyle(color = Color(0xFF_9CDCFE)),
+                        SpanStyle(color = EditorSyntaxColors.property),
                         keyStart,
                         keyStart + key.length
                     )
@@ -359,7 +360,7 @@ class SyntaxHighlightTransformation(
             // Highlight strings
             "\".*?\"".toRegex().findAll(text).forEach { match ->
                 addStyle(
-                    SpanStyle(color = Color(0xFF_CE9178)),
+                    SpanStyle(color = EditorSyntaxColors.string),
                     match.range.first,
                     match.range.last + 1
                 )
@@ -377,7 +378,7 @@ class SyntaxHighlightTransformation(
             // Highlight numbers
             "\\b\\d+(\\.\\d+)?\\b".toRegex().findAll(text).forEach { match ->
                 addStyle(
-                    SpanStyle(color = Color(0xFF_B5CEA8)),
+                    SpanStyle(color = EditorSyntaxColors.number),
                     match.range.first,
                     match.range.last + 1
                 )
@@ -386,7 +387,7 @@ class SyntaxHighlightTransformation(
             // Highlight booleans
             "\\b(true|false)\\b".toRegex().findAll(text).forEach { match ->
                 addStyle(
-                    SpanStyle(color = Color(0xFF_569CD6)),
+                    SpanStyle(color = EditorSyntaxColors.keyword),
                     match.range.first,
                     match.range.last + 1
                 )

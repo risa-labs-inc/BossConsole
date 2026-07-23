@@ -2,6 +2,7 @@ package ai.rever.boss.components.dashboard.cards
 
 import BossDarkSurface
 import BossDarkTextSecondary
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
@@ -27,7 +28,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -53,8 +53,8 @@ fun ActionCard(
         animationSpec = spring(dampingRatio = 0.6f)
     )
 
-    val backgroundColor = if (isHovered) Color(0xFF2A2D30) else BossDarkSurface
-    val iconColor = if (isHovered) Color(0xFF4A9EFF) else BossDarkTextSecondary
+    val backgroundColor = if (isHovered) BossTheme.colors.signalWash else BossDarkSurface
+    val iconColor = if (isHovered) BossTheme.colors.signal else BossDarkTextSecondary
 
     val cardShape = RoundedCornerShape(12.dp)
 
@@ -87,7 +87,7 @@ fun ActionCard(
         ) {
             Text(
                 text = title,
-                color = if (isHovered) Color.White else BossDarkTextSecondary,
+                color = if (isHovered) BossTheme.colors.textPrimary else BossDarkTextSecondary,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
                 textAlign = TextAlign.Center,

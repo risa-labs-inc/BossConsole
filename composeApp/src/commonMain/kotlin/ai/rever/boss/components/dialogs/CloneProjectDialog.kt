@@ -12,6 +12,7 @@ import ai.rever.boss.git.GitOperationResult
 import ai.rever.boss.plugin.git.GitOperationResult.Success as GitSuccess
 import ai.rever.boss.plugin.git.GitOperationResult.Error as GitError
 import ai.rever.boss.git.GitService
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.platform.rememberDirectoryPicker
@@ -28,7 +29,6 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -424,7 +424,7 @@ private fun ConfigurationStep(
                 enabled = isValidUrl && customDirectoryName.isNotBlank() && !directoryExists,
                 colors = ButtonDefaults.buttonColors(
                     backgroundColor = BossDarkAccent,
-                    contentColor = Color.Black,
+                    contentColor = BossTheme.colors.onSignal,
                     disabledBackgroundColor = BossDarkBorder,
                     disabledContentColor = BossDarkTextSecondary
                 ),
@@ -578,7 +578,7 @@ private fun SuccessStep(
                 onClick = onOpenProject,
                 colors = ButtonDefaults.buttonColors(
                     backgroundColor = BossDarkAccent,
-                    contentColor = Color.Black
+                    contentColor = BossTheme.colors.onSignal
                 ),
                 shape = RoundedCornerShape(4.dp)
             ) {
@@ -672,7 +672,7 @@ private fun ErrorStep(
                 onClick = onRetry,
                 colors = ButtonDefaults.buttonColors(
                     backgroundColor = BossDarkAccent,
-                    contentColor = Color.Black
+                    contentColor = BossTheme.colors.onSignal
                 ),
                 shape = RoundedCornerShape(4.dp)
             ) {

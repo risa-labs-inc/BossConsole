@@ -3,6 +3,7 @@ package ai.rever.boss.components.dashboard.cards
 import BossDarkSurface
 import BossDarkTextSecondary
 import ai.rever.boss.dashboard.SplitTemplate
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
@@ -58,8 +59,8 @@ fun SplitTemplateCard(
         animationSpec = spring(dampingRatio = 0.6f)
     )
 
-    val backgroundColor = if (isHovered) Color(0xFF2A2D30) else BossDarkSurface
-    val borderColor = if (isHovered) Color(0xFF4A9EFF).copy(alpha = 0.5f) else Color.Transparent
+    val backgroundColor = if (isHovered) BossTheme.colors.signalWash else BossDarkSurface
+    val borderColor = if (isHovered) BossTheme.colors.signal.copy(alpha = 0.5f) else Color.Transparent
 
     val cardShape = RoundedCornerShape(12.dp)
 
@@ -89,7 +90,7 @@ fun SplitTemplateCard(
         ) {
             Text(
                 text = template.name,
-                color = Color.White,
+                color = BossTheme.colors.textPrimary,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
@@ -131,7 +132,7 @@ private fun SplitPreview(template: SplitTemplate) {
             .fillMaxWidth()
             .height(50.dp)
             .clip(RoundedCornerShape(6.dp))
-            .background(Color(0xFF1A1B1E)),
+            .background(BossTheme.colors.ink),
         horizontalArrangement = Arrangement.spacedBy(2.dp)
     ) {
         // Left panel
@@ -161,14 +162,15 @@ private fun PanelPreview(
     modifier: Modifier = Modifier
 ) {
     val (icon, color, label) = when (type) {
-        "terminal" -> Triple(Icons.Outlined.Terminal, Color(0xFF4EC9B0), "Term")
-        "browser" -> Triple(Icons.Outlined.Language, Color(0xFF4A9EFF), "Web")
+        "terminal" -> Triple(Icons.Outlined.Terminal, BossTheme.colors.ok, "Term")
+        "browser" -> Triple(Icons.Outlined.Language, BossTheme.colors.data, "Web")
+        // Deliberate one-off: the design system has no purple token (editor identity color).
         "editor" -> Triple(Icons.Outlined.Code, Color(0xFFB877DB), "Code")
         else -> Triple(Icons.Outlined.Code, BossDarkTextSecondary, type)
     }
 
     Box(
-        modifier = modifier.background(Color(0xFF252629)),
+        modifier = modifier.background(BossTheme.colors.raised),
         contentAlignment = Alignment.Center
     ) {
         Column(

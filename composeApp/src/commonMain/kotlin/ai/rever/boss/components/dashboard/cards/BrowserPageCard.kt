@@ -4,6 +4,7 @@ import BossDarkSurface
 import BossDarkTextSecondary
 import ai.rever.boss.cache.loadHighQualityFavicon
 import ai.rever.boss.plugin.api.TabIcon
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.dashboard.RecentBrowserPage
 import ai.rever.boss.dashboard.RecentBrowserPagesManager
 import androidx.compose.animation.core.animateFloatAsState
@@ -64,7 +65,7 @@ fun BrowserPageCard(
         animationSpec = spring(dampingRatio = 0.6f)
     )
 
-    val backgroundColor = if (isHovered) Color(0xFF2A2D30) else BossDarkSurface
+    val backgroundColor = if (isHovered) BossTheme.colors.signalWash else BossDarkSurface
     val domain = RecentBrowserPagesManager.getDomain(page.url)
     val iconColor = getDomainColor(domain)
     val cardShape = RoundedCornerShape(12.dp)
@@ -126,7 +127,7 @@ fun BrowserPageCard(
             ) {
                 Text(
                     text = page.title.ifBlank { domain },
-                    color = Color.White,
+                    color = BossTheme.colors.textPrimary,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Medium,
                     maxLines = 2,
@@ -152,7 +153,7 @@ fun BrowserPageCard(
                     .padding(4.dp)
                     .size(16.dp)
                     .background(
-                        color = Color(0xFF3A3D40),
+                        color = BossTheme.colors.lineStrong,
                         shape = CircleShape
                     )
                     .clickable { onRemove() },
@@ -171,6 +172,9 @@ fun BrowserPageCard(
 
 /**
  * Get a color for a domain based on common sites.
+ *
+ * These are deliberate external brand-identity colors (GitHub green, Google
+ * blue, YouTube red, ...) and are intentionally exempt from BOSS theme tokens.
  */
 private fun getDomainColor(domain: String): Color {
     return when {

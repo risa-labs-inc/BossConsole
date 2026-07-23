@@ -14,6 +14,7 @@ import ai.rever.boss.components.events.PanelEventBus
 import ai.rever.boss.components.events.TerminalEventBus
 import ai.rever.boss.components.events.URLEventBus
 import ai.rever.boss.components.plugin.PanelIds
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.window.Project
 import ai.rever.boss.components.plugin.panels.left_top.ProjectState
 import ai.rever.boss.dashboard.DashboardStatsManager
@@ -71,7 +72,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -210,8 +210,8 @@ fun Dashboard(
                         androidx.compose.material.Button(
                             onClick = onOpenProjectDialog,
                             colors = androidx.compose.material.ButtonDefaults.buttonColors(
-                                backgroundColor = Color(0xFF4A9EFF),
-                                contentColor = Color.White
+                                backgroundColor = BossTheme.colors.signal,
+                                contentColor = BossTheme.colors.onSignal
                             ),
                             shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.padding(16.dp)
@@ -596,7 +596,7 @@ private fun WelcomeMessage(modifier: Modifier = Modifier) {
     Column(modifier = modifier) {
         Text(
             text = "Welcome To Boss Console",
-            color = Color.White,
+            color = BossTheme.colors.textPrimary,
             fontSize = 28.sp,
             fontWeight = FontWeight.Bold
         )
@@ -638,7 +638,7 @@ private fun StatItem(label: String, value: String) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
             text = value,
-            color = Color(0xFF4A9EFF),
+            color = BossTheme.colors.data,
             fontSize = 16.sp,
             fontWeight = FontWeight.Bold,
             maxLines = 1,

@@ -4,6 +4,7 @@ import ai.rever.boss.components.plugin.OutOfProcessPluginSpawnerImpl
 import ai.rever.boss.components.plugin.PluginStateBridge
 import ai.rever.boss.plugin.api.PanelComponentWithUI
 import ai.rever.boss.plugin.api.PanelInfo
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material.CircularProgressIndicator
@@ -13,7 +14,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import com.arkivanov.decompose.ComponentContext
 import org.slf4j.LoggerFactory
 
@@ -52,7 +52,7 @@ class BridgedPanelComponent(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center,
             ) {
-                CircularProgressIndicator(color = Color(0xFF4A9EFF))
+                CircularProgressIndicator(color = BossTheme.colors.signal)
             }
         } else {
             content(stateBytes, connected)

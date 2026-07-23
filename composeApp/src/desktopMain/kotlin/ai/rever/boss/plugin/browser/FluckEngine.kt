@@ -34,6 +34,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.SupervisorJob
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.graphics.toArgb
+import ai.rever.boss.plugin.ui.BossColors
 import ai.rever.boss.plugin.ui.BossThemeController
 import ai.rever.boss.plugin.ui.BossThemes
 import java.awt.Toolkit
@@ -180,10 +182,10 @@ object FluckEngine {
                         val current = result.selectedMatch()
                         if (total > 0) {
                             infoLabel?.text = "$current/$total"
-                            infoLabel?.foreground = java.awt.Color(0xCC, 0xCC, 0xCC)
+                            infoLabel?.foreground = java.awt.Color(BossColors.darkTextPrimary.toArgb(), true)
                         } else {
                             infoLabel?.text = "0/0"
-                            infoLabel?.foreground = java.awt.Color(0xFF, 0x6B, 0x6B)
+                            infoLabel?.foreground = java.awt.Color(BossColors.darkError.toArgb(), true)
                         }
                     }
                 }
@@ -201,10 +203,12 @@ object FluckEngine {
         }
 
         private fun createDialog(owner: java.awt.Window) {
-            val bg = java.awt.Color(0x25, 0x25, 0x26)
-            val inputBg = java.awt.Color(0x3C, 0x3C, 0x3C)
-            val fg = java.awt.Color(0xCC, 0xCC, 0xCC)
-            val mutedFg = java.awt.Color(0x80, 0x80, 0x80)
+            // Colors resolve from the active BOSS theme at dialog build time.
+            val bg = java.awt.Color(BossColors.darkBackground.toArgb(), true)
+            val inputBg = java.awt.Color(BossColors.darkSurface.toArgb(), true)
+            val fg = java.awt.Color(BossColors.darkTextPrimary.toArgb(), true)
+            val mutedFg = java.awt.Color(BossColors.darkTextSecondary.toArgb(), true)
+            fun cssHex(c: java.awt.Color) = "#%06x".format(c.rgb and 0xFFFFFF)
             val font = java.awt.Font("SansSerif", java.awt.Font.PLAIN, 13)
             val smallFont = java.awt.Font("SansSerif", java.awt.Font.PLAIN, 11)
 
@@ -219,17 +223,17 @@ object FluckEngine {
             content.background = bg
             content.layout = java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 2, 4)
             content.border = javax.swing.BorderFactory.createCompoundBorder(
-                javax.swing.BorderFactory.createLineBorder(java.awt.Color(0x3C, 0x3C, 0x3C)),
+                javax.swing.BorderFactory.createLineBorder(java.awt.Color(BossColors.darkBorder.toArgb(), true)),
                 javax.swing.BorderFactory.createEmptyBorder(2, 6, 2, 6)
             )
 
             val tf = javax.swing.JTextField(14)
             tf.font = font
-            tf.foreground = java.awt.Color.WHITE
+            tf.foreground = fg
             tf.background = inputBg
-            tf.caretColor = java.awt.Color.WHITE
+            tf.caretColor = fg
             tf.border = javax.swing.BorderFactory.createCompoundBorder(
-                javax.swing.BorderFactory.createLineBorder(java.awt.Color(0x55, 0x55, 0x55)),
+                javax.swing.BorderFactory.createLineBorder(java.awt.Color(BossThemeController.current.colors.lineStrong.toArgb(), true)),
                 javax.swing.BorderFactory.createEmptyBorder(2, 6, 2, 6)
             )
             tf.preferredSize = java.awt.Dimension(160, 28)
@@ -259,17 +263,17 @@ object FluckEngine {
                 return b
             }
 
-            val prevBtn = makeBtn("<html><span style='font-size:10px;color:#cccccc;'>\u25B2</span></html>", "Previous (Shift+Enter)")
-            val nextBtn = makeBtn("<html><span style='font-size:10px;color:#cccccc;'>\u25BC</span></html>", "Next (Enter)")
-            val caseBtn = makeBtn("<html><span style='font-size:12px;color:#808080;'>Aa</span></html>", "Case sensitive")
+            val prevBtn = makeBtn("<html><span style='font-size:10px;color:${cssHex(fg)};'>\u25B2</span></html>", "Previous (Shift+Enter)")
+            val nextBtn = makeBtn("<html><span style='font-size:10px;color:${cssHex(fg)};'>\u25BC</span></html>", "Next (Enter)")
+            val caseBtn = makeBtn("<html><span style='font-size:12px;color:${cssHex(mutedFg)};'>Aa</span></html>", "Case sensitive")
             caseBtn.preferredSize = java.awt.Dimension(40, 28)
-            val closeBtn = makeBtn("<html><span style='font-size:12px;color:#cccccc;'>\u2715</span></html>", "Close (Esc)")
+            val closeBtn = makeBtn("<html><span style='font-size:12px;color:${cssHex(fg)};'>\u2715</span></html>", "Close (Esc)")
 
             prevBtn.addActionListener { performFind(true) }
             nextBtn.addActionListener { performFind(false) }
             caseBtn.addActionListener {
                 caseSensitive = !caseSensitive
-                val color = if (caseSensitive) "#4a90e2" else "#808080"
+                val color = if (caseSensitive) cssHex(java.awt.Color(BossColors.darkAccent.toArgb(), true)) else cssHex(mutedFg)
                 val weight = if (caseSensitive) "bold" else "normal"
                 caseBtn.text = "<html><span style='font-size:12px;color:$color;font-weight:$weight;'>Aa</span></html>"
                 performFind(false)

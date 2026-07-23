@@ -1,6 +1,11 @@
 package ai.rever.boss.components.window_panel.components.main_window_panels
 
+import BossDarkAccent
 import BossDarkBackground
+import BossDarkContentBackground
+import BossDarkSurface
+import BossDarkTextMuted
+import BossDarkTextPrimary
 import BossDarkTextSecondary
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
@@ -18,7 +23,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -128,7 +132,7 @@ fun EmptyContent(
                 Icon(
                     imageVector = Icons.Outlined.Dashboard,
                     contentDescription = "BOSS",
-                    tint = Color(0xFF4A9EFF),
+                    tint = BossDarkAccent,
                     modifier = Modifier.size(80.dp)
                 )
             }
@@ -138,7 +142,7 @@ fun EmptyContent(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text("Welcome to BOSS", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+                Text("Welcome to BOSS", color = BossDarkTextPrimary, fontSize = 28.sp, fontWeight = FontWeight.Bold)
                 Text("Multi-panel development environment", color = BossDarkTextSecondary, fontSize = 16.sp)
             }
 
@@ -147,7 +151,7 @@ fun EmptyContent(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Text("Quick Tips", color = Color(0xFF4A9EFF), fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Text("Quick Tips", color = BossDarkAccent, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     tips.forEachIndexed { index, tip ->
                         Card(
@@ -221,20 +225,20 @@ private fun Card(
 
     // Colors based on state
     val backgroundColor = when {
-        !enabled -> Color(0xFF1A1B1E)  // Darker for disabled
-        isSelected -> Color(0xFF2A2D30)
-        else -> Color(0xFF1E1F22)
+        !enabled -> BossDarkContentBackground  // Darker for disabled
+        isSelected -> BossDarkSurface
+        else -> BossDarkBackground
     }
 
     val iconTint = when {
-        !enabled -> Color(0xFF4A4A4A)  // Muted gray for disabled
-        isSelected -> Color(0xFF4A9EFF)
+        !enabled -> BossDarkTextMuted  // Muted for disabled
+        isSelected -> BossDarkAccent
         else -> BossDarkTextSecondary
     }
 
     val textColor = when {
-        !enabled -> Color(0xFF666666)  // Dim text for disabled
-        isSelected -> Color.White
+        !enabled -> BossDarkTextMuted  // Dim text for disabled
+        isSelected -> BossDarkTextPrimary
         else -> BossDarkTextSecondary
     }
 

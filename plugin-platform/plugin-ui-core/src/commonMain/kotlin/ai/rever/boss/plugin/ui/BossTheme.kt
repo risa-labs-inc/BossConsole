@@ -38,8 +38,9 @@ object BossThemeColors {
 /**
  * BOSS application theme.
  *
- * This theme only supports dark mode and ignores system theme settings.
- * The dark theme is mandatory for all screens and components in the app.
+ * Resolves through [BossThemeController]'s active theme — Operator (dark,
+ * default), Daylight (light), or Clean (charcoal) — selected explicitly by the
+ * user in Settings and persisted; the OS theme setting is not consulted.
  *
  * @param content The content to be styled with this theme
  */

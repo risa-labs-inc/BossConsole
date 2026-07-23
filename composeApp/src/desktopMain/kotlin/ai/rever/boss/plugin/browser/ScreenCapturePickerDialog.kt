@@ -11,6 +11,7 @@ import BossDarkTextSecondary
 import ai.rever.boss.cache.loadHighQualityFavicon
 import ai.rever.boss.components.common.rememberFaviconLoader
 import ai.rever.boss.plugin.api.TabIcon
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
@@ -181,7 +182,7 @@ private fun TabBar(
 @Composable
 private fun TabItem(title: String, count: Int, isSelected: Boolean, onClick: () -> Unit) {
     val backgroundColor = if (isSelected) BossDarkAccent else Color.Transparent
-    val textColor = if (isSelected) Color.Black else BossDarkTextSecondary
+    val textColor = if (isSelected) BossTheme.colors.onSignal else BossDarkTextSecondary
     val borderColor = if (isSelected) BossDarkAccent else BossDarkBorder
 
     Surface(
@@ -194,7 +195,7 @@ private fun TabItem(title: String, count: Int, isSelected: Boolean, onClick: () 
             Text(text = title, fontSize = 14.sp, fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal, color = textColor)
             if (count > 0) {
                 Spacer(modifier = Modifier.width(6.dp))
-                Surface(shape = RoundedCornerShape(10.dp), color = if (isSelected) Color.Black.copy(alpha = 0.2f) else BossDarkSurface) {
+                Surface(shape = RoundedCornerShape(10.dp), color = if (isSelected) BossTheme.colors.onSignal.copy(alpha = 0.2f) else BossDarkSurface) {
                     Text(text = count.toString(), fontSize = 12.sp, color = textColor, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
                 }
             }
@@ -242,11 +243,11 @@ private fun SourceListItem(
 
     // Determine fallback icon
     val (fallbackIcon, fallbackTint) = when (source.category) {
-        ScreenCaptureNotifier.CaptureSourceItem.Category.SCREEN -> Icons.Default.Monitor to Color(0xFF8B5CF6)
-        ScreenCaptureNotifier.CaptureSourceItem.Category.WINDOW -> Icons.Default.Window to Color(0xFF10B981)
+        ScreenCaptureNotifier.CaptureSourceItem.Category.SCREEN -> Icons.Default.Monitor to BossTheme.colors.signal
+        ScreenCaptureNotifier.CaptureSourceItem.Category.WINDOW -> Icons.Default.Window to BossTheme.colors.ok
         ScreenCaptureNotifier.CaptureSourceItem.Category.BROWSER_TAB -> {
-            if (isLoading) Icons.Default.Refresh to Color(0xFF9CA3AF)
-            else Icons.Default.Tab to Color(0xFF3B82F6)
+            if (isLoading) Icons.Default.Refresh to BossTheme.colors.textSecondary
+            else Icons.Default.Tab to BossTheme.colors.data
         }
     }
 
@@ -307,7 +308,7 @@ private fun DialogFooter(
             Checkbox(
                 checked = includeAudio,
                 onCheckedChange = onAudioToggle,
-                colors = CheckboxDefaults.colors(checkedColor = BossDarkAccent, uncheckedColor = BossDarkTextSecondary, checkmarkColor = Color.Black)
+                colors = CheckboxDefaults.colors(checkedColor = BossDarkAccent, uncheckedColor = BossDarkTextSecondary, checkmarkColor = BossTheme.colors.onSignal)
             )
             Text(text = "Share audio", fontSize = 14.sp, color = BossDarkTextPrimary)
         }
@@ -321,7 +322,7 @@ private fun DialogFooter(
                 enabled = selectedSource != null,
                 colors = ButtonDefaults.buttonColors(
                     backgroundColor = BossDarkAccent,
-                    contentColor = Color.Black,
+                    contentColor = BossTheme.colors.onSignal,
                     disabledBackgroundColor = BossDarkSurface,
                     disabledContentColor = BossDarkTextSecondary
                 ),

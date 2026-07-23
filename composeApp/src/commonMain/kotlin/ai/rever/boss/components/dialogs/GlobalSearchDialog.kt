@@ -1,10 +1,14 @@
 package ai.rever.boss.components.dialogs
 
+import BossDarkAccent
 import BossDarkBackground
+import BossDarkSecondary
+import BossDarkSuccess
 import BossDarkSurface
 import BossDarkTextMuted
 import BossDarkTextPrimary
 import BossDarkTextSecondary
+import BossDarkWarning
 import ai.rever.boss.components.workspaces.WorkspaceManager
 import ai.rever.boss.icons.FileIcons
 import ai.rever.boss.search.GlobalSearchService
@@ -64,12 +68,14 @@ import kotlinx.coroutines.launch
 
 private val globalSearchLogger = BossLogger.forComponent("GlobalSearchDialog")
 
-// Theme colors matching the dashboard
-private val AccentBlue = Color(0xFF4A9EFF)
-private val AccentGreen = Color(0xFF4CAF50)
-private val AccentOrange = Color(0xFFFF9800)
+// Theme colors — reactive getters into the BOSS design system tokens
+// (getters, not cached vals, so theme switches re-skin the dialog).
+private val AccentBlue get() = BossDarkAccent      // signal — selection / primary
+private val AccentGreen get() = BossDarkSuccess    // ok — tabs
+private val AccentOrange get() = BossDarkWarning   // warn — bookmarks
+// Deliberate one-off: the design system has no purple token (run-config identity color).
 private val AccentPurple = Color(0xFF9C27B0)
-private val AccentCyan = Color(0xFF00BCD4)
+private val AccentCyan get() = BossDarkSecondary   // data — commands
 private val HoverBackground get() = BossDarkSurface
 private val CardShape = RoundedCornerShape(12.dp)
 private val SmallCardShape = RoundedCornerShape(8.dp)

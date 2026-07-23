@@ -2,6 +2,7 @@ package ai.rever.boss.components.bars.horizontal
 
 import BossDarkTextSecondary
 import BossDarkBorder
+import BossDarkSuccess
 import ai.rever.boss.components.buttons.BossActionButton
 import ai.rever.boss.components.events.PanelEventBus
 import ai.rever.boss.window.LocalWindowId
@@ -198,7 +199,7 @@ fun BossRightBottomBar() {
     statusMessage?.let { message ->
         Text(
             text = message,
-            color = androidx.compose.ui.graphics.Color(0xFF4CAF50), // Green color for success
+            color = BossDarkSuccess, // Green color for success
             fontSize = 12.sp,
             modifier = Modifier.padding(horizontal = 8.dp)
         )

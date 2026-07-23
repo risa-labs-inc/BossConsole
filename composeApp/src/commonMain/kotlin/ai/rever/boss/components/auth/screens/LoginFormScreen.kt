@@ -15,7 +15,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -28,6 +27,7 @@ import BossDarkTextPrimary
 import BossDarkTextSecondary
 import BossDarkAccent
 import ai.rever.boss.components.auth.forms.*
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.viewmodels.LoginViewModel
 import ai.rever.boss.viewmodels.auth.AuthOptions
 import kotlinx.coroutines.launch
@@ -191,20 +191,20 @@ fun LoginFormScreen(
                             shape = RoundedCornerShape(4.dp),
                             colors = ButtonDefaults.buttonColors(
                                 backgroundColor = BossDarkAccent,
-                                contentColor = Color.White
+                                contentColor = BossTheme.colors.onSignal
                             )
                         ) {
                             if (passkeyAuthLoading) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(18.dp),
-                                    color = Color.White,
+                                    color = BossDarkTextPrimary,
                                     strokeWidth = 2.dp
                                 )
                             } else {
                                 Icon(
                                     imageVector = Icons.Default.Fingerprint,
                                     contentDescription = "Passkey",
-                                    tint = Color.White,
+                                    tint = BossTheme.colors.onSignal,
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))

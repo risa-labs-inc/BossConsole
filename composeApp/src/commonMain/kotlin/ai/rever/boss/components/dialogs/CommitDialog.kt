@@ -12,6 +12,7 @@ import ai.rever.boss.git.GitOperationResult
 import ai.rever.boss.plugin.git.GitOperationResult.Success as GitSuccess
 import ai.rever.boss.plugin.git.GitOperationResult.Error as GitError
 import ai.rever.boss.git.GitService
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.window.LocalWindowId
 import ai.rever.boss.window.LocalWindowGitState
 import androidx.compose.foundation.background
@@ -29,7 +30,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -418,11 +418,11 @@ private fun CommitFileRow(
         else -> " "
     }
     val statusColor = when (statusType) {
-        GitFileStatusType.MODIFIED -> Color(0xFF6B9BFA)
-        GitFileStatusType.ADDED -> Color(0xFF73C991)
-        GitFileStatusType.DELETED -> Color(0xFFF28B82)
-        GitFileStatusType.RENAMED, GitFileStatusType.COPIED -> Color(0xFFFDD663)
-        GitFileStatusType.UNTRACKED -> Color(0xFF9AA0A6)
+        GitFileStatusType.MODIFIED -> BossTheme.colors.data
+        GitFileStatusType.ADDED -> BossTheme.colors.ok
+        GitFileStatusType.DELETED -> BossTheme.colors.alert
+        GitFileStatusType.RENAMED, GitFileStatusType.COPIED -> BossTheme.colors.warn
+        GitFileStatusType.UNTRACKED -> BossTheme.colors.textSecondary
         else -> BossDarkTextSecondary
     }
 
