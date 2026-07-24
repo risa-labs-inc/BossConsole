@@ -73,6 +73,7 @@ class WorkspaceExtractorTest {
     ) : TabComponentWithUI, ComponentContext by ctx {
         @Composable
         override fun Content() {
+            // Fixture tab renders nothing; extraction only reads tab metadata.
         }
     }
 
