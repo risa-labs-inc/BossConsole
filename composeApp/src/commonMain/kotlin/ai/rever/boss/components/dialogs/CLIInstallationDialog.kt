@@ -1,12 +1,6 @@
 package ai.rever.boss.components.dialogs
 
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkError
-import BossDarkSuccess
-import BossDarkSurface
-import BossDarkTextPrimary
-import BossDarkTextSecondary
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.utils.CLIInstallResult
 import ai.rever.boss.utils.CLIInstaller
 import androidx.compose.foundation.layout.*
@@ -58,7 +52,7 @@ fun CLIInstallationDialog(
                 .width(500.dp)
                 .padding(16.dp),
             elevation = 8.dp,
-            backgroundColor = BossDarkSurface
+            backgroundColor = BossTheme.colors.raised
         ) {
             Column(
                 modifier = Modifier.padding(24.dp),
@@ -107,7 +101,7 @@ private fun InstallingContent() {
     ) {
         CircularProgressIndicator(
             modifier = Modifier.size(64.dp),
-            color = BossDarkAccent
+            color = BossTheme.colors.signal
         )
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -116,7 +110,7 @@ private fun InstallingContent() {
             text = "Installing BOSS CLI",
             fontSize = 20.sp,
             fontWeight = FontWeight.Bold,
-            color = BossDarkTextPrimary
+            color = BossTheme.colors.textPrimary
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -124,7 +118,7 @@ private fun InstallingContent() {
         Text(
             text = "Please wait...",
             fontSize = 14.sp,
-            color = BossDarkTextSecondary
+            color = BossTheme.colors.textSecondary
         )
     }
 }
@@ -144,7 +138,7 @@ private fun SuccessContent(
             imageVector = Icons.Default.CheckCircle,
             contentDescription = "Success",
             modifier = Modifier.size(64.dp),
-            tint = BossDarkSuccess
+            tint = BossTheme.colors.ok
         )
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -153,14 +147,14 @@ private fun SuccessContent(
             text = "CLI Installed Successfully",
             fontSize = 20.sp,
             fontWeight = FontWeight.Bold,
-            color = BossDarkTextPrimary
+            color = BossTheme.colors.textPrimary
         )
 
         Spacer(modifier = Modifier.height(16.dp))
 
         Card(
             modifier = Modifier.fillMaxWidth(),
-            backgroundColor = BossDarkBackground,
+            backgroundColor = BossTheme.colors.panel,
             elevation = 0.dp
         ) {
             Column(
@@ -169,7 +163,7 @@ private fun SuccessContent(
                 Text(
                     text = result.message,
                     fontSize = 13.sp,
-                    color = BossDarkTextSecondary,
+                    color = BossTheme.colors.textSecondary,
                     lineHeight = 20.sp
                 )
             }
@@ -180,8 +174,8 @@ private fun SuccessContent(
         Button(
             onClick = onClose,
             colors = ButtonDefaults.buttonColors(
-                backgroundColor = BossDarkAccent,
-                contentColor = BossDarkTextPrimary
+                backgroundColor = BossTheme.colors.signal,
+                contentColor = BossTheme.colors.onSignal
             ),
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -206,7 +200,7 @@ private fun ErrorContent(
             imageVector = Icons.Default.Error,
             contentDescription = "Error",
             modifier = Modifier.size(64.dp),
-            tint = BossDarkError
+            tint = BossTheme.colors.alert
         )
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -215,14 +209,14 @@ private fun ErrorContent(
             text = "Installation Failed",
             fontSize = 20.sp,
             fontWeight = FontWeight.Bold,
-            color = BossDarkTextPrimary
+            color = BossTheme.colors.textPrimary
         )
 
         Spacer(modifier = Modifier.height(16.dp))
 
         Card(
             modifier = Modifier.fillMaxWidth(),
-            backgroundColor = BossDarkBackground,
+            backgroundColor = BossTheme.colors.panel,
             elevation = 0.dp
         ) {
             Column(
@@ -231,7 +225,7 @@ private fun ErrorContent(
                 Text(
                     text = message,
                     fontSize = 13.sp,
-                    color = BossDarkTextSecondary,
+                    color = BossTheme.colors.textSecondary,
                     lineHeight = 20.sp
                 )
             }
@@ -246,7 +240,7 @@ private fun ErrorContent(
             OutlinedButton(
                 onClick = onClose,
                 colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = BossDarkTextPrimary
+                    contentColor = BossTheme.colors.textPrimary
                 ),
                 modifier = Modifier.weight(1f)
             ) {
@@ -256,8 +250,8 @@ private fun ErrorContent(
             Button(
                 onClick = onRetry,
                 colors = ButtonDefaults.buttonColors(
-                    backgroundColor = BossDarkAccent,
-                    contentColor = BossDarkTextPrimary
+                    backgroundColor = BossTheme.colors.signal,
+                    contentColor = BossTheme.colors.onSignal
                 ),
                 modifier = Modifier.weight(1f)
             ) {

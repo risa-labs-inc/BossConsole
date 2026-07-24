@@ -1,11 +1,7 @@
 package ai.rever.boss.updater
 
-import ai.rever.boss.plugin.ui.BossDarkAccent
-import ai.rever.boss.plugin.ui.BossDarkBorder
-import ai.rever.boss.plugin.ui.BossDarkSurface
-import ai.rever.boss.plugin.ui.BossDarkTextMuted
-import ai.rever.boss.plugin.ui.BossDarkTextPrimary
-import ai.rever.boss.plugin.ui.BossDarkTextSecondary
+import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.plugin.ui.BossThemeController
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -165,10 +161,13 @@ private val LINK = Regex("^\\[([^\\]]+)\\]\\(([^)\\s]+)\\)$")
 
 /** Renders one markdown span run into an [AnnotatedString] (no block nesting). */
 internal fun buildInlineMarkdown(text: String): AnnotatedString = buildAnnotatedString {
+    // Non-composable context: read tokens through the controller. Callers in
+    // composition re-run on theme switches anyway (the whole dialog recomposes).
+    val colors = BossThemeController.current.colors
     val codeStyle = SpanStyle(
         fontFamily = FontFamily.Monospace,
-        color = BossDarkTextPrimary,
-        background = BossDarkSurface,
+        color = colors.textPrimary,
+        background = colors.raised,
         fontSize = 11.sp
     )
     var pos = 0
@@ -188,7 +187,7 @@ internal fun buildInlineMarkdown(text: String): AnnotatedString = buildAnnotated
                 val link = LINK.matchEntire(token)
                 if (link != null) {
                     val styles = TextLinkStyles(
-                        style = SpanStyle(color = BossDarkAccent, textDecoration = TextDecoration.Underline)
+                        style = SpanStyle(color = colors.signal, textDecoration = TextDecoration.Underline)
                     )
                     withLink(LinkAnnotation.Url(link.groupValues[2], styles)) { append(link.groupValues[1]) }
                 } else {
@@ -215,7 +214,7 @@ internal fun NotesBlockView(block: NotesBlock) {
     when (block) {
         is NotesBlock.Heading -> Text(
             buildInlineMarkdown(block.text),
-            color = BossDarkTextPrimary,
+            color = BossTheme.colors.textPrimary,
             fontSize = headingFontSize(block.level),
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.padding(top = 6.dp)
@@ -223,7 +222,7 @@ internal fun NotesBlockView(block: NotesBlock) {
 
         is NotesBlock.Paragraph -> Text(
             buildInlineMarkdown(block.text),
-            color = BossDarkTextSecondary,
+            color = BossTheme.colors.textSecondary,
             fontSize = 12.sp,
             lineHeight = 17.sp
         )
@@ -231,14 +230,14 @@ internal fun NotesBlockView(block: NotesBlock) {
         is NotesBlock.ListItem -> Row(Modifier.padding(start = (12 * block.indent).dp)) {
             Text(
                 block.marker,
-                color = BossDarkTextMuted,
+                color = BossTheme.colors.textMuted,
                 fontSize = 12.sp,
                 lineHeight = 17.sp,
                 modifier = Modifier.width(18.dp)
             )
             Text(
                 buildInlineMarkdown(block.text),
-                color = BossDarkTextSecondary,
+                color = BossTheme.colors.textSecondary,
                 fontSize = 12.sp,
                 lineHeight = 17.sp
             )
@@ -246,41 +245,41 @@ internal fun NotesBlockView(block: NotesBlock) {
 
         is NotesBlock.CodeBlock -> Text(
             block.code,
-            color = BossDarkTextPrimary,
+            color = BossTheme.colors.textPrimary,
             fontFamily = FontFamily.Monospace,
             fontSize = 11.sp,
             lineHeight = 15.sp,
             modifier = Modifier
                 .fillMaxWidth()
-                .background(BossDarkSurface, RoundedCornerShape(4.dp))
+                .background(BossTheme.colors.raised, RoundedCornerShape(4.dp))
                 .padding(8.dp)
         )
 
         is NotesBlock.Table -> Column(
             Modifier
                 .fillMaxWidth()
-                .background(BossDarkSurface.copy(alpha = 0.4f), RoundedCornerShape(4.dp))
+                .background(BossTheme.colors.raised.copy(alpha = 0.4f), RoundedCornerShape(4.dp))
                 .padding(vertical = 2.dp)
         ) {
             Row(Modifier.padding(horizontal = 6.dp, vertical = 3.dp)) {
                 block.header.forEach { cell ->
                     Text(
                         buildInlineMarkdown(cell),
-                        color = BossDarkTextPrimary,
+                        color = BossTheme.colors.textPrimary,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium,
                         modifier = Modifier.weight(1f).padding(end = 6.dp)
                     )
                 }
             }
-            Divider(color = BossDarkBorder, thickness = 1.dp)
+            Divider(color = BossTheme.colors.line, thickness = 1.dp)
             block.rows.forEach { row ->
                 Row(Modifier.padding(horizontal = 6.dp, vertical = 3.dp)) {
                     // Pad/trim ragged rows to the header width so weights stay aligned.
                     List(block.header.size) { idx -> row.getOrElse(idx) { "" } }.forEach { cell ->
                         Text(
                             buildInlineMarkdown(cell),
-                            color = BossDarkTextSecondary,
+                            color = BossTheme.colors.textSecondary,
                             fontSize = 11.sp,
                             modifier = Modifier.weight(1f).padding(end = 6.dp)
                         )
@@ -290,7 +289,7 @@ internal fun NotesBlockView(block: NotesBlock) {
         }
 
         NotesBlock.ThematicBreak -> Divider(
-            color = BossDarkBorder,
+            color = BossTheme.colors.line,
             thickness = 1.dp,
             modifier = Modifier.padding(vertical = 4.dp)
         )

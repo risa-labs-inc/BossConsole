@@ -1,5 +1,6 @@
 package ai.rever.boss.components.settings.keymap
 
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.TooltipArea
 import androidx.compose.foundation.layout.*
@@ -7,7 +8,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Warning
-import BossDarkError
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,7 +38,7 @@ fun ConflictWarningBadge(
         Surface(
             modifier = modifier,
             shape = RoundedCornerShape(12.dp),
-            color = BossDarkError.copy(alpha = 0.9f),
+            color = BossTheme.colors.alert.copy(alpha = 0.9f),
             elevation = 2.dp
         ) {
             Row(
@@ -82,7 +82,7 @@ private fun ConflictTooltip(conflicts: List<KeyBinding>) {
                 text = "⚠️ Shortcut Conflicts",
                 style = MaterialTheme.typography.subtitle2,
                 fontWeight = FontWeight.Bold,
-                color = BossDarkError
+                color = BossTheme.colors.alert
             )
 
             Divider()

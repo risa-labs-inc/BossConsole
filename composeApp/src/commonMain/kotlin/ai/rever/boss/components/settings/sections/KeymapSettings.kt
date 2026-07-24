@@ -1,9 +1,6 @@
 package ai.rever.boss.components.settings.sections
 
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkTextPrimary
-import BossDarkTextSecondary
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -47,7 +44,7 @@ fun KeymapSettings() {
             text = "Keyboard Shortcuts",
             style = MaterialTheme.typography.h5,
             fontWeight = FontWeight.Bold,
-            color = BossDarkTextPrimary
+            color = BossTheme.colors.textPrimary
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -55,7 +52,7 @@ fun KeymapSettings() {
         Text(
             text = "Reference for all available keyboard shortcuts in BOSS Console",
             style = MaterialTheme.typography.body2,
-            color = BossDarkTextSecondary
+            color = BossTheme.colors.textSecondary
         )
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -63,14 +60,14 @@ fun KeymapSettings() {
         TextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
-            placeholder = { Text("Search shortcuts...", color = BossDarkTextSecondary) },
-            leadingIcon = { Icon(Icons.Default.Search, null, tint = BossDarkTextSecondary) },
+            placeholder = { Text("Search shortcuts...", color = BossTheme.colors.textSecondary) },
+            leadingIcon = { Icon(Icons.Default.Search, null, tint = BossTheme.colors.textSecondary) },
             modifier = Modifier.fillMaxWidth(),
             colors = TextFieldDefaults.textFieldColors(
-                backgroundColor = BossDarkAccent.copy(alpha = 0.1f),
-                textColor = BossDarkTextPrimary,
-                cursorColor = BossDarkAccent,
-                focusedIndicatorColor = BossDarkAccent,
+                backgroundColor = BossTheme.colors.signal.copy(alpha = 0.1f),
+                textColor = BossTheme.colors.textPrimary,
+                cursorColor = BossTheme.colors.signal,
+                focusedIndicatorColor = BossTheme.colors.signal,
                 unfocusedIndicatorColor = Color.Transparent
             )
         )
@@ -101,7 +98,7 @@ fun KeymapSettings() {
         if (filteredShortcuts.isEmpty()) {
             Text(
                 text = "No shortcuts found matching your search.",
-                color = BossDarkTextSecondary,
+                color = BossTheme.colors.textSecondary,
                 modifier = Modifier.padding(16.dp)
             )
         } else {
@@ -127,8 +124,8 @@ private fun FilterChipButton(
     Button(
         onClick = onClick,
         colors = ButtonDefaults.buttonColors(
-            backgroundColor = if (selected) BossDarkAccent else BossDarkAccent.copy(alpha = 0.1f),
-            contentColor = if (selected) BossDarkTextPrimary else BossDarkTextSecondary
+            backgroundColor = if (selected) BossTheme.colors.signal else BossTheme.colors.signal.copy(alpha = 0.1f),
+            contentColor = if (selected) BossTheme.colors.textPrimary else BossTheme.colors.textSecondary
         ),
         shape = RoundedCornerShape(16.dp),
         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
@@ -149,9 +146,9 @@ private fun CategorySection(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        backgroundColor = BossDarkBackground,
+        backgroundColor = BossTheme.colors.panel,
         elevation = 0.dp,
-        border = BorderStroke(1.dp, BossDarkAccent.copy(alpha = 0.2f)),
+        border = BorderStroke(1.dp, BossTheme.colors.signal.copy(alpha = 0.2f)),
         shape = RoundedCornerShape(8.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -159,7 +156,7 @@ private fun CategorySection(
                 text = category.displayName,
                 style = MaterialTheme.typography.subtitle1,
                 fontWeight = FontWeight.Bold,
-                color = BossDarkTextPrimary
+                color = BossTheme.colors.textPrimary
             )
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -169,7 +166,7 @@ private fun CategorySection(
                 if (shortcut != shortcuts.last()) {
                     Divider(
                         modifier = Modifier.padding(vertical = 12.dp),
-                        color = BossDarkAccent.copy(alpha = 0.1f)
+                        color = BossTheme.colors.signal.copy(alpha = 0.1f)
                     )
                 }
             }
@@ -188,12 +185,12 @@ private fun ShortcutRow(shortcut: KeyboardShortcut) {
             Text(
                 text = shortcut.action,
                 style = MaterialTheme.typography.body1,
-                color = BossDarkTextPrimary
+                color = BossTheme.colors.textPrimary
             )
             Text(
                 text = shortcut.description,
                 style = MaterialTheme.typography.caption,
-                color = BossDarkTextSecondary
+                color = BossTheme.colors.textSecondary
             )
         }
 
@@ -226,15 +223,15 @@ private fun ShortcutKeysDisplay(
 private fun KeyCap(text: String) {
     Surface(
         shape = RoundedCornerShape(4.dp),
-        color = BossDarkAccent.copy(alpha = 0.2f),
-        border = BorderStroke(1.dp, BossDarkAccent.copy(alpha = 0.3f))
+        color = BossTheme.colors.signal.copy(alpha = 0.2f),
+        border = BorderStroke(1.dp, BossTheme.colors.signal.copy(alpha = 0.3f))
     ) {
         Text(
             text = text,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
             style = MaterialTheme.typography.body2,
             fontFamily = FontFamily.Monospace,
-            color = BossDarkTextPrimary
+            color = BossTheme.colors.textPrimary
         )
     }
 }

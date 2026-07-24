@@ -1,16 +1,12 @@
 package ai.rever.boss.components.bars.horizontal
 
-import BossDarkError
-import BossDarkSuccess
 import ai.rever.boss.components.buttons.BossActionButton
 import ai.rever.boss.performance.HealthStatus
 import ai.rever.boss.performance.PerformanceHealth
 import ai.rever.boss.performance.PerformanceSnapshot
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.utils.FormatUtils
 import androidx.compose.runtime.Composable
-
-// Re-export BossDarkWarning from plugin-ui-core for backward compatibility
-val BossDarkWarning = ai.rever.boss.plugin.ui.BossDarkWarning
 
 /**
  * Compact performance indicator for the status bar.
@@ -27,9 +23,9 @@ fun PerformanceIndicator(
     if (snapshot == null) return
 
     val color = when (health.overall) {
-        HealthStatus.GOOD -> BossDarkSuccess
-        HealthStatus.WARNING -> BossDarkWarning
-        HealthStatus.CRITICAL -> BossDarkError
+        HealthStatus.GOOD -> BossTheme.colors.ok
+        HealthStatus.WARNING -> BossTheme.colors.warn
+        HealthStatus.CRITICAL -> BossTheme.colors.alert
     }
 
     val memoryUsed = FormatUtils.formatMegabytes(snapshot.memory.heapUsedMB, compact = true)

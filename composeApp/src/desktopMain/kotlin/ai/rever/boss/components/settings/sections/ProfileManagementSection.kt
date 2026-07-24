@@ -1,15 +1,9 @@
 package ai.rever.boss.components.settings.sections
 
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkBorder
-import BossDarkContentBackground
-import BossDarkSurface
-import BossDarkTextPrimary
-import BossDarkTextSecondary
 import ai.rever.boss.plugin.browser.BrowserSettings
 import ai.rever.boss.plugin.browser.BrowserSettingsManager
 import ai.rever.boss.components.settings.shared.SettingsSection
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -59,10 +53,10 @@ fun ProfileManagementSection(
     ) {
         Card(
             modifier = Modifier.fillMaxWidth(),
-            backgroundColor = BossDarkContentBackground,
+            backgroundColor = BossTheme.colors.ink,
             shape = RoundedCornerShape(8.dp),
             elevation = 0.dp,
-            border = BorderStroke(1.dp, BossDarkBorder)
+            border = BorderStroke(1.dp, BossTheme.colors.line)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Row(
@@ -73,13 +67,13 @@ fun ProfileManagementSection(
                     Column {
                         Text(
                             text = "Current Profile",
-                            color = BossDarkTextSecondary,
+                            color = BossTheme.colors.textSecondary,
                             fontSize = 13.sp
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = currentProfile,
-                            color = BossDarkTextPrimary,
+                            color = BossTheme.colors.textPrimary,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Medium
                         )
@@ -89,7 +83,7 @@ fun ProfileManagementSection(
                         Box {
                             TextButton(
                                 onClick = { showSwitchProfileMenu = true },
-                                colors = ButtonDefaults.textButtonColors(contentColor = BossDarkAccent)
+                                colors = ButtonDefaults.textButtonColors(contentColor = BossTheme.colors.signal)
                             ) {
                                 Icon(
                                     Icons.Outlined.SwapHoriz,
@@ -103,7 +97,7 @@ fun ProfileManagementSection(
                             DropdownMenu(
                                 expanded = showSwitchProfileMenu,
                                 onDismissRequest = { showSwitchProfileMenu = false },
-                                modifier = Modifier.background(BossDarkBackground)
+                                modifier = Modifier.background(BossTheme.colors.panel)
                             ) {
                                 availableProfiles.forEach { profile ->
                                     DropdownMenuItem(
@@ -114,8 +108,8 @@ fun ProfileManagementSection(
                                         },
                                         modifier = Modifier.background(
                                             if (profile == currentProfile)
-                                                BossDarkAccent.copy(alpha = 0.1f)
-                                            else BossDarkBackground
+                                                BossTheme.colors.signal.copy(alpha = 0.1f)
+                                            else BossTheme.colors.panel
                                         )
                                     ) {
                                         Row(
@@ -124,14 +118,14 @@ fun ProfileManagementSection(
                                         ) {
                                             Text(
                                                 text = profile,
-                                                color = BossDarkTextPrimary,
+                                                color = BossTheme.colors.textPrimary,
                                                 fontSize = 13.sp
                                             )
                                             if (profile == currentProfile) {
                                                 Icon(
                                                     Icons.Outlined.Check,
                                                     contentDescription = "Selected",
-                                                    tint = BossDarkAccent,
+                                                    tint = BossTheme.colors.signal,
                                                     modifier = Modifier.size(16.dp)
                                                 )
                                             }
@@ -143,7 +137,7 @@ fun ProfileManagementSection(
 
                         TextButton(
                             onClick = { showNewProfileDialog = true },
-                            colors = ButtonDefaults.textButtonColors(contentColor = BossDarkAccent)
+                            colors = ButtonDefaults.textButtonColors(contentColor = BossTheme.colors.signal)
                         ) {
                             Icon(
                                 Icons.Outlined.Add,
@@ -169,7 +163,7 @@ fun ProfileManagementSection(
             title = {
                 Text(
                     "Create New Profile",
-                    color = BossDarkTextPrimary,
+                    color = BossTheme.colors.textPrimary,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -178,7 +172,7 @@ fun ProfileManagementSection(
                 Column {
                     Text(
                         "Enter a name for the new browser profile:",
-                        color = BossDarkTextSecondary,
+                        color = BossTheme.colors.textSecondary,
                         fontSize = 13.sp
                     )
                     Spacer(modifier = Modifier.height(16.dp))
@@ -190,12 +184,12 @@ fun ProfileManagementSection(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         colors = TextFieldDefaults.outlinedTextFieldColors(
-                            textColor = BossDarkTextPrimary,
-                            focusedBorderColor = BossDarkAccent,
-                            unfocusedBorderColor = BossDarkBorder,
-                            focusedLabelColor = BossDarkAccent,
-                            unfocusedLabelColor = BossDarkTextSecondary,
-                            placeholderColor = BossDarkTextSecondary.copy(alpha = 0.5f)
+                            textColor = BossTheme.colors.textPrimary,
+                            focusedBorderColor = BossTheme.colors.signal,
+                            unfocusedBorderColor = BossTheme.colors.line,
+                            focusedLabelColor = BossTheme.colors.signal,
+                            unfocusedLabelColor = BossTheme.colors.textSecondary,
+                            placeholderColor = BossTheme.colors.textSecondary.copy(alpha = 0.5f)
                         )
                     )
                 }
@@ -221,7 +215,7 @@ fun ProfileManagementSection(
                 ) {
                     Text(
                         "Create",
-                        color = if (newProfileName.isNotBlank()) BossDarkAccent else BossDarkTextSecondary,
+                        color = if (newProfileName.isNotBlank()) BossTheme.colors.signal else BossTheme.colors.textSecondary,
                         fontSize = 13.sp
                     )
                 }
@@ -233,11 +227,11 @@ fun ProfileManagementSection(
                         newProfileName = ""
                     }
                 ) {
-                    Text("Cancel", color = BossDarkTextSecondary, fontSize = 13.sp)
+                    Text("Cancel", color = BossTheme.colors.textSecondary, fontSize = 13.sp)
                 }
             },
-            backgroundColor = BossDarkBackground,
-            contentColor = BossDarkTextPrimary
+            backgroundColor = BossTheme.colors.panel,
+            contentColor = BossTheme.colors.textPrimary
         )
     }
 }

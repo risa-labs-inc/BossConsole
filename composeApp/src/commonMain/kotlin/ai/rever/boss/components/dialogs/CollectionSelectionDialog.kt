@@ -1,12 +1,7 @@
 package ai.rever.boss.components.dialogs
 
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkBorder
-import BossDarkSurface
-import BossDarkTextPrimary
-import BossDarkTextSecondary
 import ai.rever.boss.components.bookmarks.BookmarkCollection
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -76,7 +71,7 @@ fun CollectionSelectionDialog(
                 .width(500.dp)
                 .heightIn(max = 600.dp),
             shape = RoundedCornerShape(8.dp),
-            color = BossDarkBackground
+            color = BossTheme.colors.panel
         ) {
             Column(
                 modifier = Modifier.padding(20.dp)
@@ -86,7 +81,7 @@ fun CollectionSelectionDialog(
                     text = title,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
-                    color = BossDarkTextPrimary
+                    color = BossTheme.colors.textPrimary
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -99,7 +94,7 @@ fun CollectionSelectionDialog(
                         "Select a collection to move bookmark to"
                     },
                     fontSize = 13.sp,
-                    color = BossDarkTextSecondary
+                    color = BossTheme.colors.textSecondary
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -121,7 +116,7 @@ fun CollectionSelectionDialog(
                                 Text(
                                     text = "No other collections available",
                                     fontSize = 13.sp,
-                                    color = BossDarkTextSecondary,
+                                    color = BossTheme.colors.textSecondary,
                                     fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
                                 )
                             }
@@ -160,7 +155,7 @@ fun CollectionSelectionDialog(
                     TextButton(
                         onClick = onDismiss,
                         colors = ButtonDefaults.textButtonColors(
-                            contentColor = BossDarkTextSecondary
+                            contentColor = BossTheme.colors.textSecondary
                         )
                     ) {
                         Text("Cancel")
@@ -175,10 +170,10 @@ fun CollectionSelectionDialog(
                         },
                         enabled = selectedCollections.isNotEmpty(),
                         colors = ButtonDefaults.buttonColors(
-                            backgroundColor = BossDarkAccent,
+                            backgroundColor = BossTheme.colors.signal,
                             contentColor = Color.Black,
-                            disabledBackgroundColor = BossDarkBorder,
-                            disabledContentColor = BossDarkTextSecondary
+                            disabledBackgroundColor = BossTheme.colors.line,
+                            disabledContentColor = BossTheme.colors.textSecondary
                         ),
                         shape = RoundedCornerShape(6.dp)
                     ) {
@@ -209,11 +204,11 @@ private fun CollectionSelectionItem(
             .padding(vertical = 4.dp)
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(8.dp),
-        color = if (isSelected) BossDarkSurface else Color.Transparent,
+        color = if (isSelected) BossTheme.colors.raised else Color.Transparent,
         border = if (isSelected) {
-            androidx.compose.foundation.BorderStroke(1.dp, BossDarkAccent)
+            androidx.compose.foundation.BorderStroke(1.dp, BossTheme.colors.signal)
         } else {
-            androidx.compose.foundation.BorderStroke(1.dp, BossDarkBorder)
+            androidx.compose.foundation.BorderStroke(1.dp, BossTheme.colors.line)
         }
     ) {
         Row(
@@ -230,7 +225,7 @@ private fun CollectionSelectionItem(
                     if (isSelected) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked
                 },
                 contentDescription = if (isSelected) "Selected" else "Not selected",
-                tint = if (isSelected) BossDarkAccent else BossDarkTextSecondary,
+                tint = if (isSelected) BossTheme.colors.signal else BossTheme.colors.textSecondary,
                 modifier = Modifier.size(20.dp)
             )
 
@@ -240,7 +235,7 @@ private fun CollectionSelectionItem(
             Icon(
                 imageVector = if (collection.isFavorite) Icons.Outlined.Star else Icons.Outlined.Folder,
                 contentDescription = null,
-                tint = if (collection.isFavorite) BossDarkAccent else BossDarkTextSecondary,
+                tint = if (collection.isFavorite) BossTheme.colors.signal else BossTheme.colors.textSecondary,
                 modifier = Modifier.size(18.dp)
             )
 
@@ -252,12 +247,12 @@ private fun CollectionSelectionItem(
                     text = collection.name,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
-                    color = BossDarkTextPrimary
+                    color = BossTheme.colors.textPrimary
                 )
                 Text(
                     text = "${collection.bookmarks.size} bookmarks",
                     fontSize = 12.sp,
-                    color = BossDarkTextSecondary
+                    color = BossTheme.colors.textSecondary
                 )
             }
         }

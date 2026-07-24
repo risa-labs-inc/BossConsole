@@ -1,13 +1,6 @@
 package ai.rever.boss.components.settings.keymap
 
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkBorder
-import BossDarkContentBackground
-import BossDarkError
-import BossDarkSurface
-import BossDarkTextPrimary
-import BossDarkTextSecondary
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -47,7 +40,7 @@ fun KeymapImportExport(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(6.dp))
-                .background(BossDarkBackground)
+                .background(BossTheme.colors.panel)
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
@@ -55,19 +48,19 @@ fun KeymapImportExport(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "Export Keymap",
-                    color = BossDarkTextPrimary,
+                    color = BossTheme.colors.textPrimary,
                     fontSize = 13.sp
                 )
                 Text(
                     text = "Backup your shortcuts to JSON",
-                    color = BossDarkTextSecondary,
+                    color = BossTheme.colors.textSecondary,
                     fontSize = 11.sp,
                     modifier = Modifier.padding(top = 2.dp)
                 )
             }
             TextButton(
                 onClick = { showExportDialog = true },
-                colors = ButtonDefaults.textButtonColors(contentColor = BossDarkAccent)
+                colors = ButtonDefaults.textButtonColors(contentColor = BossTheme.colors.signal)
             ) {
                 Icon(
                     imageVector = Icons.Default.FileDownload,
@@ -84,7 +77,7 @@ fun KeymapImportExport(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(6.dp))
-                .background(BossDarkBackground)
+                .background(BossTheme.colors.panel)
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
@@ -92,19 +85,19 @@ fun KeymapImportExport(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "Import Keymap",
-                    color = BossDarkTextPrimary,
+                    color = BossTheme.colors.textPrimary,
                     fontSize = 13.sp
                 )
                 Text(
                     text = "Restore shortcuts from JSON backup",
-                    color = BossDarkTextSecondary,
+                    color = BossTheme.colors.textSecondary,
                     fontSize = 11.sp,
                     modifier = Modifier.padding(top = 2.dp)
                 )
             }
             TextButton(
                 onClick = { showImportDialog = true },
-                colors = ButtonDefaults.textButtonColors(contentColor = BossDarkAccent)
+                colors = ButtonDefaults.textButtonColors(contentColor = BossTheme.colors.signal)
             ) {
                 Icon(
                     imageVector = Icons.Default.FileUpload,
@@ -121,7 +114,7 @@ fun KeymapImportExport(
             Text(
                 text = "⚠️ $error",
                 fontSize = 11.sp,
-                color = BossDarkError
+                color = BossTheme.colors.alert
             )
         }
     }
@@ -171,7 +164,7 @@ private fun ExportDialog(
                 .width(600.dp)
                 .wrapContentHeight(),
             shape = RoundedCornerShape(12.dp),
-            color = BossDarkBackground,
+            color = BossTheme.colors.panel,
             elevation = 8.dp
         ) {
             Column(modifier = Modifier.padding(24.dp)) {
@@ -179,7 +172,7 @@ private fun ExportDialog(
                     text = "Export Keymap",
                     fontSize = 18.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = BossDarkTextPrimary
+                    color = BossTheme.colors.textPrimary
                 )
 
                 Spacer(modifier = Modifier.height(4.dp))
@@ -187,7 +180,7 @@ private fun ExportDialog(
                 Text(
                     text = "Copy the JSON below to backup or share your keymap",
                     fontSize = 13.sp,
-                    color = BossDarkTextSecondary
+                    color = BossTheme.colors.textSecondary
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -198,15 +191,15 @@ private fun ExportDialog(
                         .fillMaxWidth()
                         .height(300.dp)
                         .clip(RoundedCornerShape(6.dp))
-                        .background(BossDarkContentBackground)
-                        .border(1.dp, BossDarkBorder, RoundedCornerShape(6.dp))
+                        .background(BossTheme.colors.ink)
+                        .border(1.dp, BossTheme.colors.line, RoundedCornerShape(6.dp))
                         .padding(12.dp)
                 ) {
                     Text(
                         text = exportedJson,
                         fontSize = 11.sp,
                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                        color = BossDarkTextPrimary
+                        color = BossTheme.colors.textPrimary
                     )
                 }
 
@@ -217,16 +210,16 @@ private fun ExportDialog(
                     horizontalArrangement = Arrangement.End
                 ) {
                     TextButton(onClick = onDismiss) {
-                        Text("Close", color = BossDarkTextSecondary, fontSize = 13.sp)
+                        Text("Close", color = BossTheme.colors.textSecondary, fontSize = 13.sp)
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = {
                             copied = true
                         },
-                        colors = ButtonDefaults.buttonColors(backgroundColor = BossDarkAccent)
+                        colors = ButtonDefaults.buttonColors(backgroundColor = BossTheme.colors.signal)
                     ) {
-                        Text(if (copied) "Copied!" else "Copy to Clipboard", color = BossDarkTextPrimary, fontSize = 13.sp)
+                        Text(if (copied) "Copied!" else "Copy to Clipboard", color = BossTheme.colors.textPrimary, fontSize = 13.sp)
                     }
                 }
 
@@ -235,7 +228,7 @@ private fun ExportDialog(
                     Text(
                         text = "💡 Tip: Save this JSON to a file for backup",
                         fontSize = 11.sp,
-                        color = BossDarkAccent
+                        color = BossTheme.colors.signal
                     )
                 }
             }
@@ -260,7 +253,7 @@ private fun ImportDialog(
                 .width(600.dp)
                 .wrapContentHeight(),
             shape = RoundedCornerShape(12.dp),
-            color = BossDarkBackground,
+            color = BossTheme.colors.panel,
             elevation = 8.dp
         ) {
             Column(modifier = Modifier.padding(24.dp)) {
@@ -268,7 +261,7 @@ private fun ImportDialog(
                     text = "Import Keymap",
                     fontSize = 18.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = BossDarkTextPrimary
+                    color = BossTheme.colors.textPrimary
                 )
 
                 Spacer(modifier = Modifier.height(4.dp))
@@ -276,7 +269,7 @@ private fun ImportDialog(
                 Text(
                     text = "Paste keymap JSON below",
                     fontSize = 13.sp,
-                    color = BossDarkTextSecondary
+                    color = BossTheme.colors.textSecondary
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -287,8 +280,8 @@ private fun ImportDialog(
                         .fillMaxWidth()
                         .height(300.dp)
                         .clip(RoundedCornerShape(6.dp))
-                        .background(BossDarkContentBackground)
-                        .border(1.dp, BossDarkBorder, RoundedCornerShape(6.dp))
+                        .background(BossTheme.colors.ink)
+                        .border(1.dp, BossTheme.colors.line, RoundedCornerShape(6.dp))
                 ) {
                     TextField(
                         value = jsonInput,
@@ -300,13 +293,13 @@ private fun ImportDialog(
                         textStyle = androidx.compose.ui.text.TextStyle(
                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                             fontSize = 11.sp,
-                            color = BossDarkTextPrimary
+                            color = BossTheme.colors.textPrimary
                         ),
-                        placeholder = { Text("Paste JSON here...", color = BossDarkTextSecondary, fontSize = 11.sp) },
+                        placeholder = { Text("Paste JSON here...", color = BossTheme.colors.textSecondary, fontSize = 11.sp) },
                         colors = TextFieldDefaults.textFieldColors(
-                            textColor = BossDarkTextPrimary,
+                            textColor = BossTheme.colors.textPrimary,
                             backgroundColor = Color.Transparent,
-                            cursorColor = BossDarkAccent,
+                            cursorColor = BossTheme.colors.signal,
                             focusedIndicatorColor = Color.Transparent,
                             unfocusedIndicatorColor = Color.Transparent
                         )
@@ -318,7 +311,7 @@ private fun ImportDialog(
                     Text(
                         text = "⚠️ Invalid JSON format. Please check and try again.",
                         fontSize = 11.sp,
-                        color = BossDarkError
+                        color = BossTheme.colors.alert
                     )
                 }
 
@@ -329,7 +322,7 @@ private fun ImportDialog(
                     horizontalArrangement = Arrangement.End
                 ) {
                     TextButton(onClick = onDismiss) {
-                        Text("Cancel", color = BossDarkTextSecondary, fontSize = 13.sp)
+                        Text("Cancel", color = BossTheme.colors.textSecondary, fontSize = 13.sp)
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
@@ -341,9 +334,9 @@ private fun ImportDialog(
                             }
                         },
                         enabled = jsonInput.isNotBlank(),
-                        colors = ButtonDefaults.buttonColors(backgroundColor = BossDarkAccent)
+                        colors = ButtonDefaults.buttonColors(backgroundColor = BossTheme.colors.signal)
                     ) {
-                        Text("Import", color = BossDarkTextPrimary, fontSize = 13.sp)
+                        Text("Import", color = BossTheme.colors.textPrimary, fontSize = 13.sp)
                     }
                 }
 
@@ -352,7 +345,7 @@ private fun ImportDialog(
                 Text(
                     text = "⚠️ Warning: Importing will replace your current keymap",
                     fontSize = 11.sp,
-                    color = BossDarkError.copy(alpha = 0.7f)
+                    color = BossTheme.colors.alert.copy(alpha = 0.7f)
                 )
             }
         }

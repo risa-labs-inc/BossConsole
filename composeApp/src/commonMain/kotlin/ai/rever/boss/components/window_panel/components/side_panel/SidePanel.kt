@@ -1,7 +1,5 @@
 package ai.rever.boss.components.window_panel.components.side_panel
 
-import BossDarkBackground
-import BossDarkBorder
 import ai.rever.boss.components.model.BossDraggableComponent
 import ai.rever.boss.components.plugin.LocalPanelPluginIdResolver
 import ai.rever.boss.components.plugin.PluginUpdateRegistry
@@ -13,6 +11,7 @@ import ai.rever.boss.mcp.EvolverContract
 import ai.rever.boss.plugin.sandbox.PanelSandboxRegistry
 import ai.rever.boss.plugin.sandbox.ui.PluginCrashRegistry
 import ai.rever.boss.plugin.sandbox.ui.PluginErrorBoundary
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.components.bars.horizontal.StatusMessageManager
@@ -67,7 +66,7 @@ fun BossDraggableComponent.SidePanel(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(BossDarkBackground)
+            .background(BossTheme.colors.panel)
             .hoverable(interactionSource)
     ) {
         val title = component?.panelInfo?.displayName ?: "Default title"//getPanelTitle(panel)
@@ -175,7 +174,7 @@ fun BossDraggableComponent.SidePanel(
             windowId = windowId,
             dragModifier = headerDragModifier
         )
-        Divider(color = BossDarkBorder)
+        Divider(color = BossTheme.colors.line)
 
         Box(modifier = Modifier.fillMaxSize()) {
             // Read crash state so a plugin crash triggers full subtree teardown/rebuild.

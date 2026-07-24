@@ -1,12 +1,7 @@
 package ai.rever.boss.components.dialogs
 
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkBorder
-import BossDarkSurface
-import BossDarkTextPrimary
-import BossDarkTextSecondary
 import ai.rever.boss.components.common.rememberFaviconLoader
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.components.workspaces.WorkspaceManager
@@ -150,7 +145,7 @@ fun TopOfMindDialog(
                     }
                 },
             shape = RoundedCornerShape(8.dp),
-            color = BossDarkBackground,
+            color = BossTheme.colors.panel,
             elevation = 8.dp
         ) {
             Column(
@@ -166,20 +161,20 @@ fun TopOfMindDialog(
                     Icon(
                         Icons.Outlined.Language,
                         contentDescription = "Browser tabs",
-                        tint = BossDarkTextPrimary,
+                        tint = BossTheme.colors.textPrimary,
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         "Top of mind",
-                        color = BossDarkTextPrimary,
+                        color = BossTheme.colors.textPrimary,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(modifier = Modifier.weight(1f))
                     Text(
                         "${filteredTabs.size} tab${if (filteredTabs.size != 1) "s" else ""}",
-                        color = BossDarkTextSecondary,
+                        color = BossTheme.colors.textSecondary,
                         fontSize = 12.sp
                     )
                 }
@@ -197,7 +192,7 @@ fun TopOfMindDialog(
                     placeholder = {
                         Text(
                             "Search tabs by title, type, or workspace...",
-                            color = BossDarkTextSecondary,
+                            color = BossTheme.colors.textSecondary,
                             fontSize = 14.sp
                         )
                     },
@@ -205,15 +200,15 @@ fun TopOfMindDialog(
                         Icon(
                             Icons.Outlined.Search,
                             contentDescription = "Search",
-                            tint = BossDarkTextSecondary
+                            tint = BossTheme.colors.textSecondary
                         )
                     },
                     colors = TextFieldDefaults.outlinedTextFieldColors(
-                        backgroundColor = BossDarkSurface,
-                        focusedBorderColor = BossDarkBorder,
-                        unfocusedBorderColor = BossDarkBorder,
-                        textColor = BossDarkTextPrimary,
-                        cursorColor = BossDarkTextPrimary
+                        backgroundColor = BossTheme.colors.raised,
+                        focusedBorderColor = BossTheme.colors.line,
+                        unfocusedBorderColor = BossTheme.colors.line,
+                        textColor = BossTheme.colors.textPrimary,
+                        cursorColor = BossTheme.colors.textPrimary
                     ),
                     singleLine = true
                 )
@@ -230,7 +225,7 @@ fun TopOfMindDialog(
                     ) {
                         Text(
                             text = if (searchQuery.isBlank()) "No active tabs found" else "No tabs matching \"$searchQuery\"",
-                            color = BossDarkTextSecondary,
+                            color = BossTheme.colors.textSecondary,
                             fontSize = 14.sp
                         )
                     }
@@ -258,7 +253,7 @@ fun TopOfMindDialog(
                 // Instructions
                 Text(
                     "↑↓ to navigate • Enter to select • Esc to close",
-                    color = BossDarkTextSecondary,
+                    color = BossTheme.colors.textSecondary,
                     fontSize = 11.sp,
                     modifier = Modifier.align(Alignment.CenterHorizontally)
                 )
@@ -281,7 +276,7 @@ private fun ActiveTabDialogItem(
             .fillMaxWidth()
             .clip(RoundedCornerShape(6.dp))
             .clickable { onTabClick() },
-        color = if (isSelected) BossDarkAccent.copy(alpha = 0.3f) else BossDarkSurface,
+        color = if (isSelected) BossTheme.colors.signal.copy(alpha = 0.3f) else BossTheme.colors.raised,
         elevation = if (isSelected) 2.dp else 0.dp
     ) {
         Row(
@@ -307,7 +302,7 @@ private fun ActiveTabDialogItem(
                 Icon(
                     fallbackIcon,
                     contentDescription = "Tab icon",
-                    tint = if (isSelected) BossDarkTextPrimary else BossDarkTextSecondary,
+                    tint = if (isSelected) BossTheme.colors.textPrimary else BossTheme.colors.textSecondary,
                     modifier = Modifier.size(16.dp)
                 )
             }
@@ -321,7 +316,7 @@ private fun ActiveTabDialogItem(
                 Text(
                     text = activeTab.tabInfo.title,
                     fontSize = 14.sp,
-                    color = if (isSelected) BossDarkTextPrimary else BossDarkTextPrimary,
+                    color = if (isSelected) BossTheme.colors.textPrimary else BossTheme.colors.textPrimary,
                     fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -337,7 +332,7 @@ private fun ActiveTabDialogItem(
                     Text(
                         text = secondaryText,
                         fontSize = 12.sp,
-                        color = if (isSelected) BossDarkTextSecondary.copy(alpha = 0.9f) else BossDarkTextSecondary,
+                        color = if (isSelected) BossTheme.colors.textSecondary.copy(alpha = 0.9f) else BossTheme.colors.textSecondary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -348,13 +343,13 @@ private fun ActiveTabDialogItem(
             
             // Workspace badge
             Surface(
-                color = BossDarkBorder,
+                color = BossTheme.colors.line,
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Text(
                     text = activeTab.workspaceName,
                     fontSize = 10.sp,
-                    color = BossDarkTextSecondary,
+                    color = BossTheme.colors.textSecondary,
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                 )
             }

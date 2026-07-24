@@ -1,12 +1,6 @@
 package ai.rever.boss.components.settings.shared
 
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkBorder
-import BossDarkContentBackground
-import BossDarkTextMuted
-import BossDarkTextPrimary
-import BossDarkTextSecondary
+import ai.rever.boss.plugin.ui.BossThemeController
 import androidx.compose.ui.graphics.Color
 
 /**
@@ -14,12 +8,12 @@ import androidx.compose.ui.graphics.Color
  */
 object SettingsTheme {
     // Getters (not stored vals) so the entire settings UI re-skins when the
-    // active host theme changes — BossDark* now resolve through BossThemeController.
-    val SurfaceColor: Color get() = BossDarkBackground       // Sidebar background
-    val BackgroundColor: Color get() = BossDarkContentBackground // Content area background
-    val AccentColor: Color get() = BossDarkAccent            // Selection/highlight color
-    val BorderColor: Color get() = BossDarkBorder            // Border/divider color
-    val TextPrimary: Color get() = BossDarkTextPrimary        // Primary text color
-    val TextSecondary: Color get() = BossDarkTextSecondary    // Secondary text color
-    val TextMuted: Color get() = BossDarkTextMuted            // Muted text color
+    // active host theme changes — each member reads the current semantic token.
+    val SurfaceColor: Color get() = BossThemeController.current.colors.panel          // Sidebar background
+    val BackgroundColor: Color get() = BossThemeController.current.colors.ink         // Content area background
+    val AccentColor: Color get() = BossThemeController.current.colors.signal          // Selection/highlight color
+    val BorderColor: Color get() = BossThemeController.current.colors.line            // Border/divider color
+    val TextPrimary: Color get() = BossThemeController.current.colors.textPrimary     // Primary text color
+    val TextSecondary: Color get() = BossThemeController.current.colors.textSecondary // Secondary text color
+    val TextMuted: Color get() = BossThemeController.current.colors.textMuted         // Muted text color
 }

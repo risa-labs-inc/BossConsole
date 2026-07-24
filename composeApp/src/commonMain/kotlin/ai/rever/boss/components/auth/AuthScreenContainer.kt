@@ -1,5 +1,6 @@
 package ai.rever.boss.components.auth
 
+import ai.rever.boss.plugin.ui.BossThemeController
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.foundation.background
@@ -7,7 +8,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import BossDarkBackground
 import BossTheme
 import ai.rever.boss.components.auth.screens.LoginFormScreen
 import ai.rever.boss.components.auth.screens.MagicLinkWaitingScreen
@@ -126,7 +126,7 @@ fun AuthScreenContainer(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(BossDarkBackground)
+                .background(BossThemeController.current.colors.panel)
         ) {
             when (currentScreen) {
                 AuthScreen.LOGIN -> {

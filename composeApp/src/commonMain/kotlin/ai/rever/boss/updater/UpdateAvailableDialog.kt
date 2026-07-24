@@ -1,10 +1,6 @@
 package ai.rever.boss.updater
 
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkTextMuted
-import BossDarkTextPrimary
-import BossDarkTextSecondary
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -32,10 +28,6 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-
-// Matches the banner colors in UpdateUI.kt
-private val AccentBlue get() = BossDarkAccent
-private val TextGray get() = BossDarkTextMuted
 
 /**
  * Dismissible dialog shown when a new BossConsole version is available.
@@ -65,7 +57,7 @@ fun UpdateAvailableDialog(
         title = {
             Text(
                 "Update available",
-                color = BossDarkTextPrimary,
+                color = BossTheme.colors.textPrimary,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.SemiBold
             )
@@ -75,14 +67,14 @@ fun UpdateAvailableDialog(
                 Text(
                     "BossConsole v${updateInfo.latestVersion} is available " +
                         "(you have v${updateInfo.currentVersion}).",
-                    color = BossDarkTextSecondary,
+                    color = BossTheme.colors.textSecondary,
                     fontSize = 13.sp
                 )
                 if (updateInfo.releaseNotes.isNotBlank()) {
                     Spacer(Modifier.height(12.dp))
                     Text(
                         "What's new",
-                        color = BossDarkTextPrimary,
+                        color = BossTheme.colors.textPrimary,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium
                     )
@@ -105,7 +97,7 @@ fun UpdateAvailableDialog(
                             updateInfo.releaseNotes.lines().forEach { line ->
                                 Text(
                                     line,
-                                    color = BossDarkTextSecondary,
+                                    color = BossTheme.colors.textSecondary,
                                     fontSize = 12.sp
                                 )
                             }
@@ -116,16 +108,16 @@ fun UpdateAvailableDialog(
         },
         confirmButton = {
             TextButton(onClick = onUpdateNow) {
-                Text("Update Now", color = AccentBlue, fontSize = 13.sp)
+                Text("Update Now", color = BossTheme.colors.signal, fontSize = 13.sp)
             }
         },
         dismissButton = {
             TextButton(onClick = onLater) {
-                Text("Later", color = TextGray, fontSize = 13.sp)
+                Text("Later", color = BossTheme.colors.textMuted, fontSize = 13.sp)
             }
         },
-        backgroundColor = BossDarkBackground,
-        contentColor = BossDarkTextPrimary
+        backgroundColor = BossTheme.colors.panel,
+        contentColor = BossTheme.colors.textPrimary
     )
 }
 

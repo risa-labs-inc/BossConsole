@@ -1,6 +1,5 @@
 package ai.rever.boss.components.window_panel.components
 
-import BossDarkBorder
 import ai.rever.boss.platform.CursorUtil.cursorForHorizontalResize
 import ai.rever.boss.platform.CursorUtil.cursorForVerticalResize
 import ai.rever.boss.components.dividers.VDivider
@@ -13,6 +12,7 @@ import ai.rever.boss.plugin.api.Panel.Companion.isVertical
 import ai.rever.boss.plugin.api.Panel.Companion.left
 import ai.rever.boss.plugin.api.Panel.Companion.right
 import ai.rever.boss.plugin.api.Panel.Companion.top
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.*
@@ -154,7 +154,7 @@ fun BossResizablePanel(modifier: Modifier,
                 if (panel.isHorizontal) {
                     VDivider()
                 } else {
-                    Divider(color = BossDarkBorder)
+                    Divider(color = BossTheme.colors.line)
                 }
             }
         }

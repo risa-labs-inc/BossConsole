@@ -1,10 +1,6 @@
 package ai.rever.boss.components.dialogs
 
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkBorder
-import BossDarkTextPrimary
-import BossDarkTextSecondary
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
@@ -46,7 +42,7 @@ fun RenameDialog(
         Surface(
             modifier = Modifier.width(400.dp),
             shape = RoundedCornerShape(8.dp),
-            color = BossDarkBackground
+            color = BossTheme.colors.panel
         ) {
             Column(
                 modifier = Modifier.padding(20.dp)
@@ -56,7 +52,7 @@ fun RenameDialog(
                     text = title,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
-                    color = BossDarkTextPrimary
+                    color = BossTheme.colors.textPrimary
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -65,13 +61,13 @@ fun RenameDialog(
                 OutlinedTextField(
                     value = newName,
                     onValueChange = { newName = it },
-                    label = { Text(label, color = BossDarkTextSecondary) },
+                    label = { Text(label, color = BossTheme.colors.textSecondary) },
                     modifier = Modifier.fillMaxWidth(),
                     colors = TextFieldDefaults.outlinedTextFieldColors(
-                        textColor = BossDarkTextPrimary,
-                        cursorColor = BossDarkAccent,
-                        focusedBorderColor = BossDarkAccent,
-                        unfocusedBorderColor = BossDarkBorder
+                        textColor = BossTheme.colors.textPrimary,
+                        cursorColor = BossTheme.colors.signal,
+                        focusedBorderColor = BossTheme.colors.signal,
+                        unfocusedBorderColor = BossTheme.colors.line
                     ),
                     singleLine = true
                 )
@@ -86,7 +82,7 @@ fun RenameDialog(
                     TextButton(
                         onClick = onDismiss,
                         colors = ButtonDefaults.textButtonColors(
-                            contentColor = BossDarkTextSecondary
+                            contentColor = BossTheme.colors.textSecondary
                         )
                     ) {
                         Text("Cancel")
@@ -104,10 +100,10 @@ fun RenameDialog(
                         },
                         enabled = newName.trim().isNotEmpty() && newName.trim() != currentName,
                         colors = ButtonDefaults.buttonColors(
-                            backgroundColor = BossDarkAccent,
+                            backgroundColor = BossTheme.colors.signal,
                             contentColor = Color.Black,
-                            disabledBackgroundColor = BossDarkBorder,
-                            disabledContentColor = BossDarkTextSecondary
+                            disabledBackgroundColor = BossTheme.colors.line,
+                            disabledContentColor = BossTheme.colors.textSecondary
                         ),
                         shape = RoundedCornerShape(6.dp)
                     ) {

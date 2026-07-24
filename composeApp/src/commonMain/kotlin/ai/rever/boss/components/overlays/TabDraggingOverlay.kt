@@ -1,12 +1,8 @@
 package ai.rever.boss.components.overlays
 
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkBorder
-import BossDarkSurface
-import BossDarkTextPrimary
 import ai.rever.boss.components.model.TabDraggableComponent
 import ai.rever.boss.plugin.api.TabIcon
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
@@ -60,8 +56,8 @@ fun TabDraggableComponent.TabDraggingOverlay() {
             .shadow(8.dp, RoundedCornerShape(4.dp))
             .width(180.dp)
             .height(32.dp)
-            .background(BossDarkSurface.copy(alpha = 0.95f), RoundedCornerShape(4.dp))
-            .border(1.dp, BossDarkAccent, RoundedCornerShape(4.dp))
+            .background(BossTheme.colors.raised.copy(alpha = 0.95f), RoundedCornerShape(4.dp))
+            .border(1.dp, BossTheme.colors.signal, RoundedCornerShape(4.dp))
             .alpha(0.9f)
     ) {
         Row(
@@ -77,7 +73,7 @@ fun TabDraggableComponent.TabDraggingOverlay() {
                         imageVector = icon.imageVector,
                         contentDescription = null,
                         modifier = Modifier.size(16.dp),
-                        tint = BossDarkTextPrimary
+                        tint = BossTheme.colors.textPrimary
                     )
                 }
                 is ai.rever.boss.plugin.api.TabIcon.Image -> {
@@ -85,7 +81,7 @@ fun TabDraggableComponent.TabDraggingOverlay() {
                         painter = icon.painter,
                         contentDescription = null,
                         modifier = Modifier.size(16.dp),
-                        tint = BossDarkTextPrimary
+                        tint = BossTheme.colors.textPrimary
                     )
                 }
                 null -> {
@@ -94,7 +90,7 @@ fun TabDraggableComponent.TabDraggingOverlay() {
                         imageVector = dragging.tabInfo.icon,
                         contentDescription = null,
                         modifier = Modifier.size(16.dp),
-                        tint = BossDarkTextPrimary
+                        tint = BossTheme.colors.textPrimary
                     )
                 }
             }
@@ -104,7 +100,7 @@ fun TabDraggableComponent.TabDraggingOverlay() {
             // Tab title
             Text(
                 text = dragging.title,
-                color = BossDarkTextPrimary,
+                color = BossTheme.colors.textPrimary,
                 fontSize = 12.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

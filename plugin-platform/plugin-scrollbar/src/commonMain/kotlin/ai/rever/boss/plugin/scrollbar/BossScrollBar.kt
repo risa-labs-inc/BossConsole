@@ -1,6 +1,7 @@
 package ai.rever.boss.plugin.scrollbar
 
-import ai.rever.boss.plugin.ui.BossDarkTextSecondary
+import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.plugin.ui.BossThemeController
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -116,23 +117,25 @@ data class ScrollbarConfig(
  * Uses thinner indicator for compact panel context.
  * This is a static default - for dynamic settings use getPanelScrollbarConfig()
  */
-val PanelScrollbarConfig = ScrollbarConfig(
-    indicatorThickness = ScrollbarDimensions.PANEL_THICKNESS,
-    indicatorColor = BossDarkTextSecondary,
-    indicatorCornerRadius = ScrollbarDimensions.PANEL_THICKNESS / 2
-)
+val PanelScrollbarConfig: ScrollbarConfig
+    get() = ScrollbarConfig(
+        indicatorThickness = ScrollbarDimensions.PANEL_THICKNESS,
+        indicatorColor = BossThemeController.current.colors.textSecondary,
+        indicatorCornerRadius = ScrollbarDimensions.PANEL_THICKNESS / 2
+    )
 
 /**
  * Default scrollbar configuration for horizontal bars (Tab Bar, Bottom Bar)
  * Uses very thin indicator positioned at top for compact horizontal chrome.
  * This is a static default - for dynamic settings use getBarScrollbarConfig()
  */
-val HorizontalBarScrollbarConfig = ScrollbarConfig(
-    indicatorThickness = ScrollbarDimensions.BAR_THICKNESS,
-    indicatorColor = BossDarkTextSecondary,
-    indicatorCornerRadius = 4.dp,
-    horizontalScrollbarAtTop = true
-)
+val HorizontalBarScrollbarConfig: ScrollbarConfig
+    get() = ScrollbarConfig(
+        indicatorThickness = ScrollbarDimensions.BAR_THICKNESS,
+        indicatorColor = BossThemeController.current.colors.textSecondary,
+        indicatorCornerRadius = 4.dp,
+        horizontalScrollbarAtTop = true
+    )
 
 /**
  * Get panel scrollbar configuration using current user settings.
@@ -141,10 +144,13 @@ val HorizontalBarScrollbarConfig = ScrollbarConfig(
 @Composable
 fun getPanelScrollbarConfig(): ScrollbarConfig {
     val settings by ScrollbarSettingsManager.currentSettings.collectAsState()
-    return remember(settings) {
+    // Read the token in composition (not inside remember) so a theme switch
+    // recomputes the config instead of serving a stale cached color.
+    val indicatorColor = BossTheme.colors.textSecondary
+    return remember(settings, indicatorColor) {
         ScrollbarConfig(
             indicatorThickness = settings.panelThicknessDp,
-            indicatorColor = BossDarkTextSecondary,
+            indicatorColor = indicatorColor,
             indicatorCornerRadius = settings.panelThicknessDp / 2,
             alpha = if (settings.alwaysShowScrollbars) 0.8f else null,
             // Only override animation spec when always showing - otherwise let the
@@ -165,10 +171,13 @@ fun getPanelScrollbarConfig(): ScrollbarConfig {
 @Composable
 fun getBarScrollbarConfig(): ScrollbarConfig {
     val settings by ScrollbarSettingsManager.currentSettings.collectAsState()
-    return remember(settings) {
+    // Read the token in composition (not inside remember) so a theme switch
+    // recomputes the config instead of serving a stale cached color.
+    val indicatorColor = BossTheme.colors.textSecondary
+    return remember(settings, indicatorColor) {
         ScrollbarConfig(
             indicatorThickness = settings.barThicknessDp,
-            indicatorColor = BossDarkTextSecondary,
+            indicatorColor = indicatorColor,
             indicatorCornerRadius = 4.dp,
             horizontalScrollbarAtTop = true,
             alpha = if (settings.alwaysShowScrollbars) 0.8f else null,

@@ -1,7 +1,7 @@
 package ai.rever.boss.components.wizard.plugin
 
-import BossDarkBackground
 import ai.rever.boss.components.wizard.WizardStepIndicator
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -76,7 +76,7 @@ fun PluginInstallWizardWindow(
     ) {
         Surface(
             modifier = Modifier.fillMaxSize(),
-            color = BossDarkBackground
+            color = BossTheme.colors.panel
         ) {
             Box(
                 modifier = Modifier

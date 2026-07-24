@@ -1,10 +1,8 @@
 package ai.rever.boss.components.settings.shared
 
-import BossDarkAccent
-import BossDarkBorder
-import BossDarkSurface
 import ai.rever.boss.components.settings.shared.SettingsTheme.TextPrimary
 import ai.rever.boss.components.settings.shared.SettingsTheme.TextMuted
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.*
@@ -42,9 +40,9 @@ fun DropdownSelector(
             modifier = Modifier.fillMaxWidth(),
             colors = TextFieldDefaults.outlinedTextFieldColors(
                 textColor = TextPrimary,
-                focusedBorderColor = BossDarkAccent,
-                unfocusedBorderColor = BossDarkBorder,
-                focusedLabelColor = BossDarkAccent,
+                focusedBorderColor = BossTheme.colors.signal,
+                unfocusedBorderColor = BossTheme.colors.line,
+                focusedLabelColor = BossTheme.colors.signal,
                 unfocusedLabelColor = TextMuted,
                 trailingIconColor = TextMuted
             )
@@ -53,7 +51,7 @@ fun DropdownSelector(
         ExposedDropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            modifier = Modifier.background(BossDarkSurface)
+            modifier = Modifier.background(BossTheme.colors.raised)
         ) {
             options.forEach { option ->
                 DropdownMenuItem(
@@ -61,7 +59,7 @@ fun DropdownSelector(
                         onValueChange(option)
                         expanded = false
                     },
-                    modifier = Modifier.background(BossDarkSurface)
+                    modifier = Modifier.background(BossTheme.colors.raised)
                 ) {
                     Text(
                         text = option,

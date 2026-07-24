@@ -1,5 +1,6 @@
 package ai.rever.boss.components.auth.forms
 
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -27,13 +28,6 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import BossDarkBackground
-import BossDarkSurface
-import BossDarkBorder
-import BossDarkTextPrimary
-import BossDarkTextSecondary
-import BossDarkAccent
-import BossDarkError
 
 /**
  * Shared component for BOSS logo display
@@ -63,7 +57,7 @@ fun AuthCard(
             .widthIn(max = 400.dp),
         shape = RoundedCornerShape(8.dp),
         elevation = 2.dp,
-        backgroundColor = BossDarkSurface
+        backgroundColor = BossTheme.colors.raised
     ) {
         Column(
             modifier = Modifier.padding(32.dp),
@@ -85,7 +79,7 @@ fun AuthCardTitle(
         text = title,
         fontSize = 20.sp,
         fontWeight = FontWeight.Bold,
-        color = BossDarkTextPrimary,
+        color = BossTheme.colors.textPrimary,
         modifier = modifier.padding(bottom = 24.dp)
     )
 }
@@ -104,12 +98,12 @@ fun EmailField(
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
-        label = { Text("Email", color = BossDarkTextSecondary) },
+        label = { Text("Email", color = BossTheme.colors.textSecondary) },
         leadingIcon = {
             Icon(
                 Icons.Default.Email,
                 contentDescription = "Email",
-                tint = BossDarkTextSecondary
+                tint = BossTheme.colors.textSecondary
             )
         },
         modifier = modifier.fillMaxWidth(),
@@ -121,13 +115,13 @@ fun EmailField(
         keyboardActions = keyboardActions,
         enabled = enabled,
         colors = TextFieldDefaults.outlinedTextFieldColors(
-            textColor = BossDarkTextPrimary,
-            backgroundColor = BossDarkBackground,
-            focusedBorderColor = BossDarkAccent,
-            unfocusedBorderColor = BossDarkBorder,
-            cursorColor = BossDarkAccent,
-            focusedLabelColor = BossDarkAccent,
-            unfocusedLabelColor = BossDarkTextSecondary
+            textColor = BossTheme.colors.textPrimary,
+            backgroundColor = BossTheme.colors.panel,
+            focusedBorderColor = BossTheme.colors.signal,
+            unfocusedBorderColor = BossTheme.colors.line,
+            cursorColor = BossTheme.colors.signal,
+            focusedLabelColor = BossTheme.colors.signal,
+            unfocusedLabelColor = BossTheme.colors.textSecondary
         )
     )
 }
@@ -151,7 +145,7 @@ fun PrimaryActionButton(
         enabled = enabled && !isLoading,
         shape = RoundedCornerShape(4.dp),
         colors = ButtonDefaults.buttonColors(
-            backgroundColor = BossDarkAccent,
+            backgroundColor = BossTheme.colors.signal,
             contentColor = Color.White
         )
     ) {
@@ -182,7 +176,7 @@ fun ErrorMessage(
     if (message != null) {
         Text(
             text = message,
-            color = BossDarkError,
+            color = BossTheme.colors.alert,
             fontSize = 12.sp,
             modifier = modifier.fillMaxWidth(),
             textAlign = TextAlign.Start
@@ -200,7 +194,7 @@ fun LoadingIndicator(
 ) {
     CircularProgressIndicator(
         modifier = modifier.size(size.dp),
-        color = BossDarkAccent,
+        color = BossTheme.colors.signal,
         strokeWidth = 2.dp
     )
 }

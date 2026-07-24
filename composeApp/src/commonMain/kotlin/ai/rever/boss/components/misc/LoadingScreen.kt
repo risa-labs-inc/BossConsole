@@ -1,8 +1,6 @@
 package ai.rever.boss.components.misc
 
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkTextSecondary
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -28,7 +26,7 @@ fun LoadingScreen() {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(BossDarkBackground),
+            .background(BossTheme.colors.panel),
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -45,7 +43,7 @@ fun LoadingScreen() {
 
             // Loading indicator
             CircularProgressIndicator(
-                color = BossDarkAccent,
+                color = BossTheme.colors.signal,
                 modifier = Modifier.size(40.dp)
             )
 
@@ -54,7 +52,7 @@ fun LoadingScreen() {
             // Loading text
             Text(
                 text = "Loading BOSS...",
-                color = BossDarkTextSecondary,
+                color = BossTheme.colors.textSecondary,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Medium
             )

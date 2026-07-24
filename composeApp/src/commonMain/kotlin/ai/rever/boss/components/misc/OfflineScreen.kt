@@ -1,10 +1,6 @@
 package ai.rever.boss.components.misc
 
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkSurface
-import BossDarkTextPrimary
-import BossDarkTextSecondary
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -57,7 +53,7 @@ fun OfflineScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(BossDarkBackground),
+            .background(BossTheme.colors.panel),
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -76,7 +72,7 @@ fun OfflineScreen(
             Icon(
                 imageVector = Icons.Filled.WifiOff,
                 contentDescription = "No Internet",
-                tint = BossDarkTextSecondary,
+                tint = BossTheme.colors.textSecondary,
                 modifier = Modifier.size(48.dp)
             )
 
@@ -85,7 +81,7 @@ fun OfflineScreen(
             // Title
             Text(
                 text = "No Internet Connection",
-                color = BossDarkTextPrimary,
+                color = BossTheme.colors.textPrimary,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.SemiBold
             )
@@ -95,7 +91,7 @@ fun OfflineScreen(
             // Description
             Text(
                 text = "BOSS requires internet to authenticate.\nPlease check your connection.",
-                color = BossDarkTextSecondary,
+                color = BossTheme.colors.textSecondary,
                 fontSize = 14.sp,
                 textAlign = TextAlign.Center
             )
@@ -113,17 +109,17 @@ fun OfflineScreen(
                 },
                 enabled = !isManualRetrying && networkState !is NetworkState.Checking,
                 colors = ButtonDefaults.buttonColors(
-                    backgroundColor = BossDarkAccent,
-                    contentColor = BossDarkTextPrimary,
-                    disabledBackgroundColor = BossDarkSurface,
-                    disabledContentColor = BossDarkTextSecondary
+                    backgroundColor = BossTheme.colors.signal,
+                    contentColor = BossTheme.colors.onSignal,
+                    disabledBackgroundColor = BossTheme.colors.raised,
+                    disabledContentColor = BossTheme.colors.textSecondary
                 ),
                 shape = RoundedCornerShape(8.dp),
                 modifier = Modifier.padding(horizontal = 32.dp)
             ) {
                 if (isManualRetrying || networkState is NetworkState.Checking) {
                     CircularProgressIndicator(
-                        color = BossDarkTextSecondary,
+                        color = BossTheme.colors.textSecondary,
                         modifier = Modifier.size(16.dp),
                         strokeWidth = 2.dp
                     )
@@ -150,7 +146,7 @@ fun OfflineScreen(
             if (isAutoRetrying && nextRetryCountdown > 0) {
                 Text(
                     text = "Auto-retry in ${nextRetryCountdown}s",
-                    color = BossDarkTextSecondary,
+                    color = BossTheme.colors.textSecondary,
                     fontSize = 12.sp
                 )
             }
@@ -161,7 +157,7 @@ fun OfflineScreen(
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = "Attempt $retryAttempt",
-                    color = BossDarkTextSecondary.copy(alpha = 0.6f),
+                    color = BossTheme.colors.textSecondary.copy(alpha = 0.6f),
                     fontSize = 11.sp
                 )
             }

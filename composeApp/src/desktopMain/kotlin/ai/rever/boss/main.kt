@@ -6,7 +6,7 @@ import ai.rever.boss.config.ChromiumAutoDownloader
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.components.dialogs.ChromiumDownloadContent
 import BossTheme
-import BossDarkBackground
+import ai.rever.boss.plugin.ui.BossThemeController
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -429,7 +429,7 @@ fun main(args: Array<String>) {
                     Box(
                         modifier = androidx.compose.ui.Modifier
                             .fillMaxSize()
-                            .background(BossDarkBackground)
+                            .background(BossThemeController.current.colors.panel)
                     ) {
                         ChromiumDownloadContent(
                             progress = downloadProgress.progressFraction,

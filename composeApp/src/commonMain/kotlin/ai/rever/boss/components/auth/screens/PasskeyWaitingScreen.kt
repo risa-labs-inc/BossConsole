@@ -1,5 +1,6 @@
 package ai.rever.boss.components.auth.screens
 
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -20,13 +21,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import BossDarkBackground
-import BossDarkBorder
-import BossDarkTextPrimary
-import BossDarkTextSecondary
-import BossDarkAccent
-import BossDarkError
-import BossDarkSuccess
 import ai.rever.boss.components.auth.forms.*
 import ai.rever.boss.viewmodels.LoginViewModel
 
@@ -78,7 +72,7 @@ fun PasskeyWaitingScreen(
             Text(
                 text = "Authenticating as:",
                 fontSize = 14.sp,
-                color = BossDarkTextSecondary,
+                color = BossTheme.colors.textSecondary,
                 textAlign = TextAlign.Center
             )
 
@@ -88,7 +82,7 @@ fun PasskeyWaitingScreen(
                 text = email,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Medium,
-                color = BossDarkAccent,
+                color = BossTheme.colors.signal,
                 textAlign = TextAlign.Center
             )
 
@@ -98,14 +92,14 @@ fun PasskeyWaitingScreen(
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(6.dp),
-                backgroundColor = BossDarkBackground,
+                backgroundColor = BossTheme.colors.panel,
                 elevation = 0.dp,
                 border = BorderStroke(
                     1.dp,
                     when (authenticationState) {
-                        AuthenticationState.ERROR -> BossDarkError
-                        AuthenticationState.AUTHENTICATING -> BossDarkAccent
-                        else -> BossDarkBorder
+                        AuthenticationState.ERROR -> BossTheme.colors.alert
+                        AuthenticationState.AUTHENTICATING -> BossTheme.colors.signal
+                        else -> BossTheme.colors.line
                     }
                 )
             ) {
@@ -118,7 +112,7 @@ fun PasskeyWaitingScreen(
                         AuthenticationState.AUTHENTICATING -> {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(48.dp),
-                                color = BossDarkAccent,
+                                color = BossTheme.colors.signal,
                                 strokeWidth = 4.dp
                             )
                         }
@@ -126,7 +120,7 @@ fun PasskeyWaitingScreen(
                             Icon(
                                 imageVector = Icons.Default.ErrorOutline,
                                 contentDescription = "Error",
-                                tint = BossDarkError,
+                                tint = BossTheme.colors.alert,
                                 modifier = Modifier.size(48.dp)
                             )
                         }
@@ -134,7 +128,7 @@ fun PasskeyWaitingScreen(
                             Icon(
                                 imageVector = Icons.Default.Fingerprint,
                                 contentDescription = "Passkey",
-                                tint = BossDarkAccent,
+                                tint = BossTheme.colors.signal,
                                 modifier = Modifier.size(48.dp)
                             )
                         }
@@ -155,8 +149,8 @@ fun PasskeyWaitingScreen(
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Medium,
                         color = when (authenticationState) {
-                            AuthenticationState.ERROR -> BossDarkError
-                            else -> BossDarkTextPrimary
+                            AuthenticationState.ERROR -> BossTheme.colors.alert
+                            else -> BossTheme.colors.textPrimary
                         },
                         textAlign = TextAlign.Center
                     )
@@ -174,7 +168,7 @@ fun PasskeyWaitingScreen(
                                 "Click \"Try Again\" to initiate biometric authentication."
                         },
                         fontSize = 13.sp,
-                        color = BossDarkTextSecondary,
+                        color = BossTheme.colors.textSecondary,
                         textAlign = TextAlign.Center,
                         lineHeight = 18.sp
                     )
@@ -197,7 +191,7 @@ fun PasskeyWaitingScreen(
                         .height(48.dp),
                     shape = RoundedCornerShape(4.dp),
                     colors = ButtonDefaults.buttonColors(
-                        backgroundColor = BossDarkAccent,
+                        backgroundColor = BossTheme.colors.signal,
                         contentColor = Color.White
                     )
                 ) {
@@ -224,7 +218,7 @@ fun PasskeyWaitingScreen(
                 Text(
                     text = "Back to Sign In",
                     fontSize = 14.sp,
-                    color = BossDarkAccent,
+                    color = BossTheme.colors.signal,
                     textDecoration = TextDecoration.Underline
                 )
             }
@@ -236,9 +230,9 @@ fun PasskeyWaitingScreen(
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(6.dp),
-                    backgroundColor = BossDarkBackground,
+                    backgroundColor = BossTheme.colors.panel,
                     elevation = 0.dp,
-                    border = BorderStroke(1.dp, BossDarkBorder)
+                    border = BorderStroke(1.dp, BossTheme.colors.line)
                 ) {
                     Column(
                         modifier = Modifier.padding(12.dp)
@@ -247,7 +241,7 @@ fun PasskeyWaitingScreen(
                             text = "Troubleshooting:",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium,
-                            color = BossDarkTextPrimary
+                            color = BossTheme.colors.textPrimary
                         )
 
                         Spacer(modifier = Modifier.height(8.dp))
@@ -257,7 +251,7 @@ fun PasskeyWaitingScreen(
                                    "• Check that you have a passkey registered for this account\n" +
                                    "• Try using a magic link instead if the issue persists",
                             fontSize = 11.sp,
-                            color = BossDarkTextSecondary,
+                            color = BossTheme.colors.textSecondary,
                             lineHeight = 16.sp
                         )
                     }

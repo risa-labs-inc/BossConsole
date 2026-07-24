@@ -1,5 +1,6 @@
 package ai.rever.boss.components.auth.screens
 
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.LogSanitizer
@@ -16,12 +17,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import BossDarkBackground
-import BossDarkSurface
-import BossDarkTextPrimary
-import BossDarkTextSecondary
-import BossDarkAccent
-import BossDarkBorder
 import ai.rever.boss.utils.DeepLinkHandler
 import ai.rever.boss.components.bars.horizontal.HorizontalBar
 import kotlinx.coroutines.delay
@@ -77,13 +72,13 @@ fun PasskeyBrowserScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(BossDarkBackground)
+            .background(BossTheme.colors.panel)
     ) {
         // Title Bar - matches BossTitleBar
         HorizontalBar(height = 26.dp) {
             Text(
                 text = "Boss Console",
-                color = BossDarkTextPrimary,
+                color = BossTheme.colors.textPrimary,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium,
                 textAlign = TextAlign.Center,
@@ -92,7 +87,7 @@ fun PasskeyBrowserScreen(
                     .align(Alignment.Center)
             )
         }
-        Divider(color = BossDarkBorder)
+        Divider(color = BossTheme.colors.line)
 
         // Top bar - matches main BossTopBar structure
         HorizontalBar(height = 40.dp) {
@@ -107,7 +102,7 @@ fun PasskeyBrowserScreen(
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "Back to Login",
-                        tint = BossDarkTextPrimary
+                        tint = BossTheme.colors.textPrimary
                     )
                 }
 
@@ -118,19 +113,19 @@ fun PasskeyBrowserScreen(
                     text = "WebAuthn Authentication",
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Normal,
-                    color = BossDarkTextPrimary
+                    color = BossTheme.colors.textPrimary
                 )
 
                 Spacer(modifier = Modifier.weight(1f))
             }
         }
-        Divider(color = BossDarkBorder)
+        Divider(color = BossTheme.colors.line)
 
         // Browser content area
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(BossDarkBackground)
+                .background(BossTheme.colors.panel)
         ) {
             if (browserError != null) {
                 // Show error state
@@ -145,19 +140,19 @@ fun PasskeyBrowserScreen(
                         text = "Browser Error",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
-                        color = BossDarkTextPrimary
+                        color = BossTheme.colors.textPrimary
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         text = browserError ?: "Failed to load browser",
                         fontSize = 14.sp,
-                        color = BossDarkTextSecondary
+                        color = BossTheme.colors.textSecondary
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Button(
                         onClick = onBack,
                         colors = ButtonDefaults.buttonColors(
-                            backgroundColor = BossDarkAccent,
+                            backgroundColor = BossTheme.colors.signal,
                             contentColor = Color.White
                         )
                     ) {
@@ -177,7 +172,7 @@ fun PasskeyBrowserScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(BossDarkBackground.copy(alpha = 0.8f)),
+                            .background(BossTheme.colors.panel.copy(alpha = 0.8f)),
                         contentAlignment = Alignment.Center
                     ) {
                         Column(
@@ -185,14 +180,14 @@ fun PasskeyBrowserScreen(
                         ) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(48.dp),
-                                color = BossDarkAccent,
+                                color = BossTheme.colors.signal,
                                 strokeWidth = 4.dp
                             )
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
                                 "Loading WebAuthn...",
                                 fontSize = 14.sp,
-                                color = BossDarkTextSecondary
+                                color = BossTheme.colors.textSecondary
                             )
                         }
                     }

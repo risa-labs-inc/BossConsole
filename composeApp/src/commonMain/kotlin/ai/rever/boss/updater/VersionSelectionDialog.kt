@@ -1,14 +1,6 @@
 package ai.rever.boss.updater
 
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkBorder
-import BossDarkContentBackground
-import BossDarkError
-import BossDarkSuccess
-import BossDarkTextPrimary
-import BossDarkTextSecondary
-import BossDarkWarning
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -67,7 +59,7 @@ fun VersionSelectionDialog(
             modifier = Modifier
                 .width(600.dp)
                 .heightIn(max = 700.dp),
-            backgroundColor = BossDarkBackground,
+            backgroundColor = BossTheme.colors.panel,
             shape = RoundedCornerShape(12.dp),
             elevation = 8.dp
         ) {
@@ -84,13 +76,13 @@ fun VersionSelectionDialog(
                         text = "Select Version",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = BossDarkTextPrimary
+                        color = BossTheme.colors.textPrimary
                     )
                     IconButton(onClick = onDismiss) {
                         Icon(
                             Icons.Default.Close,
                             "Close",
-                            tint = BossDarkTextSecondary
+                            tint = BossTheme.colors.textSecondary
                         )
                     }
                 }
@@ -117,12 +109,12 @@ fun VersionSelectionDialog(
                         checked = showStableOnly,
                         onCheckedChange = { showStableOnly = it },
                         colors = CheckboxDefaults.colors(
-                            checkedColor = BossDarkAccent
+                            checkedColor = BossTheme.colors.signal
                         )
                     )
                     Text(
                         text = "Stable releases only",
-                        color = BossDarkTextPrimary,
+                        color = BossTheme.colors.textPrimary,
                         fontSize = 14.sp
                     )
                 }
@@ -133,7 +125,7 @@ fun VersionSelectionDialog(
                 if (error != null) {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        backgroundColor = BossDarkError.copy(alpha = 0.2f),
+                        backgroundColor = BossTheme.colors.alert.copy(alpha = 0.2f),
                         shape = RoundedCornerShape(8.dp)
                     ) {
                         Row(
@@ -144,11 +136,11 @@ fun VersionSelectionDialog(
                             Icon(
                                 Icons.Default.Warning,
                                 contentDescription = null,
-                                tint = BossDarkError
+                                tint = BossTheme.colors.alert
                             )
                             Text(
                                 text = error,
-                                color = BossDarkError,
+                                color = BossTheme.colors.alert,
                                 fontSize = 14.sp
                             )
                         }
@@ -165,11 +157,11 @@ fun VersionSelectionDialog(
                         contentAlignment = Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            CircularProgressIndicator(color = BossDarkAccent)
+                            CircularProgressIndicator(color = BossTheme.colors.signal)
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
                                 "Loading versions...",
-                                color = BossDarkTextSecondary,
+                                color = BossTheme.colors.textSecondary,
                                 fontSize = 14.sp
                             )
                         }
@@ -183,7 +175,7 @@ fun VersionSelectionDialog(
                     ) {
                         Text(
                             "No versions found",
-                            color = BossDarkTextSecondary,
+                            color = BossTheme.colors.textSecondary,
                             fontSize = 14.sp
                         )
                     }
@@ -223,12 +215,12 @@ private fun VersionItem(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
-        backgroundColor = BossDarkContentBackground,
+        backgroundColor = BossTheme.colors.ink,
         shape = RoundedCornerShape(8.dp),
         elevation = 0.dp,
         border = BorderStroke(
             1.dp,
-            if (isCurrent) BossDarkAccent.copy(alpha = 0.5f) else BossDarkBorder
+            if (isCurrent) BossTheme.colors.signal.copy(alpha = 0.5f) else BossTheme.colors.line
         )
     ) {
         Row(
@@ -247,12 +239,12 @@ private fun VersionItem(
                         text = "v${versionInfo.version}",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
-                        color = if (isCurrent) BossDarkAccent else BossDarkTextPrimary
+                        color = if (isCurrent) BossTheme.colors.signal else BossTheme.colors.textPrimary
                     )
 
                     if (isCurrent) {
                         Card(
-                            backgroundColor = BossDarkSuccess,
+                            backgroundColor = BossTheme.colors.ok,
                             shape = RoundedCornerShape(4.dp)
                         ) {
                             Text(
@@ -260,14 +252,14 @@ private fun VersionItem(
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = BossDarkTextPrimary
+                                color = BossTheme.colors.textPrimary
                             )
                         }
                     }
 
                     if (isLatest && !isCurrent) {
                         Card(
-                            backgroundColor = BossDarkAccent,
+                            backgroundColor = BossTheme.colors.signal,
                             shape = RoundedCornerShape(4.dp)
                         ) {
                             Text(
@@ -275,14 +267,14 @@ private fun VersionItem(
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = BossDarkTextPrimary
+                                color = BossTheme.colors.onSignal
                             )
                         }
                     }
 
                     if (versionInfo.isPrerelease) {
                         Card(
-                            backgroundColor = BossDarkWarning,
+                            backgroundColor = BossTheme.colors.warn,
                             shape = RoundedCornerShape(4.dp)
                         ) {
                             Text(
@@ -301,14 +293,14 @@ private fun VersionItem(
                 Text(
                     text = "Released: ${formatReleaseDate(versionInfo.releaseDate)} • ${formatFileSize(versionInfo.downloadSize)}",
                     fontSize = 12.sp,
-                    color = BossDarkTextSecondary
+                    color = BossTheme.colors.textSecondary
                 )
             }
 
             Icon(
                 imageVector = Icons.Default.CloudDownload,
                 contentDescription = "Download",
-                tint = BossDarkAccent
+                tint = BossTheme.colors.signal
             )
         }
     }
