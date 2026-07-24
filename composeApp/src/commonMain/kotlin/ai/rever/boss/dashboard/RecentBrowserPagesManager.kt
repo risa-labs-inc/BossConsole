@@ -367,6 +367,11 @@ object RecentBrowserPagesManager {
             val withoutProtocol = url.removePrefix("https://").removePrefix("http://")
             withoutProtocol.substringBefore('/').substringBefore('?')
         } catch (e: Exception) {
+            logger.debug(
+                LogCategory.BROWSER,
+                "Failed to parse domain from URL - showing full URL",
+                mapOf("error" to e.toString()),
+            )
             url
         }
     }

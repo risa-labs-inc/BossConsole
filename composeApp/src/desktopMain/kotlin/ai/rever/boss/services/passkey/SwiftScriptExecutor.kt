@@ -68,7 +68,7 @@ object SwiftScriptExecutor {
             val exitCode = process.waitFor()
             exitCode == 0
         } catch (e: Exception) {
-            logger.debug(LogCategory.PASSKEY, "Swift not available")
+            logger.debug(LogCategory.PASSKEY, "Swift not available", mapOf("error" to e.toString()))
             false
         }
     }

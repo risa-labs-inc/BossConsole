@@ -410,6 +410,12 @@ class PluginInstallService(
                         ?.trim()
                 } else null
             } catch (e: Exception) {
+                // No token means lower GitHub rate limits, not a failure
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Could not read GITHUB_TOKEN from local.properties",
+                    mapOf("error" to e.toString()),
+                )
                 null
             }
     }

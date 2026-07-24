@@ -2,6 +2,8 @@ package ai.rever.boss.cache
 
 import ai.rever.boss.plugin.api.TabIcon
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import io.ktor.client.*
@@ -33,6 +35,7 @@ import javax.imageio.ImageIO
  * - Cache-first approach to minimize network requests
  */
 object HighQualityFaviconService {
+    private val logger = BossLogger.forComponent("HighQualityFaviconService")
     private const val HQ_CACHE_DIR_NAME = "favicon-hq-cache"
     private const val ICON_SIZE = 128 // Request 128px icons from Google
     private const val REQUEST_TIMEOUT_MS = 2500L
@@ -99,6 +102,11 @@ object HighQualityFaviconService {
                 // Fall back to standard favicon
                 loadStandardFavicon(standardCacheKey)
             } catch (e: Exception) {
+                logger.debug(
+                    LogCategory.BROWSER,
+                    "HQ favicon fetch failed - falling back to standard favicon",
+                    mapOf("error" to e.toString()),
+                )
                 loadStandardFavicon(standardCacheKey)
             }
         }
@@ -112,6 +120,11 @@ object HighQualityFaviconService {
             val withoutProtocol = url.removePrefix("https://").removePrefix("http://")
             withoutProtocol.substringBefore('/').substringBefore('?').removePrefix("www.")
         } catch (e: Exception) {
+            logger.debug(
+                LogCategory.BROWSER,
+                "Could not extract domain from URL for favicon",
+                mapOf("error" to e.toString()),
+            )
             null
         }
     }
@@ -141,6 +154,11 @@ object HighQualityFaviconService {
             val imageBitmap = bufferedImage.toComposeImageBitmap()
             ai.rever.boss.plugin.api.TabIcon.Image(BitmapPainter(imageBitmap))
         } catch (e: Exception) {
+            logger.debug(
+                LogCategory.BROWSER,
+                "Failed to read cached HQ favicon - treating as cache miss",
+                mapOf("error" to e.toString()),
+            )
             null
         }
     }
@@ -181,6 +199,11 @@ object HighQualityFaviconService {
                 null
             }
         } catch (e: Exception) {
+            logger.debug(
+                LogCategory.NETWORK,
+                "HQ favicon fetch from Google failed - falling back",
+                mapOf("domain" to domain, "error" to e.toString()),
+            )
             null
         }
     }
@@ -203,7 +226,12 @@ object HighQualityFaviconService {
                     try {
                         file.delete()
                     } catch (e: Exception) {
-                        // Ignore deletion errors
+                        // Deletion errors are non-fatal - entry will be retried on next eviction
+                        logger.debug(
+                            LogCategory.FILE,
+                            "Failed to evict HQ favicon cache entry",
+                            mapOf("file" to file.name, "error" to e.toString()),
+                        )
                     }
                 }
             }
@@ -225,7 +253,8 @@ object HighQualityFaviconService {
         try {
             cacheDir.listFiles()?.forEach { it.delete() }
         } catch (e: Exception) {
-            // Ignore cache clearing errors
+            // Cache clearing is best-effort - stale entries are harmless
+            logger.debug(LogCategory.FILE, "Failed to clear HQ favicon cache", mapOf("error" to e.toString()))
         }
     }
 

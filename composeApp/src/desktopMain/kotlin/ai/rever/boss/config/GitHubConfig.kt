@@ -124,7 +124,7 @@ object GitHubConfig {
                 }
             }
         } catch (e: Exception) {
-            logger.debug(LogCategory.NETWORK, "GitHub CLI not available")
+            logger.debug(LogCategory.NETWORK, "GitHub CLI not available", mapOf("error" to e.toString()))
             null
         } finally {
             process?.let {

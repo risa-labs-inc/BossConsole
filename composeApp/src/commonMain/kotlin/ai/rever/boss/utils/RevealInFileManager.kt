@@ -53,6 +53,11 @@ fun revealInFileManager(path: String): Result<Unit> {
                 } catch (e: IOException) {
                     // Minimal environments may lack xdg-utils; glib's `gio open` is the
                     // most common secondary launcher.
+                    revealLogger.debug(
+                        LogCategory.FILE,
+                        "xdg-open unavailable, falling back to gio open",
+                        mapOf("error" to e.toString()),
+                    )
                     Runtime.getRuntime().exec(arrayOf("gio", "open", dir))
                 }
             }

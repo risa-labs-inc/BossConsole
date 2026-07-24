@@ -229,8 +229,10 @@ class PluginClassLoader(
                 resolveClass(clazz)
             }
             return clazz
-        } catch (e: ClassNotFoundException) {
-            // Fall back to parent
+        } catch (ignored: ClassNotFoundException) {
+            // Fall back to parent. Deliberately unlogged: this is the expected
+            // delegation path for every host-provided class a plugin touches, so
+            // logging here would flood at class-load time on a hot path.
             return parent.loadClass(name)
         }
     }

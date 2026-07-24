@@ -10,10 +10,14 @@ import com.teamdev.jxbrowser.search.FindResult
 import com.teamdev.jxbrowser.search.TextFinder
 import com.teamdev.jxbrowser.zoom.Zoom
 import com.teamdev.jxbrowser.zoom.ZoomLevel
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import java.util.Optional
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import java.util.function.Consumer
 import kotlin.concurrent.read
+
+private val logger = BossLogger.forComponent("LockedBrowser")
 
 /**
  * Thread-safe wrapper for JxBrowser operations.
@@ -51,6 +55,12 @@ class LockedBrowser(
             if (browser.isClosed) "" else browser.url()
         }
     } catch (e: Exception) {
+        // Disposal race between the isClosed check and url() - empty is the safe answer
+        logger.debug(
+            LogCategory.BROWSER,
+            "browser.url() failed during disposal race - returning empty",
+            mapOf("error" to e.toString()),
+        )
         ""
     }
 

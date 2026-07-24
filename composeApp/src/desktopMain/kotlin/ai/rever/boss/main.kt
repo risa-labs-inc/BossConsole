@@ -687,6 +687,11 @@ private fun extractPty4jNatives(targetDir: File) {
                 }
             } catch (e: Exception) {
                 // Try next resource
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "PTY4J native extraction failed for resource - trying next",
+                    mapOf("resource" to resource, "error" to e.toString()),
+                )
             }
         }
 

@@ -150,6 +150,7 @@ class WorkspaceManager {
 
             workspace
         } catch (e: Exception) {
+            logger.warn(LogCategory.WORKSPACE, "Failed to import workspace from JSON", error = e)
             null
         }
     }

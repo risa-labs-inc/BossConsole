@@ -1,6 +1,8 @@
 package ai.rever.boss.performance
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -18,6 +20,7 @@ import java.io.File
  * - Graceful error handling with fallback to defaults
  */
 actual object PerformanceSettingsManager {
+    private val logger = BossLogger.forComponent("PerformanceSettingsManager")
     private val settingsFile = BossDirectories.resolve("performance-settings.json")
     private val json = Json {
         prettyPrint = true
@@ -43,6 +46,7 @@ actual object PerformanceSettingsManager {
                 _currentSettings.value = PerformanceSettings()
             }
         } catch (e: Exception) {
+            logger.warn(LogCategory.SYSTEM, "Failed to load performance settings - using defaults", error = e)
             _currentSettings.value = PerformanceSettings()
         }
     }
@@ -53,6 +57,11 @@ actual object PerformanceSettingsManager {
             settingsFile.writeText(content)
         } catch (e: Exception) {
             // Settings save failed - not critical, will use in-memory settings
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Failed to persist performance settings - keeping in-memory only",
+                error = e,
+            )
         }
     }
 

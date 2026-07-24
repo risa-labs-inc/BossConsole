@@ -90,6 +90,11 @@ object VersionVerifier {
             }
         } catch (e: Exception) {
             // version.properties not available - normal for production
+            logger.debug(
+                LogCategory.SYSTEM,
+                "version.properties not readable - expected in packaged builds",
+                mapOf("error" to e.toString()),
+            )
             null
         }
     }

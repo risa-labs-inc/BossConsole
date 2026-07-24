@@ -20,6 +20,7 @@ actual fun readFileContent(filePath: String): String? {
             null
         }
     } catch (e: Exception) {
+        codeEditorLogger.warn(LogCategory.EDITOR, "Failed to read file content", mapOf("path" to filePath), error = e)
         null
     }
 }

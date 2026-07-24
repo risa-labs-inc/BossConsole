@@ -49,6 +49,11 @@ private fun getValidComposeWindow(): Window? {
                 window.isDisplayable && window.isShowing
             } catch (e: Exception) {
                 // Window might be in invalid state during disposal
+                logger.debug(
+                    LogCategory.BROWSER,
+                    "Window state probe failed during disposal - skipping window",
+                    mapOf("error" to e.toString()),
+                )
                 false
             }
         }
@@ -197,6 +202,11 @@ private fun configureBrowserPopupHandler(
                             }
                         } catch (e: Exception) {
                             // Issue #255: Gracefully handle "closed object" exceptions
+                            logger.debug(
+                                LogCategory.BROWSER,
+                                "Popup browser hit closed-object exception - cleaning up",
+                                mapOf("error" to e.toString()),
+                            )
                             if (cleanedUp.compareAndSet(false, true)) {
                                 subscription?.unsubscribe()
                                 scope.cancel()
@@ -313,7 +323,17 @@ actual fun createBrowserViewState(browser: Any, window: Any?): Any? {
     val jxBrowser = browser as Browser
 
     val awtWindow = (window as? Window)?.takeIf {
-        try { it.isDisplayable && it.isShowing } catch (e: Exception) { false }
+        try {
+            it.isDisplayable && it.isShowing
+        } catch (e: Exception) {
+            // Window can be mid-disposal - fall back to scanning open windows
+            logger.debug(
+                LogCategory.BROWSER,
+                "Provided window probe failed - falling back to window scan",
+                mapOf("error" to e.toString()),
+            )
+            false
+        }
     } ?: getValidComposeWindow()
 
     if (awtWindow == null) {
@@ -332,7 +352,17 @@ actual fun recreateBrowserViewState(browser: Any, window: Any?): Any? {
     }
 
     val awtWindow = (window as? Window)?.takeIf {
-        try { it.isDisplayable && it.isShowing } catch (e: Exception) { false }
+        try {
+            it.isDisplayable && it.isShowing
+        } catch (e: Exception) {
+            // Window can be mid-disposal - fall back to scanning open windows
+            logger.debug(
+                LogCategory.BROWSER,
+                "Provided window probe failed - falling back to window scan",
+                mapOf("error" to e.toString()),
+            )
+            false
+        }
     } ?: getValidComposeWindow()
 
     if (awtWindow == null) {

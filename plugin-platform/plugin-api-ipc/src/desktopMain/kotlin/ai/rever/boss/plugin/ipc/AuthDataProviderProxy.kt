@@ -67,8 +67,11 @@ class AuthDataProviderProxy(
                     delayMs = 1_000L
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
-                } catch (e: Exception) {
-                    // Connection lost — reset state and reconnect with backoff
+                } catch (ignored: Exception) {
+                    // Connection lost — the handling IS the state reset + reconnect
+                    // with backoff below. Deliberately unlogged: plugin-api-ipc has
+                    // no logging dependency, and this fires repeatedly while the
+                    // host service is down.
                     _currentUser.value = null
                     _isAdmin.value = false
                     _userPermissions.value = emptySet()

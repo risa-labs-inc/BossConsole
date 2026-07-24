@@ -80,6 +80,11 @@ object ChromiumAutoDownloader {
         return try {
             if (versionFile.exists()) versionFile.readText().trim().takeIf { it.isNotEmpty() } else null
         } catch (e: Exception) {
+            logger.debug(
+                LogCategory.BROWSER,
+                "Could not read installed Chromium version marker",
+                mapOf("error" to e.toString()),
+            )
             null
         }
     }
@@ -348,7 +353,11 @@ object ChromiumAutoDownloader {
                         try {
                             Files.deleteIfExists(tempFile)
                         } catch (e: Exception) {
-                            logger.debug(LogCategory.BROWSER, "Could not delete temp file")
+                            logger.debug(
+                                LogCategory.BROWSER,
+                                "Could not delete temp file",
+                                mapOf("error" to e.toString()),
+                            )
                         }
                     }
                 } catch (e: Exception) {

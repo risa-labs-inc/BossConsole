@@ -1,6 +1,8 @@
 package ai.rever.boss.services.passkey
 
 import ai.rever.boss.services.supabase.getSupabaseFunctionUrl
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 
 /**
  * Helper object to extract RP ID from Supabase Function URL
@@ -14,6 +16,8 @@ import ai.rever.boss.services.supabase.getSupabaseFunctionUrl
  * - Base Supabase URL might point to internal services (like kong gateway)
  */
 object PasskeyConfigHelper {
+
+    private val logger = BossLogger.forComponent("PasskeyConfigHelper")
 
     /**
      * Extract RP ID from Supabase Function base URL
@@ -40,6 +44,11 @@ object PasskeyConfigHelper {
             // WebAuthn requires "localhost" instead of "127.0.0.1" for local development
             if (rpId == "127.0.0.1") "localhost" else rpId
         } catch (e: Exception) {
+            logger.warn(
+                LogCategory.PASSKEY,
+                "Failed to derive RP ID from function URL - falling back to production",
+                error = e,
+            )
             "api.risaboss.com" // Fallback to production
         }
     }

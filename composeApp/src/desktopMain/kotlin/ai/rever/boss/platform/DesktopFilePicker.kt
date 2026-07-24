@@ -4,9 +4,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import java.awt.FileDialog
 import java.awt.Frame
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import java.io.File
 import javax.swing.SwingUtilities
 import javax.swing.UIManager
+
+private val logger = BossLogger.forComponent("DesktopFilePicker")
 
 @Composable
 actual fun rememberDirectoryPicker(
@@ -28,6 +32,11 @@ class DesktopDirectoryPicker(
                 UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
             } catch (e: Exception) {
                 // If setting system L&F fails, continue with default
+                logger.debug(
+                    LogCategory.UI,
+                    "Could not set system look and feel - using default",
+                    mapOf("error" to e.toString()),
+                )
             }
             
             // Use native file dialog for better macOS integration

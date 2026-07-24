@@ -39,6 +39,11 @@ actual fun getEnvironmentVariable(name: String): String? {
         }
     } catch (e: Exception) {
         // launchctl might not be available or might fail - this is normal
+        logger.debug(
+            LogCategory.SYSTEM,
+            "launchctl getenv failed - falling back to env file",
+            mapOf("name" to name, "error" to e.toString()),
+        )
     }
 
     // Fallback to reading from ~/.boss/env_vars file for DMG distributions

@@ -94,6 +94,11 @@ object LLMSettings {
         get() = try {
             LLMProvider.valueOf(settings.selectedProvider)
         } catch (e: Exception) {
+            logger.debug(
+                LogCategory.GENERAL,
+                "Unknown LLM provider in settings - defaulting to ANTHROPIC",
+                mapOf("error" to e.toString()),
+            )
             LLMProvider.ANTHROPIC
         }
         set(value) {
@@ -104,6 +109,11 @@ object LLMSettings {
         get() = try {
             LLMModel.valueOf(settings.selectedModel)
         } catch (e: Exception) {
+            logger.debug(
+                LogCategory.GENERAL,
+                "Unknown LLM model in settings - using default",
+                mapOf("error" to e.toString()),
+            )
             LLMModel.CLAUDE_3_5_SONNET_V2
         }
         set(value) {
@@ -178,7 +188,14 @@ object LLMSettings {
         try {
             settings = Json.decodeFromString(json)
         } catch (e: Exception) {
-            // Keep default settings if parsing fails
+            // Keep default settings if parsing fails.
+            // Deliberately NOT logging the throwable: kotlinx.serialization decode
+            // errors embed a snippet of the offending JSON near the failure offset,
+            // and this file holds provider API keys — the raw message could leak a
+            // key fragment into WARN logs. The exception type is enough to diagnose.
+            logger.warn(LogCategory.GENERAL, "Failed to parse LLM settings JSON - keeping defaults", mapOf(
+                "exception" to (e::class.simpleName ?: "Exception")
+            ))
         }
     }
     

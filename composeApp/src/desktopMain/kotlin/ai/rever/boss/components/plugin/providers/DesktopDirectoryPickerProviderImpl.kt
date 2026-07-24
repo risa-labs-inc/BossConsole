@@ -1,6 +1,8 @@
 package ai.rever.boss.components.plugin.providers
 
 import ai.rever.boss.plugin.api.DirectoryPickerProvider
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import java.awt.FileDialog
 import java.awt.Frame
 import java.io.File
@@ -13,6 +15,8 @@ import javax.swing.UIManager
  */
 actual class DirectoryPickerProviderImpl : DirectoryPickerProvider {
 
+    private val logger = BossLogger.forComponent("DirectoryPickerProvider")
+
     override fun pickDirectory(onResult: (String?) -> Unit) {
         SwingUtilities.invokeLater {
             // Set system look and feel for native appearance
@@ -20,6 +24,11 @@ actual class DirectoryPickerProviderImpl : DirectoryPickerProvider {
                 UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
             } catch (e: Exception) {
                 // If setting system L&F fails, continue with default
+                logger.debug(
+                    LogCategory.UI,
+                    "Could not set system look and feel - using default",
+                    mapOf("error" to e.toString()),
+                )
             }
 
             // Use native file dialog for better macOS integration

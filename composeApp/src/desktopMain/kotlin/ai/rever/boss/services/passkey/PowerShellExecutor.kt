@@ -34,7 +34,7 @@ object PowerShellExecutor {
             val exitCode = process.waitFor(5, TimeUnit.SECONDS)
             exitCode && process.exitValue() == 0
         } catch (e: Exception) {
-            logger.debug(LogCategory.PASSKEY, "PowerShell not available")
+            logger.debug(LogCategory.PASSKEY, "PowerShell not available", mapOf("error" to e.toString()))
             false
         }
     }

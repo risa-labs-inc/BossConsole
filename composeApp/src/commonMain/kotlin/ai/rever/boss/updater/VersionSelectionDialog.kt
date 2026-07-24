@@ -21,6 +21,10 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import ai.rever.boss.components.common.BossSearchBar
 import ai.rever.boss.utils.Version
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
+
+private val logger = BossLogger.forComponent("VersionSelectionDialog")
 
 /**
  * Dialog for selecting a specific version to install
@@ -323,6 +327,11 @@ private fun formatReleaseDate(dateString: String): String {
         // Extract just the date part
         dateString.substringBefore("T")
     } catch (e: Exception) {
+        logger.debug(
+            LogCategory.SYSTEM,
+            "Failed to format release date - showing raw value",
+            mapOf("error" to e.toString()),
+        )
         dateString
     }
 }

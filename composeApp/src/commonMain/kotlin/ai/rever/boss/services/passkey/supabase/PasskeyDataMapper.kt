@@ -1,6 +1,8 @@
 package ai.rever.boss.services.passkey.supabase
 
 import ai.rever.boss.services.passkey.*
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import java.security.SecureRandom
@@ -10,7 +12,9 @@ import java.util.Base64
  * Handles data transformation and CBOR parsing for passkey operations
  */
 internal object PasskeyDataMapper {
-    
+
+    private val logger = BossLogger.forComponent("PasskeyDataMapper")
+
     private val json = Json { 
         ignoreUnknownKeys = true
         encodeDefaults = true
@@ -152,11 +156,22 @@ internal object PasskeyDataMapper {
                 Result.failure(Exception(credentialResponse.error ?: "Registration failed"))
             }
         } catch (parseException: Exception) {
+            // Exception type only: kotlinx decode errors embed a snippet of the
+            // response near the failure offset, and server responses can carry
+            // credential/session material that must not reach the logs.
+            logger.warn(
+                LogCategory.PASSKEY,
+                "Registration response did not parse as credential - extracting error message",
+                mapOf("exception" to (parseException::class.simpleName ?: "Exception")),
+            )
             // Try to extract error message from raw response
             val errorMessage = try {
                 val errorResponse = json.decodeFromString<JsonObject>(responseText)
                 errorResponse["error"]?.toString()?.removeSurrounding("\"") ?: "Unknown error"
             } catch (e: Exception) {
+                logger.debug(LogCategory.PASSKEY, "Raw error extraction from response also failed", mapOf(
+                    "exception" to (e::class.simpleName ?: "Exception")
+                ))
                 "Failed to parse response: $responseText"
             }
             
@@ -215,7 +230,13 @@ internal object PasskeyDataMapper {
                 )
             }
         } catch (e: Exception) {
-            // Fall back to parsing as authentication result (for completion endpoints)
+            // Fall back to parsing as authentication result (for completion endpoints).
+            // Exception type only - decode errors can embed response snippets.
+            logger.debug(
+                LogCategory.PASSKEY,
+                "Response is not a status envelope - parsing as authentication result",
+                mapOf("exception" to (e::class.simpleName ?: "Exception")),
+            )
             json.decodeFromString<PasskeyAuthenticationResult>(responseText)
         }
     }

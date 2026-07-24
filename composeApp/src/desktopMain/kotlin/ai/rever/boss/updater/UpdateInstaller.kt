@@ -108,6 +108,11 @@ object UpdateInstaller {
         val canonicalPath = try {
             downloadFile.canonicalPath
         } catch (e: Exception) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Failed to canonicalize downloaded file path - rejecting update file",
+                error = e,
+            )
             throw SecurityException("Failed to canonicalize path: ${downloadFile.absolutePath}")
         }
 
@@ -745,6 +750,11 @@ object UpdateInstaller {
                 jarFile
             } else null
         } catch (e: Exception) {
+            logger.debug(
+                LogCategory.SYSTEM,
+                "Could not determine current JAR path - not running from a JAR",
+                mapOf("error" to e.toString()),
+            )
             null
         }
     }

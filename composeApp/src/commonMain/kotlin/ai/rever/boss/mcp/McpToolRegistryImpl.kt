@@ -276,6 +276,7 @@ internal class McpToolRegistryCore(
             logger.warn(
                 LogCategory.SYSTEM, "MCP tool handler timed out",
                 mapOf("tool" to toolName, "providerId" to tool.providerId, "timeoutMs" to invokeTimeoutMs),
+                error = t,
             )
             McpToolResult("Tool '$toolName' timed out after ${invokeTimeoutMs / 1000}s", isError = true)
         } catch (t: CancellationException) {
@@ -325,6 +326,11 @@ internal class McpToolRegistryCore(
                 ?.mapValues { (_, el) -> scalarOf(el) }
                 ?: emptyMap()
         } catch (t: Throwable) {
+            logger.debug(
+                LogCategory.SYSTEM,
+                "MCP tool arguments are not a JSON object - using empty args",
+                mapOf("error" to t.toString()),
+            )
             emptyMap()
         }
         return McpToolArgs(map, arguments.ifBlank { "{}" })

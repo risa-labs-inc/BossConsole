@@ -44,6 +44,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
+
+private val logger = BossLogger.forComponent("BrowserPageCard")
 
 /**
  * Card displaying a recent browser page with favicon.
@@ -74,6 +78,11 @@ fun BrowserPageCard(
         favicon = try {
             loadHighQualityFavicon(page.url, page.faviconCacheKey)
         } catch (e: Exception) {
+            logger.debug(
+                LogCategory.BROWSER,
+                "Failed to load high-quality favicon - card shows fallback icon",
+                mapOf("error" to e.toString()),
+            )
             null
         }
     }

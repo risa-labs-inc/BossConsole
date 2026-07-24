@@ -115,9 +115,18 @@ private fun validateFilePath(path: String, basePath: String? = null): String? {
 
         canonicalPath
     } catch (e: Exception) {
-        newTabDialogLogger.debug(LogCategory.FILE, "Invalid path", mapOf("path" to path))
+        newTabDialogLogger.debug(LogCategory.FILE, "Invalid path", mapOf("path" to path, "error" to e.toString()))
         null
     }
+}
+
+/** Breadcrumb for a failed directory-children probe; hoisted out of the deeply nested tree loader. */
+private fun logDirProbeFailure(path: String, e: Exception) {
+    newTabDialogLogger.debug(
+        LogCategory.FILE,
+        "Cannot probe directory for children",
+        mapOf("path" to path, "error" to e.toString()),
+    )
 }
 
 enum class TabType(val tabTypeId: TabTypeId) {
@@ -782,6 +791,7 @@ fun NewTabDialog(
                                                                                 val hasKids = try {
                                                                                     directoryHasChildren(child.path)
                                                                                 } catch (e: Exception) {
+                                                                                    logDirProbeFailure(child.path, e)
                                                                                     false
                                                                                 }
                                                                                 child.copy(hasChildren = hasKids)
