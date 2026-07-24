@@ -43,11 +43,8 @@ internal class BrowserWindowOwnershipRegistry {
     private val lock = Any()
     private val ownerByBrowserId = mutableMapOf<String, String>()
     private val creationStateByWindowId = mutableMapOf<String, WindowCreationState>()
-    private var closingAll = false
 
     fun tryBeginCreate(windowId: String): Boolean = synchronized(lock) {
-        if (closingAll) return@synchronized false
-
         val state = creationStateByWindowId.getOrPut(windowId, ::WindowCreationState)
         if (state.closing) {
             false
@@ -59,7 +56,7 @@ internal class BrowserWindowOwnershipRegistry {
 
     fun register(browserId: String, windowId: String): Boolean = synchronized(lock) {
         val state = creationStateByWindowId[windowId]
-        if (closingAll || state == null || state.closing) {
+        if (state == null || state.closing) {
             false
         } else {
             ownerByBrowserId[browserId] = windowId
@@ -67,17 +64,18 @@ internal class BrowserWindowOwnershipRegistry {
         }
     }
 
-    fun finishCreate(windowId: String) = synchronized(lock) {
-        val state = creationStateByWindowId[windowId] ?: return@synchronized
-        check(state.inFlightCreates > 0) {
-            "Browser creation finished without a matching start for window $windowId"
-        }
+    fun finishCreate(windowId: String): Boolean = synchronized(lock) {
+        val state = creationStateByWindowId[windowId] ?: return@synchronized false
+        if (state.inFlightCreates <= 0) return@synchronized false
+
         state.inFlightCreates--
         if (state.inFlightCreates == 0) {
-            // The window-scoped BrowserService permanently rejects new work after
-            // close, so no closed UUID needs to remain once admitted calls drain.
+            // The closed WindowScopedBrowserService instance rejects further work.
+            // A later service created with the same ID represents a new lifecycle,
+            // so this transient state can be discarded once admitted calls drain.
             creationStateByWindowId.remove(windowId, state)
         }
+        true
     }
 
     fun unregister(browserId: String) = synchronized(lock) {
@@ -106,17 +104,6 @@ internal class BrowserWindowOwnershipRegistry {
 
     fun count(windowId: String): Int = synchronized(lock) {
         ownerByBrowserId.values.count { it == windowId }
-    }
-
-    fun closeAll() {
-        synchronized(lock) {
-            closingAll = true
-            ownerByBrowserId.clear()
-            creationStateByWindowId.values.forEach { it.closing = true }
-            creationStateByWindowId.entries.removeAll { (_, state) ->
-                state.inFlightCreates == 0
-            }
-        }
     }
 
     internal fun trackedWindowCount(): Int = synchronized(lock) {
@@ -240,8 +227,13 @@ object BrowserServiceImpl : BrowserService {
         }
     }
 
-    override suspend fun createBrowser(config: BrowserConfig): BrowserHandle? =
-        createBrowser(config, ownerWindowId = null)
+    override suspend fun createBrowser(config: BrowserConfig): BrowserHandle? {
+        logger.error(
+            LogCategory.BROWSER,
+            "Unscoped browser creation rejected; use a window-scoped BrowserService"
+        )
+        return null
+    }
 
     internal fun tryBeginBrowserCreation(windowId: String): Boolean =
         browserOwners.tryBeginCreate(windowId)
@@ -252,12 +244,16 @@ object BrowserServiceImpl : BrowserService {
     ): BrowserHandle? = createBrowser(config, ownerWindowId = windowId)
 
     internal fun finishBrowserCreation(windowId: String) {
-        browserOwners.finishCreate(windowId)
+        if (!browserOwners.finishCreate(windowId)) {
+            logger.error(LogCategory.BROWSER, "Unbalanced browser creation finish ignored", mapOf(
+                "windowId" to windowId
+            ))
+        }
     }
 
     private suspend fun createBrowser(
         config: BrowserConfig,
-        ownerWindowId: String?
+        ownerWindowId: String
     ): BrowserHandle? {
         // Declared outside the try so the outer catch can release the managed profile
         // if anything after newBrowser() throws (see the catch below).
@@ -318,7 +314,7 @@ object BrowserServiceImpl : BrowserService {
             }
             tracked = true // profile lifecycle now owned by disposeBrowser (via managedByHandle)
 
-            if (ownerWindowId != null && !browserOwners.register(handle.id, ownerWindowId)) {
+            if (!browserOwners.register(handle.id, ownerWindowId)) {
                 // The window closed while browser creation was suspended. Dispose
                 // synchronously so the handle cannot retain its destroyed AWT window.
                 disposeTrackedBrowserBlocking(handle)
@@ -426,26 +422,6 @@ object BrowserServiceImpl : BrowserService {
             "windowId" to windowId,
             "count" to disposedCount
         ))
-    }
-
-    /**
-     * Dispose all active browsers.
-     *
-     * Called during application shutdown to ensure clean cleanup.
-     */
-    fun disposeAll() {
-        val count = activeBrowsers.size
-        browserOwners.closeAll()
-        activeBrowsers.values.toList().forEach { handle ->
-            try {
-                disposeTrackedBrowserBlocking(handle)
-            } catch (e: Exception) {
-                logger.warn(LogCategory.BROWSER, "Error disposing browser", error = e)
-            }
-        }
-        activeBrowsers.clear()
-
-        logger.info(LogCategory.BROWSER, "All browsers disposed", mapOf("count" to count))
     }
 
     private fun disposeTrackedBrowserBlocking(handle: BrowserHandleImpl): Boolean {

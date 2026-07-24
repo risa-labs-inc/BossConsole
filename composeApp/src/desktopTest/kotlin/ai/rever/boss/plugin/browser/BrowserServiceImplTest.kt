@@ -1,8 +1,11 @@
 package ai.rever.boss.plugin.browser
 
+import ai.rever.boss.components.plugin.getBrowserServiceInstance
+import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -47,6 +50,20 @@ class BrowserServiceImplTest {
 
         assertEquals(0, registry.count("closing-window"))
         assertEquals(0, registry.trackedWindowCount())
+    }
+
+    @Test
+    fun `unbalanced browser creation finish is ignored`() {
+        val registry = BrowserWindowOwnershipRegistry()
+
+        assertFalse(registry.finishCreate("unknown-window"))
+        assertEquals(0, registry.trackedWindowCount())
+    }
+
+    @Test
+    fun `browser creation requires a window cleanup owner`() = runBlocking {
+        assertNull(getBrowserServiceInstance(null))
+        assertNull(BrowserServiceImpl.createBrowser(BrowserConfig()))
     }
 
     @Test

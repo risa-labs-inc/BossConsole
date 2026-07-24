@@ -13,10 +13,10 @@ private val windowBrowserServices = ConcurrentHashMap<String, WindowScopedBrowse
  *
  * Returns a window-scoped view of the BrowserServiceImpl singleton that wraps
  * FluckEngine. The wrapper keeps plugin browser ownership isolated per window.
+ * A null window ID has no cleanup owner, so no browser service is exposed.
  */
 actual fun getBrowserServiceInstance(windowId: String?): BrowserService? =
     windowId?.let { windowBrowserServices.computeIfAbsent(it, ::WindowScopedBrowserService) }
-        ?: BrowserServiceImpl
 
 private class WindowScopedBrowserService(
     private val windowId: String
@@ -41,6 +41,9 @@ private class WindowScopedBrowserService(
         }
     }
 
+    /**
+     * Reports this window's owned handles, not the process-wide active count.
+     */
     override fun getActiveBrowserCount(): Int =
         BrowserServiceImpl.getActiveBrowserCountForWindow(windowId)
 
