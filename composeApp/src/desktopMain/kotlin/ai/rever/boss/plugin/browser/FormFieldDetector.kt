@@ -211,7 +211,9 @@ object FormFieldDetector {
                 autocomplete = autocomplete
             )
         } catch (e: Exception) {
-            // Never log the JSON itself - it can contain a typed field value
+            // Never log the JSON payload itself - it can contain a typed field value.
+            // (e.toString() is safe here: this parser is regex/string-based, so its
+            // exceptions never embed the input, unlike kotlinx.serialization's.)
             logger.debug(LogCategory.BROWSER, "Failed to parse field info JSON - no field detected", mapOf("error" to e.toString()))
             null
         }
@@ -272,7 +274,8 @@ object FormFieldDetector {
                 autocomplete = autocomplete
             )
         } catch (e: Exception) {
-            // Never log the object string itself - it can contain a typed field value
+            // Never log the object string itself - it can contain a typed field value.
+            // (e.toString() is safe here: string-based parsing, exceptions never embed input.)
             logger.debug(LogCategory.BROWSER, "Failed to parse legacy field info - no field detected", mapOf("error" to e.toString()))
             null
         }

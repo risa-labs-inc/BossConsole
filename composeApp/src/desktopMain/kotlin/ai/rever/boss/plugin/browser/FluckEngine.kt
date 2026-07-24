@@ -599,8 +599,10 @@ object FluckEngine {
 
         lockFiles.forEach { fileName ->
             val file = profileDir.resolve(fileName).toFile()
-            if (file.exists()) {
-                file.delete()
+            if (file.exists() && !file.delete()) {
+                // A surviving lock file can make the next engine start think another
+                // instance owns the profile - worth a breadcrumb, not a failure.
+                logger.debug(LogCategory.BROWSER, "Could not delete stale browser lock file", mapOf("file" to fileName))
             }
         }
 
@@ -609,8 +611,8 @@ object FluckEngine {
         if (defaultDir.toFile().exists()) {
             lockFiles.forEach { fileName ->
                 val file = defaultDir.resolve(fileName).toFile()
-                if (file.exists()) {
-                    file.delete()
+                if (file.exists() && !file.delete()) {
+                    logger.debug(LogCategory.BROWSER, "Could not delete stale browser lock file", mapOf("file" to "Default/" + fileName))
                 }
             }
         }

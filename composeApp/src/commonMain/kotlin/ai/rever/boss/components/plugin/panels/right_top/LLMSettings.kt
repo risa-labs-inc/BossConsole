@@ -180,8 +180,14 @@ object LLMSettings {
         try {
             settings = Json.decodeFromString(json)
         } catch (e: Exception) {
-            // Keep default settings if parsing fails
-            logger.warn(LogCategory.GENERAL, "Failed to parse LLM settings JSON - keeping defaults", error = e)
+            // Keep default settings if parsing fails.
+            // Deliberately NOT logging the throwable: kotlinx.serialization decode
+            // errors embed a snippet of the offending JSON near the failure offset,
+            // and this file holds provider API keys — the raw message could leak a
+            // key fragment into WARN logs. The exception type is enough to diagnose.
+            logger.warn(LogCategory.GENERAL, "Failed to parse LLM settings JSON - keeping defaults", mapOf(
+                "exception" to (e::class.simpleName ?: "Exception")
+            ))
         }
     }
     
