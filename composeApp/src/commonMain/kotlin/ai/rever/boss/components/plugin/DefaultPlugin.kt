@@ -392,7 +392,7 @@ class DefaultPlugin(
     // Browser service for plugins needing embedded browser capabilities.
     // Automation (isolated/headless sessions, auth seeding, named profiles) is
     // folded into this same service — see BrowserConfig.profileName/ephemeralProfile/auth.
-    override val browserService: BrowserService? = getBrowserServiceInstance()
+    override val browserService: BrowserService? = getBrowserServiceInstance(_windowId)
 
     // Git data provider for plugins that display git information
     override val gitDataProvider: GitDataProvider? by lazy {
@@ -926,7 +926,7 @@ class DefaultPlugin(
     fun dispose() {
         // Dispose dynamic plugin manager and sandbox manager
         runBlocking {
-            dynamicPluginManager.dispose()
+            dynamicPluginManager.disposeWindow()
             sandboxManager.dispose()
         }
         pluginScope.cancel()
@@ -1558,4 +1558,3 @@ private class DefaultContextMenuProvider : ContextMenuProvider {
             onClick = onClick
         )
 }
-

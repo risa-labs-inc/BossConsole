@@ -2,6 +2,7 @@ package ai.rever.boss.plugin.browser
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -13,6 +14,28 @@ import kotlin.test.assertTrue
  * named-profile metadata persistence.
  */
 class BrowserServiceImplTest {
+
+    @Test
+    fun `closing one window drains only its browser handles`() {
+        val registry = BrowserWindowOwnershipRegistry()
+        assertTrue(registry.register("first-1", "first-window"))
+        assertTrue(registry.register("first-2", "first-window"))
+        assertTrue(registry.register("second-1", "second-window"))
+
+        assertEquals(setOf("second-1"), registry.closeWindow("second-window"))
+        assertEquals(2, registry.count("first-window"))
+        assertEquals(0, registry.count("second-window"))
+        assertEquals(setOf("first-1", "first-2"), registry.closeWindow("first-window"))
+    }
+
+    @Test
+    fun `browser finishing creation after window close is rejected`() {
+        val registry = BrowserWindowOwnershipRegistry()
+
+        assertTrue(registry.closeWindow("closing-window").isEmpty())
+        assertFalse(registry.register("late-browser", "closing-window"))
+        assertEquals(0, registry.count("closing-window"))
+    }
 
     @Test
     fun `cookieDomain strips scheme, path, query, fragment and port`() {

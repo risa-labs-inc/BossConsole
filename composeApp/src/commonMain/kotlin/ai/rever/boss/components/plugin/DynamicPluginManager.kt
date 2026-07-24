@@ -824,6 +824,18 @@ class DynamicPluginManager(
         pluginId: String,
         force: Boolean = false,
         waitForGC: Boolean = false
+    ): Result<Unit> = uninstallPlugin(
+        pluginId = pluginId,
+        force = force,
+        waitForGC = waitForGC,
+        closeTabsAcrossWindows = true
+    )
+
+    private suspend fun uninstallPlugin(
+        pluginId: String,
+        force: Boolean,
+        waitForGC: Boolean,
+        closeTabsAcrossWindows: Boolean
     ): Result<Unit> {
         // Close this plugin's open tabs on the UI thread FIRST, while its
         // classloader is still open, so Compose disposal resolves its
@@ -849,7 +861,8 @@ class DynamicPluginManager(
         // the doubled O(plugins) scan is the price of keeping the locked
         // check authoritative.)
         val candidate = pluginLoader.getPlugin(pluginId)
-        if (candidate != null &&
+        if (closeTabsAcrossWindows &&
+            candidate != null &&
             (force || (candidate.manifest.canUnload && checkCanUnload(pluginId).isAllowed))
         ) {
             pluginTabsTeardown?.let { teardown ->
@@ -1421,11 +1434,33 @@ class DynamicPluginManager(
      * Dispose the manager and all plugins.
      */
     suspend fun dispose() {
-        logger.info(LogCategory.SYSTEM, "Disposing DynamicPluginManager")
+        dispose(closeTabsAcrossWindows = true)
+    }
+
+    /**
+     * Dispose this window's plugin manager without closing plugin tabs in other windows.
+     *
+     * Each BossApp window owns a manager instance, while the global plugin tab teardown
+     * callback intentionally spans every window for explicit update/reload/uninstall.
+     * Window composition teardown must bypass that global callback.
+     */
+    suspend fun disposeWindow() {
+        dispose(closeTabsAcrossWindows = false)
+    }
+
+    private suspend fun dispose(closeTabsAcrossWindows: Boolean) {
+        logger.info(LogCategory.SYSTEM, "Disposing DynamicPluginManager", mapOf(
+            "scope" to if (closeTabsAcrossWindows) "global" else "window"
+        ))
 
         // Uninstall all plugins
         for (pluginId in _pluginStates.value.keys.toList()) {
-            uninstallPlugin(pluginId, force = true)
+            uninstallPlugin(
+                pluginId = pluginId,
+                force = true,
+                waitForGC = false,
+                closeTabsAcrossWindows = closeTabsAcrossWindows
+            )
         }
 
         // Cancel scope

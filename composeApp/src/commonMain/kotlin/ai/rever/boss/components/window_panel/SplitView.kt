@@ -4,6 +4,7 @@ import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import BossDarkAccent
 import ai.rever.boss.plugin.api.Panel
+import ai.rever.boss.components.plugin.disposePluginBrowsers
 import ai.rever.boss.components.model.PanelDropZones
 import ai.rever.boss.components.model.TabDraggableComponent
 import ai.rever.boss.components.model.TabDropResult
@@ -823,6 +824,7 @@ class SplitViewState(
         getAllPanels().forEach { panel ->
             panel.tabsComponent.disposeAllTabsBlocking()
         }
+        disposePluginBrowsers(windowId)
     }
 
     /**

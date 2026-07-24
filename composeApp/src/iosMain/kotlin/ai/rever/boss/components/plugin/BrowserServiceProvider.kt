@@ -7,6 +7,6 @@ import ai.rever.boss.plugin.browser.BrowserService
  *
  * JxBrowser is not available on iOS, so this returns null.
  */
-actual fun getBrowserServiceInstance(): BrowserService? = null
+actual fun getBrowserServiceInstance(windowId: String?): BrowserService? = null
 
-internal actual fun disposePluginBrowsers() {}
+internal actual fun disposePluginBrowsers(windowId: String) {}
