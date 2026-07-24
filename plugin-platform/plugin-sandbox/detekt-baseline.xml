@@ -1,0 +1,84 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ConstructorParameterNaming:SandboxedPluginContext.kt$SandboxedPluginContext$private val _sandbox: PluginSandbox</ID>
+    <ID>CyclomaticComplexMethod:PluginCrashInterceptor.kt$PluginCrashInterceptor$fun attributeToPlugin(throwable: Throwable, thread: Thread? = null): String?</ID>
+    <ID>FunctionNaming:InProcessPluginSandboxTest.kt$InProcessPluginSandboxTest.DisabledStateTests$@Test fun `setDisabled changes state to DISABLED`()</ID>
+    <ID>FunctionNaming:InProcessPluginSandboxTest.kt$InProcessPluginSandboxTest.DisabledStateTests$@Test fun `setState allows direct state changes`()</ID>
+    <ID>FunctionNaming:InProcessPluginSandboxTest.kt$InProcessPluginSandboxTest.HealthMetricsTests$@Test fun `initial health metrics are correct`()</ID>
+    <ID>FunctionNaming:InProcessPluginSandboxTest.kt$InProcessPluginSandboxTest.HealthMetricsTests$@Test fun `multiple errors increment consecutiveErrors`()</ID>
+    <ID>FunctionNaming:InProcessPluginSandboxTest.kt$InProcessPluginSandboxTest.HealthMetricsTests$@Test fun `recordError increments error counters`()</ID>
+    <ID>FunctionNaming:InProcessPluginSandboxTest.kt$InProcessPluginSandboxTest.HealthMetricsTests$@Test fun `recordHeartbeat updates lastHeartbeat`()</ID>
+    <ID>FunctionNaming:InProcessPluginSandboxTest.kt$InProcessPluginSandboxTest.HealthMetricsTests$@Test fun `recordSuccess resets consecutive errors`()</ID>
+    <ID>FunctionNaming:InProcessPluginSandboxTest.kt$InProcessPluginSandboxTest.LifecycleTests$@Test fun `double start is idempotent`()</ID>
+    <ID>FunctionNaming:InProcessPluginSandboxTest.kt$InProcessPluginSandboxTest.LifecycleTests$@Test fun `double stop is idempotent`()</ID>
+    <ID>FunctionNaming:InProcessPluginSandboxTest.kt$InProcessPluginSandboxTest.LifecycleTests$@Test fun `restart transitions through RESTARTING to RUNNING`()</ID>
+    <ID>FunctionNaming:InProcessPluginSandboxTest.kt$InProcessPluginSandboxTest.LifecycleTests$@Test fun `sandbox starts in STOPPED state`()</ID>
+    <ID>FunctionNaming:InProcessPluginSandboxTest.kt$InProcessPluginSandboxTest.LifecycleTests$@Test fun `start transitions to RUNNING state`()</ID>
+    <ID>FunctionNaming:InProcessPluginSandboxTest.kt$InProcessPluginSandboxTest.LifecycleTests$@Test fun `stop transitions to STOPPED state`()</ID>
+    <ID>FunctionNaming:InProcessPluginSandboxTest.kt$InProcessPluginSandboxTest.PluginExceptionTests$@Test fun `PluginException getPluginId extracts correct id`()</ID>
+    <ID>FunctionNaming:InProcessPluginSandboxTest.kt$InProcessPluginSandboxTest.PluginExceptionTests$@Test fun `PluginException getPluginId returns null for non-PluginException`()</ID>
+    <ID>FunctionNaming:InProcessPluginSandboxTest.kt$InProcessPluginSandboxTest.PluginExceptionTests$@Test fun `PluginException preserves pluginId`()</ID>
+    <ID>FunctionNaming:InProcessPluginSandboxTest.kt$InProcessPluginSandboxTest.PluginExceptionTests$@Test fun `recordError wraps non-PluginException errors`()</ID>
+    <ID>FunctionNaming:InProcessPluginSandboxTest.kt$InProcessPluginSandboxTest.SandboxScopeTests$@Test fun `coroutines can be launched in sandboxScope`()</ID>
+    <ID>FunctionNaming:InProcessPluginSandboxTest.kt$InProcessPluginSandboxTest.SandboxScopeTests$@Test fun `restart creates new sandboxScope`()</ID>
+    <ID>FunctionNaming:InProcessPluginSandboxTest.kt$InProcessPluginSandboxTest.SandboxScopeTests$@Test fun `sandboxScope is available after start`()</ID>
+    <ID>FunctionNaming:InProcessPluginSandboxTest.kt$InProcessPluginSandboxTest.UnhealthyStateTests$@Test fun `exceeding maxConsecutiveErrors marks sandbox as UNHEALTHY`()</ID>
+    <ID>FunctionNaming:InProcessPluginSandboxTest.kt$InProcessPluginSandboxTest.UnhealthyStateTests$@Test fun `markUnhealthy changes state from RUNNING to UNHEALTHY`()</ID>
+    <ID>FunctionNaming:InProcessPluginSandboxTest.kt$InProcessPluginSandboxTest.UnhealthyStateTests$@Test fun `markUnhealthy does nothing when not RUNNING`()</ID>
+    <ID>FunctionNaming:PluginSandboxManagerTest.kt$PluginSandboxManagerTest.DisableEnableTests$@Test fun `disablePlugin marks plugin as disabled`()</ID>
+    <ID>FunctionNaming:PluginSandboxManagerTest.kt$PluginSandboxManagerTest.DisableEnableTests$@Test fun `disablePlugin sets sandbox state to DISABLED`()</ID>
+    <ID>FunctionNaming:PluginSandboxManagerTest.kt$PluginSandboxManagerTest.DisableEnableTests$@Test fun `enablePlugin removes plugin from disabled set`()</ID>
+    <ID>FunctionNaming:PluginSandboxManagerTest.kt$PluginSandboxManagerTest.DisableEnableTests$@Test fun `getDisabledPlugins returns all disabled plugins`()</ID>
+    <ID>FunctionNaming:PluginSandboxManagerTest.kt$PluginSandboxManagerTest.DisableEnableTests$@Test fun `isPluginDisabled returns false for non-disabled plugin`()</ID>
+    <ID>FunctionNaming:PluginSandboxManagerTest.kt$PluginSandboxManagerTest.DisposeTests$@Test fun `dispose clears all sandboxes`()</ID>
+    <ID>FunctionNaming:PluginSandboxManagerTest.kt$PluginSandboxManagerTest.HealthSummaryTests$@Test fun `healthSummary is available`()</ID>
+    <ID>FunctionNaming:PluginSandboxManagerTest.kt$PluginSandboxManagerTest.ListenerTests$@Test fun `listener receives onPluginDisabled event`()</ID>
+    <ID>FunctionNaming:PluginSandboxManagerTest.kt$PluginSandboxManagerTest.ListenerTests$@Test fun `listener receives onPluginRestarted event`()</ID>
+    <ID>FunctionNaming:PluginSandboxManagerTest.kt$PluginSandboxManagerTest.ListenerTests$@Test fun `listener receives onPluginRestarting event`()</ID>
+    <ID>FunctionNaming:PluginSandboxManagerTest.kt$PluginSandboxManagerTest.ListenerTests$@Test fun `removeListener stops receiving events`()</ID>
+    <ID>FunctionNaming:PluginSandboxManagerTest.kt$PluginSandboxManagerTest.RestartTests$@Test fun `restartPlugin returns failure for unknown plugin`()</ID>
+    <ID>FunctionNaming:PluginSandboxManagerTest.kt$PluginSandboxManagerTest.RestartTests$@Test fun `restartPlugin returns success for known plugin`()</ID>
+    <ID>FunctionNaming:PluginSandboxManagerTest.kt$PluginSandboxManagerTest.SandboxCreationTests$@Test fun `createSandbox creates different sandboxes for different pluginIds`()</ID>
+    <ID>FunctionNaming:PluginSandboxManagerTest.kt$PluginSandboxManagerTest.SandboxCreationTests$@Test fun `createSandbox returns existing sandbox for same pluginId`()</ID>
+    <ID>FunctionNaming:PluginSandboxManagerTest.kt$PluginSandboxManagerTest.SandboxCreationTests$@Test fun `createSandbox returns new sandbox`()</ID>
+    <ID>FunctionNaming:PluginSandboxManagerTest.kt$PluginSandboxManagerTest.SandboxCreationTests$@Test fun `getSandbox returns null for unknown plugin`()</ID>
+    <ID>FunctionNaming:PluginSandboxManagerTest.kt$PluginSandboxManagerTest.SandboxCreationTests$@Test fun `getSandbox returns sandbox after creation`()</ID>
+    <ID>FunctionNaming:PluginSandboxManagerTest.kt$PluginSandboxManagerTest.SandboxRemovalTests$@Test fun `getAllSandboxes returns all created sandboxes`()</ID>
+    <ID>FunctionNaming:PluginSandboxManagerTest.kt$PluginSandboxManagerTest.SandboxRemovalTests$@Test fun `removeSandbox is safe for unknown plugin`()</ID>
+    <ID>FunctionNaming:PluginSandboxManagerTest.kt$PluginSandboxManagerTest.SandboxRemovalTests$@Test fun `removeSandbox removes sandbox`()</ID>
+    <ID>FunctionNaming:PluginToastStateTest.kt$PluginToastStateTest.DismissTests$@Test fun `dismiss cancels auto-dismiss timer`()</ID>
+    <ID>FunctionNaming:PluginToastStateTest.kt$PluginToastStateTest.DismissTests$@Test fun `dismiss is safe for unknown id`()</ID>
+    <ID>FunctionNaming:PluginToastStateTest.kt$PluginToastStateTest.DismissTests$@Test fun `dismiss removes specific toast by id`()</ID>
+    <ID>FunctionNaming:PluginToastStateTest.kt$PluginToastStateTest.DismissTests$@Test fun `dismissAll clears all toasts`()</ID>
+    <ID>FunctionNaming:PluginToastStateTest.kt$PluginToastStateTest.ShowTests$@Test fun `INDEFINITE duration does not auto-dismiss`()</ID>
+    <ID>FunctionNaming:PluginToastStateTest.kt$PluginToastStateTest.ShowTests$@Test fun `LONG duration auto-dismisses after 6 seconds`()</ID>
+    <ID>FunctionNaming:PluginToastStateTest.kt$PluginToastStateTest.ShowTests$@Test fun `SHORT duration auto-dismisses after 3 seconds`()</ID>
+    <ID>FunctionNaming:PluginToastStateTest.kt$PluginToastStateTest.ShowTests$@Test fun `show adds toast to list`()</ID>
+    <ID>FunctionNaming:PluginToastStateTest.kt$PluginToastStateTest.ShowTests$@Test fun `show respects maxToasts limit`()</ID>
+    <ID>FunctionNaming:PluginToastStateTest.kt$PluginToastStateTest.ToastMessageTests$@Test fun `ToastAction stores label and callback`()</ID>
+    <ID>FunctionNaming:PluginToastStateTest.kt$PluginToastStateTest.ToastMessageTests$@Test fun `ToastMessage has default id`()</ID>
+    <ID>FunctionNaming:PluginToastStateTest.kt$PluginToastStateTest.UtilityTests$@Test fun `hasToasts returns true when toasts exist`()</ID>
+    <ID>FunctionNaming:PluginToastStateTest.kt$PluginToastStateTest.UtilityTests$@Test fun `toastCount returns correct count`()</ID>
+    <ID>LongMethod:PluginErrorBoundary.kt$@Composable fun PluginErrorBoundary( pluginId: String, sandbox: PluginSandbox, onRestart: () -&gt; Unit, content: @Composable () -&gt; Unit )</ID>
+    <ID>LongMethod:PluginErrorFallback.kt$@Composable fun PluginErrorFallback( pluginId: String, error: Throwable, isIncompatible: Boolean = false, onRestart: () -&gt; Unit, onDismiss: (() -&gt; Unit)? = null )</ID>
+    <ID>LongMethod:PluginToastHost.kt$@Composable fun PluginToast( message: ToastMessage, onDismiss: () -&gt; Unit )</ID>
+    <ID>MaxLineLength:SandboxedPluginContext.kt$SandboxedPluginContext$println("[HOST-DEBUG] SandboxedPluginContext.navigationTargetProvider: delegate=${delegate::class.simpleName}, result=$result")</ID>
+    <ID>NestedBlockDepth:PluginCrashInterceptor.kt$PluginCrashInterceptor$fun attributeToPlugin(throwable: Throwable, thread: Thread? = null): String?</ID>
+    <ID>NestedBlockDepth:PluginCrashInterceptor.kt$PluginCrashInterceptor$fun register(pluginId: String, onError: (Throwable) -&gt; Unit): Registration</ID>
+    <ID>ReturnCount:PluginCrashInterceptor.kt$PluginCrashInterceptor$fun attributeToPlugin(throwable: Throwable, thread: Thread? = null): String?</ID>
+    <ID>ReturnCount:PluginCrashInterceptor.kt$PluginCrashInterceptor$private fun tryHandlePluginCrash(thread: Thread, throwable: Throwable): Boolean</ID>
+    <ID>ReturnCount:PluginWatchdog.kt$PluginWatchdog$private suspend fun checkHealth()</ID>
+    <ID>TooGenericExceptionCaught:PluginCrashInterceptor.kt$PluginCrashInterceptor$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:PluginErrorBoundary.kt$PluginCrashRegistry$e: Throwable</ID>
+    <ID>TooGenericExceptionCaught:PluginSandboxManager.kt$PluginSandboxManagerImpl$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:SandboxedPanelRegistry.kt$SandboxedPanelRegistry$e: Throwable</ID>
+    <ID>TooGenericExceptionCaught:SandboxedTabRegistry.kt$SandboxedTabRegistry$e: Throwable</ID>
+    <ID>TooManyFunctions:InProcessPluginSandbox.kt$InProcessPluginSandbox : PluginSandbox</ID>
+    <ID>TooManyFunctions:PluginSandboxManager.kt$PluginSandboxManager</ID>
+    <ID>TooManyFunctions:PluginSandboxManager.kt$PluginSandboxManagerImpl : PluginSandboxManager</ID>
+    <ID>TooManyFunctions:SandboxedPluginContext.kt$SandboxedPluginContext : PluginContext</ID>
+    <ID>UnusedPrivateProperty:InProcessPluginSandboxTest.kt$InProcessPluginSandboxTest.SandboxScopeTests$val originalScope = sandbox.sandboxScope</ID>
+  </CurrentIssues>
+</SmellBaseline>

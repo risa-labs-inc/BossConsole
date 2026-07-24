@@ -1,0 +1,13 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ComplexCondition:ProcessSpawner.kt$ProcessSpawner.Companion$currentCommand != null &amp;&amp; (currentCommand.endsWith("/java") || currentCommand.endsWith("\\java.exe") || currentCommand.endsWith("/java.exe"))</ID>
+    <ID>LoopWithTooManyJumpStatements:ProcessMonitor.kt$ProcessMonitor$while</ID>
+    <ID>NestedBlockDepth:DependencyGraph.kt$DependencyGraph$fun getDependents(id: String): Set&lt;String&gt;</ID>
+    <ID>ReturnCount:ProcessSpawner.kt$ProcessSpawner.Companion$fun findJavaExecutable(): String</ID>
+    <ID>TooManyFunctions:ProcessRegistry.kt$ProcessRegistry</ID>
+    <ID>UseCheckOrError:DependencyGraph.kt$DependencyGraph$throw IllegalStateException("Circular dependency detected among: $cycle")</ID>
+    <ID>WildcardImport:ProcessMonitor.kt$import kotlinx.coroutines.*</ID>
+  </CurrentIssues>
+</SmellBaseline>

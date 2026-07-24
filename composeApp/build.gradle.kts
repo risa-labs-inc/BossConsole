@@ -752,12 +752,12 @@ kotlin {
             implementation(libs.ktor.serialization.kotlinx.json)
 
             // CLI argument parsing
-            implementation("com.github.ajalt.clikt:clikt:5.1.0")
+            implementation(libs.clikt)
         }
 
         desktopTest.dependencies {
             implementation(kotlin("test-junit5"))
-            implementation("org.junit.jupiter:junit-jupiter:6.1.0")
+            implementation(libs.junit.jupiter)
             // Test-only: lets the suite assert the IPC proxy's skip-list stays
             // equal to the in-process scanner's (no production coupling).
             // Resolved by path with a presence guard, NOT the type-safe

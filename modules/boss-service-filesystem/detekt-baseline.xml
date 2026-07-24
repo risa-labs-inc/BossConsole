@@ -1,0 +1,17 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>CyclomaticComplexMethod:FileSystemServiceImpl.kt$FileSystemServiceImpl$override fun watchFileChanges(request: WatchFileChangesRequest): Flow&lt;FileChangeEvent&gt;</ID>
+    <ID>LongMethod:FileSystemServiceImpl.kt$FileSystemServiceImpl$override fun watchFileChanges(request: WatchFileChangesRequest): Flow&lt;FileChangeEvent&gt;</ID>
+    <ID>LoopWithTooManyJumpStatements:FileSystemServiceImpl.kt$FileSystemServiceImpl$while</ID>
+    <ID>MaxLineLength:FileSystemServiceImpl.kt$FileSystemServiceImpl$val slice = if (offsetBytes &gt; 0 &amp;&amp; offsetBytes &lt; bytes.size) bytes.drop(offsetBytes).toByteArray() else bytes</ID>
+    <ID>MaxLineLength:FileSystemServiceMain.kt$.</ID>
+    <ID>SpreadOperator:FileSystemServiceImpl.kt$FileSystemServiceImpl$(watchService, *kinds)</ID>
+    <ID>TooGenericExceptionCaught:FileSystemServiceImpl.kt$FileSystemServiceImpl$e: Exception</ID>
+    <ID>UseCheckOrError:FileSystemServiceImpl.kt$FileSystemServiceImpl$throw IllegalStateException("Destination already exists: ${request.destinationPath}")</ID>
+    <ID>VariableNaming:FileSystemServiceImpl.kt$FileSystemServiceImpl$/** Paths that must not be accessed via IPC — prevents privilege-escalation via path injection. */ private val BLOCKED_PATH_PREFIXES = listOf("/etc", "/sys", "/proc")</ID>
+    <ID>WildcardImport:FileSystemServiceImpl.kt$import ai.rever.boss.ipc.proto.services.*</ID>
+    <ID>WildcardImport:FileSystemServiceMain.kt$import ai.rever.boss.ipc.proto.*</ID>
+  </CurrentIssues>
+</SmellBaseline>

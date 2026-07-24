@@ -155,12 +155,22 @@ jobs:
         with:
           cache-read-only: false
 
-      - name: 🔍 Lint Check
+      - name: 🔍 Static Analysis (detekt)
         run: |
-          echo "🔍 Running lint checks"
-          # Add lint tasks if available
-          # ./gradlew ktlintCheck
-          echo "Lint check completed"
+          echo "🔍 Running detekt across all modules"
+          # Baselined per module: existing debt is frozen in detekt-baseline.xml
+          # files, only NEW violations fail this step.
+          ./gradlew detekt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 📊 Upload detekt Reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: detekt-reports
+          path: '**/build/reports/detekt/'
+          retention-days: 7
 
       - name: 🔒 Dependency Check
         run: |
@@ -168,11 +178,6 @@ jobs:
           ./gradlew :composeApp:dependencies
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 📊 Generate Build Report
-        run: |
-          echo "📊 Generating build report"
-          ./gradlew buildHealth || true
 
   compatibility-test:
     runs-on: ubuntu-latest

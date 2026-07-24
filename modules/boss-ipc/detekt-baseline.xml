@@ -1,0 +1,27 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>LongParameterList:ChildProcessBootstrap.kt$ChildProcessConnection$( val processId: String, val kernelClient: BossIpcClient, val kernelStub: KernelServiceGrpcKt.KernelServiceCoroutineStub, val processServer: BossIpcServer, val heartbeatJob: Job, val serviceAddresses: Map&lt;String, String&gt;, private val scope: CoroutineScope, )</ID>
+    <ID>ReturnCount:BossIpcClient.kt$BossIpcClient$suspend fun waitForReady(timeoutMs: Long = 30_000): Boolean</ID>
+    <ID>ReturnCount:IpcVersion.kt$IpcVersion$fun isCompatible( runtimeMinIpcVersion: String, hostIpcVersion: String = CURRENT, ): CompatResult</ID>
+    <ID>ReturnCount:IpcVersion.kt$IpcVersion$fun parse(version: String): Triple&lt;Int, Int, Int&gt;?</ID>
+    <ID>TooGenericExceptionCaught:ChildProcessBootstrap.kt$ChildProcessBootstrap$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:IpcAddressResolver.kt$IpcAddressResolver$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:KernelServiceImpl.kt$KernelServiceImpl$e: Exception</ID>
+    <ID>UseCheckOrError:ChildProcessBootstrap.kt$ChildProcessBootstrap$throw IllegalStateException( "Failed to register with kernel: ${registerResponse.errorMessage}" )</ID>
+    <ID>UseCheckOrError:ChildProcessBootstrap.kt$ChildProcessBootstrap$throw IllegalStateException("BOSS_KERNEL_IPC_ADDR environment variable not set")</ID>
+    <ID>UseCheckOrError:ChildProcessBootstrap.kt$ChildProcessBootstrap$throw IllegalStateException("BOSS_PROCESS_ID environment variable not set")</ID>
+    <ID>UseCheckOrError:ChildProcessBootstrap.kt$ChildProcessBootstrap$throw IllegalStateException("BOSS_PROCESS_TYPE environment variable not set")</ID>
+    <ID>UseCheckOrError:ChildProcessBootstrap.kt$ChildProcessBootstrap$throw IllegalStateException("Failed to connect to kernel at $kernelAddress")</ID>
+    <ID>UseCheckOrError:IpcAddressResolver.kt$IpcAddressResolver$throw IllegalStateException("No available TCP ports in range $TCP_PORT_BASE-${TCP_PORT_BASE + TCP_PORT_RANGE}")</ID>
+    <ID>WildcardImport:ChildProcessBootstrap.kt$import ai.rever.boss.ipc.proto.*</ID>
+    <ID>WildcardImport:ChildProcessBootstrap.kt$import kotlinx.coroutines.*</ID>
+    <ID>WildcardImport:EventBusServiceImpl.kt$import ai.rever.boss.ipc.proto.*</ID>
+    <ID>WildcardImport:EventBusServiceTest.kt$import ai.rever.boss.ipc.proto.*</ID>
+    <ID>WildcardImport:IpcRoundTripTest.kt$import ai.rever.boss.ipc.proto.*</ID>
+    <ID>WildcardImport:KernelServiceImpl.kt$import ai.rever.boss.ipc.proto.*</ID>
+    <ID>WildcardImport:StateServiceImpl.kt$import ai.rever.boss.ipc.proto.*</ID>
+    <ID>WildcardImport:StateServiceTest.kt$import ai.rever.boss.ipc.proto.*</ID>
+  </CurrentIssues>
+</SmellBaseline>

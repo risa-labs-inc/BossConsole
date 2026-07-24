@@ -1,0 +1,10 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>LongMethod:BossSearchBar.kt$@Composable fun BossSearchBar( query: String, onQueryChange: (String) -&gt; Unit, placeholder: String = "Search...", modifier: Modifier = Modifier, leadingIcon: ImageVector = Icons.Outlined.Search, showClearButton: Boolean = true, onFocusChanged: ((Boolean) -&gt; Unit)? = null )</ID>
+    <ID>LongParameterList:BossSearchBar.kt$( query: String, onQueryChange: (String) -&gt; Unit, placeholder: String = "Search...", modifier: Modifier = Modifier, leadingIcon: ImageVector = Icons.Outlined.Search, showClearButton: Boolean = true, onFocusChanged: ((Boolean) -&gt; Unit)? = null )</ID>
+    <ID>UnusedParameter:BossSearchBar.kt$onFocusChanged: ((Boolean) -&gt; Unit)? = null</ID>
+    <ID>WildcardImport:BossSearchBar.kt$import androidx.compose.foundation.layout.*</ID>
+  </CurrentIssues>
+</SmellBaseline>

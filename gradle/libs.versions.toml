@@ -8,12 +8,14 @@ androidx-activityCompose = "1.10.1"
 androidx-lifecycle = "2.10.0"
 compose-multiplatform = "1.11.1"
 compose-icons = "1.1.1"
-compose-ui = "1.8.2"
-compose-compiler = "1.5.8"
 decompose = "3.5.0"
+detekt = "1.23.8"
 essenty = "2.5.0"
+junit-jupiter = "6.1.0"
+clikt = "5.1.0"
 kotlin = "2.4.0"
 kotlinx-coroutines = "1.11.0"
+ktlint-gradle = "14.2.0"
 kotlinx-datetime = "0.8.0-0.6.x-compat"
 # Pinned to the stack the MCP Kotlin SDK supports (ktor <= 3.3/3.4 → serialization 1.9.x).
 # The terminal-tab plugin bundles ktor 3.3 + mcp-sdk, but resolves kotlinx-serialization
@@ -23,11 +25,9 @@ kotlinx-datetime = "0.8.0-0.6.x-compat"
 kotlinx-serialization = "1.11.0"
 ktor = "3.4.3"
 logback = "1.5.38"
-foundationLayoutAndroid = "1.8.2"
 precompose = "1.6.2"
 slf4j = "2.0.18"
 supabase = "3.6.0"
-uiAndroid = "1.8.2"
 zxing = "3.5.4"
 jxbrowser = "9.3.0"
 jxbrowser-gradle-plugin = "2.1.0"
@@ -50,12 +50,11 @@ boss-plugin-api = "1.0.68"
 
 [libraries]
 kotlin-test-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit-jupiter" }
+clikt = { module = "com.github.ajalt.clikt:clikt", version.ref = "clikt" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activityCompose" }
 androidx-lifecycle-viewmodel = { group = "org.jetbrains.androidx.lifecycle", name = "lifecycle-viewmodel", version.ref = "androidx-lifecycle" }
 androidx-lifecycle-runtime-compose = { group = "org.jetbrains.androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "androidx-lifecycle" }
-compose-ui = { module = "androidx.compose.ui:ui", version.ref = "compose-ui" }
-compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview", version.ref = "compose-ui" }
-compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling", version.ref = "compose-ui" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
 kotlinx-coroutines-swing = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-swing", version.ref = "kotlinx-coroutines" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
@@ -68,8 +67,6 @@ ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
 ktor-client-cio = { module = "io.ktor:ktor-client-cio", version.ref = "ktor" }
 ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
 ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
-androidx-foundation-layout-android = { group = "androidx.compose.foundation", name = "foundation-layout-android", version.ref = "foundationLayoutAndroid" }
-androidx-ui-android = { group = "androidx.compose.ui", name = "ui-android", version.ref = "uiAndroid" }
 decompose = { module = "com.arkivanov.decompose:decompose", version.ref = "decompose" }
 decompose-extensions-compose = { module = "com.arkivanov.decompose:extensions-compose", version.ref = "decompose" }
 decompose-extensions-compose-experimental = { module = "com.arkivanov.decompose:extensions-compose-experimental", version.ref = "decompose" }
@@ -128,6 +125,8 @@ androidApplication = { id = "com.android.application", version.ref = "agp" }
 androidLibrary = { id = "com.android.library", version.ref = "agp" }
 composeMultiplatform = { id = "org.jetbrains.compose", version.ref = "compose-multiplatform" }
 composeCompiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detekt" }
+ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlint-gradle" }
 kotlinJvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlinSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 ktor = { id = "io.ktor.plugin", version.ref = "ktor" }

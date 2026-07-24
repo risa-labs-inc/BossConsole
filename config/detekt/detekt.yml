@@ -1,0 +1,61 @@
+# BossConsole detekt configuration.
+#
+# Applied with buildUponDefaultConfig = true, so this file only contains
+# deliberate deviations from detekt's default ruleset — everything not listed
+# here runs with default settings.
+#
+# Existing debt is frozen in per-module detekt-baseline.xml files; only new
+# violations fail the build. Regenerate with `./gradlew detektBaseline`.
+
+naming:
+  FunctionNaming:
+    # Composable functions are PascalCase by convention.
+    ignoreAnnotated: ['Composable']
+    # Default excludes plus desktopTest: detekt's defaults exempt every test
+    # source set (test, jvmTest, commonTest, ...) EXCEPT the KMP desktop one,
+    # so idiomatic backtick test names were flagged only there.
+    excludes:
+      [
+        '**/test/**',
+        '**/androidTest/**',
+        '**/commonTest/**',
+        '**/jvmTest/**',
+        '**/androidUnitTest/**',
+        '**/androidInstrumentedTest/**',
+        '**/jsTest/**',
+        '**/iosTest/**',
+        '**/desktopTest/**',
+      ]
+
+complexity:
+  TooManyFunctions:
+    # Same desktopTest gap as FunctionNaming above: test classes grow one
+    # function per case by design and are exempt in every other test source
+    # set by default.
+    excludes:
+      [
+        '**/test/**',
+        '**/androidTest/**',
+        '**/commonTest/**',
+        '**/jvmTest/**',
+        '**/androidUnitTest/**',
+        '**/androidInstrumentedTest/**',
+        '**/jsTest/**',
+        '**/iosTest/**',
+        '**/desktopTest/**',
+      ]
+
+style:
+  MagicNumber:
+    # Disabled for now: ~1,400 findings, almost all Compose dp/sp/weight UI
+    # values where extracting a constant hurts readability. A targeted policy
+    # (ignore UI literals, keep logic/protocol constants) comes in a follow-up.
+    active: false
+
+exceptions:
+  TooGenericExceptionCaught:
+    # Kept active on purpose — catching Exception/Throwable hides real error
+    # handling. Existing catches are baselined; new ones should catch the
+    # narrowest type that makes sense.
+    active: true
+    severity: warning

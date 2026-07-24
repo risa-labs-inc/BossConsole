@@ -1,0 +1,17 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>MatchingDeclarationName:Platform.android.kt$AndroidPlatform : Platform</ID>
+    <ID>MatchingDeclarationName:Platform.ios.kt$IOSPlatform : Platform</ID>
+    <ID>MatchingDeclarationName:Platform.jvm.kt$JVMPlatform : Platform</ID>
+    <ID>MatchingDeclarationName:Platform.wasmJs.kt$WasmPlatform : Platform</ID>
+    <ID>NewLineAtEndOfFile:Constants.kt$ai.rever.boss.Constants.kt</ID>
+    <ID>NewLineAtEndOfFile:Greeting.kt$ai.rever.boss.Greeting.kt</ID>
+    <ID>NewLineAtEndOfFile:Platform.android.kt$ai.rever.boss.Platform.android.kt</ID>
+    <ID>NewLineAtEndOfFile:Platform.ios.kt$ai.rever.boss.Platform.ios.kt</ID>
+    <ID>NewLineAtEndOfFile:Platform.jvm.kt$ai.rever.boss.Platform.jvm.kt</ID>
+    <ID>NewLineAtEndOfFile:Platform.kt$ai.rever.boss.Platform.kt</ID>
+    <ID>NewLineAtEndOfFile:Platform.wasmJs.kt$ai.rever.boss.Platform.wasmJs.kt</ID>
+  </CurrentIssues>
+</SmellBaseline>

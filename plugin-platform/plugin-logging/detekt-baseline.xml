@@ -1,0 +1,14 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>MaxLineLength:LogSanitizer.kt$LogSanitizer$val endIndex = if (endChar == '\u0000') uri.length else uri.indexOf(endChar).let { if (it &lt; 0) uri.length else it }</ID>
+    <ID>ReturnCount:LogSanitizer.kt$LogSanitizer$fun maskEmail(email: String?): String</ID>
+    <ID>SwallowedException:LogSanitizer.kt$LogSanitizer$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:BossLogger.kt$BossLogger$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:LogSanitizer.kt$LogSanitizer$e: Exception</ID>
+    <ID>TooManyFunctions:BossLogger.kt$BossLogger</ID>
+    <ID>TooManyFunctions:LogSanitizer.kt$LogSanitizer</ID>
+    <ID>WildcardImport:BossLogger.kt$import kotlinx.coroutines.*</ID>
+  </CurrentIssues>
+</SmellBaseline>

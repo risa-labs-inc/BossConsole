@@ -37,7 +37,7 @@ kotlin {
         val desktopTest by getting {
             dependencies {
                 implementation(kotlin("test-junit5"))
-                implementation("org.junit.jupiter:junit-jupiter:6.1.0")
+                implementation(libs.junit.jupiter)
             }
         }
     }

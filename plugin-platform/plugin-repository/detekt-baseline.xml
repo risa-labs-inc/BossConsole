@@ -1,0 +1,58 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ForbiddenComment:PluginStoreClient.kt$PluginDetailResponse$// TODO: Implement proper timestamp parsing if needed</ID>
+    <ID>FunctionNaming:RemotePluginRepositoryDownloadTest.kt$RemotePluginRepositoryDownloadTest$@Test fun `cache hit still verifies signature and purges poisoned entry`()</ID>
+    <ID>FunctionNaming:RemotePluginRepositoryDownloadTest.kt$RemotePluginRepositoryDownloadTest$@Test fun `cache hit with valid signature succeeds without re-downloading and writes the sidecar`()</ID>
+    <ID>FunctionNaming:RemotePluginRepositoryDownloadTest.kt$RemotePluginRepositoryDownloadTest$@Test fun `fresh download with invalid signature fails and is never cached`()</ID>
+    <ID>FunctionNaming:RemotePluginRepositoryDownloadTest.kt$RemotePluginRepositoryDownloadTest$@Test fun `fresh download with valid signature succeeds, caches, and writes the sidecar`()</ID>
+    <ID>FunctionNaming:RemotePluginRepositoryDownloadTest.kt$RemotePluginRepositoryDownloadTest$@Test fun `unsigned download writes no sidecar`()</ID>
+    <ID>FunctionNaming:RemotePluginRepositorySignatureTest.kt$RemotePluginRepositorySignatureTest$@Test fun `garbage signature throws and deletes rather than allowing`()</ID>
+    <ID>FunctionNaming:RemotePluginRepositorySignatureTest.kt$RemotePluginRepositorySignatureTest$@Test fun `invalid signature throws and deletes all files`()</ID>
+    <ID>FunctionNaming:RemotePluginRepositorySignatureTest.kt$RemotePluginRepositorySignatureTest$@Test fun `missing signature hard-fails once enforcement flag is on`()</ID>
+    <ID>FunctionNaming:RemotePluginRepositorySignatureTest.kt$RemotePluginRepositorySignatureTest$@Test fun `missing signature warns but allows during rollout`()</ID>
+    <ID>FunctionNaming:RemotePluginRepositorySignatureTest.kt$RemotePluginRepositorySignatureTest$@Test fun `store-reported version differing from requested version fails`()</ID>
+    <ID>FunctionNaming:RemotePluginRepositorySignatureTest.kt$RemotePluginRepositorySignatureTest$@Test fun `substituted artifact with valid signature from another version fails`()</ID>
+    <ID>FunctionNaming:RemotePluginRepositorySignatureTest.kt$RemotePluginRepositorySignatureTest$@Test fun `valid anchor signature allows install and keeps files`()</ID>
+    <ID>LongMethod:RemotePluginRepository.kt$RemotePluginRepository$override suspend fun downloadPlugin( pluginId: String, version: String?, targetPath: String ): Result&lt;String&gt;</ID>
+    <ID>LongParameterList:RemotePluginRepository.kt$RemotePluginRepository$( sha256: String, signature: String?, pluginId: String, versionLabel: String, requestedVersion: String?, onVerificationFailure: () -&gt; Unit )</ID>
+    <ID>MaxLineLength:PluginStoreRealtimeService.kt$PluginStoreRealtimeService$logger.warn(LogCategory.NETWORK, "Plugins subscription lost, reconnecting in ${backoffMs}ms", error = e)</ID>
+    <ID>MaxLineLength:PluginStoreRealtimeService.kt$PluginStoreRealtimeService$logger.warn(LogCategory.NETWORK, "Versions subscription lost, reconnecting in ${backoffMs}ms", error = e)</ID>
+    <ID>MaxLineLength:RemotePluginRepository.kt$RemotePluginRepository$logger</ID>
+    <ID>MaxLineLength:RemotePluginRepository.kt$RemotePluginRepository$override suspend</ID>
+    <ID>MaxLineLength:RemotePluginRepository.kt$RemotePluginRepository$private</ID>
+    <ID>MaxLineLength:RemotePluginRepository.kt$RemotePluginRepository$suspend</ID>
+    <ID>MaxLineLength:RemotePluginRepository.kt$RemotePluginRepository$val totalBytes = response.headers[io.ktor.http.HttpHeaders.ContentLength]?.toLongOrNull() ?: downloadInfo.size</ID>
+    <ID>ReturnCount:PluginDownloadCache.kt$PluginDownloadCache$fun getCachedJar(pluginId: String, version: String, expectedSha256: String): File?</ID>
+    <ID>ReturnCount:PluginDownloadCache.kt$PluginDownloadCache$fun removeAllVersions(pluginId: String): Int</ID>
+    <ID>ReturnCount:PluginRepositoryManager.kt$PluginRepositoryManager$private fun isNewerVersion(version1: String, version2: String): Boolean</ID>
+    <ID>ReturnCount:PluginRepositoryManager.kt$PluginRepositoryManager$suspend fun downloadPlugin( pluginId: String, version: String? = null, targetPath: String ): Result&lt;String&gt;</ID>
+    <ID>ReturnCount:PluginStoreConfig.kt$PluginStoreConfig$private fun decodeIsAdmin(token: String?): Boolean</ID>
+    <ID>SwallowedException:LocalPluginRepository.kt$LocalPluginRepository$e: Exception</ID>
+    <ID>ThrowsCount:RemotePluginRepository.kt$RemotePluginRepository$internal fun enforceStoreSignature( sha256: String, signature: String?, pluginId: String, versionLabel: String, requestedVersion: String?, onVerificationFailure: () -&gt; Unit )</ID>
+    <ID>TooGenericExceptionCaught:LocalPluginRepository.kt$LocalPluginRepository$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:PluginStoreRealtimeService.kt$PluginStoreRealtimeService$e: Exception</ID>
+    <ID>TooManyFunctions:PluginDownloadCache.kt$PluginDownloadCache</ID>
+    <ID>TooManyFunctions:PluginRepositoryManager.kt$PluginRepositoryManager</ID>
+    <ID>TooManyFunctions:PluginStoreClient.kt$PluginStoreClient</ID>
+    <ID>TooManyFunctions:RemotePluginRepository.kt$RemotePluginRepository : PluginRepository</ID>
+    <ID>TooManyFunctions:RemotePluginRepositoryDownloadTest.kt$RemotePluginRepositoryDownloadTest</ID>
+    <ID>UnusedParameter:PluginStoreClient.kt$PluginDetailResponse$timestamp: String</ID>
+    <ID>UseCheckOrError:PluginStoreConfig.kt$PluginStoreConfig$throw IllegalStateException("PluginStoreConfig not initialized. Call initialize() first.")</ID>
+    <ID>WildcardImport:DesktopHttpClient.kt$import io.ktor.client.*</ID>
+    <ID>WildcardImport:DesktopHttpClient.kt$import io.ktor.client.engine.cio.*</ID>
+    <ID>WildcardImport:DesktopHttpClient.kt$import io.ktor.client.plugins.contentnegotiation.*</ID>
+    <ID>WildcardImport:DesktopHttpClient.kt$import io.ktor.serialization.kotlinx.json.*</ID>
+    <ID>WildcardImport:PluginStoreClient.kt$import io.ktor.client.*</ID>
+    <ID>WildcardImport:PluginStoreClient.kt$import io.ktor.client.request.*</ID>
+    <ID>WildcardImport:PluginStoreClient.kt$import io.ktor.client.statement.*</ID>
+    <ID>WildcardImport:PluginStoreClient.kt$import io.ktor.http.*</ID>
+    <ID>WildcardImport:RemotePluginRepository.kt$import ai.rever.boss.plugin.repository.*</ID>
+    <ID>WildcardImport:RemotePluginRepository.kt$import io.ktor.client.*</ID>
+    <ID>WildcardImport:RemotePluginRepository.kt$import io.ktor.client.engine.cio.*</ID>
+    <ID>WildcardImport:RemotePluginRepository.kt$import io.ktor.client.request.*</ID>
+    <ID>WildcardImport:RemotePluginRepository.kt$import io.ktor.client.statement.*</ID>
+    <ID>WildcardImport:RemotePluginRepository.kt$import io.ktor.utils.io.*</ID>
+  </CurrentIssues>
+</SmellBaseline>

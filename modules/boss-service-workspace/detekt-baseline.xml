@@ -1,0 +1,10 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>TooGenericExceptionCaught:WorkspaceServiceImpl.kt$WorkspaceServiceImpl$e: Exception</ID>
+    <ID>TooManyFunctions:WorkspaceServiceImpl.kt$WorkspaceServiceImpl : WorkspaceServiceCoroutineImplBase</ID>
+    <ID>WildcardImport:WorkspaceServiceImpl.kt$import ai.rever.boss.ipc.proto.services.*</ID>
+    <ID>WildcardImport:WorkspaceServiceMain.kt$import ai.rever.boss.ipc.proto.*</ID>
+  </CurrentIssues>
+</SmellBaseline>
