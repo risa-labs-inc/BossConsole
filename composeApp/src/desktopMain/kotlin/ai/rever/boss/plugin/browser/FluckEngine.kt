@@ -41,6 +41,7 @@ import java.awt.Toolkit
 import java.nio.file.Files
 import java.nio.file.Paths
 import java.util.*
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Classification of engine initialization errors for better user feedback.
@@ -1576,14 +1577,14 @@ object FluckEngine {
      */
     internal fun resolveBrowserKeyEventRoute(
         ownerWindowId: String?,
-        ownerWindowIsFocused: Boolean?,
+        ownerWindowIsFocused: Boolean,
         fallbackFocusedWindowId: String?
     ): BrowserKeyEventRoute = when {
         ownerWindowId == null -> BrowserKeyEventRoute(
             acceptsInput = true,
             shortcutWindowId = fallbackFocusedWindowId
         )
-        ownerWindowIsFocused == true -> BrowserKeyEventRoute(
+        ownerWindowIsFocused -> BrowserKeyEventRoute(
             acceptsInput = true,
             shortcutWindowId = ownerWindowId
         )
@@ -1606,6 +1607,7 @@ object FluckEngine {
         browser: com.teamdev.jxbrowser.browser.Browser,
         ownerWindowId: String? = null
     ) {
+        val suppressionLogged = AtomicBoolean(false)
         browser.set(com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback::class.java,
             com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback { params ->
                 val event = params.event()
@@ -1614,7 +1616,7 @@ object FluckEngine {
 
                 val route = resolveBrowserKeyEventRoute(
                     ownerWindowId = ownerWindowId,
-                    ownerWindowIsFocused = ownerWindowId?.let(WindowFocusManager::isWindowFocused),
+                    ownerWindowIsFocused = ownerWindowId?.let(WindowFocusManager::isWindowFocused) == true,
                     fallbackFocusedWindowId = if (ownerWindowId == null) {
                         WindowFocusManager.focusedWindowFlow.value
                     } else {
@@ -1622,8 +1624,21 @@ object FluckEngine {
                     }
                 )
                 if (!route.acceptsInput) {
+                    ownerWindowId?.let { windowId ->
+                        if (suppressionLogged.compareAndSet(false, true)) {
+                            logger.debug(
+                                LogCategory.BROWSER,
+                                "Browser key input suppressed because owner window is not focused",
+                                mapOf(
+                                    "ownerWindowId" to windowId,
+                                    "ownerRegistered" to (WindowFocusManager.getWindow(windowId) != null)
+                                )
+                            )
+                        }
+                    }
                     return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response.suppress()
                 }
+                suppressionLogged.set(false)
                 val shortcutWindowId = route.shortcutWindowId
 
                 // Platform-aware main modifier: Cmd on macOS, Ctrl on Windows/Linux

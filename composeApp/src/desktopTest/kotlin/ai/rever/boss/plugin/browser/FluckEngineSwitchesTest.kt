@@ -150,28 +150,21 @@ class FluckEngineSwitchesTest {
         assertTrue(focusedRoute.acceptsInput)
         assertEquals("window-a", focusedRoute.shortcutWindowId)
 
-        val inactiveRoute = FluckEngine.resolveBrowserKeyEventRoute(
+        // isWindowFocused returns false for both inactive and unregistered owners.
+        val unfocusedOrUnregisteredRoute = FluckEngine.resolveBrowserKeyEventRoute(
             ownerWindowId = "window-a",
             ownerWindowIsFocused = false,
             fallbackFocusedWindowId = "window-b"
         )
-        assertFalse(inactiveRoute.acceptsInput)
-        assertEquals(null, inactiveRoute.shortcutWindowId)
-
-        val unregisteredRoute = FluckEngine.resolveBrowserKeyEventRoute(
-            ownerWindowId = "window-a",
-            ownerWindowIsFocused = null,
-            fallbackFocusedWindowId = "window-b"
-        )
-        assertFalse(unregisteredRoute.acceptsInput)
-        assertEquals(null, unregisteredRoute.shortcutWindowId)
+        assertFalse(unfocusedOrUnregisteredRoute.acceptsInput)
+        assertEquals(null, unfocusedOrUnregisteredRoute.shortcutWindowId)
     }
 
     @Test
     fun `legacy unowned browser routes shortcuts to the focused window`() {
         val route = FluckEngine.resolveBrowserKeyEventRoute(
             ownerWindowId = null,
-            ownerWindowIsFocused = null,
+            ownerWindowIsFocused = false,
             fallbackFocusedWindowId = "window-b"
         )
 

@@ -238,6 +238,11 @@ object BrowserServiceImpl : BrowserService {
     internal fun tryBeginBrowserCreation(windowId: String): Boolean =
         browserOwners.tryBeginCreate(windowId)
 
+    /**
+     * Internal defensive boundary used after the public provider has already
+     * rejected null or blank owner IDs. Direct callers receive an exception
+     * because creating an unowned browser would bypass window-scoped cleanup.
+     */
     internal suspend fun createBrowserForWindow(
         windowId: String,
         config: BrowserConfig

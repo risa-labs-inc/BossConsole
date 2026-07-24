@@ -10,6 +10,45 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
+ * Captures AWT focus lifecycle events on the EDT and exposes a volatile
+ * snapshot that JxBrowser callback threads can safely read.
+ */
+internal class AwtWindowFocusTracker {
+    @Volatile
+    private var focusedWindowId: String? = null
+
+    fun snapshotRegistration(windowId: String, isFocused: Boolean) {
+        if (isFocused) {
+            focusedWindowId = windowId
+        }
+    }
+
+    fun createListener(
+        windowId: String,
+        onFocusGained: () -> Unit = {}
+    ): WindowAdapter = object : WindowAdapter() {
+        override fun windowGainedFocus(e: WindowEvent?) {
+            focusedWindowId = windowId
+            onFocusGained()
+        }
+
+        override fun windowLostFocus(e: WindowEvent?) {
+            if (focusedWindowId == windowId) {
+                focusedWindowId = null
+            }
+        }
+    }
+
+    fun onUnregistered(windowId: String) {
+        if (focusedWindowId == windowId) {
+            focusedWindowId = null
+        }
+    }
+
+    fun isFocused(windowId: String): Boolean = focusedWindowId == windowId
+}
+
+/**
  * WindowFocusManager - Handles multi-window focus tracking
  *
  * Tracks all application windows and their focus state to ensure
@@ -17,10 +56,10 @@ import kotlinx.coroutines.flow.asStateFlow
  */
 actual object WindowFocusManager {
     private val windows = ConcurrentHashMap<String, Window>()
+    // Listener installation and removal are EDT-confined.
     private val windowListeners = mutableMapOf<String, WindowAdapter>()
+    private val awtFocusTracker = AwtWindowFocusTracker()
     private var focusedWindowId: String? = null
-    @Volatile
-    private var awtFocusedWindowId: String? = null
     private var mainWindow: Window? = null  // Kept for backward compatibility
 
     // StateFlow to observe focus changes (for elegant focus restoration)
@@ -44,22 +83,11 @@ actual object WindowFocusManager {
 
         // Registration runs on the EDT. Snapshot an already-focused window in
         // case its focus-gained event happened before the listener was attached.
-        if (window.isFocused) {
-            awtFocusedWindowId = windowId
-        }
+        awtFocusTracker.snapshotRegistration(windowId, window.isFocused)
 
-        val listener = object : WindowAdapter() {
-            override fun windowGainedFocus(e: WindowEvent?) {
-                awtFocusedWindowId = windowId
-                focusedWindowId = windowId
-                _focusedWindowFlow.value = windowId
-            }
-
-            override fun windowLostFocus(e: WindowEvent?) {
-                if (awtFocusedWindowId == windowId) {
-                    awtFocusedWindowId = null
-                }
-            }
+        val listener = awtFocusTracker.createListener(windowId) {
+            focusedWindowId = windowId
+            _focusedWindowFlow.value = windowId
         }
 
         windowListeners[windowId] = listener
@@ -96,9 +124,7 @@ actual object WindowFocusManager {
         }
 
         windows.remove(windowId)
-        if (awtFocusedWindowId == windowId) {
-            awtFocusedWindowId = null
-        }
+        awtFocusTracker.onUnregistered(windowId)
         if (focusedWindowId == windowId) {
             // Preserve the existing last-focused flow contract for external
             // actions; another window will publish itself when it gains focus.
@@ -112,7 +138,7 @@ actual object WindowFocusManager {
      * The volatile snapshot is safe to read from JxBrowser callback threads.
      */
     actual fun isWindowFocused(windowId: String): Boolean =
-        awtFocusedWindowId == windowId
+        awtFocusTracker.isFocused(windowId)
 
     /**
      * Best-effort window id for actions that need "the" active window but may run
