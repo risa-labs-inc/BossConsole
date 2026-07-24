@@ -103,9 +103,10 @@ jobs:
       - name: 🔨 Build Application
         run: |
           echo "🔨 Building application for ${{ matrix.os }}"
-          # detekt is authoritative in the code-quality job; skip the redundant
-          # per-OS runs the plugin wires into check (3x waste + confusing signal)
-          ./gradlew build -x detekt --stacktrace
+          # detekt and ktlintCheck are authoritative in the code-quality job;
+          # skip the redundant per-OS runs the plugins wire into check
+          # (3x waste + confusing signal)
+          ./gradlew build -x detekt -x ktlintCheck --stacktrace
         env:
           # boss-plugin-api-core resolution from GitHub Packages (settings/composeApp repos)
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -157,12 +158,13 @@ jobs:
         with:
           cache-read-only: false
 
-      - name: 🔍 Static Analysis (detekt)
+      - name: 🔍 Static Analysis (detekt + ktlint)
         run: |
-          echo "🔍 Running detekt across all modules"
-          # Baselined per module: existing debt is frozen in detekt-baseline.xml
-          # files, only NEW violations fail this step.
-          ./gradlew detekt
+          echo "🔍 Running detekt and ktlintCheck across all modules"
+          # detekt is baselined per module: existing debt is frozen in
+          # detekt-baseline.xml files, only NEW violations fail this step.
+          # ktlintCheck gates formatting since the format-the-world PR.
+          ./gradlew detekt ktlintCheck
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

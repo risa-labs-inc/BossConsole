@@ -4,6 +4,7 @@
   <CurrentIssues>
     <ID>CyclomaticComplexMethod:EditorServiceImpl.kt$EditorServiceImpl$private fun detectLanguage(ext: String): String</ID>
     <ID>LongMethod:EditorServiceMain.kt$fun main()</ID>
+    <ID>MaxLineLength:EditorServiceMain.kt$"""{"type":"object","properties":{"content":{"type":"string"},"language":{"type":"string"}}}"""</ID>
     <ID>MaxLineLength:EditorServiceMain.kt$.</ID>
     <ID>TooGenericExceptionCaught:EditorServiceImpl.kt$EditorServiceImpl$e: Exception</ID>
     <ID>VariableNaming:EditorServiceImpl.kt$EditorServiceImpl$/** Paths that must not be accessed via IPC — mirrors FileSystemServiceImpl policy. */ private val BLOCKED_PATH_PREFIXES = listOf("/etc", "/sys", "/proc")</ID>

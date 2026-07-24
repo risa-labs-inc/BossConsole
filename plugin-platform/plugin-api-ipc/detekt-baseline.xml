@@ -2,37 +2,23 @@
 <SmellBaseline>
   <ManuallySuppressedIssues/>
   <CurrentIssues>
-    <ID>FunctionNaming:ProviderScanFilterTest.kt$ProviderScanFilterTest$@Test fun `children of a hidden dir are hidden without the flag despite innocent names`()</ID>
-    <ID>FunctionNaming:ProviderScanFilterTest.kt$ProviderScanFilterTest$@Test fun `entries under build or node_modules are always hidden`()</ID>
-    <ID>FunctionNaming:ProviderScanFilterTest.kt$ProviderScanFilterTest$@Test fun `explicitly scanning inside build or a dot-directory still works`()</ID>
-    <ID>FunctionNaming:ProviderScanFilterTest.kt$ProviderScanFilterTest$@Test fun `mixed separators between caller root and kernel paths still match as descendants`()</ID>
-    <ID>FunctionNaming:ProviderScanFilterTest.kt$ProviderScanFilterTest$@Test fun `prefix mismatch degrades to a name-only check instead of emptying the scan`()</ID>
-    <ID>FunctionNaming:ProviderScanFilterTest.kt$ProviderScanFilterTest$@Test fun `prefix requires a path-segment boundary`()</ID>
-    <ID>FunctionNaming:ProviderScanFilterTest.kt$ProviderScanFilterTest$@Test fun `the root itself is not a visible entry`()</ID>
-    <ID>FunctionNaming:ProviderScanFilterTest.kt$ProviderScanFilterTest$@Test fun `top-level dot entries follow the showHidden flag`()</ID>
-    <ID>FunctionNaming:ProviderScanFilterTest.kt$ProviderScanFilterTest$@Test fun `trailing separator on the root is tolerated`()</ID>
-    <ID>FunctionNaming:ProviderScanFilterTest.kt$ProviderScanFilterTest$@Test fun `windows separators are handled in relative segments`()</ID>
     <ID>MaxLineLength:ActiveTabsProviderProxy.kt$ActiveTabsProviderProxy$val resp: ActiveTabStringResponse = stub.getFaviconCacheKey(TabIdRequest.newBuilder().setTabId(tabId).build())</ID>
-    <ID>MaxLineLength:FileSystemDataProviderProxy.kt$FileSystemDataProviderProxy$override suspend</ID>
     <ID>MaxLineLength:GitDataProviderProxy.kt$GitDataProviderProxy$override suspend fun cherryPick(commitHash: String)</ID>
-    <ID>MaxLineLength:GitDataProviderProxy.kt$GitDataProviderProxy$override suspend fun discardChanges(filePath: String)</ID>
     <ID>MaxLineLength:GitDataProviderProxy.kt$GitDataProviderProxy$override suspend fun revert(commitHash: String)</ID>
     <ID>MaxLineLength:GitDataProviderProxy.kt$GitDataProviderProxy$override suspend fun stage(filePath: String)</ID>
     <ID>MaxLineLength:GitDataProviderProxy.kt$GitDataProviderProxy$override suspend fun unstage(filePath: String)</ID>
     <ID>MaxLineLength:NotificationProviderProxy.kt$NotificationProviderProxy$NotificationDuration.INDEFINITE -&gt; ai.rever.boss.ipc.proto.services.NotificationDuration.NOTIFICATION_DURATION_INDEFINITE</ID>
+    <ID>MaxLineLength:NotificationProviderProxy.kt$NotificationProviderProxy$NotificationDuration.LONG -&gt; ai.rever.boss.ipc.proto.services.NotificationDuration.NOTIFICATION_DURATION_LONG</ID>
+    <ID>MaxLineLength:NotificationProviderProxy.kt$NotificationProviderProxy$NotificationDuration.SHORT -&gt; ai.rever.boss.ipc.proto.services.NotificationDuration.NOTIFICATION_DURATION_SHORT</ID>
     <ID>MaxLineLength:ProviderScanFilterTest.kt$ProviderScanFilterTest$ProviderScanFilter.isVisibleProviderEntry(callerRoot, """C:\Users\dev\proj\.git\config""", showHidden = false)</ID>
     <ID>MaxLineLength:ProviderScanFilterTest.kt$ProviderScanFilterTest$ProviderScanFilter.isVisibleProviderEntry(callerRoot, """C:\Users\dev\proj\src\main.kt""", showHidden = false)</ID>
     <ID>MaxLineLength:ProviderScanFilterTest.kt$ProviderScanFilterTest$ProviderScanFilter.isVisibleProviderEntry(callerRoot, "/home/user/.config/myproj/.secret", showHidden = false)</ID>
     <ID>MaxLineLength:ProviderScanFilterTest.kt$ProviderScanFilterTest$ProviderScanFilter.isVisibleProviderEntry(callerRoot, "/home/user/.config/myproj/file.txt", showHidden = false)</ID>
     <ID>MaxLineLength:ProviderScanFilterTest.kt$ProviderScanFilterTest$assertFalse(ProviderScanFilter.isVisibleProviderEntry(root, "$root/node_modules/lodash/index.js", showHidden = false))</ID>
     <ID>MaxLineLength:RoleManagementProviderProxy.kt$RoleManagementProviderProxy$return "Permission name must start with a letter and contain only letters, numbers, underscores, dots, and colons"</ID>
-    <ID>MaxLineLength:SecretDataProviderProxy.kt$SecretDataProviderProxy$override suspend</ID>
-    <ID>MaxLineLength:SecretDataProviderProxy.kt$SecretDataProviderProxy$val resp = stub.getUserSecretsWithSharingInfo(SecretPaginatedRequest.newBuilder().setLimit(limit).setOffset(offset).build())</ID>
-    <ID>ReturnCount:ProviderScanFilter.kt$ProviderScanFilter$fun isVisibleProviderEntry(rootPath: String, entryPath: String, showHidden: Boolean): Boolean</ID>
+    <ID>ReturnCount:ProviderScanFilter.kt$ProviderScanFilter$fun isVisibleProviderEntry( rootPath: String, entryPath: String, showHidden: Boolean, ): Boolean</ID>
     <ID>ReturnCount:RoleManagementProviderProxy.kt$RoleManagementProviderProxy$override fun validatePermissionName(permissionName: String): String?</ID>
     <ID>ReturnCount:RoleManagementProviderProxy.kt$RoleManagementProviderProxy$override fun validateRoleName(roleName: String): String?</ID>
-    <ID>SwallowedException:AuthDataProviderProxy.kt$AuthDataProviderProxy$e: Exception</ID>
-    <ID>TooGenericExceptionCaught:AuthDataProviderProxy.kt$AuthDataProviderProxy$e: Exception</ID>
     <ID>TooGenericExceptionCaught:DownloadDataProviderProxy.kt$DownloadDataProviderProxy$e: Exception</ID>
     <ID>TooGenericExceptionCaught:FileSystemDataProviderProxy.kt$FileSystemDataProviderProxy$e: Exception</ID>
     <ID>TooGenericExceptionCaught:GitDataProviderProxy.kt$GitDataProviderProxy$e: Exception</ID>
@@ -45,10 +31,6 @@
     <ID>TooManyFunctions:GitDataProviderProxy.kt$GitDataProviderProxy : GitDataProvider</ID>
     <ID>TooManyFunctions:RoleManagementProviderProxy.kt$RoleManagementProviderProxy : RoleManagementProvider</ID>
     <ID>TooManyFunctions:SecretDataProviderProxy.kt$SecretDataProviderProxy : SecretDataProvider</ID>
-    <ID>UnusedPrivateProperty:PanelEventProviderProxy.kt$PanelEventProviderProxy$private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())</ID>
-    <ID>UnusedPrivateProperty:RoleManagementProviderProxy.kt$RoleManagementProviderProxy$private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())</ID>
-    <ID>UnusedPrivateProperty:SecretDataProviderProxy.kt$SecretDataProviderProxy$private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())</ID>
-    <ID>UnusedPrivateProperty:SupabaseDataProviderProxy.kt$SupabaseDataProviderProxy$private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())</ID>
     <ID>WildcardImport:ActiveTabsProviderProxy.kt$import ai.rever.boss.ipc.proto.services.*</ID>
     <ID>WildcardImport:AuthDataProviderProxy.kt$import ai.rever.boss.ipc.proto.services.*</ID>
     <ID>WildcardImport:ContextMenuProviderProxy.kt$import ai.rever.boss.ipc.proto.services.*</ID>

@@ -2,6 +2,6 @@
 <SmellBaseline>
   <ManuallySuppressedIssues/>
   <CurrentIssues>
-    <ID>TooGenericExceptionCaught:FileEventBus.kt$e: Exception</ID>
+    <ID>MaxLineLength:BookmarkTypes.kt$BookmarkCollection$fun</ID>
   </CurrentIssues>
 </SmellBaseline>

@@ -43,6 +43,12 @@ ktlint_standard_kdoc = disabled
 # instead of disabling the rule (violations are not auto-correctable).
 ktlint_function_naming_ignore_when_annotated_with = Composable
 
+# Generated sources (Compose resource accessors, protobuf, …) are not ours to
+# format; the ktlint-gradle source sets include them, so switch ktlint off for
+# anything a generator emits under build/.
+[**/build/generated/**.kt]
+ktlint = disabled
+
 [*.{yml,yaml,json}]
 indent_style = space
 indent_size = 2

@@ -2,8 +2,10 @@
 <SmellBaseline>
   <ManuallySuppressedIssues/>
   <CurrentIssues>
-    <ID>ComplexCondition:ProcessSpawner.kt$ProcessSpawner.Companion$currentCommand != null &amp;&amp; (currentCommand.endsWith("/java") || currentCommand.endsWith("\\java.exe") || currentCommand.endsWith("/java.exe"))</ID>
+    <ID>ComplexCondition:ProcessSpawner.kt$ProcessSpawner.Companion$currentCommand != null &amp;&amp; ( currentCommand.endsWith("/java") || currentCommand.endsWith("\\java.exe") || currentCommand.endsWith("/java.exe") )</ID>
     <ID>LoopWithTooManyJumpStatements:ProcessMonitor.kt$ProcessMonitor$while</ID>
+    <ID>MaxLineLength:ProcessRegistry.kt$ProcessRegistry$fun getProcessesByState(state: ProcessState): List&lt;ManagedProcess&gt;</ID>
+    <ID>MaxLineLength:ProcessRegistry.kt$ProcessRegistry$fun getProcessesByType(type: ProcessType): List&lt;ManagedProcess&gt;</ID>
     <ID>NestedBlockDepth:DependencyGraph.kt$DependencyGraph$fun getDependents(id: String): Set&lt;String&gt;</ID>
     <ID>ReturnCount:ProcessSpawner.kt$ProcessSpawner.Companion$fun findJavaExecutable(): String</ID>
     <ID>TooManyFunctions:ProcessRegistry.kt$ProcessRegistry</ID>

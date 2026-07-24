@@ -2,6 +2,6 @@
 <SmellBaseline>
   <ManuallySuppressedIssues/>
   <CurrentIssues>
-    <ID>TooGenericExceptionCaught:FileEventBus.kt$e: Exception</ID>
+    <ID>MaxLineLength:RunTypes.kt$Language.Companion$fun fromExtension(extension: String): Language</ID>
   </CurrentIssues>
 </SmellBaseline>

@@ -108,7 +108,7 @@ if (protocAvailable) {
             artifact = "com.google.protobuf:protoc:4.35.1"
         }
     }
-    tasks.matching { it.name.startsWith("generateProto") || it.name.startsWith("extract") && it.name.contains("Proto") }.configureEach {
+    tasks.matching { it.name.startsWith("generateProto") || (it.name.startsWith("extract") && it.name.contains("Proto")) }.configureEach {
         enabled = false
     }
 }
