@@ -1564,12 +1564,34 @@ object FluckEngine {
         }
     }
 
+    internal data class BrowserKeyEventRoute(
+        val acceptsInput: Boolean,
+        val shortcutWindowId: String?
+    )
+
     /**
-     * Null focus represents the legacy unowned browser path; only an explicitly
-     * inactive owner is rejected.
+     * Resolves both input acceptance and the destination for application shortcuts.
+     * A window-owned browser is accepted only while its owner is focused, and its
+     * stable owner always wins over the legacy process-focused fallback.
      */
-    internal fun shouldAcceptBrowserKeyEvent(ownerWindowIsFocused: Boolean?): Boolean =
-        ownerWindowIsFocused != false
+    internal fun resolveBrowserKeyEventRoute(
+        ownerWindowId: String?,
+        ownerWindowIsFocused: Boolean?,
+        fallbackFocusedWindowId: String?
+    ): BrowserKeyEventRoute = when {
+        ownerWindowId == null -> BrowserKeyEventRoute(
+            acceptsInput = true,
+            shortcutWindowId = fallbackFocusedWindowId
+        )
+        ownerWindowIsFocused == true -> BrowserKeyEventRoute(
+            acceptsInput = true,
+            shortcutWindowId = ownerWindowId
+        )
+        else -> BrowserKeyEventRoute(
+            acceptsInput = false,
+            shortcutWindowId = null
+        )
+    }
 
     /**
      * Sets up keyboard interceptor for a browser to forward menu shortcuts to the native menu bar.
@@ -1590,11 +1612,19 @@ object FluckEngine {
                 val modifiers = event.keyModifiers()
                 val keyCode = event.keyCode()
 
-                val ownerWindowIsFocused = ownerWindowId?.let(WindowFocusManager::isWindowFocused)
-                if (!shouldAcceptBrowserKeyEvent(ownerWindowIsFocused)) {
+                val route = resolveBrowserKeyEventRoute(
+                    ownerWindowId = ownerWindowId,
+                    ownerWindowIsFocused = ownerWindowId?.let(WindowFocusManager::isWindowFocused),
+                    fallbackFocusedWindowId = if (ownerWindowId == null) {
+                        WindowFocusManager.focusedWindowFlow.value
+                    } else {
+                        null
+                    }
+                )
+                if (!route.acceptsInput) {
                     return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response.suppress()
                 }
-                val shortcutWindowId = ownerWindowId ?: WindowFocusManager.focusedWindowFlow.value
+                val shortcutWindowId = route.shortcutWindowId
 
                 // Platform-aware main modifier: Cmd on macOS, Ctrl on Windows/Linux
                 val isMainModifierDown = if (SystemUtils.isMacOS) {

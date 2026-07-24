@@ -241,7 +241,10 @@ object BrowserServiceImpl : BrowserService {
     internal suspend fun createBrowserForWindow(
         windowId: String,
         config: BrowserConfig
-    ): BrowserHandle? = createBrowser(config, ownerWindowId = windowId)
+    ): BrowserHandle? {
+        require(windowId.isNotBlank()) { "Browser owner windowId must not be blank" }
+        return createBrowser(config, ownerWindowId = windowId)
+    }
 
     internal fun finishBrowserCreation(windowId: String) {
         if (!browserOwners.finishCreate(windowId)) {

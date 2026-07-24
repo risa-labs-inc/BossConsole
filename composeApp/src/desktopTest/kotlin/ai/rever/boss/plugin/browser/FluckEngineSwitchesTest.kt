@@ -141,13 +141,41 @@ class FluckEngineSwitchesTest {
     }
 
     @Test
-    fun `window-owned browser accepts keys only while its owner is focused`() {
-        assertTrue(FluckEngine.shouldAcceptBrowserKeyEvent(ownerWindowIsFocused = true))
-        assertFalse(FluckEngine.shouldAcceptBrowserKeyEvent(ownerWindowIsFocused = false))
+    fun `window-owned browser input routes only to its focused owner`() {
+        val focusedRoute = FluckEngine.resolveBrowserKeyEventRoute(
+            ownerWindowId = "window-a",
+            ownerWindowIsFocused = true,
+            fallbackFocusedWindowId = "window-b"
+        )
+        assertTrue(focusedRoute.acceptsInput)
+        assertEquals("window-a", focusedRoute.shortcutWindowId)
+
+        val inactiveRoute = FluckEngine.resolveBrowserKeyEventRoute(
+            ownerWindowId = "window-a",
+            ownerWindowIsFocused = false,
+            fallbackFocusedWindowId = "window-b"
+        )
+        assertFalse(inactiveRoute.acceptsInput)
+        assertEquals(null, inactiveRoute.shortcutWindowId)
+
+        val unregisteredRoute = FluckEngine.resolveBrowserKeyEventRoute(
+            ownerWindowId = "window-a",
+            ownerWindowIsFocused = null,
+            fallbackFocusedWindowId = "window-b"
+        )
+        assertFalse(unregisteredRoute.acceptsInput)
+        assertEquals(null, unregisteredRoute.shortcutWindowId)
     }
 
     @Test
-    fun `legacy unowned browser keeps accepting keys`() {
-        assertTrue(FluckEngine.shouldAcceptBrowserKeyEvent(ownerWindowIsFocused = null))
+    fun `legacy unowned browser routes shortcuts to the focused window`() {
+        val route = FluckEngine.resolveBrowserKeyEventRoute(
+            ownerWindowId = null,
+            ownerWindowIsFocused = null,
+            fallbackFocusedWindowId = "window-b"
+        )
+
+        assertTrue(route.acceptsInput)
+        assertEquals("window-b", route.shortcutWindowId)
     }
 }

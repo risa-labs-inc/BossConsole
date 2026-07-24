@@ -19,6 +19,8 @@ actual object WindowFocusManager {
     private val windows = ConcurrentHashMap<String, Window>()
     private val windowListeners = mutableMapOf<String, WindowAdapter>()
     private var focusedWindowId: String? = null
+    @Volatile
+    private var awtFocusedWindowId: String? = null
     private var mainWindow: Window? = null  // Kept for backward compatibility
 
     // StateFlow to observe focus changes (for elegant focus restoration)
@@ -26,7 +28,7 @@ actual object WindowFocusManager {
     actual val focusedWindowFlow: StateFlow<String?> = _focusedWindowFlow.asStateFlow()
 
     /**
-     * Register an application window with focus tracking
+     * Register an application window with focus tracking.
      *
      * @param windowId Unique identifier for the window
      * @param window The AWT window instance
@@ -34,28 +36,33 @@ actual object WindowFocusManager {
     fun registerWindow(windowId: String, window: Window) {
         windows[windowId] = window
 
-        // First window becomes the main window (backward compatibility)
+        // First window becomes the main window (backward compatibility).
         if (mainWindow == null) {
             mainWindow = window
             focusedWindowId = windowId
         }
 
-        // Create focus listener to track window focus changes
+        // Registration runs on the EDT. Snapshot an already-focused window in
+        // case its focus-gained event happened before the listener was attached.
+        if (window.isFocused) {
+            awtFocusedWindowId = windowId
+        }
+
         val listener = object : WindowAdapter() {
             override fun windowGainedFocus(e: WindowEvent?) {
+                awtFocusedWindowId = windowId
                 focusedWindowId = windowId
-                _focusedWindowFlow.value = windowId  // Emit to Flow for observers
+                _focusedWindowFlow.value = windowId
             }
 
             override fun windowLostFocus(e: WindowEvent?) {
-                // Focus tracking handled by windowGainedFocus
+                if (awtFocusedWindowId == windowId) {
+                    awtFocusedWindowId = null
+                }
             }
         }
 
-        // Store listener reference for cleanup
         windowListeners[windowId] = listener
-
-        // Add listener to window
         window.addWindowFocusListener(listener)
     }
 
@@ -79,31 +86,33 @@ actual object WindowFocusManager {
     fun getWindow(windowId: String): Window? = windows[windowId]
 
     /**
-     * Unregister a window when it closes
+     * Unregister a window when it closes.
      *
      * @param windowId The window ID to unregister
      */
     fun unregisterWindow(windowId: String) {
-        // Remove the focus listener to prevent memory leak
         windowListeners.remove(windowId)?.let { listener ->
             windows[windowId]?.removeWindowFocusListener(listener)
         }
 
         windows.remove(windowId)
+        if (awtFocusedWindowId == windowId) {
+            awtFocusedWindowId = null
+        }
         if (focusedWindowId == windowId) {
-            // If the focused window closed, clear focus (another window will gain focus via listener)
+            // Preserve the existing last-focused flow contract for external
+            // actions; another window will publish itself when it gains focus.
             focusedWindowId = null
-            _focusedWindowFlow.value = null  // Keep flow in sync
+            _focusedWindowFlow.value = null
         }
     }
 
     /**
-     * Returns the AWT focus state of the registered window rather than the last
-     * window observed by the process-wide focus listener.
+     * Returns the current AWT focus snapshot maintained by EDT focus events.
+     * The volatile snapshot is safe to read from JxBrowser callback threads.
      */
-    actual fun isWindowFocused(windowId: String): Boolean {
-        return windows[windowId]?.isFocused == true
-    }
+    actual fun isWindowFocused(windowId: String): Boolean =
+        awtFocusedWindowId == windowId
 
     /**
      * Best-effort window id for actions that need "the" active window but may run
