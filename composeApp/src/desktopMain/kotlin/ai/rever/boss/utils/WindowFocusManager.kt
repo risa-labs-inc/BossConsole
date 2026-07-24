@@ -49,14 +49,14 @@ internal class AwtWindowFocusTracker {
 }
 
 /**
- * WindowFocusManager - Handles multi-window focus tracking
- *
- * Tracks all application windows and their focus state to ensure
- * external events (deep links, file opens) are handled by the focused window only.
+ * Handles multi-window focus tracking with two intentionally different views:
+ * [isWindowFocused] is the live AWT focus used to gate browser input, while
+ * [focusedWindowFlow] retains last-focused semantics for external actions such
+ * as deep links and file opens.
  */
 actual object WindowFocusManager {
     private val windows = ConcurrentHashMap<String, Window>()
-    // Listener installation and removal are EDT-confined.
+    // EDT-confined; registerWindow/unregisterWindow enforce this before mutation.
     private val windowListeners = mutableMapOf<String, WindowAdapter>()
     private val awtFocusTracker = AwtWindowFocusTracker()
     private var focusedWindowId: String? = null
@@ -67,12 +67,17 @@ actual object WindowFocusManager {
     actual val focusedWindowFlow: StateFlow<String?> = _focusedWindowFlow.asStateFlow()
 
     /**
-     * Register an application window with focus tracking.
+     * Registers an application window with focus tracking. Must run on the EDT.
+     * A window registered before it is focused remains absent from the live
+     * snapshot until its first focus-gained event, so browser input fails closed.
      *
      * @param windowId Unique identifier for the window
      * @param window The AWT window instance
      */
     fun registerWindow(windowId: String, window: Window) {
+        check(SwingUtilities.isEventDispatchThread()) {
+            "WindowFocusManager.registerWindow must run on the EDT"
+        }
         windows[windowId] = window
 
         // First window becomes the main window (backward compatibility).
@@ -114,11 +119,14 @@ actual object WindowFocusManager {
     fun getWindow(windowId: String): Window? = windows[windowId]
 
     /**
-     * Unregister a window when it closes.
+     * Unregisters a window when it closes. Must run on the EDT.
      *
      * @param windowId The window ID to unregister
      */
     fun unregisterWindow(windowId: String) {
+        check(SwingUtilities.isEventDispatchThread()) {
+            "WindowFocusManager.unregisterWindow must run on the EDT"
+        }
         windowListeners.remove(windowId)?.let { listener ->
             windows[windowId]?.removeWindowFocusListener(listener)
         }
@@ -136,6 +144,8 @@ actual object WindowFocusManager {
     /**
      * Returns the current AWT focus snapshot maintained by EDT focus events.
      * The volatile snapshot is safe to read from JxBrowser callback threads.
+     * It intentionally returns false before the first focus-gained event and
+     * after unregister, keeping orphaned owner-scoped browsers fail-closed.
      */
     actual fun isWindowFocused(windowId: String): Boolean =
         awtFocusTracker.isFocused(windowId)
