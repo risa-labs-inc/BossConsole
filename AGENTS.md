@@ -93,6 +93,13 @@ supabase link --project-ref pcnwqamqdnsadranufjv  # First time
 - Location: `composeApp/src/commonMain/composeResources/`
 - Use `BossLogger` for logging (not `println()` or `printStackTrace()`)
 - All Kotlin files must end with newline
+- Formatting is gated by ktlint (`./gradlew ktlintCheck`; fix with
+  `./gradlew ktlintFormat`). Static analysis is gated by detekt with
+  per-module baselines.
+- **Blame**: the tree-wide ktlint reformat is listed in
+  `.git-blame-ignore-revs`; run
+  `git config blame.ignoreRevsFile .git-blame-ignore-revs` once per clone so
+  `git blame` skips it.
 
 ## Logging
 
