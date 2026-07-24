@@ -22,7 +22,6 @@ object DisplayUtils {
     private val logger = BossLogger.forComponent("DisplayUtils")
 
     private val isWindows = System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
-    private val isMac = System.getProperty("os.name").startsWith("Mac", ignoreCase = true)
 
     /**
      * Get the display scaling factor.

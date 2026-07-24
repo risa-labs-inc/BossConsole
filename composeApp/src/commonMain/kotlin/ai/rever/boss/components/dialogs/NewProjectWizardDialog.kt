@@ -255,12 +255,6 @@ private fun TemplateCard(
         else -> BossTheme.colors.raised
     }
 
-    val borderColor = when {
-        isSelected -> Accent
-        isHovered -> BossTheme.colors.line.copy(alpha = 0.8f)
-        else -> Color.Transparent
-    }
-
     val iconColor = when {
         isSelected -> Accent
         isHovered -> BossTheme.colors.textPrimary

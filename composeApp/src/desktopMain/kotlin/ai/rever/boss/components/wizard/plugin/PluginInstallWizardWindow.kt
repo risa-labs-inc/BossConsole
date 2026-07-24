@@ -11,7 +11,6 @@ import androidx.compose.material.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -38,7 +37,6 @@ fun PluginInstallWizardWindow(
     onInstallPlugins: suspend (List<WizardPluginInfo>, (Float, String) -> Unit) -> Result<PluginInstallResult>
 ) {
     val currentStep = state.wizardState.currentStep
-    val scope = rememberCoroutineScope()
 
     // Handle installation when we reach the Installing step
     // Use installationAttempted flag to prevent re-triggering (fixes race condition)

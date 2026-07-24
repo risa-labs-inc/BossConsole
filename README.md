@@ -275,7 +275,6 @@ This repository contains the source code for BOSS. For building from source and 
 /plugin-platform   # Host-side plugin platform: loader, repository, SDK modules
 /modules           # Microkernel / out-of-process architecture (boss-ipc, boss-ui-sdk, …)
 /server            # Minimal Ktor server component
-/shared            # Shared business logic
 /supabase          # Database migrations and Edge Functions
 /docs              # Documentation
 ```

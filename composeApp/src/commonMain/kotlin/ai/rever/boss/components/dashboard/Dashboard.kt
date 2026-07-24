@@ -109,7 +109,6 @@ fun Dashboard(
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
-    val dialogScope = rememberCoroutineScope()
     val windowId = LocalWindowId.current
 
     // State for project open mode dialog

@@ -47,10 +47,6 @@ fun FluckBrowserSettings() {
     var showRestartDialog by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
-    // Track original values to detect changes requiring restart
-    val originalProfile = remember { BrowserSettings.currentProfile }
-    val originalUserAgent = remember { BrowserSettings.userAgent }
-
     // Helper to save and check for restart
     fun saveAndCheckRestart() {
         val profileChanged = BrowserSettings.currentProfile != currentProfile

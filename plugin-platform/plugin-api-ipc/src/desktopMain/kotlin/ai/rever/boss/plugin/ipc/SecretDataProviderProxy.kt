@@ -3,16 +3,12 @@ package ai.rever.boss.plugin.ipc
 import ai.rever.boss.ipc.proto.services.*
 import ai.rever.boss.plugin.api.*
 import io.grpc.ManagedChannel
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 
 /**
  * IPC proxy implementation of SecretDataProvider.
  */
 class SecretDataProviderProxy(
     channel: ManagedChannel,
-    private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
 ) : SecretDataProvider {
 
     private val stub = SecretServiceGrpcKt.SecretServiceCoroutineStub(channel)

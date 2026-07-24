@@ -7,16 +7,12 @@ import ai.rever.boss.plugin.api.RoleInfoData
 import ai.rever.boss.plugin.api.RoleManagementProvider
 import ai.rever.boss.plugin.api.RoleWithPermissionsData
 import io.grpc.ManagedChannel
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 
 /**
  * IPC proxy implementation of RoleManagementProvider.
  */
 class RoleManagementProviderProxy(
     channel: ManagedChannel,
-    private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
 ) : RoleManagementProvider {
 
     private val stub = RoleManagementServiceGrpcKt.RoleManagementServiceCoroutineStub(channel)

@@ -4,16 +4,12 @@ import ai.rever.boss.ipc.proto.services.*
 import ai.rever.boss.plugin.api.PanelEventProvider
 import ai.rever.boss.plugin.api.PanelId
 import io.grpc.ManagedChannel
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 
 /**
  * IPC proxy implementation of PanelEventProvider.
  */
 class PanelEventProviderProxy(
     channel: ManagedChannel,
-    private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
 ) : PanelEventProvider {
 
     private val stub = PanelEventServiceGrpcKt.PanelEventServiceCoroutineStub(channel)

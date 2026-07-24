@@ -463,7 +463,6 @@ internal class BrowserHandleImpl(
             val value = extractValue("value")
             val formAction = extractValue("formAction").ifEmpty { null }
             val autocomplete = extractValue("autocomplete")
-            val className = extractValue("className")
 
             // Determine field type
             val fieldType = when {

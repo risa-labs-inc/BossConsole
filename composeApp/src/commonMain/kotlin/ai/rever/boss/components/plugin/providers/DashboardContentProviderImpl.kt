@@ -3,12 +3,9 @@ package ai.rever.boss.components.plugin.providers
 import ai.rever.boss.components.dashboard.Dashboard
 import ai.rever.boss.components.events.URLEventBus
 import ai.rever.boss.dashboard.SplitTemplate
-import ai.rever.boss.window.LocalWindowId
 import ai.rever.boss.window.Project
 import ai.rever.boss.plugin.api.DashboardContentProvider
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.rememberCoroutineScope
-import kotlinx.coroutines.launch
 
 /**
  * Implementation of DashboardContentProvider that wraps the Boss Console Dashboard.
@@ -20,9 +17,6 @@ class DashboardContentProviderImpl : DashboardContentProvider {
 
     @Composable
     override fun DashboardContent(onNavigate: (String) -> Unit) {
-        val scope = rememberCoroutineScope()
-        val windowId = LocalWindowId.current
-
         Dashboard(
             onOpenFile = { /* No-op for browser plugin */ },
             onOpenUrl = onNavigate,

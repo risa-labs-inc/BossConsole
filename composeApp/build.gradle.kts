@@ -1,7 +1,4 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
-import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-import org.jetbrains.kotlin.gradle.targets.js.webpack.KotlinWebpackConfig
 import java.util.Properties
 import java.util.zip.ZipFile
 import java.time.LocalDateTime
@@ -25,7 +22,6 @@ val isWindowsArm64Build: Boolean = run {
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
-    // alias(libs.plugins.androidApplication) // Disabled for desktop-focused development
     alias(libs.plugins.composeMultiplatform)
     alias(libs.plugins.composeCompiler)
     alias(libs.plugins.kotlinSerialization)
@@ -537,35 +533,6 @@ kotlin {
         freeCompilerArgs.add("-Xexpect-actual-classes")
     }
 
-    // Android target disabled for desktop-focused development
-    /*
-    androidTarget {
-        compilerOptions {
-            jvmTarget.set(JvmTarget.JVM_11)
-        }
-    }
-    */
-
-    // iOS targets disabled for desktop-focused development
-    // Uncomment below if iOS support is needed in the future
-    /*
-    listOf(
-        iosX64(),
-        iosArm64(),
-        iosSimulatorArm64()
-    ).forEach { iosTarget ->
-        iosTarget.binaries.framework {
-            baseName = "ComposeApp"
-            isStatic = true
-
-            // Export Decompose and Essenty for iOS
-            export(libs.decompose)
-            export(libs.essenty.lifecycle)
-            export(libs.essenty.state.keeper)
-        }
-    }
-    */
-
     jvm("desktop")
 
     // Enable experimental APIs
@@ -574,29 +541,6 @@ kotlin {
         languageSettings.optIn("kotlin.ExperimentalMultiplatform")
     }
 
-    // WASM targets disabled for desktop-focused development
-    /*
-    @OptIn(ExperimentalWasmDsl::class)
-    wasmJs {
-        moduleName = "composeApp"
-        browser {
-            val rootDirPath = project.rootDir.path
-            val projectDirPath = project.projectDir.path
-            commonWebpackConfig {
-                outputFileName = "composeApp.js"
-                devServer = (devServer ?: KotlinWebpackConfig.DevServer()).apply {
-                    static = (static ?: mutableListOf()).apply {
-                        // Serve sources to debug inside browser
-                        add(rootDirPath)
-                        add(projectDirPath)
-                    }
-                }
-            }
-        }
-        binaries.executable()
-    }
-    */
-    
     sourceSets {
         val desktopMain = getByName("desktopMain") {
             if (isWindowsArm64Build) {
@@ -625,13 +569,6 @@ kotlin {
         // Build-time embedded config (JxBrowser license, Supabase endpoint/key)
         desktopMain.resources.srcDir(generateEmbeddedConfig.map { it.outputs.files.singleFile.parentFile })
 
-        // androidMain.dependencies disabled for desktop-focused development
-        /*
-        androidMain.dependencies {
-            implementation(compose.preview)
-            implementation(libs.androidx.activity.compose)
-        }
-        */
         commonMain.dependencies {
             implementation(libs.compose.mp.runtime)
             implementation(libs.compose.mp.foundation)
@@ -642,7 +579,6 @@ kotlin {
             implementation(libs.compose.mp.components.ui.tooling.preview)
             implementation(libs.androidx.lifecycle.viewmodel)
             implementation(libs.androidx.lifecycle.runtime.compose)
-            implementation(projects.shared)
             // NOTE: BossEditor is not a host dependency. The editor-tab plugin
             // bundles bosseditor-compose-desktop (and its kotlin-compiler-embeddable
             // PSI stack) privately inside its own JAR; the plugin's classloader

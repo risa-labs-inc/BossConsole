@@ -150,32 +150,6 @@ class DefaultPlugin(
 ) : PluginContext {
 
     companion object {
-        // Plugin IDs for sandboxing - using consistent naming
-        private const val PLUGIN_ID_BOOKMARKS = "panel-bookmarks"
-        private const val PLUGIN_ID_DOWNLOADS = "panel-downloads"
-        private const val PLUGIN_ID_CODEBASE = "panel-codebase"
-        private const val PLUGIN_ID_TERMINAL = "panel-terminal"
-        private const val PLUGIN_ID_CONSOLE = "panel-console"
-        private const val PLUGIN_ID_PERFORMANCE = "panel-performance"
-        private const val PLUGIN_ID_GIT_STATUS = "panel-git-status"
-        private const val PLUGIN_ID_GIT_LOG = "panel-git-log"
-        private const val PLUGIN_ID_TOP_OF_MIND = "panel-top-of-mind"
-        private const val PLUGIN_ID_RUN_CONFIGS = "panel-run-configurations"
-        private const val PLUGIN_ID_FLUCK = "panel-fluck"
-        private const val PLUGIN_ID_LLM_RPA = "panel-llm-rpa"
-        private const val PLUGIN_ID_RPA_RECORDER = "panel-rpa-recorder"
-        private const val PLUGIN_ID_RPA_ENGINE = "panel-rpa-engine"
-        private const val PLUGIN_ID_ADMIN_ROLE_MGMT = "panel-admin-role-management"
-        private const val PLUGIN_ID_ROLE_CREATION = "panel-role-creation"
-        private const val PLUGIN_ID_SECRET_MANAGER = "panel-secret-manager"
-        private const val PLUGIN_ID_USER_SECRET_LIST = "panel-user-secret-list"
-        private const val PLUGIN_ID_PLUGIN_MANAGER = "panel-plugin-manager"
-
-        // Tab plugin IDs
-        private const val PLUGIN_ID_TAB_FLUCK = "tab-fluck"
-        private const val PLUGIN_ID_TAB_CODE_EDITOR = "tab-code-editor"
-        private const val PLUGIN_ID_TAB_TERMINAL = "tab-terminal"
-
         // Persisted plugins loading state
         @Volatile
         private var persistedPluginsLoaded = false
@@ -815,75 +789,6 @@ class DefaultPlugin(
         // This allows dynamic plugins (like plugin-manager) to interact with the plugin system
         // ============================================================
         PluginLoaderDelegateSetup.register(this, dynamicPluginManager)
-
-        // ============================================================
-        // SANDBOXED PANEL PLUGINS
-        // Each plugin gets its own sandbox for crash isolation
-        // NOTE: Most panel plugins are now loaded dynamically from JARs.
-        // Only Plugin Manager remains bundled.
-        // ============================================================
-
-        // DYNAMIC: Bookmarks panel - loaded from boss-plugin-bookmarks JAR
-        // val bookmarksContext = createSandboxedContext(PLUGIN_ID_BOOKMARKS)
-        // BookmarksPanelPlugin.registerWithProviders(...)
-
-        // DYNAMIC: Downloads panel - loaded from boss-plugin-downloads JAR
-        // val downloadsContext = createSandboxedContext(PLUGIN_ID_DOWNLOADS)
-        // DownloadsPanelPlugin.register(...)
-
-        // DYNAMIC: CodeBase panel - loaded from boss-plugin-codebase JAR
-        // val codebaseContext = createSandboxedContext(PLUGIN_ID_CODEBASE)
-        // CodeBasePanelPlugin.registerWithProviders(...)
-
-        // DYNAMIC: Terminal panel - loaded from boss-plugin-terminal JAR
-        // val terminalPanelContext = createSandboxedContext(PLUGIN_ID_TERMINAL)
-        // TerminalPanelPlugin.registerWithProviders(...)
-
-        // DYNAMIC: Console panel - loaded from boss-plugin-console JAR
-        // val consoleContext = createSandboxedContext(PLUGIN_ID_CONSOLE)
-        // ConsolePanelPlugin.register(consoleContext)
-
-        // DYNAMIC: Performance panel - loaded from boss-plugin-performance JAR
-        // val performanceContext = createSandboxedContext(PLUGIN_ID_PERFORMANCE)
-        // PerformancePanelPlugin.register(performanceContext)
-
-        // DYNAMIC: Git panels - loaded from boss-plugin-git-log and boss-plugin-git-status JARs
-        // registerGitPanels()
-
-        // DYNAMIC: Top of Mind panel - loaded from boss-plugin-topofmind JAR
-        // val topOfMindContext = createSandboxedContext(PLUGIN_ID_TOP_OF_MIND)
-        // TopOfMindPanelPlugin.registerWithProviders(...)
-
-        // DYNAMIC: Run Configurations plugin - loaded from boss-plugin-run-configurations JAR
-        // val runConfigsContext = createSandboxedContext(PLUGIN_ID_RUN_CONFIGS)
-        // RunConfigurationsPanelPlugin.register(...)
-
-        // DYNAMIC: Fluck (ChatGPT) panel - loaded from boss-plugin-fluck JAR
-        // val fluckPanelContext = createSandboxedContext(PLUGIN_ID_FLUCK)
-        // FluckPanelPlugin.registerWithProviders(...)
-
-        // DYNAMIC: LLM RPA panel - loaded from boss-plugin-llmrpa JAR
-        // val llmRpaContext = createSandboxedContext(PLUGIN_ID_LLM_RPA)
-        // LLMRpaPanelPlugin.register(...)
-
-        // DYNAMIC: RPA Recorder panel - loaded from boss-plugin-rparecorder JAR
-        // val rpaRecorderContext = createSandboxedContext(PLUGIN_ID_RPA_RECORDER)
-        // RpaRecorderPanelPlugin.register(...)
-
-        // DYNAMIC: RPA Engine panel - loaded from boss-plugin-rpaengine JAR
-        // val rpaEngineContext = createSandboxedContext(PLUGIN_ID_RPA_ENGINE)
-        // RpaEnginePanelPlugin.register(...)
-
-        // ============================================================
-        // BUNDLED PLUGIN: Plugin Manager (DISABLED - using dynamic plugin instead)
-        // This is the ONLY bundled panel plugin - used for managing dynamic plugins
-        // ============================================================
-        // val pluginManagerContext = createSandboxedContext(PLUGIN_ID_PLUGIN_MANAGER)
-        // PluginManagerSetup.registerPluginManagerPanel(
-        //     pluginManagerContext,
-        //     dynamicPluginManager,
-        //     activeTabsProvider
-        // )
 
         // ============================================================
         // DYNAMIC PANEL PLUGINS (loaded from JARs)

@@ -39,7 +39,6 @@ For a bottom split use `panel: horizontal_split`. Reuse a pane across calls by p
 ### Module Structure
 - **`composeApp/`** - Main Compose Multiplatform UI application
 - **`server/`** - Minimal Ktor server component
-- **`shared/`** - Shared business logic
 - **`modules/`** - Microkernel / out-of-process architecture Gradle modules
   (`boss-ipc`, `boss-service-*`, `boss-orchestrator`, `boss-ui-sdk`,
   `boss-mastery-*`, `boss-app-*`). They keep flat Gradle paths (`:boss-ipc`),

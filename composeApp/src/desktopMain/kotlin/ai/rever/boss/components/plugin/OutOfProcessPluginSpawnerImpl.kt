@@ -124,11 +124,11 @@ class OutOfProcessPluginSpawnerImpl(
                     mainClass = "ai.rever.boss.plugin.runtime.PluginProcessMainKt",
                     classpath = classpath,
                     nativeImagePath = manifest.nativeImagePath?.takeIf { it.isNotEmpty() },
-                    jvmArgs = buildJvmArgs(manifest),
+                    jvmArgs = buildJvmArgs(),
                     workDir = File(projectPath.ifEmpty { System.getProperty("user.dir") }),
                     restartPolicy = RestartPolicy.ON_FAILURE,
                     maxRestarts = manifest.sandbox.maxRestartAttempts,
-                    environment = buildEnvironment(pluginId, jarPath),
+                    environment = buildEnvironment(jarPath),
                     startupTimeoutMs = manifest.healthContract?.startupTimeoutMs ?: 30_000,
                     heartbeatIntervalMs = manifest.healthContract?.heartbeatIntervalMs ?: 5_000,
                 )
@@ -236,7 +236,7 @@ class OutOfProcessPluginSpawnerImpl(
      */
     fun isAlive(pluginId: String): Boolean = managedProcesses[pluginId]?.isAlive == true
 
-    private fun buildJvmArgs(manifest: PluginManifest): List<String> = buildList {
+    private fun buildJvmArgs(): List<String> = buildList {
         val settings = try {
             ai.rever.boss.performance.PerformanceSettingsManager.currentSettings.value
         } catch (_: Exception) { null }
@@ -253,7 +253,7 @@ class OutOfProcessPluginSpawnerImpl(
         }
     }
 
-    private fun buildEnvironment(pluginId: String, jarPath: String): Map<String, String> = buildMap {
+    private fun buildEnvironment(jarPath: String): Map<String, String> = buildMap {
         put("BOSS_PLUGIN_CLASSPATH", jarPath)
         if (windowId.isNotEmpty()) put("BOSS_WINDOW_ID", windowId)
         if (projectPath.isNotEmpty()) put("BOSS_PROJECT_PATH", projectPath)

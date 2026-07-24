@@ -15,7 +15,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.arkivanov.decompose.ComponentContext
-import org.slf4j.LoggerFactory
 
 /**
  * Kernel-side panel component for out-of-process plugins using the split-brain model.
@@ -38,8 +37,6 @@ class BridgedPanelComponent(
     private val bridge: PluginStateBridge,
     private val content: @Composable (stateBytes: ByteArray, connected: Boolean) -> Unit,
 ) : PanelComponentWithUI, ComponentContext by ctx {
-
-    private val logger = LoggerFactory.getLogger(BridgedPanelComponent::class.java)
 
     @Composable
     override fun Content() {

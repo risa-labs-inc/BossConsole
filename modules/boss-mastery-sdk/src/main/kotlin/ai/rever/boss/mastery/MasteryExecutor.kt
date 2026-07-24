@@ -56,7 +56,7 @@ class MasteryExecutor(
                     val levelResults: List<Pair<String, Map<String, String>>> = coroutineScope {
                         level.map { node ->
                             async {
-                                executeNode(mastery, node, snapshot) { progress ->
+                                executeNode(node, snapshot) { progress ->
                                     this@channelFlow.send(progress)
                                 }
                             }
@@ -75,7 +75,6 @@ class MasteryExecutor(
         }
 
     private suspend fun executeNode(
-        mastery: MasteryDefinition,
         node: MasteryNode,
         nodeOutputs: Map<String, Map<String, String>>,
         emit: suspend (MasteryProgress) -> Unit,
@@ -87,7 +86,7 @@ class MasteryExecutor(
             )
         )
 
-        val resolvedInput = resolveNodeInput(mastery, node, nodeOutputs)
+        val resolvedInput = resolveNodeInput(node, nodeOutputs)
         val nodeStart = System.currentTimeMillis()
         var lastError: Throwable? = null
 
@@ -121,7 +120,6 @@ class MasteryExecutor(
      * Edge source format: "SOURCE_NODE_ID.outputKey" or "INPUT.key"
      */
     private fun resolveNodeInput(
-        mastery: MasteryDefinition,
         node: MasteryNode,
         nodeOutputs: Map<String, Map<String, String>>,
     ): Map<String, String> {

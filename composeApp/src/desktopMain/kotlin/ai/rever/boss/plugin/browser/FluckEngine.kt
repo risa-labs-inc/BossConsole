@@ -454,12 +454,11 @@ object FluckEngine {
         if (proactiveCleanupDone) return
         proactiveCleanupDone = true
 
-        val userHome = System.getProperty("user.home")
         val selectedProfile = BrowserSettings.currentProfile
         val profileDirPath = BossDirectories.resolve(selectedProfile).toPath()
 
         // First, kill any stale Chromium processes from previous sessions
-        killStaleChromiumProcesses(userHome)
+        killStaleChromiumProcesses()
 
         if (profileDirPath.toFile().exists()) {
             cleanupStaleLockFiles(profileDirPath)
@@ -469,14 +468,14 @@ object FluckEngine {
 
         // Clean up ALL temporary profiles from previous sessions
         // At startup time, no temp profiles should be in use
-        cleanupAllTemporaryProfiles(userHome)
+        cleanupAllTemporaryProfiles()
     }
 
     /**
      * Kill stale Chromium processes that were spawned by previous BOSS sessions.
      * These zombie processes can prevent profile reuse even without lock files.
      */
-    private fun killStaleChromiumProcesses(userHome: String) {
+    private fun killStaleChromiumProcesses() {
         var killedAny = false
         try {
             // Use explicit paths for more precise matching (security: avoid killing unrelated processes)
@@ -593,7 +592,7 @@ object FluckEngine {
         lockFiles.forEach { fileName ->
             val file = profileDir.resolve(fileName).toFile()
             if (file.exists()) {
-                val deleted = file.delete()
+                file.delete()
             }
         }
 
@@ -603,7 +602,7 @@ object FluckEngine {
             lockFiles.forEach { fileName ->
                 val file = defaultDir.resolve(fileName).toFile()
                 if (file.exists()) {
-                    val deleted = file.delete()
+                    file.delete()
                 }
             }
         }
@@ -913,18 +912,16 @@ object FluckEngine {
         // requested lazily on the first user-initiated screen share, after an in-app
         // rationale dialog (see setupCaptureSessionHandler + ScreenCaptureNotifier).
 
-        // Get user's home directory dynamically
-        val userHome = System.getProperty("user.home")
-        val chromiumDir = getChromiumDir(userHome)
+        val chromiumDir = getChromiumDir()
 
         // Create directories if they don't exist
         chromiumDir.toFile().mkdirs()
 
         // Clean up old temporary profiles on startup (older than 24 hours)
-        cleanupOldTemporaryProfiles(userHome)
+        cleanupOldTemporaryProfiles()
 
         // Try to create engine with profile handling
-        return createEngineWithProfile(chromiumDir, userHome)
+        return createEngineWithProfile(chromiumDir)
     }
 
     /**
@@ -932,7 +929,7 @@ object FluckEngine {
      * 1. Bundled BOSS-branded Chromium (in app resources)
      * 2. Cached BOSS-branded Chromium (~/.boss/boss-chromium/)
      */
-    private fun getChromiumDir(userHome: String): java.nio.file.Path {
+    private fun getChromiumDir(): java.nio.file.Path {
         // Priority 1: Bundled BOSS-branded Chromium (in app resources)
         val bundledDir = getBundledChromiumPath()
         if (bundledDir != null && isValidChromiumDir(bundledDir)) {
@@ -1133,7 +1130,7 @@ object FluckEngine {
      * Deletes browser-profile-* directories older than 24 hours.
      * Called during engine initialization (may run alongside active engine).
      */
-    private fun cleanupOldTemporaryProfiles(userHome: String) {
+    private fun cleanupOldTemporaryProfiles() {
         try {
             val bossDir = BossDirectories.rootDir
             val oneDayAgo = System.currentTimeMillis() - (24 * 60 * 60 * 1000)
@@ -1155,7 +1152,7 @@ object FluckEngine {
      * At startup time, no temp profiles should be in use — they are always
      * leftovers from crashed/killed sessions. Safe to delete unconditionally.
      */
-    private fun cleanupAllTemporaryProfiles(userHome: String) {
+    private fun cleanupAllTemporaryProfiles() {
         try {
             val bossDir = BossDirectories.rootDir
             var cleanedCount = 0
@@ -1182,18 +1179,18 @@ object FluckEngine {
         }
     }
 
-    private fun createEngineWithProfile(chromiumDir: java.nio.file.Path, userHome: String): Engine {
+    private fun createEngineWithProfile(chromiumDir: java.nio.file.Path): Engine {
         val selectedProfile = BrowserSettings.currentProfile
         val profileDirPath = BossDirectories.resolve(selectedProfile).toPath()
         profileDirPath.toFile().mkdirs()
 
         return try {
-            createEngineInstance(chromiumDir, profileDirPath, selectedProfile)
+            createEngineInstance(chromiumDir, profileDirPath)
         } catch (e: UserDataDirectoryAlreadyInUseException) {
             // Try to clean up stale lock files first
             if (cleanupStaleLockFiles(profileDirPath)) {
                 try {
-                    return createEngineInstance(chromiumDir, profileDirPath, selectedProfile)
+                    return createEngineInstance(chromiumDir, profileDirPath)
                 } catch (e2: Exception) {
                 }
             }
@@ -1204,7 +1201,7 @@ object FluckEngine {
             tempProfilePath.toFile().mkdirs()
 
             try {
-                createEngineInstance(chromiumDir, tempProfilePath, tempProfile)
+                createEngineInstance(chromiumDir, tempProfilePath)
             } catch (e2: Exception) {
                 throw e2
             }
@@ -1359,7 +1356,7 @@ object FluckEngine {
         return switches
     }
 
-    private fun createEngineInstance(chromiumDir: java.nio.file.Path, profileDirPath: java.nio.file.Path, profileName: String): Engine {
+    private fun createEngineInstance(chromiumDir: java.nio.file.Path, profileDirPath: java.nio.file.Path): Engine {
         // Evaluated once per boot: feeds both the container-only switches and the
         // sandbox decision below, so the two can never disagree.
         val inContainer = runningInContainer()
@@ -1868,7 +1865,7 @@ object FluckEngine {
 
                     // Register event listeners on the download object
                     val downloadObj = download
-                    setupDownloadEventListeners(downloadObj, downloadId, sanitizedFileName, savePath, target.url())
+                    setupDownloadEventListeners(downloadObj, downloadId, savePath, target.url())
 
                     // Initiate the download
                     action.download(downloadPath)
@@ -1883,7 +1880,6 @@ object FluckEngine {
     private fun setupDownloadEventListeners(
         download: Download,
         downloadId: String,
-        fileName: String,
         destinationPath: String,
         url: String
     ) {
@@ -2029,9 +2025,8 @@ object FluckEngine {
             _engineGenerationFlow.value = _engineGeneration
 
             // Step 3: Kill any stale Chromium processes
-            val userHome = System.getProperty("user.home")
             try {
-                killStaleChromiumProcesses(userHome)
+                killStaleChromiumProcesses()
             } catch (e: Exception) {
                 // Continue - not critical
             }
@@ -2060,7 +2055,7 @@ object FluckEngine {
 
             // Step 5: Also clean up temporary profiles
             try {
-                cleanupOldTemporaryProfiles(userHome)
+                cleanupOldTemporaryProfiles()
                 tempProfilesCleaned = true
             } catch (e: Exception) {
                 // Not critical - continue
