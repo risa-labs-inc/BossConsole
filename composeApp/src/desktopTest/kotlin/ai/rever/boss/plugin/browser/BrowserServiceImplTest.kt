@@ -63,6 +63,8 @@ class BrowserServiceImplTest {
     @Test
     fun `browser creation requires a window cleanup owner`() = runBlocking {
         assertNull(getBrowserServiceInstance(null))
+        assertNull(getBrowserServiceInstance(""))
+        assertNull(getBrowserServiceInstance("   "))
         assertNull(BrowserServiceImpl.createBrowser(BrowserConfig()))
     }
 

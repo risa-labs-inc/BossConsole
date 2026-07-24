@@ -238,10 +238,18 @@ object BrowserServiceImpl : BrowserService {
     internal fun tryBeginBrowserCreation(windowId: String): Boolean =
         browserOwners.tryBeginCreate(windowId)
 
+    /**
+     * Internal defensive boundary used after the public provider has already
+     * rejected null or blank owner IDs. Direct callers receive an exception
+     * because creating an unowned browser would bypass window-scoped cleanup.
+     */
     internal suspend fun createBrowserForWindow(
         windowId: String,
         config: BrowserConfig
-    ): BrowserHandle? = createBrowser(config, ownerWindowId = windowId)
+    ): BrowserHandle? {
+        require(windowId.isNotBlank()) { "Browser owner windowId must not be blank" }
+        return createBrowser(config, ownerWindowId = windowId)
+    }
 
     internal fun finishBrowserCreation(windowId: String) {
         if (!browserOwners.finishCreate(windowId)) {
@@ -301,7 +309,12 @@ object BrowserServiceImpl : BrowserService {
                 config
             }
 
-            val handle = BrowserHandleImpl(browser, effectiveConfig, generation)
+            val handle = BrowserHandleImpl(
+                browser = browser,
+                config = effectiveConfig,
+                engineGeneration = generation,
+                ownerWindowId = ownerWindowId
+            )
             handleId = handle.id
             activeBrowsers[handle.id] = handle
             m?.let {

@@ -139,4 +139,36 @@ class FluckEngineSwitchesTest {
         assertFalse(FluckEngine.cgroupIndicatesContainer("0::/"))
         assertFalse(FluckEngine.cgroupIndicatesContainer("12:pids:/user.slice/user-501.slice"))
     }
+
+    @Test
+    fun `window-owned browser input routes only to its focused owner`() {
+        val focusedRoute = FluckEngine.resolveBrowserKeyEventRoute(
+            ownerWindowId = "window-a",
+            ownerWindowIsFocused = true,
+            fallbackFocusedWindowId = "window-b"
+        )
+        assertTrue(focusedRoute.acceptsInput)
+        assertEquals("window-a", focusedRoute.shortcutWindowId)
+
+        // isWindowFocused returns false for both inactive and unregistered owners.
+        val unfocusedOrUnregisteredRoute = FluckEngine.resolveBrowserKeyEventRoute(
+            ownerWindowId = "window-a",
+            ownerWindowIsFocused = false,
+            fallbackFocusedWindowId = "window-b"
+        )
+        assertFalse(unfocusedOrUnregisteredRoute.acceptsInput)
+        assertEquals(null, unfocusedOrUnregisteredRoute.shortcutWindowId)
+    }
+
+    @Test
+    fun `legacy unowned browser routes shortcuts to the focused window`() {
+        val route = FluckEngine.resolveBrowserKeyEventRoute(
+            ownerWindowId = null,
+            ownerWindowIsFocused = false,
+            fallbackFocusedWindowId = "window-b"
+        )
+
+        assertTrue(route.acceptsInput)
+        assertEquals("window-b", route.shortcutWindowId)
+    }
 }

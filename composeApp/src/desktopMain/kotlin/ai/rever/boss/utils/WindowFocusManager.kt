@@ -3,20 +3,62 @@ package ai.rever.boss.utils
 import java.awt.Window
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
+import java.util.concurrent.ConcurrentHashMap
 import javax.swing.SwingUtilities
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * WindowFocusManager - Handles multi-window focus tracking
- *
- * Tracks all application windows and their focus state to ensure
- * external events (deep links, file opens) are handled by the focused window only.
+ * Captures AWT focus lifecycle events on the EDT and exposes a volatile
+ * snapshot that JxBrowser callback threads can safely read.
+ */
+internal class AwtWindowFocusTracker {
+    @Volatile
+    private var focusedWindowId: String? = null
+
+    fun snapshotRegistration(windowId: String, isFocused: Boolean) {
+        if (isFocused) {
+            focusedWindowId = windowId
+        }
+    }
+
+    fun createListener(
+        windowId: String,
+        onFocusGained: () -> Unit = {}
+    ): WindowAdapter = object : WindowAdapter() {
+        override fun windowGainedFocus(e: WindowEvent?) {
+            focusedWindowId = windowId
+            onFocusGained()
+        }
+
+        override fun windowLostFocus(e: WindowEvent?) {
+            if (focusedWindowId == windowId) {
+                focusedWindowId = null
+            }
+        }
+    }
+
+    fun onUnregistered(windowId: String) {
+        if (focusedWindowId == windowId) {
+            focusedWindowId = null
+        }
+    }
+
+    fun isFocused(windowId: String): Boolean = focusedWindowId == windowId
+}
+
+/**
+ * Handles multi-window focus tracking with two intentionally different views:
+ * [isWindowFocused] is the live AWT focus used to gate browser input, while
+ * [focusedWindowFlow] retains last-focused semantics for external actions such
+ * as deep links and file opens.
  */
 actual object WindowFocusManager {
-    private val windows = mutableMapOf<String, Window>()
+    private val windows = ConcurrentHashMap<String, Window>()
+    // EDT-confined; registerWindow/unregisterWindow enforce this before mutation.
     private val windowListeners = mutableMapOf<String, WindowAdapter>()
+    private val awtFocusTracker = AwtWindowFocusTracker()
     private var focusedWindowId: String? = null
     private var mainWindow: Window? = null  // Kept for backward compatibility
 
@@ -25,36 +67,35 @@ actual object WindowFocusManager {
     actual val focusedWindowFlow: StateFlow<String?> = _focusedWindowFlow.asStateFlow()
 
     /**
-     * Register an application window with focus tracking
+     * Registers an application window with focus tracking. Must run on the EDT.
+     * A window registered before it is focused remains absent from the live
+     * snapshot until its first focus-gained event, so browser input fails closed.
      *
      * @param windowId Unique identifier for the window
      * @param window The AWT window instance
      */
     fun registerWindow(windowId: String, window: Window) {
+        check(SwingUtilities.isEventDispatchThread()) {
+            "WindowFocusManager.registerWindow must run on the EDT"
+        }
         windows[windowId] = window
 
-        // First window becomes the main window (backward compatibility)
+        // First window becomes the main window (backward compatibility).
         if (mainWindow == null) {
             mainWindow = window
             focusedWindowId = windowId
         }
 
-        // Create focus listener to track window focus changes
-        val listener = object : WindowAdapter() {
-            override fun windowGainedFocus(e: WindowEvent?) {
-                focusedWindowId = windowId
-                _focusedWindowFlow.value = windowId  // Emit to Flow for observers
-            }
+        // Registration runs on the EDT. Snapshot an already-focused window in
+        // case its focus-gained event happened before the listener was attached.
+        awtFocusTracker.snapshotRegistration(windowId, window.isFocused)
 
-            override fun windowLostFocus(e: WindowEvent?) {
-                // Focus tracking handled by windowGainedFocus
-            }
+        val listener = awtFocusTracker.createListener(windowId) {
+            focusedWindowId = windowId
+            _focusedWindowFlow.value = windowId
         }
 
-        // Store listener reference for cleanup
         windowListeners[windowId] = listener
-
-        // Add listener to window
         window.addWindowFocusListener(listener)
     }
 
@@ -78,33 +119,36 @@ actual object WindowFocusManager {
     fun getWindow(windowId: String): Window? = windows[windowId]
 
     /**
-     * Unregister a window when it closes
+     * Unregisters a window when it closes. Must run on the EDT.
      *
      * @param windowId The window ID to unregister
      */
     fun unregisterWindow(windowId: String) {
-        // Remove the focus listener to prevent memory leak
+        check(SwingUtilities.isEventDispatchThread()) {
+            "WindowFocusManager.unregisterWindow must run on the EDT"
+        }
         windowListeners.remove(windowId)?.let { listener ->
             windows[windowId]?.removeWindowFocusListener(listener)
         }
 
         windows.remove(windowId)
+        awtFocusTracker.onUnregistered(windowId)
         if (focusedWindowId == windowId) {
-            // If the focused window closed, clear focus (another window will gain focus via listener)
+            // Preserve the existing last-focused flow contract for external
+            // actions; another window will publish itself when it gains focus.
             focusedWindowId = null
-            _focusedWindowFlow.value = null  // Keep flow in sync
+            _focusedWindowFlow.value = null
         }
     }
 
     /**
-     * Check if a specific window is currently focused
-     *
-     * @param windowId The window ID to check
-     * @return true if the window is focused, false otherwise
+     * Returns the current AWT focus snapshot maintained by EDT focus events.
+     * The volatile snapshot is safe to read from JxBrowser callback threads.
+     * It intentionally returns false before the first focus-gained event and
+     * after unregister, keeping orphaned owner-scoped browsers fail-closed.
      */
-    actual fun isWindowFocused(windowId: String): Boolean {
-        return focusedWindowId == windowId
-    }
+    actual fun isWindowFocused(windowId: String): Boolean =
+        awtFocusTracker.isFocused(windowId)
 
     /**
      * Best-effort window id for actions that need "the" active window but may run

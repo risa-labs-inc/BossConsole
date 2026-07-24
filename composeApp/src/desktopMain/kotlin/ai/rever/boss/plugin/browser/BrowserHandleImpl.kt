@@ -96,7 +96,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 internal class BrowserHandleImpl(
     private val browser: Browser,
     private val config: BrowserConfig,
-    private val engineGeneration: Long
+    private val engineGeneration: Long,
+    private val ownerWindowId: String
 ) : BrowserHandle {
 
     private val logger = BossLogger.forComponent("BrowserHandleImpl")
@@ -338,7 +339,7 @@ internal class BrowserHandleImpl(
         }
 
         // Setup keyboard interceptor for menu shortcuts
-        FluckEngine.setupKeyboardInterceptor(browser)
+        FluckEngine.setupKeyboardInterceptor(browser, ownerWindowId)
 
         // Setup screen capture handler
         FluckEngine.setupCaptureSessionHandler(browser)
@@ -676,7 +677,7 @@ internal class BrowserHandleImpl(
                     )
                     "keydown", "keyup" -> {
                         val keyCode = jsKeyToKeyCode(str("key"), str("code"))
-                        val ch = str("ch").firstOrNull() ?: ' '
+                        val ch = str("ch").firstOrNull() ?: '\u0000'
                         val mods = KeyModifiers.newBuilder()
                             .shiftDown(bool("shift"))
                             .controlDown(bool("ctrl"))
@@ -687,7 +688,7 @@ internal class BrowserHandleImpl(
                             browser.dispatch(KeyPressed.newBuilder(keyCode).keyChar(ch).keyModifiers(mods).build())
                             // KeyTyped delivers the character to the focused field; only for
                             // printable input (modifier chords and control keys must not type).
-                            if (ch != ' ' && !ch.isISOControl() && !bool("ctrl") && !bool("meta")) {
+                            if (ch != '\u0000' && !ch.isISOControl() && !bool("ctrl") && !bool("meta")) {
                                 browser.dispatch(KeyTyped.newBuilder(keyCode).keyChar(ch).keyModifiers(mods).build())
                             }
                         } else {
