@@ -43,6 +43,10 @@ allprojects {
     }
 
     extensions.configure<KtlintExtension> {
+        // Pin the ktlint engine to the exact version the format-the-world
+        // reformat was produced with (ktlint-gradle 14.2.0 bundles 1.5.0 by
+        // default; rule behavior differs across engine versions).
+        version.set("1.8.0")
         // Report-only until the format-the-world PR lands; ktlintCheck is part
         // of `check`, so failing here would gate every build on legacy
         // formatting before it has been normalized.
