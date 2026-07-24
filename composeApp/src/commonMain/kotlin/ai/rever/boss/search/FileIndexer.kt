@@ -9,9 +9,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-// Note: Using java.io.File in commonMain is acceptable here because BOSS is a desktop-only
-// application (see CLAUDE.md). This avoids unnecessary abstraction for a single-platform target.
 import java.io.File
+
+// Note on java.io.File: using it in commonMain is acceptable here because BOSS is a
+// desktop-only application (see CLAUDE.md). This avoids unnecessary abstraction for a
+// single-platform target.
 
 private val logger = BossLogger.forComponent("FileIndexer")
 

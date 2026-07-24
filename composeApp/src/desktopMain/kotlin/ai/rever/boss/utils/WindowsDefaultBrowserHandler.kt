@@ -25,8 +25,10 @@ object WindowsDefaultBrowserHandler {
     // Registry paths
     private const val START_MENU_KEY = "HKEY_CURRENT_USER\\SOFTWARE\\Clients\\StartMenuInternet\\BOSS"
     private const val REGISTERED_APPS = "HKEY_CURRENT_USER\\SOFTWARE\\RegisteredApplications"
-    private const val HTTP_USER_CHOICE = "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\http\\UserChoice"
-    private const val HTTPS_USER_CHOICE = "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https\\UserChoice"
+    private const val HTTP_USER_CHOICE =
+        "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\http\\UserChoice"
+    private const val HTTPS_USER_CHOICE =
+        "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https\\UserChoice"
 
     /**
      * Check if BOSS is currently the default browser on Windows

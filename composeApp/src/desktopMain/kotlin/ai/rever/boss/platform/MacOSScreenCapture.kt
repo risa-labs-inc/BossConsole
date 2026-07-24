@@ -27,6 +27,7 @@ private interface CoreGraphics : Library {
      * Returns true if the app has screen capture access, false otherwise.
      * This does NOT trigger a permission prompt.
      */
+    @Suppress("ktlint:standard:function-naming") // JNA maps by native symbol name
     fun CGPreflightScreenCaptureAccess(): Boolean
 
     /**
@@ -34,6 +35,7 @@ private interface CoreGraphics : Library {
      * this will trigger the system permission dialog.
      * Returns true if access is granted, false otherwise.
      */
+    @Suppress("ktlint:standard:function-naming") // JNA maps by native symbol name
     fun CGRequestScreenCaptureAccess(): Boolean
 }
 

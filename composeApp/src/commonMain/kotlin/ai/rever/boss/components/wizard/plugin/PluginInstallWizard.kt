@@ -119,7 +119,9 @@ internal fun WelcomeStepContent() {
         Spacer(modifier = Modifier.height(12.dp))
 
         Text(
-            text = "Customize your workspace by selecting the tools you need.\nWe'll help you get started with some recommended essentials.",
+            text =
+                "Customize your workspace by selecting the tools you need.\n" +
+                    "We'll help you get started with some recommended essentials.",
             fontSize = 14.sp,
             color = BossTheme.colors.textSecondary,
             textAlign = TextAlign.Center,

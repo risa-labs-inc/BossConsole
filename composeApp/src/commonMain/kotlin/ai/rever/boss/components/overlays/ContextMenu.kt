@@ -224,7 +224,8 @@ private fun ContextMenuContent(
                                     imageVector = item.trailingIcon,
                                     contentDescription = "Action",
                                     tint = item.trailingIconColor ?: colors.textSecondary,
-                                    modifier = Modifier.size(if (item.onTrailingClick != null) 16.dp else 8.dp), // Smaller for indicator dots
+                                    // Smaller size for indicator dots
+                                    modifier = Modifier.size(if (item.onTrailingClick != null) 16.dp else 8.dp),
                                 )
                             }
                         }

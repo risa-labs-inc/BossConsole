@@ -1384,7 +1384,9 @@ actual object GitService {
                     }
                 }
             } catch (e: TimeoutCancellationException) {
-                val errorMessage = "Clone operation timed out after 10 minutes. The repository may be too large or the connection too slow. Try cloning from terminal instead."
+                val errorMessage =
+                    "Clone operation timed out after 10 minutes. " +
+                        "The repository may be too large or the connection too slow. Try cloning from terminal instead."
                 logger.error(LogCategory.GENERAL, errorMessage, error = e)
                 // Clean up partial clone
                 try {

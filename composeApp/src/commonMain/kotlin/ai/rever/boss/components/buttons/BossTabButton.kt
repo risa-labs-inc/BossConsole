@@ -247,9 +247,8 @@ fun BossTabButton(
                                         onClose()
                                     }
                                     event.changes.forEach { it.consume() }
-                                }
-                                // Right-click (button 3): show context menu
-                                else if (awtEvent?.button == 3 && contextMenuItems.isNotEmpty()) {
+                                } else if (awtEvent?.button == 3 && contextMenuItems.isNotEmpty()) {
+                                    // Right-click (button 3): show context menu
                                     showContextMenu = true
                                     event.changes.forEach { it.consume() }
                                 }

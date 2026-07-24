@@ -1170,7 +1170,12 @@ fun NewTabDialog(
                                                     verticalAlignment = Alignment.CenterVertically,
                                                 ) {
                                                     Icon(
-                                                        imageVector = if (suggestion.isSearchSuggestion) Icons.Default.Search else Icons.Default.History,
+                                                        imageVector =
+                                                            if (suggestion.isSearchSuggestion) {
+                                                                Icons.Default.Search
+                                                            } else {
+                                                                Icons.Default.History
+                                                            },
                                                         contentDescription = null,
                                                         modifier = Modifier.size(18.dp),
                                                         tint = BossTheme.colors.textSecondary,

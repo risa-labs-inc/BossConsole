@@ -600,9 +600,8 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                         // This ensures URLs/terminals/files/workspaces create tabs AFTER workspace is loaded,
                         // not before (which would cause tabs to be destroyed by clearAllPanels)
                         state.markHandlersReady(isSessionResolved)
-                    }
-                    // Else: New window - don't load Last Session, start with empty workspace, but still mark ready
-                    else {
+                    } else {
+                        // New window - don't load Last Session, start with empty workspace, but still mark ready
                         state.markHandlersReady(isSessionResolved)
                     }
                 }

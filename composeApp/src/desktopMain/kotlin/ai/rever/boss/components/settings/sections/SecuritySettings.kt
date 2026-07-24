@@ -318,7 +318,9 @@ fun SecuritySettings() {
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         Text(
-                            text = "WebAuthn is not supported on this device. Please ensure you have biometric authentication enabled in System Preferences.",
+                            text =
+                                "WebAuthn is not supported on this device. " +
+                                    "Please ensure you have biometric authentication enabled in System Preferences.",
                             fontSize = 14.sp,
                             color = BossTheme.colors.textPrimary,
                         )
@@ -444,7 +446,12 @@ fun SecuritySettings() {
                                             color = BossTheme.colors.textPrimary,
                                         )
                                         Text(
-                                            text = if (passkeyFactors.isEmpty()) "No credentials enrolled" else "${passkeyFactors.size} credential(s) enrolled",
+                                            text =
+                                                if (passkeyFactors.isEmpty()) {
+                                                    "No credentials enrolled"
+                                                } else {
+                                                    "${passkeyFactors.size} credential(s) enrolled"
+                                                },
                                             fontSize = 14.sp,
                                             color = BossTheme.colors.textSecondary,
                                         )

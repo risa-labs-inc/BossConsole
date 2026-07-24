@@ -71,7 +71,8 @@ fun Modifier.scrollbar(
                 val contentOffset = scrollState.value
                 val viewPortLength = if (isVertical) size.height else size.width
                 val viewPortCrossAxisLength = if (isVertical) size.width else size.height
-                val contentLength = max(viewPortLength + scrollState.maxValue, 0.001f /* To prevent divide by zero error */)
+                // The 0.001f floor prevents a divide-by-zero error below.
+                val contentLength = max(viewPortLength + scrollState.maxValue, 0.001f)
                 val scrollbarLength =
                     viewPortLength -
                         (if (isVertical) topPadding + bottomPadding else startPadding + endPadding)

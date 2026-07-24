@@ -197,10 +197,21 @@ fun CrossDeviceAuthenticationDialog(
                 Text(
                     text =
                         when {
-                            pollError != null -> pollError!!
-                            isPolling -> "A QR code is displayed in the browser tab. Scan it with your iPhone to complete authentication."
-                            onCreateFluckTab != null -> "The authentication page is opening in a new FLUCK tab. You'll see a QR code to scan with your iPhone."
-                            else -> "The authentication page is opening in your browser. You'll see a QR code to scan with your iPhone."
+                            pollError != null -> {
+                                pollError!!
+                            }
+
+                            isPolling -> {
+                                "A QR code is displayed in the browser tab. Scan it with your iPhone to complete authentication."
+                            }
+
+                            onCreateFluckTab != null -> {
+                                "The authentication page is opening in a new FLUCK tab. You'll see a QR code to scan with your iPhone."
+                            }
+
+                            else -> {
+                                "The authentication page is opening in your browser. You'll see a QR code to scan with your iPhone."
+                            }
                         },
                     fontSize = 14.sp,
                     color = BossTheme.colors.textSecondary,

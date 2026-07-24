@@ -245,7 +245,9 @@ fun FluckBrowserSettings() {
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "When enabled, auto-filled password fields are blurred for shoulder surfing protection. Blur persists even on \"show password\" toggles.",
+                        text =
+                            "When enabled, auto-filled password fields are blurred for shoulder surfing protection. " +
+                                "Blur persists even on \"show password\" toggles.",
                         fontSize = 12.sp,
                         color = TextSecondary,
                     )
