@@ -11,6 +11,39 @@ naming:
   FunctionNaming:
     # Composable functions are PascalCase by convention.
     ignoreAnnotated: ['Composable']
+    # Default excludes plus desktopTest: detekt's defaults exempt every test
+    # source set (test, jvmTest, commonTest, ...) EXCEPT the KMP desktop one,
+    # so idiomatic backtick test names were flagged only there.
+    excludes:
+      [
+        '**/test/**',
+        '**/androidTest/**',
+        '**/commonTest/**',
+        '**/jvmTest/**',
+        '**/androidUnitTest/**',
+        '**/androidInstrumentedTest/**',
+        '**/jsTest/**',
+        '**/iosTest/**',
+        '**/desktopTest/**',
+      ]
+
+complexity:
+  TooManyFunctions:
+    # Same desktopTest gap as FunctionNaming above: test classes grow one
+    # function per case by design and are exempt in every other test source
+    # set by default.
+    excludes:
+      [
+        '**/test/**',
+        '**/androidTest/**',
+        '**/commonTest/**',
+        '**/jvmTest/**',
+        '**/androidUnitTest/**',
+        '**/androidInstrumentedTest/**',
+        '**/jsTest/**',
+        '**/iosTest/**',
+        '**/desktopTest/**',
+      ]
 
 style:
   MagicNumber:

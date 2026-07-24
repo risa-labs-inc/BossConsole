@@ -5,7 +5,7 @@
     <ID>ComplexCondition:BossAppEventBusEffects.kt$processingState.totalTabs == 0 &amp;&amp; !processingState.isProcessingURLs &amp;&amp; !processingState.isProcessingTerminals &amp;&amp; !processingState.isProcessingFiles &amp;&amp; processingState.isRestorationComplete</ID>
     <ID>ComplexCondition:BrowserHandleImpl.kt$BrowserHandleImpl$ch != '\u0000' &amp;&amp; !ch.isISOControl() &amp;&amp; !bool("ctrl") &amp;&amp; !bool("meta")</ID>
     <ID>ComplexCondition:ChromiumAutoDownloader.kt$ChromiumAutoDownloader$isMacOSExecutable || isChromium || isSharedLib || isShellScript || hasNoExtension</ID>
-    <ID>ComplexCondition:DynamicPluginManager.kt$DynamicPluginManager$candidate != null &amp;&amp; (force || (candidate.manifest.canUnload &amp;&amp; checkCanUnload(pluginId).isAllowed))</ID>
+    <ID>ComplexCondition:DynamicPluginManager.kt$DynamicPluginManager$closeTabsAcrossWindows &amp;&amp; candidate != null &amp;&amp; (force || (candidate.manifest.canUnload &amp;&amp; checkCanUnload(pluginId).isAllowed))</ID>
     <ID>ComplexCondition:FileNameSanitizer.kt$FileNameSanitizer$sanitized.startsWith("/") || sanitized.startsWith("\\") || sanitized.contains("..") || sanitized.contains(":/")</ID>
     <ID>ComplexCondition:FullscreenBrowserWindow.kt$FullscreenBrowserWindow.&lt;no name provided&gt;$hasReachedFullscreen &amp;&amp; isInFullscreenMode &amp;&amp; !isExiting &amp;&amp; fullscreenFrame != null</ID>
     <ID>ComplexCondition:NewTabDialog.kt$lowerTrimmed.startsWith("http://") || lowerTrimmed.startsWith("https://") || lowerTrimmed.startsWith("file://") || lowerTrimmed.startsWith("javascript:") || lowerTrimmed.startsWith("chrome://")</ID>
@@ -55,7 +55,7 @@
     <ID>CyclomaticComplexMethod:BossMainWindowPanel.kt$@Composable fun BossTabsComponent.BossMainTabBar( splitViewState: ai.rever.boss.components.window_panel.SplitViewState? = null, currentPanelId: String? = null, focusRequester: FocusRequester? = null, tabDragComponent: TabDraggableComponent? = null, onTabDropResult: (TabDropResult) -&gt; Unit = {} )</ID>
     <ID>CyclomaticComplexMethod:BossPanelTopBar.kt$@Composable fun BossPanelTopBar( title: String?, isHovered: Boolean, onReset: (() -&gt; Unit)? = null, onReloadPlugin: (() -&gt; Unit)? = null, onOpenAsTab: (() -&gt; Unit)? = null, onCheckForUpdates: (() -&gt; Unit)? = null, onOpenEvolver: (() -&gt; Unit)? = null, onReportIssue: (() -&gt; Unit)? = null, onMinimize: () -&gt; Unit, updateAvailable: AvailablePluginUpdate? = null, onUpdateClick: (() -&gt; Unit)? = null, panelId: PanelId? = null, windowId: String? = null, dragModifier: Modifier = Modifier, content: (@Composable () -&gt; Unit)? = null )</ID>
     <ID>CyclomaticComplexMethod:BossResizablePanel.kt$@Composable fun BossResizablePanel(modifier: Modifier, panel: Panel, isPanelVisible: Boolean = false, isMainVisible: Boolean = true, isRelative: Boolean = false, defaultWeight: Float = 1f, sideContent: (@Composable BoxScope.() -&gt; Unit)? = null, mainContent: (@Composable BoxScope.() -&gt; Unit)? = null)</ID>
-    <ID>CyclomaticComplexMethod:BossTabButton.kt$@OptIn(ExperimentalComposeUiApi::class) @Composable fun BossTabButton( fileName: String, icon: ImageVector? = null, iconPainter: Painter? = null, tabIcon: TabIcon? = null, isSelected: Boolean = false, isFocused: Boolean = true, modifier: Modifier = Modifier, onClick: () -&gt; Unit, onClose: () -&gt; Unit = {}, contextMenuItems: List&lt;ContextMenuItem&gt; = emptyList(), // Drag-related parameters tabDragComponent: TabDraggableComponent? = null, tabInfo: TabInfo? = null, panelId: String? = null, tabIndex: Int = -1, onDragStart: () -&gt; Unit = {}, onDragEnd: (TabDropResult?) -&gt; Unit = {} )</ID>
+    <ID>CyclomaticComplexMethod:BossTabButton.kt$@OptIn(ExperimentalComposeUiApi::class) @Composable fun BossTabButton( fileName: String, icon: ImageVector? = null, iconPainter: Painter? = null, tabIcon: TabIcon? = null, isSelected: Boolean = false, isFocused: Boolean = true, modifier: Modifier = Modifier, onClick: () -&gt; Unit, onClose: () -&gt; Unit = {}, contextMenuItems: List&lt;ContextMenuItem&gt; = emptyList(), /** * Explicit width for this tab. When provided, the tab is sized exactly to this value * (no min/max content sizing). Callers compute this from available row width to get * Safari-style "shrink to fit, then scroll" behaviour. Defaults to null which falls * back to the legacy intrinsic-min sizing with a 180–450 dp width clamp. */ tabWidth: Dp? = null, // Drag-related parameters tabDragComponent: TabDraggableComponent? = null, tabInfo: TabInfo? = null, panelId: String? = null, tabIndex: Int = -1, onDragStart: () -&gt; Unit = {}, onDragEnd: (TabDropResult?) -&gt; Unit = {} )</ID>
     <ID>CyclomaticComplexMethod:BossTopBar.kt$@Composable fun BossDraggableComponent.BossTopLeftBar( workspaceManager: WorkspaceManager? = null, onApplyWorkspace: ((LayoutWorkspace) -&gt; Unit)? = null, getCurrentWorkspace: (() -&gt; LayoutWorkspace)? = null, onShowTopOfMind: (() -&gt; Unit)? = null, onNewProject: (() -&gt; Unit)? = null, onCloneProject: (() -&gt; Unit)? = null )</ID>
     <ID>CyclomaticComplexMethod:BossWindow.kt$@Composable fun ApplicationScope.BossWindow( windowState: BossWindowState, onCloseRequest: () -&gt; Unit )</ID>
     <ID>CyclomaticComplexMethod:BrowserEngineSettings.kt$@Composable fun BrowserEngineSettings()</ID>
@@ -67,8 +67,8 @@
     <ID>CyclomaticComplexMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun jsKeyToKeyCode(key: String, code: String): KeyCode</ID>
     <ID>CyclomaticComplexMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun setupEventListeners()</ID>
     <ID>CyclomaticComplexMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun setupPopupHandler()</ID>
-    <ID>CyclomaticComplexMethod:BrowserServiceImpl.kt$BrowserServiceImpl$override suspend fun createBrowser(config: BrowserConfig): BrowserHandle?</ID>
     <ID>CyclomaticComplexMethod:BrowserServiceImpl.kt$BrowserServiceImpl$private fun seedCookiesAndHeaders(profile: Profile, auth: BrowserAuthSpec)</ID>
+    <ID>CyclomaticComplexMethod:BrowserServiceImpl.kt$BrowserServiceImpl$private suspend fun createBrowser( config: BrowserConfig, ownerWindowId: String ): BrowserHandle?</ID>
     <ID>CyclomaticComplexMethod:ChromiumDownloader.kt$fun main(args: Array&lt;String&gt;)</ID>
     <ID>CyclomaticComplexMethod:CloneProjectDialog.kt$@Composable private fun ConfigurationStep( onDismiss: () -&gt; Unit, onClone: (url: String, directory: String) -&gt; Unit )</ID>
     <ID>CyclomaticComplexMethod:CommitDialog.kt$@Composable fun CommitDialog( onDismiss: () -&gt; Unit, onCommitSuccess: (String) -&gt; Unit = {} )</ID>
@@ -86,8 +86,8 @@
     <ID>CyclomaticComplexMethod:DesktopGitService.kt$GitService$actual suspend fun watchGitHeadForWindow( projectPath: String, windowGitState: WindowGitState?, )</ID>
     <ID>CyclomaticComplexMethod:DesktopUpdateService.kt$UpdateService$actual suspend fun checkForUpdates(): UpdateInfo</ID>
     <ID>CyclomaticComplexMethod:DesktopUpdateService.kt$UpdateService$private suspend fun downloadFrom( url: String, assetName: String, assetSize: Long, sha256: String?, onProgress: (progress: Float) -&gt; Unit ): String?</ID>
+    <ID>CyclomaticComplexMethod:DynamicPluginManager.kt$DynamicPluginManager$private suspend fun uninstallPlugin( pluginId: String, force: Boolean, waitForGC: Boolean, closeTabsAcrossWindows: Boolean ): Result&lt;Unit&gt;</ID>
     <ID>CyclomaticComplexMethod:DynamicPluginManager.kt$DynamicPluginManager$suspend fun installPlugin(jarPath: String, enabled: Boolean = true): Result&lt;DynamicPluginInfo&gt;</ID>
-    <ID>CyclomaticComplexMethod:DynamicPluginManager.kt$DynamicPluginManager$suspend fun uninstallPlugin( pluginId: String, force: Boolean = false, waitForGC: Boolean = false ): Result&lt;Unit&gt;</ID>
     <ID>CyclomaticComplexMethod:DynamicPluginManager.kt$DynamicPluginManager.Companion$private suspend fun hotSwapApiLayerOrchestration(pluginDir: java.io.File): Result&lt;Int&gt;</ID>
     <ID>CyclomaticComplexMethod:EditableKeymapSettings.kt$@Composable fun EditableKeymapSettings()</ID>
     <ID>CyclomaticComplexMethod:EditorContentProviderImpl.kt$EditorContentProviderImpl$override fun detectLanguage(filePath: String): String</ID>
@@ -98,7 +98,7 @@
     <ID>CyclomaticComplexMethod:Fluck.kt$@Composable fun BrowserErrorView( error: Throwable, url: String, retryCount: Int = 0, maxRetries: Int = 3, onRetry: (() -&gt; Unit)? = null, onReset: (() -&gt; Unit)? = null, onResetBrowser: (() -&gt; Unit)? = null, onRetryEngine: (() -&gt; Unit)? = null )</ID>
     <ID>CyclomaticComplexMethod:Fluck.kt$FluckTabComponent$@Composable override fun Content()</ID>
     <ID>CyclomaticComplexMethod:FluckBrowserSettings.kt$@Composable fun FluckBrowserSettings()</ID>
-    <ID>CyclomaticComplexMethod:FluckEngine.kt$FluckEngine$fun setupKeyboardInterceptor(browser: com.teamdev.jxbrowser.browser.Browser)</ID>
+    <ID>CyclomaticComplexMethod:FluckEngine.kt$FluckEngine$fun setupKeyboardInterceptor( browser: com.teamdev.jxbrowser.browser.Browser, ownerWindowId: String? = null )</ID>
     <ID>CyclomaticComplexMethod:FluckEngine.kt$FluckEngine$private fun classifyError(e: Throwable): EngineInitError</ID>
     <ID>CyclomaticComplexMethod:FluckEngine.kt$FluckEngine$private fun createEngineInstance(chromiumDir: java.nio.file.Path, profileDirPath: java.nio.file.Path, profileName: String): Engine</ID>
     <ID>CyclomaticComplexMethod:FluckEngine.kt$FluckEngine$private fun killStaleChromiumProcesses(userHome: String)</ID>
@@ -187,683 +187,9 @@
     <ID>ForbiddenComment:VersionVerifier.kt$VersionVerifier$// TODO: Consider adding analytics/crash reporting here</ID>
     <ID>ForbiddenComment:WasmCodeEditor.kt$// TODO: Implement browser-based file reading</ID>
     <ID>ForbiddenComment:WasmCodeEditor.kt$// TODO: Implement browser-based file writing</ID>
-    <ID>FunctionNaming:BossLoggerTest.kt$BossLoggerTest$@Test fun `ComponentLogger logs at all levels`()</ID>
-    <ID>FunctionNaming:BossLoggerTest.kt$BossLoggerTest$@Test fun `ComponentLogger name is preserved in entries`()</ID>
-    <ID>FunctionNaming:BossLoggerTest.kt$BossLoggerTest$@Test fun `LogLevel fromString defaults to INFO for invalid values`()</ID>
-    <ID>FunctionNaming:BossLoggerTest.kt$BossLoggerTest$@Test fun `LogLevel fromString handles valid values`()</ID>
-    <ID>FunctionNaming:BossLoggerTest.kt$BossLoggerTest$@Test fun `clearCategoryLevel falls back to global level`()</ID>
-    <ID>FunctionNaming:BossLoggerTest.kt$BossLoggerTest$@Test fun `clearLogs removes all entries`()</ID>
-    <ID>FunctionNaming:BossLoggerTest.kt$BossLoggerTest$@Test fun `configure applies all settings`()</ID>
-    <ID>FunctionNaming:BossLoggerTest.kt$BossLoggerTest$@Test fun `disableFileLogging stops writing to file`()</ID>
-    <ID>FunctionNaming:BossLoggerTest.kt$BossLoggerTest$@Test fun `enableFileLogging creates log file`()</ID>
-    <ID>FunctionNaming:BossLoggerTest.kt$BossLoggerTest$@Test fun `file rotation triggers at maxFileSize`()</ID>
-    <ID>FunctionNaming:BossLoggerTest.kt$BossLoggerTest$@Test fun `getEffectiveLevel returns category level when set`()</ID>
-    <ID>FunctionNaming:BossLoggerTest.kt$BossLoggerTest$@Test fun `getRecentLogs filters by category`()</ID>
-    <ID>FunctionNaming:BossLoggerTest.kt$BossLoggerTest$@Test fun `getRecentLogs filters by minimum level`()</ID>
-    <ID>FunctionNaming:BossLoggerTest.kt$BossLoggerTest$@Test fun `getRecentLogs respects limit parameter`()</ID>
-    <ID>FunctionNaming:BossLoggerTest.kt$BossLoggerTest$@Test fun `listeners receive log entries`()</ID>
-    <ID>FunctionNaming:BossLoggerTest.kt$BossLoggerTest$@Test fun `log entries capture exceptions`()</ID>
-    <ID>FunctionNaming:BossLoggerTest.kt$BossLoggerTest$@Test fun `log entries contain correct metadata`()</ID>
-    <ID>FunctionNaming:BossLoggerTest.kt$BossLoggerTest$@Test fun `log filtering respects category-specific levels`()</ID>
-    <ID>FunctionNaming:BossLoggerTest.kt$BossLoggerTest$@Test fun `log filtering respects global level hierarchy`()</ID>
-    <ID>FunctionNaming:BossLoggerTest.kt$BossLoggerTest$@Test fun `removeListener stops notifications`()</ID>
-    <ID>FunctionNaming:BossTabsComponentMoveTest.kt$BossTabsComponentMoveTest$@Test fun `a move publishes MOVED instead of a CLOSED-OPENED pair`()</ID>
-    <ID>FunctionNaming:BossTabsComponentMoveTest.kt$BossTabsComponentMoveTest$@Test fun `addTab drives the tab lifecycle to RESUMED`()</ID>
-    <ID>FunctionNaming:BossTabsComponentMoveTest.kt$BossTabsComponentMoveTest$@Test fun `addTab returns -1 and stores nothing for an unregistered tab type`()</ID>
-    <ID>FunctionNaming:BossTabsComponentMoveTest.kt$BossTabsComponentMoveTest$@Test fun `adoptTab closes a stale holder of the same tab id instead of orphaning it`()</ID>
-    <ID>FunctionNaming:BossTabsComponentMoveTest.kt$BossTabsComponentMoveTest$@Test fun `detachTab and adoptTab move the live component without destroying it`()</ID>
-    <ID>FunctionNaming:BossTabsComponentMoveTest.kt$BossTabsComponentMoveTest$@Test fun `detachTab returns null for unknown tab`()</ID>
-    <ID>FunctionNaming:BossTabsComponentMoveTest.kt$BossTabsComponentMoveTest$@Test fun `removeTab destroys the tab component's lifecycle`()</ID>
-    <ID>FunctionNaming:BossTabsComponentMoveTest.kt$BossTabsComponentMoveTest$@Test fun `removeTabById reports whether a tab was removed`()</ID>
-    <ID>FunctionNaming:BossTabsComponentMoveTest.kt$BossTabsComponentMoveTest$@Test fun `splitPanel adopts a detached tab into the new panel without recreating it`()</ID>
-    <ID>FunctionNaming:BossTabsComponentMoveTest.kt$BossTabsComponentMoveTest$@Test fun `splitPanel with a missing target panel rescues the detached tab instead of leaking it`()</ID>
-    <ID>FunctionNaming:BrowserServiceImplTest.kt$BrowserServiceImplTest$@Test fun `cookieDomain strips scheme, path, query, fragment and port`()</ID>
-    <ID>FunctionNaming:BrowserServiceImplTest.kt$BrowserServiceImplTest$@Test fun `meta json round-trips and tolerates missing diskBytes (back-compat)`()</ID>
-    <ID>FunctionNaming:BrowserServiceImplTest.kt$BrowserServiceImplTest$@Test fun `sanitize keeps safe profile-name chars and replaces the rest`()</ID>
-    <ID>FunctionNaming:BrowserServiceImplTest.kt$BrowserServiceImplTest$@Test fun `selectEvictionVictims evicts oldest first until under cap`()</ID>
-    <ID>FunctionNaming:BrowserServiceImplTest.kt$BrowserServiceImplTest$@Test fun `selectEvictionVictims never evicts an in-use profile`()</ID>
-    <ID>FunctionNaming:BrowserServiceImplTest.kt$BrowserServiceImplTest$@Test fun `selectEvictionVictims returns nothing when under cap`()</ID>
-    <ID>FunctionNaming:ChromiumAutoDownloaderTest.kt$ChromiumAutoDownloaderTest$@Test fun `all candidates failing returns failure and reports the error`()</ID>
-    <ID>FunctionNaming:ChromiumAutoDownloaderTest.kt$ChromiumAutoDownloaderTest$@Test fun `checksum mismatch rejects the candidate and falls through to the next source`()</ID>
-    <ID>FunctionNaming:ChromiumAutoDownloaderTest.kt$ChromiumAutoDownloaderTest$@Test fun `complete staged install replaces the existing engine`()</ID>
-    <ID>FunctionNaming:ChromiumAutoDownloaderTest.kt$ChromiumAutoDownloaderTest$@Test fun `falls back to the next source when a fetch fails`()</ID>
-    <ID>FunctionNaming:ChromiumAutoDownloaderTest.kt$ChromiumAutoDownloaderTest$@Test fun `matching checksum is accepted`()</ID>
-    <ID>FunctionNaming:ChromiumAutoDownloaderTest.kt$ChromiumAutoDownloaderTest$@Test fun `no-op when nothing is staged`()</ID>
-    <ID>FunctionNaming:ChromiumAutoDownloaderTest.kt$ChromiumAutoDownloaderTest$@Test fun `promotes onto a missing target (fresh install)`()</ID>
-    <ID>FunctionNaming:ChromiumAutoDownloaderTest.kt$ChromiumAutoDownloaderTest$@Test fun `staged install writes the commit marker last`()</ID>
-    <ID>FunctionNaming:ChromiumAutoDownloaderTest.kt$ChromiumAutoDownloaderTest$@Test fun `staging with markers from the archive but no commit marker is not promoted`()</ID>
-    <ID>FunctionNaming:ChromiumAutoDownloaderTest.kt$ChromiumAutoDownloaderTest$@Test fun `staging without commit marker is discarded and engine preserved`()</ID>
-    <ID>FunctionNaming:ChromiumAutoDownloaderTest.kt$ChromiumAutoDownloaderTest$@Test fun `stale backup from an earlier failed swap is cleaned up`()</ID>
-    <ID>FunctionNaming:ChromiumReleaseSourceTest.kt$ChromiumReleaseSourceTest$@Test fun `asset matching is by exact archive name`()</ID>
-    <ID>FunctionNaming:ChromiumReleaseSourceTest.kt$ChromiumReleaseSourceTest$@Test fun `availableVersions returns newest first across sources with dedup`()</ID>
-    <ID>FunctionNaming:ChromiumReleaseSourceTest.kt$ChromiumReleaseSourceTest$@Test fun `both sources failing throws`()</ID>
-    <ID>FunctionNaming:ChromiumReleaseSourceTest.kt$ChromiumReleaseSourceTest$@Test fun `github fallback is the only candidate when supabase has no row or fails`()</ID>
-    <ID>FunctionNaming:ChromiumReleaseSourceTest.kt$ChromiumReleaseSourceTest$@Test fun `single source failure is reported not thrown`()</ID>
-    <ID>FunctionNaming:ChromiumReleaseSourceTest.kt$ChromiumReleaseSourceTest$@Test fun `stable release outranks its own pre-releases`()</ID>
-    <ID>FunctionNaming:ChromiumReleaseSourceTest.kt$ChromiumReleaseSourceTest$@Test fun `supabase candidate comes first and carries sha256, github backup has none`()</ID>
-    <ID>FunctionNaming:ChromiumReleaseSourceTest.kt$ChromiumReleaseSourceTest$@Test fun `versions sort numerically not lexicographically`()</ID>
-    <ID>FunctionNaming:CommonConditionsTest.kt$CommonConditionsTest$@Test fun `ConditionBuilder creates disabled condition when check returns false`()</ID>
-    <ID>FunctionNaming:CommonConditionsTest.kt$CommonConditionsTest$@Test fun `ConditionBuilder creates enabled condition when check returns true`()</ID>
-    <ID>FunctionNaming:CommonConditionsTest.kt$CommonConditionsTest$@Test fun `ConditionBuilder throws when no check provided`()</ID>
-    <ID>FunctionNaming:CommonConditionsTest.kt$CommonConditionsTest$@Test fun `ConditionBuilder with async check works`()</ID>
-    <ID>FunctionNaming:CommonConditionsTest.kt$CommonConditionsTest$@Test fun `Conditions always and never work correctly`()</ID>
-    <ID>FunctionNaming:CommonConditionsTest.kt$CommonConditionsTest$@Test fun `Conditions canCreateSplit works correctly`()</ID>
-    <ID>FunctionNaming:CommonConditionsTest.kt$CommonConditionsTest$@Test fun `Conditions canNavigateSplits works correctly`()</ID>
-    <ID>FunctionNaming:CommonConditionsTest.kt$CommonConditionsTest$@Test fun `Conditions canUndo and canRedo work correctly`()</ID>
-    <ID>FunctionNaming:CommonConditionsTest.kt$CommonConditionsTest$@Test fun `Conditions context checks work correctly`()</ID>
-    <ID>FunctionNaming:CommonConditionsTest.kt$CommonConditionsTest$@Test fun `Conditions debugOnly works correctly`()</ID>
-    <ID>FunctionNaming:CommonConditionsTest.kt$CommonConditionsTest$@Test fun `Conditions featureFlag works correctly`()</ID>
-    <ID>FunctionNaming:CommonConditionsTest.kt$CommonConditionsTest$@Test fun `Conditions hasActiveTab works correctly`()</ID>
-    <ID>FunctionNaming:CommonConditionsTest.kt$CommonConditionsTest$@Test fun `Conditions hasClipboardContent works correctly`()</ID>
-    <ID>FunctionNaming:CommonConditionsTest.kt$CommonConditionsTest$@Test fun `Conditions hasMinTabs works correctly`()</ID>
-    <ID>FunctionNaming:CommonConditionsTest.kt$CommonConditionsTest$@Test fun `Conditions hasMultipleTabs works correctly`()</ID>
-    <ID>FunctionNaming:CommonConditionsTest.kt$CommonConditionsTest$@Test fun `Conditions hasSelection works correctly`()</ID>
-    <ID>FunctionNaming:CommonConditionsTest.kt$CommonConditionsTest$@Test fun `Conditions hasTabs works correctly`()</ID>
-    <ID>FunctionNaming:CommonConditionsTest.kt$CommonConditionsTest$@Test fun `Conditions isEditable works correctly`()</ID>
-    <ID>FunctionNaming:CommonConditionsTest.kt$CommonConditionsTest$@Test fun `Conditions navigation checks work correctly`()</ID>
-    <ID>FunctionNaming:CommonConditionsTest.kt$CommonConditionsTest$@Test fun `Real-world scenario - close tab enabled with tabs OR can create split`()</ID>
-    <ID>FunctionNaming:CommonConditionsTest.kt$CommonConditionsTest$@Test fun `Real-world scenario - paste enabled when clipboard has content and editor is active`()</ID>
-    <ID>FunctionNaming:CommonConditionsTest.kt$CommonConditionsTest$@Test fun `and combinator requires both conditions`()</ID>
-    <ID>FunctionNaming:CommonConditionsTest.kt$CommonConditionsTest$@Test fun `complex combinator chain works`()</ID>
-    <ID>FunctionNaming:CommonConditionsTest.kt$CommonConditionsTest$@Test fun `condition DSL creates working condition`()</ID>
-    <ID>FunctionNaming:CommonConditionsTest.kt$CommonConditionsTest$@Test fun `enabledWhen creates working condition`()</ID>
-    <ID>FunctionNaming:CommonConditionsTest.kt$CommonConditionsTest$@Test fun `enabledWhenSync creates working condition`()</ID>
-    <ID>FunctionNaming:CommonConditionsTest.kt$CommonConditionsTest$@Test fun `not combinator inverts condition`()</ID>
-    <ID>FunctionNaming:CommonConditionsTest.kt$CommonConditionsTest$@Test fun `not combinator uses custom reason and description`()</ID>
-    <ID>FunctionNaming:CommonConditionsTest.kt$CommonConditionsTest$@Test fun `or combinator requires at least one condition`()</ID>
-    <ID>FunctionNaming:ConfigLoaderTest.kt$ConfigLoaderTest$@Test fun `default is used when no source has the key`()</ID>
-    <ID>FunctionNaming:ConfigLoaderTest.kt$ConfigLoaderTest$@Test fun `embedded build config wins below local properties`()</ID>
-    <ID>FunctionNaming:ConfigLoaderTest.kt$ConfigLoaderTest$@Test fun `env wins over all other tiers`()</ID>
-    <ID>FunctionNaming:ConfigLoaderTest.kt$ConfigLoaderTest$@Test fun `getConfig picks up a live system property and falls back to default`()</ID>
-    <ID>FunctionNaming:ConfigLoaderTest.kt$ConfigLoaderTest$@Test fun `local properties win below system property`()</ID>
-    <ID>FunctionNaming:ConfigLoaderTest.kt$ConfigLoaderTest$@Test fun `null when no source has the key and no default given`()</ID>
-    <ID>FunctionNaming:ConfigLoaderTest.kt$ConfigLoaderTest$@Test fun `system property wins below env`()</ID>
-    <ID>FunctionNaming:CrashHandlerAttributionTest.kt$CrashHandlerAttributionTest$@Test fun `attribution prefers the root cause origin`()</ID>
-    <ID>FunctionNaming:CrashHandlerAttributionTest.kt$CrashHandlerAttributionTest$@Test fun `attribution survives a closed loader`()</ID>
-    <ID>FunctionNaming:CrashHandlerAttributionTest.kt$CrashHandlerAttributionTest$@Test fun `crash with plugin-defined stack frames attributes to the plugin`()</ID>
-    <ID>FunctionNaming:CrashHandlerAttributionTest.kt$CrashHandlerAttributionTest$@Test fun `host-only crash attributes to nothing`()</ID>
-    <ID>FunctionNaming:CrashHandlerAttributionTest.kt$CrashHandlerAttributionTest$@Test fun `plugin-defined exception class attributes even without walking frames`()</ID>
-    <ID>FunctionNaming:CrashHandlerAttributionTest.kt$CrashHandlerAttributionTest$@Test fun `registry finds the defining plugin for a loaded class`()</ID>
-    <ID>FunctionNaming:CrashHandlerAttributionTest.kt$CrashHandlerAttributionTest$@Test fun `self-referential cause chain terminates`()</ID>
-    <ID>FunctionNaming:CrashHandlerAttributionTest.kt$CrashHandlerAttributionTest$@Test fun `shared parent-first classes are never attributed to a plugin`()</ID>
-    <ID>FunctionNaming:CrashHandlerAttributionTest.kt$CrashHandlerAttributionTest$@Test fun `unknown class names are not attributed`()</ID>
-    <ID>FunctionNaming:CrashHandlerAttributionTest.kt$CrashHandlerAttributionTest$@Test fun `wrapped plugin exception attributes via the cause chain`()</ID>
-    <ID>FunctionNaming:CrashHandlerIgnorableTest.kt$CrashHandlerIgnorableTest$@Test fun `broken pipe io exception is ignorable`()</ID>
-    <ID>FunctionNaming:CrashHandlerIgnorableTest.kt$CrashHandlerIgnorableTest$@Test fun `coroutine cancellation is ignorable`()</ID>
-    <ID>FunctionNaming:CrashHandlerIgnorableTest.kt$CrashHandlerIgnorableTest$@Test fun `generic runtime exception is not ignorable`()</ID>
-    <ID>FunctionNaming:CrashHandlerIgnorableTest.kt$CrashHandlerIgnorableTest$@Test fun `supabase token expiry is ignorable`()</ID>
-    <ID>FunctionNaming:CrashHandlerIgnorableTest.kt$CrashHandlerIgnorableTest$@Test fun `token expiry nested in cause chain is ignorable`()</ID>
-    <ID>FunctionNaming:DesktopFileScannerTest.kt$DesktopFileScannerTest$@Test fun `build and node_modules stay excluded even with showHidden`()</ID>
-    <ID>FunctionNaming:DesktopFileScannerTest.kt$DesktopFileScannerTest$@Test fun `directoryHasChildren does not throw on a malformed path`()</ID>
-    <ID>FunctionNaming:DesktopFileScannerTest.kt$DesktopFileScannerTest$@Test fun `directoryHasChildren follows a symlink to a non-empty directory`()</ID>
-    <ID>FunctionNaming:DesktopFileScannerTest.kt$DesktopFileScannerTest$@Test fun `directoryHasChildren returns false for a non-existent path`()</ID>
-    <ID>FunctionNaming:DesktopFileScannerTest.kt$DesktopFileScannerTest$@Test fun `directoryHasChildren returns false for an empty directory`()</ID>
-    <ID>FunctionNaming:DesktopFileScannerTest.kt$DesktopFileScannerTest$@Test fun `directoryHasChildren returns false when only a filtered directory name is present`()</ID>
-    <ID>FunctionNaming:DesktopFileScannerTest.kt$DesktopFileScannerTest$@Test fun `directoryHasChildren returns false when only hidden entries are present`()</ID>
-    <ID>FunctionNaming:DesktopFileScannerTest.kt$DesktopFileScannerTest$@Test fun `directoryHasChildren returns true when a visible file is present`()</ID>
-    <ID>FunctionNaming:DesktopFileScannerTest.kt$DesktopFileScannerTest$@Test fun `directoryHasChildren with showHidden counts a directory containing only hidden entries`()</ID>
-    <ID>FunctionNaming:DesktopFileScannerTest.kt$DesktopFileScannerTest$@Test fun `scanDirectory reports hasChildren false for a directory containing only node_modules`()</ID>
-    <ID>FunctionNaming:DesktopFileScannerTest.kt$DesktopFileScannerTest$@Test fun `scanDirectory reports hasChildren true for a directory with a visible file`()</ID>
-    <ID>FunctionNaming:DesktopFileScannerTest.kt$DesktopFileScannerTest$@Test fun `scanDirectory with showHidden includes hidden entries in children`()</ID>
-    <ID>FunctionNaming:DesktopFileScannerTest.kt$DesktopFileScannerTest$@Test fun `scanDirectoryWithDepth threads showHidden through recursion`()</ID>
-    <ID>FunctionNaming:EvolverContractTest.kt$EvolverContractTest$@Test fun `hostile characters in the id survive json building without corrupting the arg map`()</ID>
-    <ID>FunctionNaming:EvolverContractTest.kt$EvolverContractTest$@Test fun `menu gating predicate matches the registered tool name`()</ID>
-    <ID>FunctionNaming:EvolverContractTest.kt$EvolverContractTest$@Test fun `open evolver dispatch round-trips the plugin id to the handler`()</ID>
-    <ID>FunctionNaming:FileEventBusTest.kt$FileEventBusTest$@Test fun `parseFileReference decodes URL-encoded spaces`()</ID>
-    <ID>FunctionNaming:FileEventBusTest.kt$FileEventBusTest$@Test fun `parseFileReference decodes multiple URL-encoded characters`()</ID>
-    <ID>FunctionNaming:FileEventBusTest.kt$FileEventBusTest$@Test fun `parseFileReference handles Windows path only`()</ID>
-    <ID>FunctionNaming:FileEventBusTest.kt$FileEventBusTest$@Test fun `parseFileReference handles Windows path with line and column`()</ID>
-    <ID>FunctionNaming:FileEventBusTest.kt$FileEventBusTest$@Test fun `parseFileReference handles Windows path with line`()</ID>
-    <ID>FunctionNaming:FileEventBusTest.kt$FileEventBusTest$@Test fun `parseFileReference handles empty string`()</ID>
-    <ID>FunctionNaming:FileEventBusTest.kt$FileEventBusTest$@Test fun `parseFileReference handles filename with colon but no line number`()</ID>
-    <ID>FunctionNaming:FileEventBusTest.kt$FileEventBusTest$@Test fun `parseFileReference handles invalid URL encoding gracefully`()</ID>
-    <ID>FunctionNaming:FileEventBusTest.kt$FileEventBusTest$@Test fun `parseFileReference handles large line numbers`()</ID>
-    <ID>FunctionNaming:FileEventBusTest.kt$FileEventBusTest$@Test fun `parseFileReference handles lowercase Windows drive letter`()</ID>
-    <ID>FunctionNaming:FileEventBusTest.kt$FileEventBusTest$@Test fun `parseFileReference handles multiple colons with only last being line number`()</ID>
-    <ID>FunctionNaming:FileEventBusTest.kt$FileEventBusTest$@Test fun `parseFileReference handles path only`()</ID>
-    <ID>FunctionNaming:FileEventBusTest.kt$FileEventBusTest$@Test fun `parseFileReference handles path with line and column`()</ID>
-    <ID>FunctionNaming:FileEventBusTest.kt$FileEventBusTest$@Test fun `parseFileReference handles path with line`()</ID>
-    <ID>FunctionNaming:FileEventBusTest.kt$FileEventBusTest$@Test fun `parseFileReference handles zero line number`()</ID>
-    <ID>FunctionNaming:FileEventBusTest.kt$FileEventBusTest$@Test fun `stripFilePrefix handles file colon only prefix`()</ID>
-    <ID>FunctionNaming:FileEventBusTest.kt$FileEventBusTest$@Test fun `stripFilePrefix handles file double slash prefix`()</ID>
-    <ID>FunctionNaming:FileEventBusTest.kt$FileEventBusTest$@Test fun `stripFilePrefix handles file single slash prefix`()</ID>
-    <ID>FunctionNaming:FileEventBusTest.kt$FileEventBusTest$@Test fun `stripFilePrefix handles file triple slash prefix`()</ID>
-    <ID>FunctionNaming:FileEventBusTest.kt$FileEventBusTest$@Test fun `stripFilePrefix returns path unchanged when no prefix`()</ID>
-    <ID>FunctionNaming:FileEventBusTest.kt$FileEventBusTest$@Test fun `validateFilePath resolves path traversal sequences`(@TempDir tempDir: Path)</ID>
-    <ID>FunctionNaming:FileEventBusTest.kt$FileEventBusTest$@Test fun `validateFilePath returns Invalid for blank path`()</ID>
-    <ID>FunctionNaming:FileEventBusTest.kt$FileEventBusTest$@Test fun `validateFilePath returns Invalid for directory`(@TempDir tempDir: Path)</ID>
-    <ID>FunctionNaming:FileEventBusTest.kt$FileEventBusTest$@Test fun `validateFilePath returns Invalid for empty path`()</ID>
-    <ID>FunctionNaming:FileEventBusTest.kt$FileEventBusTest$@Test fun `validateFilePath returns Invalid for non-existent file`()</ID>
-    <ID>FunctionNaming:FileEventBusTest.kt$FileEventBusTest$@Test fun `validateFilePath returns Valid for existing readable file`(@TempDir tempDir: Path)</ID>
-    <ID>FunctionNaming:FindRelocatedPluginJarTest.kt$FindRelocatedPluginJarTest$@Test fun `finds the jar with the matching pluginId`()</ID>
-    <ID>FunctionNaming:FindRelocatedPluginJarTest.kt$FindRelocatedPluginJarTest$@Test fun `ignores jars without a readable manifest`()</ID>
-    <ID>FunctionNaming:FindRelocatedPluginJarTest.kt$FindRelocatedPluginJarTest$@Test fun `prefers the highest manifest version when several match`()</ID>
-    <ID>FunctionNaming:FindRelocatedPluginJarTest.kt$FindRelocatedPluginJarTest$@Test fun `returns null when nothing matches`()</ID>
-    <ID>FunctionNaming:FluckEngineSwitchesTest.kt$FluckEngineSwitchesTest$@Test fun `SkiaGraphite is opt-in only — it blanks OSR output on JxBrowser 9-3`()</ID>
-    <ID>FunctionNaming:FluckEngineSwitchesTest.kt$FluckEngineSwitchesTest$@Test fun `cgroup predicate recognizes container runtimes and rejects host cgroups`()</ID>
-    <ID>FunctionNaming:FluckEngineSwitchesTest.kt$FluckEngineSwitchesTest$@Test fun `extra switches are appended last so operator flags win ties`()</ID>
-    <ID>FunctionNaming:FluckEngineSwitchesTest.kt$FluckEngineSwitchesTest$@Test fun `falsy flag accepts the documented disable spellings only`()</ID>
-    <ID>FunctionNaming:FluckEngineSwitchesTest.kt$FluckEngineSwitchesTest$@Test fun `linux enables VA-API and adds container-only switches inside containers`()</ID>
-    <ID>FunctionNaming:FluckEngineSwitchesTest.kt$FluckEngineSwitchesTest$@Test fun `parseExtraSwitches handles null, empty and switch-less input`()</ID>
-    <ID>FunctionNaming:FluckEngineSwitchesTest.kt$FluckEngineSwitchesTest$@Test fun `parseExtraSwitches keeps comma-bearing feature lists intact`()</ID>
-    <ID>FunctionNaming:FluckEngineSwitchesTest.kt$FluckEngineSwitchesTest$@Test fun `parseExtraSwitches splits on whitespace and keeps only switch-shaped entries`()</ID>
-    <ID>FunctionNaming:FluckEngineSwitchesTest.kt$FluckEngineSwitchesTest$@Test fun `partitionExtraSwitches separates accepted switches from dropped tokens in one pass`()</ID>
-    <ID>FunctionNaming:FluckEngineSwitchesTest.kt$FluckEngineSwitchesTest$@Test fun `truthy flag accepts the documented enable spellings only`()</ID>
-    <ID>FunctionNaming:FluckEngineSwitchesTest.kt$FluckEngineSwitchesTest$@Test fun `unknown platforms get no platform-specific switches`()</ID>
-    <ID>FunctionNaming:FluckEngineSwitchesTest.kt$FluckEngineSwitchesTest$@Test fun `windows disables the native-window occlusion tracker`()</ID>
-    <ID>FunctionNaming:FluckTabInfoTest.kt$FluckTabInfoTest$@Test fun `concurrent navigation updates are thread-safe`()</ID>
-    <ID>FunctionNaming:FluckTabInfoTest.kt$FluckTabInfoTest$@Test fun `concurrent reads and writes are thread-safe`()</ID>
-    <ID>FunctionNaming:FluckTabInfoTest.kt$FluckTabInfoTest$@Test fun `copy creates independent navigation history`()</ID>
-    <ID>FunctionNaming:FluckTabInfoTest.kt$FluckTabInfoTest$@Test fun `copy for split view preserves current URL as initial URL`()</ID>
-    <ID>FunctionNaming:FluckTabInfoTest.kt$FluckTabInfoTest$@Test fun `copy with back navigation creates independent history`()</ID>
-    <ID>FunctionNaming:FluckTabInfoTest.kt$FluckTabInfoTest$@Test fun `currentUrl returns initial URL when no navigation has occurred`()</ID>
-    <ID>FunctionNaming:FluckTabInfoTest.kt$FluckTabInfoTest$@Test fun `currentUrl returns navigated URL after navigation`()</ID>
-    <ID>FunctionNaming:FluckTabInfoTest.kt$FluckTabInfoTest$@Test fun `currentUrl tracks multiple navigations correctly`()</ID>
-    <ID>FunctionNaming:FluckTabInfoTest.kt$FluckTabInfoTest$@Test fun `duplicate consecutive navigation does not add to history`()</ID>
-    <ID>FunctionNaming:FluckTabInfoTest.kt$FluckTabInfoTest$@Test fun `empty URL is handled gracefully`()</ID>
-    <ID>FunctionNaming:FluckTabInfoTest.kt$FluckTabInfoTest$@Test fun `equals is based on id and display content`()</ID>
-    <ID>FunctionNaming:FluckTabInfoTest.kt$FluckTabInfoTest$@Test fun `equals returns false for different ids`()</ID>
-    <ID>FunctionNaming:FluckTabInfoTest.kt$FluckTabInfoTest$@Test fun `explicit tabIcon override wins over the home icon`()</ID>
-    <ID>FunctionNaming:FluckTabInfoTest.kt$FluckTabInfoTest$@Test fun `home landing transform sets Home title and clears the stale favicon`()</ID>
-    <ID>FunctionNaming:FluckTabInfoTest.kt$FluckTabInfoTest$@Test fun `home page shows Home icon instead of the generic globe`()</ID>
-    <ID>FunctionNaming:FluckTabInfoTest.kt$FluckTabInfoTest$@Test fun `icon follows navigation between home and real pages`()</ID>
-    <ID>FunctionNaming:FluckTabInfoTest.kt$FluckTabInfoTest$@Test fun `isHomeUrl matches blank and about-blank urls only`()</ID>
-    <ID>FunctionNaming:FluckTabInfoTest.kt$FluckTabInfoTest$@Test fun `navigateBack at start of history does nothing`()</ID>
-    <ID>FunctionNaming:FluckTabInfoTest.kt$FluckTabInfoTest$@Test fun `navigateBack returns to previous URL`()</ID>
-    <ID>FunctionNaming:FluckTabInfoTest.kt$FluckTabInfoTest$@Test fun `navigateForward at end of history does nothing`()</ID>
-    <ID>FunctionNaming:FluckTabInfoTest.kt$FluckTabInfoTest$@Test fun `navigateForward returns to next URL after navigateBack`()</ID>
-    <ID>FunctionNaming:FluckTabInfoTest.kt$FluckTabInfoTest$@Test fun `navigation after navigateBack truncates forward history`()</ID>
-    <ID>FunctionNaming:FluckTabInfoTest.kt$FluckTabInfoTest$@Test fun `navigation to empty URL updates currentUrl`()</ID>
-    <ID>FunctionNaming:FluckTabInfoTest.kt$FluckTabInfoTest$@Test fun `real page keeps the default browser icon`()</ID>
-    <ID>FunctionNaming:FocusModeSettingsTest.kt$FocusModeSettingsTest$@Test fun `copy preserves unchanged values`()</ID>
-    <ID>FunctionNaming:FocusModeSettingsTest.kt$FocusModeSettingsTest$@Test fun `default settings should have 30px reveal offset`()</ID>
-    <ID>FunctionNaming:FocusModeSettingsTest.kt$FocusModeSettingsTest$@Test fun `default settings should have auto-reveal enabled`()</ID>
-    <ID>FunctionNaming:FocusModeSettingsTest.kt$FocusModeSettingsTest$@Test fun `default settings should have focus mode disabled`()</ID>
-    <ID>FunctionNaming:FocusModeSettingsTest.kt$FocusModeSettingsTest$@Test fun `settings can be created with auto-reveal disabled`()</ID>
-    <ID>FunctionNaming:FocusModeSettingsTest.kt$FocusModeSettingsTest$@Test fun `settings can be created with custom reveal offset`()</ID>
-    <ID>FunctionNaming:FocusModeSettingsTest.kt$FocusModeSettingsTest$@Test fun `settings can be created with focus mode enabled`()</ID>
-    <ID>FunctionNaming:FocusModeSettingsTest.kt$FocusModeSettingsTest$@Test fun `toggling focus mode preserves other settings`()</ID>
-    <ID>FunctionNaming:FuzzyMatcherTest.kt$FuzzyMatcherTest$@Test fun `compareResults should sort by score descending`()</ID>
-    <ID>FunctionNaming:FuzzyMatcherTest.kt$FuzzyMatcherTest$@Test fun `should collapse consecutive matches into single range`()</ID>
-    <ID>FunctionNaming:FuzzyMatcherTest.kt$FuzzyMatcherTest$@Test fun `should create separate ranges for non-consecutive matches`()</ID>
-    <ID>FunctionNaming:FuzzyMatcherTest.kt$FuzzyMatcherTest$@Test fun `should give bonus for exact match`()</ID>
-    <ID>FunctionNaming:FuzzyMatcherTest.kt$FuzzyMatcherTest$@Test fun `should give bonus for shorter targets`()</ID>
-    <ID>FunctionNaming:FuzzyMatcherTest.kt$FuzzyMatcherTest$@Test fun `should give higher score for camelCase word boundary matches`()</ID>
-    <ID>FunctionNaming:FuzzyMatcherTest.kt$FuzzyMatcherTest$@Test fun `should give higher score for consecutive matches`()</ID>
-    <ID>FunctionNaming:FuzzyMatcherTest.kt$FuzzyMatcherTest$@Test fun `should give higher score for matches at beginning`()</ID>
-    <ID>FunctionNaming:FuzzyMatcherTest.kt$FuzzyMatcherTest$@Test fun `should give higher score for path separator word boundaries`()</ID>
-    <ID>FunctionNaming:FuzzyMatcherTest.kt$FuzzyMatcherTest$@Test fun `should give higher score for underscore word boundary matches`()</ID>
-    <ID>FunctionNaming:FuzzyMatcherTest.kt$FuzzyMatcherTest$@Test fun `should handle mixed consecutive and non-consecutive`()</ID>
-    <ID>FunctionNaming:FuzzyMatcherTest.kt$FuzzyMatcherTest$@Test fun `should match all characters in order`()</ID>
-    <ID>FunctionNaming:FuzzyMatcherTest.kt$FuzzyMatcherTest$@Test fun `should match case-insensitively`()</ID>
-    <ID>FunctionNaming:FuzzyMatcherTest.kt$FuzzyMatcherTest$@Test fun `should match command descriptions`()</ID>
-    <ID>FunctionNaming:FuzzyMatcherTest.kt$FuzzyMatcherTest$@Test fun `should match file names with fuzzy patterns`()</ID>
-    <ID>FunctionNaming:FuzzyMatcherTest.kt$FuzzyMatcherTest$@Test fun `should rank exact prefix higher than scattered match`()</ID>
-    <ID>FunctionNaming:FuzzyMatcherTest.kt$FuzzyMatcherTest$@Test fun `should return empty result for empty pattern`()</ID>
-    <ID>FunctionNaming:FuzzyMatcherTest.kt$FuzzyMatcherTest$@Test fun `should return null when not all characters match`()</ID>
-    <ID>FunctionNaming:FuzzyMatcherTest.kt$FuzzyMatcherTest$@Test fun `should return null when pattern longer than target`()</ID>
-    <ID>FunctionNaming:IpcCompatibilityTest.kt$IpcCompatibilityTest$@Test fun `blank version is unknown and installable`()</ID>
-    <ID>FunctionNaming:IpcCompatibilityTest.kt$IpcCompatibilityTest$@Test fun `equal version is compatible and installable`()</ID>
-    <ID>FunctionNaming:IpcCompatibilityTest.kt$IpcCompatibilityTest$@Test fun `hostVersion reflects IpcVersion CURRENT`()</ID>
-    <ID>FunctionNaming:IpcCompatibilityTest.kt$IpcCompatibilityTest$@Test fun `newer major is a major mismatch`()</ID>
-    <ID>FunctionNaming:IpcCompatibilityTest.kt$IpcCompatibilityTest$@Test fun `newer minor within same major requires host update`()</ID>
-    <ID>FunctionNaming:JupyterTabInfoTest.kt$JupyterTabInfoTest$@Test fun `create derives title from unix path basename`()</ID>
-    <ID>FunctionNaming:JupyterTabInfoTest.kt$JupyterTabInfoTest$@Test fun `create derives title from windows path basename`()</ID>
-    <ID>FunctionNaming:JupyterTabInfoTest.kt$JupyterTabInfoTest$@Test fun `create falls back to derived title when override is blank`()</ID>
-    <ID>FunctionNaming:JupyterTabInfoTest.kt$JupyterTabInfoTest$@Test fun `create generates unique jupyter-prefixed ids`()</ID>
-    <ID>FunctionNaming:JupyterTabInfoTest.kt$JupyterTabInfoTest$@Test fun `create honours explicit title override`()</ID>
-    <ID>FunctionNaming:JupyterTabInfoTest.kt$JupyterTabInfoTest$@Test fun `create uses the shared jupyter type id`()</ID>
-    <ID>FunctionNaming:JupyterTabInfoTest.kt$JupyterTabInfoTest$@Test fun `create with blank path yields Notebook title`()</ID>
-    <ID>FunctionNaming:JupyterTabInfoTest.kt$JupyterTabInfoTest$@Test fun `createUntitled trims the name and defaults to Notebook`()</ID>
-    <ID>FunctionNaming:JupyterTabInfoTest.kt$JupyterTabInfoTest$@Test fun `updateTitle returns a retitled copy preserving id and path`()</ID>
-    <ID>FunctionNaming:KeyboardEventBusTest.kt$KeyboardEventBusTest$@Test fun `COMPONENT priority is highest`()</ID>
-    <ID>FunctionNaming:KeyboardEventBusTest.kt$KeyboardEventBusTest$@Test fun `GLOBAL priority is lowest`()</ID>
-    <ID>FunctionNaming:KeyboardEventBusTest.kt$KeyboardEventBusTest$@Test fun `KeyEventSource has expected values`()</ID>
-    <ID>FunctionNaming:KeyboardEventBusTest.kt$KeyboardEventBusTest$@Test fun `KeyboardEventResult consumed property works`()</ID>
-    <ID>FunctionNaming:KeyboardEventBusTest.kt$KeyboardEventBusTest$@Test fun `KeyboardEventResult includes actionId when provided`()</ID>
-    <ID>FunctionNaming:KeyboardEventBusTest.kt$KeyboardEventBusTest$@Test fun `WORKSPACE priority is medium`()</ID>
-    <ID>FunctionNaming:KeyboardEventBusTest.kt$KeyboardEventBusTest$@Test fun `cancelled job removes handler`()</ID>
-    <ID>FunctionNaming:KeyboardEventBusTest.kt$KeyboardEventBusTest$@Test fun `clearHandlers removes all handlers`()</ID>
-    <ID>FunctionNaming:KeyboardEventBusTest.kt$KeyboardEventBusTest$@Test fun `consumed event stops propagation`()</ID>
-    <ID>FunctionNaming:KeyboardEventBusTest.kt$KeyboardEventBusTest$@Test fun `debug mode can be enabled`()</ID>
-    <ID>FunctionNaming:KeyboardEventBusTest.kt$KeyboardEventBusTest$@Test fun `emit returns false when no handlers registered`()</ID>
-    <ID>FunctionNaming:KeyboardEventBusTest.kt$KeyboardEventBusTest$@Test fun `fromLevel returns GLOBAL for unknown level`()</ID>
-    <ID>FunctionNaming:KeyboardEventBusTest.kt$KeyboardEventBusTest$@Test fun `fromLevel returns correct priority`()</ID>
-    <ID>FunctionNaming:KeyboardEventBusTest.kt$KeyboardEventBusTest$@Test fun `getHandlerCounts returns correct counts per priority`()</ID>
-    <ID>FunctionNaming:KeyboardEventBusTest.kt$KeyboardEventBusTest$@Test fun `getHandlerCounts returns empty map initially`()</ID>
-    <ID>FunctionNaming:KeyboardEventBusTest.kt$KeyboardEventBusTest$@Test fun `handler exception does not stop other handlers`()</ID>
-    <ID>FunctionNaming:KeyboardEventBusTest.kt$KeyboardEventBusTest$@Test fun `handler with targetWindowId only receives matching events`()</ID>
-    <ID>FunctionNaming:KeyboardEventBusTest.kt$KeyboardEventBusTest$@Test fun `handlers are called in priority order`()</ID>
-    <ID>FunctionNaming:KeyboardEventBusTest.kt$KeyboardEventBusTest$@Test fun `multiple handlers at same priority all called`()</ID>
-    <ID>FunctionNaming:KeyboardEventBusTest.kt$KeyboardEventBusTest$@Test fun `multiple window-specific handlers filter correctly`()</ID>
-    <ID>FunctionNaming:KeyboardEventBusTest.kt$KeyboardEventBusTest$@Test fun `subscribe adds handler`()</ID>
-    <ID>FunctionNaming:KeyboardEventBusTest.kt$KeyboardEventBusTest$@Test fun `unconsumed event propagates to all handlers`()</ID>
-    <ID>FunctionNaming:KeyedDetachedJobsTest.kt$KeyedDetachedJobsTest$@Test fun `a run after completion executes again instead of joining a stale result`()</ID>
-    <ID>FunctionNaming:KeyedDetachedJobsTest.kt$KeyedDetachedJobsTest$@Test fun `concurrent runs for the same key coalesce onto one execution`()</ID>
-    <ID>FunctionNaming:KeyedDetachedJobsTest.kt$KeyedDetachedJobsTest$@Test fun `detached failure after caller cancellation reaches onDetachedFailure`()</ID>
-    <ID>FunctionNaming:KeyedDetachedJobsTest.kt$KeyedDetachedJobsTest$@Test fun `distinct keys run independently`()</ID>
-    <ID>FunctionNaming:KeyedDetachedJobsTest.kt$KeyedDetachedJobsTest$@Test fun `job runs to completion although the caller is cancelled mid-run`()</ID>
-    <ID>FunctionNaming:KeymapHandlerTest.kt$KeymapHandlerTest$@Test fun `MapBasedActionExecutor builder chains correctly`()</ID>
-    <ID>FunctionNaming:KeymapHandlerTest.kt$KeymapHandlerTest$@Test fun `MapBasedActionExecutor executes registered handler`()</ID>
-    <ID>FunctionNaming:KeymapHandlerTest.kt$KeymapHandlerTest$@Test fun `MapBasedActionExecutor handles multiple executions`()</ID>
-    <ID>FunctionNaming:KeymapHandlerTest.kt$KeymapHandlerTest$@Test fun `MapBasedActionExecutor returns false for unregistered action`()</ID>
-    <ID>FunctionNaming:KeymapHandlerTest.kt$KeymapHandlerTest$@Test fun `determineContext returns BROWSER for browser component`()</ID>
-    <ID>FunctionNaming:KeymapHandlerTest.kt$KeymapHandlerTest$@Test fun `determineContext returns BROWSER for fluck component`()</ID>
-    <ID>FunctionNaming:KeymapHandlerTest.kt$KeymapHandlerTest$@Test fun `determineContext returns EDITOR for code component`()</ID>
-    <ID>FunctionNaming:KeymapHandlerTest.kt$KeymapHandlerTest$@Test fun `determineContext returns EDITOR for editor component`()</ID>
-    <ID>FunctionNaming:KeymapHandlerTest.kt$KeymapHandlerTest$@Test fun `determineContext returns GLOBAL for null component`()</ID>
-    <ID>FunctionNaming:KeymapHandlerTest.kt$KeymapHandlerTest$@Test fun `determineContext returns GLOBAL for unknown component`()</ID>
-    <ID>FunctionNaming:KeymapHandlerTest.kt$KeymapHandlerTest$@Test fun `determineContext returns TERMINAL for terminal component`()</ID>
-    <ID>FunctionNaming:KeymapHandlerTest.kt$KeymapHandlerTest$@Test fun `determineContext returns WORKSPACE for workspace component`()</ID>
-    <ID>FunctionNaming:KeymapHandlerTest.kt$KeymapHandlerTest$@Test fun `from factory creates handler with settings`()</ID>
-    <ID>FunctionNaming:KeymapHandlerTest.kt$KeymapHandlerTest$@Test fun `getBinding returns correct binding`()</ID>
-    <ID>FunctionNaming:KeymapHandlerTest.kt$KeymapHandlerTest$@Test fun `getBinding returns null for nonexistent action`()</ID>
-    <ID>FunctionNaming:KeymapHandlerTest.kt$KeymapHandlerTest$@Test fun `getDisplayString returns formatted string for bound action`()</ID>
-    <ID>FunctionNaming:KeymapHandlerTest.kt$KeymapHandlerTest$@Test fun `getDisplayString returns null for unbound action`()</ID>
-    <ID>FunctionNaming:KeymapHandlerTest.kt$KeymapHandlerTest$@Test fun `isBound returns false for disabled binding`()</ID>
-    <ID>FunctionNaming:KeymapHandlerTest.kt$KeymapHandlerTest$@Test fun `isBound returns false for unbound action`()</ID>
-    <ID>FunctionNaming:KeymapHandlerTest.kt$KeymapHandlerTest$@Test fun `isBound returns true for bound action`()</ID>
-    <ID>FunctionNaming:KeymapHandlerTest.kt$KeymapHandlerTest$@Test fun `settings property returns current settings`()</ID>
-    <ID>FunctionNaming:KeymapHandlerTest.kt$KeymapHandlerTest$@Test fun `updateSettings changes handler settings`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `KeyStroke displayString formats correctly on Windows`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `KeyStroke displayString formats correctly on macOS`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `KeyStroke matches returns false for non-matching event`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `KeyStroke matches returns true for matching event`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `KeyStroke of factory creates correctly`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `KeyStroke signature formats correctly`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `binding allSignatures returns all signatures`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `binding displayStringAll shows all keystrokes`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `binding matches alternate keystroke`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `binding matches primary keystroke`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `binding with alternate keystrokes has correct allKeystrokes`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `clearAlternateKeystrokes removes all alternates`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `context-specific binding takes priority over global binding`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `crossPlatform creates binding with Cmd and Ctrl alternates`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `crossPlatform with additional modifiers works correctly`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `disabled binding is not matched`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `display string formats arrow keys correctly`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `display string formats correctly on Windows`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `display string formats correctly on macOS`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `display string formats special keys correctly`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `enabled binding is matched`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `getBindingsByCategory groups correctly`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `getBindingsForContext returns only matching context`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `getEnabledBindings filters out disabled`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `global binding matches when no context-specific binding exists`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `hasAlternates returns false when no alternates`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `hasAlternates returns true when alternates exist`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `matches returns false for disabled binding`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `matches returns false for wrong key`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `matches returns true for matching key and modifiers`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `signature includes context and modifiers`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `signature without modifiers formats correctly`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `withAlternateKeystroke adds new alternate`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `withoutAlternateKeystroke removes alternate`()</ID>
-    <ID>FunctionNaming:KeymapMatcherTest.kt$KeymapMatcherTest$@Test fun `workspace binding is checked when context-specific not found`()</ID>
-    <ID>FunctionNaming:KeymapSettingsTabSwitchModeTest.kt$KeymapSettingsTabSwitchModeTest$@Test fun `an explicit tab switch mode survives a json round-trip`()</ID>
-    <ID>FunctionNaming:KeymapSettingsTabSwitchModeTest.kt$KeymapSettingsTabSwitchModeTest$@Test fun `legacy keymap json without tabSwitchMode falls back to the default`()</ID>
-    <ID>FunctionNaming:KeymapSettingsTabSwitchModeTest.kt$KeymapSettingsTabSwitchModeTest$@Test fun `tab switch mode defaults to MRU for new users`()</ID>
-    <ID>FunctionNaming:KeymapValidatorTest.kt$KeymapValidatorTest$@Test fun `checkBinding detects same context conflict`()</ID>
-    <ID>FunctionNaming:KeymapValidatorTest.kt$KeymapValidatorTest$@Test fun `checkBinding excludes action being edited`()</ID>
-    <ID>FunctionNaming:KeymapValidatorTest.kt$KeymapValidatorTest$@Test fun `checkBinding finds existing conflicts`()</ID>
-    <ID>FunctionNaming:KeymapValidatorTest.kt$KeymapValidatorTest$@Test fun `checkBinding uses signature which includes context`()</ID>
-    <ID>FunctionNaming:KeymapValidatorTest.kt$KeymapValidatorTest$@Test fun `conflict description includes action names`()</ID>
-    <ID>FunctionNaming:KeymapValidatorTest.kt$KeymapValidatorTest$@Test fun `conflictCount returns correct number`()</ID>
-    <ID>FunctionNaming:KeymapValidatorTest.kt$KeymapValidatorTest$@Test fun `detects conflict between same context bindings`()</ID>
-    <ID>FunctionNaming:KeymapValidatorTest.kt$KeymapValidatorTest$@Test fun `getSummary returns correct message for multiple conflicts`()</ID>
-    <ID>FunctionNaming:KeymapValidatorTest.kt$KeymapValidatorTest$@Test fun `getSummary returns correct message for no conflicts`()</ID>
-    <ID>FunctionNaming:KeymapValidatorTest.kt$KeymapValidatorTest$@Test fun `getSummary returns correct message for single conflict`()</ID>
-    <ID>FunctionNaming:KeymapValidatorTest.kt$KeymapValidatorTest$@Test fun `global and specific context do not conflict with different signatures`()</ID>
-    <ID>FunctionNaming:KeymapValidatorTest.kt$KeymapValidatorTest$@Test fun `hasConflicts returns false when no conflicts`()</ID>
-    <ID>FunctionNaming:KeymapValidatorTest.kt$KeymapValidatorTest$@Test fun `hasConflicts returns true when conflicts exist`()</ID>
-    <ID>FunctionNaming:KeymapValidatorTest.kt$KeymapValidatorTest$@Test fun `isSafeToSave returns true even with conflicts`()</ID>
-    <ID>FunctionNaming:KeymapValidatorTest.kt$KeymapValidatorTest$@Test fun `multiple conflicts detected separately`()</ID>
-    <ID>FunctionNaming:KeymapValidatorTest.kt$KeymapValidatorTest$@Test fun `no conflicts between different non-global contexts`()</ID>
-    <ID>FunctionNaming:KeymapValidatorTest.kt$KeymapValidatorTest$@Test fun `no conflicts when one binding is disabled`()</ID>
-    <ID>FunctionNaming:KeymapValidatorTest.kt$KeymapValidatorTest$@Test fun `no conflicts with unique key combinations`()</ID>
-    <ID>FunctionNaming:KeymapValidatorTest.kt$KeymapValidatorTest$@Test fun `suggestFixes provides disable suggestions`()</ID>
-    <ID>FunctionNaming:KeymapValidatorTest.kt$KeymapValidatorTest$@Test fun `suggestFixes provides key change suggestions`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `describeUri handles null`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `describeUri indicates fragment present`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `describeUri indicates query params present`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `describeUri shows scheme and host without params`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `looksLikeSecret detects GitHub tokens`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `looksLikeSecret detects JWT tokens`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `looksLikeSecret detects Stripe-style keys`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `looksLikeSecret detects long alphanumeric strings`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `looksLikeSecret returns false for blank`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `looksLikeSecret returns false for null`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `looksLikeSecret returns false for short strings`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskCredentialId handles null`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskCredentialId shows length only`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskEmail handles blank input`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskEmail handles invalid email without at symbol`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskEmail handles multiple at symbols`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskEmail handles null input`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskEmail handles single char local part`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskEmail handles standard email format`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskEmail handles subdomain`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskEmail handles two char local part`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskSessionId handles short ids`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskSessionId shows first 8 chars`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskToken handles blank input`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskToken handles exactly 7 chars`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskToken handles null input`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskToken handles short tokens`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskToken preserves first and last 3 chars`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskUriParams handles blank input`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskUriParams handles case insensitive param names`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskUriParams handles fragment parameters`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskUriParams handles null input`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskUriParams handles uri without params`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskUriParams preserves non-sensitive parameters`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskUriParams redacts access_token parameter`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskUriParams redacts api_key parameter`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskUriParams redacts multiple sensitive parameters`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskUriParams redacts refresh_token parameter`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskUriParams redacts token parameter`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskUserId handles null`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskUserId handles short ids`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `maskUserId shows first 4 chars`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `sanitizeMap handles empty map`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `sanitizeMap handles nested sensitive key names`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `sanitizeMap handles null input`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `sanitizeMap masks values that look like secrets`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `sanitizeMap preserves non-sensitive values`()</ID>
-    <ID>FunctionNaming:LogSanitizerTest.kt$LogSanitizerTest$@Test fun `sanitizeMap redacts known sensitive keys`()</ID>
     <ID>FunctionNaming:MacOSScreenCapture.kt$CoreGraphics$fun CGPreflightScreenCaptureAccess(): Boolean</ID>
     <ID>FunctionNaming:MacOSScreenCapture.kt$CoreGraphics$fun CGRequestScreenCaptureAccess(): Boolean</ID>
     <ID>FunctionNaming:MainViewController.kt$fun MainViewControllerV4()</ID>
-    <ID>FunctionNaming:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$@Test fun `a provider whose tools() throws registers with no tools and does not affect siblings`()</ID>
-    <ID>FunctionNaming:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$@Test fun `admin bypasses requiredPermissions`()</ID>
-    <ID>FunctionNaming:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$@Test fun `admin bypasses requiresAdmin`()</ID>
-    <ID>FunctionNaming:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$@Test fun `allTools is not permission-filtered but tools is (metadata-only disclosure posture)`()</ID>
-    <ID>FunctionNaming:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$@Test fun `concurrent register, unregister, and updateAccess never leave a stale or torn snapshot`()</ID>
-    <ID>FunctionNaming:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$@Test fun `corrupt disabled-tools file fails open to emptySet rather than crashing`()</ID>
-    <ID>FunctionNaming:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$@Test fun `disabled set persists across a fresh core instance reading the same file`()</ID>
-    <ID>FunctionNaming:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$@Test fun `duplicate tool name across providers - first registered wins`()</ID>
-    <ID>FunctionNaming:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$@Test fun `int() returns null for values outside Int range instead of silently wrapping`()</ID>
-    <ID>FunctionNaming:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$@Test fun `invoke coerces a JSON integer through int() and double()`()</ID>
-    <ID>FunctionNaming:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$@Test fun `invoke parses string, boolean, integer, and double arguments`()</ID>
-    <ID>FunctionNaming:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$@Test fun `invoke propagates caller cancellation rather than swallowing it into an error result`()</ID>
-    <ID>FunctionNaming:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$@Test fun `invoke rejects a disabled tool by name (unreachable even though still registered)`()</ID>
-    <ID>FunctionNaming:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$@Test fun `invoke rejects a permission-denied tool by name`()</ID>
-    <ID>FunctionNaming:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$@Test fun `invoke rejects unknown tool name`()</ID>
-    <ID>FunctionNaming:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$@Test fun `invoke times out a handler that never completes`()</ID>
-    <ID>FunctionNaming:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$@Test fun `invoke with malformed JSON args runs the handler with an empty arg set instead of erroring`()</ID>
-    <ID>FunctionNaming:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$@Test fun `invoke wraps a handler exception into an error result`()</ID>
-    <ID>FunctionNaming:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$@Test fun `missing disabled-tools file starts with an empty disabled set`()</ID>
-    <ID>FunctionNaming:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$@Test fun `non-admin with requiresAdmin is hidden even holding the listed permissions`()</ID>
-    <ID>FunctionNaming:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$@Test fun `null disabledFile skips persistence entirely (pure in-memory)`()</ID>
-    <ID>FunctionNaming:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$@Test fun `re-registering the same providerId replaces its tool set`()</ID>
-    <ID>FunctionNaming:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$@Test fun `revoking a permission live hides the tool without re-registration`()</ID>
-    <ID>FunctionNaming:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$@Test fun `save leaves no dangling tmp file (atomic rename completed)`()</ID>
-    <ID>FunctionNaming:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$@Test fun `setToolEnabled false removes the tool from tools but not allTools`()</ID>
-    <ID>FunctionNaming:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$@Test fun `tool requiring ALL permissions is hidden when only some are held`()</ID>
-    <ID>FunctionNaming:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$@Test fun `tool requiring a permission is hidden until the user holds it`()</ID>
-    <ID>FunctionNaming:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$@Test fun `tool with no requirements is exposed to a logged-out user`()</ID>
-    <ID>FunctionNaming:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest$@Test fun `unregistering the winning provider lets the second provider's tool take over`()</ID>
-    <ID>FunctionNaming:PanelComponentStoreResetTest.kt$PanelComponentStoreResetTest$@Test fun `open panel keeps its cached component when the factory is re-registered`()</ID>
-    <ID>FunctionNaming:PanelComponentStoreResetTest.kt$PanelComponentStoreResetTest$@Test fun `resetComponent drops the stale component when the panel is no longer registered`()</ID>
-    <ID>FunctionNaming:PanelComponentStoreResetTest.kt$PanelComponentStoreResetTest$@Test fun `resetComponent recreates the panel from the newly registered factory`()</ID>
-    <ID>FunctionNaming:PanelComponentStoreResetTest.kt$PanelComponentStoreResetTest$@Test fun `resetComponent returns false for a panel that is not open`()</ID>
-    <ID>FunctionNaming:PanelComponentStoreResetTest.kt$PanelComponentStoreResetTest$@Test fun `resetComponent survives the old component's cleanup hook throwing an Error`()</ID>
-    <ID>FunctionNaming:PanelComponentStoreResetTest.kt$PanelComponentStoreResetTest$@Test fun `resetPanels resets only matching open slots across windows and leaves others untouched`()</ID>
-    <ID>FunctionNaming:PanelComponentStoreResetTest.kt$PanelComponentStoreResetTest$@Test fun `store registry tracks stores per window`()</ID>
-    <ID>FunctionNaming:PerformanceMonitorTest.kt$PerformanceMonitorTest$@Test fun `test CPU load percent calculation`()</ID>
-    <ID>FunctionNaming:PerformanceMonitorTest.kt$PerformanceMonitorTest$@Test fun `test default settings are valid`()</ID>
-    <ID>FunctionNaming:PerformanceMonitorTest.kt$PerformanceMonitorTest$@Test fun `test health status CRITICAL when CPU exceeds critical threshold`()</ID>
-    <ID>FunctionNaming:PerformanceMonitorTest.kt$PerformanceMonitorTest$@Test fun `test health status CRITICAL when memory exceeds critical threshold`()</ID>
-    <ID>FunctionNaming:PerformanceMonitorTest.kt$PerformanceMonitorTest$@Test fun `test health status GOOD when below warning thresholds`()</ID>
-    <ID>FunctionNaming:PerformanceMonitorTest.kt$PerformanceMonitorTest$@Test fun `test health status WARNING when CPU exceeds warning threshold`()</ID>
-    <ID>FunctionNaming:PerformanceMonitorTest.kt$PerformanceMonitorTest$@Test fun `test health status WARNING when memory exceeds warning threshold`()</ID>
-    <ID>FunctionNaming:PerformanceMonitorTest.kt$PerformanceMonitorTest$@Test fun `test last GC memory reclaimed calculation`()</ID>
-    <ID>FunctionNaming:PerformanceMonitorTest.kt$PerformanceMonitorTest$@Test fun `test memory heap usage MB conversion`()</ID>
-    <ID>FunctionNaming:PerformanceMonitorTest.kt$PerformanceMonitorTest$@Test fun `test memory heap usage percent calculation`()</ID>
-    <ID>FunctionNaming:PerformanceMonitorTest.kt$PerformanceMonitorTest$@Test fun `test memory heap usage percent with zero max`()</ID>
-    <ID>FunctionNaming:PerformanceMonitorTest.kt$PerformanceMonitorTest$@Test fun `test memory pool max MB falls back to committed when max is negative`()</ID>
-    <ID>FunctionNaming:PerformanceMonitorTest.kt$PerformanceMonitorTest$@Test fun `test memory pool usage percent falls back to committed when max is negative`()</ID>
-    <ID>FunctionNaming:PerformanceMonitorTest.kt$PerformanceMonitorTest$@Test fun `test memory pool usage percent with max bytes`()</ID>
-    <ID>FunctionNaming:PerformanceMonitorTest.kt$PerformanceMonitorTest$@Test fun `test overall status is CRITICAL if any component is CRITICAL`()</ID>
-    <ID>FunctionNaming:PerformanceMonitorTest.kt$PerformanceMonitorTest$@Test fun `test overall status is WARNING if any component is WARNING and none CRITICAL`()</ID>
-    <ID>FunctionNaming:PerformanceMonitorTest.kt$PerformanceMonitorTest$@Test fun `test settings validation clamps cpu critical threshold`()</ID>
-    <ID>FunctionNaming:PerformanceMonitorTest.kt$PerformanceMonitorTest$@Test fun `test settings validation clamps cpu warning threshold`()</ID>
-    <ID>FunctionNaming:PerformanceMonitorTest.kt$PerformanceMonitorTest$@Test fun `test settings validation clamps history retention`()</ID>
-    <ID>FunctionNaming:PerformanceMonitorTest.kt$PerformanceMonitorTest$@Test fun `test settings validation clamps memory critical threshold`()</ID>
-    <ID>FunctionNaming:PerformanceMonitorTest.kt$PerformanceMonitorTest$@Test fun `test settings validation clamps memory warning threshold`()</ID>
-    <ID>FunctionNaming:PerformanceMonitorTest.kt$PerformanceMonitorTest$@Test fun `test settings validation clamps sample intervals`()</ID>
-    <ID>FunctionNaming:PluginAccessGateTest.kt$PluginAccessGateTest$@Test fun `admin bypasses required permissions`()</ID>
-    <ID>FunctionNaming:PluginAccessGateTest.kt$PluginAccessGateTest$@Test fun `legacy plugin (no requirements) is visible to any authenticated user`()</ID>
-    <ID>FunctionNaming:PluginAccessGateTest.kt$PluginAccessGateTest$@Test fun `requiresAdmin AND requiredPermissions both enforced for non-admin`()</ID>
-    <ID>FunctionNaming:PluginAccessGateTest.kt$PluginAccessGateTest$@Test fun `requiresAdmin plugin hidden from non-admin even with permissions`()</ID>
-    <ID>FunctionNaming:PluginAccessGateTest.kt$PluginAccessGateTest$@Test fun `requiresAdmin plugin visible to admin`()</ID>
-    <ID>FunctionNaming:PluginAccessGateTest.kt$PluginAccessGateTest$@Test fun `user missing one required permission is denied`()</ID>
-    <ID>FunctionNaming:PluginAccessGateTest.kt$PluginAccessGateTest$@Test fun `user with all required permissions is allowed`()</ID>
-    <ID>FunctionNaming:PluginStoreSetupIpcGateTest.kt$PluginStoreSetupIpcGateTest$@Test fun `blank minIpcVersion is not gated`()</ID>
-    <ID>FunctionNaming:PluginStoreSetupIpcGateTest.kt$PluginStoreSetupIpcGateTest$@Test fun `newer major is rejected`()</ID>
-    <ID>FunctionNaming:PluginStoreSetupIpcGateTest.kt$PluginStoreSetupIpcGateTest$@Test fun `newer minor within same major is rejected`()</ID>
-    <ID>FunctionNaming:PluginStoreSetupIpcGateTest.kt$PluginStoreSetupIpcGateTest$@Test fun `older minor within same major is compatible`()</ID>
-    <ID>FunctionNaming:PluginStoreSetupIpcGateTest.kt$PluginStoreSetupIpcGateTest$@Test fun `version equal to host is compatible`()</ID>
-    <ID>FunctionNaming:PluginStoreSetupMinVersionGateTest.kt$PluginStoreSetupMinVersionGateTest$@Test fun `basic semver ordering`()</ID>
-    <ID>FunctionNaming:PluginStoreSetupMinVersionGateTest.kt$PluginStoreSetupMinVersionGateTest$@Test fun `multi-digit segments compare numerically not lexically`()</ID>
-    <ID>FunctionNaming:PluginStoreSetupMinVersionGateTest.kt$PluginStoreSetupMinVersionGateTest$@Test fun `no minimum means never too old`()</ID>
-    <ID>FunctionNaming:PluginStoreSetupMinVersionGateTest.kt$PluginStoreSetupMinVersionGateTest$@Test fun `non-matching filename yields null`()</ID>
-    <ID>FunctionNaming:PluginStoreSetupMinVersionGateTest.kt$PluginStoreSetupMinVersionGateTest$@Test fun `pre-release of the minimum forces update`()</ID>
-    <ID>FunctionNaming:PluginStoreSetupMinVersionGateTest.kt$PluginStoreSetupMinVersionGateTest$@Test fun `release is newer than its own pre-release`()</ID>
-    <ID>FunctionNaming:PluginStoreSetupMinVersionGateTest.kt$PluginStoreSetupMinVersionGateTest$@Test fun `release with only a thin jar yields null`()</ID>
-    <ID>FunctionNaming:PluginStoreSetupMinVersionGateTest.kt$PluginStoreSetupMinVersionGateTest$@Test fun `release without matching assets yields null`()</ID>
-    <ID>FunctionNaming:PluginStoreSetupMinVersionGateTest.kt$PluginStoreSetupMinVersionGateTest$@Test fun `suffixed segment counts as its numeric prefix`()</ID>
-    <ID>FunctionNaming:PluginStoreSetupMinVersionGateTest.kt$PluginStoreSetupMinVersionGateTest$@Test fun `thin jar listed first is skipped in favor of the real jar`()</ID>
-    <ID>FunctionNaming:PluginStoreSetupMinVersionGateTest.kt$PluginStoreSetupMinVersionGateTest$@Test fun `unreadable installed version forces update`()</ID>
-    <ID>FunctionNaming:PluginStoreSetupMinVersionGateTest.kt$PluginStoreSetupMinVersionGateTest$@Test fun `version above minimum loads`()</ID>
-    <ID>FunctionNaming:PluginStoreSetupMinVersionGateTest.kt$PluginStoreSetupMinVersionGateTest$@Test fun `version below minimum forces update`()</ID>
-    <ID>FunctionNaming:PluginStoreSetupMinVersionGateTest.kt$PluginStoreSetupMinVersionGateTest$@Test fun `version equal to minimum loads`()</ID>
-    <ID>FunctionNaming:PluginStoreSetupMinVersionGateTest.kt$PluginStoreSetupMinVersionGateTest$@Test fun `version extracted from standard jar filename`()</ID>
-    <ID>FunctionNaming:ProjectCreationIntegrationTest.kt$ProjectCreationIntegrationTest$@Test fun `test Kotlin project placeholder substitution`()</ID>
-    <ID>FunctionNaming:ProjectCreationIntegrationTest.kt$ProjectCreationIntegrationTest$@Test fun `test Node js package json contains package name`()</ID>
-    <ID>FunctionNaming:ProjectCreationIntegrationTest.kt$ProjectCreationIntegrationTest$@Test fun `test Rust Cargo toml contains package name`()</ID>
-    <ID>FunctionNaming:ProjectCreationIntegrationTest.kt$ProjectCreationIntegrationTest$@Test fun `test concurrent creation with same name handled correctly`()</ID>
-    <ID>FunctionNaming:ProjectCreationIntegrationTest.kt$ProjectCreationIntegrationTest$@Test fun `test create Go project successfully`()</ID>
-    <ID>FunctionNaming:ProjectCreationIntegrationTest.kt$ProjectCreationIntegrationTest$@Test fun `test create Kotlin JVM project successfully`()</ID>
-    <ID>FunctionNaming:ProjectCreationIntegrationTest.kt$ProjectCreationIntegrationTest$@Test fun `test create Node js project successfully`()</ID>
-    <ID>FunctionNaming:ProjectCreationIntegrationTest.kt$ProjectCreationIntegrationTest$@Test fun `test create Python project successfully`()</ID>
-    <ID>FunctionNaming:ProjectCreationIntegrationTest.kt$ProjectCreationIntegrationTest$@Test fun `test create Rust project successfully`()</ID>
-    <ID>FunctionNaming:ProjectCreationIntegrationTest.kt$ProjectCreationIntegrationTest$@Test fun `test create empty project successfully`()</ID>
-    <ID>FunctionNaming:ProjectCreationIntegrationTest.kt$ProjectCreationIntegrationTest$@Test fun `test create project in non-existent directory fails`()</ID>
-    <ID>FunctionNaming:ProjectCreationIntegrationTest.kt$ProjectCreationIntegrationTest$@Test fun `test create project where directory already exists fails`()</ID>
-    <ID>FunctionNaming:ProjectCreationIntegrationTest.kt$ProjectCreationIntegrationTest$@Test fun `test create project with Windows reserved name fails`()</ID>
-    <ID>FunctionNaming:ProjectCreationIntegrationTest.kt$ProjectCreationIntegrationTest$@Test fun `test create project with invalid name fails`()</ID>
-    <ID>FunctionNaming:ProjectCreationIntegrationTest.kt$ProjectCreationIntegrationTest$@Test fun `test empty project README contains project name`()</ID>
-    <ID>FunctionNaming:ProjectCreationIntegrationTest.kt$ProjectCreationIntegrationTest$@Test fun `test failed creation cleans up partial directory`()</ID>
-    <ID>FunctionNaming:ProjectCreationIntegrationTest.kt$ProjectCreationIntegrationTest$@Test fun `test progress callback is called with increasing values`()</ID>
-    <ID>FunctionNaming:ProjectCreationIntegrationTest.kt$ProjectCreationIntegrationTest$@Test fun `test project name with leading and trailing spaces is trimmed`()</ID>
-    <ID>FunctionNaming:ProjectCreationSecurityTest.kt$ProjectCreationSecurityTest$@Test fun `test Unicode normalization attacks are handled`()</ID>
-    <ID>FunctionNaming:ProjectCreationSecurityTest.kt$ProjectCreationSecurityTest$@Test fun `test created files do not escape project directory`()</ID>
-    <ID>FunctionNaming:ProjectCreationSecurityTest.kt$ProjectCreationSecurityTest$@Test fun `test legitimate template paths are accepted`()</ID>
-    <ID>FunctionNaming:ProjectCreationSecurityTest.kt$ProjectCreationSecurityTest$@Test fun `test null byte in project name is handled`()</ID>
-    <ID>FunctionNaming:ProjectCreationSecurityTest.kt$ProjectCreationSecurityTest$@Test fun `test path traversal in project name is rejected`()</ID>
-    <ID>FunctionNaming:ProjectCreationSecurityTest.kt$ProjectCreationSecurityTest$@Test fun `test project creation does not follow symlinks outside directory`()</ID>
-    <ID>FunctionNaming:ProjectCreationSecurityTest.kt$ProjectCreationSecurityTest$@Test fun `test rejected names cannot be created`()</ID>
-    <ID>FunctionNaming:ProjectCreationSecurityTest.kt$ProjectCreationSecurityTest$@Test fun `test special shell characters in project name are safe`()</ID>
-    <ID>FunctionNaming:ProjectCreationSecurityTest.kt$ProjectCreationSecurityTest$@Test fun `test validation and creation are consistent`()</ID>
-    <ID>FunctionNaming:ProjectCreationSecurityTest.kt$ProjectCreationSecurityTest$@Test fun `test very long project name is rejected`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test CamelCase name is lowercased`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test Windows reserved name AUX is rejected`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test Windows reserved name COM1 is rejected`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test Windows reserved name CON is rejected`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test Windows reserved name LPT1 is rejected`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test Windows reserved name NUL is rejected`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test Windows reserved name PRN is rejected`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test Windows reserved name with extension is rejected`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test Windows reserved names are case insensitive`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test blank project name with spaces is rejected`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test complex realistic name`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test empty name returns default`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test empty project name is rejected`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test existing project directory is rejected`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test hyphen is converted to dot`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test leading and trailing dots are trimmed`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test leading number gets prefix`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test mixed case name is accepted`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test mixed separators are converted`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test multiple consecutive dots are collapsed`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test multiple separators are collapsed to single dot`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test name starting with number is accepted`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test name with dot in middle is accepted`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test name with hyphen is accepted`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test name with numbers is accepted`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test name with only special chars returns default`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test name with spaces is trimmed and accepted`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test name with underscore is accepted`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test non-existent parent directory is rejected`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test numbers in middle are preserved`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test project name at max length is accepted`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test project name exceeding max length is rejected`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test project name with asterisk is rejected`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test project name with backslash is rejected`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test project name with colon is rejected`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test project name with double quote is rejected`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test project name with greater than is rejected`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test project name with leading dot is rejected`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test project name with less than is rejected`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test project name with only trailing space is trimmed and accepted`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test project name with pipe is rejected`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test project name with question mark is rejected`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test project name with slash is rejected`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test project name with space in middle is rejected`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test project name with trailing dot is rejected`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test simple lowercase name derives correctly`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test simple lowercase name is accepted`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test space is converted to dot`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test special characters are removed`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test underscore is converted to dot`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test unicode characters are removed`()</ID>
-    <ID>FunctionNaming:ProjectCreationServiceTest.kt$ProjectCreationServiceTest$@Test fun `test uppercase name is lowercased`()</ID>
-    <ID>FunctionNaming:RegistryAwaitTest.kt$RegistryAwaitTest$@Test fun `completes when a registry change satisfies the condition`()</ID>
-    <ID>FunctionNaming:RegistryAwaitTest.kt$RegistryAwaitTest$@Test fun `notifications that do not satisfy the condition keep waiting until one does`()</ID>
-    <ID>FunctionNaming:RegistryAwaitTest.kt$RegistryAwaitTest$@Test fun `returns false on timeout and removes the listener`()</ID>
-    <ID>FunctionNaming:RegistryAwaitTest.kt$RegistryAwaitTest$@Test fun `returns immediately when condition already holds`()</ID>
-    <ID>FunctionNaming:ReleaseNotesMarkdownTest.kt$ReleaseNotesMarkdownTest$@Test fun `inline markdown maps to styled spans`()</ID>
-    <ID>FunctionNaming:ReleaseNotesMarkdownTest.kt$ReleaseNotesMarkdownTest$@Test fun `parses generated release notes into heading and table blocks`()</ID>
-    <ID>FunctionNaming:ReleaseNotesMarkdownTest.kt$ReleaseNotesMarkdownTest$@Test fun `parses lists, code fences, breaks, and paragraphs`()</ID>
-    <ID>FunctionNaming:ReleaseNotesMarkdownTest.kt$ReleaseNotesMarkdownTest$@Test fun `plain text passes through untouched`()</ID>
-    <ID>FunctionNaming:ReleaseNotesMarkdownTest.kt$ReleaseNotesMarkdownTest$@Test fun `unterminated fence still yields a code block`()</ID>
-    <ID>FunctionNaming:RoleClaimsTest.kt$RoleClaimsTest$@Test fun `admin claim parsed and effective permissions surfaced`()</ID>
-    <ID>FunctionNaming:RoleClaimsTest.kt$RoleClaimsTest$@Test fun `defaults applied when role claims absent`()</ID>
-    <ID>FunctionNaming:RoleClaimsTest.kt$RoleClaimsTest$@Test fun `missing user_permissions yields empty permissions`()</ID>
-    <ID>FunctionNaming:RoleClaimsTest.kt$RoleClaimsTest$@Test fun `non-string entries in user_permissions are filtered out`()</ID>
-    <ID>FunctionNaming:RoleClaimsTest.kt$RoleClaimsTest$@Test fun `parses user_permissions, user_roles and is_admin`()</ID>
-    <ID>FunctionNaming:SessionRecoveryPolicyTest.kt$SessionRecoveryPolicyTest$@Test fun `4xx rejections clear the session`()</ID>
-    <ID>FunctionNaming:SessionRecoveryPolicyTest.kt$SessionRecoveryPolicyTest$@Test fun `backoff doubles and caps at max`()</ID>
-    <ID>FunctionNaming:SessionRecoveryPolicyTest.kt$SessionRecoveryPolicyTest$@Test fun `non-rest exceptions retry`()</ID>
-    <ID>FunctionNaming:SessionRecoveryPolicyTest.kt$SessionRecoveryPolicyTest$@Test fun `server errors and cloudflare codes retry`()</ID>
-    <ID>FunctionNaming:SessionRecoveryPolicyTest.kt$SessionRecoveryPolicyTest$@Test fun `transient 4xx codes retry instead of clearing`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `AlwaysEnabledCondition disabledReason is descriptive`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `AlwaysEnabledCondition enabledDescription is descriptive`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `AlwaysEnabledCondition isEnabled returns true`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `AndCondition enabledDescription joins with and`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `AndCondition returns false when any condition false`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `AndCondition returns true for empty list`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `AndCondition returns true when all conditions true`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `NeverEnabledCondition enabledDescription is Never`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `NeverEnabledCondition isEnabled returns false`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `NeverEnabledCondition uses custom disabled reason`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `NeverEnabledCondition uses default disabled reason`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `OrCondition disabledReason lists all conditions`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `OrCondition enabledDescription joins with or`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `OrCondition returns false for empty list`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `OrCondition returns false when all conditions false`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `OrCondition returns true when any condition true`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `clear removes all conditions and states`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `custom condition with dynamic state`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `debug mode can be toggled`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `default enabledDescription is Always`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `getDisabledReason returns null for enabled action`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `getDisabledReason returns reason for disabled action`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `getRegisteredActions returns all registered action IDs`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `getState returns null for unregistered action`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `getState returns state after registration`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `isEnabled handles condition exception`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `isEnabled returns false for NeverEnabledCondition`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `isEnabled returns true for AlwaysEnabledCondition`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `isEnabled returns true for unregistered action`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `nested And and Or conditions work correctly`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `reevaluate updates all states`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `reevaluateSingle updates single state`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `registerCondition adds condition`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `startAutoReevaluation returns cancellable job`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `states flow emits initial empty map`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `states flow updates when condition registered`()</ID>
-    <ID>FunctionNaming:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest$@Test fun `unregisterCondition removes condition`()</ID>
-    <ID>FunctionNaming:SidebarIconLimitsTest.kt$SidebarIconLimitsTest$@Test fun `caps equal counts when everything fits`()</ID>
-    <ID>FunctionNaming:SidebarIconLimitsTest.kt$SidebarIconLimitsTest$@Test fun `caps skip empty slots`()</ID>
-    <ID>FunctionNaming:SidebarIconLimitsTest.kt$SidebarIconLimitsTest$@Test fun `empty slots are skipped entirely`()</ID>
-    <ID>FunctionNaming:SidebarIconLimitsTest.kt$SidebarIconLimitsTest$@Test fun `every non-empty slot keeps one row even on zero or negative budget`()</ID>
-    <ID>FunctionNaming:SidebarIconLimitsTest.kt$SidebarIconLimitsTest$@Test fun `everything fits when budget covers all items`()</ID>
-    <ID>FunctionNaming:SidebarIconLimitsTest.kt$SidebarIconLimitsTest$@Test fun `guaranteed single row renders More only`()</ID>
-    <ID>FunctionNaming:SidebarIconLimitsTest.kt$SidebarIconLimitsTest$@Test fun `overflowing slot yields its last row to the More button`()</ID>
-    <ID>FunctionNaming:SidebarIconLimitsTest.kt$SidebarIconLimitsTest$@Test fun `surplus beyond item counts is not allocated`()</ID>
-    <ID>FunctionNaming:SidebarIconLimitsTest.kt$SidebarIconLimitsTest$@Test fun `tight budget is dealt round-robin so no slot starves`()</ID>
-    <ID>FunctionNaming:SkipListDriftTest.kt$SkipListDriftTest$@Test fun `in-process and IPC name-visibility rules agree`()</ID>
-    <ID>FunctionNaming:SkipListDriftTest.kt$SkipListDriftTest$@Test fun `in-process and IPC skip-lists are identical`()</ID>
-    <ID>FunctionNaming:TabDropResultHandlingTest.kt$TabDropResultHandlingTest$@Test fun `MoveToPanel drops the move when the tab was closed mid-drag`()</ID>
-    <ID>FunctionNaming:TabDropResultHandlingTest.kt$TabDropResultHandlingTest$@Test fun `MoveToPanel transfers the live component and activates the target panel`()</ID>
-    <ID>FunctionNaming:TabDropResultHandlingTest.kt$TabDropResultHandlingTest$@Test fun `cross-panel CreateSplit drops the move when the tab was closed mid-drag`()</ID>
-    <ID>FunctionNaming:TabDropResultHandlingTest.kt$TabDropResultHandlingTest$@Test fun `cross-panel CreateSplit moves the live component into the new split`()</ID>
-    <ID>FunctionNaming:TabDropResultHandlingTest.kt$TabDropResultHandlingTest$@Test fun `same-panel CreateSplit keeps copy semantics - original retained and not detached`()</ID>
-    <ID>FunctionNaming:TabUpdateRegistryMoveTest.kt$TabUpdateRegistryMoveTest$@Test fun `all provider methods delegate to the current owner`()</ID>
-    <ID>FunctionNaming:TabUpdateRegistryMoveTest.kt$TabUpdateRegistryMoveTest$@Test fun `cached provider no-ops safely when the owner is gone mid-flight`()</ID>
-    <ID>FunctionNaming:TabUpdateRegistryMoveTest.kt$TabUpdateRegistryMoveTest$@Test fun `cached provider routes updates to the tab's current owner after a move`()</ID>
-    <ID>FunctionNaming:TabUpdateRegistryMoveTest.kt$TabUpdateRegistryMoveTest$@Test fun `createProvider returns null when no component owns the tab`()</ID>
-    <ID>FunctionNaming:TerminalLinkSettingsSerializationTest.kt$TerminalLinkSettingsSerializationTest$@Test fun `defaults still apply when fields are missing`()</ID>
-    <ID>FunctionNaming:TerminalLinkSettingsSerializationTest.kt$TerminalLinkSettingsSerializationTest$@Test fun `every open mode round-trips`()</ID>
-    <ID>FunctionNaming:TerminalLinkSettingsSerializationTest.kt$TerminalLinkSettingsSerializationTest$@Test fun `system default decodes from persisted json by name`()</ID>
-    <ID>FunctionNaming:TrackingPluginContextMcpTest.kt$TrackingPluginContextMcpTest$@Test fun `tracker isolates plugins - unregisterAll only tears down its own plugin's providers`()</ID>
-    <ID>FunctionNaming:TrackingPluginContextMcpTest.kt$TrackingPluginContextMcpTest$@Test fun `unregisterAll clears the tracker so a second call does not re-unregister`()</ID>
-    <ID>FunctionNaming:TrackingPluginContextMcpTest.kt$TrackingPluginContextMcpTest$@Test fun `unregisterAll unregisters every MCP tool provider the plugin registered`()</ID>
-    <ID>FunctionNaming:UpdateInstallerPathResolutionTest.kt$UpdateInstallerPathResolutionTest$@Test fun `bundle suffix is matched at path segment boundary`()</ID>
-    <ID>FunctionNaming:UpdateInstallerPathResolutionTest.kt$UpdateInstallerPathResolutionTest$@Test fun `library path preserves app substring inside bundle name`()</ID>
-    <ID>FunctionNaming:UpdateInstallerPathResolutionTest.kt$UpdateInstallerPathResolutionTest$@Test fun `non-translocated app path is returned without filesystem lookup`()</ID>
-    <ID>FunctionNaming:UpdateInstallerPathResolutionTest.kt$UpdateInstallerPathResolutionTest$@Test fun `translocated path falls back to installed app lookup`()</ID>
-    <ID>FunctionNaming:UpdateInstallerPathResolutionTest.kt$UpdateInstallerPathResolutionTest$@Test fun `translocated path resolves bundle name in Applications`()</ID>
-    <ID>FunctionNaming:UpdateInstallerPathResolutionTest.kt$UpdateInstallerPathResolutionTest$@Test fun `unresolved translocated path is preserved`()</ID>
-    <ID>FunctionNaming:UpdateScriptGeneratorSecurityTest.kt$UpdateScriptGeneratorSecurityTest$@Test fun `test Windows batch metacharacters are rejected`()</ID>
-    <ID>FunctionNaming:UpdateScriptGeneratorSecurityTest.kt$UpdateScriptGeneratorSecurityTest$@Test fun `test Windows batch percent sign escaping`()</ID>
-    <ID>FunctionNaming:UpdateScriptGeneratorSecurityTest.kt$UpdateScriptGeneratorSecurityTest$@Test fun `test Windows batch quote escaping with legitimate path`()</ID>
-    <ID>FunctionNaming:UpdateScriptGeneratorSecurityTest.kt$UpdateScriptGeneratorSecurityTest$@Test fun `test Windows script handles spaces correctly`()</ID>
-    <ID>FunctionNaming:UpdateScriptGeneratorSecurityTest.kt$UpdateScriptGeneratorSecurityTest$@Test fun `test Windows script validation`()</ID>
-    <ID>FunctionNaming:UpdateScriptGeneratorSecurityTest.kt$UpdateScriptGeneratorSecurityTest$@Test fun `test backtick command substitution is rejected`()</ID>
-    <ID>FunctionNaming:UpdateScriptGeneratorSecurityTest.kt$UpdateScriptGeneratorSecurityTest$@Test fun `test command separators are rejected as errors`()</ID>
-    <ID>FunctionNaming:UpdateScriptGeneratorSecurityTest.kt$UpdateScriptGeneratorSecurityTest$@Test fun `test command substitution is rejected`()</ID>
-    <ID>FunctionNaming:UpdateScriptGeneratorSecurityTest.kt$UpdateScriptGeneratorSecurityTest$@Test fun `test generated script contains self-destruct command`()</ID>
-    <ID>FunctionNaming:UpdateScriptGeneratorSecurityTest.kt$UpdateScriptGeneratorSecurityTest$@Test fun `test generated script is executable`()</ID>
-    <ID>FunctionNaming:UpdateScriptGeneratorSecurityTest.kt$UpdateScriptGeneratorSecurityTest$@Test fun `test generated script retries relaunch on failure`()</ID>
-    <ID>FunctionNaming:UpdateScriptGeneratorSecurityTest.kt$UpdateScriptGeneratorSecurityTest$@Test fun `test generated script strips quarantine attribute`()</ID>
-    <ID>FunctionNaming:UpdateScriptGeneratorSecurityTest.kt$UpdateScriptGeneratorSecurityTest$@Test fun `test generated script waits for PID`()</ID>
-    <ID>FunctionNaming:UpdateScriptGeneratorSecurityTest.kt$UpdateScriptGeneratorSecurityTest$@Test fun `test legitimate paths with spaces work correctly`()</ID>
-    <ID>FunctionNaming:UpdateScriptGeneratorSecurityTest.kt$UpdateScriptGeneratorSecurityTest$@Test fun `test newline injection is rejected`()</ID>
-    <ID>FunctionNaming:UpdateScriptGeneratorSecurityTest.kt$UpdateScriptGeneratorSecurityTest$@Test fun `test null byte injection is rejected`()</ID>
-    <ID>FunctionNaming:UpdateScriptGeneratorSecurityTest.kt$UpdateScriptGeneratorSecurityTest$@Test fun `test path traversal is rejected as error`()</ID>
-    <ID>FunctionNaming:UpdateScriptGeneratorSecurityTest.kt$UpdateScriptGeneratorSecurityTest$@Test fun `test paths with single quotes are properly escaped`()</ID>
-    <ID>FunctionNaming:UpdateSourceTest.kt$UpdateSourceTest$@Test fun `app_releases row maps to GitHubRelease with assets and sha256`()</ID>
-    <ID>FunctionNaming:UpdateSourceTest.kt$UpdateSourceTest$@Test fun `falls back to backup when primary returns empty`()</ID>
-    <ID>FunctionNaming:UpdateSourceTest.kt$UpdateSourceTest$@Test fun `falls back to backup when primary throws`()</ID>
-    <ID>FunctionNaming:UpdateSourceTest.kt$UpdateSourceTest$@Test fun `getReleaseByTag falls back to backup when primary has none`()</ID>
-    <ID>FunctionNaming:UpdateSourceTest.kt$UpdateSourceTest$@Test fun `getReleaseByTag prefers primary`()</ID>
-    <ID>FunctionNaming:UpdateSourceTest.kt$UpdateSourceTest$@Test fun `multi-asset row maps every asset and tolerates missing sha256`()</ID>
-    <ID>FunctionNaming:UpdateSourceTest.kt$UpdateSourceTest$@Test fun `prerelease row maps prerelease flag`()</ID>
-    <ID>FunctionNaming:UpdateSourceTest.kt$UpdateSourceTest$@Test fun `returns empty when both sources fail`()</ID>
-    <ID>FunctionNaming:UpdateSourceTest.kt$UpdateSourceTest$@Test fun `uses primary when it returns releases and does not call backup`()</ID>
-    <ID>FunctionNaming:WindowFitMathTest.kt$WindowFitMathTest$@Test fun clamps_to_usable_screen()</ID>
-    <ID>FunctionNaming:WindowFitMathTest.kt$WindowFitMathTest$@Test fun floors_at_min_fit_size()</ID>
-    <ID>FunctionNaming:WindowFitMathTest.kt$WindowFitMathTest$@Test fun grow_at_1x_adds_delta_as_dp()</ID>
-    <ID>FunctionNaming:WindowFitMathTest.kt$WindowFitMathTest$@Test fun negative_delta_shrinks()</ID>
-    <ID>FunctionNaming:WindowFitMathTest.kt$WindowFitMathTest$@Test fun non_positive_scale_is_treated_as_1x()</ID>
-    <ID>FunctionNaming:WindowFitMathTest.kt$WindowFitMathTest$@Test fun scale_2x_halves_the_px_delta()</ID>
-    <ID>FunctionNaming:WindowFitMathTest.kt$WindowFitMathTest$@Test fun usable_below_floor_yields_screen_not_a_throw()</ID>
-    <ID>FunctionNaming:WindowManagerReflectionContractTest.kt$WindowManagerReflectionContractTest$@Test fun fitWindowByDelta_isReachableByReflection()</ID>
-    <ID>FunctionNaming:WindowManagerReflectionContractTest.kt$WindowManagerReflectionContractTest$@Test fun restoreWindowSize_isReachableByReflection()</ID>
-    <ID>FunctionNaming:WindowManagerReflectionContractTest.kt$WindowManagerReflectionContractTest$@Test fun windowManager_exposesSingletonInstance()</ID>
     <ID>FunctionOnlyReturningConstant:CLIInstaller.kt$CLIInstaller$private fun getHomebrewBinPath(): String</ID>
     <ID>FunctionOnlyReturningConstant:CLIInstaller.kt$CLIInstaller$private fun getHomebrewCLISourcePath(): String</ID>
     <ID>FunctionOnlyReturningConstant:FluckEngine.kt$FluckEngine$private fun isShiftPressed(): Boolean</ID>
@@ -910,7 +236,7 @@
     <ID>LongMethod:BossMainWindowPanel.kt$@Composable fun BossTabsComponent.BossMainPanelContent( modifier: Modifier, splitViewState: ai.rever.boss.components.window_panel.SplitViewState? = null, currentPanelId: String? = null, onShowSettings: (() -&gt; Unit)? = null, onOpenProjectDialog: (() -&gt; Unit)? = null, onNewProject: (() -&gt; Unit)? = null )</ID>
     <ID>LongMethod:BossMainWindowPanel.kt$@Composable fun BossTabsComponent.BossMainTabBar( splitViewState: ai.rever.boss.components.window_panel.SplitViewState? = null, currentPanelId: String? = null, focusRequester: FocusRequester? = null, tabDragComponent: TabDraggableComponent? = null, onTabDropResult: (TabDropResult) -&gt; Unit = {} )</ID>
     <ID>LongMethod:BossPanelTopBar.kt$@Composable fun BossPanelTopBar( title: String?, isHovered: Boolean, onReset: (() -&gt; Unit)? = null, onReloadPlugin: (() -&gt; Unit)? = null, onOpenAsTab: (() -&gt; Unit)? = null, onCheckForUpdates: (() -&gt; Unit)? = null, onOpenEvolver: (() -&gt; Unit)? = null, onReportIssue: (() -&gt; Unit)? = null, onMinimize: () -&gt; Unit, updateAvailable: AvailablePluginUpdate? = null, onUpdateClick: (() -&gt; Unit)? = null, panelId: PanelId? = null, windowId: String? = null, dragModifier: Modifier = Modifier, content: (@Composable () -&gt; Unit)? = null )</ID>
-    <ID>LongMethod:BossTabButton.kt$@OptIn(ExperimentalComposeUiApi::class) @Composable fun BossTabButton( fileName: String, icon: ImageVector? = null, iconPainter: Painter? = null, tabIcon: TabIcon? = null, isSelected: Boolean = false, isFocused: Boolean = true, modifier: Modifier = Modifier, onClick: () -&gt; Unit, onClose: () -&gt; Unit = {}, contextMenuItems: List&lt;ContextMenuItem&gt; = emptyList(), // Drag-related parameters tabDragComponent: TabDraggableComponent? = null, tabInfo: TabInfo? = null, panelId: String? = null, tabIndex: Int = -1, onDragStart: () -&gt; Unit = {}, onDragEnd: (TabDropResult?) -&gt; Unit = {} )</ID>
+    <ID>LongMethod:BossTabButton.kt$@OptIn(ExperimentalComposeUiApi::class) @Composable fun BossTabButton( fileName: String, icon: ImageVector? = null, iconPainter: Painter? = null, tabIcon: TabIcon? = null, isSelected: Boolean = false, isFocused: Boolean = true, modifier: Modifier = Modifier, onClick: () -&gt; Unit, onClose: () -&gt; Unit = {}, contextMenuItems: List&lt;ContextMenuItem&gt; = emptyList(), /** * Explicit width for this tab. When provided, the tab is sized exactly to this value * (no min/max content sizing). Callers compute this from available row width to get * Safari-style "shrink to fit, then scroll" behaviour. Defaults to null which falls * back to the legacy intrinsic-min sizing with a 180–450 dp width clamp. */ tabWidth: Dp? = null, // Drag-related parameters tabDragComponent: TabDraggableComponent? = null, tabInfo: TabInfo? = null, panelId: String? = null, tabIndex: Int = -1, onDragStart: () -&gt; Unit = {}, onDragEnd: (TabDropResult?) -&gt; Unit = {} )</ID>
     <ID>LongMethod:BossTopBar.kt$@Composable fun BossDraggableComponent.BossTopLeftBar( workspaceManager: WorkspaceManager? = null, onApplyWorkspace: ((LayoutWorkspace) -&gt; Unit)? = null, getCurrentWorkspace: (() -&gt; LayoutWorkspace)? = null, onShowTopOfMind: (() -&gt; Unit)? = null, onNewProject: (() -&gt; Unit)? = null, onCloneProject: (() -&gt; Unit)? = null )</ID>
     <ID>LongMethod:BossTopBar.kt$@Composable private fun getGitContextMenuItems( currentBranch: String?, localBranches: List&lt;GitBranchInfo&gt;, remoteBranches: List&lt;GitBranchInfo&gt;, stashList: List&lt;GitStashInfo&gt;, isLoading: Boolean, onCheckout: (String) -&gt; Unit, onMerge: (String) -&gt; Unit, onRebase: (String) -&gt; Unit, onCreateBranch: () -&gt; Unit, onCommit: () -&gt; Unit, onPull: () -&gt; Unit, onPush: () -&gt; Unit, onCreatePR: (() -&gt; Unit)?, onStash: () -&gt; Unit, onStashPop: (Int) -&gt; Unit, onRefresh: () -&gt; Unit ): List&lt;ContextMenuItem&gt;</ID>
     <ID>LongMethod:BossTopRunBar.kt$@Composable fun BossTopRunBar()</ID>
@@ -923,6 +249,7 @@
     <ID>LongMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun setupEventListeners()</ID>
     <ID>LongMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun setupPopupHandler()</ID>
     <ID>LongMethod:BrowserPageCard.kt$@Composable fun BrowserPageCard( page: RecentBrowserPage, onClick: () -&gt; Unit, onRemove: () -&gt; Unit, modifier: Modifier = Modifier )</ID>
+    <ID>LongMethod:BrowserServiceImpl.kt$BrowserServiceImpl$private suspend fun createBrowser( config: BrowserConfig, ownerWindowId: String ): BrowserHandle?</ID>
     <ID>LongMethod:CLIInstallationDialog.kt$@Composable fun CLIInstallationDialog( onDismiss: () -&gt; Unit )</ID>
     <ID>LongMethod:CLIInstallationDialog.kt$@Composable private fun ErrorContent( message: String, onRetry: () -&gt; Unit, onClose: () -&gt; Unit )</ID>
     <ID>LongMethod:ChromiumAutoDownloader.kt$ChromiumAutoDownloader$internal suspend fun installFromCandidates( candidates: List&lt;EngineDownloadCandidate&gt;, version: String, targetDir: Path, staged: Boolean, onProgress: (DownloadProgress) -&gt; Unit, fetch: (String, Path) -&gt; Unit = { url, dest -&gt; downloadWithProgress(url, dest, onProgress) }, extract: (Path, Path) -&gt; Unit = { zip, dest -&gt; extractZip(zip, dest) } ): Result&lt;Path&gt;</ID>
@@ -951,8 +278,8 @@
     <ID>LongMethod:DesktopUpdateService.kt$UpdateService$actual suspend fun checkForUpdates(): UpdateInfo</ID>
     <ID>LongMethod:DowngradeWarningDialog.kt$@Composable fun DowngradeWarningDialog( currentVersion: Version, targetVersion: Version, onConfirm: () -&gt; Unit, onDismiss: () -&gt; Unit )</ID>
     <ID>LongMethod:DraggableActionButton.kt$@Composable fun BossDraggableComponent.DraggableActionButton( item: SidebarItem, slot: Panel, modifier: Modifier = Modifier )</ID>
+    <ID>LongMethod:DynamicPluginManager.kt$DynamicPluginManager$private suspend fun uninstallPlugin( pluginId: String, force: Boolean, waitForGC: Boolean, closeTabsAcrossWindows: Boolean ): Result&lt;Unit&gt;</ID>
     <ID>LongMethod:DynamicPluginManager.kt$DynamicPluginManager$suspend fun installPlugin(jarPath: String, enabled: Boolean = true): Result&lt;DynamicPluginInfo&gt;</ID>
-    <ID>LongMethod:DynamicPluginManager.kt$DynamicPluginManager$suspend fun uninstallPlugin( pluginId: String, force: Boolean = false, waitForGC: Boolean = false ): Result&lt;Unit&gt;</ID>
     <ID>LongMethod:DynamicPluginManager.kt$DynamicPluginManager.Companion$private suspend fun hotSwapApiLayerOrchestration(pluginDir: java.io.File): Result&lt;Int&gt;</ID>
     <ID>LongMethod:EditableKeymapSettings.kt$@Composable fun EditableKeymapSettings()</ID>
     <ID>LongMethod:EditableKeymapSettings.kt$@Composable private fun ShortcutItem( binding: KeyBinding, hasConflict: Boolean, conflictingBindings: List&lt;KeyBinding&gt;, onEdit: () -&gt; Unit )</ID>
@@ -964,7 +291,7 @@
     <ID>LongMethod:Fluck.kt$FluckTabComponent$@Composable override fun Content()</ID>
     <ID>LongMethod:FluckBrowserSettings.kt$@Composable fun FluckBrowserSettings()</ID>
     <ID>LongMethod:FluckEngine.kt$FluckEngine$fun setupBrowserDownloadHandler(browser: com.teamdev.jxbrowser.browser.Browser)</ID>
-    <ID>LongMethod:FluckEngine.kt$FluckEngine$fun setupKeyboardInterceptor(browser: com.teamdev.jxbrowser.browser.Browser)</ID>
+    <ID>LongMethod:FluckEngine.kt$FluckEngine$fun setupKeyboardInterceptor( browser: com.teamdev.jxbrowser.browser.Browser, ownerWindowId: String? = null )</ID>
     <ID>LongMethod:FluckEngine.kt$FluckEngine$private fun killStaleChromiumProcesses(userHome: String)</ID>
     <ID>LongMethod:FluckEngine.kt$FluckEngine$suspend fun resetBrowserProfile(): ResetResult</ID>
     <ID>LongMethod:FluckEngine.kt$FluckEngine.BrowserFindBar$private fun createDialog(owner: java.awt.Window)</ID>
@@ -1090,13 +417,13 @@
     <ID>LongParameterList:BossActionButton.kt$( imageVector: ImageVector? = null, leftLogo: (@Composable () -&gt; Unit)? = null, leftIcon: ImageVector? = null, text: String, fontSize: TextUnit = 13.sp, color: Color = BossTheme.colors.textPrimary, iconColor: Color? = null, // Optional separate icon color (defaults to color if null) iconSize: Dp = 20.dp, // Icon size for imageVector mode maxTextWidth: Dp? = null, // Optional max width for text (truncates with ellipsis) modifier: Modifier = Modifier, contentPadding: PaddingValues = PaddingValues(2.dp), isSelected: Boolean = false, contextMenuItems: List&lt;ContextMenuItem&gt;? = null, contextDirection: Panel = bottom, hintText: String? = null, showHintWithDelay: Boolean = true, hintDirection: Panel = bottom, onClick: () -&gt; Unit = {} )</ID>
     <ID>LongParameterList:BossAppScaffold.kt$( state: BossAppState, reveal: FocusModeRevealState, isFocusModeEnabled: Boolean, isAutoRevealEnabled: Boolean, revealOffsetDp: Dp, showTitleBar: Boolean, onToggleMaximize: (() -&gt; Unit)?, )</ID>
     <ID>LongParameterList:BossAppState.kt$BossAppState$( val windowId: String, val isFirstWindow: Boolean, val panelRegistry: PanelRegistry, val tabRegistry: TabRegistry, val panelComponentStore: PanelComponentStore, val draggablePanelComponent: BossDraggableComponent, val tabDragComponent: TabDraggableComponent, val tabsComponent: BossTabsComponent, val splitViewState: SplitViewState, val splitViewOperations: SplitViewOperationsImpl, val workspaceDataProvider: WorkspaceDataProviderImpl, val windowProjectState: WindowProjectState, val windowRunnerState: WindowRunnerState, val windowGitState: WindowGitState, val coroutineScope: CoroutineScope, )</ID>
-    <ID>LongParameterList:BossMainWindowPanel.kt$( config: TabInfo, isSelected: Boolean, isFocused: Boolean, onClick: () -&gt; Unit, onClose: () -&gt; Unit, contextMenuItems: List&lt;ContextMenuItem&gt;, // Drag-related parameters tabDragComponent: TabDraggableComponent? = null, panelId: String? = null, tabIndex: Int = -1, onDragEnd: (TabDropResult?) -&gt; Unit = {} )</ID>
+    <ID>LongParameterList:BossMainWindowPanel.kt$( config: TabInfo, isSelected: Boolean, isFocused: Boolean, onClick: () -&gt; Unit, onClose: () -&gt; Unit, contextMenuItems: List&lt;ContextMenuItem&gt;, tabWidth: Dp?, // Drag-related parameters tabDragComponent: TabDraggableComponent? = null, panelId: String? = null, tabIndex: Int = -1, onDragEnd: (TabDropResult?) -&gt; Unit = {} )</ID>
     <ID>LongParameterList:BossMainWindowPanel.kt$( modifier: Modifier = Modifier, splitViewState: ai.rever.boss.components.window_panel.SplitViewState? = null, currentPanelId: String? = null, tabDragComponent: TabDraggableComponent? = null, onTabDropResult: (TabDropResult) -&gt; Unit = {}, onShowSettings: (() -&gt; Unit)? = null, onOpenProjectDialog: (() -&gt; Unit)? = null, onNewProject: (() -&gt; Unit)? = null )</ID>
     <ID>LongParameterList:BossMainWindowPanel.kt$( modifier: Modifier, splitViewState: ai.rever.boss.components.window_panel.SplitViewState? = null, currentPanelId: String? = null, onShowSettings: (() -&gt; Unit)? = null, onOpenProjectDialog: (() -&gt; Unit)? = null, onNewProject: (() -&gt; Unit)? = null )</ID>
     <ID>LongParameterList:BossPanelTopBar.kt$( title: String?, isHovered: Boolean, onReset: (() -&gt; Unit)? = null, onReloadPlugin: (() -&gt; Unit)? = null, onOpenAsTab: (() -&gt; Unit)? = null, onCheckForUpdates: (() -&gt; Unit)? = null, onOpenEvolver: (() -&gt; Unit)? = null, onReportIssue: (() -&gt; Unit)? = null, onMinimize: () -&gt; Unit, updateAvailable: AvailablePluginUpdate? = null, onUpdateClick: (() -&gt; Unit)? = null, panelId: PanelId? = null, windowId: String? = null, dragModifier: Modifier = Modifier, content: (@Composable () -&gt; Unit)? = null )</ID>
     <ID>LongParameterList:BossResizablePanel.kt$(modifier: Modifier, panel: Panel, isPanelVisible: Boolean = false, isMainVisible: Boolean = true, isRelative: Boolean = false, defaultWeight: Float = 1f, sideContent: (@Composable BoxScope.() -&gt; Unit)? = null, mainContent: (@Composable BoxScope.() -&gt; Unit)? = null)</ID>
     <ID>LongParameterList:BossSearchBar.kt$( query: String, onQueryChange: (String) -&gt; Unit, placeholder: String = "Search...", modifier: Modifier = Modifier, leadingIcon: ImageVector = Icons.Outlined.Search, showClearButton: Boolean = true, onFocusChanged: ((Boolean) -&gt; Unit)? = null )</ID>
-    <ID>LongParameterList:BossTabButton.kt$( fileName: String, icon: ImageVector? = null, iconPainter: Painter? = null, tabIcon: TabIcon? = null, isSelected: Boolean = false, isFocused: Boolean = true, modifier: Modifier = Modifier, onClick: () -&gt; Unit, onClose: () -&gt; Unit = {}, contextMenuItems: List&lt;ContextMenuItem&gt; = emptyList(), // Drag-related parameters tabDragComponent: TabDraggableComponent? = null, tabInfo: TabInfo? = null, panelId: String? = null, tabIndex: Int = -1, onDragStart: () -&gt; Unit = {}, onDragEnd: (TabDropResult?) -&gt; Unit = {} )</ID>
+    <ID>LongParameterList:BossTabButton.kt$( fileName: String, icon: ImageVector? = null, iconPainter: Painter? = null, tabIcon: TabIcon? = null, isSelected: Boolean = false, isFocused: Boolean = true, modifier: Modifier = Modifier, onClick: () -&gt; Unit, onClose: () -&gt; Unit = {}, contextMenuItems: List&lt;ContextMenuItem&gt; = emptyList(), /** * Explicit width for this tab. When provided, the tab is sized exactly to this value * (no min/max content sizing). Callers compute this from available row width to get * Safari-style "shrink to fit, then scroll" behaviour. Defaults to null which falls * back to the legacy intrinsic-min sizing with a 180–450 dp width clamp. */ tabWidth: Dp? = null, // Drag-related parameters tabDragComponent: TabDraggableComponent? = null, tabInfo: TabInfo? = null, panelId: String? = null, tabIndex: Int = -1, onDragStart: () -&gt; Unit = {}, onDragEnd: (TabDropResult?) -&gt; Unit = {} )</ID>
     <ID>LongParameterList:BossTopBar.kt$( currentBranch: String?, localBranches: List&lt;GitBranchInfo&gt;, remoteBranches: List&lt;GitBranchInfo&gt;, stashList: List&lt;GitStashInfo&gt;, isLoading: Boolean, onCheckout: (String) -&gt; Unit, onMerge: (String) -&gt; Unit, onRebase: (String) -&gt; Unit, onCreateBranch: () -&gt; Unit, onCommit: () -&gt; Unit, onPull: () -&gt; Unit, onPush: () -&gt; Unit, onCreatePR: (() -&gt; Unit)?, onStash: () -&gt; Unit, onStashPop: (Int) -&gt; Unit, onRefresh: () -&gt; Unit )</ID>
     <ID>LongParameterList:BossTopBar.kt$( workspaceManager: WorkspaceManager? = null, onApplyWorkspace: ((LayoutWorkspace) -&gt; Unit)? = null, getCurrentWorkspace: (() -&gt; LayoutWorkspace)? = null, onShowTopOfMind: (() -&gt; Unit)? = null, onNewProject: (() -&gt; Unit)? = null, onCloneProject: (() -&gt; Unit)? = null )</ID>
     <ID>LongParameterList:BossTopBar.kt$( workspaceManager: WorkspaceManager? = null, onApplyWorkspace: ((LayoutWorkspace) -&gt; Unit)? = null, getCurrentWorkspace: (() -&gt; LayoutWorkspace)? = null, onShowTopOfMind: (() -&gt; Unit)? = null, onShowSettings: (() -&gt; Unit)? = null, onShowSearch: (() -&gt; Unit)? = null, onNewProject: (() -&gt; Unit)? = null, onCloneProject: (() -&gt; Unit)? = null )</ID>
@@ -1779,8 +1106,8 @@
     <ID>NestedBlockDepth:BossDraggableComponent.kt$BossDraggableComponent$fun activatePlugin(pluginId: String)</ID>
     <ID>NestedBlockDepth:BossDraggableComponent.kt$BossDraggableComponent$fun stopDragging()</ID>
     <ID>NestedBlockDepth:BossDraggableComponent.kt$BossDraggableComponent$private fun updateHoverTarget()</ID>
-    <ID>NestedBlockDepth:BrowserServiceImpl.kt$BrowserServiceImpl$override suspend fun createBrowser(config: BrowserConfig): BrowserHandle?</ID>
     <ID>NestedBlockDepth:BrowserServiceImpl.kt$BrowserServiceImpl$override suspend fun disposeBrowser(handle: BrowserHandle)</ID>
+    <ID>NestedBlockDepth:BrowserServiceImpl.kt$BrowserServiceImpl$private suspend fun createBrowser( config: BrowserConfig, ownerWindowId: String ): BrowserHandle?</ID>
     <ID>NestedBlockDepth:CLICommandHandler.kt$CLICommandHandler$private suspend fun executeCommand(command: CLICommand)</ID>
     <ID>NestedBlockDepth:CLIInstaller.kt$CLIInstaller$private fun installHomebrewStyle(): CLIInstallResult</ID>
     <ID>NestedBlockDepth:ChromiumAutoDownloader.kt$ChromiumAutoDownloader$internal suspend fun installFromCandidates( candidates: List&lt;EngineDownloadCandidate&gt;, version: String, targetDir: Path, staged: Boolean, onProgress: (DownloadProgress) -&gt; Unit, fetch: (String, Path) -&gt; Unit = { url, dest -&gt; downloadWithProgress(url, dest, onProgress) }, extract: (Path, Path) -&gt; Unit = { zip, dest -&gt; extractZip(zip, dest) } ): Result&lt;Path&gt;</ID>
@@ -1844,6 +1171,7 @@
     <ID>PackageNaming:BrowserSecretIntegrationViewModel.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
     <ID>PackageNaming:CodeBase.kt$package ai.rever.boss.components.plugin.panels.left_top</ID>
     <ID>PackageNaming:CodeEditor.kt$package ai.rever.boss.components.plugin.tab_types</ID>
+    <ID>PackageNaming:ComputeTabWidthPxTest.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:DesktopBrowserAccessor.kt$package ai.rever.boss.components.plugin.panels.right_top</ID>
     <ID>PackageNaming:DesktopCodeEditor.kt$package ai.rever.boss.components.plugin.tab_types</ID>
     <ID>PackageNaming:DesktopFileScanner.kt$package ai.rever.boss.components.plugin.panels.left_top</ID>
@@ -2325,9 +1653,7 @@
     <ID>TooManyFunctions:BookmarkAPIAccess.kt$BookmarkAPIAccess</ID>
     <ID>TooManyFunctions:BossDraggableComponent.kt$BossDraggableComponent</ID>
     <ID>TooManyFunctions:BossLogger.kt$BossLogger</ID>
-    <ID>TooManyFunctions:BossLoggerTest.kt$BossLoggerTest</ID>
     <ID>TooManyFunctions:BossMainWindowPanel.kt$BossTabsComponent : ComponentContext</ID>
-    <ID>TooManyFunctions:BossTabsComponentMoveTest.kt$BossTabsComponentMoveTest</ID>
     <ID>TooManyFunctions:BrowserFunctions.kt$ai.rever.boss.components.plugin.tab_types.fluck.BrowserFunctions.kt</ID>
     <ID>TooManyFunctions:BrowserHandleImpl.kt$BrowserHandleImpl : BrowserHandle</ID>
     <ID>TooManyFunctions:BrowserSecretIntegrationViewModel.kt$BrowserSecretIntegrationViewModel</ID>
@@ -2335,17 +1661,13 @@
     <ID>TooManyFunctions:CLICommandHandler.kt$CLICommandHandler</ID>
     <ID>TooManyFunctions:CLIInstaller.kt$CLIInstaller</ID>
     <ID>TooManyFunctions:ChromiumAutoDownloader.kt$ChromiumAutoDownloader</ID>
-    <ID>TooManyFunctions:ChromiumAutoDownloaderTest.kt$ChromiumAutoDownloaderTest</ID>
     <ID>TooManyFunctions:CodeEditor.kt$ai.rever.boss.components.plugin.tab_types.CodeEditor.kt</ID>
     <ID>TooManyFunctions:CommonConditions.kt$Conditions</ID>
-    <ID>TooManyFunctions:CommonConditionsTest.kt$CommonConditionsTest</ID>
     <ID>TooManyFunctions:CrashHandler.kt$CrashHandler</ID>
-    <ID>TooManyFunctions:CrashHandlerAttributionTest.kt$CrashHandlerAttributionTest</ID>
     <ID>TooManyFunctions:DeepLinkHandler.kt$DeepLinkHandler</ID>
     <ID>TooManyFunctions:DefaultPlugin.kt$ApiActiveTabsProviderAdapter : ActiveTabsProvider</ID>
     <ID>TooManyFunctions:DefaultPlugin.kt$DefaultPlugin : PluginContext</ID>
     <ID>TooManyFunctions:DesktopCodeEditor.kt$ai.rever.boss.components.plugin.tab_types.DesktopCodeEditor.kt</ID>
-    <ID>TooManyFunctions:DesktopFileScannerTest.kt$DesktopFileScannerTest</ID>
     <ID>TooManyFunctions:DesktopGitService.kt$GitService</ID>
     <ID>TooManyFunctions:DesktopMainFunctionDetector.kt$DesktopMainFunctionDetector : MainFunctionDetector</ID>
     <ID>TooManyFunctions:DesktopRunConfigurationManager.kt$RunConfigurationManager</ID>
@@ -2353,16 +1675,12 @@
     <ID>TooManyFunctions:DesktopUpdateService.kt$UpdateService</ID>
     <ID>TooManyFunctions:DownloadManager.kt$DownloadManager</ID>
     <ID>TooManyFunctions:DynamicPluginManager.kt$DynamicPluginManager</ID>
-    <ID>TooManyFunctions:FileEventBusTest.kt$FileEventBusTest</ID>
     <ID>TooManyFunctions:FileSystemDataProviderImpl.kt$FileSystemDataProviderImpl : FileSystemDataProvider</ID>
     <ID>TooManyFunctions:Fluck.kt$FluckTabInfo : TabInfo</ID>
     <ID>TooManyFunctions:Fluck.kt$ai.rever.boss.components.plugin.tab_types.fluck.Fluck.kt</ID>
     <ID>TooManyFunctions:FluckEngine.kt$FluckEngine</ID>
-    <ID>TooManyFunctions:FluckEngineSwitchesTest.kt$FluckEngineSwitchesTest</ID>
-    <ID>TooManyFunctions:FluckTabInfoTest.kt$FluckTabInfoTest</ID>
     <ID>TooManyFunctions:FontManager.kt$FontManager</ID>
     <ID>TooManyFunctions:FullscreenBrowserWindow.kt$FullscreenBrowserWindow</ID>
-    <ID>TooManyFunctions:FuzzyMatcherTest.kt$FuzzyMatcherTest</ID>
     <ID>TooManyFunctions:GitDataProviderImpl.kt$GitDataProviderImpl : GitDataProvider</ID>
     <ID>TooManyFunctions:GitService.kt$GitService</ID>
     <ID>TooManyFunctions:GitServiceBridge.kt$GitServiceBridge : GitServiceCoroutineImplBase</ID>
@@ -2370,27 +1688,17 @@
     <ID>TooManyFunctions:GlobalSearchService.kt$GlobalSearchService</ID>
     <ID>TooManyFunctions:IosBrowserFunctions.kt$ai.rever.boss.components.plugin.tab_types.fluck.IosBrowserFunctions.kt</ID>
     <ID>TooManyFunctions:IosCodeEditor.kt$ai.rever.boss.components.plugin.tab_types.IosCodeEditor.kt</ID>
-    <ID>TooManyFunctions:KeyboardEventBusTest.kt$KeyboardEventBusTest</ID>
-    <ID>TooManyFunctions:KeymapHandlerTest.kt$KeymapHandlerTest</ID>
-    <ID>TooManyFunctions:KeymapMatcherTest.kt$KeymapMatcherTest</ID>
-    <ID>TooManyFunctions:KeymapValidatorTest.kt$KeymapValidatorTest</ID>
     <ID>TooManyFunctions:LLMModelFetcher.kt$LLMModelFetcher</ID>
     <ID>TooManyFunctions:LogSanitizer.kt$LogSanitizer</ID>
-    <ID>TooManyFunctions:LogSanitizerTest.kt$LogSanitizerTest</ID>
-    <ID>TooManyFunctions:McpToolRegistryCoreTest.kt$McpToolRegistryCoreTest</ID>
     <ID>TooManyFunctions:McpToolRegistryImpl.kt$McpToolRegistryCore</ID>
     <ID>TooManyFunctions:MenuActionsHandler.kt$MenuActionsHandler</ID>
     <ID>TooManyFunctions:PasskeyDataMapper.kt$PasskeyDataMapper</ID>
     <ID>TooManyFunctions:PerformanceMonitor.kt$PerformanceMonitor</ID>
-    <ID>TooManyFunctions:PerformanceMonitorTest.kt$PerformanceMonitorTest</ID>
     <ID>TooManyFunctions:PluginInstallWizardState.kt$PluginInstallWizardState</ID>
     <ID>TooManyFunctions:PluginLoaderDelegateImpl.kt$PluginLoaderDelegateImpl : PluginLoaderDelegate</ID>
     <ID>TooManyFunctions:PluginPersistence.kt$PluginPersistence</ID>
     <ID>TooManyFunctions:PluginStorageFactoryProvider.kt$PluginStorageProviderImpl : PluginStorageProvider</ID>
     <ID>TooManyFunctions:PluginStoreSetup.kt$PluginStoreSetup</ID>
-    <ID>TooManyFunctions:PluginStoreSetupMinVersionGateTest.kt$PluginStoreSetupMinVersionGateTest</ID>
-    <ID>TooManyFunctions:ProjectCreationIntegrationTest.kt$ProjectCreationIntegrationTest</ID>
-    <ID>TooManyFunctions:ProjectCreationServiceTest.kt$ProjectCreationServiceTest</ID>
     <ID>TooManyFunctions:RoleCreationService.kt$RoleCreationService</ID>
     <ID>TooManyFunctions:RoleManagementProviderImpl.kt$RoleManagementProviderImpl : RoleManagementProvider</ID>
     <ID>TooManyFunctions:RoleManagementServiceBridge.kt$RoleManagementServiceBridge : RoleManagementServiceCoroutineImplBase</ID>
@@ -2399,7 +1707,6 @@
     <ID>TooManyFunctions:SecretServiceBridge.kt$SecretServiceBridge : SecretServiceCoroutineImplBase</ID>
     <ID>TooManyFunctions:SettingsComponents.kt$ai.rever.boss.components.settings.shared.SettingsComponents.kt</ID>
     <ID>TooManyFunctions:ShortcutLifecycleManager.kt$ShortcutLifecycleManager</ID>
-    <ID>TooManyFunctions:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest</ID>
     <ID>TooManyFunctions:SplitTemplatesManager.kt$SplitTemplatesManager</ID>
     <ID>TooManyFunctions:SplitView.kt$SplitViewState</ID>
     <ID>TooManyFunctions:SplitViewOperationsImpl.kt$SplitViewOperationsImpl : SplitViewOperations</ID>
@@ -2409,7 +1716,6 @@
     <ID>TooManyFunctions:TrackingPluginContext.kt$TrackingPluginContext : PluginContext</ID>
     <ID>TooManyFunctions:UpdateInstaller.kt$UpdateInstaller</ID>
     <ID>TooManyFunctions:UpdateManager.kt$UpdateManager</ID>
-    <ID>TooManyFunctions:UpdateScriptGeneratorSecurityTest.kt$UpdateScriptGeneratorSecurityTest</ID>
     <ID>TooManyFunctions:WasmBrowserFunctions.kt$ai.rever.boss.components.plugin.tab_types.fluck.WasmBrowserFunctions.kt</ID>
     <ID>TooManyFunctions:WasmCodeEditor.kt$ai.rever.boss.components.plugin.tab_types.WasmCodeEditor.kt</ID>
     <ID>TooManyFunctions:WindowManager.kt$WindowManager</ID>
