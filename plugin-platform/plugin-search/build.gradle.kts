@@ -23,7 +23,7 @@ kotlin {
     }
 
     sourceSets {
-        val commonMain by getting {
+        commonMain {
             dependencies {
                 implementation(libs.compose.mp.runtime)
                 implementation(libs.compose.mp.ui)
@@ -32,7 +32,7 @@ kotlin {
                 implementation(compose.materialIconsExtended)  // No base KMP artifact
             }
         }
-        val desktopMain by getting {
+        named("desktopMain") {
             dependencies {
                 implementation(compose.desktop.currentOs)
             }

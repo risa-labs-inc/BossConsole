@@ -103,7 +103,9 @@ jobs:
       - name: 🔨 Build Application
         run: |
           echo "🔨 Building application for ${{ matrix.os }}"
-          ./gradlew build --stacktrace
+          # detekt is authoritative in the code-quality job; skip the redundant
+          # per-OS runs the plugin wires into check (3x waste + confusing signal)
+          ./gradlew build -x detekt --stacktrace
         env:
           # boss-plugin-api-core resolution from GitHub Packages (settings/composeApp repos)
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

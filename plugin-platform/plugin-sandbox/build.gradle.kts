@@ -28,7 +28,7 @@ kotlin {
     }
 
     sourceSets {
-        val commonMain by getting {
+        commonMain {
             dependencies {
                 // Compose dependencies
                 implementation(libs.compose.mp.runtime)
@@ -52,13 +52,13 @@ kotlin {
             }
         }
 
-        val desktopMain by getting {
+        named("desktopMain") {
             dependencies {
                 implementation(compose.desktop.currentOs)
             }
         }
 
-        val desktopTest by getting {
+        named("desktopTest") {
             dependencies {
                 implementation(kotlin("test"))
                 implementation(kotlin("test-junit5"))

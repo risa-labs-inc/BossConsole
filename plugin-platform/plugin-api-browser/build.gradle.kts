@@ -29,7 +29,7 @@ kotlin {
     }
 
     sourceSets {
-        val commonMain by getting {
+        commonMain {
             dependencies {
                 // Standalone module - no dependency on plugin-api
                 implementation(libs.compose.mp.runtime)
@@ -38,7 +38,7 @@ kotlin {
             }
         }
 
-        val desktopMain by getting {
+        named("desktopMain") {
             dependencies {
                 implementation(compose.desktop.currentOs)
             }

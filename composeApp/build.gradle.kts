@@ -598,7 +598,7 @@ kotlin {
     */
     
     sourceSets {
-        val desktopMain by getting {
+        val desktopMain = getByName("desktopMain") {
             if (isWindowsArm64Build) {
                 // Exclude kernel/OOP source files that depend on boss-ipc (unavailable on Windows ARM64)
                 kotlin.srcDirs.forEach { srcDir ->
@@ -611,7 +611,7 @@ kotlin {
                 }
             }
         }
-        val desktopTest by getting
+        val desktopTest = getByName("desktopTest")
 
         // Add generated source directory to commonMain
         commonMain {
@@ -764,7 +764,12 @@ kotlin {
             // accessor: the module is excluded from the build on Windows ARM64
             // (settings.gradle.kts — boss-ipc's protoc ships no win-arm64
             // binaries), where the generated accessor wouldn't even compile.
-            findProject(":plugin-platform:plugin-api-ipc")?.let { implementation(it) }
+            // findProject only guards presence; the dependency itself must use
+            // project(path) string notation — passing the Project OBJECT to
+            // implementation() is an error in Gradle 10.
+            if (findProject(":plugin-platform:plugin-api-ipc") != null) {
+                implementation(project(":plugin-platform:plugin-api-ipc"))
+            }
         }
         // Without the IPC module (Windows ARM64) the drift test can't compile;
         // drop it from the source set — every other platform still enforces it.
@@ -1744,11 +1749,9 @@ tasks.register("createExecutableJarWithIncrement") {
 
 // Task to download Chromium binaries for branding
 // Uses desktop runtime classpath since this is a Kotlin Multiplatform project
-val desktopMain by kotlin.sourceSets.getting
-
 // Detached configuration for the JxBrowser platform binary needed by downloadChromium.
 // This is NOT included in the app runtime (branded Chromium is used instead).
-val jxBrowserPlatformBinary: Configuration by configurations.creating
+val jxBrowserPlatformBinary: Configuration = configurations.create("jxBrowserPlatformBinary")
 
 dependencies {
     jxBrowserPlatformBinary(jxbrowser.currentPlatform)

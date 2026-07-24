@@ -24,17 +24,13 @@ kotlin {
     }
 
     sourceSets {
-        val commonMain by getting
-
-        val commonTest by getting {
+        commonTest {
             dependencies {
                 implementation(kotlin("test"))
             }
         }
 
-        val desktopMain by getting
-
-        val desktopTest by getting {
+        named("desktopTest") {
             dependencies {
                 implementation(kotlin("test-junit5"))
                 implementation(libs.junit.jupiter)

@@ -27,7 +27,7 @@ kotlin {
     }
 
     sourceSets {
-        val commonMain by getting {
+        commonMain {
             dependencies {
                 implementation(project(":plugin-platform:plugin-ui-core"))
                 implementation(libs.compose.mp.runtime)
@@ -38,7 +38,7 @@ kotlin {
                 implementation(project(":plugin-platform:plugin-path-utils"))
             }
         }
-        val desktopMain by getting {
+        named("desktopMain") {
             dependencies {
                 implementation(project(":plugin-platform:plugin-logging"))
                 implementation(compose.desktop.currentOs)

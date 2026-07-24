@@ -27,7 +27,7 @@ kotlin {
     }
 
     sourceSets {
-        val commonMain by getting {
+        commonMain {
             dependencies {
                 // Coroutines
                 implementation(libs.kotlinx.coroutines.core)
@@ -54,7 +54,7 @@ kotlin {
             }
         }
 
-        val desktopMain by getting {
+        named("desktopMain") {
             dependencies {
                 // Ktor engine
                 implementation(libs.ktor.client.cio)
@@ -63,7 +63,7 @@ kotlin {
             }
         }
 
-        val desktopTest by getting {
+        named("desktopTest") {
             dependencies {
                 implementation(kotlin("test"))
                 implementation(kotlin("test-junit5"))

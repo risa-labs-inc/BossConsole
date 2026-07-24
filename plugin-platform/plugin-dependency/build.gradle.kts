@@ -26,7 +26,7 @@ kotlin {
     }
 
     sourceSets {
-        val commonMain by getting {
+        commonMain {
             // SemanticVersion is pure Kotlin — no external dependencies. (The
             // coroutines/serialization/plugin-api-core/logging deps went with
             // the removed PluginDependencyResolver.)
@@ -34,12 +34,12 @@ kotlin {
             }
         }
 
-        val desktopMain by getting {
+        named("desktopMain") {
             dependencies {
             }
         }
 
-        val desktopTest by getting {
+        named("desktopTest") {
             dependencies {
                 implementation(kotlin("test"))
                 implementation(kotlin("test-junit5"))

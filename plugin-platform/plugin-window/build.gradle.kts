@@ -24,7 +24,7 @@ kotlin {
     }
 
     sourceSets {
-        val commonMain by getting {
+        commonMain {
             dependencies {
                 implementation(project(":plugin-platform:plugin-logging"))
                 implementation(libs.compose.mp.runtime)
@@ -32,7 +32,7 @@ kotlin {
                 implementation(libs.kotlinx.serialization.json)
             }
         }
-        val desktopMain by getting {
+        named("desktopMain") {
             dependencies {
                 implementation(compose.desktop.currentOs)
             }

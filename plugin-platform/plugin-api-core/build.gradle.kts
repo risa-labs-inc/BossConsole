@@ -109,7 +109,7 @@ kotlin {
         // contract classes from that jar. The ~20 host modules keep depending
         // on :plugin-platform:plugin-api-core unchanged. Bump the pin in
         // libs.versions.toml (boss-plugin-api) to adopt a new API level.
-        val commonMain by getting {
+        commonMain {
             dependencies {
                 // The pinned API contract classes (filtered release jar).
                 api(files(apiContractCoreJar))
@@ -149,7 +149,7 @@ kotlin {
             }
         }
 
-        val desktopMain by getting {
+        named("desktopMain") {
             dependencies {
                 implementation(compose.desktop.currentOs)
             }
