@@ -186,6 +186,11 @@ internal object CoreAuthService {
                         }
 
                         is SessionStatus.RefreshFailure -> {
+                            // supabase-kt deprecated RefreshFailure.cause in favor of a
+                            // separate AuthEvent.RefreshFailure flow; migrating means
+                            // restructuring the recovery path (#855), so read it here
+                            // until that refactor - suppressed, not ignored.
+                            @Suppress("DEPRECATION")
                             val detail =
                                 when (val cause = sessionStatus.cause) {
                                     is RefreshFailureCause.NetworkError -> {
@@ -194,10 +199,6 @@ internal object CoreAuthService {
 
                                     is RefreshFailureCause.InternalServerError -> {
                                         "server: HTTP ${cause.exception.statusCode} ${cause.exception.error}"
-                                    }
-
-                                    else -> {
-                                        cause::class.simpleName ?: "unknown"
                                     }
                                 }
                             logger.warn(LogCategory.AUTH, "Session refresh failed", mapOf("cause" to detail))

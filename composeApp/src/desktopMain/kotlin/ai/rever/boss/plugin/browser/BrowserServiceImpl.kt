@@ -233,7 +233,7 @@ object BrowserServiceImpl : BrowserService {
                     LogCategory.BROWSER,
                     "BrowserService not available",
                     mapOf(
-                        "initError" to (initErr?.toString() ?: "none"),
+                        "initError" to initErr.toString(),
                     ),
                 )
             }

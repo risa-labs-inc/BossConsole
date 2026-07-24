@@ -292,10 +292,9 @@ fun main(args: Array<String>) {
         }
     }
 
-    // Initialize deep link handler
-    DeepLinkHandler
-
-    // Process command line arguments for deep links (Windows)
+    // Process command line arguments for deep links (Windows).
+    // This first member access also triggers DeepLinkHandler's object init,
+    // so no separate bare-reference "initialization" line is needed.
     DeepLinkHandler.processCommandLineArgs(args)
 
     // Install AWT keyboard interceptor to capture shortcuts before BossTerm

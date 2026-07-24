@@ -118,7 +118,6 @@ fun BossDraggableComponent.SidePanel(
                         StatusMessageManager.showMessage("$failLabel failed: ${result.text}", durationMs = 5000)
                     }
                 }
-                Unit
             }
         }
         val openEvolver: (() -> Unit)? =

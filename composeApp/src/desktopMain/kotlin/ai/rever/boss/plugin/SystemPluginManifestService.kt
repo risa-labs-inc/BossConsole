@@ -231,7 +231,10 @@ object SystemPluginManifestService {
         subscribeToChanges()
     }
 
-    private suspend fun refreshFromRemote() =
+    // Block body, not expression body: the early `return`s inside withLock are
+    // non-local returns from this function, which Kotlin 2.5 forbids in
+    // expression-bodied functions without an explicit return type (KTLC-288).
+    private suspend fun refreshFromRemote() {
         refreshMutex.withLock {
             val fetched =
                 try {
@@ -296,6 +299,7 @@ object SystemPluginManifestService {
                 ),
             )
         }
+    }
 
     private fun subscribeToChanges() {
         scope.launch {
