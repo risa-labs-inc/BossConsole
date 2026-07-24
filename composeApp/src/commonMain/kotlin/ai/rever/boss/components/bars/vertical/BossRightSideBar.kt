@@ -33,16 +33,18 @@ fun BossDraggableComponent.BossRightSideBar() {
         // BoxWithConstraints gives the rail's full height so adaptive
         // mode can budget icon rows; recomposes on window resize.
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-            val iconLimits = computeSlotIconLimits(
-                slots = listOf(right.top.top, right.top.bottom),
-                settings = visibility,
-                barHeight = maxHeight,
-                reservedHeight = SidebarIconRail.SectionDivider +
-                    (if (customizeOnThisBar) SidebarIconRail.CustomizeButton else 0.dp),
-            )
+            val iconLimits =
+                computeSlotIconLimits(
+                    slots = listOf(right.top.top, right.top.bottom),
+                    settings = visibility,
+                    barHeight = maxHeight,
+                    reservedHeight =
+                        SidebarIconRail.SectionDivider +
+                            (if (customizeOnThisBar) SidebarIconRail.CustomizeButton else 0.dp),
+                )
             Column(
                 modifier = Modifier.fillMaxSize(),
-                horizontalAlignment = Alignment.CenterHorizontally
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 DraggableSidebarSection(
                     slot = right.top.top,

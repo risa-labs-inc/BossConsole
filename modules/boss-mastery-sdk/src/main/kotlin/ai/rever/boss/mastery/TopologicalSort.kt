@@ -7,7 +7,6 @@ package ai.rever.boss.mastery
  * in level N are satisfied by levels 0..N-1.
  */
 object TopologicalSort {
-
     /**
      * Sort nodes topologically into parallelizable levels.
      *
@@ -45,10 +44,11 @@ object TopologicalSort {
 
         // Kahn's BFS: process one level at a time
         val levels = mutableListOf<List<T>>()
-        var currentLevel = inDegree
-            .filter { it.value == 0 }
-            .keys
-            .mapNotNull { nodeById[it] }
+        var currentLevel =
+            inDegree
+                .filter { it.value == 0 }
+                .keys
+                .mapNotNull { nodeById[it] }
 
         val visited = mutableSetOf<String>()
 

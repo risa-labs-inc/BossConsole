@@ -25,7 +25,11 @@ object ClipboardHelper {
         try {
             Robot()
         } catch (e: Exception) {
-            logger.warn(LogCategory.UI, "Failed to initialize Robot for clipboard operations - may need accessibility permissions", error = e)
+            logger.warn(
+                LogCategory.UI,
+                "Failed to initialize Robot for clipboard operations - may need accessibility permissions",
+                error = e,
+            )
             null
         }
     }

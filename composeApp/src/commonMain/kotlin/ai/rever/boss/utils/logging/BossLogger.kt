@@ -1,4 +1,5 @@
 @file:Suppress("UNUSED")
+
 package ai.rever.boss.utils.logging
 
 /**
@@ -23,19 +24,39 @@ object BossLogger {
         get() = delegate.globalLevel
 
     fun configureFromEnvironment() = delegate.configureFromEnvironment()
+
     fun initialize() = delegate.initialize()
+
     fun configure(config: BossLoggerConfig) = delegate.configure(config)
+
     fun setGlobalLevel(level: LogLevel) = delegate.setGlobalLevel(level)
-    fun setCategoryLevel(category: LogCategory, level: LogLevel) = delegate.setCategoryLevel(category, level)
+
+    fun setCategoryLevel(
+        category: LogCategory,
+        level: LogLevel,
+    ) = delegate.setCategoryLevel(category, level)
+
     fun clearCategoryLevel(category: LogCategory) = delegate.clearCategoryLevel(category)
+
     fun getEffectiveLevel(category: LogCategory): LogLevel = delegate.getEffectiveLevel(category)
+
     fun enableFileLogging(file: java.io.File) = delegate.enableFileLogging(file)
+
     fun disableFileLogging() = delegate.disableFileLogging()
+
     fun shutdown() = delegate.shutdown()
+
     fun addListener(listener: LogListener) = delegate.addListener(listener)
+
     fun removeListener(listener: LogListener) = delegate.removeListener(listener)
-    fun getRecentLogs(limit: Int = 100, category: LogCategory? = null, minLevel: LogLevel = LogLevel.TRACE): List<LogEntry> =
-        delegate.getRecentLogs(limit, category, minLevel)
+
+    fun getRecentLogs(
+        limit: Int = 100,
+        category: LogCategory? = null,
+        minLevel: LogLevel = LogLevel.TRACE,
+    ): List<LogEntry> = delegate.getRecentLogs(limit, category, minLevel)
+
     fun clearLogs() = delegate.clearLogs()
+
     fun forComponent(componentName: String): ComponentLogger = delegate.forComponent(componentName)
 }

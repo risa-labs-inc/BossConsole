@@ -41,16 +41,17 @@ import androidx.compose.ui.unit.sp
 fun UpdateAvailableDialog(
     updateInfo: UpdateInfo,
     onUpdateNow: () -> Unit,
-    onLater: () -> Unit
+    onLater: () -> Unit,
 ) {
     // Release notes are markdown; render them like the editor's preview does.
     // Best-effort: if parsing fails (or yields nothing), notesBlocks stays null
     // and the dialog falls back to the plain-text lines it always showed.
-    val notesBlocks = remember(updateInfo.releaseNotes) {
-        runCatching { parseReleaseNotes(updateInfo.releaseNotes) }
-            .getOrNull()
-            ?.takeIf { it.isNotEmpty() }
-    }
+    val notesBlocks =
+        remember(updateInfo.releaseNotes) {
+            runCatching { parseReleaseNotes(updateInfo.releaseNotes) }
+                .getOrNull()
+                ?.takeIf { it.isNotEmpty() }
+        }
     AlertDialog(
         onDismissRequest = onLater,
         modifier = Modifier.widthIn(min = 360.dp, max = 480.dp),
@@ -59,7 +60,7 @@ fun UpdateAvailableDialog(
                 "Update available",
                 color = BossTheme.colors.textPrimary,
                 fontSize = 18.sp,
-                fontWeight = FontWeight.SemiBold
+                fontWeight = FontWeight.SemiBold,
             )
         },
         text = {
@@ -68,7 +69,7 @@ fun UpdateAvailableDialog(
                     "BossConsole v${updateInfo.latestVersion} is available " +
                         "(you have v${updateInfo.currentVersion}).",
                     color = BossTheme.colors.textSecondary,
-                    fontSize = 13.sp
+                    fontSize = 13.sp,
                 )
                 if (updateInfo.releaseNotes.isNotBlank()) {
                     Spacer(Modifier.height(12.dp))
@@ -76,7 +77,7 @@ fun UpdateAvailableDialog(
                         "What's new",
                         color = BossTheme.colors.textPrimary,
                         fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium
+                        fontWeight = FontWeight.Medium,
                     )
                     Spacer(Modifier.height(4.dp))
                     // Column+verticalScroll behind NotesAreaSizing (see its kdoc):
@@ -87,7 +88,7 @@ fun UpdateAvailableDialog(
                         Modifier
                             .then(NotesAreaSizing(220.dp))
                             .verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         if (notesBlocks != null) {
                             notesBlocks.forEach { block ->
@@ -98,7 +99,7 @@ fun UpdateAvailableDialog(
                                 Text(
                                     line,
                                     color = BossTheme.colors.textSecondary,
-                                    fontSize = 12.sp
+                                    fontSize = 12.sp,
                                 )
                             }
                         }
@@ -117,7 +118,7 @@ fun UpdateAvailableDialog(
             }
         },
         backgroundColor = BossTheme.colors.panel,
-        contentColor = BossTheme.colors.textPrimary
+        contentColor = BossTheme.colors.textPrimary,
     )
 }
 
@@ -137,27 +138,37 @@ fun UpdateAvailableDialog(
  *    grows the dialog by exactly the scrolled amount. Pinning both baselines
  *    to constants stops any scroll-dependent value from escaping.
  */
-private data class NotesAreaSizing(private val max: Dp) : LayoutModifier {
-    override fun MeasureScope.measure(measurable: Measurable, constraints: Constraints): MeasureResult {
+private data class NotesAreaSizing(
+    private val max: Dp,
+) : LayoutModifier {
+    override fun MeasureScope.measure(
+        measurable: Measurable,
+        constraints: Constraints,
+    ): MeasureResult {
         val cappedMax = max.roundToPx().coerceAtMost(constraints.maxHeight)
-        val placeable = measurable.measure(
-            constraints.copy(
-                minHeight = constraints.minHeight.coerceAtMost(cappedMax),
-                maxHeight = cappedMax
+        val placeable =
+            measurable.measure(
+                constraints.copy(
+                    minHeight = constraints.minHeight.coerceAtMost(cappedMax),
+                    maxHeight = cappedMax,
+                ),
             )
-        )
         return layout(
             placeable.width,
             placeable.height,
-            alignmentLines = mapOf(FirstBaseline to 0, LastBaseline to placeable.height)
+            alignmentLines = mapOf(FirstBaseline to 0, LastBaseline to placeable.height),
         ) {
             placeable.placeRelative(0, 0)
         }
     }
 
-    override fun IntrinsicMeasureScope.minIntrinsicHeight(measurable: IntrinsicMeasurable, width: Int): Int =
-        measurable.minIntrinsicHeight(width).coerceAtMost(max.roundToPx())
+    override fun IntrinsicMeasureScope.minIntrinsicHeight(
+        measurable: IntrinsicMeasurable,
+        width: Int,
+    ): Int = measurable.minIntrinsicHeight(width).coerceAtMost(max.roundToPx())
 
-    override fun IntrinsicMeasureScope.maxIntrinsicHeight(measurable: IntrinsicMeasurable, width: Int): Int =
-        measurable.maxIntrinsicHeight(width).coerceAtMost(max.roundToPx())
+    override fun IntrinsicMeasureScope.maxIntrinsicHeight(
+        measurable: IntrinsicMeasurable,
+        width: Int,
+    ): Int = measurable.maxIntrinsicHeight(width).coerceAtMost(max.roundToPx())
 }

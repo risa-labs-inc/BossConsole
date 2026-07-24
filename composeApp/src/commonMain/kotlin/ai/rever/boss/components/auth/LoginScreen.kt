@@ -1,7 +1,7 @@
 package ai.rever.boss.components.auth
 
-import androidx.compose.runtime.Composable
 import ai.rever.boss.components.auth.AuthScreenContainer
+import androidx.compose.runtime.Composable
 
 /**
  * Main entry point for authentication flow.
@@ -11,13 +11,8 @@ import ai.rever.boss.components.auth.AuthScreenContainer
  * @param onLoginSuccess Callback invoked when login/authentication is successful
  */
 @Composable
-fun LoginScreen(
-    onLoginSuccess: () -> Unit
-) {
+fun LoginScreen(onLoginSuccess: () -> Unit) {
     AuthScreenContainer(
-        onLoginSuccess = onLoginSuccess
+        onLoginSuccess = onLoginSuccess,
     )
 }
-
-
-

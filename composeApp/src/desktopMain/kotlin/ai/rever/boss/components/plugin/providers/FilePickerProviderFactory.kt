@@ -15,21 +15,18 @@ private val logger = BossLogger.forComponent("FilePickerProvider")
 /**
  * Desktop implementation of FilePickerProvider factory.
  */
-actual fun createFilePickerProvider(): FilePickerProvider? {
-    return DesktopFilePickerProvider()
-}
+actual fun createFilePickerProvider(): FilePickerProvider? = DesktopFilePickerProvider()
 
 /**
  * Desktop file picker provider using AWT/Swing dialogs.
  */
 private class DesktopFilePickerProvider : FilePickerProvider {
-
     private val isMacOS = System.getProperty("os.name").lowercase().contains("mac")
 
     override fun pickFile(
         title: String?,
         filters: List<String>?,
-        onResult: (String?) -> Unit
+        onResult: (String?) -> Unit,
     ) {
         SwingUtilities.invokeLater {
             try {
@@ -49,20 +46,21 @@ private class DesktopFilePickerProvider : FilePickerProvider {
                         onResult(null)
                     }
                 } else {
-                    val chooser = JFileChooser().apply {
-                        dialogTitle = title ?: "Open File"
-                        fileSelectionMode = JFileChooser.FILES_ONLY
-                        currentDirectory = File(System.getProperty("user.home"))
-                        if (!filters.isNullOrEmpty()) {
-                            isAcceptAllFileFilterUsed = false
-                            addChoosableFileFilter(
-                                FileNameExtensionFilter(
-                                    filters.joinToString(", ") { "*.$it" },
-                                    *filters.toTypedArray()
+                    val chooser =
+                        JFileChooser().apply {
+                            dialogTitle = title ?: "Open File"
+                            fileSelectionMode = JFileChooser.FILES_ONLY
+                            currentDirectory = File(System.getProperty("user.home"))
+                            if (!filters.isNullOrEmpty()) {
+                                isAcceptAllFileFilterUsed = false
+                                addChoosableFileFilter(
+                                    FileNameExtensionFilter(
+                                        filters.joinToString(", ") { "*.$it" },
+                                        *filters.toTypedArray(),
+                                    ),
                                 )
-                            )
+                            }
                         }
-                    }
                     val result = chooser.showOpenDialog(null)
                     if (result == JFileChooser.APPROVE_OPTION) {
                         onResult(chooser.selectedFile?.absolutePath)
@@ -80,7 +78,7 @@ private class DesktopFilePickerProvider : FilePickerProvider {
     override fun pickSaveFile(
         suggestedFileName: String?,
         filters: List<String>?,
-        onResult: (String?) -> Unit
+        onResult: (String?) -> Unit,
     ) {
         SwingUtilities.invokeLater {
             try {
@@ -98,23 +96,24 @@ private class DesktopFilePickerProvider : FilePickerProvider {
                         onResult(null)
                     }
                 } else {
-                    val chooser = JFileChooser().apply {
-                        dialogTitle = "Save File"
-                        fileSelectionMode = JFileChooser.FILES_ONLY
-                        currentDirectory = File(System.getProperty("user.home"))
-                        if (suggestedFileName != null) {
-                            selectedFile = File(suggestedFileName)
-                        }
-                        if (!filters.isNullOrEmpty()) {
-                            isAcceptAllFileFilterUsed = false
-                            addChoosableFileFilter(
-                                FileNameExtensionFilter(
-                                    filters.joinToString(", ") { "*.$it" },
-                                    *filters.toTypedArray()
+                    val chooser =
+                        JFileChooser().apply {
+                            dialogTitle = "Save File"
+                            fileSelectionMode = JFileChooser.FILES_ONLY
+                            currentDirectory = File(System.getProperty("user.home"))
+                            if (suggestedFileName != null) {
+                                selectedFile = File(suggestedFileName)
+                            }
+                            if (!filters.isNullOrEmpty()) {
+                                isAcceptAllFileFilterUsed = false
+                                addChoosableFileFilter(
+                                    FileNameExtensionFilter(
+                                        filters.joinToString(", ") { "*.$it" },
+                                        *filters.toTypedArray(),
+                                    ),
                                 )
-                            )
+                            }
                         }
-                    }
                     val result = chooser.showSaveDialog(null)
                     if (result == JFileChooser.APPROVE_OPTION) {
                         onResult(chooser.selectedFile?.absolutePath)

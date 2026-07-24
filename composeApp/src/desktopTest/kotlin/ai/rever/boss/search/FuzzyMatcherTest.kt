@@ -18,7 +18,6 @@ import kotlin.test.assertTrue
  * - Match range correctness
  */
 class FuzzyMatcherTest {
-
     // ==================== BASIC MATCHING TESTS ====================
 
     @Test
@@ -63,8 +62,10 @@ class FuzzyMatcherTest {
 
         assertNotNull(consecutive)
         assertNotNull(scattered)
-        assertTrue(consecutive.score > scattered.score,
-            "Consecutive match (${consecutive.score}) should score higher than scattered (${scattered.score})")
+        assertTrue(
+            consecutive.score > scattered.score,
+            "Consecutive match (${consecutive.score}) should score higher than scattered (${scattered.score})",
+        )
     }
 
     @Test
@@ -96,8 +97,10 @@ class FuzzyMatcherTest {
 
         assertNotNull(startMatch)
         assertNotNull(endMatch)
-        assertTrue(startMatch.score > endMatch.score,
-            "Start match (${startMatch.score}) should score higher than end match (${endMatch.score})")
+        assertTrue(
+            startMatch.score > endMatch.score,
+            "Start match (${startMatch.score}) should score higher than end match (${endMatch.score})",
+        )
     }
 
     @Test
@@ -107,8 +110,10 @@ class FuzzyMatcherTest {
 
         assertNotNull(exact)
         assertNotNull(partial)
-        assertTrue(exact.score > partial.score,
-            "Exact match (${exact.score}) should score higher than partial (${partial.score})")
+        assertTrue(
+            exact.score > partial.score,
+            "Exact match (${exact.score}) should score higher than partial (${partial.score})",
+        )
     }
 
     @Test
@@ -118,8 +123,10 @@ class FuzzyMatcherTest {
 
         assertNotNull(short)
         assertNotNull(long)
-        assertTrue(short.score > long.score,
-            "Short target (${short.score}) should score higher than long (${long.score})")
+        assertTrue(
+            short.score > long.score,
+            "Short target (${short.score}) should score higher than long (${long.score})",
+        )
     }
 
     // ==================== MATCH RANGE TESTS ====================
@@ -174,8 +181,10 @@ class FuzzyMatcherTest {
 
         assertNotNull(prefix)
         assertNotNull(scattered)
-        assertTrue(prefix.score > scattered.score,
-            "Prefix match (${prefix.score}) should score higher than scattered (${scattered.score})")
+        assertTrue(
+            prefix.score > scattered.score,
+            "Prefix match (${prefix.score}) should score higher than scattered (${scattered.score})",
+        )
     }
 
     // ==================== COMPARISON TESTS ====================

@@ -13,7 +13,6 @@ import kotlin.test.assertTrue
  * - Property validation
  */
 class FocusModeSettingsTest {
-
     // ==================== DEFAULT VALUES TESTS ====================
 
     @Test

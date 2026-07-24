@@ -22,12 +22,16 @@ import androidx.compose.ui.unit.sp
 enum class PluginProcessState {
     /** Plugin process is running normally. */
     RUNNING,
+
     /** Plugin process has crashed and can be restarted. */
     CRASHED,
+
     /** Plugin is being restarted. */
     RESTARTING,
+
     /** Plugin failed to restart after max attempts. */
     FAILED,
+
     /** Plugin has been switched to in-process fallback mode. */
     IN_PROCESS_FALLBACK,
 }
@@ -70,21 +74,30 @@ fun PluginCrashFallbackUI(
             modifier = Modifier.padding(32.dp).widthIn(max = 400.dp),
         ) {
             when (processState) {
-                PluginProcessState.CRASHED -> CrashedContent(
-                    displayName = displayName,
-                    errorMessage = errorMessage,
-                    restartCount = restartCount,
-                    maxRestarts = maxRestarts,
-                    onRestart = onRestart,
-                    onRunInProcess = onRunInProcess,
-                )
-                PluginProcessState.RESTARTING -> RestartingContent(displayName)
-                PluginProcessState.FAILED -> FailedContent(
-                    displayName = displayName,
-                    errorMessage = errorMessage,
-                    restartCount = restartCount,
-                    onRunInProcess = onRunInProcess,
-                )
+                PluginProcessState.CRASHED -> {
+                    CrashedContent(
+                        displayName = displayName,
+                        errorMessage = errorMessage,
+                        restartCount = restartCount,
+                        maxRestarts = maxRestarts,
+                        onRestart = onRestart,
+                        onRunInProcess = onRunInProcess,
+                    )
+                }
+
+                PluginProcessState.RESTARTING -> {
+                    RestartingContent(displayName)
+                }
+
+                PluginProcessState.FAILED -> {
+                    FailedContent(
+                        displayName = displayName,
+                        errorMessage = errorMessage,
+                        restartCount = restartCount,
+                        onRunInProcess = onRunInProcess,
+                    )
+                }
+
                 else -> {}
             }
         }
@@ -134,10 +147,11 @@ private fun CrashedContent(
 
     Button(
         onClick = onRunInProcess,
-        colors = ButtonDefaults.buttonColors(
-            backgroundColor = MaterialTheme.colors.surface,
-            contentColor = MaterialTheme.colors.primary,
-        ),
+        colors =
+            ButtonDefaults.buttonColors(
+                backgroundColor = MaterialTheme.colors.surface,
+                contentColor = MaterialTheme.colors.primary,
+            ),
     ) {
         Text("Run In-Process")
     }

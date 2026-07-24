@@ -13,7 +13,6 @@ import java.util.concurrent.ConcurrentHashMap
  * loading threads while lookups happen on the composition thread.
  */
 object PanelSandboxRegistry {
-
     private val panelToSandbox = ConcurrentHashMap<String, PluginSandbox>()
 
     /**
@@ -22,7 +21,10 @@ object PanelSandboxRegistry {
      * @param panelId The panel ID
      * @param sandbox The sandbox managing this panel
      */
-    fun register(panelId: PanelId, sandbox: PluginSandbox) {
+    fun register(
+        panelId: PanelId,
+        sandbox: PluginSandbox,
+    ) {
         panelToSandbox[panelId.panelId] = sandbox
     }
 
@@ -41,9 +43,7 @@ object PanelSandboxRegistry {
      * @param panelId The panel ID
      * @return The managing sandbox, or null if not sandboxed
      */
-    fun getSandbox(panelId: PanelId): PluginSandbox? {
-        return panelToSandbox[panelId.panelId]
-    }
+    fun getSandbox(panelId: PanelId): PluginSandbox? = panelToSandbox[panelId.panelId]
 
     /**
      * Get the sandbox for a panel by its string ID.
@@ -51,9 +51,7 @@ object PanelSandboxRegistry {
      * @param panelIdString The panel ID string
      * @return The managing sandbox, or null if not sandboxed
      */
-    fun getSandbox(panelIdString: String): PluginSandbox? {
-        return panelToSandbox[panelIdString]
-    }
+    fun getSandbox(panelIdString: String): PluginSandbox? = panelToSandbox[panelIdString]
 
     /**
      * Clear all registrations. Used for testing or cleanup.

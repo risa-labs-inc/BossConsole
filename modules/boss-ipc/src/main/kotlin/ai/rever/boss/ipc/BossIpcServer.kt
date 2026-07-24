@@ -15,8 +15,9 @@ import java.util.concurrent.TimeUnit
  *     .start()
  * ```
  */
-class BossIpcServer(private val address: String) {
-
+class BossIpcServer(
+    private val address: String,
+) {
     private val logger = LoggerFactory.getLogger(BossIpcServer::class.java)
     private val services = mutableListOf<BindableService>()
     private var server: Server? = null

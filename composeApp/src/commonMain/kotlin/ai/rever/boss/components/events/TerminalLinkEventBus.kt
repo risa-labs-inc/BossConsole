@@ -14,7 +14,7 @@ data class TerminalLinkClickEvent(
     /** Terminal tab ID where the link was clicked (used to find source panel) */
     val sourceTerminalId: String? = null,
     /** Window ID where the link was clicked (used to filter events to correct window) */
-    val sourceWindowId: String? = null
+    val sourceWindowId: String? = null,
 )
 
 /**
@@ -39,10 +39,11 @@ object TerminalLinkEventBus {
      *   before the first dialog appears (~16ms compose frame time). If buffer overflows,
      *   emit() suspends until space is available (no events lost, just delayed).
      */
-    private val _linkClickEvents = MutableSharedFlow<TerminalLinkClickEvent>(
-        replay = 0,
-        extraBufferCapacity = 10
-    )
+    private val _linkClickEvents =
+        MutableSharedFlow<TerminalLinkClickEvent>(
+            replay = 0,
+            extraBufferCapacity = 10,
+        )
     val linkClickEvents: SharedFlow<TerminalLinkClickEvent> = _linkClickEvents.asSharedFlow()
 
     /**
@@ -52,7 +53,11 @@ object TerminalLinkEventBus {
      * @param sourceTerminalId Optional terminal tab ID (for detecting source panel in splits)
      * @param sourceWindowId Optional window ID (for filtering events to correct window)
      */
-    suspend fun emitLinkClick(url: String, sourceTerminalId: String? = null, sourceWindowId: String? = null) {
+    suspend fun emitLinkClick(
+        url: String,
+        sourceTerminalId: String? = null,
+        sourceWindowId: String? = null,
+    ) {
         val event = TerminalLinkClickEvent(url, sourceTerminalId, sourceWindowId)
         _linkClickEvents.emit(event)
         sourceWindowId?.let { ipcBridge?.forward("TerminalLinkClickEvent", event, it) }
@@ -62,7 +67,9 @@ object TerminalLinkEventBus {
      * Non-suspend version for callers that can't use coroutines (e.g., plugin reflection).
      * Uses tryEmit which succeeds immediately when buffer has space (extraBufferCapacity = 10).
      */
-    fun tryEmitLinkClick(url: String, sourceTerminalId: String? = null, sourceWindowId: String? = null): Boolean {
-        return _linkClickEvents.tryEmit(TerminalLinkClickEvent(url, sourceTerminalId, sourceWindowId))
-    }
+    fun tryEmitLinkClick(
+        url: String,
+        sourceTerminalId: String? = null,
+        sourceWindowId: String? = null,
+    ): Boolean = _linkClickEvents.tryEmit(TerminalLinkClickEvent(url, sourceTerminalId, sourceWindowId))
 }

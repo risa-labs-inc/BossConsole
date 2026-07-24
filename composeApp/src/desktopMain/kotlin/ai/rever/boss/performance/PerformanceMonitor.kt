@@ -50,9 +50,10 @@ object PerformanceMonitor {
     private val _currentSnapshot = MutableStateFlow<PerformanceSnapshot?>(null)
     val currentSnapshot: StateFlow<PerformanceSnapshot?> = _currentSnapshot.asStateFlow()
 
-    private val _currentHealth = MutableStateFlow(
-        PerformanceHealth(HealthStatus.GOOD, HealthStatus.GOOD, HealthStatus.GOOD)
-    )
+    private val _currentHealth =
+        MutableStateFlow(
+            PerformanceHealth(HealthStatus.GOOD, HealthStatus.GOOD, HealthStatus.GOOD),
+        )
     val currentHealth: StateFlow<PerformanceHealth> = _currentHealth.asStateFlow()
 
     // Max history entries based on retention and sample interval
@@ -91,10 +92,11 @@ object PerformanceMonitor {
     private var historyModified: Boolean = false // Track if buffer changed since last StateFlow update
     private const val HISTORY_UPDATE_INTERVAL_MS = 10_000L // Update history StateFlow every 10 seconds
 
-    private val json = Json {
-        prettyPrint = true
-        ignoreUnknownKeys = true
-    }
+    private val json =
+        Json {
+            prettyPrint = true
+            ignoreUnknownKeys = true
+        }
 
     /**
      * Start performance monitoring.
@@ -105,111 +107,113 @@ object PerformanceMonitor {
 
         logger.debug(LogCategory.SYSTEM, "Starting performance monitor")
 
-        monitoringJob = scope.launch {
-            var memoryTick = 0L
-            var cpuTick = 0L
-            var resourceTick = 0L
-            var gcTick = 0L
+        monitoringJob =
+            scope.launch {
+                var memoryTick = 0L
+                var cpuTick = 0L
+                var resourceTick = 0L
+                var gcTick = 0L
 
-            while (isActive) {
-                val settings = PerformanceSettingsManager.currentSettings.value
+                while (isActive) {
+                    val settings = PerformanceSettingsManager.currentSettings.value
 
-                if (!settings.enabled) {
-                    // Clear stale history when monitoring is disabled
-                    if (historyBuffer.isNotEmpty()) {
-                        historyBuffer.clear()
-                        _history.value = emptyList()
+                    if (!settings.enabled) {
+                        // Clear stale history when monitoring is disabled
+                        if (historyBuffer.isNotEmpty()) {
+                            historyBuffer.clear()
+                            _history.value = emptyList()
+                        }
+                        delay(1000)
+                        continue
                     }
-                    delay(1000)
-                    continue
-                }
 
-                val now = System.currentTimeMillis()
-                // Initialize with actual metrics on first run to avoid NPE
-                var memory = _currentSnapshot.value?.memory ?: collectMemoryMetrics()
-                var cpu = _currentSnapshot.value?.cpu ?: collectCpuMetrics()
-                var gc = _currentSnapshot.value?.gc ?: collectGcMetrics()
-                var resources = _currentSnapshot.value?.resources ?: collectResourceMetrics()
+                    val now = System.currentTimeMillis()
+                    // Initialize with actual metrics on first run to avoid NPE
+                    var memory = _currentSnapshot.value?.memory ?: collectMemoryMetrics()
+                    var cpu = _currentSnapshot.value?.cpu ?: collectCpuMetrics()
+                    var gc = _currentSnapshot.value?.gc ?: collectGcMetrics()
+                    var resources = _currentSnapshot.value?.resources ?: collectResourceMetrics()
 
-                // Sample memory
-                if (now - memoryTick >= settings.memorySampleIntervalMs) {
-                    memory = collectMemoryMetrics()
-                    memoryTick = now
-                }
+                    // Sample memory
+                    if (now - memoryTick >= settings.memorySampleIntervalMs) {
+                        memory = collectMemoryMetrics()
+                        memoryTick = now
+                    }
 
-                // Sample CPU
-                if (now - cpuTick >= settings.cpuSampleIntervalMs) {
-                    cpu = collectCpuMetrics()
-                    cpuTick = now
-                }
+                    // Sample CPU
+                    if (now - cpuTick >= settings.cpuSampleIntervalMs) {
+                        cpu = collectCpuMetrics()
+                        cpuTick = now
+                    }
 
-                // Sample GC
-                if (now - gcTick >= settings.gcSampleIntervalMs) {
-                    gc = collectGcMetrics()
-                    gcTick = now
-                }
+                    // Sample GC
+                    if (now - gcTick >= settings.gcSampleIntervalMs) {
+                        gc = collectGcMetrics()
+                        gcTick = now
+                    }
 
-                // Sample resources
-                if (now - resourceTick >= settings.resourceSampleIntervalMs) {
-                    resources = collectResourceMetrics()
-                    resourceTick = now
-                }
+                    // Sample resources
+                    if (now - resourceTick >= settings.resourceSampleIntervalMs) {
+                        resources = collectResourceMetrics()
+                        resourceTick = now
+                    }
 
-                val snapshot = PerformanceSnapshot(
-                    timestamp = now,
-                    memory = memory,
-                    cpu = cpu,
-                    gc = gc,
-                    resources = resources
-                )
+                    val snapshot =
+                        PerformanceSnapshot(
+                            timestamp = now,
+                            memory = memory,
+                            cpu = cpu,
+                            gc = gc,
+                            resources = resources,
+                        )
 
-                // Only update if values changed to avoid unnecessary recomposition
-                val current = _currentSnapshot.value
-                if (current == null || hasSignificantChange(current, snapshot)) {
-                    _currentSnapshot.value = snapshot
-                    _currentHealth.value = PerformanceHealth.fromSnapshot(snapshot, settings)
-                }
+                    // Only update if values changed to avoid unnecessary recomposition
+                    val current = _currentSnapshot.value
+                    if (current == null || hasSignificantChange(current, snapshot)) {
+                        _currentSnapshot.value = snapshot
+                        _currentHealth.value = PerformanceHealth.fromSnapshot(snapshot, settings)
+                    }
 
-                // Update history buffer (cheap - just pointer manipulation)
-                // Only add to buffer when there's a significant change
-                val shouldAddToHistory = current == null || hasSignificantChange(current, snapshot)
+                    // Update history buffer (cheap - just pointer manipulation)
+                    // Only add to buffer when there's a significant change
+                    val shouldAddToHistory = current == null || hasSignificantChange(current, snapshot)
 
-                if (shouldAddToHistory) {
-                    val cutoff = now - (settings.historyRetentionMinutes * 60 * 1000)
+                    if (shouldAddToHistory) {
+                        val cutoff = now - (settings.historyRetentionMinutes * 60 * 1000)
 
-                    // Remove old entries from front
-                    while (historyBuffer.isNotEmpty() && historyBuffer.first().timestamp < cutoff) {
-                        historyBuffer.removeFirst()
+                        // Remove old entries from front
+                        while (historyBuffer.isNotEmpty() && historyBuffer.first().timestamp < cutoff) {
+                            historyBuffer.removeFirst()
+                            historyModified = true
+                        }
+
+                        // Add new snapshot
+                        historyBuffer.addLast(snapshot)
                         historyModified = true
+
+                        // Enforce max size (shouldn't happen often with proper retention)
+                        while (historyBuffer.size > MAX_HISTORY_SIZE) {
+                            historyBuffer.removeFirst()
+                            historyModified = true
+                        }
                     }
 
-                    // Add new snapshot
-                    historyBuffer.addLast(snapshot)
-                    historyModified = true
-
-                    // Enforce max size (shouldn't happen often with proper retention)
-                    while (historyBuffer.size > MAX_HISTORY_SIZE) {
-                        historyBuffer.removeFirst()
-                        historyModified = true
+                    // Update StateFlow less frequently (expensive - creates full list copy)
+                    // Only update if: (1) enough time passed AND (2) history actually changed
+                    if (now - lastHistoryUpdate > HISTORY_UPDATE_INTERVAL_MS && historyModified) {
+                        _history.value = historyBuffer.toList()
+                        lastHistoryUpdate = now
+                        historyModified = false
                     }
-                }
 
-                // Update StateFlow less frequently (expensive - creates full list copy)
-                // Only update if: (1) enough time passed AND (2) history actually changed
-                if (now - lastHistoryUpdate > HISTORY_UPDATE_INTERVAL_MS && historyModified) {
-                    _history.value = historyBuffer.toList()
-                    lastHistoryUpdate = now
-                    historyModified = false
-                }
-
-                delay(
-                    minOf(
-                        settings.memorySampleIntervalMs,
-                        settings.cpuSampleIntervalMs
+                    delay(
+                        minOf(
+                            settings.memorySampleIntervalMs,
+                            settings.cpuSampleIntervalMs,
+                        ),
                     )
-                )
+                }
             }
-        }
     }
 
     /**
@@ -234,7 +238,7 @@ object PerformanceMonitor {
         terminals: () -> Int,
         editorTabs: () -> Int,
         panels: () -> Int,
-        windows: () -> Int
+        windows: () -> Int,
     ) {
         browserTabCountProvider = browserTabs
         terminalCountProvider = terminals
@@ -250,7 +254,7 @@ object PerformanceMonitor {
     fun registerDetailedResourceProviders(
         browserTabs: () -> List<BrowserTabInfo>,
         terminals: () -> List<TerminalInfo>,
-        editorTabs: () -> List<EditorTabResourceInfo>
+        editorTabs: () -> List<EditorTabResourceInfo>,
     ) {
         browserTabsProvider = browserTabs
         terminalsProvider = terminals
@@ -277,16 +281,17 @@ object PerformanceMonitor {
         val nonHeapUsage = memoryMXBean.nonHeapMemoryUsage
 
         // Collect memory pool details
-        val memoryPools = memoryPoolMXBeans.map { pool ->
-            val usage = pool.usage
-            MemoryPoolInfo(
-                name = pool.name,
-                type = pool.type.name,
-                usedBytes = usage?.used ?: 0L,
-                maxBytes = usage?.max ?: -1L,
-                committedBytes = usage?.committed ?: 0L
-            )
-        }
+        val memoryPools =
+            memoryPoolMXBeans.map { pool ->
+                val usage = pool.usage
+                MemoryPoolInfo(
+                    name = pool.name,
+                    type = pool.type.name,
+                    usedBytes = usage?.used ?: 0L,
+                    maxBytes = usage?.max ?: -1L,
+                    committedBytes = usage?.committed ?: 0L,
+                )
+            }
 
         return MemoryMetrics(
             heapUsedBytes = heapUsage.used,
@@ -294,7 +299,7 @@ object PerformanceMonitor {
             heapCommittedBytes = heapUsage.committed,
             nonHeapUsedBytes = nonHeapUsage.used,
             nonHeapCommittedBytes = nonHeapUsage.committed,
-            memoryPools = memoryPools
+            memoryPools = memoryPools,
         )
     }
 
@@ -306,65 +311,71 @@ object PerformanceMonitor {
         val threadIds = threadMXBean.allThreadIds
         val threadInfos = threadMXBean.getThreadInfo(threadIds)
 
-        val threads = threadIds.zip(threadInfos.toList())
-            .filter { it.second != null }
-            .map { (id, info) ->
-                val cpuTime = if (threadMXBean.isThreadCpuTimeSupported) {
-                    threadMXBean.getThreadCpuTime(id) / 1_000_000 // nanoseconds to milliseconds
-                } else {
-                    0L
-                }
-                val userTime = if (threadMXBean.isThreadCpuTimeSupported) {
-                    threadMXBean.getThreadUserTime(id) / 1_000_000
-                } else {
-                    0L
-                }
-                ThreadInfo(
-                    id = id,
-                    name = info!!.threadName,
-                    state = info.threadState.name,
-                    cpuTimeMs = cpuTime,
-                    userTimeMs = userTime,
-                    blockedCount = info.blockedCount,
-                    waitedCount = info.waitedCount
-                )
-            }
-            .sortedByDescending { it.cpuTimeMs }
-            .take(20)
+        val threads =
+            threadIds
+                .zip(threadInfos.toList())
+                .filter { it.second != null }
+                .map { (id, info) ->
+                    val cpuTime =
+                        if (threadMXBean.isThreadCpuTimeSupported) {
+                            threadMXBean.getThreadCpuTime(id) / 1_000_000 // nanoseconds to milliseconds
+                        } else {
+                            0L
+                        }
+                    val userTime =
+                        if (threadMXBean.isThreadCpuTimeSupported) {
+                            threadMXBean.getThreadUserTime(id) / 1_000_000
+                        } else {
+                            0L
+                        }
+                    ThreadInfo(
+                        id = id,
+                        name = info!!.threadName,
+                        state = info.threadState.name,
+                        cpuTimeMs = cpuTime,
+                        userTimeMs = userTime,
+                        blockedCount = info.blockedCount,
+                        waitedCount = info.waitedCount,
+                    )
+                }.sortedByDescending { it.cpuTimeMs }
+                .take(20)
 
         return CpuMetrics(
             processLoad = if (processLoad >= 0) processLoad else 0.0,
             systemLoad = if (systemLoad >= 0) systemLoad else 0.0,
             availableProcessors = osMXBean.availableProcessors,
             activeThreadCount = threadMXBean.threadCount,
-            threads = threads
+            threads = threads,
         )
     }
 
     private fun collectGcMetrics(): GcMetrics {
         // Create a map of last GC info by collector name
-        val lastGcInfoMap = sunGcBeans.associate { gc ->
-            val gcInfo = gc.lastGcInfo
-            gc.name to gcInfo?.let { info ->
-                val memoryBefore = info.memoryUsageBeforeGc.values.sumOf { it.used }
-                val memoryAfter = info.memoryUsageAfterGc.values.sumOf { it.used }
-                LastGcInfo(
-                    startTime = info.startTime,
-                    durationMs = info.duration,
-                    memoryBeforeBytes = memoryBefore,
-                    memoryAfterBytes = memoryAfter
+        val lastGcInfoMap =
+            sunGcBeans.associate { gc ->
+                val gcInfo = gc.lastGcInfo
+                gc.name to
+                    gcInfo?.let { info ->
+                        val memoryBefore = info.memoryUsageBeforeGc.values.sumOf { it.used }
+                        val memoryAfter = info.memoryUsageAfterGc.values.sumOf { it.used }
+                        LastGcInfo(
+                            startTime = info.startTime,
+                            durationMs = info.duration,
+                            memoryBeforeBytes = memoryBefore,
+                            memoryAfterBytes = memoryAfter,
+                        )
+                    }
+            }
+
+        val collectors =
+            gcMXBeans.map { gc ->
+                GcCollectorInfo(
+                    name = gc.name,
+                    collectionCount = gc.collectionCount,
+                    collectionTimeMs = gc.collectionTime,
+                    lastGcInfo = lastGcInfoMap[gc.name],
                 )
             }
-        }
-
-        val collectors = gcMXBeans.map { gc ->
-            GcCollectorInfo(
-                name = gc.name,
-                collectionCount = gc.collectionCount,
-                collectionTimeMs = gc.collectionTime,
-                lastGcInfo = lastGcInfoMap[gc.name]
-            )
-        }
 
         val totalCount = collectors.sumOf { it.collectionCount }
         val totalTime = collectors.sumOf { it.collectionTimeMs }
@@ -376,12 +387,12 @@ object PerformanceMonitor {
             collectionCount = totalCount,
             collectionTimeMs = totalTime,
             gcTimeSinceLastSampleMs = gcTimeSinceLastSample,
-            gcCollectors = collectors
+            gcCollectors = collectors,
         )
     }
 
-    private fun collectResourceMetrics(): ResourceMetrics {
-        return ResourceMetrics(
+    private fun collectResourceMetrics(): ResourceMetrics =
+        ResourceMetrics(
             browserTabCount = safeInvoke(browserTabCountProvider) { 0 },
             terminalCount = safeInvoke(terminalCountProvider) { 0 },
             editorTabCount = safeInvoke(editorTabCountProvider) { 0 },
@@ -389,28 +400,32 @@ object PerformanceMonitor {
             windowCount = safeInvoke(windowCountProvider) { 0 },
             browserTabs = safeInvoke(browserTabsProvider) { emptyList() },
             terminals = safeInvoke(terminalsProvider) { emptyList() },
-            editorTabs = safeInvoke(editorTabsProvider) { emptyList() }
+            editorTabs = safeInvoke(editorTabsProvider) { emptyList() },
         )
-    }
 
     /**
      * Safely invoke a provider function, catching any exceptions.
      * This prevents concurrent modification or other errors from crashing the monitoring loop.
      */
-    private inline fun <T> safeInvoke(noinline provider: (() -> T)?, default: () -> T): T {
-        return try {
+    private inline fun <T> safeInvoke(
+        noinline provider: (() -> T)?,
+        default: () -> T,
+    ): T =
+        try {
             provider?.invoke() ?: default()
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Provider error", error = e)
             default()
         }
-    }
 
     /**
      * Check if there's a significant change between snapshots to avoid unnecessary updates.
      * Thresholds: memory 1MB, CPU 1%, GC count change, resource count change
      */
-    private fun hasSignificantChange(old: PerformanceSnapshot, new: PerformanceSnapshot): Boolean {
+    private fun hasSignificantChange(
+        old: PerformanceSnapshot,
+        new: PerformanceSnapshot,
+    ): Boolean {
         // Memory: 1MB threshold
         val memoryDelta = kotlin.math.abs(old.memory.heapUsedBytes - new.memory.heapUsedBytes)
         if (memoryDelta > 1024 * 1024) return true
@@ -440,26 +455,28 @@ object PerformanceMonitor {
      * Export metrics history to a JSON file.
      * Returns Result with file path on success, or error on failure.
      */
-    suspend fun exportMetrics(): Result<String> = withContext(Dispatchers.IO) {
-        try {
-            val timestamp = SimpleDateFormat("yyyyMMdd-HHmmss").format(Date())
-            val exportFile = BossDirectories.resolve("performance-export-$timestamp.json")
-            exportFile.parentFile?.mkdirs()
+    suspend fun exportMetrics(): Result<String> =
+        withContext(Dispatchers.IO) {
+            try {
+                val timestamp = SimpleDateFormat("yyyyMMdd-HHmmss").format(Date())
+                val exportFile = BossDirectories.resolve("performance-export-$timestamp.json")
+                exportFile.parentFile?.mkdirs()
 
-            val historyData = _history.value
-            if (historyData.isEmpty()) {
-                return@withContext Result.failure(IllegalStateException("No metrics data to export"))
+                val historyData = _history.value
+                if (historyData.isEmpty()) {
+                    return@withContext Result.failure(IllegalStateException("No metrics data to export"))
+                }
+
+                val content =
+                    json.encodeToString(
+                        kotlinx.serialization.builtins.ListSerializer(PerformanceSnapshot.serializer()),
+                        historyData,
+                    )
+                exportFile.writeText(content)
+
+                Result.success(exportFile.absolutePath)
+            } catch (e: Exception) {
+                Result.failure(e)
             }
-
-            val content = json.encodeToString(
-                kotlinx.serialization.builtins.ListSerializer(PerformanceSnapshot.serializer()),
-                historyData
-            )
-            exportFile.writeText(content)
-
-            Result.success(exportFile.absolutePath)
-        } catch (e: Exception) {
-            Result.failure(e)
         }
-    }
 }

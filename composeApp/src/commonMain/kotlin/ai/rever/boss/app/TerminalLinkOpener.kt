@@ -26,16 +26,17 @@ import kotlinx.coroutines.launch
  */
 internal fun openRunnerInMainPanel(
     event: RunnerTerminalOpenEvent,
-    splitViewState: SplitViewState
+    splitViewState: SplitViewState,
 ) {
     // Create terminal tab in active panel
-    val terminalTab = TerminalTabInfo(
-        id = event.terminalId,
-        typeId = TabTypeId("terminal"),
-        title = "Run: ${event.configName}",
-        initialCommand = event.command,
-        workingDirectory = event.workingDirectory
-    )
+    val terminalTab =
+        TerminalTabInfo(
+            id = event.terminalId,
+            typeId = TabTypeId("terminal"),
+            title = "Run: ${event.configName}",
+            initialCommand = event.command,
+            workingDirectory = event.workingDirectory,
+        )
 
     // Find existing tab or create new one
     val existingPanel = splitViewState.findPanelWithTab(event.terminalId)
@@ -45,8 +46,9 @@ internal fun openRunnerInMainPanel(
     }
 
     // Add to active panel (or first available)
-    val activeComponent = splitViewState.getActiveTabsComponent()
-        ?: splitViewState.getAllPanels().firstOrNull()?.tabsComponent
+    val activeComponent =
+        splitViewState.getActiveTabsComponent()
+            ?: splitViewState.getAllPanels().firstOrNull()?.tabsComponent
 
     if (activeComponent != null) {
         val tabIndex = activeComponent.addTab(terminalTab)
@@ -76,21 +78,23 @@ internal fun openTerminalLink(
     splitViewState: SplitViewState,
     sourceTerminalId: String? = null,
     scope: CoroutineScope,
-    windowId: String? = null
+    windowId: String? = null,
 ) {
     // Find the source panel (where the terminal is) to correctly identify "the other" panel
     // This is important because cmd+click doesn't change focus, so activePanelId may not be the terminal panel
-    val sourcePanelId = sourceTerminalId?.let { terminalId ->
-        splitViewState.findPanelWithTab(terminalId)?.id
-    } ?: splitViewState.activePanelId
+    val sourcePanelId =
+        sourceTerminalId?.let { terminalId ->
+            splitViewState.findPanelWithTab(terminalId)?.id
+        } ?: splitViewState.activePanelId
 
     // Defensive check: verify source panel still exists (could be closed between link click and handling)
     // Fall back to active panel if source panel no longer exists
-    val validSourcePanelId = if (splitViewState.findPanel(sourcePanelId) != null) {
-        sourcePanelId
-    } else {
-        splitViewState.activePanelId
-    }
+    val validSourcePanelId =
+        if (splitViewState.findPanel(sourcePanelId) != null) {
+            sourcePanelId
+        } else {
+            splitViewState.activePanelId
+        }
 
     // Determine if this is a file URL - file links open in editor, HTTP links open in browser
     val isFile = isFileUrl(url)
@@ -106,6 +110,7 @@ internal fun openTerminalLink(
             is FileValidationResult.Invalid -> {
                 return
             }
+
             is FileValidationResult.Valid -> {
                 // Continue with validated path - use canonical path for consistency
                 // TOCTOU note: There's a small window between validation and opening where
@@ -120,7 +125,7 @@ internal fun openTerminalLink(
                     fileLine = parsed.line,
                     fileColumn = parsed.column,
                     scope = scope,
-                    windowId = windowId
+                    windowId = windowId,
                 )
             }
         }
@@ -133,7 +138,7 @@ internal fun openTerminalLink(
             validSourcePanelId = validSourcePanelId,
             isFile = false,
             scope = scope,
-            windowId = windowId
+            windowId = windowId,
         )
     }
 }
@@ -161,7 +166,7 @@ private fun openTerminalLinkInternal(
     fileLine: Int = 0,
     fileColumn: Int = 0,
     scope: CoroutineScope,
-    windowId: String? = null
+    windowId: String? = null,
 ) {
     // Helper to create the appropriate tab type
     fun createTab() = if (isFile) createEditorTab(url) else createBrowserTab(url)
@@ -183,12 +188,16 @@ private fun openTerminalLinkInternal(
             // Open in existing split panel (not the source panel where terminal is)
             // Use the target mode setting to determine which panel to use
             val targetMode = TerminalLinkSettingsManager.currentSettings.value.existingSplitTarget
-            val targetPanel = when (targetMode) {
-                ExistingSplitTargetMode.MOST_RECENT_ACTIVE ->
-                    splitViewState.getOtherPanelExcluding(validSourcePanelId)
-                ExistingSplitTargetMode.FIRST_AVAILABLE ->
-                    splitViewState.getFirstOtherPanelExcluding(validSourcePanelId)
-            }
+            val targetPanel =
+                when (targetMode) {
+                    ExistingSplitTargetMode.MOST_RECENT_ACTIVE -> {
+                        splitViewState.getOtherPanelExcluding(validSourcePanelId)
+                    }
+
+                    ExistingSplitTargetMode.FIRST_AVAILABLE -> {
+                        splitViewState.getFirstOtherPanelExcluding(validSourcePanelId)
+                    }
+                }
             if (targetPanel != null) {
                 val tab = createTab()
                 val tabIndex = targetPanel.tabsComponent.addTab(tab)
@@ -203,25 +212,28 @@ private fun openTerminalLinkInternal(
                 splitViewState.splitPanel(
                     panelId = validSourcePanelId,
                     orientation = SplitOrientation.VERTICAL,
-                    tabToMove = createTab()
+                    tabToMove = createTab(),
                 )
                 navigateToLineIfNeeded()
             }
         }
+
         TerminalLinkOpenMode.VERTICAL_SPLIT, TerminalLinkOpenMode.HORIZONTAL_SPLIT -> {
-            val orientation = if (mode == TerminalLinkOpenMode.VERTICAL_SPLIT) {
-                SplitOrientation.VERTICAL
-            } else {
-                SplitOrientation.HORIZONTAL
-            }
+            val orientation =
+                if (mode == TerminalLinkOpenMode.VERTICAL_SPLIT) {
+                    SplitOrientation.VERTICAL
+                } else {
+                    SplitOrientation.HORIZONTAL
+                }
             // Create split from the source panel (where terminal is), not from active panel
             splitViewState.splitPanel(
                 panelId = validSourcePanelId,
                 orientation = orientation,
-                tabToMove = createTab()
+                tabToMove = createTab(),
             )
             navigateToLineIfNeeded()
         }
+
         TerminalLinkOpenMode.NEW_TAB, TerminalLinkOpenMode.ALWAYS_ASK -> {
             // NEW_TAB opens in current panel; ALWAYS_ASK shouldn't reach here but handle gracefully
             if (isFile) {
@@ -234,6 +246,7 @@ private fun openTerminalLinkInternal(
                 splitViewState.openUrlInActivePanel(url, "Loading...")
             }
         }
+
         TerminalLinkOpenMode.SYSTEM_DEFAULT -> {
             // Open outside BOSS with the OS default handler (browser or file app).
             // Line:column navigation doesn't apply to external apps.

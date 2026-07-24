@@ -29,7 +29,10 @@ interface UpdateListener {
     /**
      * Called when an update is being downloaded.
      */
-    fun onUpdateDownloading(pluginId: String, progress: Float) {}
+    fun onUpdateDownloading(
+        pluginId: String,
+        progress: Float,
+    ) {}
 
     /**
      * Called when an update installation starts.
@@ -39,12 +42,18 @@ interface UpdateListener {
     /**
      * Called when an update is completed.
      */
-    fun onUpdateCompleted(pluginId: String, newVersion: String) {}
+    fun onUpdateCompleted(
+        pluginId: String,
+        newVersion: String,
+    ) {}
 
     /**
      * Called when an update fails.
      */
-    fun onUpdateFailed(pluginId: String, error: String) {}
+    fun onUpdateFailed(
+        pluginId: String,
+        error: String,
+    ) {}
 
     /**
      * Called when a newer version was found but rejected because it is
@@ -91,7 +100,7 @@ class PluginUpdateManager(
      * value is read at check time. Blank disables the gate (fail-open); the
      * loader's own minApiVersion check remains the backstop.
      */
-    private val hostApiVersion: () -> String = { "" }
+    private val hostApiVersion: () -> String = { "" },
 ) {
     private val logger = BossLogger.forComponent("PluginUpdateManager")
 
@@ -152,16 +161,21 @@ class PluginUpdateManager(
         }
 
         checkJob?.cancel()
-        checkJob = scope.launch {
-            while (isActive) {
-                checkForUpdates(emptyMap())
-                delay(config.checkIntervalMs)
+        checkJob =
+            scope.launch {
+                while (isActive) {
+                    checkForUpdates(emptyMap())
+                    delay(config.checkIntervalMs)
+                }
             }
-        }
 
-        logger.info(LogCategory.SYSTEM, "Started periodic update checks", mapOf(
-            "intervalMs" to config.checkIntervalMs
-        ))
+        logger.info(
+            LogCategory.SYSTEM,
+            "Started periodic update checks",
+            mapOf(
+                "intervalMs" to config.checkIntervalMs,
+            ),
+        )
     }
 
     /**
@@ -179,14 +193,16 @@ class PluginUpdateManager(
      * @param installedPlugins Map of plugin ID to installed version
      * @return Update check result
      */
-    suspend fun checkForUpdates(
-        installedPlugins: Map<String, String>
-    ): UpdateCheckResult {
+    suspend fun checkForUpdates(installedPlugins: Map<String, String>): UpdateCheckResult {
         _state.value = UpdateState.Checking
 
-        logger.info(LogCategory.SYSTEM, "Checking for updates", mapOf(
-            "pluginCount" to installedPlugins.size
-        ))
+        logger.info(
+            LogCategory.SYSTEM,
+            "Checking for updates",
+            mapOf(
+                "pluginCount" to installedPlugins.size,
+            ),
+        )
 
         try {
             val updates = mutableListOf<UpdateInfo>()
@@ -202,79 +218,99 @@ class PluginUpdateManager(
                         if (!satisfiesMinBossVersion(candidate.minBossVersion)) {
                             // Newer version exists but requires a newer host app.
                             // Report it as an advisory; never auto-install.
-                            val notice = IncompatibleNotice(
-                                pluginId = pluginId,
-                                displayName = candidate.displayName,
-                                currentVersion = installedVersion,
-                                advertisedLatest = candidate.version,
-                                requiredBossVersion = candidate.minBossVersion,
-                                hostBossVersion = hostBossVersion
-                            )
+                            val notice =
+                                IncompatibleNotice(
+                                    pluginId = pluginId,
+                                    displayName = candidate.displayName,
+                                    currentVersion = installedVersion,
+                                    advertisedLatest = candidate.version,
+                                    requiredBossVersion = candidate.minBossVersion,
+                                    hostBossVersion = hostBossVersion,
+                                )
                             notices.add(notice)
-                            logger.info(LogCategory.SYSTEM, "Skipping plugin update requiring newer BOSS host", mapOf(
-                                "pluginId" to pluginId,
-                                "advertisedLatest" to candidate.version,
-                                "requiredBossVersion" to candidate.minBossVersion,
-                                "hostBossVersion" to hostBossVersion
-                            ))
+                            logger.info(
+                                LogCategory.SYSTEM,
+                                "Skipping plugin update requiring newer BOSS host",
+                                mapOf(
+                                    "pluginId" to pluginId,
+                                    "advertisedLatest" to candidate.version,
+                                    "requiredBossVersion" to candidate.minBossVersion,
+                                    "hostBossVersion" to hostBossVersion,
+                                ),
+                            )
                             listeners.forEach { it.onUpdateRejectedAsIncompatible(notice) }
                         } else if (!satisfiesMinApiVersion(candidate.minApiVersion)) {
                             // Newer version exists but requires a newer runtime
                             // API layer (boss-plugin-api jar) than installed.
                             // Report it as an advisory; never auto-install.
-                            val notice = IncompatibleNotice(
-                                pluginId = pluginId,
-                                displayName = candidate.displayName,
-                                currentVersion = installedVersion,
-                                advertisedLatest = candidate.version,
-                                requiredApiVersion = candidate.minApiVersion,
-                                hostApiVersion = hostApiVersion()
-                            )
+                            val notice =
+                                IncompatibleNotice(
+                                    pluginId = pluginId,
+                                    displayName = candidate.displayName,
+                                    currentVersion = installedVersion,
+                                    advertisedLatest = candidate.version,
+                                    requiredApiVersion = candidate.minApiVersion,
+                                    hostApiVersion = hostApiVersion(),
+                                )
                             notices.add(notice)
-                            logger.info(LogCategory.SYSTEM, "Skipping plugin update requiring newer API layer", mapOf(
-                                "pluginId" to pluginId,
-                                "advertisedLatest" to candidate.version,
-                                "requiredApiVersion" to candidate.minApiVersion,
-                                "hostApiVersion" to hostApiVersion()
-                            ))
+                            logger.info(
+                                LogCategory.SYSTEM,
+                                "Skipping plugin update requiring newer API layer",
+                                mapOf(
+                                    "pluginId" to pluginId,
+                                    "advertisedLatest" to candidate.version,
+                                    "requiredApiVersion" to candidate.minApiVersion,
+                                    "hostApiVersion" to hostApiVersion(),
+                                ),
+                            )
                             listeners.forEach { it.onUpdateRejectedAsIncompatible(notice) }
                         } else if (isIpcCompatible(candidate.minIpcVersion)) {
                             updates.add(createUpdateInfo(candidate, installedVersion))
                         } else {
                             // Newer version exists but the host can't load it.
                             // Report it as an advisory; never auto-install.
-                            val notice = IncompatibleNotice(
-                                pluginId = pluginId,
-                                displayName = candidate.displayName,
-                                currentVersion = installedVersion,
-                                advertisedLatest = candidate.version,
-                                requiredIpcVersion = candidate.minIpcVersion,
-                                hostIpcVersion = hostIpcVersion
-                            )
+                            val notice =
+                                IncompatibleNotice(
+                                    pluginId = pluginId,
+                                    displayName = candidate.displayName,
+                                    currentVersion = installedVersion,
+                                    advertisedLatest = candidate.version,
+                                    requiredIpcVersion = candidate.minIpcVersion,
+                                    hostIpcVersion = hostIpcVersion,
+                                )
                             notices.add(notice)
-                            logger.info(LogCategory.SYSTEM, "Skipping IPC-incompatible plugin update", mapOf(
-                                "pluginId" to pluginId,
-                                "advertisedLatest" to candidate.version,
-                                "requiredIpcVersion" to candidate.minIpcVersion,
-                                "hostIpcVersion" to hostIpcVersion
-                            ))
+                            logger.info(
+                                LogCategory.SYSTEM,
+                                "Skipping IPC-incompatible plugin update",
+                                mapOf(
+                                    "pluginId" to pluginId,
+                                    "advertisedLatest" to candidate.version,
+                                    "requiredIpcVersion" to candidate.minIpcVersion,
+                                    "hostIpcVersion" to hostIpcVersion,
+                                ),
+                            )
                             listeners.forEach { it.onUpdateRejectedAsIncompatible(notice) }
                         }
                     }
                 } catch (e: Exception) {
                     failed[pluginId] = e.message ?: "Unknown error"
-                    logger.warn(LogCategory.SYSTEM, "Failed to check plugin for updates", mapOf(
-                        "pluginId" to pluginId,
-                        "error" to (e.message ?: "unknown")
-                    ))
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Failed to check plugin for updates",
+                        mapOf(
+                            "pluginId" to pluginId,
+                            "error" to (e.message ?: "unknown"),
+                        ),
+                    )
                 }
             }
 
-            val result = UpdateCheckResult(
-                availableUpdates = updates,
-                failedChecks = failed,
-                incompatibleNotices = notices
-            )
+            val result =
+                UpdateCheckResult(
+                    availableUpdates = updates,
+                    failedChecks = failed,
+                    incompatibleNotices = notices,
+                )
 
             _lastCheckResult.value = result
             _availableUpdates.value = updates
@@ -282,10 +318,14 @@ class PluginUpdateManager(
             _state.value = UpdateState.Idle
 
             if (updates.isNotEmpty()) {
-                logger.info(LogCategory.SYSTEM, "Updates available", mapOf(
-                    "count" to updates.size,
-                    "critical" to updates.count { it.critical }
-                ))
+                logger.info(
+                    LogCategory.SYSTEM,
+                    "Updates available",
+                    mapOf(
+                        "count" to updates.size,
+                        "critical" to updates.count { it.critical },
+                    ),
+                )
                 listeners.forEach { it.onUpdatesAvailable(updates) }
             }
 
@@ -295,7 +335,7 @@ class PluginUpdateManager(
             _state.value = UpdateState.Idle
             return UpdateCheckResult(
                 availableUpdates = emptyList(),
-                failedChecks = installedPlugins.mapValues { "Check failed: ${e.message}" }
+                failedChecks = installedPlugins.mapValues { "Check failed: ${e.message}" },
             )
         }
     }
@@ -309,20 +349,22 @@ class PluginUpdateManager(
      */
     suspend fun downloadUpdate(
         pluginId: String,
-        targetPath: String
+        targetPath: String,
     ): Result<String> {
-        val update = _availableUpdates.value.find { it.pluginId == pluginId }
-            ?: return Result.failure(Exception("No update available for plugin: $pluginId"))
+        val update =
+            _availableUpdates.value.find { it.pluginId == pluginId }
+                ?: return Result.failure(Exception("No update available for plugin: $pluginId"))
 
         _state.value = UpdateState.Downloading(pluginId, 0f)
         listeners.forEach { it.onUpdateDownloading(pluginId, 0f) }
 
         return try {
-            val result = repositoryManager.downloadPlugin(
-                pluginId = pluginId,
-                version = update.newVersion,
-                targetPath = targetPath
-            )
+            val result =
+                repositoryManager.downloadPlugin(
+                    pluginId = pluginId,
+                    version = update.newVersion,
+                    targetPath = targetPath,
+                )
 
             if (result.isSuccess) {
                 _state.value = UpdateState.Idle
@@ -361,16 +403,21 @@ class PluginUpdateManager(
         pluginId: String,
         downloadPath: String,
         unloadPlugin: suspend (String) -> Result<Unit>,
-        loadPlugin: suspend (String) -> Result<Unit>
+        loadPlugin: suspend (String) -> Result<Unit>,
     ): Result<Unit> {
-        val update = _availableUpdates.value.find { it.pluginId == pluginId }
-            ?: return Result.failure(Exception("No update available for plugin: $pluginId"))
+        val update =
+            _availableUpdates.value.find { it.pluginId == pluginId }
+                ?: return Result.failure(Exception("No update available for plugin: $pluginId"))
 
-        logger.info(LogCategory.SYSTEM, "Starting plugin update", mapOf(
-            "pluginId" to pluginId,
-            "currentVersion" to update.currentVersion,
-            "newVersion" to update.newVersion
-        ))
+        logger.info(
+            LogCategory.SYSTEM,
+            "Starting plugin update",
+            mapOf(
+                "pluginId" to pluginId,
+                "currentVersion" to update.currentVersion,
+                "newVersion" to update.newVersion,
+            ),
+        )
 
         // Download new version
         val downloadResult = downloadUpdate(pluginId, downloadPath)
@@ -397,9 +444,13 @@ class PluginUpdateManager(
         val loadResult = loadPlugin(downloadedPath)
         if (loadResult.isFailure) {
             // Rollback - try to reload the old version
-            logger.warn(LogCategory.SYSTEM, "Update failed, attempting rollback", mapOf(
-                "pluginId" to pluginId
-            ))
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Update failed, attempting rollback",
+                mapOf(
+                    "pluginId" to pluginId,
+                ),
+            )
 
             // Note: Actual rollback would require keeping track of the old JAR path
             // For now, we just report the failure
@@ -417,10 +468,14 @@ class PluginUpdateManager(
         // Remove from available updates
         _availableUpdates.value = _availableUpdates.value.filter { it.pluginId != pluginId }
 
-        logger.info(LogCategory.SYSTEM, "Plugin updated successfully", mapOf(
-            "pluginId" to pluginId,
-            "newVersion" to update.newVersion
-        ))
+        logger.info(
+            LogCategory.SYSTEM,
+            "Plugin updated successfully",
+            mapOf(
+                "pluginId" to pluginId,
+                "newVersion" to update.newVersion,
+            ),
+        )
 
         return Result.success(Unit)
     }
@@ -436,18 +491,19 @@ class PluginUpdateManager(
     suspend fun updateAll(
         downloadDir: String,
         unloadPlugin: suspend (String) -> Result<Unit>,
-        loadPlugin: suspend (String) -> Result<Unit>
+        loadPlugin: suspend (String) -> Result<Unit>,
     ): Map<String, Result<Unit>> {
         val results = mutableMapOf<String, Result<Unit>>()
 
         for (update in _availableUpdates.value) {
             val downloadPath = "$downloadDir/${update.pluginId}-${update.newVersion}.jar"
-            results[update.pluginId] = updatePlugin(
-                pluginId = update.pluginId,
-                downloadPath = downloadPath,
-                unloadPlugin = unloadPlugin,
-                loadPlugin = loadPlugin
-            )
+            results[update.pluginId] =
+                updatePlugin(
+                    pluginId = update.pluginId,
+                    downloadPath = downloadPath,
+                    unloadPlugin = unloadPlugin,
+                    loadPlugin = loadPlugin,
+                )
         }
 
         return results
@@ -479,7 +535,10 @@ class PluginUpdateManager(
     /**
      * Check if version1 is newer than version2.
      */
-    private fun isNewerVersion(version1: String, version2: String): Boolean {
+    private fun isNewerVersion(
+        version1: String,
+        version2: String,
+    ): Boolean {
         val v1 = SemanticVersion.parse(version1) ?: return false
         val v2 = SemanticVersion.parse(version2) ?: return false
         return v1 > v2
@@ -513,7 +572,10 @@ class PluginUpdateManager(
      * rank it below the requirement and spuriously gate every exact-version
      * update on prerelease hosts.
      */
-    private fun satisfiesFloor(required: String, installed: String): Boolean {
+    private fun satisfiesFloor(
+        required: String,
+        installed: String,
+    ): Boolean {
         if (required.isBlank() || installed.isBlank()) return true
         val req = SemanticVersion.parse(required) ?: return true
         val cur = SemanticVersion.parse(installed) ?: return true
@@ -525,8 +587,11 @@ class PluginUpdateManager(
     /**
      * Create an UpdateInfo from a PluginInfo.
      */
-    private fun createUpdateInfo(plugin: PluginInfo, currentVersion: String): UpdateInfo {
-        return UpdateInfo(
+    private fun createUpdateInfo(
+        plugin: PluginInfo,
+        currentVersion: String,
+    ): UpdateInfo =
+        UpdateInfo(
             pluginId = plugin.pluginId,
             displayName = plugin.displayName,
             currentVersion = currentVersion,
@@ -536,7 +601,6 @@ class PluginUpdateManager(
             critical = false, // Would need to be specified in plugin metadata
             releaseDate = plugin.publishedAt,
             downloadUrl = plugin.downloadUrl,
-            requiresRestart = false // Dynamic plugins don't require restart
+            requiresRestart = false, // Dynamic plugins don't require restart
         )
-    }
 }

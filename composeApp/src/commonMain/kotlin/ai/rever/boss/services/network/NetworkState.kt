@@ -5,9 +5,11 @@ package ai.rever.boss.services.network
  */
 sealed class NetworkState {
     object Checking : NetworkState()
+
     object Connected : NetworkState()
+
     data class Disconnected(
         val lastCheckTime: Long = System.currentTimeMillis(),
-        val retryAttempt: Int = 0
+        val retryAttempt: Int = 0,
     ) : NetworkState()
 }

@@ -27,7 +27,11 @@ expect object RunExecutionService {
      * @param windowId The window ID that initiated the run (Issue #498)
      * @return The running process info
      */
-    suspend fun execute(config: RunConfiguration, debug: Boolean = false, windowId: String): RunningProcess?
+    suspend fun execute(
+        config: RunConfiguration,
+        debug: Boolean = false,
+        windowId: String,
+    ): RunningProcess?
 
     /**
      * Stop a running process by ID.
@@ -48,5 +52,8 @@ expect object RunExecutionService {
      * @param processId The process ID that completed
      * @param failed Whether the process failed
      */
-    fun markCompleted(processId: String, failed: Boolean = false)
+    fun markCompleted(
+        processId: String,
+        failed: Boolean = false,
+    )
 }

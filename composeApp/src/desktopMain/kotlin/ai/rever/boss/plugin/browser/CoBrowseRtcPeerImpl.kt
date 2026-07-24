@@ -4,6 +4,7 @@ import ai.rever.boss.plugin.api.CoBrowseRtcPeer
 import ai.rever.boss.plugin.api.CoBrowseRtcProvider
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import com.sun.net.httpserver.HttpServer
 import com.teamdev.jxbrowser.browser.Browser
 import com.teamdev.jxbrowser.browser.callback.StartCaptureSessionCallback
 import com.teamdev.jxbrowser.capture.AudioCaptureMode
@@ -11,7 +12,6 @@ import com.teamdev.jxbrowser.capture.NotificationVisibility
 import com.teamdev.jxbrowser.frame.Frame
 import com.teamdev.jxbrowser.js.JsObject
 import com.teamdev.jxbrowser.navigation.event.LoadFinished
-import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -34,12 +34,13 @@ internal class CoBrowseRtcProviderImpl : CoBrowseRtcProvider {
         onIce: (String) -> Unit,
         onInput: (String) -> Unit,
         onState: (Boolean) -> Unit,
-    ): CoBrowseRtcPeer? = try {
-        CoBrowseRtcPeerImpl(onAnswer, onIce, onInput, onState)
-    } catch (e: Throwable) {
-        logger.warn(LogCategory.BROWSER, "Failed to create WebRTC peer", error = e)
-        null
-    }
+    ): CoBrowseRtcPeer? =
+        try {
+            CoBrowseRtcPeerImpl(onAnswer, onIce, onInput, onState)
+        } catch (e: Throwable) {
+            logger.warn(LogCategory.BROWSER, "Failed to create WebRTC peer", error = e)
+            null
+        }
 
     companion object {
         internal val logger = BossLogger.forComponent("CoBrowseRtc")
@@ -52,22 +53,27 @@ internal class CoBrowseRtcPeerImpl(
     onInput: (String) -> Unit,
     onState: (Boolean) -> Unit,
 ) : CoBrowseRtcPeer {
-
     private val logger = CoBrowseRtcProviderImpl.logger
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private val bridge = CoBrowseRtcBridge(onAnswer, onIce, onInput, onState).also {
-        it.onVideoError = { msg -> logger.warn(LogCategory.BROWSER, "WebRTC video capture error: $msg") }
-        it.onVideoState = { msg -> logger.info(LogCategory.BROWSER, "WebRTC video: $msg") }
-    }
+    private val bridge =
+        CoBrowseRtcBridge(onAnswer, onIce, onInput, onState).also {
+            it.onVideoError = { msg -> logger.warn(LogCategory.BROWSER, "WebRTC video capture error: $msg") }
+            it.onVideoState = { msg -> logger.info(LogCategory.BROWSER, "WebRTC video: $msg") }
+        }
 
     @Volatile private var browser: Browser? = null
+
     @Volatile private var injected = false
+
     @Volatile private var ready = false
+
     @Volatile private var closed = false
+
     // Ops (offer/ice/sendDom/startVideo) that arrive before the peer page has
     // loaded + initialized are queued here and flushed on init — the viewer can
     // send its offer faster than the localhost page loads.
     private val pending = ArrayList<String>()
+
     /** Page title of the tab to capture; read when the peer page calls getDisplayMedia. */
     @Volatile private var targetTitle: String? = null
 
@@ -81,24 +87,27 @@ internal class CoBrowseRtcPeerImpl(
                 logger.info(LogCategory.BROWSER, "WebRTC peer browser created")
                 // Auto-select the shared tab as the capture source (no picker UI).
                 // Internal-tab capture doesn't need OS screen-recording permission.
-                b.set(StartCaptureSessionCallback::class.java, StartCaptureSessionCallback { params, tell ->
-                    try {
-                        val want = targetTitle
-                        val browsers = params.sources().browsers()
-                        val chosen = (want?.let { t -> browsers.firstOrNull { it.name() == t } }) ?: browsers.firstOrNull()
-                        if (chosen != null) {
-                            logger.info(LogCategory.BROWSER, "WebRTC video: selecting capture source '${chosen.name()}'")
-                            // HIDE suppresses Chromium's "Sharing this tab" banner on the captured tab.
-                            tell.selectSource(chosen, AudioCaptureMode.IGNORE, NotificationVisibility.HIDE)
-                        } else {
-                            logger.warn(LogCategory.BROWSER, "WebRTC video: no internal-tab capture source available")
-                            tell.cancel()
+                b.set(
+                    StartCaptureSessionCallback::class.java,
+                    StartCaptureSessionCallback { params, tell ->
+                        try {
+                            val want = targetTitle
+                            val browsers = params.sources().browsers()
+                            val chosen = (want?.let { t -> browsers.firstOrNull { it.name() == t } }) ?: browsers.firstOrNull()
+                            if (chosen != null) {
+                                logger.info(LogCategory.BROWSER, "WebRTC video: selecting capture source '${chosen.name()}'")
+                                // HIDE suppresses Chromium's "Sharing this tab" banner on the captured tab.
+                                tell.selectSource(chosen, AudioCaptureMode.IGNORE, NotificationVisibility.HIDE)
+                            } else {
+                                logger.warn(LogCategory.BROWSER, "WebRTC video: no internal-tab capture source available")
+                                tell.cancel()
+                            }
+                        } catch (e: Exception) {
+                            logger.warn(LogCategory.BROWSER, "WebRTC video: capture selection failed", error = e)
+                            runCatching { tell.cancel() }
                         }
-                    } catch (e: Exception) {
-                        logger.warn(LogCategory.BROWSER, "WebRTC video: capture selection failed", error = e)
-                        runCatching { tell.cancel() }
-                    }
-                })
+                    },
+                )
                 // Inject the bridge + init the peer once the served page (and its
                 // script) has finished loading.
                 b.navigation().on(LoadFinished::class.java) {
@@ -106,7 +115,8 @@ internal class CoBrowseRtcPeerImpl(
                         if (!injected) {
                             val f = b.mainFrame().orElse(null)
                             if (f != null) {
-                                injectInto(f); injected = true
+                                injectInto(f)
+                                injected = true
                                 logger.info(LogCategory.BROWSER, "WebRTC peer initialized")
                             }
                         }
@@ -128,7 +138,11 @@ internal class CoBrowseRtcPeerImpl(
         frame.executeJavaScript<Any?>("window.__bossRtcInit && window.__bossRtcInit(${jsStr(iceServersJson)});")
         // The page is now initialized — flush any ops that raced ahead of it.
         val queued: List<String>
-        synchronized(pending) { ready = true; queued = ArrayList(pending); pending.clear() }
+        synchronized(pending) {
+            ready = true
+            queued = ArrayList(pending)
+            pending.clear()
+        }
         queued.forEach { runCatching { frame.executeJavaScript<Any?>(it) } }
     }
 
@@ -137,11 +151,19 @@ internal class CoBrowseRtcPeerImpl(
     private fun runJs(script: String) {
         if (closed) return
         synchronized(pending) {
-            if (!ready) { pending.add(script); return } // apply once initialized
+            if (!ready) {
+                pending.add(script)
+                return
+            } // apply once initialized
         }
         scope.launch {
-            try { mainFrame()?.executeJavaScript<Any?>(script) }
-            catch (e: Exception) { logger.warn(LogCategory.BROWSER, "WebRTC peer JS call failed", error = e) }
+            try {
+                mainFrame()?.executeJavaScript<Any?>(script)
+            } catch (
+                e: Exception,
+            ) {
+                logger.warn(LogCategory.BROWSER, "WebRTC peer JS call failed", error = e)
+            }
         }
     }
 
@@ -171,9 +193,16 @@ internal class CoBrowseRtcPeerImpl(
     override fun close() {
         if (closed) return
         closed = true
-        bridge.onAnswer = null; bridge.onIce = null; bridge.onInput = null; bridge.onState = null; bridge.onVideoError = null
+        bridge.onAnswer = null
+        bridge.onIce = null
+        bridge.onInput = null
+        bridge.onState = null
+        bridge.onVideoError = null
         scope.launch {
-            try { browser?.takeIf { !it.isClosed }?.close() } catch (_: Throwable) {}
+            try {
+                browser?.takeIf { !it.isClosed }?.close()
+            } catch (_: Throwable) {
+            }
             browser = null
         }
     }
@@ -186,11 +215,14 @@ internal class CoBrowseRtcPeerImpl(
         // STUN alone fails across most real cross-network NATs (symmetric / mobile
         // CGNAT); TURN is what lets a remote viewer's media actually connect.
         fun buildIceServersJson(): String {
-            fun cfg(prop: String, env: String) =
-                System.getProperty(prop)?.takeIf { it.isNotBlank() } ?: System.getenv(env)?.takeIf { it.isNotBlank() }
-            val sb = StringBuilder(
-                """[{"urls":"stun:stun.l.google.com:19302"},{"urls":"stun:stun1.l.google.com:19302"}"""
-            )
+            fun cfg(
+                prop: String,
+                env: String,
+            ) = System.getProperty(prop)?.takeIf { it.isNotBlank() } ?: System.getenv(env)?.takeIf { it.isNotBlank() }
+            val sb =
+                StringBuilder(
+                    """[{"urls":"stun:stun.l.google.com:19302"},{"urls":"stun:stun1.l.google.com:19302"}""",
+                )
             val turn = cfg("boss.cobrowse.turn", "BOSS_COBROWSE_TURN")
             if (turn != null) {
                 val p = turn.split(",").map { it.trim() }
@@ -223,13 +255,17 @@ internal class CoBrowseRtcPeerImpl(
 private object RtcHostServer {
     @Volatile private var port: Int = -1
 
-    fun baseUrl(): String { ensure(); return "http://127.0.0.1:$port/" }
+    fun baseUrl(): String {
+        ensure()
+        return "http://127.0.0.1:$port/"
+    }
 
     @Synchronized
     private fun ensure() {
         if (port > 0) return
-        val html = (javaClass.getResourceAsStream("/webrtc/rtc-host.html")?.use { it.readBytes() })
-            ?: ByteArray(0)
+        val html =
+            (javaClass.getResourceAsStream("/webrtc/rtc-host.html")?.use { it.readBytes() })
+                ?: ByteArray(0)
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         server.createContext("/") { ex ->
             ex.responseHeaders.add("Content-Type", "text/html; charset=utf-8")

@@ -1,8 +1,8 @@
 package ai.rever.boss.components.settings.sections
 
-import ai.rever.boss.components.settings.shared.SettingsSection
-import ai.rever.boss.components.settings.shared.SettingsLongInput
 import ai.rever.boss.components.settings.shared.SettingsButtonRow
+import ai.rever.boss.components.settings.shared.SettingsLongInput
+import ai.rever.boss.components.settings.shared.SettingsSection
 import ai.rever.boss.components.settings.shared.SettingsTheme.AccentColor
 import ai.rever.boss.components.settings.shared.SettingsTheme.TextPrimary
 import ai.rever.boss.components.settings.shared.SettingsTheme.TextSecondary
@@ -29,7 +29,7 @@ fun StartupSettingsSection() {
 
     Column(
         modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         SettingsSection(title = "Workspace Loading") {
             SettingsLongInput(
@@ -41,7 +41,7 @@ fun StartupSettingsSection() {
                     }
                 },
                 range = MIN_TIMEOUT_MS..MAX_TIMEOUT_MS,
-                description = "Time to wait before showing New Tab dialog (${MIN_TIMEOUT_MS}-${MAX_TIMEOUT_MS}ms)"
+                description = "Time to wait before showing New Tab dialog (${MIN_TIMEOUT_MS}-${MAX_TIMEOUT_MS}ms)",
             )
 
             if (settings.workspaceLoadTimeoutMs != DEFAULT_TIMEOUT_MS) {
@@ -53,7 +53,7 @@ fun StartupSettingsSection() {
                             StartupSettingsManager.resetToDefault()
                         }
                     },
-                    description = "Reset to default value (${DEFAULT_TIMEOUT_MS}ms)"
+                    description = "Reset to default value (${DEFAULT_TIMEOUT_MS}ms)",
                 )
             }
         }
@@ -64,22 +64,23 @@ fun StartupSettingsSection() {
                 modifier = Modifier.fillMaxWidth(),
                 backgroundColor = AccentColor.copy(alpha = 0.1f),
                 shape = RoundedCornerShape(6.dp),
-                elevation = 0.dp
+                elevation = 0.dp,
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
                     Text(
                         text = "Workspace Loading",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
-                        color = TextPrimary
+                        color = TextPrimary,
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "On startup, the app waits for the workspace manager to load your Last Session. " +
+                        text =
+                            "On startup, the app waits for the workspace manager to load your Last Session. " +
                                 "If no workspaces are found within the timeout, it assumes a fresh install and shows the New Tab dialog.",
                         fontSize = 11.sp,
                         color = TextSecondary,
-                        lineHeight = 16.sp
+                        lineHeight = 16.sp,
                     )
                 }
             }

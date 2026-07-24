@@ -1,4 +1,5 @@
 @file:Suppress("UNUSED")
+
 package ai.rever.boss.git
 
 import kotlinx.coroutines.flow.StateFlow
@@ -78,7 +79,10 @@ expect object GitService {
      * @param windowId Optional window ID to update window-specific state after operation
      * @return Result indicating success or failure
      */
-    suspend fun checkout(branchName: String, windowId: String? = null): GitOperationResult
+    suspend fun checkout(
+        branchName: String,
+        windowId: String? = null,
+    ): GitOperationResult
 
     /**
      * Create a new branch.
@@ -88,7 +92,11 @@ expect object GitService {
      * @param windowId Optional window ID to update window-specific state after operation
      * @return Result indicating success or failure
      */
-    suspend fun createBranch(branchName: String, checkout: Boolean = true, windowId: String? = null): GitOperationResult
+    suspend fun createBranch(
+        branchName: String,
+        checkout: Boolean = true,
+        windowId: String? = null,
+    ): GitOperationResult
 
     /**
      * Pull changes from remote.
@@ -154,7 +162,10 @@ expect object GitService {
      * @param windowId Optional window ID to update window-specific state after operation
      * @return Result indicating success or failure
      */
-    suspend fun stage(filePath: String, windowId: String? = null): GitOperationResult
+    suspend fun stage(
+        filePath: String,
+        windowId: String? = null,
+    ): GitOperationResult
 
     /**
      * Stage all modified files.
@@ -171,7 +182,10 @@ expect object GitService {
      * @param windowId Optional window ID to update window-specific state after operation
      * @return Result indicating success or failure
      */
-    suspend fun unstage(filePath: String, windowId: String? = null): GitOperationResult
+    suspend fun unstage(
+        filePath: String,
+        windowId: String? = null,
+    ): GitOperationResult
 
     /**
      * Unstage all staged files.
@@ -188,7 +202,10 @@ expect object GitService {
      * @param windowId Optional window ID to update window-specific state after operation
      * @return Result indicating success or failure
      */
-    suspend fun discardChanges(filePath: String, windowId: String? = null): GitOperationResult
+    suspend fun discardChanges(
+        filePath: String,
+        windowId: String? = null,
+    ): GitOperationResult
 
     // ===== Commit =====
 
@@ -200,7 +217,11 @@ expect object GitService {
      * @param windowId Optional window ID to update window-specific state after operation
      * @return Result indicating success or failure
      */
-    suspend fun commit(message: String, amend: Boolean = false, windowId: String? = null): GitOperationResult
+    suspend fun commit(
+        message: String,
+        amend: Boolean = false,
+        windowId: String? = null,
+    ): GitOperationResult
 
     /**
      * Get the last commit message (for amending).
@@ -254,7 +275,10 @@ expect object GitService {
      * @param includeUntracked Whether to include untracked files
      * @return Result indicating success or failure
      */
-    suspend fun stash(message: String? = null, includeUntracked: Boolean = false): GitOperationResult
+    suspend fun stash(
+        message: String? = null,
+        includeUntracked: Boolean = false,
+    ): GitOperationResult
 
     /**
      * Pop the latest stash (apply and delete).
@@ -309,7 +333,10 @@ expect object GitService {
      * @param windowId The window ID for per-window terminal isolation (Issue #498)
      * @param branchName Branch to merge
      */
-    suspend fun mergeInTerminal(windowId: String, branchName: String)
+    suspend fun mergeInTerminal(
+        windowId: String,
+        branchName: String,
+    )
 
     /**
      * Run git rebase in the terminal (for real-time output).
@@ -317,7 +344,10 @@ expect object GitService {
      * @param windowId The window ID for per-window terminal isolation (Issue #498)
      * @param branchName Branch to rebase onto
      */
-    suspend fun rebaseInTerminal(windowId: String, branchName: String)
+    suspend fun rebaseInTerminal(
+        windowId: String,
+        branchName: String,
+    )
 
     /**
      * Run a custom git command in the terminal.
@@ -325,7 +355,10 @@ expect object GitService {
      * @param windowId The window ID for per-window terminal isolation (Issue #498)
      * @param args Git command arguments (without 'git' prefix)
      */
-    suspend fun runInTerminal(windowId: String, vararg args: String)
+    suspend fun runInTerminal(
+        windowId: String,
+        vararg args: String,
+    )
 
     /**
      * Get the current project path (for terminal commands).
@@ -345,7 +378,7 @@ expect object GitService {
     suspend fun cloneRepository(
         repositoryUrl: String,
         targetDirectory: String,
-        onProgress: (String) -> Unit = {}
+        onProgress: (String) -> Unit = {},
     ): GitOperationResult
 
     // ===== Window-Specific Operations =====
@@ -361,7 +394,10 @@ expect object GitService {
      * @param projectPath The root path of the project
      * @param windowGitState The window-specific git state to update
      */
-    suspend fun refreshForWindow(projectPath: String, windowGitState: ai.rever.boss.window.WindowGitState?)
+    suspend fun refreshForWindow(
+        projectPath: String,
+        windowGitState: ai.rever.boss.window.WindowGitState?,
+    )
 
     /**
      * Refresh stash list for a specific window.
@@ -386,7 +422,10 @@ expect object GitService {
      * @param limit Maximum number of commits to retrieve
      * @return List of commits
      */
-    suspend fun getLogForWindow(windowGitState: ai.rever.boss.window.WindowGitState?, limit: Int = 100): List<GitCommitInfo>
+    suspend fun getLogForWindow(
+        windowGitState: ai.rever.boss.window.WindowGitState?,
+        limit: Int = 100,
+    ): List<GitCommitInfo>
 
     /**
      * Watch the project's `.git/HEAD` (and refs) for external mutations and

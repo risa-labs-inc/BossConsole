@@ -15,14 +15,12 @@ actual object CursorUtil {
     /**
      * Changes the cursor to a horizontal resize cursor when hovering.
      */
-    actual fun Modifier.cursorForHorizontalResize(): Modifier {
-        return this.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.E_RESIZE_CURSOR)))
-    }
+    actual fun Modifier.cursorForHorizontalResize(): Modifier =
+        this.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.E_RESIZE_CURSOR)))
 
     /**
      * Changes the cursor to a vertical resize cursor when hovering.
      */
-    actual fun Modifier.cursorForVerticalResize(): Modifier {
-        return this.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.N_RESIZE_CURSOR)))
-    }
+    actual fun Modifier.cursorForVerticalResize(): Modifier =
+        this.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.N_RESIZE_CURSOR)))
 }

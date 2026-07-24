@@ -16,23 +16,23 @@ import androidx.compose.ui.graphics.Color
  */
 object BossThemeColors {
     // Background colors
-    val SurfaceColor: Color get() = BossColors.darkBackground       // Card/sidebar background
+    val SurfaceColor: Color get() = BossColors.darkBackground // Card/sidebar background
     val BackgroundColor: Color get() = BossColors.darkContentBackground // Content area background
-    val BorderColor: Color get() = BossColors.darkBorder            // Border/divider color
+    val BorderColor: Color get() = BossColors.darkBorder // Border/divider color
 
     // Text colors
-    val TextPrimary: Color get() = BossColors.darkTextPrimary       // Primary text color
-    val TextSecondary: Color get() = BossColors.darkTextSecondary   // Secondary text color
-    val TextMuted: Color get() = BossColors.darkTextMuted           // Muted text color
+    val TextPrimary: Color get() = BossColors.darkTextPrimary // Primary text color
+    val TextSecondary: Color get() = BossColors.darkTextSecondary // Secondary text color
+    val TextMuted: Color get() = BossColors.darkTextMuted // Muted text color
 
     // Accent colors
-    val AccentColor: Color get() = BossColors.darkAccent            // Selection/highlight color
-    val SecondaryColor: Color get() = BossColors.darkSecondary      // Secondary accent
+    val AccentColor: Color get() = BossColors.darkAccent // Selection/highlight color
+    val SecondaryColor: Color get() = BossColors.darkSecondary // Secondary accent
 
     // Status colors
-    val ErrorColor: Color get() = BossColors.darkError              // Error states
-    val SuccessColor: Color get() = BossColors.darkSuccess          // Success states
-    val WarningColor: Color get() = BossColors.darkWarning          // Warning states
+    val ErrorColor: Color get() = BossColors.darkError // Error states
+    val SuccessColor: Color get() = BossColors.darkSuccess // Success states
+    val WarningColor: Color get() = BossColors.darkWarning // Warning states
 }
 
 /**
@@ -66,14 +66,14 @@ fun BossTheme(content: @Composable () -> Unit) {
 @Composable
 fun BossTheme(
     typography: BossTypography,
-    content: @Composable () -> Unit
+    content: @Composable () -> Unit,
 ) {
     // Resolve the active host theme reactively — switching it (via the settings
     // UI / BossThemeController) re-skins the whole subtree.
     val theme = BossThemeController.current
 
     MaterialTheme(
-        colors = theme.material
+        colors = theme.material,
     ) {
         // Provide the BOSS design-system tokens so components can read
         // `BossTheme.colors.signal`, `BossTheme.space.md`, etc.

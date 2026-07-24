@@ -9,12 +9,12 @@ package ai.rever.boss.plugin.sandbox
  * deterministic — restarting the plugin will never fix them. The plugin needs an update.
  */
 object PluginErrorClassifier {
-
     enum class ErrorCategory {
         /** Non-recoverable linkage errors from API version mismatch. */
         BINARY_INCOMPATIBILITY,
+
         /** Potentially transient errors that may resolve on restart. */
-        RECOVERABLE
+        RECOVERABLE,
     }
 
     /**
@@ -30,8 +30,8 @@ object PluginErrorClassifier {
      * - [UnsupportedClassVersionError] — compiled for newer JVM
      * - [UnsatisfiedLinkError] — native library mismatch (e.g., JxBrowser version change)
      */
-    fun classify(error: Throwable): ErrorCategory {
-        return when (error) {
+    fun classify(error: Throwable): ErrorCategory =
+        when (error) {
             is NoSuchMethodError,
             is NoClassDefFoundError,
             is IncompatibleClassChangeError,
@@ -39,17 +39,22 @@ object PluginErrorClassifier {
             is NoSuchFieldError,
             is IllegalAccessError,
             is UnsupportedClassVersionError,
-            is UnsatisfiedLinkError -> ErrorCategory.BINARY_INCOMPATIBILITY
+            is UnsatisfiedLinkError,
+            -> {
+                ErrorCategory.BINARY_INCOMPATIBILITY
+            }
+
             else -> {
                 // Check the cause chain — binary incompatibility may be wrapped
                 val cause = error.cause
-                if (cause != null && cause !== error) classify(cause)
-                else ErrorCategory.RECOVERABLE
+                if (cause != null && cause !== error) {
+                    classify(cause)
+                } else {
+                    ErrorCategory.RECOVERABLE
+                }
             }
         }
-    }
 
     /** Convenience check for binary incompatibility errors. */
-    fun isBinaryIncompatibility(error: Throwable): Boolean =
-        classify(error) == ErrorCategory.BINARY_INCOMPATIBILITY
+    fun isBinaryIncompatibility(error: Throwable): Boolean = classify(error) == ErrorCategory.BINARY_INCOMPATIBILITY
 }

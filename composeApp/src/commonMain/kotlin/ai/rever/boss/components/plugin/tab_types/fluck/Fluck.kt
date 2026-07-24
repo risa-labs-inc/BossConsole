@@ -41,7 +41,6 @@ import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.read
 import kotlin.concurrent.write
 
-
 // Tab info for dynamic title and icon updates
 // Thread Safety: Navigation methods (_currentUrl mutations) use @Synchronized for thread-safe access.
 // All callers should ideally be on Main thread, but @Synchronized provides defensive protection.
@@ -58,7 +57,7 @@ class FluckTabInfo(
     val navigationHistory: MutableList<Pair<String, String>> = mutableListOf(), // List of (title, url) pairs
     @Volatile var historyIndex: Int = -1, // Current position in navigation history
     private var _currentZoomLevel: Double = 1.0, // Current zoom level (1.0 = 100%)
-    var faviconCacheKey: String? = null // Cache key for persisted favicon
+    var faviconCacheKey: String? = null, // Cache key for persisted favicon
 ) : TabInfo {
     override val title: String get() = _title
 
@@ -67,7 +66,9 @@ class FluckTabInfo(
     // updateIcon/updateTabIcon) is in place.
     private val isOnHomePage: Boolean get() = isHomeUrl(_currentUrl)
     override val icon: ImageVector get() = if (isOnHomePage) Icons.Outlined.Home else _icon
-    override val tabIcon: TabIcon? get() = _tabIcon ?: ai.rever.boss.plugin.api.TabIcon.Vector(icon)
+    override val tabIcon: TabIcon? get() =
+        _tabIcon ?: ai.rever.boss.plugin.api.TabIcon
+            .Vector(icon)
     val currentUrl: String @Synchronized get() = _currentUrl
     val currentZoomLevel: Double get() = _currentZoomLevel
 
@@ -78,12 +79,12 @@ class FluckTabInfo(
         if (other == null || other !is FluckTabInfo) return false
 
         return id == other.id &&
-               _title == other._title &&
-               _currentUrl == other._currentUrl &&
-               _icon == other._icon &&
-               _tabIcon == other._tabIcon &&
-               faviconCacheKey == other.faviconCacheKey &&
-               _currentZoomLevel == other._currentZoomLevel
+            _title == other._title &&
+            _currentUrl == other._currentUrl &&
+            _icon == other._icon &&
+            _tabIcon == other._tabIcon &&
+            faviconCacheKey == other.faviconCacheKey &&
+            _currentZoomLevel == other._currentZoomLevel
     }
 
     // Keep hashCode based on ID only for HashMap performance
@@ -102,19 +103,20 @@ class FluckTabInfo(
         _currentZoomLevel: Double = this._currentZoomLevel,
         faviconCacheKey: String? = this.faviconCacheKey,
         navigationHistory: MutableList<Pair<String, String>>? = null,
-        historyIndex: Int = this.historyIndex
+        historyIndex: Int = this.historyIndex,
     ): FluckTabInfo {
-        val newTab = FluckTabInfo(
-            id = id,
-            typeId = typeId,
-            _title = _title,
-            _icon = _icon,
-            _tabIcon = _tabIcon,
-            url = url,
-            _currentUrl = _currentUrl,
-            _currentZoomLevel = _currentZoomLevel,
-            faviconCacheKey = faviconCacheKey
-        )
+        val newTab =
+            FluckTabInfo(
+                id = id,
+                typeId = typeId,
+                _title = _title,
+                _icon = _icon,
+                _tabIcon = _tabIcon,
+                url = url,
+                _currentUrl = _currentUrl,
+                _currentZoomLevel = _currentZoomLevel,
+                faviconCacheKey = faviconCacheKey,
+            )
 
         // Copy navigation history list to prevent shared reference issues (fixes Issue #406)
         // Pairs are immutable so they're safely shared; we just need independent list instances
@@ -128,27 +130,26 @@ class FluckTabInfo(
         return newTab
     }
 
-    fun updateTitle(newTitle: String): FluckTabInfo {
-        return copy(_title = newTitle)
-    }
+    fun updateTitle(newTitle: String): FluckTabInfo = copy(_title = newTitle)
 
-    fun updateIcon(newIcon: ImageVector): FluckTabInfo {
-        return copy(_icon = newIcon, _tabIcon = ai.rever.boss.plugin.api.TabIcon.Vector(newIcon))
-    }
+    fun updateIcon(newIcon: ImageVector): FluckTabInfo =
+        copy(
+            _icon = newIcon,
+            _tabIcon =
+                ai.rever.boss.plugin.api.TabIcon
+                    .Vector(newIcon),
+        )
 
-    fun updateTabIcon(newTabIcon: TabIcon): FluckTabInfo {
-        return copy(_tabIcon = newTabIcon)
-    }
+    fun updateTabIcon(newTabIcon: TabIcon): FluckTabInfo = copy(_tabIcon = newTabIcon)
 
-    fun updateFaviconCacheKey(newCacheKey: String?): FluckTabInfo {
-        return copy(faviconCacheKey = newCacheKey)
-    }
+    fun updateFaviconCacheKey(newCacheKey: String?): FluckTabInfo = copy(faviconCacheKey = newCacheKey)
 
-    fun updateZoomLevel(newLevel: Double): FluckTabInfo {
-        return copy(_currentZoomLevel = newLevel)
-    }
+    fun updateZoomLevel(newLevel: Double): FluckTabInfo = copy(_currentZoomLevel = newLevel)
 
-    fun updateNavigation(title: String, url: String): FluckTabInfo {
+    fun updateNavigation(
+        title: String,
+        url: String,
+    ): FluckTabInfo {
         // Calculate new history and index WITHOUT mutating
         val newHistory = navigationHistory.toMutableList()
         var newIndex = historyIndex
@@ -176,7 +177,7 @@ class FluckTabInfo(
         return copy(
             _currentUrl = url,
             navigationHistory = newHistory,
-            historyIndex = newIndex
+            historyIndex = newIndex,
         )
     }
 
@@ -188,10 +189,13 @@ class FluckTabInfo(
     @Deprecated(
         message = "Use updateNavigation() for immutable state updates",
         replaceWith = ReplaceWith("updateNavigation(title, url)"),
-        level = DeprecationLevel.WARNING
+        level = DeprecationLevel.WARNING,
     )
     @Synchronized
-    fun navigateToPage(title: String, url: String) {
+    fun navigateToPage(
+        title: String,
+        url: String,
+    ) {
         // Update current URL
         _currentUrl = url
 
@@ -269,6 +273,7 @@ expect fun resetEngineInitialization()
 
 // Platform-specific settings for browser retry/recovery limits (configurable via Settings)
 expect fun getMaxInitRetries(): Int
+
 expect fun getMaxRecoveryAttempts(): Int
 
 // Platform-specific composable to observe engine generation changes
@@ -278,12 +283,18 @@ expect fun collectEngineGeneration(): Long
 // Platform-specific browser view state creation
 // Returns null if no valid window is available
 // window: Optional AWT window to use (from LocalAwtWindow) for correct multi-window support
-expect fun createBrowserViewState(browser: Any, window: Any? = null): Any?
+expect fun createBrowserViewState(
+    browser: Any,
+    window: Any? = null,
+): Any?
 
 // Platform-specific browser view state recreation
 // Used when re-acquiring rendering surface after fullscreen exit
 // Returns a NEW BrowserViewState instance for the existing browser
-expect fun recreateBrowserViewState(browser: Any, window: Any? = null): Any?
+expect fun recreateBrowserViewState(
+    browser: Any,
+    window: Any? = null,
+): Any?
 
 // Platform-specific browser view state closing
 // Must be called before recreating to release the browser
@@ -303,7 +314,7 @@ expect fun getBrowserState(
     url: String,
     onOpenInNewTab: ((String) -> Unit)? = null,
     onBrowserClosed: (() -> Unit)? = null,
-    window: Any? = null
+    window: Any? = null,
 ): Pair<Any, Any>?
 
 // Platform-specific function to get the current AWT window from CompositionLocal
@@ -321,7 +332,7 @@ expect fun createFluckTabComponent(
     onOpenInNewTab: (String) -> Unit,
     onNavigationUpdate: ((String, String) -> Unit)? = null,
     onFaviconCacheKeyUpdate: ((String?) -> Unit)? = null,
-    onCloseTab: (() -> Unit)? = null
+    onCloseTab: (() -> Unit)? = null,
 ): FluckTabComponent
 
 open class FluckTabComponent(
@@ -333,8 +344,9 @@ open class FluckTabComponent(
     private val onOpenInNewTab: (String) -> Unit,
     private val onNavigationUpdate: ((String, String) -> Unit)? = null,
     private val onFaviconCacheKeyUpdate: ((String?) -> Unit)? = null,
-    private val onCloseTab: (() -> Unit)? = null
-) : TabComponentWithUI, ComponentContext by componentContext {
+    private val onCloseTab: (() -> Unit)? = null,
+) : TabComponentWithUI,
+    ComponentContext by componentContext {
     private val logger = BossLogger.forComponent("FluckTabComponent")
 
     // Cache the FluckTabInfo cast to avoid repeated casting during recompositions
@@ -344,9 +356,10 @@ open class FluckTabComponent(
     // This must be a computed property (not val) to reflect navigation changes for recovery/reload
     // Issue #379: Previously was a val, causing stale URL on browser recovery
     private val currentUrlForBrowser: String
-        get() = fluckTabInfo?.let {
-            it.currentUrl.ifEmpty { it.url }
-        } ?: "https://www.risalabs.ai"
+        get() =
+            fluckTabInfo?.let {
+                it.currentUrl.ifEmpty { it.url }
+            } ?: "https://www.risalabs.ai"
 
     // Browser state will be initialized lazily in Content() - NOT during construction
     // This prevents blocking the UI thread during window initialization
@@ -379,12 +392,12 @@ open class FluckTabComponent(
 
     // Retry mechanism for browser initialization (Issue #162)
     private var retryCount = 0
-    private val maxRetries: Int get() = getMaxInitRetries()  // Configurable via Settings
+    private val maxRetries: Int get() = getMaxInitRetries() // Configurable via Settings
     private var retryTrigger by mutableStateOf(0)
 
     // Recovery loop prevention - track consecutive recovery attempts
     private var recoveryAttempts = 0
-    private val maxRecoveryAttempts: Int get() = getMaxRecoveryAttempts()  // Configurable via Settings
+    private val maxRecoveryAttempts: Int get() = getMaxRecoveryAttempts() // Configurable via Settings
 
     /**
      * Resets browser state to trigger recovery/reinitialization.
@@ -397,12 +410,27 @@ open class FluckTabComponent(
 
         // Prevent infinite recovery loops
         if (recoveryAttempts > maxRecoveryAttempts) {
-            logger.error(LogCategory.BROWSER, "Max recovery attempts reached", mapOf("maxAttempts" to maxRecoveryAttempts, "tabId" to config.id))
+            logger.error(
+                LogCategory.BROWSER,
+                "Max recovery attempts reached",
+                mapOf(
+                    "maxAttempts" to maxRecoveryAttempts,
+                    "tabId" to config.id,
+                ),
+            )
             browserError = Exception("Browser recovery failed after $maxRecoveryAttempts attempts. Please close and reopen this tab.")
             return false
         }
 
-        logger.info(LogCategory.BROWSER, "Triggering recovery", mapOf("reason" to reason, "tabId" to config.id, "attempt" to "$recoveryAttempts/$maxRecoveryAttempts"))
+        logger.info(
+            LogCategory.BROWSER,
+            "Triggering recovery",
+            mapOf(
+                "reason" to reason,
+                "tabId" to config.id,
+                "attempt" to "$recoveryAttempts/$maxRecoveryAttempts",
+            ),
+        )
         browserState = null
         browserError = null
         retryCount = 0
@@ -524,7 +552,15 @@ open class FluckTabComponent(
                     val delayMs = 100L * (1 shl retryCount)
 
                     if (retryCount > 0) {
-                        logger.info(LogCategory.BROWSER, "Browser retry attempt", mapOf("attempt" to "${retryCount + 1}/$maxRetries", "tabId" to config.id, "delayMs" to delayMs))
+                        logger.info(
+                            LogCategory.BROWSER,
+                            "Browser retry attempt",
+                            mapOf(
+                                "attempt" to "${retryCount + 1}/$maxRetries",
+                                "tabId" to config.id,
+                                "delayMs" to delayMs,
+                            ),
+                        )
                     }
 
                     kotlinx.coroutines.delay(delayMs)
@@ -539,36 +575,48 @@ open class FluckTabComponent(
                     // OAuth popups with dimensions will be real popups, regular links will be tabs
                     // onBrowserClosed triggers recovery when browser is closed (event-driven, no polling)
                     // Pass currentWindow (from LocalAwtWindow) to ensure correct window handle for multi-window
-                    val state = getBrowserState(
-                        url = currentUrlForBrowser,
-                        onOpenInNewTab = onOpenInNewTab,
-                        onBrowserClosed = {
-                            // Browser was closed - trigger recovery only if tab is not being disposed
-                            // This prevents recovery when user intentionally closes the tab
-                            // Note: This callback runs on JxBrowser's thread, so we dispatch to Main
-                            // for thread-safe Compose state updates
-                            if (!isDisposed) {
-                                CoroutineScope(Dispatchers.Main).launch {
-                                    if (resetForRecovery("Browser closed unexpectedly")) {
-                                        localBrowserState = null
+                    val state =
+                        getBrowserState(
+                            url = currentUrlForBrowser,
+                            onOpenInNewTab = onOpenInNewTab,
+                            onBrowserClosed = {
+                                // Browser was closed - trigger recovery only if tab is not being disposed
+                                // This prevents recovery when user intentionally closes the tab
+                                // Note: This callback runs on JxBrowser's thread, so we dispatch to Main
+                                // for thread-safe Compose state updates
+                                if (!isDisposed) {
+                                    CoroutineScope(Dispatchers.Main).launch {
+                                        if (resetForRecovery("Browser closed unexpectedly")) {
+                                            localBrowserState = null
+                                        }
                                     }
+                                } else {
+                                    logger.debug(
+                                        LogCategory.BROWSER,
+                                        "Browser closed for disposed tab, skipping recovery",
+                                        mapOf("tabId" to config.id),
+                                    )
                                 }
-                            } else {
-                                logger.debug(LogCategory.BROWSER, "Browser closed for disposed tab, skipping recovery", mapOf("tabId" to config.id))
-                            }
-                        },
-                        window = currentWindow
-                    )
+                            },
+                            window = currentWindow,
+                        )
 
                     if (state != null) {
                         this@FluckTabComponent.browserState = state
-                        localBrowserState = state  // Update local state to trigger recomposition
+                        localBrowserState = state // Update local state to trigger recomposition
 
                         // Track which engine generation this browser was created with (Issue #351)
                         browserEngineGeneration = getEngineGeneration()
 
                         if (retryCount > 0) {
-                            logger.info(LogCategory.BROWSER, "Browser retry succeeded", mapOf("attempt" to "${retryCount + 1}/$maxRetries", "tabId" to config.id))
+                            logger.info(
+                                LogCategory.BROWSER,
+                                "Browser retry succeeded",
+                                mapOf(
+                                    "attempt" to "${retryCount + 1}/$maxRetries",
+                                    "tabId" to config.id,
+                                ),
+                            )
                         }
 
                         // Reset retry count and recovery counter on success
@@ -581,9 +629,20 @@ open class FluckTabComponent(
                         // Check if there's a known engine initialization error
                         val engineError = getEngineInitError()
                         if (engineError != null) {
-                            logger.warn(LogCategory.BROWSER, "Browser init failed", mapOf("attempt" to "$retryCount/$maxRetries", "error" to engineError))
+                            logger.warn(
+                                LogCategory.BROWSER,
+                                "Browser init failed",
+                                mapOf(
+                                    "attempt" to "$retryCount/$maxRetries",
+                                    "error" to engineError,
+                                ),
+                            )
                         } else {
-                            logger.warn(LogCategory.BROWSER, "Browser init failed - window not ready", mapOf("attempt" to "$retryCount/$maxRetries"))
+                            logger.warn(
+                                LogCategory.BROWSER,
+                                "Browser init failed - window not ready",
+                                mapOf("attempt" to "$retryCount/$maxRetries"),
+                            )
                         }
 
                         if (retryCount < maxRetries) {
@@ -591,16 +650,24 @@ open class FluckTabComponent(
                             retryTrigger++
                         } else {
                             // Max retries reached - use engine error if available for better feedback
-                            browserError = if (engineError != null) {
-                                Exception(engineError)
-                            } else {
-                                Exception("Could not initialize browser after $maxRetries attempts - window not ready")
-                            }
+                            browserError =
+                                if (engineError != null) {
+                                    Exception(engineError)
+                                } else {
+                                    Exception("Could not initialize browser after $maxRetries attempts - window not ready")
+                                }
                         }
                     }
                 } catch (e: Exception) {
                     retryCount++
-                    logger.warn(LogCategory.BROWSER, "Browser retry failed", mapOf("attempt" to "$retryCount/$maxRetries", "error" to (e.message ?: "unknown")))
+                    logger.warn(
+                        LogCategory.BROWSER,
+                        "Browser retry failed",
+                        mapOf(
+                            "attempt" to "$retryCount/$maxRetries",
+                            "error" to (e.message ?: "unknown"),
+                        ),
+                    )
 
                     if (retryCount < maxRetries) {
                         // Trigger retry by incrementing retryTrigger
@@ -608,12 +675,20 @@ open class FluckTabComponent(
                     } else {
                         // Max retries reached - check for engine error first
                         val engineError = getEngineInitError()
-                        logger.error(LogCategory.BROWSER, "Max retries exhausted", mapOf("tabId" to config.id, "error" to (engineError ?: e.message ?: "unknown")))
-                        browserError = if (engineError != null) {
-                            Exception(engineError)
-                        } else {
-                            e
-                        }
+                        logger.error(
+                            LogCategory.BROWSER,
+                            "Max retries exhausted",
+                            mapOf(
+                                "tabId" to config.id,
+                                "error" to (engineError ?: e.message ?: "unknown"),
+                            ),
+                        )
+                        browserError =
+                            if (engineError != null) {
+                                Exception(engineError)
+                            } else {
+                                e
+                            }
                     }
                 }
             } else if (this@FluckTabComponent.browserState != null) {
@@ -679,9 +754,10 @@ open class FluckTabComponent(
                             retryCount = 0
                             this@FluckTabComponent.browserState = null
                             retryTrigger++
-                        }
+                        },
                     )
                 }
+
                 currentBrowserState != null && isBrowserValid(currentBrowserState.first) -> {
                     val browser = currentBrowserState.first
                     val browserViewState = currentBrowserState.second
@@ -715,10 +791,11 @@ open class FluckTabComponent(
                                 // Update favicon cache key through proper callback (Issue #160)
                                 onFaviconCacheKeyUpdate?.invoke(cacheKey)
                             },
-                            onCloseTab = onCloseTab
+                            onCloseTab = onCloseTab,
                         )
                     }
                 }
+
                 currentBrowserState != null && !isBrowserValid(currentBrowserState.first) -> {
                     // Browser exists but is invalid (Issue #351)
                     // Trigger immediate recovery
@@ -740,36 +817,40 @@ open class FluckTabComponent(
                                 recoveryAttempts = 0
                                 retryCount = 0
                                 retryTrigger++
-                            }
+                            },
                         )
                     } else {
                         BrowserRecoveryView(url = currentUrlForBrowser)
                     }
                 }
+
                 else -> {
                     // Loading state - show URL and give user control
                     Column(
-                        modifier = Modifier.fillMaxSize()
-                            .background(BossTheme.colors.ink)
+                        modifier =
+                            Modifier
+                                .fillMaxSize()
+                                .background(BossTheme.colors.ink),
                     ) {
                         // URL bar with controls
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(BossTheme.colors.panel)
-                                .padding(horizontal = 8.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .background(BossTheme.colors.panel)
+                                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
                             // Stop button - closes the tab
                             IconButton(
                                 onClick = { onCloseTab?.invoke() },
-                                modifier = Modifier.size(28.dp)
+                                modifier = Modifier.size(28.dp),
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Close,
                                     contentDescription = "Stop and close tab",
                                     tint = BossTheme.colors.textSecondary,
-                                    modifier = Modifier.size(16.dp)
+                                    modifier = Modifier.size(16.dp),
                                 )
                             }
 
@@ -781,13 +862,13 @@ open class FluckTabComponent(
                                     browserError = null
                                     retryTrigger++
                                 },
-                                modifier = Modifier.size(28.dp)
+                                modifier = Modifier.size(28.dp),
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Refresh,
                                     contentDescription = "Retry",
                                     tint = BossTheme.colors.textSecondary,
-                                    modifier = Modifier.size(16.dp)
+                                    modifier = Modifier.size(16.dp),
                                 )
                             }
 
@@ -795,23 +876,24 @@ open class FluckTabComponent(
 
                             // URL being loaded with spinner
                             Row(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .background(BossTheme.colors.ink)
-                                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                                modifier =
+                                    Modifier
+                                        .weight(1f)
+                                        .background(BossTheme.colors.ink)
+                                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(12.dp),
                                     strokeWidth = 1.5.dp,
-                                    color = BossTheme.colors.signal
+                                    color = BossTheme.colors.signal,
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = currentUrlForBrowser.ifEmpty { "New Tab" },
                                     fontSize = 13.sp,
                                     color = BossTheme.colors.textSecondary,
-                                    maxLines = 1
+                                    maxLines = 1,
                                 )
                             }
                         }
@@ -900,11 +982,12 @@ fun BrowserErrorView(
     onRetry: (() -> Unit)? = null,
     onReset: (() -> Unit)? = null,
     onResetBrowser: (() -> Unit)? = null,
-    onRetryEngine: (() -> Unit)? = null
+    onRetryEngine: (() -> Unit)? = null,
 ) {
     // Detect if this is a network/license validation error
     val errorMessage = error.message?.lowercase() ?: ""
-    val isNetworkError = errorMessage.contains("license") ||
+    val isNetworkError =
+        errorMessage.contains("license") ||
             errorMessage.contains("validation") ||
             errorMessage.contains("network") ||
             errorMessage.contains("connect") ||
@@ -913,27 +996,29 @@ fun BrowserErrorView(
             errorMessage.contains("unreachable")
 
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(32.dp),
-        contentAlignment = Alignment.Center
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .padding(32.dp),
+        contentAlignment = Alignment.Center,
     ) {
         Card(
             modifier = Modifier.fillMaxWidth(),
             elevation = 4.dp,
-            backgroundColor = BossTheme.colors.panel
+            backgroundColor = BossTheme.colors.panel,
         ) {
             Column(
-                modifier = Modifier
-                    .verticalScroll(rememberScrollState())
-                    .padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                modifier =
+                    Modifier
+                        .verticalScroll(rememberScrollState())
+                        .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Icon(
                     imageVector = Icons.Outlined.Warning,
                     contentDescription = "Error",
                     tint = if (isNetworkError) BossTheme.colors.warn else BossTheme.colors.alert,
-                    modifier = Modifier.size(48.dp)
+                    modifier = Modifier.size(48.dp),
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -942,7 +1027,7 @@ fun BrowserErrorView(
                     text = if (isNetworkError) "Connection Required" else "Browser Not Available",
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
-                    color = BossTheme.colors.textPrimary
+                    color = BossTheme.colors.textPrimary,
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -954,7 +1039,7 @@ fun BrowserErrorView(
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Medium,
                         color = BossTheme.colors.warn,
-                        textAlign = TextAlign.Center
+                        textAlign = TextAlign.Center,
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
@@ -963,13 +1048,13 @@ fun BrowserErrorView(
                         text = "The browser requires an internet connection for license validation.",
                         fontSize = 14.sp,
                         color = BossTheme.colors.textPrimary,
-                        textAlign = TextAlign.Center
+                        textAlign = TextAlign.Center,
                     )
                 } else {
                     Text(
                         text = "Unable to initialize the web browser component.",
                         fontSize = 14.sp,
-                        color = BossTheme.colors.textPrimary
+                        color = BossTheme.colors.textPrimary,
                     )
                 }
 
@@ -978,7 +1063,7 @@ fun BrowserErrorView(
                 Text(
                     text = "URL: $url",
                     fontSize = 12.sp,
-                    color = BossTheme.colors.textSecondary
+                    color = BossTheme.colors.textSecondary,
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -988,7 +1073,7 @@ fun BrowserErrorView(
                     fontSize = 12.sp,
                     color = BossTheme.colors.textSecondary,
                     modifier = Modifier.padding(horizontal = 16.dp),
-                    textAlign = TextAlign.Center
+                    textAlign = TextAlign.Center,
                 )
 
                 // Show retry progress if retries were attempted
@@ -998,7 +1083,7 @@ fun BrowserErrorView(
                         text = "Attempted $retryCount/$maxRetries times with exponential backoff",
                         fontSize = 12.sp,
                         color = BossTheme.colors.textSecondary,
-                        fontStyle = FontStyle.Italic
+                        fontStyle = FontStyle.Italic,
                     )
                 }
 
@@ -1008,15 +1093,16 @@ fun BrowserErrorView(
                 if (isNetworkError && onRetryEngine != null) {
                     Button(
                         onClick = onRetryEngine,
-                        colors = ButtonDefaults.buttonColors(
-                            backgroundColor = BossTheme.colors.signal,
-                            contentColor = BossTheme.colors.onSignal
-                        )
+                        colors =
+                            ButtonDefaults.buttonColors(
+                                backgroundColor = BossTheme.colors.signal,
+                                contentColor = BossTheme.colors.onSignal,
+                            ),
                     ) {
                         Icon(
                             imageVector = Icons.Default.Refresh,
                             contentDescription = "Try Again",
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(18.dp),
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Try Again")
@@ -1028,21 +1114,22 @@ fun BrowserErrorView(
                         text = "Ensure you have an active internet connection, then try again",
                         fontSize = 11.sp,
                         color = BossTheme.colors.textSecondary,
-                        textAlign = TextAlign.Center
+                        textAlign = TextAlign.Center,
                     )
                 } else if (retryCount < maxRetries && onRetry != null) {
                     // Still have retries left - show Retry button
                     Button(
                         onClick = onRetry,
-                        colors = ButtonDefaults.buttonColors(
-                            backgroundColor = BossTheme.colors.signal,
-                            contentColor = BossTheme.colors.onSignal
-                        )
+                        colors =
+                            ButtonDefaults.buttonColors(
+                                backgroundColor = BossTheme.colors.signal,
+                                contentColor = BossTheme.colors.onSignal,
+                            ),
                     ) {
                         Icon(
                             imageVector = Icons.Default.Refresh,
                             contentDescription = "Retry",
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(18.dp),
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Retry Loading (Attempt ${retryCount + 1}/$maxRetries)")
@@ -1051,12 +1138,12 @@ fun BrowserErrorView(
                     // Max retries exhausted - show Reset Tab button
                     Button(
                         onClick = onReset,
-                        colors = ButtonDefaults.buttonColors(backgroundColor = BossTheme.colors.alert)
+                        colors = ButtonDefaults.buttonColors(backgroundColor = BossTheme.colors.alert),
                     ) {
                         Icon(
                             imageVector = Icons.Default.Refresh,
                             contentDescription = "Reset",
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(18.dp),
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Reset Tab")
@@ -1068,7 +1155,7 @@ fun BrowserErrorView(
                         text = "Resets retry counter and attempts to load the browser again",
                         fontSize = 11.sp,
                         color = BossTheme.colors.textSecondary,
-                        textAlign = TextAlign.Center
+                        textAlign = TextAlign.Center,
                     )
 
                     // Show Reset Browser option for persistent issues
@@ -1079,14 +1166,14 @@ fun BrowserErrorView(
                             text = "If the issue persists, try resetting the browser:",
                             fontSize = 12.sp,
                             color = BossTheme.colors.textSecondary,
-                            textAlign = TextAlign.Center
+                            textAlign = TextAlign.Center,
                         )
 
                         Spacer(modifier = Modifier.height(8.dp))
 
                         Button(
                             onClick = onResetBrowser,
-                            colors = ButtonDefaults.buttonColors(backgroundColor = BossTheme.colors.alert)
+                            colors = ButtonDefaults.buttonColors(backgroundColor = BossTheme.colors.alert),
                         ) {
                             Text("Reset Browser", color = BossTheme.colors.onSignal)
                         }
@@ -1097,7 +1184,7 @@ fun BrowserErrorView(
                             text = "This clears browser cache, cookies, and sessions",
                             fontSize = 10.sp,
                             color = BossTheme.colors.textMuted,
-                            textAlign = TextAlign.Center
+                            textAlign = TextAlign.Center,
                         )
                     }
                 } else {
@@ -1105,7 +1192,7 @@ fun BrowserErrorView(
                     Text(
                         text = "Try using the code editor or terminal tabs instead.",
                         fontSize = 14.sp,
-                        color = BossTheme.colors.textPrimary
+                        color = BossTheme.colors.textPrimary,
                     )
                 }
             }
@@ -1120,23 +1207,24 @@ fun BrowserErrorView(
 @Composable
 fun BrowserRecoveryView(url: String) {
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(32.dp),
-        contentAlignment = Alignment.Center
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .padding(32.dp),
+        contentAlignment = Alignment.Center,
     ) {
         Card(
             modifier = Modifier.fillMaxWidth(),
             elevation = 4.dp,
-            backgroundColor = BossTheme.colors.panel
+            backgroundColor = BossTheme.colors.panel,
         ) {
             Column(
                 modifier = Modifier.padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(48.dp),
-                    color = BossTheme.colors.signal
+                    color = BossTheme.colors.signal,
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -1145,7 +1233,7 @@ fun BrowserRecoveryView(url: String) {
                     text = "Reconnecting Browser",
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
-                    color = BossTheme.colors.textPrimary
+                    color = BossTheme.colors.textPrimary,
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -1154,7 +1242,7 @@ fun BrowserRecoveryView(url: String) {
                     text = "The browser connection was lost. Reinitializing...",
                     fontSize = 14.sp,
                     color = BossTheme.colors.textPrimary,
-                    textAlign = TextAlign.Center
+                    textAlign = TextAlign.Center,
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -1163,10 +1251,9 @@ fun BrowserRecoveryView(url: String) {
                     text = url,
                     fontSize = 12.sp,
                     color = BossTheme.colors.textSecondary,
-                    textAlign = TextAlign.Center
+                    textAlign = TextAlign.Center,
                 )
             }
         }
     }
 }
-

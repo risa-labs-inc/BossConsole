@@ -25,7 +25,7 @@ data class TabConfig(
     val filePath: String? = null,
     val faviconCacheKey: String? = null,
     val initialCommand: String? = null,
-    val workingDirectory: String? = null
+    val workingDirectory: String? = null,
 )
 
 /**
@@ -38,7 +38,7 @@ data class TabConfig(
 @Serializable
 data class PanelConfig(
     val id: String,
-    val tabs: List<TabConfig>
+    val tabs: List<TabConfig>,
 )
 
 /**
@@ -54,7 +54,7 @@ sealed class SplitConfig {
     @Immutable
     @Serializable
     data class SinglePanel(
-        val panel: PanelConfig
+        val panel: PanelConfig,
     ) : SplitConfig()
 
     /**
@@ -64,7 +64,7 @@ sealed class SplitConfig {
     @Serializable
     data class VerticalSplit(
         val left: SplitConfig,
-        val right: SplitConfig
+        val right: SplitConfig,
     ) : SplitConfig()
 
     /**
@@ -74,7 +74,7 @@ sealed class SplitConfig {
     @Serializable
     data class HorizontalSplit(
         val top: SplitConfig,
-        val bottom: SplitConfig
+        val bottom: SplitConfig,
     ) : SplitConfig()
 }
 
@@ -84,20 +84,21 @@ sealed class SplitConfig {
  * @param prefix Prefix for the label (used for nested splits)
  * @return List of (panelId, label) pairs
  */
-fun SplitConfig.extractPanels(prefix: String = ""): List<Pair<String, String>> {
-    return when (this) {
+fun SplitConfig.extractPanels(prefix: String = ""): List<Pair<String, String>> =
+    when (this) {
         is SplitConfig.SinglePanel -> {
             val label = if (prefix.isEmpty()) "Main Panel" else prefix.trim() + " Panel"
             listOf(panel.id to label)
         }
+
         is SplitConfig.VerticalSplit -> {
             left.extractPanels("${prefix}Left ") + right.extractPanels("${prefix}Right ")
         }
+
         is SplitConfig.HorizontalSplit -> {
             top.extractPanels("${prefix}Top ") + bottom.extractPanels("${prefix}Bottom ")
         }
     }
-}
 
 /**
  * Breadcrumb display configuration for workspaces.
@@ -115,7 +116,7 @@ data class BreadcrumbConfig(
     val showWorkspacePath: Boolean = true,
     val showTabPath: Boolean = true,
     val maxLength: Int = 50,
-    val separator: String = " › "
+    val separator: String = " › ",
 )
 
 /**
@@ -138,7 +139,7 @@ data class LayoutWorkspace(
     val layout: SplitConfig,
     val breadcrumbConfig: BreadcrumbConfig = BreadcrumbConfig(),
     val timestamp: Long = 0L,
-    val projectPath: String? = null
+    val projectPath: String? = null,
 ) {
     companion object {
         /**
@@ -153,22 +154,19 @@ data class LayoutWorkspace(
  * Provides pretty-printed JSON output and ignores unknown keys for forward compatibility.
  */
 object WorkspaceSerializer {
-    private val json = Json {
-        prettyPrint = true
-        ignoreUnknownKeys = true
-    }
+    private val json =
+        Json {
+            prettyPrint = true
+            ignoreUnknownKeys = true
+        }
 
     /**
      * Serialize a workspace to JSON string.
      */
-    fun serialize(config: LayoutWorkspace): String {
-        return json.encodeToString(config)
-    }
+    fun serialize(config: LayoutWorkspace): String = json.encodeToString(config)
 
     /**
      * Deserialize a JSON string to a workspace.
      */
-    fun deserialize(jsonString: String): LayoutWorkspace {
-        return json.decodeFromString(jsonString)
-    }
+    fun deserialize(jsonString: String): LayoutWorkspace = json.decodeFromString(jsonString)
 }

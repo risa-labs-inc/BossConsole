@@ -12,7 +12,7 @@ data class WorkspaceSettings(
      * The ID of the default workspace to apply when a project is selected.
      * Use "none" to disable auto-applying workspace.
      */
-    val defaultWorkspaceId: String = "workspace-claude-code"
+    val defaultWorkspaceId: String = "workspace-claude-code",
 )
 
 /**

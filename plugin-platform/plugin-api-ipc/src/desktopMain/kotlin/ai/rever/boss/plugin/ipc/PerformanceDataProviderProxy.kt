@@ -28,7 +28,6 @@ class PerformanceDataProviderProxy(
     channel: ManagedChannel,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
 ) : PerformanceDataProvider {
-
     private val stub = PerformanceServiceGrpcKt.PerformanceServiceCoroutineStub(channel)
 
     private val _currentSnapshot = MutableStateFlow<PerformanceSnapshotData?>(null)
@@ -54,8 +53,14 @@ class PerformanceDataProviderProxy(
                     _currentSnapshot.value = proto.toData()
                 }
                 delayMs = 1_000L
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (_: Exception) { delay(delayMs); delayMs = (delayMs * 2).coerceAtMost(30_000L) }
+            } catch (
+                e: kotlinx.coroutines.CancellationException,
+            ) {
+                throw e
+            } catch (_: Exception) {
+                delay(delayMs)
+                delayMs = (delayMs * 2).coerceAtMost(30_000L)
+            }
         }
     }
 
@@ -67,8 +72,14 @@ class PerformanceDataProviderProxy(
                     _history.value = response.snapshotsList.map { it.toData() }
                 }
                 delayMs = 1_000L
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (_: Exception) { delay(delayMs); delayMs = (delayMs * 2).coerceAtMost(30_000L) }
+            } catch (
+                e: kotlinx.coroutines.CancellationException,
+            ) {
+                throw e
+            } catch (_: Exception) {
+                delay(delayMs)
+                delayMs = (delayMs * 2).coerceAtMost(30_000L)
+            }
         }
     }
 
@@ -80,81 +91,101 @@ class PerformanceDataProviderProxy(
                     _settings.value = proto.toSettingsData()
                 }
                 delayMs = 1_000L
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (_: Exception) { delay(delayMs); delayMs = (delayMs * 2).coerceAtMost(30_000L) }
+            } catch (
+                e: kotlinx.coroutines.CancellationException,
+            ) {
+                throw e
+            } catch (_: Exception) {
+                delay(delayMs)
+                delayMs = (delayMs * 2).coerceAtMost(30_000L)
+            }
         }
     }
 
     override fun requestGC() {
         scope.launch {
-            try { stub.requestGC(Empty.getDefaultInstance()) } catch (_: Exception) {}
+            try {
+                stub.requestGC(Empty.getDefaultInstance())
+            } catch (_: Exception) {
+            }
         }
     }
 
-    override suspend fun exportMetrics(): Result<String> = try {
-        val response = stub.exportMetrics(Empty.getDefaultInstance())
-        if (response.success) Result.success(response.filePath)
-        else Result.failure(Exception(response.errorMessage))
-    } catch (e: Exception) { Result.failure(e) }
+    override suspend fun exportMetrics(): Result<String> =
+        try {
+            val response = stub.exportMetrics(Empty.getDefaultInstance())
+            if (response.success) {
+                Result.success(response.filePath)
+            } else {
+                Result.failure(Exception(response.errorMessage))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
 
     override suspend fun updateSettings(settings: PerformanceSettingsData) {
         try {
             stub.updateSettings(settings.toProto())
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
     }
 
-    private fun PerformanceSnapshotProto.toData() = PerformanceSnapshotData(
-        timestamp = timestamp,
-        heapUsedBytes = heapUsedBytes,
-        heapMaxBytes = heapMaxBytes,
-        heapCommittedBytes = heapCommittedBytes,
-        heapUsagePercent = heapUsagePercent,
-        nonHeapUsedBytes = nonHeapUsedBytes,
-        nonHeapCommittedBytes = nonHeapCommittedBytes,
-        processLoadPercent = processLoadPercent,
-        systemLoadPercent = systemLoadPercent,
-        activeThreadCount = activeThreadCount,
-        availableProcessors = availableProcessors,
-        gcCollectionCount = gcCollectionCount,
-        gcCollectionTimeMs = gcCollectionTimeMs,
-        browserTabCount = browserTabCount,
-        terminalCount = terminalCount,
-        editorTabCount = editorTabCount,
-        panelCount = panelCount,
-        windowCount = windowCount,
-        childProcesses = childProcessesList.map { it.toData() },
-    )
+    private fun PerformanceSnapshotProto.toData() =
+        PerformanceSnapshotData(
+            timestamp = timestamp,
+            heapUsedBytes = heapUsedBytes,
+            heapMaxBytes = heapMaxBytes,
+            heapCommittedBytes = heapCommittedBytes,
+            heapUsagePercent = heapUsagePercent,
+            nonHeapUsedBytes = nonHeapUsedBytes,
+            nonHeapCommittedBytes = nonHeapCommittedBytes,
+            processLoadPercent = processLoadPercent,
+            systemLoadPercent = systemLoadPercent,
+            activeThreadCount = activeThreadCount,
+            availableProcessors = availableProcessors,
+            gcCollectionCount = gcCollectionCount,
+            gcCollectionTimeMs = gcCollectionTimeMs,
+            browserTabCount = browserTabCount,
+            terminalCount = terminalCount,
+            editorTabCount = editorTabCount,
+            panelCount = panelCount,
+            windowCount = windowCount,
+            childProcesses = childProcessesList.map { it.toData() },
+        )
 
-    private fun ChildProcessProto.toData() = ChildProcessData(
-        processId = processId,
-        pluginId = pluginId,
-        displayName = displayName,
-        pid = pid,
-        state = state,
-        heapUsedBytes = heapUsedBytes,
-        heapMaxBytes = heapMaxBytes,
-        activeThreads = activeThreads,
-        uptimeMs = uptimeMs,
-        restartCount = restartCount,
-        bridgeConnected = bridgeConnected,
-    )
+    private fun ChildProcessProto.toData() =
+        ChildProcessData(
+            processId = processId,
+            pluginId = pluginId,
+            displayName = displayName,
+            pid = pid,
+            state = state,
+            heapUsedBytes = heapUsedBytes,
+            heapMaxBytes = heapMaxBytes,
+            activeThreads = activeThreads,
+            uptimeMs = uptimeMs,
+            restartCount = restartCount,
+            bridgeConnected = bridgeConnected,
+        )
 
-    private fun PerformanceSettingsProto.toSettingsData() = PerformanceSettingsData(
-        enabled = enabled,
-        showIndicator = showIndicator,
-        memoryWarningThresholdPercent = memoryWarningThresholdPercent,
-        memoryCriticalThresholdPercent = memoryCriticalThresholdPercent,
-        cpuWarningThresholdPercent = cpuWarningThresholdPercent,
-        cpuCriticalThresholdPercent = cpuCriticalThresholdPercent,
-        memorySampleIntervalMs = memorySampleIntervalMs,
-        cpuSampleIntervalMs = cpuSampleIntervalMs,
-        historyRetentionMinutes = historyRetentionMinutes,
-        pluginJvmHeapMb = pluginJvmHeapMb,
-        pluginJvmInitialHeapMb = pluginJvmInitialHeapMb,
-    )
+    private fun PerformanceSettingsProto.toSettingsData() =
+        PerformanceSettingsData(
+            enabled = enabled,
+            showIndicator = showIndicator,
+            memoryWarningThresholdPercent = memoryWarningThresholdPercent,
+            memoryCriticalThresholdPercent = memoryCriticalThresholdPercent,
+            cpuWarningThresholdPercent = cpuWarningThresholdPercent,
+            cpuCriticalThresholdPercent = cpuCriticalThresholdPercent,
+            memorySampleIntervalMs = memorySampleIntervalMs,
+            cpuSampleIntervalMs = cpuSampleIntervalMs,
+            historyRetentionMinutes = historyRetentionMinutes,
+            pluginJvmHeapMb = pluginJvmHeapMb,
+            pluginJvmInitialHeapMb = pluginJvmInitialHeapMb,
+        )
 
     private fun PerformanceSettingsData.toProto(): PerformanceSettingsProto =
-        PerformanceSettingsProto.newBuilder()
+        PerformanceSettingsProto
+            .newBuilder()
             .setEnabled(enabled)
             .setShowIndicator(showIndicator)
             .setMemoryWarningThresholdPercent(memoryWarningThresholdPercent)

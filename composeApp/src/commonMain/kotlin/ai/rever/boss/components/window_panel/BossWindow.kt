@@ -1,17 +1,17 @@
 package ai.rever.boss.components.window_panel
 
 import ai.rever.boss.components.model.BossDraggableComponent
+import ai.rever.boss.components.model.TabDraggableComponent
+import ai.rever.boss.components.model.TabDropResult
+import ai.rever.boss.components.registery.PanelComponentStore
+import ai.rever.boss.components.window_panel.components.BossResizablePanel
+import ai.rever.boss.components.window_panel.components.main_window_panels.BossTabsComponent
+import ai.rever.boss.components.window_panel.components.side_panel.SidePanel
 import ai.rever.boss.plugin.api.Panel
 import ai.rever.boss.plugin.api.Panel.Companion.bottom
 import ai.rever.boss.plugin.api.Panel.Companion.left
 import ai.rever.boss.plugin.api.Panel.Companion.right
-import ai.rever.boss.components.model.TabDraggableComponent
-import ai.rever.boss.components.model.TabDropResult
-import ai.rever.boss.components.registery.PanelComponentStore
 import ai.rever.boss.plugin.api.Panel.Companion.top
-import ai.rever.boss.components.window_panel.components.BossResizablePanel
-import ai.rever.boss.components.window_panel.components.main_window_panels.BossTabsComponent
-import ai.rever.boss.components.window_panel.components.side_panel.SidePanel
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
@@ -39,18 +39,19 @@ fun BossDraggableComponent.BossWindow(
     onTabDropResult: (TabDropResult) -> Unit = {},
     onShowSettings: (() -> Unit)? = null,
     onOpenProjectDialog: (() -> Unit)? = null,
-    onNewProject: (() -> Unit)? = null
+    onNewProject: (() -> Unit)? = null,
 ) {
     // Process any pending panel opens (for two-phase transitions)
     // This is critical for JxBrowser-based plugins to avoid BrowserViewState conflicts
     ProcessPendingPanelOpen()
 
     // State for split panels - use provided or create new
-    val actualSplitViewState = splitViewState ?: rememberSplitViewState(
-        tabRegistry = tabsComponent.tabRegistry,
-        windowId = tabsComponent.windowId,
-        initialTabsComponent = tabsComponent
-    )
+    val actualSplitViewState =
+        splitViewState ?: rememberSplitViewState(
+            tabRegistry = tabsComponent.tabRegistry,
+            windowId = tabsComponent.windowId,
+            initialTabsComponent = tabsComponent,
+        )
 
     // Perform any deferred "promote sidebar plugin to a main tab" request
     // (from the header's "Open as Tab" action or a drag-out onto the central area).
@@ -60,12 +61,14 @@ fun BossDraggableComponent.BossWindow(
     ProcessPendingFocusHostedTab(actualSplitViewState)
 
     @Composable
-    fun WithPanel(panel: Panel,
-                  isPanelVisible: Boolean = isVisible(panel),
-                  isMainVisible: Boolean = true,
-                  isRelative: Boolean = false,
-                  panelContent: @Composable BoxScope.() -> Unit = { SidePanel(panel, panelComponentStore) },
-                  mainContent: (@Composable BoxScope.() -> Unit)? = null) {
+    fun WithPanel(
+        panel: Panel,
+        isPanelVisible: Boolean = isVisible(panel),
+        isMainVisible: Boolean = true,
+        isRelative: Boolean = false,
+        panelContent: @Composable BoxScope.() -> Unit = { SidePanel(panel, panelComponentStore) },
+        mainContent: (@Composable BoxScope.() -> Unit)? = null,
+    ) {
         BossResizablePanel(
             modifier = modifier,
             panel = panel,
@@ -73,29 +76,35 @@ fun BossDraggableComponent.BossWindow(
             isMainVisible = isMainVisible,
             isRelative = isRelative,
             sideContent = panelContent,
-            mainContent = mainContent
+            mainContent = mainContent,
         )
     }
 
     @Composable
-    fun WithNestedPanel(panel: Panel,
-                        secondaryPanel: Panel = bottom,
-                        isFirstPanelVisible: Boolean = isVisible(panel.bottom),
-                        isLastPanelVisible: Boolean = isVisible(panel.top),
-                        isNestedRelative: Boolean = true,
-                        firstPanel: @Composable BoxScope.() -> Unit = { SidePanel(panel.bottom, panelComponentStore) },
-                        lastPanel: @Composable BoxScope.() -> Unit = { SidePanel(panel.top, panelComponentStore) },
-                        mainContent: @Composable BoxScope.() -> Unit) {
-        WithPanel(panel,
+    fun WithNestedPanel(
+        panel: Panel,
+        secondaryPanel: Panel = bottom,
+        isFirstPanelVisible: Boolean = isVisible(panel.bottom),
+        isLastPanelVisible: Boolean = isVisible(panel.top),
+        isNestedRelative: Boolean = true,
+        firstPanel: @Composable BoxScope.() -> Unit = { SidePanel(panel.bottom, panelComponentStore) },
+        lastPanel: @Composable BoxScope.() -> Unit = { SidePanel(panel.top, panelComponentStore) },
+        mainContent: @Composable BoxScope.() -> Unit,
+    ) {
+        WithPanel(
+            panel,
             panelContent = {
-                WithPanel(secondaryPanel,
+                WithPanel(
+                    secondaryPanel,
                     isPanelVisible = isFirstPanelVisible,
                     isMainVisible = isLastPanelVisible,
                     isRelative = isNestedRelative,
                     panelContent = firstPanel,
-                    mainContent = lastPanel
-                )},
-            mainContent = mainContent)
+                    mainContent = lastPanel,
+                )
+            },
+            mainContent = mainContent,
+        )
     }
 
     WithPanel(bottom) {
@@ -103,9 +112,10 @@ fun BossDraggableComponent.BossWindow(
             WithNestedPanel(right) {
                 // Central tab area — also the drop target for a header drag-out (open as tab).
                 Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .onGloballyPositioned { mainAreaBounds = it.boundsInWindow() }
+                    modifier =
+                        Modifier
+                            .fillMaxSize()
+                            .onGloballyPositioned { mainAreaBounds = it.boundsInWindow() },
                 ) {
                     // Use the new split view panel
                     SplitViewPanel(
@@ -114,7 +124,7 @@ fun BossDraggableComponent.BossWindow(
                         onTabDropResult = onTabDropResult,
                         onShowSettings = onShowSettings,
                         onOpenProjectDialog = onOpenProjectDialog,
-                        onNewProject = onNewProject
+                        onNewProject = onNewProject,
                     )
                     // While a header is dragged over the central area, highlight the
                     // resolved target region (a whole panel for center-drop, or the half
@@ -124,19 +134,18 @@ fun BossDraggableComponent.BossWindow(
                     if (highlightRect != null && areaOrigin != null && draggingItem != null) {
                         val density = LocalDensity.current
                         Box(
-                            modifier = Modifier
-                                .offset {
-                                    IntOffset(
-                                        (highlightRect.left - areaOrigin.left).roundToInt(),
-                                        (highlightRect.top - areaOrigin.top).roundToInt()
-                                    )
-                                }
-                                .size(
-                                    with(density) { highlightRect.width.toDp() },
-                                    with(density) { highlightRect.height.toDp() }
-                                )
-                                .background(Color.White.copy(alpha = 0.10f))
-                                .border(2.dp, Color.White.copy(alpha = 0.5f))
+                            modifier =
+                                Modifier
+                                    .offset {
+                                        IntOffset(
+                                            (highlightRect.left - areaOrigin.left).roundToInt(),
+                                            (highlightRect.top - areaOrigin.top).roundToInt(),
+                                        )
+                                    }.size(
+                                        with(density) { highlightRect.width.toDp() },
+                                        with(density) { highlightRect.height.toDp() },
+                                    ).background(Color.White.copy(alpha = 0.10f))
+                                    .border(2.dp, Color.White.copy(alpha = 0.5f)),
                         )
                     }
                 }
@@ -144,4 +153,3 @@ fun BossDraggableComponent.BossWindow(
         }
     }
 }
-

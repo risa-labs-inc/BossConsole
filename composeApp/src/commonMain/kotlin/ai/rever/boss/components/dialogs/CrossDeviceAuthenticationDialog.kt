@@ -1,13 +1,16 @@
 package ai.rever.boss.components.dialogs
 
+import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.services.supabase.AuthService
+import ai.rever.boss.utils.FluckTabCreator
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.automirrored.outlined.Launch
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -18,14 +21,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import ai.rever.boss.services.supabase.AuthService
-import ai.rever.boss.utils.FluckTabCreator
-import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.IO
 
 /**
  * Platform-specific URL opening function
@@ -40,17 +40,17 @@ fun CrossDeviceAuthenticationDialog(
     sessionId: String? = null,
     onDismiss: () -> Unit,
     onSuccess: () -> Unit,
-    onCreateFluckTab: ((FluckTabInfo) -> Unit)? = null
+    onCreateFluckTab: ((FluckTabInfo) -> Unit)? = null,
 ) {
     if (qrCodeUrl == null) {
         onDismiss()
         return
     }
-    
+
     var isPolling by remember { mutableStateOf(false) }
     var pollError by remember { mutableStateOf<String?>(null) }
     val coroutineScope = rememberCoroutineScope()
-    
+
     // Open URL in Fluck tab or browser - the page itself will display the QR code
     LaunchedEffect(qrCodeUrl) {
         // Open the mobile-auth URL which contains its own QR code display
@@ -61,22 +61,22 @@ fun CrossDeviceAuthenticationDialog(
             // Open in external browser as fallback
             openUrlInBrowser(qrCodeUrl)
         }
-        
+
         // Start polling for authentication completion
         if (challenge != null) {
             isPolling = true
-            
+
             coroutineScope.launch(Dispatchers.IO) {
                 // Poll for authentication completion
                 var attempts = 0
                 val maxAttempts = 60 // 60 seconds timeout
-                
+
                 while (attempts < maxAttempts && isPolling) {
                     delay(1000) // Poll every second
-                    
+
                     // Check authentication status
                     val result = AuthService.checkAuthenticationStatus(challenge, sessionId)
-                    
+
                     withContext(Dispatchers.Main) {
                         result.fold(
                             onSuccess = { completed ->
@@ -91,13 +91,13 @@ fun CrossDeviceAuthenticationDialog(
                                     isPolling = false
                                     pollError = "Authentication timed out. Please try again."
                                 }
-                            }
+                            },
                         )
                     }
-                    
+
                     attempts++
                 }
-                
+
                 if (attempts >= maxAttempts) {
                     withContext(Dispatchers.Main) {
                         isPolling = false
@@ -107,109 +107,113 @@ fun CrossDeviceAuthenticationDialog(
             }
         }
     }
-    
+
     Dialog(onDismissRequest = onDismiss) {
         Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .wrapContentHeight(),
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .wrapContentHeight(),
             shape = RoundedCornerShape(12.dp),
-            backgroundColor = BossTheme.colors.raised
+            backgroundColor = BossTheme.colors.raised,
         ) {
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 // Header
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
                         text = "Cross-Device Authentication",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = BossTheme.colors.textPrimary
+                        color = BossTheme.colors.textPrimary,
                     )
-                    
+
                     IconButton(
                         onClick = onDismiss,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(24.dp),
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
                             contentDescription = "Close",
-                            tint = BossTheme.colors.textSecondary
+                            tint = BossTheme.colors.textSecondary,
                         )
                     }
                 }
-                
+
                 Spacer(modifier = Modifier.height(24.dp))
-                
+
                 // Status indicator
                 if (isPolling) {
                     CircularProgressIndicator(
                         color = BossTheme.colors.signal,
                         modifier = Modifier.size(64.dp),
-                        strokeWidth = 4.dp
+                        strokeWidth = 4.dp,
                     )
                 } else if (pollError != null) {
                     Icon(
                         imageVector = Icons.Outlined.ErrorOutline,
                         contentDescription = "Error",
                         modifier = Modifier.size(64.dp),
-                        tint = BossTheme.colors.alert
+                        tint = BossTheme.colors.alert,
                     )
                 } else {
                     Icon(
                         imageVector = Icons.AutoMirrored.Outlined.Launch,
                         contentDescription = "Opening in browser",
                         modifier = Modifier.size(64.dp),
-                        tint = BossTheme.colors.signal
+                        tint = BossTheme.colors.signal,
                     )
                 }
-                
+
                 Spacer(modifier = Modifier.height(24.dp))
-                
+
                 // Status Text
                 Text(
-                    text = when {
-                        pollError != null -> "Authentication Failed"
-                        isPolling -> "Waiting for Authentication..."
-                        onCreateFluckTab != null -> "Opening Authentication in FLUCK"
-                        else -> "Opening Authentication Page"
-                    },
+                    text =
+                        when {
+                            pollError != null -> "Authentication Failed"
+                            isPolling -> "Waiting for Authentication..."
+                            onCreateFluckTab != null -> "Opening Authentication in FLUCK"
+                            else -> "Opening Authentication Page"
+                        },
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Medium,
                     color = if (pollError != null) BossTheme.colors.alert else BossTheme.colors.textPrimary,
-                    textAlign = TextAlign.Center
+                    textAlign = TextAlign.Center,
                 )
-                
+
                 Spacer(modifier = Modifier.height(12.dp))
-                
+
                 // Instructions
                 Text(
-                    text = when {
-                        pollError != null -> pollError!!
-                        isPolling -> "A QR code is displayed in the browser tab. Scan it with your iPhone to complete authentication."
-                        onCreateFluckTab != null -> "The authentication page is opening in a new FLUCK tab. You'll see a QR code to scan with your iPhone."
-                        else -> "The authentication page is opening in your browser. You'll see a QR code to scan with your iPhone."
-                    },
+                    text =
+                        when {
+                            pollError != null -> pollError!!
+                            isPolling -> "A QR code is displayed in the browser tab. Scan it with your iPhone to complete authentication."
+                            onCreateFluckTab != null -> "The authentication page is opening in a new FLUCK tab. You'll see a QR code to scan with your iPhone."
+                            else -> "The authentication page is opening in your browser. You'll see a QR code to scan with your iPhone."
+                        },
                     fontSize = 14.sp,
                     color = BossTheme.colors.textSecondary,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
                 )
-                
+
                 Spacer(modifier = Modifier.height(24.dp))
-                
+
                 // Action Buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     if (pollError != null) {
                         // Retry button
@@ -226,21 +230,23 @@ fun CrossDeviceAuthenticationDialog(
                                 }
                             },
                             modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = BossTheme.colors.signal
-                            )
+                            colors =
+                                ButtonDefaults.outlinedButtonColors(
+                                    contentColor = BossTheme.colors.signal,
+                                ),
                         ) {
                             Text("Retry")
                         }
                     }
-                    
+
                     Button(
                         onClick = onDismiss,
                         modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(
-                            backgroundColor = if (pollError != null) BossTheme.colors.alert else BossTheme.colors.line,
-                            contentColor = Color.White
-                        )
+                        colors =
+                            ButtonDefaults.buttonColors(
+                                backgroundColor = if (pollError != null) BossTheme.colors.alert else BossTheme.colors.line,
+                                contentColor = Color.White,
+                            ),
                     ) {
                         Text("Cancel")
                     }

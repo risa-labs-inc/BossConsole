@@ -1,14 +1,14 @@
 package ai.rever.boss.config
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.VersionConstants
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
-import ai.rever.boss.utils.VersionConstants
 import ai.rever.boss.utils.sha256Of
-import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
+import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
@@ -28,6 +28,7 @@ import java.util.zip.ZipInputStream
  */
 object ChromiumAutoDownloader {
     private val logger = BossLogger.forComponent("ChromiumAutoDownloader")
+
     // JxBrowser version from generated VersionConstants (source: gradle/libs.versions.toml)
     private val JXBROWSER_VERSION = VersionConstants.JXBROWSER_VERSION
     private const val VERSION_FILE = "version.txt"
@@ -52,7 +53,7 @@ object ChromiumAutoDownloader {
         val totalBytes: Long,
         val isComplete: Boolean = false,
         val isExtracting: Boolean = false,
-        val error: String? = null
+        val error: String? = null,
     ) {
         val progressFraction: Float
             get() = if (totalBytes > 0) bytesDownloaded.toFloat() / totalBytes else 0f
@@ -67,12 +68,10 @@ object ChromiumAutoDownloader {
     /**
      * Get the target directory for Chromium installation
      */
-    fun getChromiumDir(): Path =
-        BossDirectories.resolve("boss-chromium").toPath()
+    fun getChromiumDir(): Path = BossDirectories.resolve("boss-chromium").toPath()
 
     /** Staging directory for engine installs done while the current engine is running. */
-    fun getPendingChromiumDir(): Path =
-        BossDirectories.resolve("boss-chromium.pending").toPath()
+    fun getPendingChromiumDir(): Path = BossDirectories.resolve("boss-chromium.pending").toPath()
 
     /** The version of the currently installed engine, or null if none/unknown. */
     fun installedVersion(): String? {
@@ -98,12 +97,16 @@ object ChromiumAutoDownloader {
         promotePendingInstall(
             pending = getPendingChromiumDir().toFile(),
             target = getChromiumDir().toFile(),
-            backup = BossDirectories.resolve("boss-chromium.old")
+            backup = BossDirectories.resolve("boss-chromium.old"),
         )
     }
 
     // Directory params are injectable for tests.
-    internal fun promotePendingInstall(pending: File, target: File, backup: File) {
+    internal fun promotePendingInstall(
+        pending: File,
+        target: File,
+        backup: File,
+    ) {
         if (!pending.exists()) return
 
         try {
@@ -123,22 +126,38 @@ object ChromiumAutoDownloader {
             if (backup.exists()) backup.deleteRecursively() // stale backup from an earlier failed swap
 
             if (target.exists() && !target.renameTo(backup)) {
-                logger.warn(LogCategory.BROWSER,
-                    "Could not move current engine aside; keeping staged install for next launch")
+                logger.warn(
+                    LogCategory.BROWSER,
+                    "Could not move current engine aside; keeping staged install for next launch",
+                )
                 return
             }
             if (pending.renameTo(target)) {
                 target.resolve(STAGED_COMPLETE_MARKER).delete()
                 backup.deleteRecursively()
-                logger.info(LogCategory.BROWSER, "Promoted pending engine install", mapOf(
-                    "version" to (target.resolve(VERSION_FILE).takeIf { it.exists() }?.readText()?.trim() ?: "unknown")
-                ))
+                logger.info(
+                    LogCategory.BROWSER,
+                    "Promoted pending engine install",
+                    mapOf(
+                        "version" to (
+                            target
+                                .resolve(VERSION_FILE)
+                                .takeIf { it.exists() }
+                                ?.readText()
+                                ?.trim() ?: "unknown"
+                        ),
+                    ),
+                )
             } else if (backup.exists() && backup.renameTo(target)) {
-                logger.warn(LogCategory.BROWSER,
-                    "Could not promote pending engine install; previous engine restored")
+                logger.warn(
+                    LogCategory.BROWSER,
+                    "Could not promote pending engine install; previous engine restored",
+                )
             } else {
-                logger.error(LogCategory.BROWSER,
-                    "Engine swap failed and previous engine could not be restored; startup will re-download")
+                logger.error(
+                    LogCategory.BROWSER,
+                    "Engine swap failed and previous engine could not be restored; startup will re-download",
+                )
             }
         } catch (e: Exception) {
             logger.warn(LogCategory.BROWSER, "Error promoting pending engine install", error = e)
@@ -166,10 +185,14 @@ object ChromiumAutoDownloader {
 
         val installedVersion = versionFile.readText().trim()
         if (installedVersion != effectiveVersion) {
-            logger.info(LogCategory.BROWSER, "Chromium version mismatch", mapOf(
-                "installed" to installedVersion,
-                "required" to effectiveVersion
-            ))
+            logger.info(
+                LogCategory.BROWSER,
+                "Chromium version mismatch",
+                mapOf(
+                    "installed" to installedVersion,
+                    "required" to effectiveVersion,
+                ),
+            )
             return false
         }
 
@@ -201,12 +224,30 @@ object ChromiumAutoDownloader {
         val os = System.getProperty("os.name").lowercase()
         val arch = System.getProperty("os.arch").lowercase()
         return when {
-            os.contains("mac") && (arch.contains("aarch64") || arch.contains("arm64")) -> "macos-arm64"
-            os.contains("mac") -> "macos-x64"
-            os.contains("win") && (arch.contains("aarch64") || arch.contains("arm64")) -> "windows-arm64"
-            os.contains("win") -> "windows-x64"
-            os.contains("linux") && (arch.contains("aarch64") || arch.contains("arm64")) -> "linux-arm64"
-            os.contains("linux") -> "linux-x64"
+            os.contains("mac") && (arch.contains("aarch64") || arch.contains("arm64")) -> {
+                "macos-arm64"
+            }
+
+            os.contains("mac") -> {
+                "macos-x64"
+            }
+
+            os.contains("win") && (arch.contains("aarch64") || arch.contains("arm64")) -> {
+                "windows-arm64"
+            }
+
+            os.contains("win") -> {
+                "windows-x64"
+            }
+
+            os.contains("linux") && (arch.contains("aarch64") || arch.contains("arm64")) -> {
+                "linux-arm64"
+            }
+
+            os.contains("linux") -> {
+                "linux-x64"
+            }
+
             else -> {
                 logger.warn(LogCategory.BROWSER, "Unknown platform, defaulting to linux-x64", mapOf("os" to os, "arch" to arch))
                 "linux-x64"
@@ -238,7 +279,7 @@ object ChromiumAutoDownloader {
     suspend fun downloadChromium(
         version: String,
         staged: Boolean = false,
-        onProgress: (DownloadProgress) -> Unit
+        onProgress: (DownloadProgress) -> Unit,
     ): Result<Path> =
         withContext(Dispatchers.IO) {
             val archiveName = "boss-chromium-${detectPlatform()}.zip"
@@ -247,7 +288,7 @@ object ChromiumAutoDownloader {
                 version = version,
                 targetDir = if (staged) getPendingChromiumDir() else getChromiumDir(),
                 staged = staged,
-                onProgress = onProgress
+                onProgress = onProgress,
             )
         }
 
@@ -263,115 +304,136 @@ object ChromiumAutoDownloader {
         staged: Boolean,
         onProgress: (DownloadProgress) -> Unit,
         fetch: (String, Path) -> Unit = { url, dest -> downloadWithProgress(url, dest, onProgress) },
-        extract: (Path, Path) -> Unit = { zip, dest -> extractZip(zip, dest) }
+        extract: (Path, Path) -> Unit = { zip, dest -> extractZip(zip, dest) },
     ): Result<Path> {
-            var lastError: Exception? = null
-            for (candidate in candidates) {
-                logger.info(LogCategory.BROWSER, "Downloading BOSS-branded Chromium", mapOf(
+        var lastError: Exception? = null
+        for (candidate in candidates) {
+            logger.info(
+                LogCategory.BROWSER,
+                "Downloading BOSS-branded Chromium",
+                mapOf(
                     "source" to candidate.sourceName,
                     "url" to candidate.url,
-                    "targetDir" to targetDir.toString()
-                ))
+                    "targetDir" to targetDir.toString(),
+                ),
+            )
 
+            try {
+                // Create parent directories
+                Files.createDirectories(targetDir.parent)
+
+                // Download to temp file with progress
+                val tempFile = Files.createTempFile("boss-chromium-", ".zip")
                 try {
-                    // Create parent directories
-                    Files.createDirectories(targetDir.parent)
+                    fetch(candidate.url, tempFile)
 
-                    // Download to temp file with progress
-                    val tempFile = Files.createTempFile("boss-chromium-", ".zip")
-                    try {
-                        fetch(candidate.url, tempFile)
-
-                        // Integrity check before extracting a native binary we will
-                        // execute. Like the app updater, this guards against
-                        // Storage/CDN corruption (hash and URL come from the same
-                        // catalog row); the constructed GitHub URL has no hash.
-                        if (candidate.sha256 != null) {
-                            val actualSha = sha256Of(tempFile.toFile())
-                            if (!candidate.sha256.equals(actualSha, ignoreCase = true)) {
-                                throw IllegalStateException(
-                                    "Engine archive checksum mismatch from ${candidate.sourceName} " +
-                                    "(expected ${candidate.sha256}, got $actualSha)"
-                                )
-                            }
-                            logger.info(LogCategory.BROWSER, "Engine archive checksum verified", mapOf(
-                                "source" to candidate.sourceName
-                            ))
-                        } else {
-                            logger.debug(LogCategory.BROWSER, "No checksum available for engine archive", mapOf(
-                                "source" to candidate.sourceName
-                            ))
-                        }
-
-                        // Update status to extracting
-                        onProgress(DownloadProgress(0, 0, isExtracting = true))
-
-                        // Delete existing directory if present
-                        if (targetDir.toFile().exists()) {
-                            targetDir.toFile().deleteRecursively()
-                        }
-
-                        // Extract
-                        extract(tempFile, targetDir)
-
-                        // Verify extraction produced executable.name
-                        val executableNameFile = targetDir.resolve("executable.name").toFile()
-                        if (!executableNameFile.exists()) {
+                    // Integrity check before extracting a native binary we will
+                    // execute. Like the app updater, this guards against
+                    // Storage/CDN corruption (hash and URL come from the same
+                    // catalog row); the constructed GitHub URL has no hash.
+                    if (candidate.sha256 != null) {
+                        val actualSha = sha256Of(tempFile.toFile())
+                        if (!candidate.sha256.equals(actualSha, ignoreCase = true)) {
                             throw IllegalStateException(
-                                "Extraction completed but executable.name not found. " +
-                                "The downloaded archive may be corrupted."
+                                "Engine archive checksum mismatch from ${candidate.sourceName} " +
+                                    "(expected ${candidate.sha256}, got $actualSha)",
                             )
                         }
+                        logger.info(
+                            LogCategory.BROWSER,
+                            "Engine archive checksum verified",
+                            mapOf(
+                                "source" to candidate.sourceName,
+                            ),
+                        )
+                    } else {
+                        logger.debug(
+                            LogCategory.BROWSER,
+                            "No checksum available for engine archive",
+                            mapOf(
+                                "source" to candidate.sourceName,
+                            ),
+                        )
+                    }
 
-                        // Write version file to track installed version
-                        targetDir.resolve(VERSION_FILE).toFile().writeText(version)
-                        logger.debug(LogCategory.BROWSER, "Version file written", mapOf("version" to version))
+                    // Update status to extracting
+                    onProgress(DownloadProgress(0, 0, isExtracting = true))
 
-                        // Written last: promotePendingInstall refuses staging dirs
-                        // without this marker.
-                        if (staged) {
-                            targetDir.resolve(STAGED_COMPLETE_MARKER).toFile().writeText(version)
-                        }
+                    // Delete existing directory if present
+                    if (targetDir.toFile().exists()) {
+                        targetDir.toFile().deleteRecursively()
+                    }
 
-                        // Clean up old JxBrowser default Chromium directory if it exists
-                        cleanupOldChromium()
+                    // Extract
+                    extract(tempFile, targetDir)
 
-                        // Small delay after extraction to let file system sync
-                        // This helps avoid a race condition in JxBrowser's IPC layer
-                        // that can cause crashes on first launch after extraction
-                        kotlinx.coroutines.delay(500)
+                    // Verify extraction produced executable.name
+                    val executableNameFile = targetDir.resolve("executable.name").toFile()
+                    if (!executableNameFile.exists()) {
+                        throw IllegalStateException(
+                            "Extraction completed but executable.name not found. " +
+                                "The downloaded archive may be corrupted.",
+                        )
+                    }
 
-                        logger.info(LogCategory.BROWSER, "BOSS-branded Chromium installed successfully", mapOf(
+                    // Write version file to track installed version
+                    targetDir.resolve(VERSION_FILE).toFile().writeText(version)
+                    logger.debug(LogCategory.BROWSER, "Version file written", mapOf("version" to version))
+
+                    // Written last: promotePendingInstall refuses staging dirs
+                    // without this marker.
+                    if (staged) {
+                        targetDir.resolve(STAGED_COMPLETE_MARKER).toFile().writeText(version)
+                    }
+
+                    // Clean up old JxBrowser default Chromium directory if it exists
+                    cleanupOldChromium()
+
+                    // Small delay after extraction to let file system sync
+                    // This helps avoid a race condition in JxBrowser's IPC layer
+                    // that can cause crashes on first launch after extraction
+                    kotlinx.coroutines.delay(500)
+
+                    logger.info(
+                        LogCategory.BROWSER,
+                        "BOSS-branded Chromium installed successfully",
+                        mapOf(
                             "source" to candidate.sourceName,
                             "version" to version,
-                            "path" to targetDir.toString()
-                        ))
-                        onProgress(DownloadProgress(0, 0, isComplete = true))
-                        return Result.success(targetDir)
-                    } finally {
-                        // Clean up temp file
-                        try {
-                            Files.deleteIfExists(tempFile)
-                        } catch (e: Exception) {
-                            logger.debug(
-                                LogCategory.BROWSER,
-                                "Could not delete temp file",
-                                mapOf("error" to e.toString()),
-                            )
-                        }
+                            "path" to targetDir.toString(),
+                        ),
+                    )
+                    onProgress(DownloadProgress(0, 0, isComplete = true))
+                    return Result.success(targetDir)
+                } finally {
+                    // Clean up temp file
+                    try {
+                        Files.deleteIfExists(tempFile)
+                    } catch (e: Exception) {
+                        logger.debug(
+                            LogCategory.BROWSER,
+                            "Could not delete temp file",
+                            mapOf("error" to e.toString()),
+                        )
                     }
-                } catch (e: Exception) {
-                    lastError = e
-                    logger.warn(LogCategory.BROWSER, "Chromium download failed from source", mapOf(
-                        "source" to candidate.sourceName
-                    ), error = e)
                 }
+            } catch (e: Exception) {
+                lastError = e
+                logger.warn(
+                    LogCategory.BROWSER,
+                    "Chromium download failed from source",
+                    mapOf(
+                        "source" to candidate.sourceName,
+                    ),
+                    error = e,
+                )
             }
+        }
 
-            val error = lastError ?: IllegalStateException("No engine download sources available")
-            logger.error(LogCategory.BROWSER, "Chromium download failed from all sources", error = error)
-            onProgress(DownloadProgress(0, 0, error = error.message ?: "Unknown error"))
-            return Result.failure(error)
+        val error = lastError ?: IllegalStateException("No engine download sources available")
+        logger.error(LogCategory.BROWSER, "Chromium download failed from all sources", error = error)
+        onProgress(DownloadProgress(0, 0, error = error.message ?: "Unknown error"))
+        return Result.failure(error)
     }
 
     /**
@@ -380,7 +442,7 @@ object ChromiumAutoDownloader {
     private fun downloadWithProgress(
         urlString: String,
         targetPath: Path,
-        onProgress: (DownloadProgress) -> Unit
+        onProgress: (DownloadProgress) -> Unit,
     ) {
         val url = URL(urlString)
         val connection = url.openConnection() as HttpURLConnection
@@ -428,7 +490,10 @@ object ChromiumAutoDownloader {
      * and code signatures. Java's ZipInputStream breaks macOS framework
      * symlinks (e.g. Versions/Current), causing Chromium startup failures.
      */
-    private fun extractZip(zipPath: Path, targetDir: Path) {
+    private fun extractZip(
+        zipPath: Path,
+        targetDir: Path,
+    ) {
         logger.debug(LogCategory.BROWSER, "Extracting Chromium", mapOf("targetDir" to targetDir.toString()))
         Files.createDirectories(targetDir)
 
@@ -444,15 +509,22 @@ object ChromiumAutoDownloader {
     /**
      * Extract using macOS native `ditto` which preserves symlinks and code signatures.
      */
-    private fun extractWithDitto(zipPath: Path, targetDir: Path) {
-        val process = ProcessBuilder("ditto", "-xk", zipPath.toString(), targetDir.toString())
-            .redirectErrorStream(true)
-            .start()
+    private fun extractWithDitto(
+        zipPath: Path,
+        targetDir: Path,
+    ) {
+        val process =
+            ProcessBuilder("ditto", "-xk", zipPath.toString(), targetDir.toString())
+                .redirectErrorStream(true)
+                .start()
         val output = process.inputStream.bufferedReader().readText()
         val exitCode = process.waitFor()
         if (exitCode != 0) {
-            logger.warn(LogCategory.BROWSER, "ditto extraction failed, falling back to Java",
-                mapOf("exitCode" to exitCode, "output" to output))
+            logger.warn(
+                LogCategory.BROWSER,
+                "ditto extraction failed, falling back to Java",
+                mapOf("exitCode" to exitCode, "output" to output),
+            )
             extractWithJava(zipPath, targetDir)
         }
     }
@@ -460,7 +532,10 @@ object ChromiumAutoDownloader {
     /**
      * Extract using Java's ZipInputStream (non-macOS or fallback).
      */
-    private fun extractWithJava(zipPath: Path, targetDir: Path) {
+    private fun extractWithJava(
+        zipPath: Path,
+        targetDir: Path,
+    ) {
         ZipInputStream(Files.newInputStream(zipPath)).use { zis ->
             var entry = zis.nextEntry
             while (entry != null) {

@@ -4,8 +4,8 @@ import ai.rever.boss.keymap.KeymapSettingsManager
 import ai.rever.boss.keymap.model.KeymapActions
 import ai.rever.boss.plugin.api.PluginSearchResult
 import ai.rever.boss.plugin.api.SearchResultAction
-import ai.rever.boss.topofmind.TopOfMindStateHolder
 import ai.rever.boss.run.RunConfigurationManager
+import ai.rever.boss.topofmind.TopOfMindStateHolder
 import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -31,7 +31,6 @@ private val logger = BossLogger.forComponent("GlobalSearchService")
  * - Plugin-contributed search results
  */
 object GlobalSearchService {
-
     private val fileIndexer = FileIndexer()
 
     private val _searchResults = MutableStateFlow<List<SearchResult>>(emptyList())
@@ -81,12 +80,18 @@ object GlobalSearchService {
      * @param projectPath The root directory to index
      * @param forceReindex If true, re-index even if already indexed
      */
-    suspend fun indexProject(projectPath: String, forceReindex: Boolean = false) {
+    suspend fun indexProject(
+        projectPath: String,
+        forceReindex: Boolean = false,
+    ) {
         // Clear old index when switching projects to prevent memory leak
         val currentPath = fileIndexer.indexedPath.value
         if (currentPath != null && currentPath != projectPath) {
-            logger.debug(LogCategory.FILE, "Clearing old index before switching projects",
-                mapOf("oldPath" to currentPath, "newPath" to projectPath))
+            logger.debug(
+                LogCategory.FILE,
+                "Clearing old index before switching projects",
+                mapOf("oldPath" to currentPath, "newPath" to projectPath),
+            )
             fileIndexer.clearIndex()
         }
         fileIndexer.indexProject(projectPath, forceReindex)
@@ -117,21 +122,23 @@ object GlobalSearchService {
         _isSearching.value = true
 
         try {
-            val results = withContext(Dispatchers.Default) {
-                // Run all searches in parallel for better performance
-                coroutineScope {
-                    val searchResults = listOf(
-                        async { searchFiles(query) },
-                        async { searchTabs(query) },
-                        async { searchPluginProviders(query) },  // Includes bookmarks from plugin
-                        async { searchRunConfigs(query) },
-                        async { searchCommands(query) }
-                    ).awaitAll().flatten()
+            val results =
+                withContext(Dispatchers.Default) {
+                    // Run all searches in parallel for better performance
+                    coroutineScope {
+                        val searchResults =
+                            listOf(
+                                async { searchFiles(query) },
+                                async { searchTabs(query) },
+                                async { searchPluginProviders(query) }, // Includes bookmarks from plugin
+                                async { searchRunConfigs(query) },
+                                async { searchCommands(query) },
+                            ).awaitAll().flatten()
 
-                    // Sort by score
-                    searchResults.sortedByDescending { it.score }
+                        // Sort by score
+                        searchResults.sortedByDescending { it.score }
+                    }
                 }
-            }
 
             _searchResults.value = results
             return results
@@ -190,8 +197,8 @@ object GlobalSearchService {
                         path = file.path,
                         relativePath = file.relativePath,
                         score = nameMatch.score + 50,
-                        matchRanges = nameMatch.matchRanges
-                    )
+                        matchRanges = nameMatch.matchRanges,
+                    ),
                 )
                 continue
             }
@@ -199,16 +206,16 @@ object GlobalSearchService {
             val pathMatch = FuzzyMatcher.match(queryLower, file.relativePath, file.relativePath.lowercase())
             if (pathMatch != null && pathMatch.score >= MIN_SCORE) {
                 val fileNameStart = file.relativePath.lastIndexOf('/') + 1
-                val adjustedRanges = pathMatch.matchRanges
-                    .filter { it.start >= fileNameStart || it.end > fileNameStart }
-                    .map { range ->
-                        MatchRange(
-                            start = maxOf(0, range.start - fileNameStart),
-                            // Clamp end to file name length to prevent out-of-bounds
-                            end = minOf(file.name.length, maxOf(0, range.end - fileNameStart))
-                        )
-                    }
-                    .filter { it.start < file.name.length && it.end > it.start }
+                val adjustedRanges =
+                    pathMatch.matchRanges
+                        .filter { it.start >= fileNameStart || it.end > fileNameStart }
+                        .map { range ->
+                            MatchRange(
+                                start = maxOf(0, range.start - fileNameStart),
+                                // Clamp end to file name length to prevent out-of-bounds
+                                end = minOf(file.name.length, maxOf(0, range.end - fileNameStart)),
+                            )
+                        }.filter { it.start < file.name.length && it.end > it.start }
 
                 results.add(
                     SearchResult.FileResult(
@@ -216,8 +223,8 @@ object GlobalSearchService {
                         path = file.path,
                         relativePath = file.relativePath,
                         score = pathMatch.score,
-                        matchRanges = adjustedRanges
-                    )
+                        matchRanges = adjustedRanges,
+                    ),
                 )
             }
         }
@@ -255,8 +262,8 @@ object GlobalSearchService {
                         url = null, // Would need FluckTabInfo check
                         filePath = null, // Would need EditorTabInfo check
                         score = titleMatch.score + 30, // Bonus for tabs (currently visible)
-                        matchRanges = titleMatch.matchRanges
-                    )
+                        matchRanges = titleMatch.matchRanges,
+                    ),
                 )
             }
         }
@@ -292,9 +299,14 @@ object GlobalSearchService {
                     }
                 }
             } catch (e: Exception) {
-                logger.warn(LogCategory.SYSTEM, "Search provider failed", mapOf(
-                    "providerId" to provider.providerId
-                ), error = e)
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Search provider failed",
+                    mapOf(
+                        "providerId" to provider.providerId,
+                    ),
+                    error = e,
+                )
             }
         }
 
@@ -308,28 +320,31 @@ object GlobalSearchService {
      */
     private fun convertPluginSearchResult(result: PluginSearchResult): SearchResult? {
         // Map category string to SearchCategory
-        val category = when (result.category.lowercase()) {
-            "bookmarks" -> SearchCategory.BOOKMARKS
-            "files" -> SearchCategory.FILES
-            "tabs" -> SearchCategory.TABS
-            "run configs", "run_configs" -> SearchCategory.RUN_CONFIGS
-            "commands" -> SearchCategory.COMMANDS
-            else -> SearchCategory.BOOKMARKS // Default to bookmarks for plugin results
-        }
+        val category =
+            when (result.category.lowercase()) {
+                "bookmarks" -> SearchCategory.BOOKMARKS
+                "files" -> SearchCategory.FILES
+                "tabs" -> SearchCategory.TABS
+                "run configs", "run_configs" -> SearchCategory.RUN_CONFIGS
+                "commands" -> SearchCategory.COMMANDS
+                else -> SearchCategory.BOOKMARKS // Default to bookmarks for plugin results
+            }
 
         // Convert match ranges
         val matchRanges = result.matchRanges.map { MatchRange(it.start, it.end) }
 
         return when (category) {
             SearchCategory.BOOKMARKS -> {
-                val url = when (val action = result.action) {
-                    is SearchResultAction.OpenUrl -> action.url
-                    else -> null
-                }
-                val filePath = when (val action = result.action) {
-                    is SearchResultAction.OpenFile -> action.path
-                    else -> null
-                }
+                val url =
+                    when (val action = result.action) {
+                        is SearchResultAction.OpenUrl -> action.url
+                        else -> null
+                    }
+                val filePath =
+                    when (val action = result.action) {
+                        is SearchResultAction.OpenFile -> action.path
+                        else -> null
+                    }
 
                 SearchResult.BookmarkResult(
                     title = result.title,
@@ -340,10 +355,13 @@ object GlobalSearchService {
                     url = url,
                     filePath = filePath,
                     score = result.score,
-                    matchRanges = matchRanges
+                    matchRanges = matchRanges,
                 )
             }
-            else -> null // Other categories handled by dedicated search methods
+
+            else -> {
+                null
+            } // Other categories handled by dedicated search methods
         }
     }
 
@@ -375,8 +393,8 @@ object GlobalSearchService {
                         filePath = config.filePath,
                         configType = config.type.name,
                         score = nameMatch.score,
-                        matchRanges = nameMatch.matchRanges
-                    )
+                        matchRanges = nameMatch.matchRanges,
+                    ),
                 )
             }
         }
@@ -409,19 +427,20 @@ object GlobalSearchService {
             if (bestMatch != null && bestMatch.score >= MIN_SCORE) {
                 // Get shortcut for this action
                 val binding = settings.shortcuts[actionId]
-                val shortcut = if (binding != null && binding.enabled) {
-                    formatShortcut(binding.modifiers, binding.key)
-                } else {
-                    null
-                }
+                val shortcut =
+                    if (binding != null && binding.enabled) {
+                        formatShortcut(binding.modifiers, binding.key)
+                    } else {
+                        null
+                    }
 
                 results.add(
                     SearchResult.CommandResult(
                         actionId = actionId,
                         description = description,
                         shortcut = shortcut,
-                        score = bestMatch.score
-                    )
+                        score = bestMatch.score,
+                    ),
                 )
             }
         }
@@ -434,17 +453,21 @@ object GlobalSearchService {
     /**
      * Format a keyboard shortcut for display.
      */
-    private fun formatShortcut(modifiers: List<String>, key: String): String {
+    private fun formatShortcut(
+        modifiers: List<String>,
+        key: String,
+    ): String {
         val isMacOS = SystemUtils.isMacOS
-        val modifierSymbols = modifiers.map { modifier ->
-            when (modifier.lowercase()) {
-                "cmd", "meta" -> if (isMacOS) "⌘" else "Ctrl"
-                "ctrl", "control" -> if (isMacOS) "⌃" else "Ctrl"
-                "shift" -> if (isMacOS) "⇧" else "Shift"
-                "alt", "option" -> if (isMacOS) "⌥" else "Alt"
-                else -> modifier
+        val modifierSymbols =
+            modifiers.map { modifier ->
+                when (modifier.lowercase()) {
+                    "cmd", "meta" -> if (isMacOS) "⌘" else "Ctrl"
+                    "ctrl", "control" -> if (isMacOS) "⌃" else "Ctrl"
+                    "shift" -> if (isMacOS) "⇧" else "Shift"
+                    "alt", "option" -> if (isMacOS) "⌥" else "Alt"
+                    else -> modifier
+                }
             }
-        }
         return (modifierSymbols + key).joinToString(if (isMacOS) "" else "+")
     }
 

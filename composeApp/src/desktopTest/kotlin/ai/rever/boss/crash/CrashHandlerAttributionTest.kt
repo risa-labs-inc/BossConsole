@@ -21,7 +21,6 @@ import kotlin.test.assertTrue
  * they produce carry genuinely plugin-defined frames — no mocking.
  */
 class CrashHandlerAttributionTest {
-
     private companion object {
         const val PLUGIN_ID = "test.plugin.probe"
         const val PROBE_CLASS = "ai.rever.boss.crash.pluginprobe.PluginProbe"
@@ -29,11 +28,12 @@ class CrashHandlerAttributionTest {
     }
 
     private val jarFile: File = buildProbeJar()
-    private val loader = PluginClassLoader(
-        pluginId = PLUGIN_ID,
-        urls = arrayOf(jarFile.toURI().toURL()),
-        parent = javaClass.classLoader
-    )
+    private val loader =
+        PluginClassLoader(
+            pluginId = PLUGIN_ID,
+            urls = arrayOf(jarFile.toURI().toURL()),
+            parent = javaClass.classLoader,
+        )
 
     @AfterTest
     fun tearDown() {
@@ -47,9 +47,10 @@ class CrashHandlerAttributionTest {
         JarOutputStream(jar.outputStream()).use { out ->
             for (className in listOf(PROBE_CLASS, EXCEPTION_CLASS)) {
                 val resource = className.replace('.', '/') + ".class"
-                val bytes = checkNotNull(javaClass.classLoader.getResourceAsStream(resource)) {
-                    "fixture class $resource not on test classpath"
-                }.use { it.readBytes() }
+                val bytes =
+                    checkNotNull(javaClass.classLoader.getResourceAsStream(resource)) {
+                        "fixture class $resource not on test classpath"
+                    }.use { it.readBytes() }
                 out.putNextEntry(JarEntry(resource))
                 out.write(bytes)
                 out.closeEntry()

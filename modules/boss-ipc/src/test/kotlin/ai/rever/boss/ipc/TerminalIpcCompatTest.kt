@@ -27,55 +27,58 @@ import kotlin.test.assertTrue
  *     future minor bump is a one-line change.
  */
 class TerminalIpcCompatTest {
-
     @Test
     fun `legacy terminal plugin built against 1_0_0 still loads on 1_1_x host`() {
-        val r = IpcVersion.isCompatible(
-            runtimeMinIpcVersion = "1.0.0",
-            hostIpcVersion = "1.1.0",
-        )
+        val r =
+            IpcVersion.isCompatible(
+                runtimeMinIpcVersion = "1.0.0",
+                hostIpcVersion = "1.1.0",
+            )
         assertEquals(IpcVersion.CompatResult.Compatible, r)
     }
 
     @Test
     fun `new terminal plugin requiring 1_1_0 is rejected by 1_0_x host with actionable message`() {
-        val r = IpcVersion.isCompatible(
-            runtimeMinIpcVersion = "1.1.0",
-            hostIpcVersion = "1.0.5",
-        )
-        val inc = r as? IpcVersion.CompatResult.Incompatible
-            ?: error("expected Incompatible, got $r")
+        val r =
+            IpcVersion.isCompatible(
+                runtimeMinIpcVersion = "1.1.0",
+                hostIpcVersion = "1.0.5",
+            )
+        val inc =
+            r as? IpcVersion.CompatResult.Incompatible
+                ?: error("expected Incompatible, got $r")
         assertTrue(inc.reason.contains("Update BossConsole"), "got: ${inc.reason}")
     }
 
     @Test
     fun `TerminalGridDelta round-trips with grapheme starts and style attrs`() {
-        val original = TerminalGridDelta.newBuilder()
-            .setSessionId("sess-1")
-            .setRevision(42)
-            .setCols(80)
-            .setRows(24)
-            .setIsFullRedraw(false)
-            .setIsAlternateBuffer(false)
-            .addRowsChanged(
-                CellRun.newBuilder()
-                    .setRow(3)
-                    .setCol(0)
-                    .setText("héllo 🌍")
-                    .addAllGraphemeStarts(listOf(0, 1, 3, 4, 5, 6, 7))
-                    .setStyle(
-                        CellStyle.newBuilder()
-                            .setFgRgba(0xFFFFFFFFu.toInt())
-                            .setBgRgba(0x000000FFu.toInt())
-                            .setAttrs(
-                                CellAttr.CELL_ATTR_BOLD_VALUE or
-                                    CellAttr.CELL_ATTR_UNDERLINE_VALUE,
-                            )
-                            .build(),
-                    )
-                    .build(),
-            )
-            .build()
+        val original =
+            TerminalGridDelta
+                .newBuilder()
+                .setSessionId("sess-1")
+                .setRevision(42)
+                .setCols(80)
+                .setRows(24)
+                .setIsFullRedraw(false)
+                .setIsAlternateBuffer(false)
+                .addRowsChanged(
+                    CellRun
+                        .newBuilder()
+                        .setRow(3)
+                        .setCol(0)
+                        .setText("héllo 🌍")
+                        .addAllGraphemeStarts(listOf(0, 1, 3, 4, 5, 6, 7))
+                        .setStyle(
+                            CellStyle
+                                .newBuilder()
+                                .setFgRgba(0xFFFFFFFFu.toInt())
+                                .setBgRgba(0x000000FFu.toInt())
+                                .setAttrs(
+                                    CellAttr.CELL_ATTR_BOLD_VALUE or
+                                        CellAttr.CELL_ATTR_UNDERLINE_VALUE,
+                                ).build(),
+                        ).build(),
+                ).build()
 
         val roundTripped = TerminalGridDelta.parseFrom(original.toByteArray())
 
@@ -92,14 +95,16 @@ class TerminalIpcCompatTest {
 
     @Test
     fun `CursorState carries shape and blink hints`() {
-        val original = CursorState.newBuilder()
-            .setSessionId("sess-1")
-            .setRow(5)
-            .setCol(12)
-            .setVisible(true)
-            .setShape(CursorShape.CURSOR_SHAPE_BAR)
-            .setBlink(true)
-            .build()
+        val original =
+            CursorState
+                .newBuilder()
+                .setSessionId("sess-1")
+                .setRow(5)
+                .setCol(12)
+                .setVisible(true)
+                .setShape(CursorShape.CURSOR_SHAPE_BAR)
+                .setBlink(true)
+                .build()
 
         val roundTripped = CursorState.parseFrom(original.toByteArray())
         assertEquals(CursorShape.CURSOR_SHAPE_BAR, roundTripped.shape)
@@ -110,12 +115,14 @@ class TerminalIpcCompatTest {
 
     @Test
     fun `ShellEvent encodes prompt-and-command lifecycle`() {
-        val finished = ShellEvent.newBuilder()
-            .setSessionId("sess-1")
-            .setType(ShellEventType.SHELL_EVENT_TYPE_COMMAND_FINISHED)
-            .setExitCode(0)
-            .setTimestampMs(1_234_567L)
-            .build()
+        val finished =
+            ShellEvent
+                .newBuilder()
+                .setSessionId("sess-1")
+                .setType(ShellEventType.SHELL_EVENT_TYPE_COMMAND_FINISHED)
+                .setExitCode(0)
+                .setTimestampMs(1_234_567L)
+                .build()
 
         val roundTripped = ShellEvent.parseFrom(finished.toByteArray())
         assertEquals(ShellEventType.SHELL_EVENT_TYPE_COMMAND_FINISHED, roundTripped.type)

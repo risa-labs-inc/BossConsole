@@ -2,14 +2,13 @@ package ai.rever.boss.utils.logging
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
  * Tests for LogSanitizer utility functions.
  */
 class LogSanitizerTest {
-
     // =========================================================================
     // maskEmail Tests
     // =========================================================================
@@ -206,11 +205,12 @@ class LogSanitizerTest {
 
     @Test
     fun `sanitizeMap redacts known sensitive keys`() {
-        val input = mapOf(
-            "username" to "john",
-            "token" to "secret123",
-            "password" to "hunter2"
-        )
+        val input =
+            mapOf(
+                "username" to "john",
+                "token" to "secret123",
+                "password" to "hunter2",
+            )
         val result = LogSanitizer.sanitizeMap(input)
 
         assertEquals("john", result["username"])
@@ -220,12 +220,13 @@ class LogSanitizerTest {
 
     @Test
     fun `sanitizeMap handles nested sensitive key names`() {
-        val input = mapOf(
-            "access_token" to "secret",
-            "refresh_token" to "secret",
-            "api_key" to "secret",
-            "credential_id" to "cred123"
-        )
+        val input =
+            mapOf(
+                "access_token" to "secret",
+                "refresh_token" to "secret",
+                "api_key" to "secret",
+                "credential_id" to "cred123",
+            )
         val result = LogSanitizer.sanitizeMap(input)
 
         assertEquals("[REDACTED]", result["access_token"])
@@ -236,9 +237,10 @@ class LogSanitizerTest {
 
     @Test
     fun `sanitizeMap masks values that look like secrets`() {
-        val input = mapOf(
-            "data" to "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload.signature"
-        )
+        val input =
+            mapOf(
+                "data" to "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload.signature",
+            )
         val result = LogSanitizer.sanitizeMap(input)
 
         // Should be masked because it looks like a JWT
@@ -247,11 +249,12 @@ class LogSanitizerTest {
 
     @Test
     fun `sanitizeMap preserves non-sensitive values`() {
-        val input = mapOf(
-            "status" to "success",
-            "count" to 42,
-            "enabled" to true
-        )
+        val input =
+            mapOf(
+                "status" to "success",
+                "count" to 42,
+                "enabled" to true,
+            )
         val result = LogSanitizer.sanitizeMap(input)
 
         assertEquals("success", result["status"])

@@ -9,7 +9,7 @@ import ai.rever.boss.keymap.model.ShortcutContext
  */
 data class KeymapConflict(
     val signature: String,
-    val bindings: List<KeyBinding>
+    val bindings: List<KeyBinding>,
 ) {
     val count: Int get() = bindings.size
 
@@ -30,9 +30,7 @@ object KeymapValidator {
      * Validate a keymap settings object and return list of conflicts.
      * Empty list means no conflicts.
      */
-    fun validate(settings: KeymapSettings): List<KeymapConflict> {
-        return findConflicts(settings)
-    }
+    fun validate(settings: KeymapSettings): List<KeymapConflict> = findConflicts(settings)
 
     /**
      * Check if a specific key binding would conflict with existing bindings.
@@ -41,7 +39,7 @@ object KeymapValidator {
     fun checkBinding(
         binding: KeyBinding,
         settings: KeymapSettings,
-        excludeActionId: String? = null
+        excludeActionId: String? = null,
     ): List<KeyBinding> {
         val signature = binding.signature()
 
@@ -55,16 +53,12 @@ object KeymapValidator {
     /**
      * Check if a keymap settings object has any conflicts.
      */
-    fun hasConflicts(settings: KeymapSettings): Boolean {
-        return findConflicts(settings).isNotEmpty()
-    }
+    fun hasConflicts(settings: KeymapSettings): Boolean = findConflicts(settings).isNotEmpty()
 
     /**
      * Get count of conflicts in a keymap settings object.
      */
-    fun conflictCount(settings: KeymapSettings): Int {
-        return findConflicts(settings).size
-    }
+    fun conflictCount(settings: KeymapSettings): Int = findConflicts(settings).size
 
     /**
      * Find all conflicts in a keymap settings object.
@@ -110,13 +104,15 @@ object KeymapValidator {
      * Same contexts conflict with each other.
      * Different non-global contexts don't conflict.
      */
-    private fun contextsConflict(context1: ShortcutContext, context2: ShortcutContext): Boolean {
-        return when {
+    private fun contextsConflict(
+        context1: ShortcutContext,
+        context2: ShortcutContext,
+    ): Boolean =
+        when {
             context1 == ShortcutContext.GLOBAL || context2 == ShortcutContext.GLOBAL -> true
             context1 == context2 -> true
             else -> false
         }
-    }
 
     /**
      * Suggest fixes for conflicts.

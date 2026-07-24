@@ -24,7 +24,6 @@ import java.util.concurrent.atomic.AtomicLong
  * - Set: update state with optimistic concurrency control
  */
 class StateServiceImpl : StateServiceGrpcKt.StateServiceCoroutineImplBase() {
-
     private val logger = LoggerFactory.getLogger(StateServiceImpl::class.java)
 
     private val stateStore = ConcurrentHashMap<String, StateEntry>()
@@ -35,52 +34,58 @@ class StateServiceImpl : StateServiceGrpcKt.StateServiceCoroutineImplBase() {
     private val stateMutex = Mutex()
 
     override suspend fun getState(request: StateKey): StateValue {
-        val entry = stateStore[request.key]
-            ?: return StateValue.newBuilder()
-                .setKey(request.key)
-                .setVersion(0)
-                .build()
+        val entry =
+            stateStore[request.key]
+                ?: return StateValue
+                    .newBuilder()
+                    .setKey(request.key)
+                    .setVersion(0)
+                    .build()
 
         return entry.toStateValue()
     }
 
-    override fun watchState(request: StateKey): Flow<StateValue> = flow {
-        // First emit current value
-        stateStore[request.key]?.let { emit(it.toStateValue()) }
+    override fun watchState(request: StateKey): Flow<StateValue> =
+        flow {
+            // First emit current value
+            stateStore[request.key]?.let { emit(it.toStateValue()) }
 
-        // Then stream changes
-        stateChanges
-            .filter { it.key == request.key }
-            .collect { emit(it) }
-    }
+            // Then stream changes
+            stateChanges
+                .filter { it.key == request.key }
+                .collect { emit(it) }
+        }
 
     override suspend fun setState(request: StateUpdate): StateValue {
         val key = request.key
 
-        val entry: StateEntry = stateMutex.withLock {
-            // Optimistic concurrency check
-            if (request.expectedVersion > 0) {
-                val current = stateStore[key]
-                if (current != null && current.version != request.expectedVersion) {
-                    logger.warn(
-                        "State update conflict for key={}: expected version {}, current {}",
-                        key, request.expectedVersion, current.version
-                    )
-                    // Return current value without updating (conflict)
-                    return current.toStateValue()
+        val entry: StateEntry =
+            stateMutex.withLock {
+                // Optimistic concurrency check
+                if (request.expectedVersion > 0) {
+                    val current = stateStore[key]
+                    if (current != null && current.version != request.expectedVersion) {
+                        logger.warn(
+                            "State update conflict for key={}: expected version {}, current {}",
+                            key,
+                            request.expectedVersion,
+                            current.version,
+                        )
+                        // Return current value without updating (conflict)
+                        return current.toStateValue()
+                    }
                 }
-            }
 
-            val newVersion = versionCounter.incrementAndGet()
-            StateEntry(
-                key = key,
-                value = request.value,
-                valueType = request.valueType,
-                version = newVersion,
-                timestamp = System.currentTimeMillis(),
-                ownerProcess = request.sourceProcess,
-            ).also { stateStore[key] = it }
-        }
+                val newVersion = versionCounter.incrementAndGet()
+                StateEntry(
+                    key = key,
+                    value = request.value,
+                    valueType = request.valueType,
+                    version = newVersion,
+                    timestamp = System.currentTimeMillis(),
+                    ownerProcess = request.sourceProcess,
+                ).also { stateStore[key] = it }
+            }
 
         val stateValue = entry.toStateValue()
         stateChanges.emit(stateValue)
@@ -91,16 +96,19 @@ class StateServiceImpl : StateServiceGrpcKt.StateServiceCoroutineImplBase() {
     }
 
     override suspend fun listStateKeys(request: Empty): StateKeyList {
-        val keys = stateStore.map { (key, entry) ->
-            StateKeyInfo.newBuilder()
-                .setKey(key)
-                .setValueType(entry.valueType)
-                .setOwnerProcess(entry.ownerProcess)
-                .setVersion(entry.version)
-                .build()
-        }
+        val keys =
+            stateStore.map { (key, entry) ->
+                StateKeyInfo
+                    .newBuilder()
+                    .setKey(key)
+                    .setValueType(entry.valueType)
+                    .setOwnerProcess(entry.ownerProcess)
+                    .setVersion(entry.version)
+                    .build()
+            }
 
-        return StateKeyList.newBuilder()
+        return StateKeyList
+            .newBuilder()
             .addAllKeys(keys)
             .build()
     }
@@ -108,13 +116,20 @@ class StateServiceImpl : StateServiceGrpcKt.StateServiceCoroutineImplBase() {
     /**
      * Set state locally (from kernel code, not via gRPC).
      */
-    suspend fun setLocal(key: String, value: ByteArray, valueType: String, ownerProcess: String = "kernel") {
-        val request = StateUpdate.newBuilder()
-            .setKey(key)
-            .setValue(ByteString.copyFrom(value))
-            .setValueType(valueType)
-            .setSourceProcess(ownerProcess)
-            .build()
+    suspend fun setLocal(
+        key: String,
+        value: ByteArray,
+        valueType: String,
+        ownerProcess: String = "kernel",
+    ) {
+        val request =
+            StateUpdate
+                .newBuilder()
+                .setKey(key)
+                .setValue(ByteString.copyFrom(value))
+                .setValueType(valueType)
+                .setSourceProcess(ownerProcess)
+                .build()
         setState(request)
     }
 
@@ -129,11 +144,13 @@ private data class StateEntry(
     val timestamp: Long,
     val ownerProcess: String,
 ) {
-    fun toStateValue(): StateValue = StateValue.newBuilder()
-        .setKey(key)
-        .setValue(value)
-        .setValueType(valueType)
-        .setVersion(version)
-        .setTimestamp(timestamp)
-        .build()
+    fun toStateValue(): StateValue =
+        StateValue
+            .newBuilder()
+            .setKey(key)
+            .setValue(value)
+            .setValueType(valueType)
+            .setVersion(version)
+            .setTimestamp(timestamp)
+            .build()
 }

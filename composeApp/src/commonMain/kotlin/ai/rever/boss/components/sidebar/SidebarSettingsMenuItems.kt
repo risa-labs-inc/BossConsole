@@ -36,7 +36,7 @@ fun rememberSidebarSettingsMenuItems(): List<ContextMenuItem> {
                         MenuActionsHandler.triggerOpenSettings(id, "SIDEBAR")
                     }
                 },
-            )
+            ),
         )
     }
 }

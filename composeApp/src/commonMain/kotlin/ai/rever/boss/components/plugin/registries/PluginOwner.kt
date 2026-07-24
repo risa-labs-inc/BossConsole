@@ -11,5 +11,4 @@ import ai.rever.boss.plugin.loader.PluginClassLoader
  * This avoids widening the registration APIs to carry a pluginId: the
  * classloader already knows.
  */
-fun owningPluginId(contribution: Any): String? =
-    (contribution.javaClass.classLoader as? PluginClassLoader)?.pluginId
+fun owningPluginId(contribution: Any): String? = (contribution.javaClass.classLoader as? PluginClassLoader)?.pluginId

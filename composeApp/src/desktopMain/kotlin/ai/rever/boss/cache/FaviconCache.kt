@@ -1,14 +1,14 @@
 package ai.rever.boss.cache
 
+import ai.rever.boss.plugin.api.TabIcon
+import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.graphics.toComposeImageBitmap
-import androidx.compose.ui.graphics.painter.BitmapPainter
-import ai.rever.boss.plugin.api.TabIcon
-import ai.rever.boss.plugin.pathutils.BossDirectories
 import java.io.File
 import java.security.MessageDigest
 import javax.imageio.ImageIO
@@ -44,7 +44,10 @@ object FaviconCache {
      * @param imageBitmap The favicon ImageBitmap to cache
      * @return The cache key if successful, null if the favicon exceeds size limit or on error
      */
-    fun saveFavicon(url: String, imageBitmap: ImageBitmap): String? {
+    fun saveFavicon(
+        url: String,
+        imageBitmap: ImageBitmap,
+    ): String? {
         try {
             val cacheKey = generateCacheKey(url)
             val cacheFile = File(cacheDir, "$cacheKey.png")
@@ -58,7 +61,14 @@ object FaviconCache {
 
             if (tempFile.length() > MAX_FAVICON_SIZE_BYTES) {
                 tempFile.delete()
-                logger.debug(LogCategory.BROWSER, "Favicon too large, skipping cache", mapOf("size" to tempFile.length(), "maxSize" to MAX_FAVICON_SIZE_BYTES))
+                logger.debug(
+                    LogCategory.BROWSER,
+                    "Favicon too large, skipping cache",
+                    mapOf(
+                        "size" to tempFile.length(),
+                        "maxSize" to MAX_FAVICON_SIZE_BYTES,
+                    ),
+                )
                 return null
             }
 
@@ -99,7 +109,8 @@ object FaviconCache {
             // Convert to Compose ImageBitmap
             val imageBitmap = bufferedImage.toComposeImageBitmap()
             val painter = BitmapPainter(imageBitmap)
-            return ai.rever.boss.plugin.api.TabIcon.Image(painter)
+            return ai.rever.boss.plugin.api.TabIcon
+                .Image(painter)
         } catch (e: Exception) {
             logger.warn(LogCategory.BROWSER, "Error loading favicon", mapOf("cacheKey" to cacheKey), error = e)
             return null
@@ -141,14 +152,10 @@ object FaviconCache {
     /**
      * Gets the total size of the favicon cache in bytes.
      */
-    fun getCacheSize(): Long {
-        return cacheDir.listFiles()?.sumOf { it.length() } ?: 0L
-    }
+    fun getCacheSize(): Long = cacheDir.listFiles()?.sumOf { it.length() } ?: 0L
 
     /**
      * Gets the number of cached favicons.
      */
-    fun getCacheCount(): Int {
-        return cacheDir.listFiles()?.size ?: 0
-    }
+    fun getCacheCount(): Int = cacheDir.listFiles()?.size ?: 0
 }

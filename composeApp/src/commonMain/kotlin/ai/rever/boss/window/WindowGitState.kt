@@ -18,7 +18,9 @@ import kotlinx.coroutines.flow.asStateFlow
  *
  * Pattern follows WindowRunnerState for consistency.
  */
-class WindowGitState(val windowId: String) {
+class WindowGitState(
+    val windowId: String,
+) {
     private val _projectPath = MutableStateFlow<String?>(null)
     val projectPath: StateFlow<String?> = _projectPath.asStateFlow()
 
@@ -54,7 +56,7 @@ class WindowGitState(val windowId: String) {
         isRepo: Boolean,
         branch: String?,
         local: List<GitBranchInfo>,
-        remote: List<GitBranchInfo>
+        remote: List<GitBranchInfo>,
     ) {
         _isGitRepository.value = isRepo
         _currentBranch.value = branch

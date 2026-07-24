@@ -25,101 +25,115 @@ import kotlin.test.assertTrue
  * missing (dev builds, pre-migration store rows).
  */
 class PluginUpdateManagerBossVersionGateTest {
-
     private val pluginId = "com.example.demo"
 
-    private fun candidate(version: String, minBoss: String) = PluginInfo(
+    private fun candidate(
+        version: String,
+        minBoss: String,
+    ) = PluginInfo(
         pluginId = pluginId,
         displayName = "Demo",
         version = version,
-        minBossVersion = minBoss
+        minBossVersion = minBoss,
     )
 
-    private fun manager(latest: PluginInfo, hostBossVersion: String): PluginUpdateManager {
+    private fun manager(
+        latest: PluginInfo,
+        hostBossVersion: String,
+    ): PluginUpdateManager {
         val repos = PluginRepositoryManager().apply { addRepository(FakeRepository(latest)) }
         return PluginUpdateManager(
             repositoryManager = repos,
-            hostBossVersion = hostBossVersion
+            hostBossVersion = hostBossVersion,
         )
     }
 
     @Test
-    fun `update requiring newer host is reported, not offered`() = runTest {
-        val mgr = manager(candidate("1.8.4", minBoss = "9.2.26"), hostBossVersion = "9.2.25")
+    fun `update requiring newer host is reported, not offered`() =
+        runTest {
+            val mgr = manager(candidate("1.8.4", minBoss = "9.2.26"), hostBossVersion = "9.2.25")
 
-        val result = mgr.checkForUpdates(mapOf(pluginId to "1.8.3"))
+            val result = mgr.checkForUpdates(mapOf(pluginId to "1.8.3"))
 
-        assertTrue(result.availableUpdates.isEmpty(), "host-incompatible update must not be offered")
-        assertEquals(1, result.incompatibleNotices.size)
-        val notice = result.incompatibleNotices.first()
-        assertEquals(pluginId, notice.pluginId)
-        assertEquals("1.8.4", notice.advertisedLatest)
-        assertEquals("9.2.26", notice.requiredBossVersion)
-        assertEquals("9.2.25", notice.hostBossVersion)
-        assertEquals("", notice.requiredIpcVersion, "boss-version notice must not fabricate an IPC reason")
-    }
-
-    @Test
-    fun `update whose minBossVersion the host satisfies is offered`() = runTest {
-        val mgr = manager(candidate("1.8.4", minBoss = "9.2.25"), hostBossVersion = "9.2.25")
-
-        val result = mgr.checkForUpdates(mapOf(pluginId to "1.8.3"))
-
-        assertEquals(1, result.availableUpdates.size)
-        assertEquals("1.8.4", result.availableUpdates.first().newVersion)
-        assertTrue(result.incompatibleNotices.isEmpty())
-    }
+            assertTrue(result.availableUpdates.isEmpty(), "host-incompatible update must not be offered")
+            assertEquals(1, result.incompatibleNotices.size)
+            val notice = result.incompatibleNotices.first()
+            assertEquals(pluginId, notice.pluginId)
+            assertEquals("1.8.4", notice.advertisedLatest)
+            assertEquals("9.2.26", notice.requiredBossVersion)
+            assertEquals("9.2.25", notice.hostBossVersion)
+            assertEquals("", notice.requiredIpcVersion, "boss-version notice must not fabricate an IPC reason")
+        }
 
     @Test
-    fun `newer host than required is offered`() = runTest {
-        val mgr = manager(candidate("1.8.4", minBoss = "9.2.20"), hostBossVersion = "9.2.26")
+    fun `update whose minBossVersion the host satisfies is offered`() =
+        runTest {
+            val mgr = manager(candidate("1.8.4", minBoss = "9.2.25"), hostBossVersion = "9.2.25")
 
-        val result = mgr.checkForUpdates(mapOf(pluginId to "1.8.3"))
+            val result = mgr.checkForUpdates(mapOf(pluginId to "1.8.3"))
 
-        assertEquals(1, result.availableUpdates.size)
-    }
-
-    @Test
-    fun `prerelease of the required host version is offered, not gated`() = runTest {
-        val mgr = manager(candidate("1.8.4", minBoss = "9.2.26"), hostBossVersion = "9.2.26-alpha.1")
-
-        val result = mgr.checkForUpdates(mapOf(pluginId to "1.8.3"))
-
-        assertEquals(1, result.availableUpdates.size)
-        assertTrue(result.incompatibleNotices.isEmpty())
-    }
+            assertEquals(1, result.availableUpdates.size)
+            assertEquals("1.8.4", result.availableUpdates.first().newVersion)
+            assertTrue(result.incompatibleNotices.isEmpty())
+        }
 
     @Test
-    fun `blank minBossVersion fails open`() = runTest {
-        val mgr = manager(candidate("1.8.4", minBoss = ""), hostBossVersion = "9.2.25")
+    fun `newer host than required is offered`() =
+        runTest {
+            val mgr = manager(candidate("1.8.4", minBoss = "9.2.20"), hostBossVersion = "9.2.26")
 
-        val result = mgr.checkForUpdates(mapOf(pluginId to "1.8.3"))
+            val result = mgr.checkForUpdates(mapOf(pluginId to "1.8.3"))
 
-        assertEquals(1, result.availableUpdates.size)
-        assertTrue(result.incompatibleNotices.isEmpty())
-    }
-
-    @Test
-    fun `blank host version disables the gate`() = runTest {
-        val mgr = manager(candidate("1.8.4", minBoss = "9.2.26"), hostBossVersion = "")
-
-        val result = mgr.checkForUpdates(mapOf(pluginId to "1.8.3"))
-
-        assertEquals(1, result.availableUpdates.size)
-    }
+            assertEquals(1, result.availableUpdates.size)
+        }
 
     @Test
-    fun `unparseable minBossVersion fails open`() = runTest {
-        val mgr = manager(candidate("1.8.4", minBoss = "not-a-version"), hostBossVersion = "9.2.25")
+    fun `prerelease of the required host version is offered, not gated`() =
+        runTest {
+            val mgr = manager(candidate("1.8.4", minBoss = "9.2.26"), hostBossVersion = "9.2.26-alpha.1")
 
-        val result = mgr.checkForUpdates(mapOf(pluginId to "1.8.3"))
+            val result = mgr.checkForUpdates(mapOf(pluginId to "1.8.3"))
 
-        assertEquals(1, result.availableUpdates.size)
-    }
+            assertEquals(1, result.availableUpdates.size)
+            assertTrue(result.incompatibleNotices.isEmpty())
+        }
+
+    @Test
+    fun `blank minBossVersion fails open`() =
+        runTest {
+            val mgr = manager(candidate("1.8.4", minBoss = ""), hostBossVersion = "9.2.25")
+
+            val result = mgr.checkForUpdates(mapOf(pluginId to "1.8.3"))
+
+            assertEquals(1, result.availableUpdates.size)
+            assertTrue(result.incompatibleNotices.isEmpty())
+        }
+
+    @Test
+    fun `blank host version disables the gate`() =
+        runTest {
+            val mgr = manager(candidate("1.8.4", minBoss = "9.2.26"), hostBossVersion = "")
+
+            val result = mgr.checkForUpdates(mapOf(pluginId to "1.8.3"))
+
+            assertEquals(1, result.availableUpdates.size)
+        }
+
+    @Test
+    fun `unparseable minBossVersion fails open`() =
+        runTest {
+            val mgr = manager(candidate("1.8.4", minBoss = "not-a-version"), hostBossVersion = "9.2.25")
+
+            val result = mgr.checkForUpdates(mapOf(pluginId to "1.8.3"))
+
+            assertEquals(1, result.availableUpdates.size)
+        }
 }
 
 /** Minimal remote [PluginRepository] that always resolves to [latest]. */
-private class FakeRepository(private val latest: PluginInfo) : PluginRepository {
+private class FakeRepository(
+    private val latest: PluginInfo,
+) : PluginRepository {
     override val id = "fake-remote"
     override val name = "Fake Remote"
     override val isLocal = false
@@ -136,8 +150,11 @@ private class FakeRepository(private val latest: PluginInfo) : PluginRepository 
     override suspend fun getPluginVersions(pluginId: String): Result<List<PluginInfo>> =
         Result.success(if (pluginId == latest.pluginId) listOf(latest) else emptyList())
 
-    override suspend fun downloadPlugin(pluginId: String, version: String?, targetPath: String): Result<String> =
-        Result.success(targetPath)
+    override suspend fun downloadPlugin(
+        pluginId: String,
+        version: String?,
+        targetPath: String,
+    ): Result<String> = Result.success(targetPath)
 
     override fun getDownloadProgress(pluginId: String): Flow<Float>? = null
 

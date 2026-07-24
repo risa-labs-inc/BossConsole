@@ -17,7 +17,6 @@ package ai.rever.boss.plugin
  * same major required, runtime `minor.patch` must be ≤ the host's.
  */
 object IpcCompatibility {
-
     enum class Status {
         /** Host can load this version. */
         COMPATIBLE,
@@ -29,7 +28,7 @@ object IpcCompatibility {
         MAJOR_MISMATCH,
 
         /** Blank minIpcVersion, or host IPC version unavailable. */
-        UNKNOWN
+        UNKNOWN,
     }
 
     /**
@@ -64,8 +63,7 @@ object IpcCompatibility {
      * this host. Treats UNKNOWN as installable (legacy JARs / no boss-ipc),
      * matching the lenient behaviour of the spawn-time gate.
      */
-    fun isInstallable(minIpcVersion: String): Boolean =
-        status(minIpcVersion).let { it == Status.COMPATIBLE || it == Status.UNKNOWN }
+    fun isInstallable(minIpcVersion: String): Boolean = status(minIpcVersion).let { it == Status.COMPATIBLE || it == Status.UNKNOWN }
 
     private fun parse(version: String): Triple<Int, Int, Int>? {
         val core = version.substringBefore('-').substringBefore('+')

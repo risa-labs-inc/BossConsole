@@ -1,9 +1,9 @@
 package ai.rever.boss.components.plugin.panels.right_top
 
+import ai.rever.boss.config.ConfigLoader
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
-import ai.rever.boss.config.ConfigLoader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -31,7 +31,11 @@ actual fun getEnvironmentVariable(name: String): String? {
         val process = ProcessBuilder("launchctl", "getenv", name).start()
         process.waitFor()
         if (process.exitValue() == 0) {
-            val result = process.inputStream.bufferedReader().readText().trim()
+            val result =
+                process.inputStream
+                    .bufferedReader()
+                    .readText()
+                    .trim()
             if (result.isNotBlank()) {
                 logger.debug(LogCategory.SYSTEM, "Found env var from launchctl", mapOf("name" to name))
                 return result
@@ -50,16 +54,18 @@ actual fun getEnvironmentVariable(name: String): String? {
     try {
         val envFile = BossDirectories.resolve("env_vars")
         if (envFile.exists()) {
-            val envVars = envFile.readLines()
-                .filter { it.isNotBlank() && !it.startsWith("#") }
-                .associate { line ->
-                    val parts = line.split("=", limit = 2)
-                    if (parts.size == 2) {
-                        parts[0].trim() to parts[1].trim()
-                    } else {
-                        "" to ""
+            val envVars =
+                envFile
+                    .readLines()
+                    .filter { it.isNotBlank() && !it.startsWith("#") }
+                    .associate { line ->
+                        val parts = line.split("=", limit = 2)
+                        if (parts.size == 2) {
+                            parts[0].trim() to parts[1].trim()
+                        } else {
+                            "" to ""
+                        }
                     }
-                }
             val result = envVars[name]
             if (!result.isNullOrBlank()) {
                 logger.debug(LogCategory.SYSTEM, "Found env var from env_vars file", mapOf("name" to name))
@@ -79,7 +85,7 @@ actual fun getEnvironmentVariable(name: String): String? {
  */
 actual object LLMSettingsManager {
     private val settingsFile = BossDirectories.resolve("llm_settings.json")
-    
+
     actual suspend fun loadSettings() {
         withContext(Dispatchers.IO) {
             try {
@@ -106,13 +112,14 @@ actual object LLMSettingsManager {
             }
         }
     }
-    
+
     private fun createEnvVarsTemplateIfNeeded() {
         try {
             val envFile = BossDirectories.resolve("env_vars")
             if (!envFile.exists()) {
                 envFile.parentFile?.mkdirs()
-                val template = """
+                val template =
+                    """
                     # Environment variables for BOSS
                     #
                     # IMPORTANT: DMG applications on macOS don't inherit shell environment variables
@@ -142,7 +149,7 @@ actual object LLMSettingsManager {
                     # Settings → LLM Providers → Enter keys manually
 
                     # Priority order: System.getenv() → launchctl getenv → this file → Settings UI
-                """.trimIndent()
+                    """.trimIndent()
 
                 envFile.writeText(template)
                 logger.info(LogCategory.SYSTEM, "Created environment variables template", mapOf("path" to envFile.absolutePath))

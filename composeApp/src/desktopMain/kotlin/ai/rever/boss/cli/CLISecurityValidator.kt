@@ -7,14 +7,11 @@ package ai.rever.boss.cli
  * Based on security validation from UpdateScriptGenerator.kt:72-104
  */
 object CLISecurityValidator {
-
     /**
      * Validates URL format.
      * For backward compatibility - use normalizeAndValidateUrl() for new code.
      */
-    fun isValidUrl(url: String): Boolean {
-        return url.startsWith("http://") || url.startsWith("https://")
-    }
+    fun isValidUrl(url: String): Boolean = url.startsWith("http://") || url.startsWith("https://")
 
     /**
      * Normalizes and validates a URL.

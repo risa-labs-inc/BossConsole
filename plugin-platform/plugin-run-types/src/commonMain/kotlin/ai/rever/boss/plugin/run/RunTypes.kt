@@ -28,7 +28,7 @@ data class RunConfiguration(
     val environmentVariables: Map<String, String> = emptyMap(),
     val arguments: String = "",
     val isAutoDetected: Boolean = true,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
 )
 
 /**
@@ -39,14 +39,17 @@ enum class RunConfigurationType {
     MAIN_FUNCTION,
     SCRIPT,
     TEST,
-    CUSTOM
+    CUSTOM,
 }
 
 /**
  * Supported programming languages for run detection.
  */
 @Serializable
-enum class Language(val displayName: String, val extensions: List<String>) {
+enum class Language(
+    val displayName: String,
+    val extensions: List<String>,
+) {
     KOTLIN("Kotlin", listOf("kt", "kts")),
     JAVA("Java", listOf("java")),
     PYTHON("Python", listOf("py")),
@@ -54,12 +57,11 @@ enum class Language(val displayName: String, val extensions: List<String>) {
     TYPESCRIPT("TypeScript", listOf("ts", "tsx")),
     GO("Go", listOf("go")),
     RUST("Rust", listOf("rs")),
-    UNKNOWN("Unknown", emptyList());
+    UNKNOWN("Unknown", emptyList()),
+    ;
 
     companion object {
-        fun fromExtension(extension: String): Language {
-            return entries.find { it.extensions.contains(extension.lowercase()) } ?: UNKNOWN
-        }
+        fun fromExtension(extension: String): Language = entries.find { it.extensions.contains(extension.lowercase()) } ?: UNKNOWN
 
         fun fromFileName(fileName: String): Language {
             val extension = fileName.substringAfterLast('.', "")
@@ -77,19 +79,18 @@ data class DetectedMainFunction(
     val className: String?,
     val packageName: String?,
     val language: Language,
-    val filePath: String
+    val filePath: String,
 ) {
     /**
      * Creates a display name for this detected function.
      */
-    fun toDisplayName(): String {
-        return when {
+    fun toDisplayName(): String =
+        when {
             className != null && packageName != null -> "$packageName.$className.$functionName"
             className != null -> "$className.$functionName"
             packageName != null -> "$packageName.$functionName"
             else -> functionName
         }
-    }
 
     /**
      * Creates a short display name for UI.
@@ -112,10 +113,11 @@ data class DetectedMainFunction(
         val fileName = filePath.extractFileName()
         val projectName = projectRoot?.extractFileName()?.takeIf { it.isNotBlank() }
 
-        val nameWithFile = when {
-            className != null -> "$className.$functionName"
-            else -> functionName
-        }
+        val nameWithFile =
+            when {
+                className != null -> "$className.$functionName"
+                else -> functionName
+            }
 
         return if (projectName != null) {
             "$nameWithFile ($fileName [$projectName])"
@@ -133,7 +135,7 @@ data class RunConfigurationSettings(
     val configurations: List<RunConfiguration> = emptyList(),
     val lastUsedConfigId: String? = null,
     val recentConfigIds: List<String> = emptyList(),
-    val maxRecentConfigs: Int = 10
+    val maxRecentConfigs: Int = 10,
 )
 
 /**
@@ -144,7 +146,7 @@ enum class ProcessStatus {
     RUNNING,
     STOPPING,
     STOPPED,
-    FAILED
+    FAILED,
 }
 
 /**
@@ -156,7 +158,7 @@ data class RunningProcess(
     val configName: String,
     val command: String,
     val startTime: Long,
-    val status: ProcessStatus
+    val status: ProcessStatus,
 )
 
 // ============================================
@@ -180,7 +182,7 @@ enum class RunnerTerminalTarget {
      * Open runner terminals in the main panel (center area).
      * This provides more space for output and is similar to IntelliJ's run window.
      */
-    MAIN_PANEL
+    MAIN_PANEL,
 }
 
 /**
@@ -195,32 +197,28 @@ data class RunnerSettings(
      * Default: SIDEBAR_PANEL
      */
     val terminalTarget: RunnerTerminalTarget = RunnerTerminalTarget.SIDEBAR_PANEL,
-
     /**
      * Whether to automatically focus the terminal when a runner starts.
      * Default: true
      */
     val focusOnRun: Boolean = true,
-
     /**
      * Whether to clear the terminal before re-running a configuration.
      * Note: Currently not supported - re-run creates a new terminal.
      * Default: true
      */
     val clearOnRerun: Boolean = true,
-
     /**
      * Whether to show a notification when a runner process exits.
      * Default: false
      */
     val notifyOnExit: Boolean = false,
-
     /**
      * Delay in milliseconds between sending Ctrl+C and the new command during re-run.
      * This gives the shell time to handle the interrupt and show its prompt.
      * Default: 1000ms. Range: 0-2000ms
      */
-    val rerunDelayMs: Long = 1000
+    val rerunDelayMs: Long = 1000,
 )
 
 // ============================================
@@ -237,7 +235,7 @@ data class RunnerSettings(
 data class RunExecuteEvent(
     val configuration: RunConfiguration,
     val debug: Boolean = false,
-    val sourceWindowId: String
+    val sourceWindowId: String,
 )
 
 /**
@@ -248,7 +246,7 @@ data class RunExecuteEvent(
  */
 data class RunStopEvent(
     val configId: String? = null,
-    val sourceWindowId: String
+    val sourceWindowId: String,
 )
 
 /**
@@ -259,7 +257,7 @@ data class RunStopEvent(
  */
 data class RunScanEvent(
     val projectPath: String,
-    val sourceWindowId: String
+    val sourceWindowId: String,
 )
 
 // ============================================
@@ -276,7 +274,7 @@ data class RunnerTerminalOpenEvent(
     val configName: String,
     val workingDirectory: String?,
     val isRerun: Boolean,
-    val sourceWindowId: String  // Window that initiated the run (Issue #498)
+    val sourceWindowId: String, // Window that initiated the run (Issue #498)
 )
 
 /**
@@ -286,7 +284,7 @@ data class RunnerTerminalOpenEvent(
 data class RunnerTerminalStopEvent(
     val terminalId: String,
     val configId: String,
-    val sourceWindowId: String
+    val sourceWindowId: String,
 )
 
 /**
@@ -295,5 +293,5 @@ data class RunnerTerminalStopEvent(
  */
 data class RunnerTerminalCloseEvent(
     val terminalId: String,
-    val sourceWindowId: String
+    val sourceWindowId: String,
 )

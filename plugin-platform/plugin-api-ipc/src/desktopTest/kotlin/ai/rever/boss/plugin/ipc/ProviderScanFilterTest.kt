@@ -12,7 +12,6 @@ import kotlin.test.assertTrue
  * roots, and the prefix-mismatch degradation.
  */
 class ProviderScanFilterTest {
-
     private val root = "/home/user/proj"
 
     @Test
@@ -55,10 +54,10 @@ class ProviderScanFilterTest {
         // symlinks): the entry's own name decides, ancestors are not misread.
         val callerRoot = "/Home/User/.config/myproj" // case differs from entry paths
         assertTrue(
-            ProviderScanFilter.isVisibleProviderEntry(callerRoot, "/home/user/.config/myproj/file.txt", showHidden = false)
+            ProviderScanFilter.isVisibleProviderEntry(callerRoot, "/home/user/.config/myproj/file.txt", showHidden = false),
         )
         assertFalse(
-            ProviderScanFilter.isVisibleProviderEntry(callerRoot, "/home/user/.config/myproj/.secret", showHidden = false)
+            ProviderScanFilter.isVisibleProviderEntry(callerRoot, "/home/user/.config/myproj/.secret", showHidden = false),
         )
     }
 
@@ -82,10 +81,10 @@ class ProviderScanFilterTest {
         // silently fall into the name-only branch: .git children stay hidden.
         val callerRoot = "C:/Users/dev/proj"
         assertFalse(
-            ProviderScanFilter.isVisibleProviderEntry(callerRoot, """C:\Users\dev\proj\.git\config""", showHidden = false)
+            ProviderScanFilter.isVisibleProviderEntry(callerRoot, """C:\Users\dev\proj\.git\config""", showHidden = false),
         )
         assertTrue(
-            ProviderScanFilter.isVisibleProviderEntry(callerRoot, """C:\Users\dev\proj\src\main.kt""", showHidden = false)
+            ProviderScanFilter.isVisibleProviderEntry(callerRoot, """C:\Users\dev\proj\src\main.kt""", showHidden = false),
         )
     }
 

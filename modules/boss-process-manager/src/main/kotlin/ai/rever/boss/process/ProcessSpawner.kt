@@ -17,11 +17,12 @@ import java.io.File
  */
 class ProcessSpawner(
     private val kernelIpcAddress: String,
-    private val logDir: File = File(
-        System.getenv("BOSS_DATA_DIR")
-            ?: "${System.getProperty("user.home")}/.boss",
-        "logs"
-    ),
+    private val logDir: File =
+        File(
+            System.getenv("BOSS_DATA_DIR")
+                ?: "${System.getProperty("user.home")}/.boss",
+            "logs",
+        ),
 ) {
     private val logger = LoggerFactory.getLogger(ProcessSpawner::class.java)
 
@@ -36,10 +37,11 @@ class ProcessSpawner(
         val stdoutLog = File(processLogDir, "stdout.log")
         val stderrLog = File(processLogDir, "stderr.log")
 
-        val ipcAddress = IpcAddressResolver.resolveAddress(
-            config.processType.name.lowercase(),
-            config.processId
-        )
+        val ipcAddress =
+            IpcAddressResolver.resolveAddress(
+                config.processType.name.lowercase(),
+                config.processId,
+            )
 
         val command = buildCommand(config)
 
@@ -47,13 +49,14 @@ class ProcessSpawner(
             "Spawning process: id={}, type={}, command={}",
             config.processId,
             config.processType,
-            command.joinToString(" ")
+            command.joinToString(" "),
         )
 
-        val processBuilder = ProcessBuilder(command)
-            .directory(config.workDir)
-            .redirectOutput(ProcessBuilder.Redirect.appendTo(stdoutLog))
-            .redirectError(ProcessBuilder.Redirect.appendTo(stderrLog))
+        val processBuilder =
+            ProcessBuilder(command)
+                .directory(config.workDir)
+                .redirectOutput(ProcessBuilder.Redirect.appendTo(stdoutLog))
+                .redirectError(ProcessBuilder.Redirect.appendTo(stderrLog))
 
         // Set environment variables
         processBuilder.environment().apply {
@@ -70,7 +73,7 @@ class ProcessSpawner(
             "Process started: id={}, pid={}, ipc={}",
             config.processId,
             process.pid(),
-            ipcAddress
+            ipcAddress,
         )
 
         return ManagedProcess(
@@ -111,10 +114,17 @@ class ProcessSpawner(
             // Use the same Java that's running the kernel — but only if it IS java.
             // In packaged app bundles, the current command is the app launcher (e.g., "BOSS"),
             // not the java binary. In that case fall back to JAVA_HOME.
-            val currentCommand = ProcessHandle.current().info().command().orElse(null)
+            val currentCommand =
+                ProcessHandle
+                    .current()
+                    .info()
+                    .command()
+                    .orElse(null)
             if (currentCommand != null &&
-                (currentCommand.endsWith("/java") || currentCommand.endsWith("\\java.exe") ||
-                 currentCommand.endsWith("/java.exe"))
+                (
+                    currentCommand.endsWith("/java") || currentCommand.endsWith("\\java.exe") ||
+                        currentCommand.endsWith("/java.exe")
+                )
             ) {
                 return currentCommand
             }

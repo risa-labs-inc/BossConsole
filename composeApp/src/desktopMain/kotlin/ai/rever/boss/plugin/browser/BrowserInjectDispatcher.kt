@@ -39,7 +39,10 @@ internal object BrowserInjectDispatcher {
      * if you only want the top frame). Injector exceptions are swallowed so one can't
      * break the page's JS thread or starve the others.
      */
-    fun register(browser: Browser, injector: (Frame) -> Unit) {
+    fun register(
+        browser: Browser,
+        injector: (Frame) -> Unit,
+    ) {
         synchronized(injectors) {
             val existing = injectors[browser]
             if (existing != null) {
@@ -50,19 +53,25 @@ internal object BrowserInjectDispatcher {
         }
         // First injector for this browser → claim the single callback slot.
         try {
-            browser.set(InjectJsCallback::class.java, InjectJsCallback { params ->
-                val frame = params.frame()
-                val handlers = synchronized(injectors) { injectors[frame.browser()]?.toList() }.orEmpty()
-                for (handler in handlers) {
-                    try {
-                        handler(frame)
-                    } catch (e: Throwable) {
-                        logger.debug(LogCategory.BROWSER, "Inject handler failed",
-                            mapOf("error" to (e.message ?: "")))
+            browser.set(
+                InjectJsCallback::class.java,
+                InjectJsCallback { params ->
+                    val frame = params.frame()
+                    val handlers = synchronized(injectors) { injectors[frame.browser()]?.toList() }.orEmpty()
+                    for (handler in handlers) {
+                        try {
+                            handler(frame)
+                        } catch (e: Throwable) {
+                            logger.debug(
+                                LogCategory.BROWSER,
+                                "Inject handler failed",
+                                mapOf("error" to (e.message ?: "")),
+                            )
+                        }
                     }
-                }
-                InjectJsCallback.Response.proceed()
-            })
+                    InjectJsCallback.Response.proceed()
+                },
+            )
         } catch (e: Throwable) {
             logger.warn(LogCategory.BROWSER, "Failed to register shared InjectJsCallback", error = e)
         }

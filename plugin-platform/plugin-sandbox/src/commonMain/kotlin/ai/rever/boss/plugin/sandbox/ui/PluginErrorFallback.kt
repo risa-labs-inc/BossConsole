@@ -52,30 +52,31 @@ fun PluginErrorFallback(
     error: Throwable,
     isIncompatible: Boolean = false,
     onRestart: () -> Unit,
-    onDismiss: (() -> Unit)? = null
+    onDismiss: (() -> Unit)? = null,
 ) {
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.1f))
-            .padding(16.dp),
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.1f))
+                .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        verticalArrangement = Arrangement.Center,
     ) {
         // Header with dismiss button
         if (onDismiss != null) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
+                horizontalArrangement = Arrangement.End,
             ) {
                 IconButton(
                     onClick = onDismiss,
-                    modifier = Modifier.size(24.dp)
+                    modifier = Modifier.size(24.dp),
                 ) {
                     Icon(
                         imageVector = Icons.Outlined.Close,
                         contentDescription = "Dismiss",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
@@ -88,7 +89,7 @@ fun PluginErrorFallback(
             imageVector = if (isIncompatible) Icons.Outlined.SystemUpdate else Icons.Outlined.Warning,
             contentDescription = if (isIncompatible) "Update Required" else "Error",
             modifier = Modifier.size(48.dp),
-            tint = if (isIncompatible) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+            tint = if (isIncompatible) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -97,7 +98,7 @@ fun PluginErrorFallback(
         Text(
             text = if (isIncompatible) "Plugin Update Required" else "Plugin Error",
             style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurface
+            color = MaterialTheme.colorScheme.onSurface,
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -106,35 +107,37 @@ fun PluginErrorFallback(
         Text(
             text = pluginId,
             style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
         Spacer(modifier = Modifier.height(16.dp))
 
         // Error message in a styled container
         Column(
-            modifier = Modifier
-                .fillMaxWidth(0.9f)
-                .clip(RoundedCornerShape(8.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                .padding(12.dp)
+            modifier =
+                Modifier
+                    .fillMaxWidth(0.9f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                    .padding(12.dp),
         ) {
             Text(
                 text = error.javaClass.simpleName,
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.error
+                color = MaterialTheme.colorScheme.error,
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = if (isIncompatible) {
-                    "This plugin is incompatible with the current version of BOSS. Please update it."
-                } else {
-                    error.message ?: "Unknown error"
-                },
+                text =
+                    if (isIncompatible) {
+                        "This plugin is incompatible with the current version of BOSS. Please update it."
+                    } else {
+                        error.message ?: "Unknown error"
+                    },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 3,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
             )
         }
 
@@ -149,14 +152,15 @@ fun PluginErrorFallback(
             // Restart button for recoverable errors
             Button(
                 onClick = onRestart,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                )
+                colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                    ),
             ) {
                 Icon(
                     imageVector = Icons.Outlined.Refresh,
                     contentDescription = null,
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(18.dp),
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Restart Plugin")
@@ -167,14 +171,15 @@ fun PluginErrorFallback(
 
         // Help text
         Text(
-            text = if (isIncompatible) {
-                "Update this plugin to a version compatible with the current BOSS release."
-            } else {
-                "If this problem persists, try restarting the application."
-            },
+            text =
+                if (isIncompatible) {
+                    "Update this plugin to a version compatible with the current BOSS release."
+                } else {
+                    "If this problem persists, try restarting the application."
+                },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-            textAlign = TextAlign.Center
+            textAlign = TextAlign.Center,
         )
     }
 }

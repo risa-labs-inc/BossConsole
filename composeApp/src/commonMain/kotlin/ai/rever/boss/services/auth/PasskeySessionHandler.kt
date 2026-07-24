@@ -1,9 +1,9 @@
 package ai.rever.boss.services.auth
 
 import ai.rever.boss.services.passkey.supabase.PasskeyAuthenticationResult
+import ai.rever.boss.services.supabase.RoleService
 import ai.rever.boss.services.supabase.SupabaseConfig
 import ai.rever.boss.services.supabase.models.UserInfo
-import ai.rever.boss.services.supabase.RoleService
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.LogSanitizer
@@ -26,7 +26,6 @@ import kotlin.time.ExperimentalTime
  */
 @OptIn(ExperimentalTime::class)
 object PasskeySessionHandler {
-
     private val logger = BossLogger.forComponent("PasskeySessionHandler")
 
     /**
@@ -59,51 +58,68 @@ object PasskeySessionHandler {
                 logger.debug(LogCategory.PASSKEY, "Server provided Supabase session tokens")
 
                 // Parse role claims from access token if available
-                val roleClaims = authData.accessToken.let { token ->
-                    try {
-                        // Create temporary session for parsing
-                        val tempSession = UserSession(
-                            accessToken = token,
-                            refreshToken = authData.refreshToken,
-                            expiresIn = authData.expiresAt?.minus(java.time.Instant.now().epochSecond) ?: 3600,
-                            tokenType = "bearer",
-                            user = null
-                        )
-                        RoleService.parseRoleClaimsFromSession(tempSession)
-                    } catch (e: Exception) {
-                        logger.warn(LogCategory.PASSKEY, "Failed to parse role claims", error = e)
-                        null
+                val roleClaims =
+                    authData.accessToken.let { token ->
+                        try {
+                            // Create temporary session for parsing
+                            val tempSession =
+                                UserSession(
+                                    accessToken = token,
+                                    refreshToken = authData.refreshToken,
+                                    expiresIn =
+                                        authData.expiresAt?.minus(
+                                            java.time.Instant
+                                                .now()
+                                                .epochSecond,
+                                        ) ?: 3600,
+                                    tokenType = "bearer",
+                                    user = null,
+                                )
+                            RoleService.parseRoleClaimsFromSession(tempSession)
+                        } catch (e: Exception) {
+                            logger.warn(LogCategory.PASSKEY, "Failed to parse role claims", error = e)
+                            null
+                        }
                     }
-                }
 
                 // Create user info from authentication response
-                val userInfo = UserInfo(
-                    id = authData.userId,
-                    email = authData.email,
-                    createdAt = java.time.Instant.now().toString(),
-                    roleClaims = roleClaims
-                )
+                val userInfo =
+                    UserInfo(
+                        id = authData.userId,
+                        email = authData.email,
+                        createdAt =
+                            java.time.Instant
+                                .now()
+                                .toString(),
+                        roleClaims = roleClaims,
+                    )
 
                 // Calculate expiration time
-                val expiresIn = authData.expiresAt?.minus(java.time.Instant.now().epochSecond) ?: 3600L
+                val expiresIn =
+                    authData.expiresAt?.minus(
+                        java.time.Instant
+                            .now()
+                            .epochSecond,
+                    ) ?: 3600L
 
                 // Use SessionManager for centralized session establishment
                 // This handles: importSession, UserDataStorage, and AuthStateManager updates
-                SessionManager.establishSession(
-                    accessToken = authData.accessToken,
-                    refreshToken = authData.refreshToken,
-                    userInfo = userInfo,
-                    authMethod = SessionManager.AuthMethod.PASSKEY,
-                    expiresIn = expiresIn
-                ).fold(
-                    onSuccess = {
-                        logger.info(LogCategory.PASSKEY, "Session established successfully")
-                    },
-                    onFailure = { error ->
-                        logger.error(LogCategory.PASSKEY, "Failed to establish session", error = error)
-                        return Result.failure(error)
-                    }
-                )
+                SessionManager
+                    .establishSession(
+                        accessToken = authData.accessToken,
+                        refreshToken = authData.refreshToken,
+                        userInfo = userInfo,
+                        authMethod = SessionManager.AuthMethod.PASSKEY,
+                        expiresIn = expiresIn,
+                    ).fold(
+                        onSuccess = {
+                            logger.info(LogCategory.PASSKEY, "Session established successfully")
+                        },
+                        onFailure = { error ->
+                            logger.error(LogCategory.PASSKEY, "Failed to establish session", error = error)
+                            return Result.failure(error)
+                        },
+                    )
             } else {
                 // No tokens provided - trigger magic link authentication as fallback
                 logger.warn(LogCategory.PASSKEY, "No session tokens from passkey auth - requesting magic link")
@@ -113,11 +129,17 @@ object PasskeySessionHandler {
                     SupabaseConfig.client.auth.signInWith(OTP) {
                         email = authData.email
                     }
-                    logger.info(LogCategory.PASSKEY, "Magic link sent for session creation", mapOf("email" to LogSanitizer.maskEmail(authData.email)))
+                    logger.info(
+                        LogCategory.PASSKEY,
+                        "Magic link sent for session creation",
+                        mapOf("email" to LogSanitizer.maskEmail(authData.email)),
+                    )
                     return Result.failure(Exception("Magic link sent to ${authData.email}. Please check your email to complete sign-in."))
                 } catch (e: Exception) {
                     logger.error(LogCategory.PASSKEY, "Failed to send magic link", error = e)
-                    return Result.failure(Exception("Passkey authentication succeeded but failed to create session. Please try magic link login."))
+                    return Result.failure(
+                        Exception("Passkey authentication succeeded but failed to create session. Please try magic link login."),
+                    )
                 }
             }
 

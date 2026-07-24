@@ -1,18 +1,17 @@
 package ai.rever.boss.plugin.browser
 
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
-
+import ai.rever.boss.components.window_panel.SplitViewStateRegistry
+import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
-import ai.rever.boss.plugin.api.TabInfo
-import ai.rever.boss.components.window_panel.SplitViewStateRegistry
 import com.teamdev.jxbrowser.browser.callback.StartCaptureSessionCallback
 import com.teamdev.jxbrowser.capture.AudioCaptureMode
 import com.teamdev.jxbrowser.capture.CaptureSources
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.ConcurrentHashMap
@@ -32,14 +31,14 @@ object ScreenCaptureNotifier {
     data class CaptureSourceItem(
         val name: String,
         val category: Category,
-        val index: Int,  // Index in the original JxBrowser list for selection
-        val tabInfo: TabInfo? = null,  // Reference to internal tab for favicon loading (browser tabs only)
-        val url: String? = null  // URL for high-quality favicon loading (browser tabs only)
+        val index: Int, // Index in the original JxBrowser list for selection
+        val tabInfo: TabInfo? = null, // Reference to internal tab for favicon loading (browser tabs only)
+        val url: String? = null, // URL for high-quality favicon loading (browser tabs only)
     ) {
         enum class Category {
             SCREEN,
             WINDOW,
-            BROWSER_TAB
+            BROWSER_TAB,
         }
 
         /** Unique identifier for stable comparison */
@@ -54,13 +53,13 @@ object ScreenCaptureNotifier {
         val requestId: String,
         val screens: List<CaptureSourceItem>,
         val windows: List<CaptureSourceItem>,
-        val browsers: List<CaptureSourceItem>
+        val browsers: List<CaptureSourceItem>,
     )
 
     // Internal storage for callback and sources
     private data class PendingRequest(
         val tell: StartCaptureSessionCallback.Action,
-        val sources: CaptureSources
+        val sources: CaptureSources,
     )
 
     private val _captureRequest = MutableStateFlow<CaptureRequest?>(null)
@@ -69,8 +68,11 @@ object ScreenCaptureNotifier {
     private val pendingRequests = ConcurrentHashMap<String, PendingRequest>()
 
     // --- Screen-recording permission rationale (shown before the macOS prompt) ---
-    private val rationaleSlot = java.util.concurrent.atomic.AtomicReference<CompletableDeferred<Boolean>?>(null)
+    private val rationaleSlot =
+        java.util.concurrent.atomic
+            .AtomicReference<CompletableDeferred<Boolean>?>(null)
     private val _permissionRationale = MutableStateFlow<CompletableDeferred<Boolean>?>(null)
+
     /** Non-null while an in-app rationale dialog should be shown. */
     val permissionRationale: StateFlow<CompletableDeferred<Boolean>?> = _permissionRationale.asStateFlow()
 
@@ -104,42 +106,53 @@ object ScreenCaptureNotifier {
     fun requestCapture(
         requestId: String,
         sources: CaptureSources,
-        tell: StartCaptureSessionCallback.Action
+        tell: StartCaptureSessionCallback.Action,
     ) {
         pendingRequests[requestId] = PendingRequest(tell, sources)
 
         val totalScreens = sources.screens().size
-        val screens = sources.screens().mapIndexed { index, screen ->
-            val rawName = screen.name()
-            // Replace generic "Screen N" names with friendlier labels
-            val displayName = when {
-                rawName.isBlank() || rawName.matches(Regex("(?i)screen\\s*\\d+")) -> {
-                    if (totalScreens == 1) "Entire Screen"
-                    else if (index == 0) "Primary Display"
-                    else "Secondary Display${if (totalScreens > 2) " ${index + 1}" else ""}"
-                }
-                else -> rawName
-            }
-            CaptureSourceItem(
-                name = displayName,
-                category = CaptureSourceItem.Category.SCREEN,
-                index = index
-            )
-        }
+        val screens =
+            sources.screens().mapIndexed { index, screen ->
+                val rawName = screen.name()
+                // Replace generic "Screen N" names with friendlier labels
+                val displayName =
+                    when {
+                        rawName.isBlank() || rawName.matches(Regex("(?i)screen\\s*\\d+")) -> {
+                            if (totalScreens == 1) {
+                                "Entire Screen"
+                            } else if (index == 0) {
+                                "Primary Display"
+                            } else {
+                                "Secondary Display${if (totalScreens > 2) " ${index + 1}" else ""}"
+                            }
+                        }
 
-        val windows = sources.applicationWindows().mapIndexed { index, window ->
-            CaptureSourceItem(
-                name = window.name().ifBlank { "Window ${index + 1}" },
-                category = CaptureSourceItem.Category.WINDOW,
-                index = index
-            )
-        }
+                        else -> {
+                            rawName
+                        }
+                    }
+                CaptureSourceItem(
+                    name = displayName,
+                    category = CaptureSourceItem.Category.SCREEN,
+                    index = index,
+                )
+            }
+
+        val windows =
+            sources.applicationWindows().mapIndexed { index, window ->
+                CaptureSourceItem(
+                    name = window.name().ifBlank { "Window ${index + 1}" },
+                    category = CaptureSourceItem.Category.WINDOW,
+                    index = index,
+                )
+            }
 
         // Collect all internal tabs using TopOfMind pattern for favicon/title enrichment
         val allInternalTabs = mutableListOf<FluckTabInfo>()
         try {
             SplitViewStateRegistry.getAllStates().forEach { (windowId, state) ->
-                state.collectAllActiveTabs(null, windowId)
+                state
+                    .collectAllActiveTabs(null, windowId)
                     .filter { it.tabInfo is FluckTabInfo }
                     .forEach { allInternalTabs.add(it.tabInfo as FluckTabInfo) }
             }
@@ -147,46 +160,68 @@ object ScreenCaptureNotifier {
             logger.warn(LogCategory.BROWSER, "Failed to collect internal tabs", error = e)
         }
 
-        val browsers = sources.browsers().mapIndexed { index, browserSource ->
-            val rawName = browserSource.name()
+        val browsers =
+            sources.browsers().mapIndexed { index, browserSource ->
+                val rawName = browserSource.name()
 
-            // Match by title (JxBrowser returns page title as name)
-            val matchingTab = allInternalTabs.find { it.title == rawName }
+                // Match by title (JxBrowser returns page title as name)
+                val matchingTab = allInternalTabs.find { it.title == rawName }
 
-            val tabName = when {
-                matchingTab != null -> matchingTab.title
-                rawName.isBlank() -> "Loading..."
-                rawName.equals("about:blank", ignoreCase = true) -> "New Tab"
-                rawName.equals("new tab", ignoreCase = true) -> "New Tab"
-                else -> rawName
+                val tabName =
+                    when {
+                        matchingTab != null -> matchingTab.title
+                        rawName.isBlank() -> "Loading..."
+                        rawName.equals("about:blank", ignoreCase = true) -> "New Tab"
+                        rawName.equals("new tab", ignoreCase = true) -> "New Tab"
+                        else -> rawName
+                    }
+
+                CaptureSourceItem(
+                    name = tabName,
+                    category = CaptureSourceItem.Category.BROWSER_TAB,
+                    index = index,
+                    tabInfo = matchingTab,
+                    url = matchingTab?.currentUrl,
+                )
             }
 
-            CaptureSourceItem(
-                name = tabName,
-                category = CaptureSourceItem.Category.BROWSER_TAB,
-                index = index,
-                tabInfo = matchingTab,
-                url = matchingTab?.currentUrl
-            )
-        }
-
-        logger.debug(LogCategory.BROWSER, "Full picker sources", mapOf("screens" to screens.size, "windows" to windows.size, "browsers" to browsers.size))
-
-        _captureRequest.value = CaptureRequest(
-            requestId = requestId,
-            screens = screens,
-            windows = windows,
-            browsers = browsers
+        logger.debug(
+            LogCategory.BROWSER,
+            "Full picker sources",
+            mapOf(
+                "screens" to screens.size,
+                "windows" to windows.size,
+                "browsers" to browsers.size,
+            ),
         )
+
+        _captureRequest.value =
+            CaptureRequest(
+                requestId = requestId,
+                screens = screens,
+                windows = windows,
+                browsers = browsers,
+            )
     }
 
     /**
      * Called by UI when user selects a source.
      */
-    fun selectSource(requestId: String, source: CaptureSourceItem, audioMode: AudioCaptureMode = AudioCaptureMode.CAPTURE) {
+    fun selectSource(
+        requestId: String,
+        source: CaptureSourceItem,
+        audioMode: AudioCaptureMode = AudioCaptureMode.CAPTURE,
+    ) {
         val pending = pendingRequests.remove(requestId)
         if (pending != null) {
-            logger.debug(LogCategory.BROWSER, "User selected capture source", mapOf("name" to source.name, "category" to source.category.name))
+            logger.debug(
+                LogCategory.BROWSER,
+                "User selected capture source",
+                mapOf(
+                    "name" to source.name,
+                    "category" to source.category.name,
+                ),
+            )
 
             when (source.category) {
                 CaptureSourceItem.Category.BROWSER_TAB -> {
@@ -198,6 +233,7 @@ object ScreenCaptureNotifier {
                         pending.tell.cancel()
                     }
                 }
+
                 CaptureSourceItem.Category.WINDOW -> {
                     val windows = pending.sources.applicationWindows()
                     if (source.index < windows.size) {
@@ -207,6 +243,7 @@ object ScreenCaptureNotifier {
                         pending.tell.cancel()
                     }
                 }
+
                 CaptureSourceItem.Category.SCREEN -> {
                     val screens = pending.sources.screens()
                     if (source.index < screens.size) {
@@ -238,7 +275,5 @@ object ScreenCaptureNotifier {
     /**
      * Check if there's a pending request
      */
-    fun hasPendingRequest(requestId: String): Boolean {
-        return pendingRequests.containsKey(requestId)
-    }
+    fun hasPendingRequest(requestId: String): Boolean = pendingRequests.containsKey(requestId)
 }

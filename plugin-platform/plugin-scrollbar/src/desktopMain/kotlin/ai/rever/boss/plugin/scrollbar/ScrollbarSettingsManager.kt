@@ -23,10 +23,11 @@ import java.io.File
 actual object ScrollbarSettingsManager {
     private val logger = BossLogger.forComponent("ScrollbarSettingsManager")
     private val settingsFile = BossDirectories.resolve("scrollbar-settings.json")
-    private val json = Json {
-        prettyPrint = true
-        ignoreUnknownKeys = true
-    }
+    private val json =
+        Json {
+            prettyPrint = true
+            ignoreUnknownKeys = true
+        }
 
     private val _currentSettings = MutableStateFlow(ScrollbarSettings())
     actual val currentSettings: StateFlow<ScrollbarSettings> = _currentSettings.asStateFlow()
@@ -73,15 +74,16 @@ actual object ScrollbarSettingsManager {
     /**
      * Save current settings to disk asynchronously.
      */
-    private suspend fun saveSettings() = withContext(Dispatchers.IO) {
-        try {
-            val content = json.encodeToString(ScrollbarSettings.serializer(), _currentSettings.value)
-            settingsFile.writeText(content)
-            logger.debug(LogCategory.SYSTEM, "Settings saved", mapOf("path" to settingsFile.absolutePath))
-        } catch (e: Exception) {
-            logger.warn(LogCategory.SYSTEM, "Failed to save settings", error = e)
+    private suspend fun saveSettings() =
+        withContext(Dispatchers.IO) {
+            try {
+                val content = json.encodeToString(ScrollbarSettings.serializer(), _currentSettings.value)
+                settingsFile.writeText(content)
+                logger.debug(LogCategory.SYSTEM, "Settings saved", mapOf("path" to settingsFile.absolutePath))
+            } catch (e: Exception) {
+                logger.warn(LogCategory.SYSTEM, "Failed to save settings", error = e)
+            }
         }
-    }
 
     /**
      * Update the current settings and save to disk asynchronously.

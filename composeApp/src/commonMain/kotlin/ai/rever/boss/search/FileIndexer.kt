@@ -25,7 +25,6 @@ private val logger = BossLogger.forComponent("FileIndexer")
  * Thread-safe: Uses a mutex to prevent concurrent indexing operations.
  */
 class FileIndexer {
-
     /** Mutex to ensure only one indexing operation runs at a time. */
     private val indexingMutex = Mutex()
 
@@ -41,28 +40,29 @@ class FileIndexer {
     /**
      * Directories to exclude from indexing.
      */
-    private val excludedDirectories = setOf(
-        ".git",
-        ".idea",
-        ".gradle",
-        ".svn",
-        ".hg",
-        "build",
-        "out",
-        "target",
-        "node_modules",
-        "vendor",
-        "__pycache__",
-        ".cache",
-        "dist",
-        "coverage",
-        ".next",
-        ".nuxt",
-        ".venv",
-        "venv",
-        "env",
-        ".env"
-    )
+    private val excludedDirectories =
+        setOf(
+            ".git",
+            ".idea",
+            ".gradle",
+            ".svn",
+            ".hg",
+            "build",
+            "out",
+            "target",
+            "node_modules",
+            "vendor",
+            "__pycache__",
+            ".cache",
+            "dist",
+            "coverage",
+            ".next",
+            ".nuxt",
+            ".venv",
+            "venv",
+            "env",
+            ".env",
+        )
 
     /**
      * File extensions to include in indexing.
@@ -85,7 +85,10 @@ class FileIndexer {
      * @param projectPath The root directory to index
      * @param forceReindex If true, re-index even if already indexed
      */
-    suspend fun indexProject(projectPath: String, forceReindex: Boolean = false) {
+    suspend fun indexProject(
+        projectPath: String,
+        forceReindex: Boolean = false,
+    ) {
         // Try to acquire lock without blocking - if already indexing, skip
         if (!indexingMutex.tryLock()) {
             logger.debug(LogCategory.FILE, "Index already in progress, skipping")
@@ -104,9 +107,10 @@ class FileIndexer {
             logger.info(LogCategory.FILE, "Starting file indexing", mapOf("path" to projectPath))
             val startTime = System.currentTimeMillis()
 
-            val files = withContext(Dispatchers.IO) {
-                scanProjectFiles(projectPath)
-            }
+            val files =
+                withContext(Dispatchers.IO) {
+                    scanProjectFiles(projectPath)
+                }
 
             _indexedFiles.value = files
             _indexedPath.value = projectPath
@@ -118,8 +122,8 @@ class FileIndexer {
                 mapOf(
                     "path" to projectPath,
                     "fileCount" to files.size,
-                    "elapsedMs" to elapsed
-                )
+                    "elapsedMs" to elapsed,
+                ),
             )
         } catch (e: Exception) {
             logger.error(LogCategory.FILE, "Error indexing project", error = e)
@@ -169,7 +173,7 @@ class FileIndexer {
         rootCanonicalPath: String,
         rootPathLength: Int,
         files: MutableList<IndexedFile>,
-        depth: Int = 0
+        depth: Int = 0,
     ) {
         // Limit depth to prevent extremely deep traversal
         if (depth > maxDepth) return
@@ -186,20 +190,24 @@ class FileIndexer {
             if (child.isDirectory && name in excludedDirectories) continue
 
             // Security: Ensure file/directory is within project root (prevents symlink escape)
-            val childCanonicalPath = try {
-                child.canonicalPath
-            } catch (e: Exception) {
-                // Skip files we can't resolve (broken symlinks, permission issues)
+            val childCanonicalPath =
+                try {
+                    child.canonicalPath
+                } catch (e: Exception) {
+                    // Skip files we can't resolve (broken symlinks, permission issues)
+                    logger.debug(
+                        LogCategory.FILE,
+                        "Skipping unresolvable path",
+                        mapOf("path" to child.path, "error" to e.toString()),
+                    )
+                    continue
+                }
+            if (!childCanonicalPath.startsWith(rootCanonicalPath)) {
                 logger.debug(
                     LogCategory.FILE,
-                    "Skipping unresolvable path",
-                    mapOf("path" to child.path, "error" to e.toString()),
+                    "Skipping path outside project root",
+                    mapOf("path" to child.path, "canonical" to childCanonicalPath),
                 )
-                continue
-            }
-            if (!childCanonicalPath.startsWith(rootCanonicalPath)) {
-                logger.debug(LogCategory.FILE, "Skipping path outside project root",
-                    mapOf("path" to child.path, "canonical" to childCanonicalPath))
                 continue
             }
 
@@ -215,18 +223,19 @@ class FileIndexer {
 
                 // Add file to index
                 val absolutePath = child.absolutePath
-                val relativePath = if (absolutePath.length > rootPathLength) {
-                    absolutePath.substring(rootPathLength)
-                } else {
-                    name
-                }
+                val relativePath =
+                    if (absolutePath.length > rootPathLength) {
+                        absolutePath.substring(rootPathLength)
+                    } else {
+                        name
+                    }
 
                 files.add(
                     IndexedFile(
                         name = name,
                         path = absolutePath,
-                        relativePath = relativePath
-                    )
+                        relativePath = relativePath,
+                    ),
                 )
             }
         }

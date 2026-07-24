@@ -17,8 +17,9 @@ import kotlinx.coroutines.async
  * still mid-uninstall/load (the per-key equivalent of hotSwapApiLayer's
  * apiSwapInProgress guard).
  */
-internal class KeyedDetachedJobs<K : Any, V>(private val scope: CoroutineScope) {
-
+internal class KeyedDetachedJobs<K : Any, V>(
+    private val scope: CoroutineScope,
+) {
     private val inFlight = HashMap<K, Deferred<V>>()
 
     /**
@@ -41,21 +42,22 @@ internal class KeyedDetachedJobs<K : Any, V>(private val scope: CoroutineScope) 
     suspend fun run(
         key: K,
         onDetachedFailure: (Throwable) -> Unit = {},
-        block: suspend () -> V
+        block: suspend () -> V,
     ): V {
-        val job = synchronized(inFlight) {
-            inFlight[key]?.takeIf { it.isActive }
-                ?: scope.async { block() }.also { job ->
-                    inFlight[key] = job
-                    // Identity-checked removal: by the time a finished job's
-                    // handler runs, a newer job may already occupy the slot.
-                    job.invokeOnCompletion {
-                        synchronized(inFlight) {
-                            if (inFlight[key] === job) inFlight.remove(key)
+        val job =
+            synchronized(inFlight) {
+                inFlight[key]?.takeIf { it.isActive }
+                    ?: scope.async { block() }.also { job ->
+                        inFlight[key] = job
+                        // Identity-checked removal: by the time a finished job's
+                        // handler runs, a newer job may already occupy the slot.
+                        job.invokeOnCompletion {
+                            synchronized(inFlight) {
+                                if (inFlight[key] === job) inFlight.remove(key)
+                            }
                         }
                     }
-                }
-        }
+            }
         return try {
             job.await()
         } catch (ce: CancellationException) {

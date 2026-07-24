@@ -21,7 +21,6 @@ import java.util.concurrent.ConcurrentHashMap
  * startup and written synchronously on every mutation.
  */
 class SettingsServiceImpl : SettingsServiceGrpcKt.SettingsServiceCoroutineImplBase() {
-
     private val logger = LoggerFactory.getLogger(SettingsServiceImpl::class.java)
 
     @Serializable
@@ -32,9 +31,14 @@ class SettingsServiceImpl : SettingsServiceGrpcKt.SettingsServiceCoroutineImplBa
         val updatedAt: Long,
     )
 
-    private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
-    private val settingsFile = File(System.getProperty("user.home"), ".boss/settings.json")
-        .also { it.parentFile.mkdirs() }
+    private val json =
+        Json {
+            ignoreUnknownKeys = true
+            prettyPrint = true
+        }
+    private val settingsFile =
+        File(System.getProperty("user.home"), ".boss/settings.json")
+            .also { it.parentFile.mkdirs() }
 
     private val settings = ConcurrentHashMap<String, SettingValue>()
     private val changes = MutableSharedFlow<SettingValue>(extraBufferCapacity = 64)
@@ -44,8 +48,10 @@ class SettingsServiceImpl : SettingsServiceGrpcKt.SettingsServiceCoroutineImplBa
     }
 
     /** Composite storage key: "namespace/key" or just "key" for global namespace. */
-    private fun storageKey(namespace: String, key: String): String =
-        if (namespace.isBlank()) key else "$namespace/$key"
+    private fun storageKey(
+        namespace: String,
+        key: String,
+    ): String = if (namespace.isBlank()) key else "$namespace/$key"
 
     // ---- Disk persistence helpers ----
 
@@ -54,13 +60,15 @@ class SettingsServiceImpl : SettingsServiceGrpcKt.SettingsServiceCoroutineImplBa
         try {
             val list = json.decodeFromString<List<PersistedSetting>>(settingsFile.readText())
             list.forEach { ps ->
-                settings[storageKey(ps.namespace, ps.key)] = SettingValue.newBuilder()
-                    .setKey(ps.key)
-                    .setValue(ps.value)
-                    .setNamespace(ps.namespace)
-                    .setUpdatedAt(ps.updatedAt)
-                    .setFound(true)
-                    .build()
+                settings[storageKey(ps.namespace, ps.key)] =
+                    SettingValue
+                        .newBuilder()
+                        .setKey(ps.key)
+                        .setValue(ps.value)
+                        .setNamespace(ps.namespace)
+                        .setUpdatedAt(ps.updatedAt)
+                        .setFound(true)
+                        .build()
             }
             logger.info("Loaded {} setting(s) from disk", settings.size)
         } catch (e: Exception) {
@@ -70,14 +78,15 @@ class SettingsServiceImpl : SettingsServiceGrpcKt.SettingsServiceCoroutineImplBa
 
     private fun saveToDisk() {
         try {
-            val list = settings.values.map { sv ->
-                PersistedSetting(
-                    key = sv.key,
-                    value = sv.value,
-                    namespace = sv.namespace,
-                    updatedAt = sv.updatedAt,
-                )
-            }
+            val list =
+                settings.values.map { sv ->
+                    PersistedSetting(
+                        key = sv.key,
+                        value = sv.value,
+                        namespace = sv.namespace,
+                        updatedAt = sv.updatedAt,
+                    )
+                }
             settingsFile.writeText(json.encodeToString(list))
         } catch (e: Exception) {
             logger.warn("Failed to persist settings: {}", e.message)
@@ -88,7 +97,8 @@ class SettingsServiceImpl : SettingsServiceGrpcKt.SettingsServiceCoroutineImplBa
 
     override suspend fun getSetting(request: GetSettingRequest): SettingValue {
         val stored = settings[storageKey(request.namespace, request.key)]
-        return stored ?: SettingValue.newBuilder()
+        return stored ?: SettingValue
+            .newBuilder()
             .setKey(request.key)
             .setNamespace(request.namespace)
             .setValue(request.defaultValue)
@@ -99,40 +109,45 @@ class SettingsServiceImpl : SettingsServiceGrpcKt.SettingsServiceCoroutineImplBa
     override suspend fun setSetting(request: SetSettingRequest): SettingValue =
         withContext(Dispatchers.IO) {
             logger.debug("setSetting: namespace={}, key={}", request.namespace, request.key)
-            val value = SettingValue.newBuilder()
-                .setKey(request.key)
-                .setValue(request.value)
-                .setFound(true)
-                .setNamespace(request.namespace)
-                .setUpdatedAt(System.currentTimeMillis())
-                .build()
+            val value =
+                SettingValue
+                    .newBuilder()
+                    .setKey(request.key)
+                    .setValue(request.value)
+                    .setFound(true)
+                    .setNamespace(request.namespace)
+                    .setUpdatedAt(System.currentTimeMillis())
+                    .build()
             settings[storageKey(request.namespace, request.key)] = value
             saveToDisk()
             changes.tryEmit(value)
             value
         }
 
-    override fun watchSetting(request: GetSettingRequest): Flow<SettingValue> = flow {
-        // Emit current value first
-        settings[storageKey(request.namespace, request.key)]?.let { emit(it) }
-        // Stream subsequent changes matching this key and namespace
-        changes
-            .filter { it.key == request.key && it.namespace == request.namespace }
-            .collect { emit(it) }
-    }
+    override fun watchSetting(request: GetSettingRequest): Flow<SettingValue> =
+        flow {
+            // Emit current value first
+            settings[storageKey(request.namespace, request.key)]?.let { emit(it) }
+            // Stream subsequent changes matching this key and namespace
+            changes
+                .filter { it.key == request.key && it.namespace == request.namespace }
+                .collect { emit(it) }
+        }
 
     override suspend fun listSettings(request: ListSettingsRequest): SettingsListResponse {
         val prefix = request.namespacePrefix
-        val all = if (prefix.isBlank()) {
-            settings.values.toList()
-        } else {
-            settings.values.filter { it.namespace.startsWith(prefix) }
-        }
+        val all =
+            if (prefix.isBlank()) {
+                settings.values.toList()
+            } else {
+                settings.values.filter { it.namespace.startsWith(prefix) }
+            }
         val total = all.size
         val limit = if (request.limit > 0) request.limit else Int.MAX_VALUE
         val offset = if (request.offset > 0) request.offset else 0
         val page = all.drop(offset).take(limit)
-        return SettingsListResponse.newBuilder()
+        return SettingsListResponse
+            .newBuilder()
             .addAllSettings(page)
             .setTotalCount(total)
             .build()

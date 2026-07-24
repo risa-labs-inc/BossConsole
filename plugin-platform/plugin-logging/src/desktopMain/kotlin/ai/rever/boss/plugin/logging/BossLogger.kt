@@ -1,8 +1,8 @@
 package ai.rever.boss.plugin.logging
 
 import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.io.File
@@ -14,18 +14,19 @@ import java.util.concurrent.atomic.AtomicLong
 /**
  * Log levels for BOSS logging.
  */
-enum class LogLevel(val priority: Int) {
+enum class LogLevel(
+    val priority: Int,
+) {
     TRACE(0),
     DEBUG(1),
     INFO(2),
     WARN(3),
     ERROR(4),
-    OFF(5);
+    OFF(5),
+    ;
 
     companion object {
-        fun fromString(value: String): LogLevel {
-            return entries.find { it.name.equals(value, ignoreCase = true) } ?: INFO
-        }
+        fun fromString(value: String): LogLevel = entries.find { it.name.equals(value, ignoreCase = true) } ?: INFO
     }
 }
 
@@ -33,17 +34,17 @@ enum class LogLevel(val priority: Int) {
  * Log category for filtering and organizing logs.
  */
 enum class LogCategory {
-    AUTH,           // Authentication flows (login, logout, session)
-    PASSKEY,        // Passkey/WebAuthn operations
-    BROWSER,        // Browser/JxBrowser operations
-    TERMINAL,       // Terminal/BossTerm operations
-    NETWORK,        // Network requests and connectivity
-    UI,             // UI components and navigation
-    SYSTEM,         // System-level operations (startup, shutdown)
-    EDITOR,         // Code editor operations
-    FILE,           // File operations
-    WORKSPACE,      // Workspace management
-    GENERAL         // General/uncategorized
+    AUTH, // Authentication flows (login, logout, session)
+    PASSKEY, // Passkey/WebAuthn operations
+    BROWSER, // Browser/JxBrowser operations
+    TERMINAL, // Terminal/BossTerm operations
+    NETWORK, // Network requests and connectivity
+    UI, // UI components and navigation
+    SYSTEM, // System-level operations (startup, shutdown)
+    EDITOR, // Code editor operations
+    FILE, // File operations
+    WORKSPACE, // Workspace management
+    GENERAL, // General/uncategorized
 }
 
 /**
@@ -58,7 +59,7 @@ data class LogEntry(
     val component: String,
     val message: String,
     val data: Map<String, Any?>? = null,
-    val error: Throwable? = null
+    val error: Throwable? = null,
 )
 
 /**
@@ -124,16 +125,19 @@ object BossLogger {
     private var stackTraceDepth: Int = 20 // Configurable stack trace depth (20 for deep call stacks)
 
     /** Async file writing */
-    private val fileWriteChannel = Channel<LogEntry>(
-        capacity = 1000,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST
-    )
+    private val fileWriteChannel =
+        Channel<LogEntry>(
+            capacity = 1000,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
     private var fileWriteJob: Job? = null
     private val fileWriterLock = Any()
+
     @OptIn(ExperimentalCoroutinesApi::class)
-    private val fileWriteScope = CoroutineScope(
-        Dispatchers.IO.limitedParallelism(1) + SupervisorJob()
-    )
+    private val fileWriteScope =
+        CoroutineScope(
+            Dispatchers.IO.limitedParallelism(1) + SupervisorJob(),
+        )
 
     /** Maximum log entries to keep in memory (for UI) */
     private const val MAX_LOG_ENTRIES = 1000
@@ -142,6 +146,7 @@ object BossLogger {
 
     /** Drop tracking for buffer overflow */
     private val droppedLogCount = AtomicLong(0)
+
     @Volatile
     private var lastDropWarningTime = 0L
     private const val DROP_WARNING_INTERVAL_MS = 60_000L // 1 minute
@@ -149,6 +154,7 @@ object BossLogger {
     /** Shutdown hook tracking */
     @Volatile
     private var shutdownHookRegistered = false
+
     @Volatile
     private var isShutdown = false
     private val shutdownLock = Any()
@@ -177,7 +183,8 @@ object BossLogger {
         }
 
         // Default based on whether we're in dev mode
-        val isDevMode = System.getProperty("boss.dev.mode")?.toBoolean() == true ||
+        val isDevMode =
+            System.getProperty("boss.dev.mode")?.toBoolean() == true ||
                 System.getenv("BOSS_DEV_MODE")?.toBoolean() == true
         globalLevel = if (isDevMode) LogLevel.DEBUG else LogLevel.INFO
     }
@@ -191,9 +198,11 @@ object BossLogger {
     fun initialize() {
         synchronized(shutdownLock) {
             if (!shutdownHookRegistered) {
-                Runtime.getRuntime().addShutdownHook(Thread {
-                    shutdown()
-                })
+                Runtime.getRuntime().addShutdownHook(
+                    Thread {
+                        shutdown()
+                    },
+                )
                 shutdownHookRegistered = true
             }
         }
@@ -230,7 +239,10 @@ object BossLogger {
     /**
      * Set log level for a specific category.
      */
-    fun setCategoryLevel(category: LogCategory, level: LogLevel) {
+    fun setCategoryLevel(
+        category: LogCategory,
+        level: LogLevel,
+    ) {
         synchronized(categoryLock) {
             categoryLevels[category] = level
         }
@@ -248,11 +260,10 @@ object BossLogger {
     /**
      * Get effective log level for a category.
      */
-    fun getEffectiveLevel(category: LogCategory): LogLevel {
-        return synchronized(categoryLock) {
+    fun getEffectiveLevel(category: LogCategory): LogLevel =
+        synchronized(categoryLock) {
             categoryLevels[category] ?: globalLevel
         }
-    }
 
     /**
      * Enable file logging.
@@ -285,16 +296,17 @@ object BossLogger {
         synchronized(fileWriterLock) {
             if (fileWriteJob?.isActive == true) return
 
-            fileWriteJob = fileWriteScope.launch {
-                for (entry in fileWriteChannel) {
-                    try {
-                        writeToFileAsync(entry)
-                    } catch (e: Exception) {
-                        // Avoid recursive logging
-                        slf4jLogger.warn("Failed to write to log file: ${e.message}")
+            fileWriteJob =
+                fileWriteScope.launch {
+                    for (entry in fileWriteChannel) {
+                        try {
+                            writeToFileAsync(entry)
+                        } catch (e: Exception) {
+                            // Avoid recursive logging
+                            slf4jLogger.warn("Failed to write to log file: ${e.message}")
+                        }
                     }
                 }
-            }
         }
     }
 
@@ -372,17 +384,15 @@ object BossLogger {
     fun getRecentLogs(
         limit: Int = 100,
         category: LogCategory? = null,
-        minLevel: LogLevel = LogLevel.TRACE
-    ): List<LogEntry> {
-        return synchronized(recentLogsLock) {
+        minLevel: LogLevel = LogLevel.TRACE,
+    ): List<LogEntry> =
+        synchronized(recentLogsLock) {
             recentLogs
                 .filter { entry ->
                     entry.level.priority >= minLevel.priority &&
-                    (category == null || entry.category == category)
-                }
-                .takeLast(limit)
+                        (category == null || entry.category == category)
+                }.takeLast(limit)
         }
-    }
 
     /**
      * Clear recent logs.
@@ -411,21 +421,37 @@ object BossLogger {
         }
 
         // Format message for SLF4J
-        val formattedMessage = buildString {
-            append("[${entry.category}]")
-            append(" ${entry.component}: ${entry.message}")
-            if (entry.data != null) {
-                append(" | ${entry.data}")
+        val formattedMessage =
+            buildString {
+                append("[${entry.category}]")
+                append(" ${entry.component}: ${entry.message}")
+                if (entry.data != null) {
+                    append(" | ${entry.data}")
+                }
             }
-        }
 
         // Log to SLF4J (which outputs to stdout, captured by GlobalLogCapture)
         when (entry.level) {
-            LogLevel.TRACE -> slf4jLogger.trace(formattedMessage, entry.error)
-            LogLevel.DEBUG -> slf4jLogger.debug(formattedMessage, entry.error)
-            LogLevel.INFO -> slf4jLogger.info(formattedMessage, entry.error)
-            LogLevel.WARN -> slf4jLogger.warn(formattedMessage, entry.error)
-            LogLevel.ERROR -> slf4jLogger.error(formattedMessage, entry.error)
+            LogLevel.TRACE -> {
+                slf4jLogger.trace(formattedMessage, entry.error)
+            }
+
+            LogLevel.DEBUG -> {
+                slf4jLogger.debug(formattedMessage, entry.error)
+            }
+
+            LogLevel.INFO -> {
+                slf4jLogger.info(formattedMessage, entry.error)
+            }
+
+            LogLevel.WARN -> {
+                slf4jLogger.warn(formattedMessage, entry.error)
+            }
+
+            LogLevel.ERROR -> {
+                slf4jLogger.error(formattedMessage, entry.error)
+            }
+
             LogLevel.OFF -> { /* no-op */ }
         }
 
@@ -450,11 +476,11 @@ object BossLogger {
      * Format epoch milliseconds to human-readable timestamp.
      * Called lazily only when writing to file (not on hot path).
      */
-    private fun formatTimestamp(millis: Long): String {
-        return Instant.ofEpochMilli(millis)
+    private fun formatTimestamp(millis: Long): String =
+        Instant
+            .ofEpochMilli(millis)
             .atZone(ZoneId.systemDefault())
             .format(dateFormatter)
-    }
 
     /**
      * Write log entry to file asynchronously.
@@ -468,31 +494,33 @@ object BossLogger {
                 rotateLogFiles(file)
             }
 
-            val line = buildString {
-                append(formatTimestamp(entry.timestamp))
-                append(" [${entry.level.name.padEnd(5)}]")
-                append(" [${entry.category.name}]")
-                append(" ${entry.component}: ${entry.message}")
-                if (entry.data != null) {
-                    append(" | ${entry.data}")
+            val line =
+                buildString {
+                    append(formatTimestamp(entry.timestamp))
+                    append(" [${entry.level.name.padEnd(5)}]")
+                    append(" [${entry.category.name}]")
+                    append(" ${entry.component}: ${entry.message}")
+                    if (entry.data != null) {
+                        append(" | ${entry.data}")
+                    }
+                    if (entry.error != null) {
+                        append("\n  Exception: ${entry.error.message}")
+                        // Use configurable stack trace depth
+                        val frames =
+                            if (stackTraceDepth <= 0) {
+                                entry.error.stackTrace.toList()
+                            } else {
+                                entry.error.stackTrace.take(stackTraceDepth)
+                            }
+                        frames.forEach { frame ->
+                            append("\n    at $frame")
+                        }
+                        if (stackTraceDepth > 0 && entry.error.stackTrace.size > stackTraceDepth) {
+                            append("\n    ... ${entry.error.stackTrace.size - stackTraceDepth} more frames")
+                        }
+                    }
+                    append("\n")
                 }
-                if (entry.error != null) {
-                    append("\n  Exception: ${entry.error.message}")
-                    // Use configurable stack trace depth
-                    val frames = if (stackTraceDepth <= 0) {
-                        entry.error.stackTrace.toList()
-                    } else {
-                        entry.error.stackTrace.take(stackTraceDepth)
-                    }
-                    frames.forEach { frame ->
-                        append("\n    at $frame")
-                    }
-                    if (stackTraceDepth > 0 && entry.error.stackTrace.size > stackTraceDepth) {
-                        append("\n    ... ${entry.error.stackTrace.size - stackTraceDepth} more frames")
-                    }
-                }
-                append("\n")
-            }
             file.appendText(line)
         } catch (e: Exception) {
             // Avoid recursive logging
@@ -538,9 +566,10 @@ object BossLogger {
     }
 
     private fun notifyListeners(entry: LogEntry) {
-        val listenersCopy = synchronized(listenersLock) {
-            listeners.toList()
-        }
+        val listenersCopy =
+            synchronized(listenersLock) {
+                listeners.toList()
+            }
         listenersCopy.forEach { listener ->
             try {
                 listener.onLog(entry)
@@ -554,9 +583,7 @@ object BossLogger {
     /**
      * Create a component-specific logger.
      */
-    fun forComponent(componentName: String): ComponentLogger {
-        return ComponentLogger(componentName)
-    }
+    fun forComponent(componentName: String): ComponentLogger = ComponentLogger(componentName)
 }
 
 /**
@@ -577,18 +604,19 @@ data class BossLoggerConfig(
     val logFilePath: String? = null,
     val maxFileSize: Long = 10 * 1024 * 1024, // 10 MB
     val maxBackupFiles: Int = 5,
-    val stackTraceDepth: Int = 10
+    val stackTraceDepth: Int = 10,
 )
 
 /**
  * Component-specific logger for convenient logging.
  */
-class ComponentLogger(private val componentName: String) {
-
+class ComponentLogger(
+    private val componentName: String,
+) {
     fun trace(
         category: LogCategory,
         message: String,
-        data: Map<String, Any?>? = null
+        data: Map<String, Any?>? = null,
     ) {
         log(LogLevel.TRACE, category, message, data, null)
     }
@@ -596,7 +624,7 @@ class ComponentLogger(private val componentName: String) {
     fun debug(
         category: LogCategory,
         message: String,
-        data: Map<String, Any?>? = null
+        data: Map<String, Any?>? = null,
     ) {
         log(LogLevel.DEBUG, category, message, data, null)
     }
@@ -604,7 +632,7 @@ class ComponentLogger(private val componentName: String) {
     fun info(
         category: LogCategory,
         message: String,
-        data: Map<String, Any?>? = null
+        data: Map<String, Any?>? = null,
     ) {
         log(LogLevel.INFO, category, message, data, null)
     }
@@ -613,7 +641,7 @@ class ComponentLogger(private val componentName: String) {
         category: LogCategory,
         message: String,
         data: Map<String, Any?>? = null,
-        error: Throwable? = null
+        error: Throwable? = null,
     ) {
         log(LogLevel.WARN, category, message, data, error)
     }
@@ -622,7 +650,7 @@ class ComponentLogger(private val componentName: String) {
         category: LogCategory,
         message: String,
         data: Map<String, Any?>? = null,
-        error: Throwable? = null
+        error: Throwable? = null,
     ) {
         log(LogLevel.ERROR, category, message, data, error)
     }
@@ -632,17 +660,18 @@ class ComponentLogger(private val componentName: String) {
         category: LogCategory,
         message: String,
         data: Map<String, Any?>?,
-        error: Throwable?
+        error: Throwable?,
     ) {
-        val entry = LogEntry(
-            timestamp = System.currentTimeMillis(),
-            level = level,
-            category = category,
-            component = componentName,
-            message = message,
-            data = data,
-            error = error
-        )
+        val entry =
+            LogEntry(
+                timestamp = System.currentTimeMillis(),
+                level = level,
+                category = category,
+                component = componentName,
+                message = message,
+                data = data,
+                error = error,
+            )
         BossLogger.log(entry)
     }
 }

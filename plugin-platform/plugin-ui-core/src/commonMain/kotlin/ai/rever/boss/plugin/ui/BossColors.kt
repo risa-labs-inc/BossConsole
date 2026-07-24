@@ -16,10 +16,10 @@ object BossColors {
     private val c: BossColorScheme get() = BossThemeController.current.colors
 
     // Background colors
-    val darkBackground: Color get() = c.panel            // chrome / card / sidebar
-    val darkSurface: Color get() = c.raised              // raised surface
-    val darkContentBackground: Color get() = c.ink       // content floor (host + terminal)
-    val darkBorder: Color get() = c.line                 // hairline border / divider
+    val darkBackground: Color get() = c.panel // chrome / card / sidebar
+    val darkSurface: Color get() = c.raised // raised surface
+    val darkContentBackground: Color get() = c.ink // content floor (host + terminal)
+    val darkBorder: Color get() = c.line // hairline border / divider
 
     // Text colors
     val darkTextPrimary: Color get() = c.textPrimary
@@ -27,8 +27,8 @@ object BossColors {
     val darkTextMuted: Color get() = c.textMuted
 
     // Accent colors
-    val darkAccent: Color get() = c.signal               // primary / live / active
-    val darkSecondary: Color get() = c.data              // links / data
+    val darkAccent: Color get() = c.signal // primary / live / active
+    val darkSecondary: Color get() = c.data // links / data
 
     // Status colors
     val darkError: Color get() = c.alert
@@ -51,30 +51,50 @@ object BossColors {
 // `BossThemeController.current.colors.<token>` anywhere else).
 private const val DARK_ALIAS_DEPRECATION =
     "Misleading name: resolves to the ACTIVE theme (which may be light), not a dark value. " +
-    "Use BossTheme.colors.<token> in composables, or BossThemeController.current.colors.<token> elsewhere."
+        "Use BossTheme.colors.<token> in composables, or BossThemeController.current.colors.<token> elsewhere."
 
 @Deprecated(DARK_ALIAS_DEPRECATION, ReplaceWith("BossThemeController.current.colors.panel", "ai.rever.boss.plugin.ui.BossThemeController"))
 val BossDarkBackground: Color get() = BossColors.darkBackground
+
 @Deprecated(DARK_ALIAS_DEPRECATION, ReplaceWith("BossThemeController.current.colors.raised", "ai.rever.boss.plugin.ui.BossThemeController"))
 val BossDarkSurface: Color get() = BossColors.darkSurface
+
 @Deprecated(DARK_ALIAS_DEPRECATION, ReplaceWith("BossThemeController.current.colors.ink", "ai.rever.boss.plugin.ui.BossThemeController"))
 val BossDarkContentBackground: Color get() = BossColors.darkContentBackground
+
 @Deprecated(DARK_ALIAS_DEPRECATION, ReplaceWith("BossThemeController.current.colors.line", "ai.rever.boss.plugin.ui.BossThemeController"))
 val BossDarkBorder: Color get() = BossColors.darkBorder
-@Deprecated(DARK_ALIAS_DEPRECATION, ReplaceWith("BossThemeController.current.colors.textPrimary", "ai.rever.boss.plugin.ui.BossThemeController"))
+
+@Deprecated(
+    DARK_ALIAS_DEPRECATION,
+    ReplaceWith("BossThemeController.current.colors.textPrimary", "ai.rever.boss.plugin.ui.BossThemeController"),
+)
 val BossDarkTextPrimary: Color get() = BossColors.darkTextPrimary
-@Deprecated(DARK_ALIAS_DEPRECATION, ReplaceWith("BossThemeController.current.colors.textSecondary", "ai.rever.boss.plugin.ui.BossThemeController"))
+
+@Deprecated(
+    DARK_ALIAS_DEPRECATION,
+    ReplaceWith("BossThemeController.current.colors.textSecondary", "ai.rever.boss.plugin.ui.BossThemeController"),
+)
 val BossDarkTextSecondary: Color get() = BossColors.darkTextSecondary
-@Deprecated(DARK_ALIAS_DEPRECATION, ReplaceWith("BossThemeController.current.colors.textMuted", "ai.rever.boss.plugin.ui.BossThemeController"))
+
+@Deprecated(
+    DARK_ALIAS_DEPRECATION,
+    ReplaceWith("BossThemeController.current.colors.textMuted", "ai.rever.boss.plugin.ui.BossThemeController"),
+)
 val BossDarkTextMuted: Color get() = BossColors.darkTextMuted
+
 @Deprecated(DARK_ALIAS_DEPRECATION, ReplaceWith("BossThemeController.current.colors.signal", "ai.rever.boss.plugin.ui.BossThemeController"))
 val BossDarkAccent: Color get() = BossColors.darkAccent
+
 @Deprecated(DARK_ALIAS_DEPRECATION, ReplaceWith("BossThemeController.current.colors.data", "ai.rever.boss.plugin.ui.BossThemeController"))
 val BossDarkSecondary: Color get() = BossColors.darkSecondary
+
 @Deprecated(DARK_ALIAS_DEPRECATION, ReplaceWith("BossThemeController.current.colors.alert", "ai.rever.boss.plugin.ui.BossThemeController"))
 val BossDarkError: Color get() = BossColors.darkError
+
 @Deprecated(DARK_ALIAS_DEPRECATION, ReplaceWith("BossThemeController.current.colors.ok", "ai.rever.boss.plugin.ui.BossThemeController"))
 val BossDarkSuccess: Color get() = BossColors.darkSuccess
+
 @Deprecated(DARK_ALIAS_DEPRECATION, ReplaceWith("BossThemeController.current.colors.warn", "ai.rever.boss.plugin.ui.BossThemeController"))
 val BossDarkWarning: Color get() = BossColors.darkWarning
 

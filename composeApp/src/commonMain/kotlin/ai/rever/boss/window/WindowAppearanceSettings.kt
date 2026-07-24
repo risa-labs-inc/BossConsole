@@ -12,12 +12,11 @@ data class WindowAppearanceSettings(
      * Default: true on macOS, false on Linux/Windows
      */
     val showTitleBar: Boolean = true,
-
     /**
      * How tabs in the main (top) tab bar are sized.
      * Default: SHRINK_TO_FIT (Safari behaviour)
      */
-    val tabWidthMode: TabWidthMode = TabWidthMode.SHRINK_TO_FIT
+    val tabWidthMode: TabWidthMode = TabWidthMode.SHRINK_TO_FIT,
 )
 
 /**
@@ -35,5 +34,5 @@ enum class TabWidthMode {
      * Tabs take their content-driven width (clamped to 180–450 dp) and the
      * row scrolls as soon as they overflow the bar.
      */
-    FIXED
+    FIXED,
 }

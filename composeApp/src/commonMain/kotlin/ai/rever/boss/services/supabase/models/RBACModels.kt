@@ -17,7 +17,7 @@ data class UserRole(
     @SerialName("assigned_at")
     val assignedAt: String,
     @SerialName("created_at")
-    val createdAt: String
+    val createdAt: String,
 )
 
 /**
@@ -29,7 +29,7 @@ data class RolePermission(
     val role: String,
     val permission: String,
     @SerialName("created_at")
-    val createdAt: String
+    val createdAt: String,
 )
 
 /**
@@ -44,7 +44,7 @@ data class RoleClaims(
      * Effective permissions (own + inherited via the role hierarchy), injected
      * into the JWT by the custom_access_token_hook as the `user_permissions` claim.
      */
-    val permissions: List<String> = emptyList()
+    val permissions: List<String> = emptyList(),
 ) {
     companion object {
         /**
@@ -65,7 +65,7 @@ data class RoleClaims(
                 userRole = primaryRole,
                 userRoles = roles,
                 isAdmin = isAdmin,
-                permissions = permissions
+                permissions = permissions,
             )
         }
     }
@@ -98,7 +98,7 @@ data class UserWithRoles(
     val userId: String,
     val email: String,
     val roles: List<String>,
-    val isAdmin: Boolean
+    val isAdmin: Boolean,
 ) {
     /**
      * Get primary role name
@@ -112,13 +112,13 @@ data class UserWithRoles(
  * Now uses table-based schema with full CRUD support
  */
 data class RoleInfo(
-    val id: String? = null,              // UUID from roles table (null for backward compatibility)
+    val id: String? = null, // UUID from roles table (null for backward compatibility)
     val name: String,
     val description: String? = null,
-    val isSystem: Boolean = false,       // System roles (user, admin) cannot be deleted
-    val createdAt: String? = null,       // Timestamp when role was created
-    val updatedAt: String? = null,       // Timestamp when role was last updated
-    val ordinal: Int = 0                 // For backward compatibility (deprecated)
+    val isSystem: Boolean = false, // System roles (user, admin) cannot be deleted
+    val createdAt: String? = null, // Timestamp when role was created
+    val updatedAt: String? = null, // Timestamp when role was last updated
+    val ordinal: Int = 0, // For backward compatibility (deprecated)
 ) {
     /**
      * Check if this role can be deleted
@@ -136,13 +136,13 @@ data class RoleInfo(
  * Now uses table-based schema with full CRUD support
  */
 data class PermissionInfo(
-    val id: String? = null,              // UUID from permissions table (null for backward compatibility)
+    val id: String? = null, // UUID from permissions table (null for backward compatibility)
     val name: String,
     val description: String? = null,
-    val isSystem: Boolean = false,       // System permissions cannot be deleted
-    val createdAt: String? = null,       // Timestamp when permission was created
-    val updatedAt: String? = null,       // Timestamp when permission was last updated
-    val ordinal: Int = 0                 // For backward compatibility (deprecated)
+    val isSystem: Boolean = false, // System permissions cannot be deleted
+    val createdAt: String? = null, // Timestamp when permission was created
+    val updatedAt: String? = null, // Timestamp when permission was last updated
+    val ordinal: Int = 0, // For backward compatibility (deprecated)
 ) {
     /**
      * Check if this permission can be deleted
@@ -153,6 +153,7 @@ data class PermissionInfo(
      * Get domain and action parts (e.g., "users.read" -> "users" and "read")
      */
     fun getDomain(): String = name.substringBefore(".")
+
     fun getAction(): String = name.substringAfter(".")
 }
 
@@ -161,7 +162,7 @@ data class PermissionInfo(
  */
 data class RoleWithPermissions(
     val roleName: String,
-    val permissions: List<String> = emptyList()
+    val permissions: List<String> = emptyList(),
 ) {
     fun hasPermission(permission: String): Boolean = permissions.contains(permission)
 }

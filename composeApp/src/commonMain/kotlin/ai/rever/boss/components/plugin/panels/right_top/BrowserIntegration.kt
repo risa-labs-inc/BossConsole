@@ -48,7 +48,7 @@ data class FluckTabInfo(
     val title: String,
     val url: String,
     val panelId: String,
-    val tabComponent: Any? // The actual FluckTabComponent
+    val tabComponent: Any?, // The actual FluckTabComponent
 )
 
 /**

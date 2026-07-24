@@ -1,10 +1,10 @@
 package ai.rever.boss.services.supabase
 
+import ai.rever.boss.services.supabase.models.PermissionInfo
+import ai.rever.boss.services.supabase.models.RoleInfo
+import ai.rever.boss.services.supabase.models.RoleWithPermissions
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
-import ai.rever.boss.services.supabase.models.RoleInfo
-import ai.rever.boss.services.supabase.models.PermissionInfo
-import ai.rever.boss.services.supabase.models.RoleWithPermissions
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.rpc
 import kotlinx.serialization.SerialName
@@ -39,7 +39,6 @@ import kotlinx.serialization.json.*
  * ```
  */
 object RoleCreationService {
-
     private val logger = BossLogger.forComponent("RoleCreationService")
 
     /**
@@ -49,19 +48,24 @@ object RoleCreationService {
      * @param description Optional description
      * @return Result with RoleInfo on success or exception on failure
      */
-    suspend fun createRole(roleName: String, description: String? = null): Result<RoleInfo> {
-        return try {
-            val params = buildJsonObject {
-                put("role_name", roleName)
-                if (description != null) {
-                    put("description", description)
+    suspend fun createRole(
+        roleName: String,
+        description: String? = null,
+    ): Result<RoleInfo> =
+        try {
+            val params =
+                buildJsonObject {
+                    put("role_name", roleName)
+                    if (description != null) {
+                        put("description", description)
+                    }
                 }
-            }
 
-            val postgrestResult = SupabaseConfig.client.postgrest.rpc(
-                function = "create_new_role",
-                parameters = params
-            )
+            val postgrestResult =
+                SupabaseConfig.client.postgrest.rpc(
+                    function = "create_new_role",
+                    parameters = params,
+                )
 
             val jsonElement = Json.parseToJsonElement(postgrestResult.data)
             val result = Json.decodeFromJsonElement<RpcResponse>(jsonElement)
@@ -71,8 +75,8 @@ object RoleCreationService {
                     RoleInfo(
                         name = roleName,
                         description = description,
-                        ordinal = 0 // Will be assigned by database
-                    )
+                        ordinal = 0, // Will be assigned by database
+                    ),
                 )
             } else {
                 Result.failure(Exception(result.error ?: "Failed to create role"))
@@ -81,7 +85,6 @@ object RoleCreationService {
             logger.warn(LogCategory.AUTH, "createRole failed", error = e)
             Result.failure(e)
         }
-    }
 
     /**
      * Create a new permission dynamically
@@ -92,20 +95,22 @@ object RoleCreationService {
      */
     suspend fun createPermission(
         permissionName: String,
-        description: String? = null
-    ): Result<PermissionInfo> {
-        return try {
-            val params = buildJsonObject {
-                put("permission_name", permissionName)
-                if (description != null) {
-                    put("description", description)
+        description: String? = null,
+    ): Result<PermissionInfo> =
+        try {
+            val params =
+                buildJsonObject {
+                    put("permission_name", permissionName)
+                    if (description != null) {
+                        put("description", description)
+                    }
                 }
-            }
 
-            val postgrestResult = SupabaseConfig.client.postgrest.rpc(
-                function = "create_new_permission",
-                parameters = params
-            )
+            val postgrestResult =
+                SupabaseConfig.client.postgrest.rpc(
+                    function = "create_new_permission",
+                    parameters = params,
+                )
 
             val jsonElement = Json.parseToJsonElement(postgrestResult.data)
             val result = Json.decodeFromJsonElement<RpcResponse>(jsonElement)
@@ -115,8 +120,8 @@ object RoleCreationService {
                     PermissionInfo(
                         name = permissionName,
                         description = description,
-                        ordinal = 0 // Will be assigned by database
-                    )
+                        ordinal = 0, // Will be assigned by database
+                    ),
                 )
             } else {
                 Result.failure(Exception(result.error ?: "Failed to create permission"))
@@ -125,35 +130,36 @@ object RoleCreationService {
             logger.warn(LogCategory.AUTH, "createPermission failed", error = e)
             Result.failure(e)
         }
-    }
 
     /**
      * Get all roles from the database
      *
      * @return Result with list of RoleInfo on success or exception on failure
      */
-    suspend fun getAllRoles(): Result<List<RoleInfo>> {
-        return try {
-            val postgrestResult = SupabaseConfig.client.postgrest.rpc(
-                function = "get_all_roles",
-                parameters = buildJsonObject { }
-            )
+    suspend fun getAllRoles(): Result<List<RoleInfo>> =
+        try {
+            val postgrestResult =
+                SupabaseConfig.client.postgrest.rpc(
+                    function = "get_all_roles",
+                    parameters = buildJsonObject { },
+                )
 
             val jsonElement = Json.parseToJsonElement(postgrestResult.data)
             val result = Json.decodeFromJsonElement<RolesResponseNew>(jsonElement)
 
             if (result.success) {
-                val roles = result.data?.map { roleData ->
-                    RoleInfo(
-                        id = roleData.id,
-                        name = roleData.name,
-                        description = roleData.description,
-                        isSystem = roleData.isSystem,
-                        createdAt = roleData.createdAt,
-                        updatedAt = roleData.updatedAt,
-                        ordinal = 0 // Deprecated field
-                    )
-                } ?: emptyList()
+                val roles =
+                    result.data?.map { roleData ->
+                        RoleInfo(
+                            id = roleData.id,
+                            name = roleData.name,
+                            description = roleData.description,
+                            isSystem = roleData.isSystem,
+                            createdAt = roleData.createdAt,
+                            updatedAt = roleData.updatedAt,
+                            ordinal = 0, // Deprecated field
+                        )
+                    } ?: emptyList()
                 Result.success(roles)
             } else {
                 Result.failure(Exception(result.error ?: "Failed to get roles"))
@@ -162,35 +168,36 @@ object RoleCreationService {
             logger.warn(LogCategory.AUTH, "getAllRoles failed", error = e)
             Result.failure(e)
         }
-    }
 
     /**
      * Get all permissions from the database
      *
      * @return Result with list of PermissionInfo on success or exception on failure
      */
-    suspend fun getAllPermissions(): Result<List<PermissionInfo>> {
-        return try {
-            val postgrestResult = SupabaseConfig.client.postgrest.rpc(
-                function = "get_all_permissions",
-                parameters = buildJsonObject { }
-            )
+    suspend fun getAllPermissions(): Result<List<PermissionInfo>> =
+        try {
+            val postgrestResult =
+                SupabaseConfig.client.postgrest.rpc(
+                    function = "get_all_permissions",
+                    parameters = buildJsonObject { },
+                )
 
             val jsonElement = Json.parseToJsonElement(postgrestResult.data)
             val result = Json.decodeFromJsonElement<PermissionsResponseNew>(jsonElement)
 
             if (result.success) {
-                val permissions = result.data?.map { permData ->
-                    PermissionInfo(
-                        id = permData.id,
-                        name = permData.name,
-                        description = permData.description,
-                        isSystem = permData.isSystem,
-                        createdAt = permData.createdAt,
-                        updatedAt = permData.updatedAt,
-                        ordinal = 0 // Deprecated field
-                    )
-                } ?: emptyList()
+                val permissions =
+                    result.data?.map { permData ->
+                        PermissionInfo(
+                            id = permData.id,
+                            name = permData.name,
+                            description = permData.description,
+                            isSystem = permData.isSystem,
+                            createdAt = permData.createdAt,
+                            updatedAt = permData.updatedAt,
+                            ordinal = 0, // Deprecated field
+                        )
+                    } ?: emptyList()
                 Result.success(permissions)
             } else {
                 Result.failure(Exception(result.error ?: "Failed to get permissions"))
@@ -199,7 +206,6 @@ object RoleCreationService {
             logger.warn(LogCategory.AUTH, "getAllPermissions failed", error = e)
             Result.failure(e)
         }
-    }
 
     /**
      * Assign a permission to a role
@@ -210,18 +216,20 @@ object RoleCreationService {
      */
     suspend fun assignPermissionToRole(
         roleName: String,
-        permissionName: String
-    ): Result<Unit> {
-        return try {
-            val params = buildJsonObject {
-                put("role_name", roleName)
-                put("permission_name", permissionName)
-            }
+        permissionName: String,
+    ): Result<Unit> =
+        try {
+            val params =
+                buildJsonObject {
+                    put("role_name", roleName)
+                    put("permission_name", permissionName)
+                }
 
-            val postgrestResult = SupabaseConfig.client.postgrest.rpc(
-                function = "assign_permission_to_role",
-                parameters = params
-            )
+            val postgrestResult =
+                SupabaseConfig.client.postgrest.rpc(
+                    function = "assign_permission_to_role",
+                    parameters = params,
+                )
 
             val jsonElement = Json.parseToJsonElement(postgrestResult.data)
             val result = Json.decodeFromJsonElement<RpcResponse>(jsonElement)
@@ -235,7 +243,6 @@ object RoleCreationService {
             logger.warn(LogCategory.AUTH, "assignPermissionToRole failed", error = e)
             Result.failure(e)
         }
-    }
 
     /**
      * Remove a permission from a role
@@ -246,18 +253,20 @@ object RoleCreationService {
      */
     suspend fun removePermissionFromRole(
         roleName: String,
-        permissionName: String
-    ): Result<Unit> {
-        return try {
-            val params = buildJsonObject {
-                put("role_name", roleName)
-                put("permission_name", permissionName)
-            }
+        permissionName: String,
+    ): Result<Unit> =
+        try {
+            val params =
+                buildJsonObject {
+                    put("role_name", roleName)
+                    put("permission_name", permissionName)
+                }
 
-            val postgrestResult = SupabaseConfig.client.postgrest.rpc(
-                function = "remove_permission_from_role",
-                parameters = params
-            )
+            val postgrestResult =
+                SupabaseConfig.client.postgrest.rpc(
+                    function = "remove_permission_from_role",
+                    parameters = params,
+                )
 
             val jsonElement = Json.parseToJsonElement(postgrestResult.data)
             val result = Json.decodeFromJsonElement<RpcResponse>(jsonElement)
@@ -271,7 +280,6 @@ object RoleCreationService {
             logger.warn(LogCategory.AUTH, "removePermissionFromRole failed", error = e)
             Result.failure(e)
         }
-    }
 
     /**
      * Get all permissions assigned to a specific role
@@ -279,16 +287,18 @@ object RoleCreationService {
      * @param roleName Role to get permissions for
      * @return Result with RoleWithPermissions on success or exception on failure
      */
-    suspend fun getRolePermissions(roleName: String): Result<RoleWithPermissions> {
-        return try {
-            val params = buildJsonObject {
-                put("role_name", roleName)
-            }
+    suspend fun getRolePermissions(roleName: String): Result<RoleWithPermissions> =
+        try {
+            val params =
+                buildJsonObject {
+                    put("role_name", roleName)
+                }
 
-            val postgrestResult = SupabaseConfig.client.postgrest.rpc(
-                function = "get_role_permissions",
-                parameters = params
-            )
+            val postgrestResult =
+                SupabaseConfig.client.postgrest.rpc(
+                    function = "get_role_permissions",
+                    parameters = params,
+                )
 
             val jsonElement = Json.parseToJsonElement(postgrestResult.data)
             val result = Json.decodeFromJsonElement<RolePermissionsResponse>(jsonElement)
@@ -297,8 +307,8 @@ object RoleCreationService {
                 Result.success(
                     RoleWithPermissions(
                         roleName = roleName,
-                        permissions = result.permissions ?: emptyList()
-                    )
+                        permissions = result.permissions ?: emptyList(),
+                    ),
                 )
             } else {
                 Result.failure(Exception(result.error ?: "Failed to get role permissions"))
@@ -307,7 +317,6 @@ object RoleCreationService {
             logger.warn(LogCategory.AUTH, "getRolePermissions failed", error = e)
             Result.failure(e)
         }
-    }
 
     /**
      * Delete a role from the database
@@ -315,16 +324,18 @@ object RoleCreationService {
      * @param roleName Role to delete
      * @return Result with Unit on success or exception on failure
      */
-    suspend fun deleteRole(roleName: String): Result<Unit> {
-        return try {
-            val params = buildJsonObject {
-                put("role_name", roleName)
-            }
+    suspend fun deleteRole(roleName: String): Result<Unit> =
+        try {
+            val params =
+                buildJsonObject {
+                    put("role_name", roleName)
+                }
 
-            val postgrestResult = SupabaseConfig.client.postgrest.rpc(
-                function = "delete_role",
-                parameters = params
-            )
+            val postgrestResult =
+                SupabaseConfig.client.postgrest.rpc(
+                    function = "delete_role",
+                    parameters = params,
+                )
 
             val jsonElement = Json.parseToJsonElement(postgrestResult.data)
             val result = Json.decodeFromJsonElement<RpcResponse>(jsonElement)
@@ -338,7 +349,6 @@ object RoleCreationService {
             logger.warn(LogCategory.AUTH, "deleteRole failed", error = e)
             Result.failure(e)
         }
-    }
 
     /**
      * Delete a permission from the database
@@ -346,16 +356,18 @@ object RoleCreationService {
      * @param permissionName Permission to delete
      * @return Result with Unit on success or exception on failure
      */
-    suspend fun deletePermission(permissionName: String): Result<Unit> {
-        return try {
-            val params = buildJsonObject {
-                put("permission_name", permissionName)
-            }
+    suspend fun deletePermission(permissionName: String): Result<Unit> =
+        try {
+            val params =
+                buildJsonObject {
+                    put("permission_name", permissionName)
+                }
 
-            val postgrestResult = SupabaseConfig.client.postgrest.rpc(
-                function = "delete_permission",
-                parameters = params
-            )
+            val postgrestResult =
+                SupabaseConfig.client.postgrest.rpc(
+                    function = "delete_permission",
+                    parameters = params,
+                )
 
             val jsonElement = Json.parseToJsonElement(postgrestResult.data)
             val result = Json.decodeFromJsonElement<RpcResponse>(jsonElement)
@@ -369,7 +381,6 @@ object RoleCreationService {
             logger.warn(LogCategory.AUTH, "deletePermission failed", error = e)
             Result.failure(e)
         }
-    }
 
     /**
      * Validate role name format (client-side validation before server call)
@@ -380,11 +391,21 @@ object RoleCreationService {
     fun validateRoleName(roleName: String): String? {
         val regex = Regex("^[a-z][a-z0-9_]{2,50}$")
         return when {
-            roleName.isBlank() -> "Role name cannot be empty"
-            !regex.matches(roleName) -> "Role name must be lowercase, start with letter, 3-50 characters, alphanumeric + underscore only"
-            roleName in listOf("user", "admin", "authenticated", "anon", "service_role", "postgres") ->
+            roleName.isBlank() -> {
+                "Role name cannot be empty"
+            }
+
+            !regex.matches(roleName) -> {
+                "Role name must be lowercase, start with letter, 3-50 characters, alphanumeric + underscore only"
+            }
+
+            roleName in listOf("user", "admin", "authenticated", "anon", "service_role", "postgres") -> {
                 "Role name is reserved and cannot be used"
-            else -> null
+            }
+
+            else -> {
+                null
+            }
         }
     }
 
@@ -398,7 +419,11 @@ object RoleCreationService {
         val regex = Regex("^[a-z][a-z0-9_]{1,30}\\.[a-z][a-z0-9_]{1,30}$")
         return when {
             permissionName.isBlank() -> "Permission name cannot be empty"
-            !regex.matches(permissionName) -> "Permission must be domain.action format (e.g., \"code.review\"), lowercase, alphanumeric + underscore"
+
+            !regex.matches(
+                permissionName,
+            ) -> "Permission must be domain.action format (e.g., \"code.review\"), lowercase, alphanumeric + underscore"
+
             else -> null
         }
     }
@@ -413,11 +438,11 @@ private data class RpcResponse(
     val success: Boolean,
     val error: String? = null,
     val message: String? = null,
-    val permission: String? = null,       // Returned by create_new_permission()
-    val description: String? = null,      // Returned by create_new_permission()
-    val permission_id: String? = null,    // Returned by create_new_permission() (table-based)
-    val role: String? = null,             // Returned by create_new_role()
-    val role_id: String? = null           // Returned by create_new_role() (table-based)
+    val permission: String? = null, // Returned by create_new_permission()
+    val description: String? = null, // Returned by create_new_permission()
+    val permission_id: String? = null, // Returned by create_new_permission() (table-based)
+    val role: String? = null, // Returned by create_new_role()
+    val role_id: String? = null, // Returned by create_new_role() (table-based)
 )
 
 // NEW: Response DTOs for table-based schema
@@ -425,7 +450,7 @@ private data class RpcResponse(
 private data class RolesResponseNew(
     val success: Boolean,
     val error: String? = null,
-    val data: List<RoleDataNew>? = null
+    val data: List<RoleDataNew>? = null,
 )
 
 @Serializable
@@ -438,14 +463,14 @@ private data class RoleDataNew(
     @SerialName("created_at")
     val createdAt: String,
     @SerialName("updated_at")
-    val updatedAt: String
+    val updatedAt: String,
 )
 
 @Serializable
 private data class PermissionsResponseNew(
     val success: Boolean,
     val error: String? = null,
-    val data: List<PermissionDataNew>? = null
+    val data: List<PermissionDataNew>? = null,
 )
 
 @Serializable
@@ -458,7 +483,7 @@ private data class PermissionDataNew(
     @SerialName("created_at")
     val createdAt: String,
     @SerialName("updated_at")
-    val updatedAt: String
+    val updatedAt: String,
 )
 
 @Serializable
@@ -466,5 +491,5 @@ private data class RolePermissionsResponse(
     val success: Boolean,
     val error: String? = null,
     val role: String? = null,
-    val permissions: List<String>? = null
+    val permissions: List<String>? = null,
 )

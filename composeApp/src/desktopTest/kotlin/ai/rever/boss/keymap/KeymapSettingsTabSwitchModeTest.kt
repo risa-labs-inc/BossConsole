@@ -17,11 +17,11 @@ import kotlin.test.assertEquals
  *   deserialize cleanly and fall back to the default.
  */
 class KeymapSettingsTabSwitchModeTest {
-
-    private val json = Json {
-        prettyPrint = true
-        ignoreUnknownKeys = true
-    }
+    private val json =
+        Json {
+            prettyPrint = true
+            ignoreUnknownKeys = true
+        }
 
     @Test
     fun `tab switch mode defaults to MRU for new users`() {
@@ -33,24 +33,26 @@ class KeymapSettingsTabSwitchModeTest {
     fun `an explicit tab switch mode survives a json round-trip`() {
         // Round-trip the non-default value to prove an explicit choice is persisted.
         val settings = KeymapPresets.getBOSSDefault().copy(tabSwitchMode = TabSwitchMode.POSITIONAL)
-        val decoded = json.decodeFromString(
-            KeymapSettings.serializer(),
-            json.encodeToString(KeymapSettings.serializer(), settings)
-        )
+        val decoded =
+            json.decodeFromString(
+                KeymapSettings.serializer(),
+                json.encodeToString(KeymapSettings.serializer(), settings),
+            )
         assertEquals(TabSwitchMode.POSITIONAL, decoded.tabSwitchMode)
     }
 
     @Test
     fun `legacy keymap json without tabSwitchMode falls back to the default`() {
         // A keymap file written before the tabSwitchMode field existed.
-        val legacyJson = """
+        val legacyJson =
+            """
             {
               "shortcuts": {},
               "presetName": "BOSS Default",
               "customized": false,
               "version": 1
             }
-        """.trimIndent()
+            """.trimIndent()
         val decoded = json.decodeFromString(KeymapSettings.serializer(), legacyJson)
         assertEquals(TabSwitchMode.MRU, decoded.tabSwitchMode)
     }

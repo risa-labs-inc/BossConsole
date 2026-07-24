@@ -24,7 +24,6 @@ import java.util.concurrent.ConcurrentHashMap
  * gRPC interface.
  */
 class TerminalServiceImpl : TerminalServiceGrpcKt.TerminalServiceCoroutineImplBase() {
-
     private val logger = LoggerFactory.getLogger(TerminalServiceImpl::class.java)
 
     private data class TerminalSession(
@@ -34,9 +33,10 @@ class TerminalServiceImpl : TerminalServiceGrpcKt.TerminalServiceCoroutineImplBa
         @Volatile var cols: Int = 80,
         @Volatile var rows: Int = 24,
         val createdAt: Long = System.currentTimeMillis(),
-        val outputFlow: MutableSharedFlow<TerminalOutputChunk> = MutableSharedFlow(
-            extraBufferCapacity = 256,
-        ),
+        val outputFlow: MutableSharedFlow<TerminalOutputChunk> =
+            MutableSharedFlow(
+                extraBufferCapacity = 256,
+            ),
         val process: Process,
     )
 
@@ -45,20 +45,23 @@ class TerminalServiceImpl : TerminalServiceGrpcKt.TerminalServiceCoroutineImplBa
     override suspend fun createSession(request: CreateSessionRequest): CreateSessionResponse {
         val sessionId = UUID.randomUUID().toString()
         val workDir = request.workingDirectory.ifBlank { System.getProperty("user.home") }
-        val cmd = if (request.commandList.isNotEmpty()) {
-            request.commandList
-        } else {
-            val shell = System.getenv("SHELL")
-                ?: if (System.getProperty("os.name").lowercase().contains("win")) "cmd.exe" else "/bin/sh"
-            listOf(shell)
-        }
+        val cmd =
+            if (request.commandList.isNotEmpty()) {
+                request.commandList
+            } else {
+                val shell =
+                    System.getenv("SHELL")
+                        ?: if (System.getProperty("os.name").lowercase().contains("win")) "cmd.exe" else "/bin/sh"
+                listOf(shell)
+            }
 
         logger.info("createSession: id={}, workdir={}, command={}", sessionId, workDir, cmd)
 
         return try {
-            val pb = ProcessBuilder(cmd)
-                .directory(java.io.File(workDir))
-                .redirectErrorStream(true)
+            val pb =
+                ProcessBuilder(cmd)
+                    .directory(java.io.File(workDir))
+                    .redirectErrorStream(true)
 
             val env = pb.environment()
             env["TERM"] = "xterm-256color"
@@ -68,15 +71,16 @@ class TerminalServiceImpl : TerminalServiceGrpcKt.TerminalServiceCoroutineImplBa
 
             val process = pb.start()
             val outputFlow = MutableSharedFlow<TerminalOutputChunk>(extraBufferCapacity = 256)
-            val session = TerminalSession(
-                id = sessionId,
-                workingDirectory = workDir,
-                command = cmd,
-                cols = request.cols.takeIf { it > 0 } ?: 80,
-                rows = request.rows.takeIf { it > 0 } ?: 24,
-                outputFlow = outputFlow,
-                process = process,
-            )
+            val session =
+                TerminalSession(
+                    id = sessionId,
+                    workingDirectory = workDir,
+                    command = cmd,
+                    cols = request.cols.takeIf { it > 0 } ?: 80,
+                    rows = request.rows.takeIf { it > 0 } ?: 24,
+                    outputFlow = outputFlow,
+                    process = process,
+                )
             sessions[sessionId] = session
 
             // Pump stdout/stderr into the SharedFlow on a daemon thread
@@ -87,36 +91,45 @@ class TerminalServiceImpl : TerminalServiceGrpcKt.TerminalServiceCoroutineImplBa
                     var n: Int
                     while (reader.read(buf).also { n = it } != -1) {
                         outputFlow.tryEmit(
-                            TerminalOutputChunk.newBuilder()
+                            TerminalOutputChunk
+                                .newBuilder()
                                 .setSessionId(sessionId)
                                 .setData(ByteString.copyFromUtf8(String(buf, 0, n)))
                                 .setTimestamp(System.currentTimeMillis())
-                                .build()
+                                .build(),
                         )
                     }
                     // Emit exit notification
-                    val exitCode = try { process.waitFor() } catch (_: Exception) { -1 }
+                    val exitCode =
+                        try {
+                            process.waitFor()
+                        } catch (_: Exception) {
+                            -1
+                        }
                     outputFlow.tryEmit(
-                        TerminalOutputChunk.newBuilder()
+                        TerminalOutputChunk
+                            .newBuilder()
                             .setSessionId(sessionId)
                             .setData(ByteString.copyFromUtf8("\r\n[Process exited with code $exitCode]\r\n"))
                             .setTimestamp(System.currentTimeMillis())
                             .setIsExit(true)
                             .setExitCode(exitCode)
-                            .build()
+                            .build(),
                     )
                 } catch (_: Exception) {
                     // Process terminated or stream closed — pump ends cleanly
                 }
             }.also { it.isDaemon = true }.start()
 
-            CreateSessionResponse.newBuilder()
+            CreateSessionResponse
+                .newBuilder()
                 .setSuccess(true)
                 .setSessionId(sessionId)
                 .build()
         } catch (e: Exception) {
             logger.error("Failed to create terminal session", e)
-            CreateSessionResponse.newBuilder()
+            CreateSessionResponse
+                .newBuilder()
                 .setSuccess(false)
                 .setErrorMessage(e.message ?: "Failed to start process")
                 .build()
@@ -139,14 +152,15 @@ class TerminalServiceImpl : TerminalServiceGrpcKt.TerminalServiceCoroutineImplBa
         return Empty.getDefaultInstance()
     }
 
-    override fun streamOutput(request: StreamOutputRequest): Flow<TerminalOutputChunk> = flow {
-        val session = sessions[request.sessionId]
-        if (session == null) {
-            logger.warn("streamOutput: session not found: {}", request.sessionId)
-            return@flow
+    override fun streamOutput(request: StreamOutputRequest): Flow<TerminalOutputChunk> =
+        flow {
+            val session = sessions[request.sessionId]
+            if (session == null) {
+                logger.warn("streamOutput: session not found: {}", request.sessionId)
+                return@flow
+            }
+            session.outputFlow.collect { chunk -> emit(chunk) }
         }
-        session.outputFlow.collect { chunk -> emit(chunk) }
-    }
 
     override suspend fun resize(request: ResizeRequest): Empty {
         val session = sessions[request.sessionId]
@@ -170,15 +184,17 @@ class TerminalServiceImpl : TerminalServiceGrpcKt.TerminalServiceCoroutineImplBa
     }
 
     override suspend fun listSessions(request: Empty): ListSessionsResponse {
-        val infos = sessions.values.map { s ->
-            TerminalSessionInfo.newBuilder()
-                .setSessionId(s.id)
-                .setWorkingDirectory(s.workingDirectory)
-                .addAllCommand(s.command)
-                .setCreatedAt(s.createdAt)
-                .setIsAlive(s.process.isAlive)
-                .build()
-        }
+        val infos =
+            sessions.values.map { s ->
+                TerminalSessionInfo
+                    .newBuilder()
+                    .setSessionId(s.id)
+                    .setWorkingDirectory(s.workingDirectory)
+                    .addAllCommand(s.command)
+                    .setCreatedAt(s.createdAt)
+                    .setIsAlive(s.process.isAlive)
+                    .build()
+            }
         return ListSessionsResponse.newBuilder().addAllSessions(infos).build()
     }
 }

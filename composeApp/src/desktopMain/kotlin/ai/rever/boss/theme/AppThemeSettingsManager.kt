@@ -23,10 +23,11 @@ import kotlinx.serialization.json.Json
 object AppThemeSettingsManager {
     private val logger = BossLogger.forComponent("AppThemeSettingsManager")
     private val settingsFile = BossDirectories.resolve("app-theme-settings.json")
-    private val json = Json {
-        prettyPrint = true
-        ignoreUnknownKeys = true
-    }
+    private val json =
+        Json {
+            prettyPrint = true
+            ignoreUnknownKeys = true
+        }
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private val _settings = MutableStateFlow(AppThemeSettings())
@@ -57,10 +58,11 @@ object AppThemeSettingsManager {
     private fun loadSync() {
         try {
             if (settingsFile.exists()) {
-                _settings.value = json.decodeFromString(
-                    AppThemeSettings.serializer(),
-                    settingsFile.readText(),
-                )
+                _settings.value =
+                    json.decodeFromString(
+                        AppThemeSettings.serializer(),
+                        settingsFile.readText(),
+                    )
             }
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Failed to load app theme settings, using default", error = e)
@@ -68,12 +70,13 @@ object AppThemeSettingsManager {
         }
     }
 
-    private suspend fun save() = withContext(Dispatchers.IO) {
-        try {
-            settingsFile.writeText(json.encodeToString(AppThemeSettings.serializer(), _settings.value))
-            logger.debug(LogCategory.SYSTEM, "Saved app theme", mapOf("themeId" to _settings.value.appThemeId))
-        } catch (e: Exception) {
-            logger.warn(LogCategory.SYSTEM, "Failed to save app theme settings", error = e)
+    private suspend fun save() =
+        withContext(Dispatchers.IO) {
+            try {
+                settingsFile.writeText(json.encodeToString(AppThemeSettings.serializer(), _settings.value))
+                logger.debug(LogCategory.SYSTEM, "Saved app theme", mapOf("themeId" to _settings.value.appThemeId))
+            } catch (e: Exception) {
+                logger.warn(LogCategory.SYSTEM, "Failed to save app theme settings", error = e)
+            }
         }
-    }
 }

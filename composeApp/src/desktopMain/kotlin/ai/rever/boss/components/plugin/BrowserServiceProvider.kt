@@ -1,8 +1,8 @@
 package ai.rever.boss.components.plugin
 
-import ai.rever.boss.plugin.browser.BrowserService
 import ai.rever.boss.plugin.browser.BrowserConfig
 import ai.rever.boss.plugin.browser.BrowserHandle
+import ai.rever.boss.plugin.browser.BrowserService
 import ai.rever.boss.plugin.browser.BrowserServiceImpl
 import java.util.concurrent.ConcurrentHashMap
 
@@ -21,19 +21,20 @@ actual fun getBrowserServiceInstance(windowId: String?): BrowserService? =
         ?.let { windowBrowserServices.computeIfAbsent(it, ::WindowScopedBrowserService) }
 
 private class WindowScopedBrowserService(
-    private val windowId: String
+    private val windowId: String,
 ) : BrowserService by BrowserServiceImpl {
     private val lifecycleLock = Any()
     private var closed = false
 
     override suspend fun createBrowser(config: BrowserConfig): BrowserHandle? {
-        val creationStarted = synchronized(lifecycleLock) {
-            if (closed) {
-                false
-            } else {
-                BrowserServiceImpl.tryBeginBrowserCreation(windowId)
+        val creationStarted =
+            synchronized(lifecycleLock) {
+                if (closed) {
+                    false
+                } else {
+                    BrowserServiceImpl.tryBeginBrowserCreation(windowId)
+                }
             }
-        }
         if (!creationStarted) return null
 
         return try {
@@ -46,8 +47,7 @@ private class WindowScopedBrowserService(
     /**
      * Reports this window's owned handles, not the process-wide active count.
      */
-    override fun getActiveBrowserCount(): Int =
-        BrowserServiceImpl.getActiveBrowserCountForWindow(windowId)
+    override fun getActiveBrowserCount(): Int = BrowserServiceImpl.getActiveBrowserCountForWindow(windowId)
 
     fun close() {
         synchronized(lifecycleLock) {

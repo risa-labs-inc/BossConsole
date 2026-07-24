@@ -30,7 +30,7 @@ actual fun FluckView(
     onNavigationUpdate: ((String, String) -> Unit)?,
     onNavigationStateChange: ((isBack: Boolean) -> Unit)?,
     onFaviconCached: ((String?) -> Unit)?,
-    onCloseTab: (() -> Unit)?
+    onCloseTab: (() -> Unit)?,
 ) {
     val jxBrowser = browser as? Browser
     val jxBrowserViewState = browserViewState as? BrowserViewState

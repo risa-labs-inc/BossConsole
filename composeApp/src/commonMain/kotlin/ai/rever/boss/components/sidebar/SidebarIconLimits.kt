@@ -37,7 +37,10 @@ object SidebarIconRail {
  * the "More" overflow button, which is the minimum needed to keep every
  * plugin reachable.
  */
-fun allocateIconRows(itemCounts: List<Int>, totalRows: Int): List<Int> {
+fun allocateIconRows(
+    itemCounts: List<Int>,
+    totalRows: Int,
+): List<Int> {
     val allocations = IntArray(itemCounts.size)
     var remaining = totalRows
     itemCounts.forEachIndexed { index, count ->
@@ -69,7 +72,10 @@ fun allocateIconRows(itemCounts: List<Int>, totalRows: Int): List<Int> {
  * button (cap = rows − 1, floored at 0), so a slot's rendered rows —
  * icons plus More — never exceed its allocation.
  */
-fun iconCapsForRows(itemCounts: List<Int>, totalRows: Int): List<Int> {
+fun iconCapsForRows(
+    itemCounts: List<Int>,
+    totalRows: Int,
+): List<Int> {
     val rows = allocateIconRows(itemCounts, totalRows)
     return itemCounts.indices.map { index ->
         if (itemCounts[index] > rows[index]) {
@@ -106,8 +112,9 @@ fun BossDraggableComponent.computeSlotIconLimits(
     reservedHeight: Dp,
 ): Map<Panel, Int> {
     if (settings.iconLimitMode == SidebarIconLimitMode.FIXED) {
-        val limit = settings.fixedIconLimit
-            .coerceIn(SidebarVisibilitySettings.FIXED_ICON_LIMIT_RANGE)
+        val limit =
+            settings.fixedIconLimit
+                .coerceIn(SidebarVisibilitySettings.FIXED_ICON_LIMIT_RANGE)
         return slots.associateWith { limit }
     }
 

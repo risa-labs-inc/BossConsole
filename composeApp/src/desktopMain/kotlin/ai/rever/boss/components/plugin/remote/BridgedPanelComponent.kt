@@ -36,8 +36,8 @@ class BridgedPanelComponent(
     override val panelInfo: PanelInfo,
     private val bridge: PluginStateBridge,
     private val content: @Composable (stateBytes: ByteArray, connected: Boolean) -> Unit,
-) : PanelComponentWithUI, ComponentContext by ctx {
-
+) : PanelComponentWithUI,
+    ComponentContext by ctx {
     @Composable
     override fun Content() {
         val connected by bridge.connected.collectAsState()

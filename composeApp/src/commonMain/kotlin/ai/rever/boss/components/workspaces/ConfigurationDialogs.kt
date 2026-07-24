@@ -1,23 +1,23 @@
 package ai.rever.boss.components.workspaces
 
+import ai.rever.boss.platform.rememberFilePicker
 import ai.rever.boss.plugin.ui.BossTheme
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.clickable
 import androidx.compose.material.RadioButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import ai.rever.boss.platform.rememberFilePicker
 
 /**
  * Save workspace dialog
@@ -25,7 +25,7 @@ import ai.rever.boss.platform.rememberFilePicker
 @Composable
 fun SaveWorkspaceDialog(
     onDismiss: () -> Unit,
-    onSave: (String) -> Unit
+    onSave: (String) -> Unit,
 ) {
     var name by remember { mutableStateOf("") }
 
@@ -37,13 +37,13 @@ fun SaveWorkspaceDialog(
                 value = name,
                 onValueChange = { name = it },
                 label = { androidx.compose.material.Text("Workspace Name") },
-                singleLine = true
+                singleLine = true,
             )
         },
         confirmButton = {
             androidx.compose.material.TextButton(
                 onClick = { onSave(name) },
-                enabled = name.isNotBlank()
+                enabled = name.isNotBlank(),
             ) {
                 androidx.compose.material.Text("Save")
             }
@@ -52,7 +52,7 @@ fun SaveWorkspaceDialog(
             androidx.compose.material.TextButton(onClick = onDismiss) {
                 androidx.compose.material.Text("Cancel")
             }
-        }
+        },
     )
 }
 
@@ -62,17 +62,18 @@ fun SaveWorkspaceDialog(
 @Composable
 fun OpenWorkspaceDialog(
     onDismiss: () -> Unit,
-    onOpen: (String) -> Unit
+    onOpen: (String) -> Unit,
 ) {
-    val filePicker = rememberFilePicker(
-        onFileSelected = { path, content ->
-            if (content != null) {
-                onOpen(content)
-            }
-            onDismiss()
-        },
-        fileExtensions = listOf("json")
-    )
+    val filePicker =
+        rememberFilePicker(
+            onFileSelected = { path, content ->
+                if (content != null) {
+                    onOpen(content)
+                }
+                onDismiss()
+            },
+            fileExtensions = listOf("json"),
+        )
 
     // Immediately trigger file picker
     LaunchedEffect(Unit) {
@@ -87,7 +88,7 @@ fun OpenWorkspaceDialog(
 fun DeleteWorkspaceDialog(
     workspaces: List<LayoutWorkspace>,
     onDismiss: () -> Unit,
-    onDelete: (String) -> Unit
+    onDelete: (String) -> Unit,
 ) {
     var selectedWorkspace by remember { mutableStateOf<String?>(null) }
 
@@ -98,24 +99,25 @@ fun DeleteWorkspaceDialog(
             Column {
                 androidx.compose.material.Text(
                     "Select a workspace to delete:",
-                    modifier = Modifier.padding(bottom = 16.dp)
+                    modifier = Modifier.padding(bottom = 16.dp),
                 )
 
                 workspaces.forEach { workspace ->
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { selectedWorkspace = workspace.name }
-                            .padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { selectedWorkspace = workspace.name }
+                                .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         RadioButton(
                             selected = selectedWorkspace == workspace.name,
-                            onClick = { selectedWorkspace = workspace.name }
+                            onClick = { selectedWorkspace = workspace.name },
                         )
                         androidx.compose.material.Text(
                             text = workspace.name,
-                            modifier = Modifier.padding(start = 8.dp)
+                            modifier = Modifier.padding(start = 8.dp),
                         )
                     }
                 }
@@ -123,7 +125,7 @@ fun DeleteWorkspaceDialog(
                 if (workspaces.isEmpty()) {
                     androidx.compose.material.Text(
                         "No custom workspaces to delete.",
-                        color = BossTheme.colors.textSecondary
+                        color = BossTheme.colors.textSecondary,
                     )
                 }
             }
@@ -133,7 +135,7 @@ fun DeleteWorkspaceDialog(
                 onClick = {
                     selectedWorkspace?.let { onDelete(it) }
                 },
-                enabled = selectedWorkspace != null
+                enabled = selectedWorkspace != null,
             ) {
                 androidx.compose.material.Text("Delete", color = BossTheme.colors.alert)
             }
@@ -142,6 +144,6 @@ fun DeleteWorkspaceDialog(
             androidx.compose.material.TextButton(onClick = onDismiss) {
                 androidx.compose.material.Text("Cancel")
             }
-        }
+        },
     )
 }

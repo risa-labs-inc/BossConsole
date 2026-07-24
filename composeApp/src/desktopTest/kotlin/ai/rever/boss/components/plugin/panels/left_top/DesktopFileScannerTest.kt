@@ -14,10 +14,10 @@ import kotlin.test.assertTrue
  * malformed path input (InvalidPathException must not escape as uncaught).
  */
 class DesktopFileScannerTest {
-
-    private fun tempDir(): File = Files.createTempDirectory("scanner-test").toFile().apply {
-        deleteOnExit()
-    }
+    private fun tempDir(): File =
+        Files.createTempDirectory("scanner-test").toFile().apply {
+            deleteOnExit()
+        }
 
     @Test
     fun `directoryHasChildren returns false for a non-existent path`() {
@@ -113,25 +113,33 @@ class DesktopFileScannerTest {
     }
 
     @Test
-    fun `scanDirectoryWithDepth threads showHidden through recursion`() = runBlocking {
-        val dir = tempDir()
-        val hiddenDir = File(dir, ".config").apply { mkdir() }
-        File(hiddenDir, "settings.json").writeText("{}")
-        val visibleDir = File(dir, "src").apply { mkdir() }
-        File(visibleDir, ".dotfile").writeText("x")
-        File(visibleDir, "main.kt").writeText("fun main() {}")
+    fun `scanDirectoryWithDepth threads showHidden through recursion`() =
+        runBlocking {
+            val dir = tempDir()
+            val hiddenDir = File(dir, ".config").apply { mkdir() }
+            File(hiddenDir, "settings.json").writeText("{}")
+            val visibleDir = File(dir, "src").apply { mkdir() }
+            File(visibleDir, ".dotfile").writeText("x")
+            File(visibleDir, "main.kt").writeText("fun main() {}")
 
-        val withHidden = scanDirectoryWithDepth(dir.absolutePath, maxDepth = 2, startDepth = 0, showHidden = true)
-        val config = withHidden?.children?.firstOrNull { it.name == ".config" }
-        assertEquals(listOf("settings.json"), config?.children?.map { it.name })
-        val src = withHidden?.children?.firstOrNull { it.name == "src" }
-        // nested hidden entry included: the flag propagated into recursion
-        assertEquals(listOf(".dotfile", "main.kt"), src?.children?.map { it.name })
+            val withHidden = scanDirectoryWithDepth(dir.absolutePath, maxDepth = 2, startDepth = 0, showHidden = true)
+            val config = withHidden?.children?.firstOrNull { it.name == ".config" }
+            assertEquals(listOf("settings.json"), config?.children?.map { it.name })
+            val src = withHidden?.children?.firstOrNull { it.name == "src" }
+            // nested hidden entry included: the flag propagated into recursion
+            assertEquals(listOf(".dotfile", "main.kt"), src?.children?.map { it.name })
 
-        val withoutHidden = scanDirectoryWithDepth(dir.absolutePath, maxDepth = 2, startDepth = 0, showHidden = false)
-        assertEquals(listOf("src"), withoutHidden?.children?.map { it.name })
-        assertEquals(listOf("main.kt"), withoutHidden?.children?.first()?.children?.map { it.name })
-    }
+            val withoutHidden = scanDirectoryWithDepth(dir.absolutePath, maxDepth = 2, startDepth = 0, showHidden = false)
+            assertEquals(listOf("src"), withoutHidden?.children?.map { it.name })
+            assertEquals(
+                listOf("main.kt"),
+                withoutHidden
+                    ?.children
+                    ?.first()
+                    ?.children
+                    ?.map { it.name },
+            )
+        }
 
     @Test
     fun `build and node_modules stay excluded even with showHidden`() {

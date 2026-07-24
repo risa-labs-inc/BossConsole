@@ -1,6 +1,9 @@
 package ai.rever.boss.components.auth.screens
 
+import ai.rever.boss.components.auth.forms.*
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.services.passkey.PasskeyInfo
+import ai.rever.boss.viewmodels.LoginViewModel
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -25,16 +28,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import ai.rever.boss.components.auth.forms.*
-import ai.rever.boss.viewmodels.LoginViewModel
-import ai.rever.boss.services.passkey.PasskeyInfo
 
 @Composable
 fun PasskeySelectionScreen(
     email: String,
     viewModel: LoginViewModel,
     onPasskeySelected: (String) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
 ) {
     var selectedCredentialId by remember { mutableStateOf<String?>(null) }
 
@@ -50,26 +50,27 @@ fun PasskeySelectionScreen(
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         Column(
-            modifier = Modifier
-                .heightIn(min = maxHeight)
-                .padding(24.dp),
+            modifier =
+                Modifier
+                    .heightIn(min = maxHeight)
+                    .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+            verticalArrangement = Arrangement.Center,
         ) {
             BossLogo()
 
-        Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
-        AuthCard {
-            PasskeySelectionCardContent(
-                email = email,
-                passkeys = passkeys,
-                selectedCredentialId = selectedCredentialId,
-                onSelect = { selectedCredentialId = it },
-                onContinue = { selectedCredentialId?.let(onPasskeySelected) },
-                onBack = onBack
-            )
-        }
+            AuthCard {
+                PasskeySelectionCardContent(
+                    email = email,
+                    passkeys = passkeys,
+                    selectedCredentialId = selectedCredentialId,
+                    onSelect = { selectedCredentialId = it },
+                    onContinue = { selectedCredentialId?.let(onPasskeySelected) },
+                    onBack = onBack,
+                )
+            }
         }
     }
 }
@@ -81,7 +82,7 @@ private fun PasskeySelectionCardContent(
     selectedCredentialId: String?,
     onSelect: (String) -> Unit,
     onContinue: () -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
 ) {
     val colors = BossTheme.colors
     AuthCardTitle("Choose Your Passkey")
@@ -96,7 +97,7 @@ private fun PasskeySelectionCardContent(
             "Select the device you want to use:",
             fontSize = 13.sp,
             color = colors.textSecondary,
-            modifier = Modifier.padding(bottom = 12.dp)
+            modifier = Modifier.padding(bottom = 12.dp),
         )
         LazyColumn(Modifier.fillMaxWidth().heightIn(max = 400.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(passkeys) { passkey ->
@@ -108,7 +109,7 @@ private fun PasskeySelectionCardContent(
             text = "Continue with Selected Passkey",
             onClick = onContinue,
             enabled = selectedCredentialId != null,
-            isLoading = false
+            isLoading = false,
         )
     } else {
         Text(
@@ -116,7 +117,7 @@ private fun PasskeySelectionCardContent(
             fontSize = 14.sp,
             color = colors.textPrimary,
             textAlign = TextAlign.Center,
-            modifier = Modifier.padding(vertical = 20.dp)
+            modifier = Modifier.padding(vertical = 20.dp),
         )
     }
 
@@ -127,13 +128,21 @@ private fun PasskeySelectionCardContent(
 }
 
 @Composable
-private fun PasskeyCard(passkey: PasskeyInfo, isSelected: Boolean, onClick: () -> Unit) {
-    Card(Modifier.fillMaxWidth().clickable(onClick = onClick), RoundedCornerShape(8.dp),
-        if (isSelected) BossTheme.colors.raised else BossTheme.colors.panel, elevation = 0.dp,
-        border = BorderStroke(
-            if (isSelected) 2.dp else 1.dp,
-            if (isSelected) BossTheme.colors.signal else BossTheme.colors.line
-        )
+private fun PasskeyCard(
+    passkey: PasskeyInfo,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+) {
+    Card(
+        Modifier.fillMaxWidth().clickable(onClick = onClick),
+        RoundedCornerShape(8.dp),
+        if (isSelected) BossTheme.colors.raised else BossTheme.colors.panel,
+        elevation = 0.dp,
+        border =
+            BorderStroke(
+                if (isSelected) 2.dp else 1.dp,
+                if (isSelected) BossTheme.colors.signal else BossTheme.colors.line,
+            ),
     ) {
         Row(Modifier.fillMaxWidth().padding(16.dp), Arrangement.SpaceBetween, Alignment.CenterVertically) {
             Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
@@ -141,7 +150,7 @@ private fun PasskeyCard(passkey: PasskeyInfo, isSelected: Boolean, onClick: () -
                     imageVector = Icons.Default.Devices,
                     contentDescription = "Device",
                     tint = if (isSelected) BossTheme.colors.signal else BossTheme.colors.textSecondary,
-                    modifier = Modifier.size(24.dp)
+                    modifier = Modifier.size(24.dp),
                 )
                 Spacer(Modifier.width(12.dp))
                 Column {
@@ -149,14 +158,14 @@ private fun PasskeyCard(passkey: PasskeyInfo, isSelected: Boolean, onClick: () -
                         text = passkey.displayName,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Medium,
-                        color = BossTheme.colors.textPrimary
+                        color = BossTheme.colors.textPrimary,
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
                         text = formatCredentialId(passkey.credentialId),
                         fontSize = 11.sp,
                         color = BossTheme.colors.textSecondary,
-                        fontFamily = FontFamily.Monospace
+                        fontFamily = FontFamily.Monospace,
                     )
                 }
             }
@@ -164,7 +173,7 @@ private fun PasskeyCard(passkey: PasskeyInfo, isSelected: Boolean, onClick: () -
                 imageVector = if (isSelected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
                 contentDescription = if (isSelected) "Selected" else "Not selected",
                 tint = if (isSelected) BossTheme.colors.ok else BossTheme.colors.textSecondary,
-                modifier = Modifier.size(24.dp)
+                modifier = Modifier.size(24.dp),
             )
         }
     }

@@ -1,10 +1,10 @@
 package ai.rever.boss.components.dialogs
 
-import ai.rever.boss.plugin.ui.BossTheme
-import ai.rever.boss.window.Project
 import ai.rever.boss.components.plugin.panels.left_top.ProjectState
-import ai.rever.boss.window.WindowProjectState
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.window.LocalWindowProjectState
+import ai.rever.boss.window.Project
+import ai.rever.boss.window.WindowProjectState
 import ai.rever.boss.window.selectProjectInWindow
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -35,7 +35,7 @@ import androidx.compose.ui.window.DialogProperties
 @Composable
 fun ProjectSelectionDialog(
     onDismiss: () -> Unit,
-    onOpenDirectoryPicker: () -> Unit = {}
+    onOpenDirectoryPicker: () -> Unit = {},
 ) {
     // Get window project state from composition local for multi-window support
     val windowProjectState = LocalWindowProjectState.current
@@ -52,34 +52,36 @@ fun ProjectSelectionDialog(
 
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            dismissOnBackPress = true,
-            dismissOnClickOutside = true,
-            usePlatformDefaultWidth = false
-        )
+        properties =
+            DialogProperties(
+                dismissOnBackPress = true,
+                dismissOnClickOutside = true,
+                usePlatformDefaultWidth = false,
+            ),
     ) {
         Box(
             modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center
+            contentAlignment = Alignment.Center,
         ) {
             Card(
-                modifier = Modifier
-                    .width(500.dp)
-                    .heightIn(min = 200.dp, max = 450.dp)
-                    .onKeyEvent { event ->
-                        if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
-                            onDismiss()
-                            true
-                        } else {
-                            false
-                        }
-                    },
+                modifier =
+                    Modifier
+                        .width(500.dp)
+                        .heightIn(min = 200.dp, max = 450.dp)
+                        .onKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                                onDismiss()
+                                true
+                            } else {
+                                false
+                            }
+                        },
                 shape = RoundedCornerShape(8.dp),
                 backgroundColor = BossTheme.colors.panel,
-                elevation = 8.dp
+                elevation = 8.dp,
             ) {
                 Column(
-                    modifier = Modifier.padding(16.dp)
+                    modifier = Modifier.padding(16.dp),
                 ) {
                     // Title
                     Text(
@@ -87,7 +89,7 @@ fun ProjectSelectionDialog(
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         color = BossTheme.colors.textPrimary,
-                        modifier = Modifier.padding(bottom = 16.dp)
+                        modifier = Modifier.padding(bottom = 16.dp),
                     )
 
                     // Recent projects list
@@ -95,13 +97,14 @@ fun ProjectSelectionDialog(
                         text = "Recent Projects",
                         fontSize = 12.sp,
                         color = BossTheme.colors.textSecondary,
-                        modifier = Modifier.padding(bottom = 8.dp)
+                        modifier = Modifier.padding(bottom = 8.dp),
                     )
 
                     LazyColumn(
-                        modifier = Modifier
-                            .weight(1f, fill = false)
-                            .fillMaxWidth()
+                        modifier =
+                            Modifier
+                                .weight(1f, fill = false)
+                                .fillMaxWidth(),
                     ) {
                         items(recentProjects) { project ->
                             ProjectListItem(
@@ -109,7 +112,7 @@ fun ProjectSelectionDialog(
                                 onClick = {
                                     selectProjectInWindow(windowProjectState, project)
                                     onDismiss()
-                                }
+                                },
                             )
                         }
                     }
@@ -120,20 +123,21 @@ fun ProjectSelectionDialog(
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Button(
                             onClick = { onOpenDirectoryPicker() },
-                            colors = ButtonDefaults.buttonColors(
-                                backgroundColor = BossTheme.colors.signal,
-                                contentColor = Color.White
-                            ),
-                            shape = RoundedCornerShape(4.dp)
+                            colors =
+                                ButtonDefaults.buttonColors(
+                                    backgroundColor = BossTheme.colors.signal,
+                                    contentColor = Color.White,
+                                ),
+                            shape = RoundedCornerShape(4.dp),
                         ) {
                             Icon(
                                 imageVector = Icons.Outlined.FolderOpen,
                                 contentDescription = null,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(18.dp),
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text("Browse...")
@@ -141,9 +145,10 @@ fun ProjectSelectionDialog(
 
                         TextButton(
                             onClick = onDismiss,
-                            colors = ButtonDefaults.textButtonColors(
-                                contentColor = BossTheme.colors.textSecondary
-                            )
+                            colors =
+                                ButtonDefaults.textButtonColors(
+                                    contentColor = BossTheme.colors.textSecondary,
+                                ),
                         ) {
                             Text("Cancel")
                         }
@@ -157,28 +162,30 @@ fun ProjectSelectionDialog(
 @Composable
 private fun ProjectListItem(
     project: Project,
-    onClick: () -> Unit
+    onClick: () -> Unit,
 ) {
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp)
-            .clickable { onClick() },
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp)
+                .clickable { onClick() },
         backgroundColor = BossTheme.colors.raised,
         shape = RoundedCornerShape(4.dp),
-        elevation = 1.dp
+        elevation = 1.dp,
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
                 imageVector = Icons.Outlined.Folder,
                 contentDescription = "Project",
                 tint = BossTheme.colors.signal,
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier.size(20.dp),
             )
             Spacer(modifier = Modifier.width(12.dp))
             Column {
@@ -186,12 +193,12 @@ private fun ProjectListItem(
                     text = project.name,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
-                    color = BossTheme.colors.textPrimary
+                    color = BossTheme.colors.textPrimary,
                 )
                 Text(
                     text = project.path,
                     fontSize = 12.sp,
-                    color = BossTheme.colors.textSecondary
+                    color = BossTheme.colors.textSecondary,
                 )
             }
         }

@@ -58,7 +58,7 @@ data class UpdateSettingsData(
     val autoCheckEnabled: Boolean = true,
     val checkIntervalHours: Long = 6,
     val includePreReleases: Boolean = false,
-    val lastDismissedVersion: String? = null
+    val lastDismissedVersion: String? = null,
 )
 
 /**
@@ -70,10 +70,11 @@ data class UpdateSettingsData(
 actual object UpdateSettingsManager {
     private val logger = BossLogger.forComponent("UpdateSettingsManager")
     private val settingsFile = BossDirectories.resolve("update-settings.json")
-    private val json = Json {
-        prettyPrint = true
-        ignoreUnknownKeys = true
-    }
+    private val json =
+        Json {
+            prettyPrint = true
+            ignoreUnknownKeys = true
+        }
 
     init {
         // Ensure directory exists
@@ -99,10 +100,14 @@ actual object UpdateSettingsManager {
                 UpdateSettings.includePreReleases = settings.includePreReleases
                 UpdateSettings.lastDismissedVersion = settings.lastDismissedVersion
 
-                logger.debug(LogCategory.SYSTEM, "Loaded update settings", mapOf(
-                    "autoCheck" to settings.autoCheckEnabled,
-                    "includePreReleases" to settings.includePreReleases
-                ))
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Loaded update settings",
+                    mapOf(
+                        "autoCheck" to settings.autoCheckEnabled,
+                        "includePreReleases" to settings.includePreReleases,
+                    ),
+                )
             } else {
                 logger.debug(LogCategory.SYSTEM, "No saved update settings found, using defaults")
             }
@@ -116,21 +121,23 @@ actual object UpdateSettingsManager {
      * Save current settings to disk
      * Should be called whenever settings are changed in the UI
      */
-    actual suspend fun saveSettings() = withContext(Dispatchers.IO) {
-        try {
-            val settings = UpdateSettingsData(
-                autoCheckEnabled = UpdateSettings.autoCheckEnabled,
-                checkIntervalHours = UpdateSettings.checkIntervalHours,
-                includePreReleases = UpdateSettings.includePreReleases,
-                lastDismissedVersion = UpdateSettings.lastDismissedVersion
-            )
+    actual suspend fun saveSettings() =
+        withContext(Dispatchers.IO) {
+            try {
+                val settings =
+                    UpdateSettingsData(
+                        autoCheckEnabled = UpdateSettings.autoCheckEnabled,
+                        checkIntervalHours = UpdateSettings.checkIntervalHours,
+                        includePreReleases = UpdateSettings.includePreReleases,
+                        lastDismissedVersion = UpdateSettings.lastDismissedVersion,
+                    )
 
-            val content = json.encodeToString(UpdateSettingsData.serializer(), settings)
-            settingsFile.writeText(content)
+                val content = json.encodeToString(UpdateSettingsData.serializer(), settings)
+                settingsFile.writeText(content)
 
-            logger.debug(LogCategory.SYSTEM, "Saved update settings", mapOf("path" to settingsFile.absolutePath))
-        } catch (e: Exception) {
-            logger.warn(LogCategory.SYSTEM, "Failed to save update settings", error = e)
+                logger.debug(LogCategory.SYSTEM, "Saved update settings", mapOf("path" to settingsFile.absolutePath))
+            } catch (e: Exception) {
+                logger.warn(LogCategory.SYSTEM, "Failed to save update settings", error = e)
+            }
         }
-    }
 }

@@ -10,5 +10,5 @@ data class ContextMenuItemData(
     val icon: ImageVector? = null,
     val isDivider: Boolean = false,
     val onClick: () -> Unit = {},
-    val subMenu: List<ContextMenuItemData>? = null
+    val subMenu: List<ContextMenuItemData>? = null,
 )

@@ -2,6 +2,7 @@ package ai.rever.boss.plugin.loader
 
 import ai.rever.boss.plugin.api.Plugin
 import ai.rever.boss.plugin.api.PluginContext
+import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
@@ -12,7 +13,6 @@ import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import kotlinx.coroutines.runBlocking
 
 /**
  * The central fix of the hot-swap PR: `unloadPlugin(force = true)` must bypass
@@ -22,7 +22,6 @@ import kotlinx.coroutines.runBlocking
  * the CLOSED old ApiClassLoader.
  */
 class ForceUnloadTest {
-
     private val tempJars = mutableListOf<File>()
 
     @BeforeTest
@@ -53,7 +52,7 @@ class ForceUnloadTest {
                   "systemPlugin": true,
                   "canUnload": false
                 }
-                """.trimIndent().toByteArray()
+                """.trimIndent().toByteArray(),
             )
             out.closeEntry()
         }
@@ -61,28 +60,30 @@ class ForceUnloadTest {
     }
 
     @Test
-    fun `non-forced unload refuses a canUnload=false plugin`() = runBlocking<Unit> {
-        val loader = DynamicPluginLoaderImpl()
-        assertNotNull(loader.loadPlugin(lockedPluginJar()).getOrThrow())
+    fun `non-forced unload refuses a canUnload=false plugin`() =
+        runBlocking<Unit> {
+            val loader = DynamicPluginLoaderImpl()
+            assertNotNull(loader.loadPlugin(lockedPluginJar()).getOrThrow())
 
-        val result = loader.unloadPlugin(FIXTURE_ID)
+            val result = loader.unloadPlugin(FIXTURE_ID)
 
-        assertIs<PluginUnloadException>(result.exceptionOrNull())
-        assertNotNull(loader.getPlugin(FIXTURE_ID), "plugin must remain loaded after refused unload")
+            assertIs<PluginUnloadException>(result.exceptionOrNull())
+            assertNotNull(loader.getPlugin(FIXTURE_ID), "plugin must remain loaded after refused unload")
 
-        loader.unloadPlugin(FIXTURE_ID, force = true)
-    }
+            loader.unloadPlugin(FIXTURE_ID, force = true)
+        }
 
     @Test
-    fun `forced unload bypasses canUnload=false`() = runBlocking<Unit> {
-        val loader = DynamicPluginLoaderImpl()
-        assertNotNull(loader.loadPlugin(lockedPluginJar()).getOrThrow())
+    fun `forced unload bypasses canUnload=false`() =
+        runBlocking<Unit> {
+            val loader = DynamicPluginLoaderImpl()
+            assertNotNull(loader.loadPlugin(lockedPluginJar()).getOrThrow())
 
-        val result = loader.unloadPlugin(FIXTURE_ID, force = true)
+            val result = loader.unloadPlugin(FIXTURE_ID, force = true)
 
-        assertTrue(result.isSuccess, "force unload failed: ${result.exceptionOrNull()}")
-        assertNull(loader.getPlugin(FIXTURE_ID), "plugin must be gone after forced unload")
-    }
+            assertTrue(result.isSuccess, "force unload failed: ${result.exceptionOrNull()}")
+            assertNull(loader.getPlugin(FIXTURE_ID), "plugin must be gone after forced unload")
+        }
 
     private companion object {
         const val FIXTURE_ID = "com.example.locked.fixture"
@@ -95,5 +96,6 @@ class ForceUnloadTest {
 class LockedFixturePlugin : Plugin {
     override val pluginId = "com.example.locked.fixture"
     override val displayName = "Locked Fixture"
+
     override fun register(context: PluginContext) {}
 }

@@ -16,7 +16,6 @@ import ai.rever.boss.utils.logging.LogCategory
  * - Base Supabase URL might point to internal services (like kong gateway)
  */
 object PasskeyConfigHelper {
-
     private val logger = BossLogger.forComponent("PasskeyConfigHelper")
 
     /**
@@ -31,9 +30,10 @@ object PasskeyConfigHelper {
 
         return try {
             // Remove protocol
-            val withoutProtocol = functionBaseUrl
-                .removePrefix("https://")
-                .removePrefix("http://")
+            val withoutProtocol =
+                functionBaseUrl
+                    .removePrefix("https://")
+                    .removePrefix("http://")
 
             // Remove port if present
             val host = withoutProtocol.split(":").first()

@@ -13,5 +13,5 @@ import kotlinx.serialization.Serializable
 data class Project(
     val name: String,
     val path: String,
-    val lastOpened: Long = 0L
+    val lastOpened: Long = 0L,
 )

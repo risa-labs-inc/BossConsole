@@ -43,15 +43,14 @@ actual fun publishSystemEvent(event: ApplicationEvent) {
  * All events are broadcast to all subscribers via SharedFlow.
  */
 class ApplicationEventBusImpl private constructor(
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
 ) : ApplicationEventBus {
-
     companion object {
         @Volatile
         private var instance: ApplicationEventBusImpl? = null
 
-        fun getInstance(scope: CoroutineScope): ApplicationEventBusImpl {
-            return instance ?: synchronized(this) {
+        fun getInstance(scope: CoroutineScope): ApplicationEventBusImpl =
+            instance ?: synchronized(this) {
                 instance ?: ApplicationEventBusImpl(scope).also {
                     instance = it
                     // Publish to the process-global registry so the host's publishSystemEvent and
@@ -62,15 +61,15 @@ class ApplicationEventBusImpl private constructor(
                     }
                 }
             }
-        }
     }
 
     // Replay = 0 means events are only delivered to active subscribers
     // Buffer = 64 should handle most burst scenarios
-    private val _events = MutableSharedFlow<ApplicationEvent>(
-        replay = 0,
-        extraBufferCapacity = 64
-    )
+    private val _events =
+        MutableSharedFlow<ApplicationEvent>(
+            replay = 0,
+            extraBufferCapacity = 64,
+        )
 
     override fun events(): Flow<ApplicationEvent> = _events.asSharedFlow()
 

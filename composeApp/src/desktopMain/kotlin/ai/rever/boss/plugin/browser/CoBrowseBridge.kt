@@ -17,7 +17,7 @@ import com.teamdev.jxbrowser.js.JsAccessible
  * swallowed so a misbehaving sink can never crash the page's JS thread.
  */
 internal class CoBrowseBridge(
-    @Volatile var onEvent: ((String) -> Unit)? = null
+    @Volatile var onEvent: ((String) -> Unit)? = null,
 ) {
     @JsAccessible
     fun emit(json: String) {

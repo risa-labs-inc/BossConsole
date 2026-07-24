@@ -1,10 +1,10 @@
 package ai.rever.boss.events
 
-import ai.rever.boss.plugin.events.FileValidationResult
 import ai.rever.boss.components.events.ParsedFileReference
 import ai.rever.boss.components.events.parseFileReference
 import ai.rever.boss.components.events.stripFilePrefix
 import ai.rever.boss.components.events.validateFilePath
+import ai.rever.boss.plugin.events.FileValidationResult
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -24,7 +24,6 @@ import kotlin.test.assertTrue
  * - stripFilePrefix utility
  */
 class FileEventBusTest {
-
     // ==================== stripFilePrefix Tests ====================
 
     @Test
@@ -183,7 +182,9 @@ class FileEventBusTest {
     }
 
     @Test
-    fun `validateFilePath returns Invalid for directory`(@TempDir tempDir: Path) {
+    fun `validateFilePath returns Invalid for directory`(
+        @TempDir tempDir: Path,
+    ) {
         val dir = tempDir.toFile()
         val result = validateFilePath(dir.absolutePath)
         assertIs<FileValidationResult.Invalid>(result)
@@ -191,7 +192,9 @@ class FileEventBusTest {
     }
 
     @Test
-    fun `validateFilePath returns Valid for existing readable file`(@TempDir tempDir: Path) {
+    fun `validateFilePath returns Valid for existing readable file`(
+        @TempDir tempDir: Path,
+    ) {
         val file = File(tempDir.toFile(), "test.kt")
         file.writeText("test content")
 
@@ -201,12 +204,14 @@ class FileEventBusTest {
     }
 
     @Test
-    fun `validateFilePath resolves path traversal sequences`(@TempDir tempDir: Path) {
+    fun `validateFilePath resolves path traversal sequences`(
+        @TempDir tempDir: Path,
+    ) {
         val file = File(tempDir.toFile(), "test.kt")
         file.writeText("test content")
 
         // Path with .. should resolve to canonical path
-        val pathWithTraversal = "${tempDir}/subdir/../test.kt"
+        val pathWithTraversal = "$tempDir/subdir/../test.kt"
         val result = validateFilePath(pathWithTraversal)
         assertIs<FileValidationResult.Valid>(result)
         assertEquals(file.canonicalPath, result.canonicalPath)

@@ -12,7 +12,6 @@ private val logger = BossLogger.forComponent("FileSystemUtils")
  * Cross-platform file system utilities for downloads.
  */
 object FileSystemUtils {
-
     /**
      * Opens the file manager and reveals the specified file.
      * - macOS: Uses 'open -R' to reveal in Finder
@@ -70,7 +69,10 @@ object FileSystemUtils {
      * @param requiredBytes Number of bytes needed for the download
      * @return true if sufficient space is available, false otherwise
      */
-    fun hasSufficientDiskSpace(destinationPath: String, requiredBytes: Long): Boolean {
+    fun hasSufficientDiskSpace(
+        destinationPath: String,
+        requiredBytes: Long,
+    ): Boolean {
         return try {
             val file = File(destinationPath)
             val parentDir = file.parentFile ?: return true // Can't check, assume OK
@@ -93,7 +95,10 @@ object FileSystemUtils {
      * @param fileName Original file name
      * @return Absolute path to a unique file (may be the original if no collision)
      */
-    fun generateUniqueFilePath(directory: String, fileName: String): String {
+    fun generateUniqueFilePath(
+        directory: String,
+        fileName: String,
+    ): String {
         val dir = File(directory)
 
         // Ensure directory exists
@@ -114,11 +119,12 @@ object FileSystemUtils {
         var counter = 1
 
         do {
-            val newName = if (extension.isNotEmpty()) {
-                "$nameWithoutExtension ($counter).$extension"
-            } else {
-                "$nameWithoutExtension ($counter)"
-            }
+            val newName =
+                if (extension.isNotEmpty()) {
+                    "$nameWithoutExtension ($counter).$extension"
+                } else {
+                    "$nameWithoutExtension ($counter)"
+                }
             file = File(dir, newName)
             counter++
         } while (file.exists() && counter < 1000) // Prevent infinite loop
@@ -172,8 +178,8 @@ object FileSystemUtils {
      * @param directoryPath Path to the directory
      * @return true if directory is writable, false otherwise
      */
-    fun isDirectoryWritable(directoryPath: String): Boolean {
-        return try {
+    fun isDirectoryWritable(directoryPath: String): Boolean =
+        try {
             val dir = File(directoryPath)
             dir.isDirectory && dir.canWrite()
         } catch (e: Exception) {
@@ -184,5 +190,4 @@ object FileSystemUtils {
             )
             false
         }
-    }
 }

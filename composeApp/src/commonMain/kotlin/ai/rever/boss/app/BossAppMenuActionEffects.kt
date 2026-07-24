@@ -27,13 +27,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import com.arkivanov.decompose.extensions.compose.subscribeAsState
-import kotlin.random.Random
-import kotlin.time.Clock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.random.Random
+import kotlin.time.Clock
 
 /**
  * Listeners translating [MenuActionsHandler] menu-bar events (File/View/Plugin
@@ -42,7 +42,10 @@ import kotlinx.coroutines.withContext
  * count) to keep menu items in sync.
  */
 @Composable
-internal fun BossAppMenuActionEffects(state: BossAppState, reveal: FocusModeRevealState) {
+internal fun BossAppMenuActionEffects(
+    state: BossAppState,
+    reveal: FocusModeRevealState,
+) {
     val windowId = state.windowId
     val splitViewState = state.splitViewState
     val windowProjectState = state.windowProjectState
@@ -75,8 +78,7 @@ internal fun BossAppMenuActionEffects(state: BossAppState, reveal: FocusModeReve
                     // Show new tab dialog when menu item is clicked
                     state.showNewTabDialog = true
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     LaunchedEffect(windowId) {
@@ -85,9 +87,10 @@ internal fun BossAppMenuActionEffects(state: BossAppState, reveal: FocusModeReve
                 if (eventWindowId == windowId) {
                     // First check if there are ANY tabs in the window
                     val allPanels = splitViewState.getAllPanels()
-                    val totalTabs = allPanels.sumOf { panel ->
-                        panel.tabsComponent.tabsState.value.tabs.size
-                    }
+                    val totalTabs =
+                        allPanels.sumOf { panel ->
+                            panel.tabsComponent.tabsState.value.tabs.size
+                        }
 
                     // If no tabs at all (dashboard showing), close window directly
                     if (totalTabs == 0) {
@@ -104,17 +107,17 @@ internal fun BossAppMenuActionEffects(state: BossAppState, reveal: FocusModeReve
                             activeTabsComponent.removeTab(activeIndex)
 
                             // Re-check total tabs after removal
-                            val remainingTabs = allPanels.sumOf { panel ->
-                                panel.tabsComponent.tabsState.value.tabs.size
-                            }
+                            val remainingTabs =
+                                allPanels.sumOf { panel ->
+                                    panel.tabsComponent.tabsState.value.tabs.size
+                                }
                             if (remainingTabs == 0) {
                                 WindowOperations.closeWindow(windowId)
                             }
                         }
                     }
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     // Tab switching (Ctrl+Tab). Next/previous "steps" and the MRU "commit" share ONE ordered
@@ -131,17 +134,18 @@ internal fun BossAppMenuActionEffects(state: BossAppState, reveal: FocusModeReve
                         // Non-null only during an MRU cycle; drives the switcher overlay.
                         state.tabCycleOverlay = comp?.currentCycleOverlay()
                     }
+
                     MenuActionsHandler.TabSwitchAction.PREVIOUS -> {
                         comp?.switchToPreviousTab()
                         state.tabCycleOverlay = comp?.currentCycleOverlay()
                     }
+
                     MenuActionsHandler.TabSwitchAction.COMMIT -> {
                         comp?.commitTabCycle()
                         state.tabCycleOverlay = null
                     }
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     // Listen for zoom menu actions
@@ -155,8 +159,7 @@ internal fun BossAppMenuActionEffects(state: BossAppState, reveal: FocusModeReve
                         activeTab.zoomIn()
                     }
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     LaunchedEffect(windowId) {
@@ -169,8 +172,7 @@ internal fun BossAppMenuActionEffects(state: BossAppState, reveal: FocusModeReve
                         activeTab.zoomOut()
                     }
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     LaunchedEffect(windowId) {
@@ -183,8 +185,7 @@ internal fun BossAppMenuActionEffects(state: BossAppState, reveal: FocusModeReve
                         activeTab.actualSize()
                     }
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     // Handle new File menu events
@@ -194,8 +195,7 @@ internal fun BossAppMenuActionEffects(state: BossAppState, reveal: FocusModeReve
                 if (eventWindowId == windowId) {
                     state.showProjectDialog = true
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     LaunchedEffect(windowId) {
@@ -206,8 +206,7 @@ internal fun BossAppMenuActionEffects(state: BossAppState, reveal: FocusModeReve
                     state.newTabDialogInitialType = TabType.FILE
                     state.showNewTabDialog = true
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     LaunchedEffect(windowId) {
@@ -219,17 +218,17 @@ internal fun BossAppMenuActionEffects(state: BossAppState, reveal: FocusModeReve
                     activeTabsComponent?.let { component ->
                         // Get current project path for terminal working directory (per-window)
                         val projectPath = windowProjectState.selectedProject.value.path
-                        val terminalTab = TerminalTabInfo(
-                            id = "terminal-${Random.nextLong()}",
-                            typeId = TerminalTabType.typeId,
-                            title = "Terminal",
-                            workingDirectory = projectPath.ifEmpty { null }
-                        )
+                        val terminalTab =
+                            TerminalTabInfo(
+                                id = "terminal-${Random.nextLong()}",
+                                typeId = TerminalTabType.typeId,
+                                title = "Terminal",
+                                workingDirectory = projectPath.ifEmpty { null },
+                            )
                         component.addTab(terminalTab)
                     }
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     LaunchedEffect(windowId) {
@@ -238,8 +237,7 @@ internal fun BossAppMenuActionEffects(state: BossAppState, reveal: FocusModeReve
                 if (eventWindowId == windowId) {
                     state.showTopOfMindDialog = true
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     LaunchedEffect(windowId, workspaceManager, splitViewState) {
@@ -252,8 +250,7 @@ internal fun BossAppMenuActionEffects(state: BossAppState, reveal: FocusModeReve
                     // Apply workspace to UI
                     applyWorkspace(workspace, splitViewState, windowProjectState)
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     LaunchedEffect(windowId) {
@@ -263,8 +260,7 @@ internal fun BossAppMenuActionEffects(state: BossAppState, reveal: FocusModeReve
                     state.settingsInitialSection = section
                     state.showSettingsDialog = true
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     // Handle View menu events
@@ -276,8 +272,7 @@ internal fun BossAppMenuActionEffects(state: BossAppState, reveal: FocusModeReve
                         FocusModeSettingsManager.toggleFocusMode()
                     }
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     LaunchedEffect(windowId) {
@@ -289,11 +284,10 @@ internal fun BossAppMenuActionEffects(state: BossAppState, reveal: FocusModeReve
                     splitViewState.splitPanel(
                         panelId = splitViewState.activePanelId,
                         orientation = SplitOrientation.VERTICAL,
-                        tabToMove = currentTab
+                        tabToMove = currentTab,
                     )
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     LaunchedEffect(windowId) {
@@ -305,11 +299,10 @@ internal fun BossAppMenuActionEffects(state: BossAppState, reveal: FocusModeReve
                     splitViewState.splitPanel(
                         panelId = splitViewState.activePanelId,
                         orientation = SplitOrientation.HORIZONTAL,
-                        tabToMove = currentTab
+                        tabToMove = currentTab,
                     )
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     // Track whether split is enabled (has tabs in active panel).
@@ -321,12 +314,13 @@ internal fun BossAppMenuActionEffects(state: BossAppState, reveal: FocusModeReve
     // created purely via the OS menu).
     val activePanelId by splitViewState.activePanelIdState
     val activeTabsComponent = splitViewState.getActiveTabsComponent()
-    val hasActiveTabs = if (activeTabsComponent != null) {
-        val activeTabsState by activeTabsComponent.tabsState.subscribeAsState()
-        activeTabsState.tabs.isNotEmpty()
-    } else {
-        false
-    }
+    val hasActiveTabs =
+        if (activeTabsComponent != null) {
+            val activeTabsState by activeTabsComponent.tabsState.subscribeAsState()
+            activeTabsState.tabs.isNotEmpty()
+        } else {
+            false
+        }
     LaunchedEffect(windowId, activePanelId, hasActiveTabs) {
         MenuActionsHandler.updateSplitEnabled(windowId, hasActiveTabs)
     }
@@ -345,8 +339,7 @@ internal fun BossAppMenuActionEffects(state: BossAppState, reveal: FocusModeReve
                     // Activate the plugin (same as clicking its sidebar icon)
                     state.draggablePanelComponent.activatePlugin(pluginId)
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     // Handle Browser Reload menu events
@@ -363,8 +356,7 @@ internal fun BossAppMenuActionEffects(state: BossAppState, reveal: FocusModeReve
                         }
                     }
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     // Handle Save Workspace menu events
@@ -375,27 +367,28 @@ internal fun BossAppMenuActionEffects(state: BossAppState, reveal: FocusModeReve
                     val currentConfig = workspaceManager.currentWorkspace.value
                     if (currentConfig != null) {
                         val currentLayout = extractCurrentWorkspace(splitViewState, windowProjectState.selectedProject.value.path)
-                        val updatedConfig = currentConfig.copy(
-                            layout = currentLayout.layout,
-                            timestamp = Clock.System.now().toEpochMilliseconds()
-                        )
+                        val updatedConfig =
+                            currentConfig.copy(
+                                layout = currentLayout.layout,
+                                timestamp = Clock.System.now().toEpochMilliseconds(),
+                            )
                         workspaceManager.updateCurrentWorkspace(updatedConfig)
                         workspaceManager.saveCurrentWorkspace()
                         TabTreeState.markWorkspaceAsSaved(currentConfig.id)
                         StatusMessageManager.showMessage("Workspace Saved")
                     } else {
                         val currentLayout = extractCurrentWorkspace(splitViewState, windowProjectState.selectedProject.value.path)
-                        val newConfig = currentLayout.copy(
-                            name = "Workspace ${Clock.System.now().toEpochMilliseconds() / 1000}",
-                            description = "Saved workspace"
-                        )
+                        val newConfig =
+                            currentLayout.copy(
+                                name = "Workspace ${Clock.System.now().toEpochMilliseconds() / 1000}",
+                                description = "Saved workspace",
+                            )
                         workspaceManager.updateCurrentWorkspace(newConfig)
                         workspaceManager.saveCurrentWorkspace()
                         StatusMessageManager.showMessage("Workspace Saved")
                     }
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     // Handle Open Codebase menu events
@@ -405,8 +398,7 @@ internal fun BossAppMenuActionEffects(state: BossAppState, reveal: FocusModeReve
                 if (eventWindowId == windowId) {
                     state.draggablePanelComponent.activatePlugin("codebase")
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     // Handle Open Global Search menu events (Issue #92)
@@ -416,27 +408,28 @@ internal fun BossAppMenuActionEffects(state: BossAppState, reveal: FocusModeReve
                 if (eventWindowId == windowId) {
                     state.showGlobalSearchDialog = true
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     // Handle Panel Navigation menu events (consolidated)
     LaunchedEffect(windowId) {
-        val navigationFlows = mapOf(
-            NavigationDirection.LEFT to MenuActionsHandler.navigatePanelLeftEvents,
-            NavigationDirection.RIGHT to MenuActionsHandler.navigatePanelRightEvents,
-            NavigationDirection.UP to MenuActionsHandler.navigatePanelUpEvents,
-            NavigationDirection.DOWN to MenuActionsHandler.navigatePanelDownEvents
-        )
+        val navigationFlows =
+            mapOf(
+                NavigationDirection.LEFT to MenuActionsHandler.navigatePanelLeftEvents,
+                NavigationDirection.RIGHT to MenuActionsHandler.navigatePanelRightEvents,
+                NavigationDirection.UP to MenuActionsHandler.navigatePanelUpEvents,
+                NavigationDirection.DOWN to MenuActionsHandler.navigatePanelDownEvents,
+            )
 
         navigationFlows.forEach { (direction, flow) ->
-            flow.onEach { eventWindowId ->
-                if (eventWindowId == windowId) {
-                    splitViewState.findPanelInDirection(direction)?.let { panel ->
-                        splitViewState.setActivePanel(panel.id)
+            flow
+                .onEach { eventWindowId ->
+                    if (eventWindowId == windowId) {
+                        splitViewState.findPanelInDirection(direction)?.let { panel ->
+                            splitViewState.setActivePanel(panel.id)
+                        }
                     }
-                }
-            }.launchIn(this)
+                }.launchIn(this)
         }
     }
 
@@ -447,8 +440,7 @@ internal fun BossAppMenuActionEffects(state: BossAppState, reveal: FocusModeReve
                 if (eventWindowId == windowId) {
                     state.showShortcutHelpDialog = true
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     // Handle Show Plugin Wizard menu events
@@ -458,17 +450,17 @@ internal fun BossAppMenuActionEffects(state: BossAppState, reveal: FocusModeReve
                 if (eventWindowId == windowId) {
                     // Load plugins if not already loaded (on IO thread)
                     if (state.availablePluginsForWizard.isEmpty()) {
-                        val plugins = withContext(Dispatchers.IO) {
-                            PluginWizardIntegration.getAvailablePlugins()
-                        }
+                        val plugins =
+                            withContext(Dispatchers.IO) {
+                                PluginWizardIntegration.getAvailablePlugins()
+                            }
                         state.availablePluginsForWizard = plugins
                     }
                     if (state.availablePluginsForWizard.isNotEmpty()) {
                         state.showPluginInstallWizard = true
                     }
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     // Handle Reload All Plugins menu events
@@ -481,8 +473,7 @@ internal fun BossAppMenuActionEffects(state: BossAppState, reveal: FocusModeReve
                     val count = result.getOrElse { 0 }
                     StatusMessageManager.showMessage("Reloaded $count plugin(s)")
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     // Handle Reload Plugin (by panel ID) menu events
@@ -502,8 +493,7 @@ internal fun BossAppMenuActionEffects(state: BossAppState, reveal: FocusModeReve
                         }
                     }
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     // Handle "Check for Updates" (by panel ID) menu / header-badge events
@@ -514,23 +504,36 @@ internal fun BossAppMenuActionEffects(state: BossAppState, reveal: FocusModeReve
                     val manager = state.currentDefaultPlugin?.dynamicPluginManager ?: return@onEach
                     val pluginId = manager.getRegistrationTracker().getPluginIdForPanel(panelId) ?: return@onEach
                     val info = manager.getPluginInfo(pluginId) ?: return@onEach
-                    val ref = InstalledPluginRef(
-                        pluginId, info.manifest.displayName, info.manifest.version
-                    )
+                    val ref =
+                        InstalledPluginRef(
+                            pluginId,
+                            info.manifest.displayName,
+                            info.manifest.version,
+                        )
                     when (val outcome = PluginUpdateBridge.checkOne(ref)) {
-                        is UpdateCheckOutcome.Available ->
-                            state.pluginUpdatePrompt = AvailablePluginUpdate(
-                                pluginId, outcome.displayName, outcome.currentVersion, outcome.newVersion
-                            )
-                        UpdateCheckOutcome.UpToDate ->
+                        is UpdateCheckOutcome.Available -> {
+                            state.pluginUpdatePrompt =
+                                AvailablePluginUpdate(
+                                    pluginId,
+                                    outcome.displayName,
+                                    outcome.currentVersion,
+                                    outcome.newVersion,
+                                )
+                        }
+
+                        UpdateCheckOutcome.UpToDate -> {
                             StatusMessageManager.showMessage("${info.manifest.displayName} is up to date")
-                        is UpdateCheckOutcome.Incompatible ->
+                        }
+
+                        is UpdateCheckOutcome.Incompatible -> {
                             StatusMessageManager.showMessage("Update v${outcome.advertisedLatest} needs a newer BOSS")
-                        is UpdateCheckOutcome.Error ->
+                        }
+
+                        is UpdateCheckOutcome.Error -> {
                             StatusMessageManager.showMessage("Couldn't check for updates: ${outcome.message}")
+                        }
                     }
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 }

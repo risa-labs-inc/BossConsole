@@ -9,13 +9,17 @@ import java.util.UUID
  * Layout: $dataDir/snapshots/{processId}/{timestamp}-{uuid}.snapshot
  * Optional description: $dataDir/snapshots/{processId}/{timestamp}-{uuid}.desc
  */
-class SnapshotManager(private val dataDir: File) {
-
-    private fun snapshotDir(processId: String): File =
-        File(dataDir, "snapshots/$processId").also { it.mkdirs() }
+class SnapshotManager(
+    private val dataDir: File,
+) {
+    private fun snapshotDir(processId: String): File = File(dataDir, "snapshots/$processId").also { it.mkdirs() }
 
     /** Persist [data] for [processId] and return the new snapshot ID. */
-    fun save(processId: String, data: ByteArray, description: String = ""): String {
+    fun save(
+        processId: String,
+        data: ByteArray,
+        description: String = "",
+    ): String {
         val id = UUID.randomUUID().toString()
         val timestamp = System.currentTimeMillis()
         val dir = snapshotDir(processId)
@@ -30,7 +34,8 @@ class SnapshotManager(private val dataDir: File) {
     fun loadLatest(processId: String): ByteArray? {
         val dir = File(dataDir, "snapshots/$processId")
         if (!dir.exists()) return null
-        return dir.listFiles { f -> f.extension == "snapshot" }
+        return dir
+            .listFiles { f -> f.extension == "snapshot" }
             ?.maxByOrNull { it.nameWithoutExtension.substringBefore("-").toLongOrNull() ?: 0L }
             ?.readBytes()
     }
@@ -39,7 +44,8 @@ class SnapshotManager(private val dataDir: File) {
     fun listSnapshots(processId: String): List<SnapshotInfo> {
         val dir = File(dataDir, "snapshots/$processId")
         if (!dir.exists()) return emptyList()
-        return dir.listFiles { f -> f.extension == "snapshot" }
+        return dir
+            .listFiles { f -> f.extension == "snapshot" }
             ?.map { file ->
                 val nameWithoutExt = file.nameWithoutExtension
                 val dashIdx = nameWithoutExt.indexOf('-')
@@ -53,18 +59,22 @@ class SnapshotManager(private val dataDir: File) {
                     sizeBytes = file.length(),
                     description = if (descFile.exists()) descFile.readText() else "",
                 )
-            }
-            ?.sortedByDescending { it.timestamp }
+            }?.sortedByDescending { it.timestamp }
             ?: emptyList()
     }
 
     /** Delete all but the [keepLast] most recent snapshots for [processId]. */
-    fun cleanup(processId: String, keepLast: Int = 5) {
+    fun cleanup(
+        processId: String,
+        keepLast: Int = 5,
+    ) {
         val dir = File(dataDir, "snapshots/$processId")
         if (!dir.exists()) return
-        val snapshots = dir.listFiles { f -> f.extension == "snapshot" }
-            ?.sortedByDescending { it.nameWithoutExtension.substringBefore("-").toLongOrNull() ?: 0L }
-            ?: return
+        val snapshots =
+            dir
+                .listFiles { f -> f.extension == "snapshot" }
+                ?.sortedByDescending { it.nameWithoutExtension.substringBefore("-").toLongOrNull() ?: 0L }
+                ?: return
         snapshots.drop(keepLast).forEach { file ->
             file.delete()
             File(dir, "${file.nameWithoutExtension}.desc").takeIf { it.exists() }?.delete()

@@ -68,26 +68,27 @@ private fun ThemeCard(
 ) {
     val preview = theme.colors
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .border(
-                width = if (isSelected) 2.dp else 1.dp,
-                color = if (isSelected) BossTheme.colors.signal else BossTheme.colors.line,
-                shape = RoundedCornerShape(8.dp),
-            )
-            .clickable(onClick = onClick)
-            .padding(12.dp),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .border(
+                    width = if (isSelected) 2.dp else 1.dp,
+                    color = if (isSelected) BossTheme.colors.signal else BossTheme.colors.line,
+                    shape = RoundedCornerShape(8.dp),
+                ).clickable(onClick = onClick)
+                .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         // Mini preview of the theme's own palette (so each card previews itself).
         Row(
-            modifier = Modifier
-                .clip(RoundedCornerShape(6.dp))
-                .background(preview.ink)
-                .border(1.dp, preview.line, RoundedCornerShape(6.dp))
-                .padding(6.dp),
+            modifier =
+                Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(preview.ink)
+                    .border(1.dp, preview.line, RoundedCornerShape(6.dp))
+                    .padding(6.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -125,9 +126,10 @@ private fun ThemeCard(
 @Composable
 private fun Swatch(color: Color) {
     Box(
-        modifier = Modifier
-            .size(16.dp)
-            .clip(RoundedCornerShape(3.dp))
-            .background(color),
+        modifier =
+            Modifier
+                .size(16.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(color),
     )
 }

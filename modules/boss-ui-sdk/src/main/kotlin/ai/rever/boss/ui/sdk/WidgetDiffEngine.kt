@@ -1,19 +1,34 @@
 package ai.rever.boss.ui.sdk
 
 sealed class DiffOperation {
-    data class NodeAdded(val node: WidgetNode, val parentId: String, val index: Int) : DiffOperation()
-    data class NodeRemoved(val nodeId: String) : DiffOperation()
+    data class NodeAdded(
+        val node: WidgetNode,
+        val parentId: String,
+        val index: Int,
+    ) : DiffOperation()
+
+    data class NodeRemoved(
+        val nodeId: String,
+    ) : DiffOperation()
+
     data class NodeUpdated(
         val nodeId: String,
         val changedProperties: Map<String, String>,
         val newModifier: WidgetModifier?,
     ) : DiffOperation()
-    data class NodeMoved(val nodeId: String, val newParentId: String, val newIndex: Int) : DiffOperation()
+
+    data class NodeMoved(
+        val nodeId: String,
+        val newParentId: String,
+        val newIndex: Int,
+    ) : DiffOperation()
 }
 
 object WidgetDiffEngine {
-
-    fun diff(old: WidgetTree, new: WidgetTree): List<DiffOperation> {
+    fun diff(
+        old: WidgetTree,
+        new: WidgetTree,
+    ): List<DiffOperation> {
         val ops = mutableListOf<DiffOperation>()
 
         val oldParents = buildParentMap(old)
@@ -33,11 +48,12 @@ object WidgetDiffEngine {
         for (id in added) {
             val node = new.nodes[id]!!
             val parentId = newParents[id] ?: ""
-            val index = if (parentId.isNotEmpty()) {
-                new.nodes[parentId]?.childIds?.indexOf(id) ?: 0
-            } else {
-                0
-            }
+            val index =
+                if (parentId.isNotEmpty()) {
+                    new.nodes[parentId]?.childIds?.indexOf(id) ?: 0
+                } else {
+                    0
+                }
             ops.add(DiffOperation.NodeAdded(node, parentId, index))
         }
 
@@ -64,18 +80,23 @@ object WidgetDiffEngine {
 
             val modifierChanged = oldNode.modifier != newNode.modifier
             if (changedProps.isNotEmpty() || modifierChanged) {
-                ops.add(DiffOperation.NodeUpdated(
-                    id,
-                    changedProps,
-                    if (modifierChanged) newNode.modifier else null,
-                ))
+                ops.add(
+                    DiffOperation.NodeUpdated(
+                        id,
+                        changedProps,
+                        if (modifierChanged) newNode.modifier else null,
+                    ),
+                )
             }
         }
 
         return ops
     }
 
-    fun apply(base: WidgetTree, operations: List<DiffOperation>): WidgetTree {
+    fun apply(
+        base: WidgetTree,
+        operations: List<DiffOperation>,
+    ): WidgetTree {
         val nodes = base.nodes.toMutableMap()
 
         for (op in operations) {
@@ -91,6 +112,7 @@ object WidgetDiffEngine {
                         }
                     }
                 }
+
                 is DiffOperation.NodeRemoved -> {
                     val parentEntry = nodes.entries.firstOrNull { op.nodeId in it.value.childIds }
                     nodes.remove(op.nodeId)
@@ -99,22 +121,26 @@ object WidgetDiffEngine {
                         nodes[parentId] = parentNode.copy(childIds = parentNode.childIds - op.nodeId)
                     }
                 }
+
                 is DiffOperation.NodeUpdated -> {
                     val node = nodes[op.nodeId] ?: continue
                     val newProps = node.properties.toMutableMap().apply { putAll(op.changedProperties) }
-                    nodes[op.nodeId] = node.copy(
-                        properties = newProps,
-                        modifier = op.newModifier ?: node.modifier,
-                    )
+                    nodes[op.nodeId] =
+                        node.copy(
+                            properties = newProps,
+                            modifier = op.newModifier ?: node.modifier,
+                        )
                 }
+
                 is DiffOperation.NodeMoved -> {
                     // Remove from old parent
                     val oldParentEntry = nodes.entries.firstOrNull { op.nodeId in it.value.childIds }
                     if (oldParentEntry != null) {
                         val (oldParentId, oldParentNode) = oldParentEntry
-                        nodes[oldParentId] = oldParentNode.copy(
-                            childIds = oldParentNode.childIds - op.nodeId,
-                        )
+                        nodes[oldParentId] =
+                            oldParentNode.copy(
+                                childIds = oldParentNode.childIds - op.nodeId,
+                            )
                     }
                     // Add to new parent
                     val newParent = nodes[op.newParentId]

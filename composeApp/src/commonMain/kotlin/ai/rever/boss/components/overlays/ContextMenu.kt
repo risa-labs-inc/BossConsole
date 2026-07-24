@@ -3,8 +3,9 @@ package ai.rever.boss.components.overlays
 import ContextMenuBackground
 import ContextMenuBorder
 import ContextMenuHover
-import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.platform.ContextMenuHandler
+import ai.rever.boss.plugin.ui.BossTheme
+import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -12,7 +13,6 @@ import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -58,7 +58,7 @@ data class ContextMenuItem(
     val secondaryTrailingIconColor: Color? = null,
     val onSecondaryTrailingClick: (() -> Unit)? = null,
     val subMenu: List<ContextMenuItem>? = null, // Submenu items
-    val onClick: () -> Unit = {}
+    val onClick: () -> Unit = {},
 )
 
 /**
@@ -75,18 +75,18 @@ fun ContextMenu(
     offset: IntOffset = IntOffset.Zero,
     alignment: Alignment = Alignment.TopStart,
     modifier: Modifier = Modifier,
-    onDismissRequest: () -> Unit
+    onDismissRequest: () -> Unit,
 ) {
     Popup(
         onDismissRequest = onDismissRequest,
         alignment = alignment,
         offset = offset,
-        properties = PopupProperties(focusable = true)
+        properties = PopupProperties(focusable = true),
     ) {
         ContextMenuContent(
             items = items,
             modifier = modifier,
-            onDismissRequest = onDismissRequest
+            onDismissRequest = onDismissRequest,
         )
     }
 }
@@ -95,32 +95,31 @@ fun ContextMenu(
 private fun ContextMenuContent(
     items: List<ContextMenuItem>,
     modifier: Modifier = Modifier,
-    onDismissRequest: () -> Unit
+    onDismissRequest: () -> Unit,
 ) {
     var expandedSubMenuIndex by remember { mutableStateOf<Int?>(null) }
     var isSubMenuHovered by remember { mutableStateOf(false) }
     val colors = BossTheme.colors
 
     Column(
-        modifier = modifier
-            .background(
-                color = ContextMenuBackground,
-                shape = RoundedCornerShape(4.dp)
-            )
-            .border(
-                width = 1.dp,
-                color = ContextMenuBorder,
-                shape = RoundedCornerShape(4.dp)
-            )
-            .padding(vertical = 4.dp)
-            .width(IntrinsicSize.Max)
+        modifier =
+            modifier
+                .background(
+                    color = ContextMenuBackground,
+                    shape = RoundedCornerShape(4.dp),
+                ).border(
+                    width = 1.dp,
+                    color = ContextMenuBorder,
+                    shape = RoundedCornerShape(4.dp),
+                ).padding(vertical = 4.dp)
+                .width(IntrinsicSize.Max),
     ) {
         items.forEachIndexed { index, item ->
             if (item.isDivider) {
                 Divider(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                     color = ContextMenuBorder,
-                    thickness = 1.dp
+                    thickness = 1.dp,
                 )
             } else {
                 val interactionSource = remember { MutableInteractionSource() }
@@ -148,30 +147,33 @@ private fun ContextMenuContent(
 
                 Box {
                     Row(
-                        modifier = Modifier
-                            .hoverable(interactionSource)
-                            .then(
-                                if (hasSubMenu) Modifier else Modifier.clickable {
-                                    item.onClick()
-                                    onDismissRequest()
-                                }
-                            )
-                            .background(
-                                if (isHighlighted) ContextMenuHover else Color.Transparent
-                            )
-                            .padding(horizontal = 12.dp, vertical = 4.dp)
-                            .fillMaxWidth()
-                            .onGloballyPositioned { coordinates ->
-                                rowWidthRef[0] = coordinates.size.width
-                            },
-                        verticalAlignment = Alignment.CenterVertically
+                        modifier =
+                            Modifier
+                                .hoverable(interactionSource)
+                                .then(
+                                    if (hasSubMenu) {
+                                        Modifier
+                                    } else {
+                                        Modifier.clickable {
+                                            item.onClick()
+                                            onDismissRequest()
+                                        }
+                                    },
+                                ).background(
+                                    if (isHighlighted) ContextMenuHover else Color.Transparent,
+                                ).padding(horizontal = 12.dp, vertical = 4.dp)
+                                .fillMaxWidth()
+                                .onGloballyPositioned { coordinates ->
+                                    rowWidthRef[0] = coordinates.size.width
+                                },
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         if (item.icon != null) {
                             Icon(
                                 imageVector = item.icon,
                                 contentDescription = item.text,
                                 tint = colors.textPrimary,
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(16.dp),
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                         }
@@ -179,8 +181,11 @@ private fun ContextMenuContent(
                             text = item.text,
                             color = colors.textPrimary,
                             fontSize = 13.sp,
-                            modifier = Modifier.weight(1f).align(Alignment.CenterVertically)
-                                .padding(bottom = 4.dp)
+                            modifier =
+                                Modifier
+                                    .weight(1f)
+                                    .align(Alignment.CenterVertically)
+                                    .padding(bottom = 4.dp),
                         )
 
                         // Show arrow for submenu
@@ -189,7 +194,7 @@ private fun ContextMenuContent(
                             Text(
                                 text = "›",
                                 color = colors.textSecondary,
-                                fontSize = 16.sp
+                                fontSize = 16.sp,
                             )
                         }
 
@@ -197,26 +202,29 @@ private fun ContextMenuContent(
                         if (item.trailingIcon != null) {
                             Spacer(modifier = Modifier.width(12.dp))
                             Box(
-                                modifier = Modifier
-                                    .size(20.dp)
-                                    .then(
-                                        if (item.onTrailingClick != null) {
-                                            Modifier.clickable(
-                                                interactionSource = remember { MutableInteractionSource() },
-                                                indication = null
-                                            ) {
-                                                item.onTrailingClick.invoke()
-                                                onDismissRequest()
-                                            }
-                                        } else Modifier
-                                    ),
-                                contentAlignment = Alignment.Center
+                                modifier =
+                                    Modifier
+                                        .size(20.dp)
+                                        .then(
+                                            if (item.onTrailingClick != null) {
+                                                Modifier.clickable(
+                                                    interactionSource = remember { MutableInteractionSource() },
+                                                    indication = null,
+                                                ) {
+                                                    item.onTrailingClick.invoke()
+                                                    onDismissRequest()
+                                                }
+                                            } else {
+                                                Modifier
+                                            },
+                                        ),
+                                contentAlignment = Alignment.Center,
                             ) {
                                 Icon(
                                     imageVector = item.trailingIcon,
                                     contentDescription = "Action",
                                     tint = item.trailingIconColor ?: colors.textSecondary,
-                                    modifier = Modifier.size(if (item.onTrailingClick != null) 16.dp else 8.dp) // Smaller for indicator dots
+                                    modifier = Modifier.size(if (item.onTrailingClick != null) 16.dp else 8.dp), // Smaller for indicator dots
                                 )
                             }
                         }
@@ -224,22 +232,23 @@ private fun ContextMenuContent(
                         if (item.secondaryTrailingIcon != null && item.onSecondaryTrailingClick != null) {
                             Spacer(modifier = Modifier.width(8.dp))
                             Box(
-                                modifier = Modifier
-                                    .size(18.dp)
-                                    .clickable(
-                                        interactionSource = remember { MutableInteractionSource() },
-                                        indication = null
-                                    ) {
-                                        item.onSecondaryTrailingClick.invoke()
-                                        onDismissRequest()
-                                    },
-                                contentAlignment = Alignment.Center
+                                modifier =
+                                    Modifier
+                                        .size(18.dp)
+                                        .clickable(
+                                            interactionSource = remember { MutableInteractionSource() },
+                                            indication = null,
+                                        ) {
+                                            item.onSecondaryTrailingClick.invoke()
+                                            onDismissRequest()
+                                        },
+                                contentAlignment = Alignment.Center,
                             ) {
                                 Icon(
                                     imageVector = item.secondaryTrailingIcon,
                                     contentDescription = "Delete",
                                     tint = item.secondaryTrailingIconColor ?: colors.textSecondary,
-                                    modifier = Modifier.size(14.dp)
+                                    modifier = Modifier.size(14.dp),
                                 )
                             }
                         }
@@ -257,43 +266,45 @@ private fun ContextMenuContent(
 
                         Popup(
                             alignment = Alignment.TopStart,
-                            offset = IntOffset(rowWidthRef[0], 0) // Position to the right of parent menu item
+                            offset = IntOffset(rowWidthRef[0], 0), // Position to the right of parent menu item
                         ) {
                             val scrollState = rememberScrollState()
                             val needsScrollbar = scrollState.maxValue > 0
 
                             Row(
-                                modifier = Modifier
-                                    .hoverable(subMenuInteractionSource)
-                                    .heightIn(max = 400.dp)
-                                    .background(
-                                        color = ContextMenuBackground,
-                                        shape = RoundedCornerShape(4.dp)
-                                    )
-                                    .border(
-                                        width = 1.dp,
-                                        color = ContextMenuBorder,
-                                        shape = RoundedCornerShape(4.dp)
-                                    )
+                                modifier =
+                                    Modifier
+                                        .hoverable(subMenuInteractionSource)
+                                        .heightIn(max = 400.dp)
+                                        .background(
+                                            color = ContextMenuBackground,
+                                            shape = RoundedCornerShape(4.dp),
+                                        ).border(
+                                            width = 1.dp,
+                                            color = ContextMenuBorder,
+                                            shape = RoundedCornerShape(4.dp),
+                                        ),
                             ) {
                                 Column(
-                                    modifier = Modifier
-                                        .padding(vertical = 4.dp)
-                                        .widthIn(min = 150.dp)
-                                        .width(IntrinsicSize.Max)
-                                        .verticalScroll(scrollState)
+                                    modifier =
+                                        Modifier
+                                            .padding(vertical = 4.dp)
+                                            .widthIn(min = 150.dp)
+                                            .width(IntrinsicSize.Max)
+                                            .verticalScroll(scrollState),
                                 ) {
                                     SubMenuContent(
                                         items = item.subMenu,
-                                        onDismissRequest = onDismissRequest
+                                        onDismissRequest = onDismissRequest,
                                     )
                                 }
                                 // Only show scrollbar when content overflows
                                 if (needsScrollbar) {
                                     VerticalScrollbar(
-                                        modifier = Modifier
-                                            .padding(vertical = 4.dp, horizontal = 2.dp),
-                                        adapter = rememberScrollbarAdapter(scrollState)
+                                        modifier =
+                                            Modifier
+                                                .padding(vertical = 4.dp, horizontal = 2.dp),
+                                        adapter = rememberScrollbarAdapter(scrollState),
                                     )
                                 }
                             }
@@ -311,7 +322,7 @@ private fun ContextMenuContent(
 @Composable
 private fun SubMenuContent(
     items: List<ContextMenuItem>,
-    onDismissRequest: () -> Unit
+    onDismissRequest: () -> Unit,
 ) {
     var expandedSubMenuIndex by remember { mutableStateOf<Int?>(null) }
     val colors = BossTheme.colors
@@ -321,7 +332,7 @@ private fun SubMenuContent(
             Divider(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                 color = ContextMenuBorder,
-                thickness = 1.dp
+                thickness = 1.dp,
             )
         } else {
             val subInteractionSource = remember { MutableInteractionSource() }
@@ -347,30 +358,33 @@ private fun SubMenuContent(
 
             Box {
                 Row(
-                    modifier = Modifier
-                        .hoverable(subInteractionSource)
-                        .then(
-                            if (hasNestedSubMenu) Modifier else Modifier.clickable {
-                                subItem.onClick()
-                                onDismissRequest()
-                            }
-                        )
-                        .background(
-                            if (isHighlighted) ContextMenuHover else Color.Transparent
-                        )
-                        .padding(horizontal = 12.dp, vertical = 4.dp)
-                        .fillMaxWidth()
-                        .onGloballyPositioned { coordinates ->
-                            rowWidthRef[0] = coordinates.size.width
-                        },
-                    verticalAlignment = Alignment.CenterVertically
+                    modifier =
+                        Modifier
+                            .hoverable(subInteractionSource)
+                            .then(
+                                if (hasNestedSubMenu) {
+                                    Modifier
+                                } else {
+                                    Modifier.clickable {
+                                        subItem.onClick()
+                                        onDismissRequest()
+                                    }
+                                },
+                            ).background(
+                                if (isHighlighted) ContextMenuHover else Color.Transparent,
+                            ).padding(horizontal = 12.dp, vertical = 4.dp)
+                            .fillMaxWidth()
+                            .onGloballyPositioned { coordinates ->
+                                rowWidthRef[0] = coordinates.size.width
+                            },
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (subItem.icon != null) {
                         Icon(
                             imageVector = subItem.icon,
                             contentDescription = subItem.text,
                             tint = colors.textPrimary,
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(16.dp),
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                     }
@@ -378,8 +392,11 @@ private fun SubMenuContent(
                         text = subItem.text,
                         color = Color.White,
                         fontSize = 13.sp,
-                        modifier = Modifier.weight(1f).align(Alignment.CenterVertically)
-                            .padding(bottom = 4.dp)
+                        modifier =
+                            Modifier
+                                .weight(1f)
+                                .align(Alignment.CenterVertically)
+                                .padding(bottom = 4.dp),
                     )
 
                     // Show arrow for nested submenu
@@ -388,7 +405,7 @@ private fun SubMenuContent(
                         Text(
                             text = "›",
                             color = colors.textSecondary,
-                            fontSize = 16.sp
+                            fontSize = 16.sp,
                         )
                     }
 
@@ -413,41 +430,43 @@ private fun SubMenuContent(
                 if (hasNestedSubMenu && expandedSubMenuIndex == index) {
                     Popup(
                         alignment = Alignment.TopStart,
-                        offset = IntOffset(rowWidthRef[0], 0)
+                        offset = IntOffset(rowWidthRef[0], 0),
                     ) {
                         val scrollState = rememberScrollState()
                         val needsScrollbar = scrollState.maxValue > 0
 
                         Row(
-                            modifier = Modifier
-                                .heightIn(max = 400.dp)
-                                .background(
-                                    color = ContextMenuBackground,
-                                    shape = RoundedCornerShape(4.dp)
-                                )
-                                .border(
-                                    width = 1.dp,
-                                    color = ContextMenuBorder,
-                                    shape = RoundedCornerShape(4.dp)
-                                )
+                            modifier =
+                                Modifier
+                                    .heightIn(max = 400.dp)
+                                    .background(
+                                        color = ContextMenuBackground,
+                                        shape = RoundedCornerShape(4.dp),
+                                    ).border(
+                                        width = 1.dp,
+                                        color = ContextMenuBorder,
+                                        shape = RoundedCornerShape(4.dp),
+                                    ),
                         ) {
                             Column(
-                                modifier = Modifier
-                                    .padding(vertical = 4.dp)
-                                    .widthIn(min = 150.dp)
-                                    .width(IntrinsicSize.Max)
-                                    .verticalScroll(scrollState)
+                                modifier =
+                                    Modifier
+                                        .padding(vertical = 4.dp)
+                                        .widthIn(min = 150.dp)
+                                        .width(IntrinsicSize.Max)
+                                        .verticalScroll(scrollState),
                             ) {
                                 SubMenuContent(
                                     items = subItem.subMenu,
-                                    onDismissRequest = onDismissRequest
+                                    onDismissRequest = onDismissRequest,
                                 )
                             }
                             if (needsScrollbar) {
                                 VerticalScrollbar(
-                                    modifier = Modifier
-                                        .padding(vertical = 4.dp, horizontal = 2.dp),
-                                    adapter = rememberScrollbarAdapter(scrollState)
+                                    modifier =
+                                        Modifier
+                                            .padding(vertical = 4.dp, horizontal = 2.dp),
+                                    adapter = rememberScrollbarAdapter(scrollState),
                                 )
                             }
                         }
@@ -471,28 +490,29 @@ private fun SubMenuContent(
  */
 fun Modifier.contextMenu(
     enabled: Boolean = true,
-    items: List<ContextMenuItem>
-): Modifier = composed {
-    var showMenu by remember { mutableStateOf(false) }
-    var menuPosition by remember { mutableStateOf(IntOffset.Zero) }
+    items: List<ContextMenuItem>,
+): Modifier =
+    composed {
+        var showMenu by remember { mutableStateOf(false) }
+        var menuPosition by remember { mutableStateOf(IntOffset.Zero) }
 
-    // Get the platform-specific handler
-    val handler = remember { ContextMenuHandler() }
+        // Get the platform-specific handler
+        val handler = remember { ContextMenuHandler() }
 
-    if (showMenu && enabled) {
-        ContextMenu(
-            items = items,
-            offset = menuPosition,
-            onDismissRequest = { showMenu = false }
-        )
+        if (showMenu && enabled) {
+            ContextMenu(
+                items = items,
+                offset = menuPosition,
+                onDismissRequest = { showMenu = false },
+            )
+        }
+
+        // Apply platform-specific behavior
+        with(handler) {
+            this@composed.applyContextMenuBehavior(
+                showMenu = showMenu,
+                setShowMenu = { showMenu = it },
+                setMenuPosition = { menuPosition = it },
+            )
+        }
     }
-
-    // Apply platform-specific behavior
-    with(handler) {
-        this@composed.applyContextMenuBehavior(
-            showMenu = showMenu,
-            setShowMenu = { showMenu = it },
-            setMenuPosition = { menuPosition = it }
-        )
-    }
-} 

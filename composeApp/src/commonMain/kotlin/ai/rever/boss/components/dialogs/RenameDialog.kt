@@ -28,31 +28,32 @@ fun RenameDialog(
     currentName: String,
     label: String,
     onDismiss: () -> Unit,
-    onRename: (newName: String) -> Unit
+    onRename: (newName: String) -> Unit,
 ) {
     var newName by remember { mutableStateOf(currentName) }
 
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            dismissOnClickOutside = true,
-            dismissOnBackPress = true
-        )
+        properties =
+            DialogProperties(
+                dismissOnClickOutside = true,
+                dismissOnBackPress = true,
+            ),
     ) {
         Surface(
             modifier = Modifier.width(400.dp),
             shape = RoundedCornerShape(8.dp),
-            color = BossTheme.colors.panel
+            color = BossTheme.colors.panel,
         ) {
             Column(
-                modifier = Modifier.padding(20.dp)
+                modifier = Modifier.padding(20.dp),
             ) {
                 // Title
                 Text(
                     text = title,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
-                    color = BossTheme.colors.textPrimary
+                    color = BossTheme.colors.textPrimary,
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -63,13 +64,14 @@ fun RenameDialog(
                     onValueChange = { newName = it },
                     label = { Text(label, color = BossTheme.colors.textSecondary) },
                     modifier = Modifier.fillMaxWidth(),
-                    colors = TextFieldDefaults.outlinedTextFieldColors(
-                        textColor = BossTheme.colors.textPrimary,
-                        cursorColor = BossTheme.colors.signal,
-                        focusedBorderColor = BossTheme.colors.signal,
-                        unfocusedBorderColor = BossTheme.colors.line
-                    ),
-                    singleLine = true
+                    colors =
+                        TextFieldDefaults.outlinedTextFieldColors(
+                            textColor = BossTheme.colors.textPrimary,
+                            cursorColor = BossTheme.colors.signal,
+                            focusedBorderColor = BossTheme.colors.signal,
+                            unfocusedBorderColor = BossTheme.colors.line,
+                        ),
+                    singleLine = true,
                 )
 
                 Spacer(modifier = Modifier.height(20.dp))
@@ -77,13 +79,14 @@ fun RenameDialog(
                 // Action buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
+                    horizontalArrangement = Arrangement.End,
                 ) {
                     TextButton(
                         onClick = onDismiss,
-                        colors = ButtonDefaults.textButtonColors(
-                            contentColor = BossTheme.colors.textSecondary
-                        )
+                        colors =
+                            ButtonDefaults.textButtonColors(
+                                contentColor = BossTheme.colors.textSecondary,
+                            ),
                     ) {
                         Text("Cancel")
                     }
@@ -99,13 +102,14 @@ fun RenameDialog(
                             onDismiss()
                         },
                         enabled = newName.trim().isNotEmpty() && newName.trim() != currentName,
-                        colors = ButtonDefaults.buttonColors(
-                            backgroundColor = BossTheme.colors.signal,
-                            contentColor = Color.Black,
-                            disabledBackgroundColor = BossTheme.colors.line,
-                            disabledContentColor = BossTheme.colors.textSecondary
-                        ),
-                        shape = RoundedCornerShape(6.dp)
+                        colors =
+                            ButtonDefaults.buttonColors(
+                                backgroundColor = BossTheme.colors.signal,
+                                contentColor = Color.Black,
+                                disabledBackgroundColor = BossTheme.colors.line,
+                                disabledContentColor = BossTheme.colors.textSecondary,
+                            ),
+                        shape = RoundedCornerShape(6.dp),
                     ) {
                         Text("Rename", fontWeight = FontWeight.Medium)
                     }

@@ -41,14 +41,14 @@ fun ActionCard(
     title: String,
     shortcut: String? = null,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
 
     val scale by animateFloatAsState(
         targetValue = if (isHovered) 1.05f else 1f,
-        animationSpec = spring(dampingRatio = 0.6f)
+        animationSpec = spring(dampingRatio = 0.6f),
     )
 
     val backgroundColor = if (isHovered) BossTheme.colors.signalWash else BossTheme.colors.raised
@@ -57,31 +57,33 @@ fun ActionCard(
     val cardShape = RoundedCornerShape(12.dp)
 
     Column(
-        modifier = modifier
-            .width(120.dp)
-            .height(110.dp) // Fixed height for consistency
-            .scale(scale)
-            .clip(cardShape)
-            .background(color = backgroundColor)
-            .clickable { onClick() }
-            .hoverable(interactionSource)
-            .padding(12.dp),
+        modifier =
+            modifier
+                .width(120.dp)
+                .height(110.dp) // Fixed height for consistency
+                .scale(scale)
+                .clip(cardShape)
+                .background(color = backgroundColor)
+                .clickable { onClick() }
+                .hoverable(interactionSource)
+                .padding(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceBetween
+        verticalArrangement = Arrangement.SpaceBetween,
     ) {
         Icon(
             imageVector = icon,
             contentDescription = title,
             tint = iconColor,
-            modifier = Modifier.size(32.dp)
+            modifier = Modifier.size(32.dp),
         )
 
         // Title with fixed height for consistency
         Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(18.dp),
-            contentAlignment = Alignment.Center
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .height(18.dp),
+            contentAlignment = Alignment.Center,
         ) {
             Text(
                 text = title,
@@ -89,16 +91,17 @@ fun ActionCard(
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
                 textAlign = TextAlign.Center,
-                maxLines = 1
+                maxLines = 1,
             )
         }
 
         // Shortcut with fixed height for consistency
         Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(18.dp),
-            contentAlignment = Alignment.Center
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .height(18.dp),
+            contentAlignment = Alignment.Center,
         ) {
             if (shortcut != null) {
                 Text(
@@ -106,7 +109,7 @@ fun ActionCard(
                     color = BossTheme.colors.textSecondary.copy(alpha = 0.6f),
                     fontSize = 11.sp,
                     textAlign = TextAlign.Center,
-                    maxLines = 1
+                    maxLines = 1,
                 )
             }
         }

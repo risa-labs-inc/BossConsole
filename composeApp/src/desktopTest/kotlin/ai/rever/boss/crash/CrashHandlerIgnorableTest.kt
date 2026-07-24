@@ -10,7 +10,6 @@ import kotlin.test.assertTrue
  * must not pop the crash dialog (dismissing it exits the app).
  */
 class CrashHandlerIgnorableTest {
-
     @Test
     fun `supabase token expiry is ignorable`() {
         assertTrue(CrashHandler.isIgnorable(TokenExpiredException()))

@@ -1,9 +1,9 @@
 package ai.rever.boss.components.settings.sections
 
 import ai.rever.boss.components.settings.shared.SettingsDropdown
+import ai.rever.boss.components.settings.shared.SettingsInfoRow
 import ai.rever.boss.components.settings.shared.SettingsSection
 import ai.rever.boss.components.settings.shared.SettingsToggle
-import ai.rever.boss.components.settings.shared.SettingsInfoRow
 import ai.rever.boss.window.TabWidthMode
 import ai.rever.boss.window.WindowAppearanceSettingsManager
 import androidx.compose.foundation.layout.*
@@ -19,16 +19,17 @@ fun WindowAppearanceSettings() {
 
     // Determine platform default
     val os = System.getProperty("os.name").lowercase()
-    val platformDefault = when {
-        os.contains("mac") -> "Shown"
-        os.contains("linux") -> "Hidden"
-        os.contains("windows") -> "Hidden"
-        else -> "Platform-dependent"
-    }
+    val platformDefault =
+        when {
+            os.contains("mac") -> "Shown"
+            os.contains("linux") -> "Hidden"
+            os.contains("windows") -> "Hidden"
+            else -> "Platform-dependent"
+        }
 
     Column(
         modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         SettingsSection(title = "Title Bar") {
             SettingsToggle(
@@ -37,17 +38,17 @@ fun WindowAppearanceSettings() {
                 onCheckedChange = { enabled ->
                     coroutineScope.launch {
                         WindowAppearanceSettingsManager.updateSettings(
-                            settings.copy(showTitleBar = enabled)
+                            settings.copy(showTitleBar = enabled),
                         )
                     }
                 },
-                description = "Display the \"Boss Console\" title bar at the top of the window"
+                description = "Display the \"Boss Console\" title bar at the top of the window",
             )
 
             SettingsInfoRow(
                 label = "Platform Default",
                 value = platformDefault,
-                description = "The default setting for your operating system"
+                description = "The default setting for your operating system",
             )
         }
 
@@ -60,20 +61,22 @@ fun WindowAppearanceSettings() {
                     val mode = TabWidthMode.entries.first { it.displayName == selected }
                     coroutineScope.launch {
                         WindowAppearanceSettingsManager.updateSettings(
-                            settings.copy(tabWidthMode = mode)
+                            settings.copy(tabWidthMode = mode),
                         )
                     }
                 },
-                description = "Shrink to Fit: tabs shrink evenly so they all stay visible, scrolling only " +
-                    "when each is favicon-sized (Safari style). Fixed Width: tabs keep their natural width " +
-                    "and the bar scrolls when they overflow."
+                description =
+                    "Shrink to Fit: tabs shrink evenly so they all stay visible, scrolling only " +
+                        "when each is favicon-sized (Safari style). Fixed Width: tabs keep their natural width " +
+                        "and the bar scrolls when they overflow.",
             )
         }
     }
 }
 
 private val TabWidthMode.displayName: String
-    get() = when (this) {
-        TabWidthMode.SHRINK_TO_FIT -> "Shrink to Fit"
-        TabWidthMode.FIXED -> "Fixed Width"
-    }
+    get() =
+        when (this) {
+            TabWidthMode.SHRINK_TO_FIT -> "Shrink to Fit"
+            TabWidthMode.FIXED -> "Fixed Width"
+        }

@@ -26,7 +26,6 @@ import java.security.MessageDigest
  * The task reads metadata from the JAR manifest and publishes to the store.
  */
 abstract class PublishPluginTask : DefaultTask() {
-
     init {
         group = "publishing"
         description = "Publishes the plugin to the BOSS Plugin Store"
@@ -129,18 +128,21 @@ abstract class PublishPluginTask : DefaultTask() {
 
         // Extract metadata from manifest if not provided
         val manifest = readManifest(jar)
-        
-        val actualPluginId = pluginId.orNull 
-            ?: manifest["Plugin-Id"] 
-            ?: throw GradleException("Plugin ID not found. Provide via pluginId property or Plugin-Id manifest entry.")
-        
-        val actualDisplayName = displayName.orNull 
-            ?: manifest["Plugin-Name"] 
-            ?: actualPluginId
-        
-        val actualVersion = pluginVersion.orNull 
-            ?: manifest["Plugin-Version"] 
-            ?: throw GradleException("Version not found. Provide via pluginVersion property or Plugin-Version manifest entry.")
+
+        val actualPluginId =
+            pluginId.orNull
+                ?: manifest["Plugin-Id"]
+                ?: throw GradleException("Plugin ID not found. Provide via pluginId property or Plugin-Id manifest entry.")
+
+        val actualDisplayName =
+            displayName.orNull
+                ?: manifest["Plugin-Name"]
+                ?: actualPluginId
+
+        val actualVersion =
+            pluginVersion.orNull
+                ?: manifest["Plugin-Version"]
+                ?: throw GradleException("Version not found. Provide via pluginVersion property or Plugin-Version manifest entry.")
 
         logger.lifecycle("  Plugin ID:    $actualPluginId")
         logger.lifecycle("  Display Name: $actualDisplayName")
@@ -148,13 +150,17 @@ abstract class PublishPluginTask : DefaultTask() {
         logger.lifecycle("  JAR Size:     $jarSize bytes")
         logger.lifecycle("  SHA256:       ${sha256.take(16)}...")
 
-        val baseUrl = storeUrl.orNull 
-            ?: System.getenv("BOSS_PLUGIN_STORE_URL") 
-            ?: "https://api.risaboss.com/functions/v1/plugin-store"
-        
-        val token = authToken.orNull
-            ?: System.getenv("BOSS_PLUGIN_STORE_TOKEN")
-            ?: throw GradleException("Authentication token required. Set via authToken property or BOSS_PLUGIN_STORE_TOKEN environment variable.")
+        val baseUrl =
+            storeUrl.orNull
+                ?: System.getenv("BOSS_PLUGIN_STORE_URL")
+                ?: "https://api.risaboss.com/functions/v1/plugin-store"
+
+        val token =
+            authToken.orNull
+                ?: System.getenv("BOSS_PLUGIN_STORE_TOKEN")
+                ?: throw GradleException(
+                    "Authentication token required. Set via authToken property or BOSS_PLUGIN_STORE_TOKEN environment variable.",
+                )
 
         val apiKey = anonKey.orNull ?: System.getenv("SUPABASE_ANON_KEY") ?: ""
 
@@ -173,7 +179,7 @@ abstract class PublishPluginTask : DefaultTask() {
                 authorName = authorName.orNull,
                 tags = tags.orNull?.split(",")?.map { it.trim() } ?: emptyList(),
                 token = token,
-                apiKey = apiKey
+                apiKey = apiKey,
             )
             logger.lifecycle("  Plugin entry created")
         } else {
@@ -182,14 +188,15 @@ abstract class PublishPluginTask : DefaultTask() {
 
         // Step 3: Create version and get upload URL
         logger.lifecycle("Creating version entry...")
-        val (versionId, uploadUrl) = createVersion(
-            baseUrl = baseUrl,
-            pluginId = actualPluginId,
-            version = actualVersion,
-            changelog = changelog.orNull ?: "",
-            token = token,
-            apiKey = apiKey
-        )
+        val (versionId, uploadUrl) =
+            createVersion(
+                baseUrl = baseUrl,
+                pluginId = actualPluginId,
+                version = actualVersion,
+                changelog = changelog.orNull ?: "",
+                token = token,
+                apiKey = apiKey,
+            )
         logger.lifecycle("  Version created: $versionId")
 
         // Step 4: Upload JAR
@@ -205,7 +212,7 @@ abstract class PublishPluginTask : DefaultTask() {
             sha256 = sha256,
             jarSize = jarSize,
             token = token,
-            apiKey = apiKey
+            apiKey = apiKey,
         )
         logger.lifecycle("  Version finalized")
 
@@ -237,8 +244,13 @@ abstract class PublishPluginTask : DefaultTask() {
         return manifest
     }
 
-    private fun checkPluginExists(baseUrl: String, pluginId: String, token: String, apiKey: String): Boolean {
-        return try {
+    private fun checkPluginExists(
+        baseUrl: String,
+        pluginId: String,
+        token: String,
+        apiKey: String,
+    ): Boolean =
+        try {
             val response = httpGet("$baseUrl/$pluginId", token, apiKey)
             response.statusCode == 200
         } catch (e: Exception) {
@@ -246,7 +258,6 @@ abstract class PublishPluginTask : DefaultTask() {
             logger.info("Plugin existence check failed (${e.message}) - assuming plugin does not exist yet")
             false
         }
-    }
 
     private fun createPlugin(
         baseUrl: String,
@@ -256,20 +267,21 @@ abstract class PublishPluginTask : DefaultTask() {
         authorName: String?,
         tags: List<String>,
         token: String,
-        apiKey: String
+        apiKey: String,
     ) {
         val tagsJson = tags.joinToString(",") { "\"$it\"" }
         val authorJson = if (authorName != null) "\"$authorName\"" else "null"
-        
-        val body = """
-        {
-            "pluginId": "$pluginId",
-            "displayName": "$displayName",
-            "description": "${escapeJson(description)}",
-            "authorName": $authorJson,
-            "tags": [$tagsJson]
-        }
-        """.trimIndent()
+
+        val body =
+            """
+            {
+                "pluginId": "$pluginId",
+                "displayName": "$displayName",
+                "description": "${escapeJson(description)}",
+                "authorName": $authorJson,
+                "tags": [$tagsJson]
+            }
+            """.trimIndent()
 
         val response = httpPost("$baseUrl/publish", body, token, apiKey)
         if (response.statusCode !in 200..201) {
@@ -284,15 +296,16 @@ abstract class PublishPluginTask : DefaultTask() {
         version: String,
         changelog: String,
         token: String,
-        apiKey: String
+        apiKey: String,
     ): Pair<String, String> {
-        val body = """
-        {
-            "version": "$version",
-            "changelog": "${escapeJson(changelog)}",
-            "minBossVersion": "1.0.0"
-        }
-        """.trimIndent()
+        val body =
+            """
+            {
+                "version": "$version",
+                "changelog": "${escapeJson(changelog)}",
+                "minBossVersion": "1.0.0"
+            }
+            """.trimIndent()
 
         val response = httpPost("$baseUrl/$pluginId/version", body, token, apiKey)
         if (response.statusCode !in 200..201) {
@@ -300,15 +313,20 @@ abstract class PublishPluginTask : DefaultTask() {
             throw GradleException("Failed to create version: $error")
         }
 
-        val versionId = extractJsonValue(response.body, "versionId")
-            ?: throw GradleException("No versionId in response")
-        val uploadUrl = extractJsonValue(response.body, "uploadUrl")
-            ?: throw GradleException("No uploadUrl in response")
+        val versionId =
+            extractJsonValue(response.body, "versionId")
+                ?: throw GradleException("No versionId in response")
+        val uploadUrl =
+            extractJsonValue(response.body, "uploadUrl")
+                ?: throw GradleException("No uploadUrl in response")
 
         return versionId to uploadUrl
     }
 
-    private fun uploadJar(uploadUrl: String, jarBytes: ByteArray) {
+    private fun uploadJar(
+        uploadUrl: String,
+        jarBytes: ByteArray,
+    ) {
         val url = URL(uploadUrl)
         val connection = url.openConnection() as HttpURLConnection
         connection.requestMethod = "PUT"
@@ -330,15 +348,16 @@ abstract class PublishPluginTask : DefaultTask() {
         sha256: String,
         jarSize: Long,
         token: String,
-        apiKey: String
+        apiKey: String,
     ) {
-        val body = """
-        {
-            "versionId": "$versionId",
-            "sha256": "$sha256",
-            "jarSize": $jarSize
-        }
-        """.trimIndent()
+        val body =
+            """
+            {
+                "versionId": "$versionId",
+                "sha256": "$sha256",
+                "jarSize": $jarSize
+            }
+            """.trimIndent()
 
         val response = httpPost("$baseUrl/version/finalize", body, token, apiKey)
         if (response.statusCode != 200) {
@@ -347,7 +366,11 @@ abstract class PublishPluginTask : DefaultTask() {
         }
     }
 
-    private fun httpGet(url: String, token: String, apiKey: String): HttpResponse {
+    private fun httpGet(
+        url: String,
+        token: String,
+        apiKey: String,
+    ): HttpResponse {
         val connection = URL(url).openConnection() as HttpURLConnection
         connection.requestMethod = "GET"
         connection.setRequestProperty("Authorization", "Bearer $token")
@@ -358,7 +381,12 @@ abstract class PublishPluginTask : DefaultTask() {
         return readResponse(connection)
     }
 
-    private fun httpPost(url: String, body: String, token: String, apiKey: String): HttpResponse {
+    private fun httpPost(
+        url: String,
+        body: String,
+        token: String,
+        apiKey: String,
+    ): HttpResponse {
         val connection = URL(url).openConnection() as HttpURLConnection
         connection.requestMethod = "POST"
         connection.doOutput = true
@@ -377,34 +405,41 @@ abstract class PublishPluginTask : DefaultTask() {
 
     private fun readResponse(connection: HttpURLConnection): HttpResponse {
         val statusCode = connection.responseCode
-        val inputStream = if (statusCode in 200..299) {
-            connection.inputStream
-        } else {
-            connection.errorStream
-        }
-
-        val body = inputStream?.use { stream ->
-            BufferedReader(InputStreamReader(stream)).use { reader ->
-                reader.readText()
+        val inputStream =
+            if (statusCode in 200..299) {
+                connection.inputStream
+            } else {
+                connection.errorStream
             }
-        } ?: ""
+
+        val body =
+            inputStream?.use { stream ->
+                BufferedReader(InputStreamReader(stream)).use { reader ->
+                    reader.readText()
+                }
+            } ?: ""
 
         return HttpResponse(statusCode, body)
     }
 
-    private fun extractJsonValue(json: String, key: String): String? {
+    private fun extractJsonValue(
+        json: String,
+        key: String,
+    ): String? {
         val regex = """"$key"\s*:\s*"([^"]+)"""".toRegex()
         return regex.find(json)?.groupValues?.get(1)
     }
 
-    private fun escapeJson(text: String): String {
-        return text
+    private fun escapeJson(text: String): String =
+        text
             .replace("\\", "\\\\")
             .replace("\"", "\\\"")
             .replace("\n", "\\n")
             .replace("\r", "\\r")
             .replace("\t", "\\t")
-    }
 
-    private data class HttpResponse(val statusCode: Int, val body: String)
+    private data class HttpResponse(
+        val statusCode: Int,
+        val body: String,
+    )
 }

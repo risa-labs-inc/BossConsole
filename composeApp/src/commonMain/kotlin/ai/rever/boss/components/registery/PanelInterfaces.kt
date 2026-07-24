@@ -1,4 +1,5 @@
 @file:Suppress("UNUSED")
+
 package ai.rever.boss.components.registery
 
 /**
@@ -11,4 +12,3 @@ typealias PanelId = ai.rever.boss.plugin.api.PanelId
 typealias PanelInfo = ai.rever.boss.plugin.api.PanelInfo
 typealias PanelComponentWithUI = ai.rever.boss.plugin.api.PanelComponentWithUI
 typealias SidebarItem = ai.rever.boss.plugin.api.SidebarItem
-

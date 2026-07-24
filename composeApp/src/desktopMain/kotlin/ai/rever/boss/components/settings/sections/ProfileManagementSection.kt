@@ -1,8 +1,8 @@
 package ai.rever.boss.components.settings.sections
 
+import ai.rever.boss.components.settings.shared.SettingsSection
 import ai.rever.boss.plugin.browser.BrowserSettings
 import ai.rever.boss.plugin.browser.BrowserSettingsManager
-import ai.rever.boss.components.settings.shared.SettingsSection
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -33,49 +33,50 @@ import kotlinx.coroutines.launch
 @Composable
 fun ProfileManagementSection(
     currentProfile: String,
-    onProfileChange: (String) -> Unit
+    onProfileChange: (String) -> Unit,
 ) {
     var showSwitchProfileMenu by remember { mutableStateOf(false) }
     var showNewProfileDialog by remember { mutableStateOf(false) }
     var newProfileName by remember { mutableStateOf("") }
 
-    val availableProfiles = remember {
-        mutableStateListOf<String>().also {
-            it.addAll(BrowserSettings.availableProfiles)
+    val availableProfiles =
+        remember {
+            mutableStateListOf<String>().also {
+                it.addAll(BrowserSettings.availableProfiles)
+            }
         }
-    }
 
     val coroutineScope = rememberCoroutineScope()
 
     SettingsSection(
         title = "Browser Profiles",
-        description = "Manage browser data and sessions"
+        description = "Manage browser data and sessions",
     ) {
         Card(
             modifier = Modifier.fillMaxWidth(),
             backgroundColor = BossTheme.colors.ink,
             shape = RoundedCornerShape(8.dp),
             elevation = 0.dp,
-            border = BorderStroke(1.dp, BossTheme.colors.line)
+            border = BorderStroke(1.dp, BossTheme.colors.line),
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column {
                         Text(
                             text = "Current Profile",
                             color = BossTheme.colors.textSecondary,
-                            fontSize = 13.sp
+                            fontSize = 13.sp,
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = currentProfile,
                             color = BossTheme.colors.textPrimary,
                             fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium
+                            fontWeight = FontWeight.Medium,
                         )
                     }
 
@@ -83,12 +84,12 @@ fun ProfileManagementSection(
                         Box {
                             TextButton(
                                 onClick = { showSwitchProfileMenu = true },
-                                colors = ButtonDefaults.textButtonColors(contentColor = BossTheme.colors.signal)
+                                colors = ButtonDefaults.textButtonColors(contentColor = BossTheme.colors.signal),
                             ) {
                                 Icon(
                                     Icons.Outlined.SwapHoriz,
                                     contentDescription = "Switch",
-                                    modifier = Modifier.size(16.dp)
+                                    modifier = Modifier.size(16.dp),
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text("Switch", fontSize = 13.sp)
@@ -97,7 +98,7 @@ fun ProfileManagementSection(
                             DropdownMenu(
                                 expanded = showSwitchProfileMenu,
                                 onDismissRequest = { showSwitchProfileMenu = false },
-                                modifier = Modifier.background(BossTheme.colors.panel)
+                                modifier = Modifier.background(BossTheme.colors.panel),
                             ) {
                                 availableProfiles.forEach { profile ->
                                     DropdownMenuItem(
@@ -106,27 +107,30 @@ fun ProfileManagementSection(
                                             BrowserSettings.currentProfile = profile
                                             showSwitchProfileMenu = false
                                         },
-                                        modifier = Modifier.background(
-                                            if (profile == currentProfile)
-                                                BossTheme.colors.signal.copy(alpha = 0.1f)
-                                            else BossTheme.colors.panel
-                                        )
+                                        modifier =
+                                            Modifier.background(
+                                                if (profile == currentProfile) {
+                                                    BossTheme.colors.signal.copy(alpha = 0.1f)
+                                                } else {
+                                                    BossTheme.colors.panel
+                                                },
+                                            ),
                                     ) {
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween
+                                            horizontalArrangement = Arrangement.SpaceBetween,
                                         ) {
                                             Text(
                                                 text = profile,
                                                 color = BossTheme.colors.textPrimary,
-                                                fontSize = 13.sp
+                                                fontSize = 13.sp,
                                             )
                                             if (profile == currentProfile) {
                                                 Icon(
                                                     Icons.Outlined.Check,
                                                     contentDescription = "Selected",
                                                     tint = BossTheme.colors.signal,
-                                                    modifier = Modifier.size(16.dp)
+                                                    modifier = Modifier.size(16.dp),
                                                 )
                                             }
                                         }
@@ -137,12 +141,12 @@ fun ProfileManagementSection(
 
                         TextButton(
                             onClick = { showNewProfileDialog = true },
-                            colors = ButtonDefaults.textButtonColors(contentColor = BossTheme.colors.signal)
+                            colors = ButtonDefaults.textButtonColors(contentColor = BossTheme.colors.signal),
                         ) {
                             Icon(
                                 Icons.Outlined.Add,
                                 contentDescription = "Add",
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(16.dp),
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("New Profile", fontSize = 13.sp)
@@ -165,7 +169,7 @@ fun ProfileManagementSection(
                     "Create New Profile",
                     color = BossTheme.colors.textPrimary,
                     fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.SemiBold,
                 )
             },
             text = {
@@ -173,7 +177,7 @@ fun ProfileManagementSection(
                     Text(
                         "Enter a name for the new browser profile:",
                         color = BossTheme.colors.textSecondary,
-                        fontSize = 13.sp
+                        fontSize = 13.sp,
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     OutlinedTextField(
@@ -183,14 +187,15 @@ fun ProfileManagementSection(
                         placeholder = { Text("e.g., Work, Personal, Development") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
-                        colors = TextFieldDefaults.outlinedTextFieldColors(
-                            textColor = BossTheme.colors.textPrimary,
-                            focusedBorderColor = BossTheme.colors.signal,
-                            unfocusedBorderColor = BossTheme.colors.line,
-                            focusedLabelColor = BossTheme.colors.signal,
-                            unfocusedLabelColor = BossTheme.colors.textSecondary,
-                            placeholderColor = BossTheme.colors.textSecondary.copy(alpha = 0.5f)
-                        )
+                        colors =
+                            TextFieldDefaults.outlinedTextFieldColors(
+                                textColor = BossTheme.colors.textPrimary,
+                                focusedBorderColor = BossTheme.colors.signal,
+                                unfocusedBorderColor = BossTheme.colors.line,
+                                focusedLabelColor = BossTheme.colors.signal,
+                                unfocusedLabelColor = BossTheme.colors.textSecondary,
+                                placeholderColor = BossTheme.colors.textSecondary.copy(alpha = 0.5f),
+                            ),
                     )
                 }
             },
@@ -211,13 +216,17 @@ fun ProfileManagementSection(
                             }
                         }
                     },
-                    enabled = newProfileName.isNotBlank()
+                    enabled = newProfileName.isNotBlank(),
                 ) {
                     Text(
                         "Create",
-                        color = if (newProfileName.isNotBlank()) BossTheme.colors.signal
-                        else BossTheme.colors.textSecondary,
-                        fontSize = 13.sp
+                        color =
+                            if (newProfileName.isNotBlank()) {
+                                BossTheme.colors.signal
+                            } else {
+                                BossTheme.colors.textSecondary
+                            },
+                        fontSize = 13.sp,
                     )
                 }
             },
@@ -226,13 +235,13 @@ fun ProfileManagementSection(
                     onClick = {
                         showNewProfileDialog = false
                         newProfileName = ""
-                    }
+                    },
                 ) {
                     Text("Cancel", color = BossTheme.colors.textSecondary, fontSize = 13.sp)
                 }
             },
             backgroundColor = BossTheme.colors.panel,
-            contentColor = BossTheme.colors.textPrimary
+            contentColor = BossTheme.colors.textPrimary,
         )
     }
 }

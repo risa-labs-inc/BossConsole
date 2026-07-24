@@ -56,22 +56,24 @@ fun BossDraggableComponent.SidebarOverflowButton(
 
     // Built fresh each composition: isSelected reads panelsData snapshot
     // state, so open/close of any listed panel re-renders the checkmarks.
-    val menuItems = items.map { item ->
-        ContextMenuItem(
-            text = item.label,
-            icon = item.icon,
-            trailingIcon = if (isSelected(item)) Icons.Default.Check else null,
-            onClick = { handleSidebarItemClick(item) },
-        )
-    }
+    val menuItems =
+        items.map { item ->
+            ContextMenuItem(
+                text = item.label,
+                icon = item.icon,
+                trailingIcon = if (isSelected(item)) Icons.Default.Check else null,
+                onClick = { handleSidebarItemClick(item) },
+            )
+        }
 
     // Same outer-Box sizing trick as SidebarCustomizeMenu: constrain the
     // 40dp BossActionButton so its selection background matches the
     // 32dp icons around it.
     Box(
-        modifier = modifier
-            .padding(vertical = 4.dp)
-            .size(32.dp),
+        modifier =
+            modifier
+                .padding(vertical = 4.dp)
+                .size(32.dp),
         contentAlignment = Alignment.Center,
     ) {
         BossActionButton(
@@ -79,9 +81,10 @@ fun BossDraggableComponent.SidebarOverflowButton(
             text = "${items.size} more",
             isSelected = menuExpanded || items.any { isSelected(it) },
             hintDirection = slot.opposite,
-            modifier = Modifier
-                .size(40.dp)
-                .contextMenu(items = settingsMenuItems),
+            modifier =
+                Modifier
+                    .size(40.dp)
+                    .contextMenu(items = settingsMenuItems),
         ) {
             if (draggingItem == null) {
                 menuExpanded = !menuExpanded

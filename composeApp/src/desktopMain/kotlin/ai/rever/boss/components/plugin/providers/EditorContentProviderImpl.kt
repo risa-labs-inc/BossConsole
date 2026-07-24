@@ -1,6 +1,7 @@
 package ai.rever.boss.components.plugin.providers
 
 import ai.rever.boss.components.events.FileEventBus
+import ai.rever.boss.components.events.RunEventBus
 import ai.rever.boss.components.plugin.tab_types.CodeEditorUI
 import ai.rever.boss.components.plugin.tab_types.readFileContentSafe
 import ai.rever.boss.components.plugin.tab_types.writeFileContent
@@ -10,9 +11,8 @@ import ai.rever.boss.plugin.api.FileReadResult
 import ai.rever.boss.plugin.api.MainFunctionInfo
 import ai.rever.boss.plugin.run.DetectedMainFunction
 import ai.rever.boss.plugin.run.Language
-import ai.rever.boss.plugin.run.RunConfigurationType
 import ai.rever.boss.plugin.run.RunConfiguration
-import ai.rever.boss.components.events.RunEventBus
+import ai.rever.boss.plugin.run.RunConfigurationType
 import ai.rever.boss.run.MainFunctionDetectorProvider
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -42,7 +42,6 @@ private val logger = BossLogger.forComponent("EditorContentProvider")
  * accepted but discarded.
  */
 class EditorContentProviderImpl : EditorContentProvider {
-
     @Composable
     override fun CodeEditorContent(
         content: String,
@@ -56,7 +55,7 @@ class EditorContentProviderImpl : EditorContentProvider {
         onCursorPositionChange: ((line: Int, column: Int) -> Unit)?,
         onRunFunction: ((MainFunctionInfo) -> Unit)?,
         onNavigate: ((filePath: String, line: Int, column: Int) -> Unit)?,
-        showRunGutter: Boolean
+        showRunGutter: Boolean,
     ) {
         CodeEditorUI(
             content = content,
@@ -64,22 +63,25 @@ class EditorContentProviderImpl : EditorContentProvider {
             language = language,
             filePath = filePath,
             projectPath = projectPath,
-            modifier = modifier
+            modifier = modifier,
         )
     }
 
-    override fun readFileContent(filePath: String, maxSize: Long): FileReadResult {
-        return when (val result = readFileContentSafe(filePath, maxSize)) {
+    override fun readFileContent(
+        filePath: String,
+        maxSize: Long,
+    ): FileReadResult =
+        when (val result = readFileContentSafe(filePath, maxSize)) {
             is InternalFileReadResult.Success -> FileReadResult.Success(result.content)
             is InternalFileReadResult.FileTooLarge -> FileReadResult.FileTooLarge(result.sizeBytes, result.maxSizeBytes)
             is InternalFileReadResult.Error -> FileReadResult.Error(result.message)
             is InternalFileReadResult.FileNotFound -> FileReadResult.FileNotFound
         }
-    }
 
-    override fun writeFileContent(filePath: String, content: String): Boolean {
-        return writeFileContent(filePath, content)
-    }
+    override fun writeFileContent(
+        filePath: String,
+        content: String,
+    ): Boolean = writeFileContent(filePath, content)
 
     override fun detectLanguage(filePath: String): String {
         val extension = filePath.substringAfterLast('.', "").lowercase()
@@ -121,7 +123,11 @@ class EditorContentProviderImpl : EditorContentProvider {
     }
 
     @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
-    override fun navigateToDefinition(filePath: String, line: Int, column: Int) {
+    override fun navigateToDefinition(
+        filePath: String,
+        line: Int,
+        column: Int,
+    ) {
         GlobalScope.launch(Dispatchers.Main) {
             // Use empty string as sourceWindowId for plugin API calls where windowId is unknown
             // The event handler will use the active window in this case
@@ -131,22 +137,33 @@ class EditorContentProviderImpl : EditorContentProvider {
 
     // ============ Main Function Detection ============
 
-    override fun detectMainFunctions(filePath: String, content: String): List<MainFunctionInfo> {
-        return try {
+    override fun detectMainFunctions(
+        filePath: String,
+        content: String,
+    ): List<MainFunctionInfo> =
+        try {
             val detector = MainFunctionDetectorProvider.get()
             val langEnum = Language.fromFileName(filePath)
             val detected = detector.detectInFile(filePath, content, langEnum)
             detected.map { it.toMainFunctionInfo() }
         } catch (e: Exception) {
-            logger.warn(LogCategory.EDITOR, "Main-function detection failed", mapOf(
-                "filePath" to filePath
-            ), e)
+            logger.warn(
+                LogCategory.EDITOR,
+                "Main-function detection failed",
+                mapOf(
+                    "filePath" to filePath,
+                ),
+                e,
+            )
             emptyList()
         }
-    }
 
     @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
-    override fun executeMainFunction(mainFunction: MainFunctionInfo, projectPath: String, windowId: String?) {
+    override fun executeMainFunction(
+        mainFunction: MainFunctionInfo,
+        projectPath: String,
+        windowId: String?,
+    ) {
         if (windowId == null) return
 
         GlobalScope.launch(Dispatchers.Main) {
@@ -156,35 +173,45 @@ class EditorContentProviderImpl : EditorContentProvider {
                 val langEnum = Language.fromExtension(mainFunction.language)
 
                 // Create a DetectedMainFunction from MainFunctionInfo
-                val detected = DetectedMainFunction(
-                    lineNumber = mainFunction.lineNumber,
-                    functionName = mainFunction.functionName,
-                    className = mainFunction.className,
-                    packageName = null,
-                    language = langEnum,
-                    filePath = mainFunction.filePath
-                )
+                val detected =
+                    DetectedMainFunction(
+                        lineNumber = mainFunction.lineNumber,
+                        functionName = mainFunction.functionName,
+                        className = mainFunction.className,
+                        packageName = null,
+                        language = langEnum,
+                        filePath = mainFunction.filePath,
+                    )
 
                 val command = detector.generateCommand(detected, actualProjectRoot)
                 val configName = detected.toShortNameWithProject(actualProjectRoot)
 
-                val config = RunConfiguration(
-                    id = java.util.UUID.randomUUID().toString(),
-                    name = configName,
-                    type = RunConfigurationType.MAIN_FUNCTION,
-                    filePath = mainFunction.filePath,
-                    lineNumber = mainFunction.lineNumber,
-                    language = langEnum,
-                    command = command,
-                    workingDirectory = actualProjectRoot,
-                    isAutoDetected = true
-                )
+                val config =
+                    RunConfiguration(
+                        id =
+                            java.util.UUID
+                                .randomUUID()
+                                .toString(),
+                        name = configName,
+                        type = RunConfigurationType.MAIN_FUNCTION,
+                        filePath = mainFunction.filePath,
+                        lineNumber = mainFunction.lineNumber,
+                        language = langEnum,
+                        command = command,
+                        workingDirectory = actualProjectRoot,
+                        isAutoDetected = true,
+                    )
 
                 RunEventBus.execute(config, sourceWindowId = windowId)
             } catch (e: Exception) {
-                logger.warn(LogCategory.EDITOR, "Failed to execute main function", mapOf(
-                    "filePath" to mainFunction.filePath
-                ), e)
+                logger.warn(
+                    LogCategory.EDITOR,
+                    "Failed to execute main function",
+                    mapOf(
+                        "filePath" to mainFunction.filePath,
+                    ),
+                    e,
+                )
             }
         }
     }
@@ -202,15 +229,15 @@ class EditorContentProviderImpl : EditorContentProvider {
 /**
  * Extension function to convert DetectedMainFunction to MainFunctionInfo.
  */
-private fun DetectedMainFunction.toMainFunctionInfo(): MainFunctionInfo {
-    return MainFunctionInfo(
+private fun DetectedMainFunction.toMainFunctionInfo(): MainFunctionInfo =
+    MainFunctionInfo(
         filePath = this.filePath,
         lineNumber = this.lineNumber,
         functionName = this.functionName,
         language = this.language.name.lowercase(),
         className = this.className,
-        metadata = mapOf(
-            "packageName" to (this.packageName ?: "")
-        )
+        metadata =
+            mapOf(
+                "packageName" to (this.packageName ?: ""),
+            ),
     )
-}

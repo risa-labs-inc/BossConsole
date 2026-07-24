@@ -22,7 +22,7 @@ interface MainFunctionDetector {
     fun detectInFile(
         filePath: String,
         content: String,
-        language: Language? = null
+        language: Language? = null,
     ): List<DetectedMainFunction>
 
     /**
@@ -33,7 +33,7 @@ interface MainFunctionDetector {
      */
     fun generateCommand(
         detected: DetectedMainFunction,
-        projectPath: String
+        projectPath: String,
     ): String
 
     /**

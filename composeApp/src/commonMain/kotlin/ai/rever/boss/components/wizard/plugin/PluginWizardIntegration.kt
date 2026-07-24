@@ -7,7 +7,7 @@ import ai.rever.boss.components.plugin.DynamicPluginManager
  */
 data class PluginInstallResult(
     val installedIds: List<String>,
-    val failedPlugins: List<Pair<String, String>> // pluginId to error message
+    val failedPlugins: List<Pair<String, String>>, // pluginId to error message
 ) {
     val hasFailures: Boolean get() = failedPlugins.isNotEmpty()
     val allSucceeded: Boolean get() = failedPlugins.isEmpty()
@@ -38,6 +38,6 @@ expect object PluginWizardIntegration {
     suspend fun installPlugins(
         dynamicPluginManager: DynamicPluginManager,
         plugins: List<WizardPluginInfo>,
-        onProgress: (Float, String) -> Unit
+        onProgress: (Float, String) -> Unit,
     ): Result<PluginInstallResult>
 }

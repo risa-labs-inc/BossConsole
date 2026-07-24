@@ -31,7 +31,6 @@ import kotlin.test.assertTrue
  *   same-panel CreateSplit keeps the pre-existing copy semantics (original retained).
  */
 class TabDropResultHandlingTest {
-
     private object DropTestTabType : TabTypeInfo {
         override val typeId = TabTypeId("drop-test", "test.plugin")
         override val displayName = "Drop Test"
@@ -41,15 +40,16 @@ class TabDropResultHandlingTest {
     private data class DropTestTabInfo(
         override val id: String,
         override val typeId: TabTypeId = DropTestTabType.typeId,
-        override val title: String = "Drop Test Tab"
+        override val title: String = "Drop Test Tab",
     ) : TabInfo {
         override val icon get() = Icons.Outlined.Language
     }
 
     private class DropTestComponent(
         ctx: ComponentContext,
-        override val config: TabInfo
-    ) : TabComponentWithUI, ComponentContext by ctx {
+        override val config: TabInfo,
+    ) : TabComponentWithUI,
+        ComponentContext by ctx {
         override val tabTypeInfo: TabTypeInfo = DropTestTabType
 
         @Composable
@@ -57,9 +57,10 @@ class TabDropResultHandlingTest {
         }
     }
 
-    private val tabRegistry = TabRegistry().apply {
-        registerTabType(DropTestTabType) { config, ctx -> DropTestComponent(ctx, config) }
-    }
+    private val tabRegistry =
+        TabRegistry().apply {
+            registerTabType(DropTestTabType) { config, ctx -> DropTestComponent(ctx, config) }
+        }
 
     private fun newSplitViewState() = SplitViewState(tabRegistry, windowId = "test-window")
 
@@ -83,14 +84,21 @@ class TabDropResultHandlingTest {
                 tabInfo = tab,
                 sourcePanelId = "main",
                 sourceIndex = 0,
-                targetPanelId = targetPanelId
+                targetPanelId = targetPanelId,
             ),
-            state
+            state,
         )
 
-        assertTrue(main.tabsState.value.tabs.isEmpty())
+        assertTrue(
+            main.tabsState.value.tabs
+                .isEmpty(),
+        )
         assertSame(component, target.getComponentById("tab-1"))
-        assertEquals("tab-1", target.tabsState.value.activeTab?.id)
+        assertEquals(
+            "tab-1",
+            target.tabsState.value.activeTab
+                ?.id,
+        )
         assertEquals(targetPanelId, state.activePanelId)
     }
 
@@ -109,14 +117,20 @@ class TabDropResultHandlingTest {
                 tabInfo = tab,
                 sourcePanelId = "main",
                 sourceIndex = 0,
-                targetPanelId = targetPanelId
+                targetPanelId = targetPanelId,
             ),
-            state
+            state,
         )
 
         // Not resurrected from the stale drag-start snapshot.
-        assertTrue(target.tabsState.value.tabs.isEmpty())
-        assertTrue(main.tabsState.value.tabs.isEmpty())
+        assertTrue(
+            target.tabsState.value.tabs
+                .isEmpty(),
+        )
+        assertTrue(
+            main.tabsState.value.tabs
+                .isEmpty(),
+        )
     }
 
     @Test
@@ -136,15 +150,18 @@ class TabDropResultHandlingTest {
                 sourcePanelId = "main",
                 sourceIndex = 0,
                 targetPanelId = otherPanelId,
-                orientation = SplitOrientation.HORIZONTAL
+                orientation = SplitOrientation.HORIZONTAL,
             ),
-            state
+            state,
         )
 
         val newPanelId = state.getAllPanels().map { it.id }.single { it !in panelsBefore }
         val newPanel = state.getPanel(newPanelId)!!.tabsComponent
         assertSame(component, newPanel.getComponentById("tab-1"))
-        assertTrue(main.tabsState.value.tabs.isEmpty())
+        assertTrue(
+            main.tabsState.value.tabs
+                .isEmpty(),
+        )
     }
 
     @Test
@@ -163,19 +180,29 @@ class TabDropResultHandlingTest {
                 sourcePanelId = "main",
                 sourceIndex = 0,
                 targetPanelId = "main",
-                orientation = SplitOrientation.VERTICAL
+                orientation = SplitOrientation.VERTICAL,
             ),
-            state
+            state,
         )
 
         // The original stays in the source panel with its live component untouched,
         // and the new split received a separately-created copy.
         assertSame(original, main.getComponentById("tab-1"))
-        assertEquals(listOf("tab-1"), main.tabsState.value.tabs.map { it.id })
+        assertEquals(
+            listOf("tab-1"),
+            main.tabsState.value.tabs
+                .map { it.id },
+        )
         val newPanelId = state.getAllPanels().map { it.id }.single { it !in panelsBefore }
         val copied = state.getPanel(newPanelId)!!.tabsComponent
         assertEquals(1, copied.tabsState.value.tabs.size)
-        assertTrue(copied.getComponentById(copied.tabsState.value.tabs.single().id) !== original)
+        assertTrue(
+            copied.getComponentById(
+                copied.tabsState.value.tabs
+                    .single()
+                    .id,
+            ) !== original,
+        )
     }
 
     @Test
@@ -194,9 +221,9 @@ class TabDropResultHandlingTest {
                 sourcePanelId = "main",
                 sourceIndex = 0,
                 targetPanelId = otherPanelId,
-                orientation = SplitOrientation.HORIZONTAL
+                orientation = SplitOrientation.HORIZONTAL,
             ),
-            state
+            state,
         )
 
         // No new split created for a vanished tab.

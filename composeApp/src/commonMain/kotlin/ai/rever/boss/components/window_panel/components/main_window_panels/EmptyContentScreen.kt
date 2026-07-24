@@ -32,7 +32,7 @@ private data class TipCard(
     val title: String,
     val description: String,
     val action: (() -> Unit)?,
-    val enabled: Boolean
+    val enabled: Boolean,
 )
 
 /**
@@ -45,96 +45,102 @@ fun EmptyContent(
     onNewTab: () -> Unit,
     onSplitPanel: (() -> Unit)? = null,
     onSwitchPanel: (() -> Unit)? = null,
-    onNewWindow: () -> Unit
+    onNewWindow: () -> Unit,
 ) {
     var selectedTip by remember { mutableStateOf(0) }
 
     // Tip card definitions with actions
-    val tips = listOf(
-        TipCard(
-            icon = Icons.Outlined.Code,
-            title = "Open a file",
-            description = "Cmd+O to browse files",
-            action = onOpenFile,
-            enabled = true
-        ),
-        TipCard(
-            icon = Icons.Outlined.Add,
-            title = "New tab",
-            description = "Cmd+T opens tab dialog",
-            action = onNewTab,
-            enabled = true
-        ),
-        TipCard(
-            icon = Icons.Outlined.ViewColumn,
-            title = "Split panels",
-            description = "Right-click tab → Split Right/Down",
-            action = onSplitPanel,
-            enabled = onSplitPanel != null
-        ),
-        TipCard(
-            icon = Icons.Outlined.SwapHoriz,
-            title = "Switch panels",
-            description = "Cmd+← → to navigate panels",
-            action = onSwitchPanel,
-            enabled = onSwitchPanel != null
-        ),
-        TipCard(
-            icon = Icons.Outlined.OpenInBrowser,
-            title = "New window",
-            description = "Cmd+N creates new window",
-            action = onNewWindow,
-            enabled = true
+    val tips =
+        listOf(
+            TipCard(
+                icon = Icons.Outlined.Code,
+                title = "Open a file",
+                description = "Cmd+O to browse files",
+                action = onOpenFile,
+                enabled = true,
+            ),
+            TipCard(
+                icon = Icons.Outlined.Add,
+                title = "New tab",
+                description = "Cmd+T opens tab dialog",
+                action = onNewTab,
+                enabled = true,
+            ),
+            TipCard(
+                icon = Icons.Outlined.ViewColumn,
+                title = "Split panels",
+                description = "Right-click tab → Split Right/Down",
+                action = onSplitPanel,
+                enabled = onSplitPanel != null,
+            ),
+            TipCard(
+                icon = Icons.Outlined.SwapHoriz,
+                title = "Switch panels",
+                description = "Cmd+← → to navigate panels",
+                action = onSwitchPanel,
+                enabled = onSwitchPanel != null,
+            ),
+            TipCard(
+                icon = Icons.Outlined.OpenInBrowser,
+                title = "New window",
+                description = "Cmd+N creates new window",
+                action = onNewWindow,
+                enabled = true,
+            ),
         )
-    )
 
     // Animation values for BOSS logo
     val infiniteTransition = rememberInfiniteTransition()
-    val scale = infiniteTransition.animateFloat(
-        initialValue = 0.95f,
-        targetValue = 1.05f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2000, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
+    val scale =
+        infiniteTransition.animateFloat(
+            initialValue = 0.95f,
+            targetValue = 1.05f,
+            animationSpec =
+                infiniteRepeatable(
+                    animation = tween(2000, easing = FastOutSlowInEasing),
+                    repeatMode = RepeatMode.Reverse,
+                ),
         )
-    )
 
-    val rotation = infiniteTransition.animateFloat(
-        initialValue = -5f,
-        targetValue = 5f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(3000, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
+    val rotation =
+        infiniteTransition.animateFloat(
+            initialValue = -5f,
+            targetValue = 5f,
+            animationSpec =
+                infiniteRepeatable(
+                    animation = tween(3000, easing = FastOutSlowInEasing),
+                    repeatMode = RepeatMode.Reverse,
+                ),
         )
-    )
 
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(BossTheme.colors.panel),
-        contentAlignment = Alignment.Center
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .background(BossTheme.colors.panel),
+        contentAlignment = Alignment.Center,
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(24.dp)
+            verticalArrangement = Arrangement.spacedBy(24.dp),
         ) {
             // Animated BOSS logo
             Box(
                 modifier = Modifier.size(120.dp).scale(scale.value).rotate(rotation.value),
-                contentAlignment = Alignment.Center
+                contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = Icons.Outlined.Dashboard,
                     contentDescription = "BOSS",
                     tint = BossTheme.colors.signal,
-                    modifier = Modifier.size(80.dp)
+                    modifier = Modifier.size(80.dp),
                 )
             }
 
             // Welcome text
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text("Welcome to BOSS", color = BossTheme.colors.textPrimary, fontSize = 28.sp, fontWeight = FontWeight.Bold)
                 Text("Multi-panel development environment", color = BossTheme.colors.textSecondary, fontSize = 16.sp)
@@ -143,7 +149,7 @@ fun EmptyContent(
             // Quick tips with interactive cards
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 Text("Quick Tips", color = BossTheme.colors.signal, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -158,20 +164,21 @@ fun EmptyContent(
                                 selectedTip = index
                                 if (tip.enabled) tip.action?.invoke()
                             },
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f),
                         )
                     }
                 }
             }
 
             // Rotating motivational messages
-            val messages = listOf(
-                "Ready to build something amazing? 🚀",
-                "Code is poetry in motion 💫",
-                "Let's turn ideas into reality ✨",
-                "Your next breakthrough awaits 🌟",
-                "Time to create magic 🎨"
-            )
+            val messages =
+                listOf(
+                    "Ready to build something amazing? 🚀",
+                    "Code is poetry in motion 💫",
+                    "Let's turn ideas into reality ✨",
+                    "Your next breakthrough awaits 🌟",
+                    "Time to create magic 🎨",
+                )
             var messageIndex by remember { mutableStateOf((0..messages.lastIndex).random()) }
             LaunchedEffect(Unit) {
                 while (true) {
@@ -183,7 +190,7 @@ fun EmptyContent(
                 text = messages[messageIndex],
                 color = BossTheme.colors.textSecondary.copy(alpha = 0.7f),
                 fontSize = 14.sp,
-                modifier = Modifier.padding(top = 16.dp)
+                modifier = Modifier.padding(top = 16.dp),
             )
         }
     }
@@ -200,66 +207,78 @@ private fun Card(
     isSelected: Boolean,
     enabled: Boolean,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     // Animations for selection and disabled states
     val animatedAlpha by animateFloatAsState(
-        targetValue = when {
-            !enabled -> 0.3f
-            isSelected -> 1f
-            else -> 0.6f
-        },
-        animationSpec = tween(300)
+        targetValue =
+            when {
+                !enabled -> 0.3f
+                isSelected -> 1f
+                else -> 0.6f
+            },
+        animationSpec = tween(300),
     )
 
     val animatedScale by animateFloatAsState(
         targetValue = if (isSelected && enabled) 1.05f else 1f,
-        animationSpec = spring(dampingRatio = 0.4f)
+        animationSpec = spring(dampingRatio = 0.4f),
     )
 
     // Colors based on state
-    val backgroundColor = when {
-        !enabled -> BossTheme.colors.ink  // Darker for disabled
-        isSelected -> BossTheme.colors.raised
-        else -> BossTheme.colors.panel
-    }
+    val backgroundColor =
+        when {
+            !enabled -> BossTheme.colors.ink
 
-    val iconTint = when {
-        !enabled -> BossTheme.colors.textMuted  // Muted for disabled
-        isSelected -> BossTheme.colors.signal
-        else -> BossTheme.colors.textSecondary
-    }
+            // Darker for disabled
+            isSelected -> BossTheme.colors.raised
 
-    val textColor = when {
-        !enabled -> BossTheme.colors.textMuted  // Dim text for disabled
-        isSelected -> BossTheme.colors.textPrimary
-        else -> BossTheme.colors.textSecondary
-    }
+            else -> BossTheme.colors.panel
+        }
+
+    val iconTint =
+        when {
+            !enabled -> BossTheme.colors.textMuted
+
+            // Muted for disabled
+            isSelected -> BossTheme.colors.signal
+
+            else -> BossTheme.colors.textSecondary
+        }
+
+    val textColor =
+        when {
+            !enabled -> BossTheme.colors.textMuted
+
+            // Dim text for disabled
+            isSelected -> BossTheme.colors.textPrimary
+
+            else -> BossTheme.colors.textSecondary
+        }
 
     Column(
-        modifier = modifier
-            .scale(animatedScale)
-            .alpha(animatedAlpha)
-            .background(
-                color = backgroundColor,
-                shape = RoundedCornerShape(12.dp)
-            )
-            .then(
-                if (enabled) {
-                    Modifier.clickable { onClick() }
-                } else {
-                    Modifier  // No clickable modifier when disabled
-                }
-            )
-            .padding(16.dp),
+        modifier =
+            modifier
+                .scale(animatedScale)
+                .alpha(animatedAlpha)
+                .background(
+                    color = backgroundColor,
+                    shape = RoundedCornerShape(12.dp),
+                ).then(
+                    if (enabled) {
+                        Modifier.clickable { onClick() }
+                    } else {
+                        Modifier // No clickable modifier when disabled
+                    },
+                ).padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Icon(
             imageVector = icon,
             contentDescription = title,
             tint = iconTint,
-            modifier = Modifier.size(32.dp)
+            modifier = Modifier.size(32.dp),
         )
 
         Text(
@@ -267,21 +286,21 @@ private fun Card(
             color = textColor,
             fontSize = 14.sp,
             fontWeight = FontWeight.Medium,
-            textAlign = TextAlign.Center
+            textAlign = TextAlign.Center,
         )
 
         // Description appears when selected
         AnimatedVisibility(
             visible = isSelected,
             enter = fadeIn() + expandVertically(),
-            exit = fadeOut() + shrinkVertically()
+            exit = fadeOut() + shrinkVertically(),
         ) {
             Text(
                 text = description,
                 color = BossTheme.colors.textSecondary,
                 fontSize = 12.sp,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 4.dp)
+                modifier = Modifier.padding(top = 4.dp),
             )
         }
     }

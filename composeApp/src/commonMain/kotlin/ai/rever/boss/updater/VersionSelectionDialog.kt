@@ -1,6 +1,10 @@
 package ai.rever.boss.updater
 
+import ai.rever.boss.components.common.BossSearchBar
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.utils.Version
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -19,10 +23,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import ai.rever.boss.components.common.BossSearchBar
-import ai.rever.boss.utils.Version
-import ai.rever.boss.utils.logging.BossLogger
-import ai.rever.boss.utils.logging.LogCategory
 
 private val logger = BossLogger.forComponent("VersionSelectionDialog")
 
@@ -36,57 +36,60 @@ fun VersionSelectionDialog(
     isLoading: Boolean,
     error: String? = null,
     onVersionSelected: (VersionInfo) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
 ) {
     var searchQuery by remember { mutableStateOf("") }
     var showStableOnly by remember { mutableStateOf(true) }
 
     // Calculate latest stable version (first non-prerelease in sorted list)
-    val latestStableVersion = remember(versions) {
-        versions.firstOrNull { !it.isPrerelease }?.version
-    }
+    val latestStableVersion =
+        remember(versions) {
+            versions.firstOrNull { !it.isPrerelease }?.version
+        }
 
-    val filteredVersions = remember(versions, searchQuery, showStableOnly) {
-        versions
-            .filter { if (showStableOnly) !it.isPrerelease else true }
-            .filter {
-                searchQuery.isEmpty() ||
-                it.version.toString().contains(searchQuery, ignoreCase = true)
-            }
-    }
+    val filteredVersions =
+        remember(versions, searchQuery, showStableOnly) {
+            versions
+                .filter { if (showStableOnly) !it.isPrerelease else true }
+                .filter {
+                    searchQuery.isEmpty() ||
+                        it.version.toString().contains(searchQuery, ignoreCase = true)
+                }
+        }
 
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
         Card(
-            modifier = Modifier
-                .width(600.dp)
-                .heightIn(max = 700.dp),
+            modifier =
+                Modifier
+                    .width(600.dp)
+                    .heightIn(max = 700.dp),
             backgroundColor = BossTheme.colors.panel,
             shape = RoundedCornerShape(12.dp),
-            elevation = 8.dp
+            elevation = 8.dp,
         ) {
             Column(
-                modifier = Modifier.padding(24.dp)
+                modifier = Modifier.padding(24.dp),
             ) {
                 // Header
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
                         text = "Select Version",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = BossTheme.colors.textPrimary
+                        color = BossTheme.colors.textPrimary,
                     )
                     IconButton(onClick = onDismiss) {
                         Icon(
                             Icons.Default.Close,
                             "Close",
-                            tint = BossTheme.colors.textSecondary
+                            tint = BossTheme.colors.textSecondary,
                         )
                     }
                 }
@@ -98,7 +101,7 @@ fun VersionSelectionDialog(
                     query = searchQuery,
                     onQueryChange = { searchQuery = it },
                     placeholder = "Search versions...",
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -107,19 +110,20 @@ fun VersionSelectionDialog(
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Checkbox(
                         checked = showStableOnly,
                         onCheckedChange = { showStableOnly = it },
-                        colors = CheckboxDefaults.colors(
-                            checkedColor = BossTheme.colors.signal
-                        )
+                        colors =
+                            CheckboxDefaults.colors(
+                                checkedColor = BossTheme.colors.signal,
+                            ),
                     )
                     Text(
                         text = "Stable releases only",
                         color = BossTheme.colors.textPrimary,
-                        fontSize = 14.sp
+                        fontSize = 14.sp,
                     )
                 }
 
@@ -130,22 +134,22 @@ fun VersionSelectionDialog(
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         backgroundColor = BossTheme.colors.alert.copy(alpha = 0.2f),
-                        shape = RoundedCornerShape(8.dp)
+                        shape = RoundedCornerShape(8.dp),
                     ) {
                         Row(
                             modifier = Modifier.padding(12.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Icon(
                                 Icons.Default.Warning,
                                 contentDescription = null,
-                                tint = BossTheme.colors.alert
+                                tint = BossTheme.colors.alert,
                             )
                             Text(
                                 text = error,
                                 color = BossTheme.colors.alert,
-                                fontSize = 14.sp
+                                fontSize = 14.sp,
                             )
                         }
                     }
@@ -155,10 +159,11 @@ fun VersionSelectionDialog(
                 // Version list
                 if (isLoading) {
                     Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(400.dp),
-                        contentAlignment = Alignment.Center
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .height(400.dp),
+                        contentAlignment = Alignment.Center,
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             CircularProgressIndicator(color = BossTheme.colors.signal)
@@ -166,36 +171,38 @@ fun VersionSelectionDialog(
                             Text(
                                 "Loading versions...",
                                 color = BossTheme.colors.textSecondary,
-                                fontSize = 14.sp
+                                fontSize = 14.sp,
                             )
                         }
                     }
                 } else if (filteredVersions.isEmpty()) {
                     Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(400.dp),
-                        contentAlignment = Alignment.Center
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .height(400.dp),
+                        contentAlignment = Alignment.Center,
                     ) {
                         Text(
                             "No versions found",
                             color = BossTheme.colors.textSecondary,
-                            fontSize = 14.sp
+                            fontSize = 14.sp,
                         )
                     }
                 } else {
                     LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         items(filteredVersions) { versionInfo ->
                             VersionItem(
                                 versionInfo = versionInfo,
                                 isCurrent = versionInfo.version == currentVersion,
                                 isLatest = versionInfo.version == latestStableVersion,
-                                onClick = { onVersionSelected(versionInfo) }
+                                onClick = { onVersionSelected(versionInfo) },
                             )
                         }
                     }
@@ -213,50 +220,53 @@ private fun VersionItem(
     versionInfo: VersionInfo,
     isCurrent: Boolean,
     isLatest: Boolean = false,
-    onClick: () -> Unit
+    onClick: () -> Unit,
 ) {
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick),
         backgroundColor = BossTheme.colors.ink,
         shape = RoundedCornerShape(8.dp),
         elevation = 0.dp,
-        border = BorderStroke(
-            1.dp,
-            if (isCurrent) BossTheme.colors.signal.copy(alpha = 0.5f) else BossTheme.colors.line
-        )
+        border =
+            BorderStroke(
+                1.dp,
+                if (isCurrent) BossTheme.colors.signal.copy(alpha = 0.5f) else BossTheme.colors.line,
+            ),
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
                         text = "v${versionInfo.version}",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
-                        color = if (isCurrent) BossTheme.colors.signal else BossTheme.colors.textPrimary
+                        color = if (isCurrent) BossTheme.colors.signal else BossTheme.colors.textPrimary,
                     )
 
                     if (isCurrent) {
                         Card(
                             backgroundColor = BossTheme.colors.ok,
-                            shape = RoundedCornerShape(4.dp)
+                            shape = RoundedCornerShape(4.dp),
                         ) {
                             Text(
                                 "Current",
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = BossTheme.colors.textPrimary
+                                color = BossTheme.colors.textPrimary,
                             )
                         }
                     }
@@ -264,14 +274,14 @@ private fun VersionItem(
                     if (isLatest && !isCurrent) {
                         Card(
                             backgroundColor = BossTheme.colors.signal,
-                            shape = RoundedCornerShape(4.dp)
+                            shape = RoundedCornerShape(4.dp),
                         ) {
                             Text(
                                 "Latest",
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = BossTheme.colors.onSignal
+                                color = BossTheme.colors.onSignal,
                             )
                         }
                     }
@@ -279,14 +289,14 @@ private fun VersionItem(
                     if (versionInfo.isPrerelease) {
                         Card(
                             backgroundColor = BossTheme.colors.warn,
-                            shape = RoundedCornerShape(4.dp)
+                            shape = RoundedCornerShape(4.dp),
                         ) {
                             Text(
                                 "Beta",
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color.Black
+                                color = Color.Black,
                             )
                         }
                     }
@@ -297,14 +307,14 @@ private fun VersionItem(
                 Text(
                     text = "Released: ${formatReleaseDate(versionInfo.releaseDate)} • ${formatFileSize(versionInfo.downloadSize)}",
                     fontSize = 12.sp,
-                    color = BossTheme.colors.textSecondary
+                    color = BossTheme.colors.textSecondary,
                 )
             }
 
             Icon(
                 imageVector = Icons.Default.CloudDownload,
                 contentDescription = "Download",
-                tint = BossTheme.colors.signal
+                tint = BossTheme.colors.signal,
             )
         }
     }
@@ -321,8 +331,8 @@ private fun formatFileSize(bytes: Long): String {
 /**
  * Format release date to simple format
  */
-private fun formatReleaseDate(dateString: String): String {
-    return try {
+private fun formatReleaseDate(dateString: String): String =
+    try {
         // GitHub returns dates like "2024-01-15T10:30:00Z"
         // Extract just the date part
         dateString.substringBefore("T")
@@ -334,4 +344,3 @@ private fun formatReleaseDate(dateString: String): String {
         )
         dateString
     }
-}

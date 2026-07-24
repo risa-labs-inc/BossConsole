@@ -27,9 +27,7 @@ actual object TerminalHandlerService {
      * Used by BossApp to prevent showing New Tab Dialog during terminal creation.
      * Returns Compose State to trigger recomposition.
      */
-    actual fun isProcessingTerminals(): Boolean {
-        return _isProcessing.value
-    }
+    actual fun isProcessingTerminals(): Boolean = _isProcessing.value
 
     /**
      * Increment processing counter when terminal event starts.

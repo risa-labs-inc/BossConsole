@@ -27,9 +27,9 @@ actual fun createFluckTabComponent(
     onOpenInNewTab: (String) -> Unit,
     onNavigationUpdate: ((String, String) -> Unit)?,
     onFaviconCacheKeyUpdate: ((String?) -> Unit)?,
-    onCloseTab: (() -> Unit)?
-): FluckTabComponent {
-    return FluckTabComponent(
+    onCloseTab: (() -> Unit)?,
+): FluckTabComponent =
+    FluckTabComponent(
         config = config,
         componentContext = componentContext,
         onTitleUpdate = onTitleUpdate,
@@ -38,6 +38,5 @@ actual fun createFluckTabComponent(
         onOpenInNewTab = onOpenInNewTab,
         onNavigationUpdate = onNavigationUpdate,
         onFaviconCacheKeyUpdate = onFaviconCacheKeyUpdate,
-        onCloseTab = onCloseTab
+        onCloseTab = onCloseTab,
     )
-}

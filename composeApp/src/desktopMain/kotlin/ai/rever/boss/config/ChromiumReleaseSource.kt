@@ -17,7 +17,7 @@ import ai.rever.boss.utils.logging.LogCategory
 data class EngineDownloadCandidate(
     val sourceName: String,
     val url: String,
-    val sha256: String? = null
+    val sha256: String? = null,
 )
 
 /**
@@ -26,7 +26,7 @@ data class EngineDownloadCandidate(
  */
 data class EngineVersionListing(
     val versions: List<String>,
-    val failedSources: List<String> = emptyList()
+    val failedSources: List<String> = emptyList(),
 )
 
 /**
@@ -42,7 +42,7 @@ data class EngineVersionListing(
  */
 class ChromiumReleaseResolver(
     private val supabaseSource: UpdateSource,
-    private val gitHubSource: UpdateSource
+    private val gitHubSource: UpdateSource,
 ) {
     private val logger = BossLogger.forComponent("ChromiumReleaseSource")
 
@@ -51,30 +51,41 @@ class ChromiumReleaseResolver(
      * The GitHub URL is constructed rather than queried so it stays available even
      * when the GitHub API is rate-limited.
      */
-    suspend fun downloadCandidates(version: String, archiveName: String): List<EngineDownloadCandidate> {
+    suspend fun downloadCandidates(
+        version: String,
+        archiveName: String,
+    ): List<EngineDownloadCandidate> {
         val candidates = mutableListOf<EngineDownloadCandidate>()
 
         try {
-            val asset = supabaseSource.getReleaseByTag("v$version")
-                ?.assets?.firstOrNull { it.name == archiveName }
+            val asset =
+                supabaseSource
+                    .getReleaseByTag("v$version")
+                    ?.assets
+                    ?.firstOrNull { it.name == archiveName }
             val assetUrl = asset?.browser_download_url
             if (assetUrl != null) {
                 candidates += EngineDownloadCandidate(supabaseSource.name, assetUrl, asset.sha256)
             } else {
-                logger.info(LogCategory.BROWSER, "Engine release not on Supabase, will use GitHub", mapOf(
-                    "version" to version,
-                    "archive" to archiveName
-                ))
+                logger.info(
+                    LogCategory.BROWSER,
+                    "Engine release not on Supabase, will use GitHub",
+                    mapOf(
+                        "version" to version,
+                        "archive" to archiveName,
+                    ),
+                )
             }
         } catch (e: Exception) {
             logger.warn(LogCategory.BROWSER, "Supabase engine release lookup failed, will use GitHub", error = e)
         }
 
-        candidates += EngineDownloadCandidate(
-            gitHubSource.name,
-            "$GITHUB_RELEASES_BASE/$GITHUB_TAG_PREFIX$version/$archiveName",
-            sha256 = null
-        )
+        candidates +=
+            EngineDownloadCandidate(
+                gitHubSource.name,
+                "$GITHUB_RELEASES_BASE/$GITHUB_TAG_PREFIX$version/$archiveName",
+                sha256 = null,
+            )
         return candidates
     }
 
@@ -98,7 +109,8 @@ class ChromiumReleaseResolver(
         }
 
         try {
-            gitHubSource.listReleases()
+            gitHubSource
+                .listReleases()
                 .filter { it.tag_name.startsWith(GITHUB_TAG_PREFIX) }
                 .forEach { versions += it.tag_name.removePrefix(GITHUB_TAG_PREFIX) }
         } catch (e: Exception) {
@@ -110,20 +122,20 @@ class ChromiumReleaseResolver(
         if (failedSources.size == 2) {
             throw IllegalStateException(
                 "Could not list engine versions from any source: ${lastError?.message}",
-                lastError
+                lastError,
             )
         }
 
         return EngineVersionListing(
             versions = versions.sortedWith(compareByDescending(versionComparator(), ::versionKey)),
-            failedSources = failedSources
+            failedSources = failedSources,
         )
     }
 
     /** Semver-ish sort key: numeric release identifiers + optional pre-release identifiers. */
     internal data class EngineVersionKey(
         val release: List<Int>,
-        val preRelease: List<String>?
+        val preRelease: List<String>?,
     )
 
     companion object {
@@ -137,7 +149,7 @@ class ChromiumReleaseResolver(
             val prePart = version.substringAfter('-', "")
             return EngineVersionKey(
                 release = releasePart.split('.').mapNotNull { it.toIntOrNull() },
-                preRelease = prePart.takeIf { it.isNotEmpty() }?.split('.', '-')
+                preRelease = prePart.takeIf { it.isNotEmpty() }?.split('.', '-'),
             )
         }
 
@@ -146,31 +158,40 @@ class ChromiumReleaseResolver(
          * version outranks its own pre-releases and pre-release identifiers
          * compare numerically when both sides are numeric.
          */
-        internal fun versionComparator(): Comparator<EngineVersionKey> = Comparator { a, b ->
-            for (i in 0 until maxOf(a.release.size, b.release.size)) {
-                val cmp = (a.release.getOrElse(i) { 0 }).compareTo(b.release.getOrElse(i) { 0 })
-                if (cmp != 0) return@Comparator cmp
+        internal fun versionComparator(): Comparator<EngineVersionKey> =
+            Comparator { a, b ->
+                for (i in 0 until maxOf(a.release.size, b.release.size)) {
+                    val cmp = (a.release.getOrElse(i) { 0 }).compareTo(b.release.getOrElse(i) { 0 })
+                    if (cmp != 0) return@Comparator cmp
+                }
+                when {
+                    a.preRelease == null && b.preRelease == null -> 0
+                    a.preRelease == null -> 1
+                    b.preRelease == null -> -1
+                    else -> comparePreRelease(a.preRelease, b.preRelease)
+                }
             }
-            when {
-                a.preRelease == null && b.preRelease == null -> 0
-                a.preRelease == null -> 1
-                b.preRelease == null -> -1
-                else -> comparePreRelease(a.preRelease, b.preRelease)
-            }
-        }
 
-        private fun comparePreRelease(a: List<String>, b: List<String>): Int {
+        private fun comparePreRelease(
+            a: List<String>,
+            b: List<String>,
+        ): Int {
             for (i in 0 until maxOf(a.size, b.size)) {
                 val ai = a.getOrNull(i) ?: return -1 // fewer identifiers = lower (semver)
                 val bi = b.getOrNull(i) ?: return 1
                 val an = ai.toIntOrNull()
                 val bn = bi.toIntOrNull()
-                val cmp = when {
-                    an != null && bn != null -> an.compareTo(bn)
-                    an != null -> -1 // numeric identifiers sort below alphanumeric (semver)
-                    bn != null -> 1
-                    else -> ai.compareTo(bi)
-                }
+                val cmp =
+                    when {
+                        an != null && bn != null -> an.compareTo(bn)
+
+                        an != null -> -1
+
+                        // numeric identifiers sort below alphanumeric (semver)
+                        bn != null -> 1
+
+                        else -> ai.compareTo(bi)
+                    }
                 if (cmp != 0) return cmp
             }
             return 0
@@ -186,7 +207,9 @@ object ChromiumReleaseSource {
     // unauthenticated API allows only 60 requests/hour — so re-fetching on every
     // Settings-section open is both slow and rate-limit-hungry. Engine releases
     // are rare; a short TTL keeps the section snappy without going stale.
-    private val VERSIONS_CACHE_TTL_MS = java.util.concurrent.TimeUnit.MINUTES.toMillis(10)
+    private val VERSIONS_CACHE_TTL_MS =
+        java.util.concurrent.TimeUnit.MINUTES
+            .toMillis(10)
 
     @Volatile
     private var cachedVersions: Pair<Long, EngineVersionListing>? = null
@@ -194,12 +217,14 @@ object ChromiumReleaseSource {
     private val resolver by lazy {
         ChromiumReleaseResolver(
             supabaseSource = SupabaseUpdateSource(appId = APP_ID),
-            gitHubSource = GitHubUpdateSource()
+            gitHubSource = GitHubUpdateSource(),
         )
     }
 
-    suspend fun downloadCandidates(version: String, archiveName: String): List<EngineDownloadCandidate> =
-        resolver.downloadCandidates(version, archiveName)
+    suspend fun downloadCandidates(
+        version: String,
+        archiveName: String,
+    ): List<EngineDownloadCandidate> = resolver.downloadCandidates(version, archiveName)
 
     suspend fun availableVersions(): EngineVersionListing {
         cachedVersions?.let { (fetchedAt, listing) ->

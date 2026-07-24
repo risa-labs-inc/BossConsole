@@ -1,7 +1,9 @@
 package ai.rever.boss.plugin
 
+import ai.rever.boss.plugin.api.Version
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.services.supabase.SupabaseConfig
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import io.github.jan.supabase.postgrest.postgrest
@@ -9,9 +11,6 @@ import io.github.jan.supabase.realtime.PostgresAction
 import io.github.jan.supabase.realtime.RealtimeChannel
 import io.github.jan.supabase.realtime.channel
 import io.github.jan.supabase.realtime.postgresChangeFlow
-import ai.rever.boss.plugin.api.Version
-import ai.rever.boss.utils.atomicWriteText
-import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -25,6 +24,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import java.io.File
 
 /**
  * One row of the remote system-plugins manifest (`system_plugins` table):
@@ -66,69 +66,75 @@ data class SystemPluginManifestEntry(
 object SystemPluginManifestService {
     private val logger = BossLogger.forComponent("SystemPluginManifest")
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
-    private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
+    private val json =
+        Json {
+            ignoreUnknownKeys = true
+            prettyPrint = true
+        }
 
     private val cacheFile: File by lazy { BossDirectories.resolve("system-plugins.json") }
 
     /** The last-shipped hardcoded set — used when no cache exists (first run / cache wiped). */
-    private val FALLBACK: List<SystemPluginManifestEntry> = listOf(
-        SystemPluginManifestEntry(
-            pluginId = "ai.rever.boss.plugin.api",
-            githubRepo = "risa-labs-inc/boss-plugin-api",
-            artifactPrefix = "boss-plugin-api",
-            loadPriority = 0
-        ),
-        SystemPluginManifestEntry(
-            pluginId = ai.rever.boss.components.plugin.MicrokernelRuntime.PLUGIN_ID,
-            githubRepo = ai.rever.boss.components.plugin.MicrokernelRuntime.GITHUB_REPO,
-            artifactPrefix = ai.rever.boss.components.plugin.MicrokernelRuntime.ARTIFACT_PREFIX,
-            loadPriority = 1,
-            downloadOnly = true,
-            kernelOnly = true
-        ),
-        SystemPluginManifestEntry(
-            pluginId = "ai.rever.boss.plugin.dynamic.pluginmanager",
-            githubRepo = "risa-labs-inc/boss-plugin-plugin-manager",
-            artifactPrefix = "boss-plugin-plugin-manager",
-            loadPriority = 5
-        ),
-        SystemPluginManifestEntry(
-            pluginId = "ai.rever.boss.plugin.dynamic.terminaltab",
-            githubRepo = "risa-labs-inc/boss-plugin-terminal-tab",
-            artifactPrefix = "boss-plugin-terminal-tab",
-            loadPriority = 10
-        ),
-        SystemPluginManifestEntry(
-            pluginId = "ai.rever.boss.plugin.dynamic.terminal",
-            githubRepo = "risa-labs-inc/boss-plugin-terminal",
-            artifactPrefix = "boss-plugin-terminal",
-            loadPriority = 10
-        ),
-        SystemPluginManifestEntry(
-            pluginId = "ai.rever.boss.plugin.dynamic.fluckbrowser",
-            githubRepo = "risa-labs-inc/boss-plugin-fluck-browser",
-            artifactPrefix = "boss-plugin-fluck-browser",
-            loadPriority = 10
-        ),
-        SystemPluginManifestEntry(
-            pluginId = "ai.rever.boss.plugin.dynamic.editortab",
-            githubRepo = "risa-labs-inc/boss-plugin-editor-tab",
-            artifactPrefix = "boss-plugin-editor-tab",
-            loadPriority = 10,
-            // 1.4.0 bundles BossEditor privately; older plugin JARs resolve
-            // bosseditor from a host that no longer carries it.
-            minVersion = "1.4.0"
-        ),
-    )
+    private val FALLBACK: List<SystemPluginManifestEntry> =
+        listOf(
+            SystemPluginManifestEntry(
+                pluginId = "ai.rever.boss.plugin.api",
+                githubRepo = "risa-labs-inc/boss-plugin-api",
+                artifactPrefix = "boss-plugin-api",
+                loadPriority = 0,
+            ),
+            SystemPluginManifestEntry(
+                pluginId = ai.rever.boss.components.plugin.MicrokernelRuntime.PLUGIN_ID,
+                githubRepo = ai.rever.boss.components.plugin.MicrokernelRuntime.GITHUB_REPO,
+                artifactPrefix = ai.rever.boss.components.plugin.MicrokernelRuntime.ARTIFACT_PREFIX,
+                loadPriority = 1,
+                downloadOnly = true,
+                kernelOnly = true,
+            ),
+            SystemPluginManifestEntry(
+                pluginId = "ai.rever.boss.plugin.dynamic.pluginmanager",
+                githubRepo = "risa-labs-inc/boss-plugin-plugin-manager",
+                artifactPrefix = "boss-plugin-plugin-manager",
+                loadPriority = 5,
+            ),
+            SystemPluginManifestEntry(
+                pluginId = "ai.rever.boss.plugin.dynamic.terminaltab",
+                githubRepo = "risa-labs-inc/boss-plugin-terminal-tab",
+                artifactPrefix = "boss-plugin-terminal-tab",
+                loadPriority = 10,
+            ),
+            SystemPluginManifestEntry(
+                pluginId = "ai.rever.boss.plugin.dynamic.terminal",
+                githubRepo = "risa-labs-inc/boss-plugin-terminal",
+                artifactPrefix = "boss-plugin-terminal",
+                loadPriority = 10,
+            ),
+            SystemPluginManifestEntry(
+                pluginId = "ai.rever.boss.plugin.dynamic.fluckbrowser",
+                githubRepo = "risa-labs-inc/boss-plugin-fluck-browser",
+                artifactPrefix = "boss-plugin-fluck-browser",
+                loadPriority = 10,
+            ),
+            SystemPluginManifestEntry(
+                pluginId = "ai.rever.boss.plugin.dynamic.editortab",
+                githubRepo = "risa-labs-inc/boss-plugin-editor-tab",
+                artifactPrefix = "boss-plugin-editor-tab",
+                loadPriority = 10,
+                // 1.4.0 bundles BossEditor privately; older plugin JARs resolve
+                // bosseditor from a host that no longer carries it.
+                minVersion = "1.4.0",
+            ),
+        )
 
     /**
      * Plugin ids this host build cannot run without. Remote rows may
      * retarget or reprioritize them but can never disable or drop them.
      */
-    private val BOOTSTRAP_PLUGIN_IDS = setOf(
-        "ai.rever.boss.plugin.api",
-        "ai.rever.boss.plugin.dynamic.pluginmanager",
-    )
+    private val BOOTSTRAP_PLUGIN_IDS =
+        setOf(
+            "ai.rever.boss.plugin.api",
+            "ai.rever.boss.plugin.dynamic.pluginmanager",
+        )
 
     private val entries = MutableStateFlow(loadCacheOrFallback())
 
@@ -163,7 +169,7 @@ object SystemPluginManifestService {
                     artifactPrefix = it.artifactPrefix,
                     loadPriority = it.loadPriority,
                     downloadOnly = it.downloadOnly,
-                    minVersion = it.minVersion
+                    minVersion = it.minVersion,
                 )
             }
 
@@ -181,14 +187,15 @@ object SystemPluginManifestService {
         val merged = LinkedHashMap<String, SystemPluginManifestEntry>()
         for (fallback in FALLBACK) {
             val remote = fetchedById[fallback.pluginId]
-            merged[fallback.pluginId] = if (remote == null) {
-                fallback
-            } else {
-                remote.copy(
-                    minVersion = highestVersion(remote.minVersion, fallback.minVersion),
-                    enabled = remote.enabled || fallback.pluginId in BOOTSTRAP_PLUGIN_IDS
-                )
-            }
+            merged[fallback.pluginId] =
+                if (remote == null) {
+                    fallback
+                } else {
+                    remote.copy(
+                        minVersion = highestVersion(remote.minVersion, fallback.minVersion),
+                        enabled = remote.enabled || fallback.pluginId in BOOTSTRAP_PLUGIN_IDS,
+                    )
+                }
         }
         for (remote in fetched) {
             merged.putIfAbsent(remote.pluginId, remote)
@@ -197,7 +204,10 @@ object SystemPluginManifestService {
     }
 
     /** The higher of two optional semver floors (unparseable/null = no floor). */
-    private fun highestVersion(a: String?, b: String?): String? {
+    private fun highestVersion(
+        a: String?,
+        b: String?,
+    ): String? {
         val va = a?.let { Version.parse(it) }
         val vb = b?.let { Version.parse(it) }
         return when {
@@ -221,52 +231,71 @@ object SystemPluginManifestService {
         subscribeToChanges()
     }
 
-    private suspend fun refreshFromRemote() = refreshMutex.withLock {
-        val fetched = try {
-            SupabaseConfig.client.postgrest.from("system_plugins")
-                .select()
-                .decodeList<SystemPluginManifestEntry>()
-        } catch (e: Exception) {
-            logger.warn(LogCategory.NETWORK, "System-plugins manifest fetch failed; using ${if (cacheFile.exists()) "cache" else "built-in fallback"}", mapOf(
-                "error" to (e.message ?: e::class.simpleName)
-            ))
-            return
-        }
-        if (fetched.isEmpty()) {
-            // An empty table is far more likely a backend misconfiguration
-            // than a real "no system plugins" state — don't wipe the cache.
-            logger.warn(LogCategory.NETWORK, "System-plugins manifest fetch returned no rows; keeping current list")
-            return
-        }
-
-        // Floor-protected view of the remote truth; both the cache and the
-        // session list only ever hold merged rows, so a partial edit can't
-        // shadow the fallback's bootstrap rows or version floors.
-        val merged = mergeWithFallback(fetched)
-        writeCache(merged)
-
-        // Live application is additive-only (see class KDoc). Safe as a
-        // read-modify-write: refreshMutex serializes all refreshes.
-        val known = entries.value.map { it.pluginId }.toSet()
-        val additions = merged.filter { it.pluginId !in known && it.enabled }
-        if (additions.isNotEmpty()) {
-            entries.value = entries.value + additions
-            logger.info(LogCategory.SYSTEM, "New system plugins available", mapOf(
-                "pluginIds" to additions.joinToString(",") { it.pluginId }
-            ))
-            try {
-                onAdditions?.invoke()
-            } catch (e: Exception) {
-                logger.warn(LogCategory.SYSTEM, "Installing new system plugins failed", mapOf(
-                    "error" to (e.message ?: e::class.simpleName)
-                ))
+    private suspend fun refreshFromRemote() =
+        refreshMutex.withLock {
+            val fetched =
+                try {
+                    SupabaseConfig.client.postgrest
+                        .from("system_plugins")
+                        .select()
+                        .decodeList<SystemPluginManifestEntry>()
+                } catch (e: Exception) {
+                    logger.warn(
+                        LogCategory.NETWORK,
+                        "System-plugins manifest fetch failed; using ${if (cacheFile.exists()) "cache" else "built-in fallback"}",
+                        mapOf(
+                            "error" to (e.message ?: e::class.simpleName),
+                        ),
+                    )
+                    return
+                }
+            if (fetched.isEmpty()) {
+                // An empty table is far more likely a backend misconfiguration
+                // than a real "no system plugins" state — don't wipe the cache.
+                logger.warn(LogCategory.NETWORK, "System-plugins manifest fetch returned no rows; keeping current list")
+                return
             }
+
+            // Floor-protected view of the remote truth; both the cache and the
+            // session list only ever hold merged rows, so a partial edit can't
+            // shadow the fallback's bootstrap rows or version floors.
+            val merged = mergeWithFallback(fetched)
+            writeCache(merged)
+
+            // Live application is additive-only (see class KDoc). Safe as a
+            // read-modify-write: refreshMutex serializes all refreshes.
+            val known = entries.value.map { it.pluginId }.toSet()
+            val additions = merged.filter { it.pluginId !in known && it.enabled }
+            if (additions.isNotEmpty()) {
+                entries.value = entries.value + additions
+                logger.info(
+                    LogCategory.SYSTEM,
+                    "New system plugins available",
+                    mapOf(
+                        "pluginIds" to additions.joinToString(",") { it.pluginId },
+                    ),
+                )
+                try {
+                    onAdditions?.invoke()
+                } catch (e: Exception) {
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Installing new system plugins failed",
+                        mapOf(
+                            "error" to (e.message ?: e::class.simpleName),
+                        ),
+                    )
+                }
+            }
+            logger.info(
+                LogCategory.SYSTEM,
+                "System-plugins manifest synced",
+                mapOf(
+                    "rows" to fetched.size,
+                    "liveAdditions" to additions.size,
+                ),
+            )
         }
-        logger.info(LogCategory.SYSTEM, "System-plugins manifest synced", mapOf(
-            "rows" to fetched.size,
-            "liveAdditions" to additions.size
-        ))
-    }
 
     private fun subscribeToChanges() {
         scope.launch {
@@ -278,9 +307,10 @@ object SystemPluginManifestService {
                     val client = SupabaseConfig.client
                     val ch = client.channel("system-plugins-changes")
                     channel = ch
-                    val changeFlow = ch.postgresChangeFlow<PostgresAction>(schema = "public") {
-                        table = "system_plugins"
-                    }
+                    val changeFlow =
+                        ch.postgresChangeFlow<PostgresAction>(schema = "public") {
+                            table = "system_plugins"
+                        }
                     ch.subscribe()
                     backoffMs = 5_000L
                     logger.info(LogCategory.NETWORK, "Subscribed to system_plugins changes")
@@ -298,10 +328,17 @@ object SystemPluginManifestService {
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    logger.warn(LogCategory.NETWORK, "system_plugins subscription lost, retrying in ${backoffMs}ms", mapOf(
-                        "error" to (e.message ?: e::class.simpleName)
-                    ))
-                    try { channel?.unsubscribe() } catch (_: Exception) {}
+                    logger.warn(
+                        LogCategory.NETWORK,
+                        "system_plugins subscription lost, retrying in ${backoffMs}ms",
+                        mapOf(
+                            "error" to (e.message ?: e::class.simpleName),
+                        ),
+                    )
+                    try {
+                        channel?.unsubscribe()
+                    } catch (_: Exception) {
+                    }
                     channel = null
                     delay(backoffMs)
                     backoffMs = (backoffMs * 2).coerceAtMost(maxBackoffMs)
@@ -315,9 +352,13 @@ object SystemPluginManifestService {
             if (cacheFile.exists()) {
                 val cached = json.decodeFromString<List<SystemPluginManifestEntry>>(cacheFile.readText())
                 if (cached.isNotEmpty()) {
-                    logger.info(LogCategory.SYSTEM, "System-plugins manifest loaded from cache", mapOf(
-                        "rows" to cached.size
-                    ))
+                    logger.info(
+                        LogCategory.SYSTEM,
+                        "System-plugins manifest loaded from cache",
+                        mapOf(
+                            "rows" to cached.size,
+                        ),
+                    )
                     // Re-merge on load: a cache written by an OLDER build must
                     // still honor THIS build's fallback floors/bootstrap rows.
                     return mergeWithFallback(cached)
@@ -327,9 +368,13 @@ object SystemPluginManifestService {
                 FALLBACK
             }
         } catch (e: Exception) {
-            logger.warn(LogCategory.SYSTEM, "System-plugins cache unreadable; using built-in fallback", mapOf(
-                "error" to (e.message ?: e::class.simpleName)
-            ))
+            logger.warn(
+                LogCategory.SYSTEM,
+                "System-plugins cache unreadable; using built-in fallback",
+                mapOf(
+                    "error" to (e.message ?: e::class.simpleName),
+                ),
+            )
             FALLBACK
         }
     }
@@ -340,9 +385,13 @@ object SystemPluginManifestService {
             // can't interleave or delete each other's output.
             cacheFile.atomicWriteText(json.encodeToString(list))
         } catch (e: Exception) {
-            logger.warn(LogCategory.SYSTEM, "Failed to persist system-plugins cache", mapOf(
-                "error" to (e.message ?: e::class.simpleName)
-            ))
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Failed to persist system-plugins cache",
+                mapOf(
+                    "error" to (e.message ?: e::class.simpleName),
+                ),
+            )
         }
     }
 }

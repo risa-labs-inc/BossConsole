@@ -8,12 +8,12 @@ import ai.rever.boss.plugin.api.RunConfigurationTypeData
 import ai.rever.boss.plugin.run.Language
 import ai.rever.boss.plugin.run.RunConfiguration
 import ai.rever.boss.plugin.run.RunConfigurationType
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /**
@@ -22,7 +22,6 @@ import kotlinx.coroutines.launch
  * This adapter bridges the plugin API with the actual implementation in composeApp.
  */
 class RunConfigurationDataProviderImpl : RunConfigurationDataProvider {
-
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     // Map internal types to plugin API types
@@ -42,11 +41,17 @@ class RunConfigurationDataProviderImpl : RunConfigurationDataProvider {
         }
     }
 
-    override suspend fun scanProject(projectPath: String, windowId: String) {
+    override suspend fun scanProject(
+        projectPath: String,
+        windowId: String,
+    ) {
         RunEventBus.scanProject(projectPath, sourceWindowId = windowId)
     }
 
-    override suspend fun execute(config: RunConfigurationData, windowId: String) {
+    override suspend fun execute(
+        config: RunConfigurationData,
+        windowId: String,
+    ) {
         // Convert back to internal type for execution
         val internalConfig = config.toInternal()
         RunEventBus.execute(internalConfig, sourceWindowId = windowId)
@@ -64,8 +69,8 @@ class RunConfigurationDataProviderImpl : RunConfigurationDataProvider {
 /**
  * Convert internal RunConfiguration to plugin API RunConfigurationData.
  */
-private fun RunConfiguration.toPluginData(): RunConfigurationData {
-    return RunConfigurationData(
+private fun RunConfiguration.toPluginData(): RunConfigurationData =
+    RunConfigurationData(
         id = id,
         name = name,
         type = type.toPluginData(),
@@ -77,15 +82,14 @@ private fun RunConfiguration.toPluginData(): RunConfigurationData {
         environmentVariables = environmentVariables,
         arguments = arguments,
         isAutoDetected = isAutoDetected,
-        timestamp = timestamp
+        timestamp = timestamp,
     )
-}
 
 /**
  * Convert plugin API RunConfigurationData back to internal RunConfiguration.
  */
-private fun RunConfigurationData.toInternal(): RunConfiguration {
-    return RunConfiguration(
+private fun RunConfigurationData.toInternal(): RunConfiguration =
+    RunConfiguration(
         id = id,
         name = name,
         type = type.toInternal(),
@@ -97,39 +101,36 @@ private fun RunConfigurationData.toInternal(): RunConfiguration {
         environmentVariables = environmentVariables,
         arguments = arguments,
         isAutoDetected = isAutoDetected,
-        timestamp = timestamp
+        timestamp = timestamp,
     )
-}
 
 /**
  * Convert internal RunConfigurationType to plugin API type.
  */
-private fun RunConfigurationType.toPluginData(): RunConfigurationTypeData {
-    return when (this) {
+private fun RunConfigurationType.toPluginData(): RunConfigurationTypeData =
+    when (this) {
         RunConfigurationType.MAIN_FUNCTION -> RunConfigurationTypeData.MAIN_FUNCTION
         RunConfigurationType.SCRIPT -> RunConfigurationTypeData.SCRIPT
         RunConfigurationType.TEST -> RunConfigurationTypeData.TEST
         RunConfigurationType.CUSTOM -> RunConfigurationTypeData.CUSTOM
     }
-}
 
 /**
  * Convert plugin API type back to internal RunConfigurationType.
  */
-private fun RunConfigurationTypeData.toInternal(): RunConfigurationType {
-    return when (this) {
+private fun RunConfigurationTypeData.toInternal(): RunConfigurationType =
+    when (this) {
         RunConfigurationTypeData.MAIN_FUNCTION -> RunConfigurationType.MAIN_FUNCTION
         RunConfigurationTypeData.SCRIPT -> RunConfigurationType.SCRIPT
         RunConfigurationTypeData.TEST -> RunConfigurationType.TEST
         RunConfigurationTypeData.CUSTOM -> RunConfigurationType.CUSTOM
     }
-}
 
 /**
  * Convert internal Language to plugin API LanguageData.
  */
-private fun Language.toPluginData(): LanguageData {
-    return when (this) {
+private fun Language.toPluginData(): LanguageData =
+    when (this) {
         Language.KOTLIN -> LanguageData.KOTLIN
         Language.JAVA -> LanguageData.JAVA
         Language.PYTHON -> LanguageData.PYTHON
@@ -139,13 +140,12 @@ private fun Language.toPluginData(): LanguageData {
         Language.RUST -> LanguageData.RUST
         Language.UNKNOWN -> LanguageData.UNKNOWN
     }
-}
 
 /**
  * Convert plugin API LanguageData back to internal Language.
  */
-private fun LanguageData.toInternal(): Language {
-    return when (this) {
+private fun LanguageData.toInternal(): Language =
+    when (this) {
         LanguageData.KOTLIN -> Language.KOTLIN
         LanguageData.JAVA -> Language.JAVA
         LanguageData.PYTHON -> Language.PYTHON
@@ -155,4 +155,3 @@ private fun LanguageData.toInternal(): Language {
         LanguageData.RUST -> Language.RUST
         LanguageData.UNKNOWN -> Language.UNKNOWN
     }
-}

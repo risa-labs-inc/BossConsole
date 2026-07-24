@@ -22,10 +22,11 @@ import java.io.File
 actual object PerformanceSettingsManager {
     private val logger = BossLogger.forComponent("PerformanceSettingsManager")
     private val settingsFile = BossDirectories.resolve("performance-settings.json")
-    private val json = Json {
-        prettyPrint = true
-        ignoreUnknownKeys = true
-    }
+    private val json =
+        Json {
+            prettyPrint = true
+            ignoreUnknownKeys = true
+        }
 
     private val _currentSettings = MutableStateFlow(PerformanceSettings())
     actual val currentSettings: StateFlow<PerformanceSettings> = _currentSettings.asStateFlow()
@@ -51,19 +52,20 @@ actual object PerformanceSettingsManager {
         }
     }
 
-    actual suspend fun saveSettings() = withContext(Dispatchers.IO) {
-        try {
-            val content = json.encodeToString(PerformanceSettings.serializer(), _currentSettings.value)
-            settingsFile.writeText(content)
-        } catch (e: Exception) {
-            // Settings save failed - not critical, will use in-memory settings
-            logger.warn(
-                LogCategory.SYSTEM,
-                "Failed to persist performance settings - keeping in-memory only",
-                error = e,
-            )
+    actual suspend fun saveSettings() =
+        withContext(Dispatchers.IO) {
+            try {
+                val content = json.encodeToString(PerformanceSettings.serializer(), _currentSettings.value)
+                settingsFile.writeText(content)
+            } catch (e: Exception) {
+                // Settings save failed - not critical, will use in-memory settings
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Failed to persist performance settings - keeping in-memory only",
+                    error = e,
+                )
+            }
         }
-    }
 
     actual suspend fun updateSettings(settings: PerformanceSettings) {
         // Validate settings to ensure values are within valid ranges

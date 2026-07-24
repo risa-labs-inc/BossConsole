@@ -20,7 +20,7 @@ enum class DownloadStatus {
     FAILED,
 
     /** Download was cancelled by user */
-    CANCELLED
+    CANCELLED,
 }
 
 /**
@@ -55,17 +55,21 @@ data class DownloadItem(
     val finishedAt: Long?,
     val canPause: Boolean,
     val canResume: Boolean,
-    val errorReason: String?
+    val errorReason: String?,
 ) {
     /**
      * Calculates the download progress as a percentage (0.0 to 1.0).
      * Returns 0.0 if total size is unknown.
      */
     val progress: Float
-        get() = totalBytes?.let {
-            if (it > 0) (receivedBytes.toFloat() / it.toFloat()).coerceIn(0f, 1f)
-            else 0f
-        } ?: 0f
+        get() =
+            totalBytes?.let {
+                if (it > 0) {
+                    (receivedBytes.toFloat() / it.toFloat()).coerceIn(0f, 1f)
+                } else {
+                    0f
+                }
+            } ?: 0f
 
     /**
      * Estimates time remaining in seconds based on current speed.

@@ -29,47 +29,54 @@ class SupabaseUpdateSource(
     private val appId: String = UpdateSourceConfig.appId,
     private val restBaseUrl: String = UpdateSourceConfig.restBaseUrl,
     private val anonKey: String = UpdateSourceConfig.supabaseAnonKey,
-    private val apiClient: HttpClient = defaultApiClient()
+    private val apiClient: HttpClient = defaultApiClient(),
 ) : UpdateSource {
-
     override val name: String = "supabase"
     private val logger = BossLogger.forComponent("SupabaseUpdateSource")
 
     companion object {
         private const val MAX_RELEASES = 50
 
-        private fun defaultApiClient(): HttpClient = HttpClient(CIO) {
-            install(ContentNegotiation) {
-                json(Json {
-                    ignoreUnknownKeys = true
-                    isLenient = true
-                })
+        private fun defaultApiClient(): HttpClient =
+            HttpClient(CIO) {
+                install(ContentNegotiation) {
+                    json(
+                        Json {
+                            ignoreUnknownKeys = true
+                            isLenient = true
+                        },
+                    )
+                }
+                install(HttpTimeout) {
+                    requestTimeoutMillis = 30_000
+                    connectTimeoutMillis = 15_000
+                    socketTimeoutMillis = 15_000
+                }
             }
-            install(HttpTimeout) {
-                requestTimeoutMillis = 30_000
-                connectTimeoutMillis = 15_000
-                socketTimeoutMillis = 15_000
-            }
-        }
     }
 
-    private suspend fun query(versionFilter: String?, limit: Int): List<AppReleaseRow> {
+    private suspend fun query(
+        versionFilter: String?,
+        limit: Int,
+    ): List<AppReleaseRow> {
         // URL-encode interpolated values: a version with '+build' metadata or any
         // space/&/# would otherwise corrupt the PostgREST query and silently mismatch.
         val appParam = appId.encodeURLParameter()
         val versionParam = versionFilter?.let { "&version=eq.${it.encodeURLParameter()}" } ?: ""
-        val url = "$restBaseUrl/app_releases?app=eq.$appParam$versionParam" +
-            "&order=published_at.desc&limit=$limit&select=*"
-        val response = apiClient.get(url) {
-            headers {
-                append("apikey", anonKey)
-                append(HttpHeaders.Authorization, "Bearer $anonKey")
-                append(HttpHeaders.Accept, "application/json")
+        val url =
+            "$restBaseUrl/app_releases?app=eq.$appParam$versionParam" +
+                "&order=published_at.desc&limit=$limit&select=*"
+        val response =
+            apiClient.get(url) {
+                headers {
+                    append("apikey", anonKey)
+                    append(HttpHeaders.Authorization, "Bearer $anonKey")
+                    append(HttpHeaders.Accept, "application/json")
+                }
             }
-        }
         if (response.status.value !in 200..299) {
             throw UpdateSourceException(
-                "Supabase app_releases request failed (HTTP ${response.status.value})"
+                "Supabase app_releases request failed (HTTP ${response.status.value})",
             )
         }
         return response.body()
@@ -97,25 +104,27 @@ internal data class AppReleaseRow(
     val prerelease: Boolean = false,
     @SerialName("release_notes") val releaseNotes: String = "",
     val assets: List<AppReleaseAsset> = emptyList(),
-    @SerialName("published_at") val publishedAt: String = ""
+    @SerialName("published_at") val publishedAt: String = "",
 ) {
-    fun toGitHubRelease(): GitHubRelease = GitHubRelease(
-        tag_name = "v$version",
-        name = version,
-        body = releaseNotes,
-        draft = false,
-        prerelease = prerelease,
-        published_at = publishedAt,
-        assets = assets.map { asset ->
-            GitHubAsset(
-                name = asset.name,
-                browser_download_url = asset.url,
-                size = asset.size,
-                content_type = "",
-                sha256 = asset.sha256
-            )
-        }
-    )
+    fun toGitHubRelease(): GitHubRelease =
+        GitHubRelease(
+            tag_name = "v$version",
+            name = version,
+            body = releaseNotes,
+            draft = false,
+            prerelease = prerelease,
+            published_at = publishedAt,
+            assets =
+                assets.map { asset ->
+                    GitHubAsset(
+                        name = asset.name,
+                        browser_download_url = asset.url,
+                        size = asset.size,
+                        content_type = "",
+                        sha256 = asset.sha256,
+                    )
+                },
+        )
 }
 
 @Serializable
@@ -123,5 +132,5 @@ internal data class AppReleaseAsset(
     val name: String,
     val url: String,
     val size: Long = 0,
-    val sha256: String? = null
+    val sha256: String? = null,
 )

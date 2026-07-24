@@ -10,9 +10,7 @@ import ai.rever.boss.config.SupabaseClientConfig
  * 3. local.properties file
  * 4. Fallback to production default
  */
-actual fun getSupabaseUrl(): String {
-    return SupabaseClientConfig.url
-}
+actual fun getSupabaseUrl(): String = SupabaseClientConfig.url
 
 /**
  * Desktop implementation of Supabase anonymous key configuration
@@ -22,9 +20,7 @@ actual fun getSupabaseUrl(): String {
  * 3. local.properties file
  * 4. Fallback to production default
  */
-actual fun getSupabaseAnonKey(): String {
-    return SupabaseClientConfig.anonKey
-}
+actual fun getSupabaseAnonKey(): String = SupabaseClientConfig.anonKey
 
 /**
  * Desktop implementation of Supabase Functions URL configuration
@@ -34,6 +30,4 @@ actual fun getSupabaseAnonKey(): String {
  * 3. local.properties file
  * 4. Fallback to production default
  */
-actual fun getSupabaseFunctionUrl(): String {
-    return SupabaseClientConfig.functionUrl
-}
+actual fun getSupabaseFunctionUrl(): String = SupabaseClientConfig.functionUrl

@@ -30,7 +30,10 @@ class MasteryExecutor(
      * @param input   Initial key-value input (available to nodes as "INPUT.key")
      * @return [Flow] of [MasteryProgress] events emitted in real time
      */
-    fun execute(mastery: MasteryDefinition, input: Map<String, String>): Flow<MasteryProgress> =
+    fun execute(
+        mastery: MasteryDefinition,
+        input: Map<String, String>,
+    ): Flow<MasteryProgress> =
         channelFlow {
             val startTime = System.currentTimeMillis()
             send(MasteryProgress.Started(mastery.id, mastery.nodes.size))
@@ -39,29 +42,32 @@ class MasteryExecutor(
             val nodeOutputs = mutableMapOf<String, Map<String, String>>("INPUT" to input)
 
             try {
-                val levels = TopologicalSort.sort(
-                    nodes = mastery.nodes,
-                    getId = { it.id },
-                    getDeps = { node ->
-                        mastery.edges
-                            .filter { it.toNode == node.id }
-                            .map { it.fromNode }
-                            .filter { it != "INPUT" }
-                    },
-                )
+                val levels =
+                    TopologicalSort.sort(
+                        nodes = mastery.nodes,
+                        getId = { it.id },
+                        getDeps = { node ->
+                            mastery.edges
+                                .filter { it.toNode == node.id }
+                                .map { it.fromNode }
+                                .filter { it != "INPUT" }
+                        },
+                    )
 
                 for (level in levels) {
                     // All nodes in a level are independent — execute in parallel
                     val snapshot = nodeOutputs.toMap()
-                    val levelResults: List<Pair<String, Map<String, String>>> = coroutineScope {
-                        level.map { node ->
-                            async {
-                                executeNode(node, snapshot) { progress ->
-                                    this@channelFlow.send(progress)
-                                }
-                            }
-                        }.awaitAll()
-                    }
+                    val levelResults: List<Pair<String, Map<String, String>>> =
+                        coroutineScope {
+                            level
+                                .map { node ->
+                                    async {
+                                        executeNode(node, snapshot) { progress ->
+                                            this@channelFlow.send(progress)
+                                        }
+                                    }
+                                }.awaitAll()
+                        }
                     levelResults.forEach { (nodeId, output) ->
                         nodeOutputs[nodeId] = output
                     }
@@ -83,7 +89,7 @@ class MasteryExecutor(
             MasteryProgress.NodeStarted(
                 node.id,
                 node.displayName.ifEmpty { "${node.pluginId}/${node.action}" },
-            )
+            ),
         )
 
         val resolvedInput = resolveNodeInput(node, nodeOutputs)
@@ -92,9 +98,10 @@ class MasteryExecutor(
 
         for (attempt in 0..node.maxRetries) {
             try {
-                val output = withTimeout(node.timeoutMs) {
-                    capabilityResolver.invoke(node.pluginId, node.action, resolvedInput)
-                }
+                val output =
+                    withTimeout(node.timeoutMs) {
+                        capabilityResolver.invoke(node.pluginId, node.action, resolvedInput)
+                    }
                 val duration = System.currentTimeMillis() - nodeStart
                 emit(MasteryProgress.NodeCompleted(node.id, output, duration))
                 return node.id to output
@@ -106,7 +113,10 @@ class MasteryExecutor(
                 emit(MasteryProgress.NodeFailed(node.id, e.message ?: "Unknown error", willRetry))
                 logger.warn(
                     "Node {} attempt {}/{} failed: {}",
-                    node.id, attempt + 1, node.maxRetries + 1, e.message,
+                    node.id,
+                    attempt + 1,
+                    node.maxRetries + 1,
+                    e.message,
                 )
                 if (willRetry) delay(1_000L * (attempt + 1))
             }
@@ -140,7 +150,8 @@ class MasteryExecutor(
             } else {
                 logger.warn(
                     "Source node '{}' output not available when resolving input for node '{}'",
-                    sourceNodeId, node.id,
+                    sourceNodeId,
+                    node.id,
                 )
             }
         }
@@ -155,32 +166,50 @@ class MasteryExecutor(
     ): Map<String, String> {
         val nodesWithOutgoingEdges = mastery.edges.map { it.fromNode }.toSet()
         val terminalNodes = mastery.nodes.filter { it.id !in nodesWithOutgoingEdges }
-        return terminalNodes.flatMap { node ->
-            nodeOutputs[node.id]?.entries ?: emptySet()
-        }.associate { it.key to it.value }
+        return terminalNodes
+            .flatMap { node ->
+                nodeOutputs[node.id]?.entries ?: emptySet()
+            }.associate { it.key to it.value }
     }
 
-    private class NodeExecutionException(val nodeId: String, message: String) : Exception(message)
+    private class NodeExecutionException(
+        val nodeId: String,
+        message: String,
+    ) : Exception(message)
 }
 
 // ---- Progress event hierarchy ----
 
 sealed class MasteryProgress {
-    data class Started(val masteryId: String, val totalNodes: Int) : MasteryProgress()
-    data class NodeStarted(val nodeId: String, val displayName: String) : MasteryProgress()
+    data class Started(
+        val masteryId: String,
+        val totalNodes: Int,
+    ) : MasteryProgress()
+
+    data class NodeStarted(
+        val nodeId: String,
+        val displayName: String,
+    ) : MasteryProgress()
+
     data class NodeCompleted(
         val nodeId: String,
         val output: Map<String, String>,
         val durationMs: Long,
     ) : MasteryProgress()
+
     data class NodeFailed(
         val nodeId: String,
         val error: String,
         val willRetry: Boolean,
     ) : MasteryProgress()
+
     data class Completed(
         val output: Map<String, String>,
         val totalDurationMs: Long,
     ) : MasteryProgress()
-    data class Failed(val error: String, val failedNodeId: String) : MasteryProgress()
+
+    data class Failed(
+        val error: String,
+        val failedNodeId: String,
+    ) : MasteryProgress()
 }

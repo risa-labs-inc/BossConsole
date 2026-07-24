@@ -1,8 +1,8 @@
 package ai.rever.boss.components.wizard.plugin
 
 import ai.rever.boss.components.wizard.CheckboxCard
-import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.components.wizard.WizardNote
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -45,21 +45,21 @@ import androidx.compose.ui.unit.sp
 internal fun WizardHeader(
     currentStep: PluginInstallStep,
     onBack: (() -> Unit)?,
-    onDismiss: (() -> Unit)?
+    onDismiss: (() -> Unit)?,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         if (onBack != null) {
             IconButton(
                 onClick = onBack,
-                modifier = Modifier.padding(end = 12.dp)
+                modifier = Modifier.padding(end = 12.dp),
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
                     contentDescription = "Back",
-                    tint = BossTheme.colors.textSecondary
+                    tint = BossTheme.colors.textSecondary,
                 )
             }
         }
@@ -69,13 +69,13 @@ internal fun WizardHeader(
                 text = currentStep.title,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = BossTheme.colors.textPrimary
+                color = BossTheme.colors.textPrimary,
             )
             currentStep.category?.let { category ->
                 Text(
                     text = category.description,
                     fontSize = 13.sp,
-                    color = BossTheme.colors.textSecondary
+                    color = BossTheme.colors.textSecondary,
                 )
             }
         }
@@ -85,7 +85,7 @@ internal fun WizardHeader(
                 Icon(
                     imageVector = Icons.Outlined.Close,
                     contentDescription = "Close",
-                    tint = BossTheme.colors.textSecondary
+                    tint = BossTheme.colors.textSecondary,
                 )
             }
         }
@@ -97,13 +97,13 @@ internal fun WelcomeStepContent() {
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        verticalArrangement = Arrangement.Center,
     ) {
         Icon(
             imageVector = Icons.Default.HomeRepairService,
             contentDescription = null,
             modifier = Modifier.size(64.dp),
-            tint = BossTheme.colors.signal
+            tint = BossTheme.colors.signal,
         )
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -113,7 +113,7 @@ internal fun WelcomeStepContent() {
             fontSize = 24.sp,
             fontWeight = FontWeight.Bold,
             color = BossTheme.colors.textPrimary,
-            textAlign = TextAlign.Center
+            textAlign = TextAlign.Center,
         )
 
         Spacer(modifier = Modifier.height(12.dp))
@@ -124,29 +124,30 @@ internal fun WelcomeStepContent() {
             color = BossTheme.colors.textSecondary,
             textAlign = TextAlign.Center,
             lineHeight = 22.sp,
-            modifier = Modifier.padding(horizontal = 32.dp)
+            modifier = Modifier.padding(horizontal = 32.dp),
         )
 
         Spacer(modifier = Modifier.height(32.dp))
 
         Row(
-            modifier = Modifier
-                .clip(RoundedCornerShape(8.dp))
-                .background(BossTheme.colors.raised)
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
+            modifier =
+                Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(BossTheme.colors.raised)
+                    .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
                 imageVector = Icons.Default.Rocket,
                 contentDescription = null,
                 modifier = Modifier.size(20.dp),
-                tint = BossTheme.colors.signal
+                tint = BossTheme.colors.signal,
             )
             Spacer(modifier = Modifier.width(12.dp))
             Text(
                 text = "Essential tools will be pre-selected for you",
                 fontSize = 13.sp,
-                color = BossTheme.colors.textSecondary
+                color = BossTheme.colors.textSecondary,
             )
         }
     }
@@ -159,24 +160,24 @@ internal fun CategoryStepContent(
     isPluginSelected: (String) -> Boolean,
     onTogglePlugin: (String) -> Unit,
     onSelectAll: () -> Unit,
-    onDeselectAll: () -> Unit
+    onDeselectAll: () -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         // Select All / Deselect All buttons
         if (plugins.isNotEmpty()) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
+                horizontalArrangement = Arrangement.End,
             ) {
                 TextButton(
                     onClick = onSelectAll,
-                    colors = ButtonDefaults.textButtonColors(contentColor = BossTheme.colors.signal)
+                    colors = ButtonDefaults.textButtonColors(contentColor = BossTheme.colors.signal),
                 ) {
                     Text("Select All", fontSize = 12.sp)
                 }
                 TextButton(
                     onClick = onDeselectAll,
-                    colors = ButtonDefaults.textButtonColors(contentColor = BossTheme.colors.textSecondary)
+                    colors = ButtonDefaults.textButtonColors(contentColor = BossTheme.colors.textSecondary),
                 ) {
                     Text("Deselect All", fontSize = 12.sp)
                 }
@@ -186,21 +187,22 @@ internal fun CategoryStepContent(
         // Plugin list
         if (plugins.isEmpty()) {
             Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                contentAlignment = Alignment.Center
+                modifier =
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text = "No tools available in this category",
                     color = BossTheme.colors.textSecondary,
-                    fontSize = 14.sp
+                    fontSize = 14.sp,
                 )
             }
         } else {
             LazyColumn(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(plugins, key = { it.id }) { plugin ->
                     CheckboxCard(
@@ -209,7 +211,7 @@ internal fun CategoryStepContent(
                         icon = plugin.icon,
                         isChecked = isPluginSelected(plugin.id),
                         onCheckedChange = { onTogglePlugin(plugin.id) },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
             }
@@ -219,7 +221,7 @@ internal fun CategoryStepContent(
 
         // Note about Plugin Manager
         WizardNote(
-            text = "You can manage these tools later in the Toolbox"
+            text = "You can manage these tools later in the Toolbox",
         )
     }
 }
@@ -229,12 +231,12 @@ internal fun InstallingStepContent(
     progress: Float,
     status: String,
     error: String?,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        verticalArrangement = Arrangement.Center,
     ) {
         if (error != null) {
             // Error state
@@ -242,23 +244,24 @@ internal fun InstallingStepContent(
                 text = "Installation Failed",
                 fontSize = 20.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = BossTheme.colors.textPrimary
+                color = BossTheme.colors.textPrimary,
             )
 
             Spacer(modifier = Modifier.height(16.dp))
 
             Box(
-                modifier = Modifier
-                    .fillMaxWidth(0.8f)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(BossTheme.colors.raised)
-                    .padding(16.dp)
+                modifier =
+                    Modifier
+                        .fillMaxWidth(0.8f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(BossTheme.colors.raised)
+                        .padding(16.dp),
             ) {
                 Text(
                     text = error,
                     fontSize = 13.sp,
                     color = BossTheme.colors.alert,
-                    lineHeight = 20.sp
+                    lineHeight = 20.sp,
                 )
             }
 
@@ -266,11 +269,12 @@ internal fun InstallingStepContent(
 
             Button(
                 onClick = onRetry,
-                colors = ButtonDefaults.buttonColors(
-                    backgroundColor = BossTheme.colors.signal,
-                    contentColor = BossTheme.colors.onSignal
-                ),
-                shape = RoundedCornerShape(8.dp)
+                colors =
+                    ButtonDefaults.buttonColors(
+                        backgroundColor = BossTheme.colors.signal,
+                        contentColor = BossTheme.colors.onSignal,
+                    ),
+                shape = RoundedCornerShape(8.dp),
             ) {
                 Text("Try Again")
             }
@@ -279,7 +283,7 @@ internal fun InstallingStepContent(
             CircularProgressIndicator(
                 modifier = Modifier.size(64.dp),
                 color = BossTheme.colors.signal,
-                strokeWidth = 4.dp
+                strokeWidth = 4.dp,
             )
 
             Spacer(modifier = Modifier.height(28.dp))
@@ -288,7 +292,7 @@ internal fun InstallingStepContent(
                 text = "Installing Tools",
                 fontSize = 20.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = BossTheme.colors.textPrimary
+                color = BossTheme.colors.textPrimary,
             )
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -296,19 +300,20 @@ internal fun InstallingStepContent(
             Text(
                 text = status,
                 fontSize = 14.sp,
-                color = BossTheme.colors.textSecondary
+                color = BossTheme.colors.textSecondary,
             )
 
             Spacer(modifier = Modifier.height(24.dp))
 
             LinearProgressIndicator(
                 progress = progress,
-                modifier = Modifier
-                    .fillMaxWidth(0.6f)
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(2.dp)),
+                modifier =
+                    Modifier
+                        .fillMaxWidth(0.6f)
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp)),
                 color = BossTheme.colors.signal,
-                backgroundColor = BossTheme.colors.raised
+                backgroundColor = BossTheme.colors.raised,
             )
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -316,7 +321,7 @@ internal fun InstallingStepContent(
             Text(
                 text = "${(progress * 100).toInt()}%",
                 fontSize = 12.sp,
-                color = BossTheme.colors.textSecondary
+                color = BossTheme.colors.textSecondary,
             )
         }
     }
@@ -325,20 +330,20 @@ internal fun InstallingStepContent(
 @Composable
 internal fun CompleteStepContent(
     installedCount: Int,
-    failedPlugins: List<Pair<String, String>> = emptyList()
+    failedPlugins: List<Pair<String, String>> = emptyList(),
 ) {
     val hasFailures = failedPlugins.isNotEmpty()
 
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        verticalArrangement = Arrangement.Center,
     ) {
         Icon(
             imageVector = Icons.Default.CheckCircle,
             contentDescription = if (hasFailures) "Partial Success" else "Success",
             modifier = Modifier.size(72.dp),
-            tint = if (hasFailures) BossTheme.colors.warn else BossTheme.colors.ok
+            tint = if (hasFailures) BossTheme.colors.warn else BossTheme.colors.ok,
         )
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -347,20 +352,21 @@ internal fun CompleteStepContent(
             text = if (hasFailures) "Installation Complete" else "You're All Set!",
             fontSize = 24.sp,
             fontWeight = FontWeight.Bold,
-            color = BossTheme.colors.textPrimary
+            color = BossTheme.colors.textPrimary,
         )
 
         Spacer(modifier = Modifier.height(12.dp))
 
         Text(
-            text = if (installedCount > 0) {
-                "$installedCount tool${if (installedCount > 1) "s" else ""} installed successfully"
-            } else {
-                "No tools were selected for installation"
-            },
+            text =
+                if (installedCount > 0) {
+                    "$installedCount tool${if (installedCount > 1) "s" else ""} installed successfully"
+                } else {
+                    "No tools were selected for installation"
+                },
             fontSize = 14.sp,
             color = BossTheme.colors.textSecondary,
-            textAlign = TextAlign.Center
+            textAlign = TextAlign.Center,
         )
 
         // Show failed plugins if any
@@ -368,18 +374,19 @@ internal fun CompleteStepContent(
             Spacer(modifier = Modifier.height(16.dp))
 
             Box(
-                modifier = Modifier
-                    .fillMaxWidth(0.85f)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(BossTheme.colors.raised)
-                    .padding(12.dp)
+                modifier =
+                    Modifier
+                        .fillMaxWidth(0.85f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(BossTheme.colors.raised)
+                        .padding(12.dp),
             ) {
                 Column {
                     Text(
                         text = "${failedPlugins.size} tool${if (failedPlugins.size > 1) "s" else ""} failed to install:",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
-                        color = BossTheme.colors.warn
+                        color = BossTheme.colors.warn,
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     failedPlugins.forEach { (pluginId, error) ->
@@ -387,7 +394,7 @@ internal fun CompleteStepContent(
                             text = "\u2022 $pluginId: $error",
                             fontSize = 12.sp,
                             color = BossTheme.colors.textSecondary,
-                            lineHeight = 18.sp
+                            lineHeight = 18.sp,
                         )
                     }
                 }
@@ -400,7 +407,7 @@ internal fun CompleteStepContent(
                 fontSize = 13.sp,
                 color = BossTheme.colors.textSecondary.copy(alpha = 0.8f),
                 textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 32.dp)
+                modifier = Modifier.padding(horizontal = 32.dp),
             )
         } else {
             Spacer(modifier = Modifier.height(32.dp))
@@ -410,7 +417,7 @@ internal fun CompleteStepContent(
                 fontSize = 13.sp,
                 color = BossTheme.colors.textSecondary.copy(alpha = 0.8f),
                 textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 32.dp)
+                modifier = Modifier.padding(horizontal = 32.dp),
             )
         }
     }
@@ -424,23 +431,24 @@ internal fun WizardNavigation(
     onBack: () -> Unit,
     onNext: () -> Unit,
     onSkip: () -> Unit,
-    onFinish: () -> Unit
+    onFinish: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.End,
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         when (currentStep) {
             is PluginInstallStep.Welcome -> {
                 Button(
                     onClick = onNext,
-                    colors = ButtonDefaults.buttonColors(
-                        backgroundColor = BossTheme.colors.signal,
-                        contentColor = BossTheme.colors.onSignal
-                    ),
+                    colors =
+                        ButtonDefaults.buttonColors(
+                            backgroundColor = BossTheme.colors.signal,
+                            contentColor = BossTheme.colors.onSignal,
+                        ),
                     shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.height(40.dp)
+                    modifier = Modifier.height(40.dp),
                 ) {
                     Text("Get Started", fontWeight = FontWeight.Medium)
                 }
@@ -451,14 +459,16 @@ internal fun WizardNavigation(
             is PluginInstallStep.ProductivityPlugins,
             is PluginInstallStep.AutomationPlugins,
             is PluginInstallStep.AdminPlugins,
-            is PluginInstallStep.OtherPlugins -> {
+            is PluginInstallStep.OtherPlugins,
+            -> {
                 // Skip remaining steps button
                 if (currentStep.canSkip) {
                     TextButton(
                         onClick = onSkip,
-                        colors = ButtonDefaults.textButtonColors(
-                            contentColor = BossTheme.colors.textSecondary
-                        )
+                        colors =
+                            ButtonDefaults.textButtonColors(
+                                contentColor = BossTheme.colors.textSecondary,
+                            ),
                     ) {
                         Text("Skip to Install")
                     }
@@ -468,18 +478,19 @@ internal fun WizardNavigation(
 
                 Button(
                     onClick = onNext,
-                    colors = ButtonDefaults.buttonColors(
-                        backgroundColor = BossTheme.colors.signal,
-                        contentColor = BossTheme.colors.onSignal
-                    ),
+                    colors =
+                        ButtonDefaults.buttonColors(
+                            backgroundColor = BossTheme.colors.signal,
+                            contentColor = BossTheme.colors.onSignal,
+                        ),
                     shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.height(40.dp)
+                    modifier = Modifier.height(40.dp),
                 ) {
                     // Show "Install" on the last category step (Other)
                     val isLastCategoryStep = currentStep is PluginInstallStep.OtherPlugins
                     Text(
                         text = if (isLastCategoryStep) "Install" else "Next",
-                        fontWeight = FontWeight.Medium
+                        fontWeight = FontWeight.Medium,
                     )
                 }
             }
@@ -491,12 +502,13 @@ internal fun WizardNavigation(
             is PluginInstallStep.Complete -> {
                 Button(
                     onClick = onFinish,
-                    colors = ButtonDefaults.buttonColors(
-                        backgroundColor = BossTheme.colors.signal,
-                        contentColor = BossTheme.colors.onSignal
-                    ),
+                    colors =
+                        ButtonDefaults.buttonColors(
+                            backgroundColor = BossTheme.colors.signal,
+                            contentColor = BossTheme.colors.onSignal,
+                        ),
                     shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.height(40.dp)
+                    modifier = Modifier.height(40.dp),
                 ) {
                     Text("Start Using BOSS", fontWeight = FontWeight.Medium)
                 }

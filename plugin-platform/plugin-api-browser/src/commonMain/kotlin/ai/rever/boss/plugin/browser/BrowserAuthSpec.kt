@@ -32,7 +32,10 @@ data class BrowserCookieSpec(
     val sameSite: String = "LAX",
 )
 
-data class BrowserBasicAuth(val username: String, val password: String)
+data class BrowserBasicAuth(
+    val username: String,
+    val password: String,
+)
 
 /** Metadata about a persistent named browser profile (see [BrowserService.listProfiles]). */
 data class BrowserProfileInfo(

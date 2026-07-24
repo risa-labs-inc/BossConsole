@@ -25,4 +25,7 @@ interface UpdateSource {
 }
 
 /** Thrown by an [UpdateSource] when its backend is unreachable or returns an error. */
-class UpdateSourceException(message: String, cause: Throwable? = null) : Exception(message, cause)
+class UpdateSourceException(
+    message: String,
+    cause: Throwable? = null,
+) : Exception(message, cause)

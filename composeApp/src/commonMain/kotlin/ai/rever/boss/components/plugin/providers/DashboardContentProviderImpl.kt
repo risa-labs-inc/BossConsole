@@ -3,8 +3,8 @@ package ai.rever.boss.components.plugin.providers
 import ai.rever.boss.components.dashboard.Dashboard
 import ai.rever.boss.components.events.URLEventBus
 import ai.rever.boss.dashboard.SplitTemplate
-import ai.rever.boss.window.Project
 import ai.rever.boss.plugin.api.DashboardContentProvider
+import ai.rever.boss.window.Project
 import androidx.compose.runtime.Composable
 
 /**
@@ -14,7 +14,6 @@ import androidx.compose.runtime.Composable
  * when showing about:blank pages.
  */
 class DashboardContentProviderImpl : DashboardContentProvider {
-
     @Composable
     override fun DashboardContent(onNavigate: (String) -> Unit) {
         Dashboard(
@@ -29,7 +28,7 @@ class DashboardContentProviderImpl : DashboardContentProvider {
             onNewProject = { /* No-op for browser plugin */ },
             onApplySplitTemplate = { /* No-op for browser plugin */ },
             onActivatePlugin = { /* No-op for browser plugin */ },
-            onShowSettings = null
+            onShowSettings = null,
         )
     }
 }

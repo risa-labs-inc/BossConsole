@@ -20,14 +20,13 @@ import kotlin.random.Random
  * Creates a browser tab for the given URL.
  * Extracted to reduce duplication in openTerminalLink.
  */
-internal fun createBrowserTab(url: String): FluckTabInfo {
-    return FluckTabInfo(
+internal fun createBrowserTab(url: String): FluckTabInfo =
+    FluckTabInfo(
         id = "browser-${Random.nextLong()}",
         typeId = TabTypeId("fluck"),
         _title = "Loading...",
-        url = url
+        url = url,
     )
-}
 
 /**
  * Creates an editor tab for the given file path.
@@ -47,8 +46,10 @@ internal fun createEditorTab(filePath: String): EditorTabInfo {
         typeId = TabTypeId("editor"),
         title = fileName,
         icon = fileIconInfo.icon,
-        tabIcon = ai.rever.boss.plugin.api.TabIcon.Vector(fileIconInfo.icon, fileIconInfo.color),
-        filePath = cleanPath
+        tabIcon =
+            ai.rever.boss.plugin.api.TabIcon
+                .Vector(fileIconInfo.icon, fileIconInfo.color),
+        filePath = cleanPath,
     )
 }
 
@@ -63,46 +64,53 @@ internal fun isFileUrl(url: String): Boolean = url.startsWith("file:")
  */
 internal fun createTabFromTemplateConfig(
     panelConfig: TemplatePanelConfig,
-    projectPath: String
+    projectPath: String,
 ): TabInfo? {
     val timestamp = System.currentTimeMillis()
 
     return when (panelConfig.type) {
         "terminal" -> {
-            val command = panelConfig.content.command?.let {
-                // shell command → quote {projectPath} so paths with spaces/quotes survive
-                SplitTemplatesManager.processPlaceholders(it, projectPath, null, quoteProjectPath = true)
-            }
+            val command =
+                panelConfig.content.command?.let {
+                    // shell command → quote {projectPath} so paths with spaces/quotes survive
+                    SplitTemplatesManager.processPlaceholders(it, projectPath, null, quoteProjectPath = true)
+                }
             TerminalTabInfo(
                 id = "terminal-$timestamp",
                 typeId = TerminalTabType.typeId,
                 title = command?.substringBefore(" ")?.extractFileName() ?: "Terminal",
                 icon = TerminalTabType.icon,
                 workingDirectory = projectPath,
-                initialCommand = command
+                initialCommand = command,
             )
         }
+
         "browser" -> {
             val url = panelConfig.content.url ?: ""
             FluckTabInfo(
                 id = "fluck-$timestamp",
                 typeId = FluckTabType.typeId,
                 _title = "Loading...",
-                url = url
+                url = url,
             )
         }
+
         "editor" -> {
-            val filePath = panelConfig.content.filePath?.let {
-                SplitTemplatesManager.processPlaceholders(it, projectPath, null)
-            } ?: return null
+            val filePath =
+                panelConfig.content.filePath?.let {
+                    SplitTemplatesManager.processPlaceholders(it, projectPath, null)
+                } ?: return null
             EditorTabInfo(
                 id = "editor-$timestamp",
                 typeId = CodeEditorTabType.typeId,
                 title = filePath.extractFileName(),
                 icon = CodeEditorTabType.icon,
-                filePath = filePath
+                filePath = filePath,
             )
         }
-        else -> null
+
+        else -> {
+            null
+        }
     }
 }

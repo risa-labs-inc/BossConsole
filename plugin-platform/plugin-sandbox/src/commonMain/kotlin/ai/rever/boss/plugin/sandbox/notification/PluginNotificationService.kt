@@ -10,12 +10,18 @@ interface PluginNotificationService {
     /**
      * Notify that a plugin encountered an error.
      */
-    fun notifyPluginError(pluginId: String, error: Throwable)
+    fun notifyPluginError(
+        pluginId: String,
+        error: Throwable,
+    )
 
     /**
      * Notify that a plugin is restarting.
      */
-    fun notifyPluginRestarting(pluginId: String, attempt: Int)
+    fun notifyPluginRestarting(
+        pluginId: String,
+        attempt: Int,
+    )
 
     /**
      * Notify that a plugin restart succeeded.
@@ -25,7 +31,10 @@ interface PluginNotificationService {
     /**
      * Notify that a plugin restart failed.
      */
-    fun notifyPluginRestartFailed(pluginId: String, error: Throwable)
+    fun notifyPluginRestartFailed(
+        pluginId: String,
+        error: Throwable,
+    )
 
     /**
      * Notify that a plugin has been disabled.

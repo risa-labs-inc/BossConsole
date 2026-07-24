@@ -13,7 +13,7 @@ data class ShortcutLifecycleState(
     val actionId: String,
     val enabled: Boolean,
     val reason: String? = null,
-    val condition: ShortcutLifecycleCondition? = null
+    val condition: ShortcutLifecycleCondition? = null,
 )
 
 /**
@@ -67,7 +67,10 @@ object ShortcutLifecycleManager {
      * @param actionId The action ID (e.g., KeymapActions.TAB_CLOSE)
      * @param condition The condition that determines if this shortcut is enabled
      */
-    fun registerCondition(actionId: String, condition: ShortcutLifecycleCondition) {
+    fun registerCondition(
+        actionId: String,
+        condition: ShortcutLifecycleCondition,
+    ) {
         conditions[actionId] = condition
 
         if (debugMode) {
@@ -121,9 +124,7 @@ object ShortcutLifecycleManager {
      * @param actionId The action ID to get state for
      * @return The current lifecycle state, or null if not computed
      */
-    fun getState(actionId: String): ShortcutLifecycleState? {
-        return _states.value[actionId]
-    }
+    fun getState(actionId: String): ShortcutLifecycleState? = _states.value[actionId]
 
     /**
      * Gets the disabled reason for a shortcut.
@@ -157,24 +158,34 @@ object ShortcutLifecycleManager {
         for ((actionId, condition) in conditions) {
             try {
                 val enabled = condition.isEnabled()
-                newStates[actionId] = ShortcutLifecycleState(
-                    actionId = actionId,
-                    enabled = enabled,
-                    reason = if (enabled) null else condition.disabledReason,
-                    condition = condition
-                )
+                newStates[actionId] =
+                    ShortcutLifecycleState(
+                        actionId = actionId,
+                        enabled = enabled,
+                        reason = if (enabled) null else condition.disabledReason,
+                        condition = condition,
+                    )
 
                 if (debugMode) {
-                    logger.debug(LogCategory.UI, "Condition evaluated", mapOf("actionId" to actionId, "enabled" to enabled, "reason" to condition.disabledReason))
+                    logger.debug(
+                        LogCategory.UI,
+                        "Condition evaluated",
+                        mapOf(
+                            "actionId" to actionId,
+                            "enabled" to enabled,
+                            "reason" to condition.disabledReason,
+                        ),
+                    )
                 }
             } catch (e: Exception) {
                 logger.warn(LogCategory.UI, "Error evaluating condition", mapOf("actionId" to actionId), error = e)
-                newStates[actionId] = ShortcutLifecycleState(
-                    actionId = actionId,
-                    enabled = false,
-                    reason = "Error: ${e.message}",
-                    condition = condition
-                )
+                newStates[actionId] =
+                    ShortcutLifecycleState(
+                        actionId = actionId,
+                        enabled = false,
+                        reason = "Error: ${e.message}",
+                        condition = condition,
+                    )
             }
         }
 
@@ -199,27 +210,39 @@ object ShortcutLifecycleManager {
 
         try {
             val enabled = condition.isEnabled()
-            val newState = ShortcutLifecycleState(
-                actionId = actionId,
-                enabled = enabled,
-                reason = if (enabled) null else condition.disabledReason,
-                condition = condition
-            )
+            val newState =
+                ShortcutLifecycleState(
+                    actionId = actionId,
+                    enabled = enabled,
+                    reason = if (enabled) null else condition.disabledReason,
+                    condition = condition,
+                )
 
             _states.value = _states.value + (actionId to newState)
 
             if (debugMode) {
-                logger.debug(LogCategory.UI, "Updated condition", mapOf("actionId" to actionId, "enabled" to enabled, "reason" to condition.disabledReason))
+                logger.debug(
+                    LogCategory.UI,
+                    "Updated condition",
+                    mapOf(
+                        "actionId" to actionId,
+                        "enabled" to enabled,
+                        "reason" to condition.disabledReason,
+                    ),
+                )
             }
         } catch (e: Exception) {
             logger.warn(LogCategory.UI, "Error evaluating condition", mapOf("actionId" to actionId), error = e)
 
-            _states.value = _states.value + (actionId to ShortcutLifecycleState(
-                actionId = actionId,
-                enabled = false,
-                reason = "Error: ${e.message}",
-                condition = condition
-            ))
+            _states.value = _states.value + (
+                actionId to
+                    ShortcutLifecycleState(
+                        actionId = actionId,
+                        enabled = false,
+                        reason = "Error: ${e.message}",
+                        condition = condition,
+                    )
+            )
         }
     }
 
@@ -239,9 +262,7 @@ object ShortcutLifecycleManager {
     /**
      * Gets all registered action IDs with conditions.
      */
-    fun getRegisteredActions(): Set<String> {
-        return conditions.keys.toSet()
-    }
+    fun getRegisteredActions(): Set<String> = conditions.keys.toSet()
 
     /**
      * Starts automatic reevaluation on a fixed interval.
@@ -250,12 +271,11 @@ object ShortcutLifecycleManager {
      * @param intervalMs The interval in milliseconds (default: 1000ms)
      * @return Job that can be cancelled to stop automatic reevaluation
      */
-    fun startAutoReevaluation(intervalMs: Long = 1000): Job {
-        return scope.launch {
+    fun startAutoReevaluation(intervalMs: Long = 1000): Job =
+        scope.launch {
             while (isActive) {
                 delay(intervalMs)
                 reevaluate()
             }
         }
-    }
 }

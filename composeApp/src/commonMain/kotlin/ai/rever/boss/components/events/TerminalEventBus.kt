@@ -15,7 +15,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 data class TerminalOpenEvent(
     val command: String?,
     val sourceWindowId: String,
-    val workingDirectory: String? = null
+    val workingDirectory: String? = null,
 )
 
 /**
@@ -31,10 +31,11 @@ object TerminalEventBus {
     /** Optional IPC bridge for forwarding events cross-process in kernel mode. */
     @Volatile var ipcBridge: IpcEventBridge? = null
 
-    private val _terminalOpenEvents = MutableSharedFlow<TerminalOpenEvent>(
-        replay = 0,  // Don't replay past events to new subscribers (new windows)
-        extraBufferCapacity = 10  // Buffer up to 10 events if collector not ready yet
-    )
+    private val _terminalOpenEvents =
+        MutableSharedFlow<TerminalOpenEvent>(
+            replay = 0, // Don't replay past events to new subscribers (new windows)
+            extraBufferCapacity = 10, // Buffer up to 10 events if collector not ready yet
+        )
     val terminalOpenEvents: SharedFlow<TerminalOpenEvent> = _terminalOpenEvents.asSharedFlow()
 
     /**
@@ -46,7 +47,11 @@ object TerminalEventBus {
      * @param sourceWindowId The window that initiated this event (required for multi-window support)
      * @param workingDirectory Optional working directory for the terminal
      */
-    suspend fun openTerminal(command: String? = null, sourceWindowId: String, workingDirectory: String? = null) {
+    suspend fun openTerminal(
+        command: String? = null,
+        sourceWindowId: String,
+        workingDirectory: String? = null,
+    ) {
         val event = TerminalOpenEvent(command, sourceWindowId, workingDirectory)
         _terminalOpenEvents.emit(event)
         ipcBridge?.forward("TerminalOpenEvent", event, sourceWindowId)

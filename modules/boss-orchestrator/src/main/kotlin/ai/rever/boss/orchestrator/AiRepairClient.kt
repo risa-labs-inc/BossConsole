@@ -10,7 +10,6 @@ package ai.rever.boss.orchestrator
  * to fall back to static repair strategies gracefully.
  */
 interface AiRepairClient {
-
     /**
      * Proposes a source-code fix for a process failure.
      *
@@ -49,13 +48,14 @@ data class SourceFixProposal(
     val explanation: String,
     val patches: List<FilePatch>,
 ) {
-    fun toSummary(): String = buildString {
-        appendLine(explanation)
-        for (patch in patches) {
-            appendLine("--- ${patch.filePath}")
-            appendLine(patch.description)
-        }
-    }.trim()
+    fun toSummary(): String =
+        buildString {
+            appendLine(explanation)
+            for (patch in patches) {
+                appendLine("--- ${patch.filePath}")
+                appendLine(patch.description)
+            }
+        }.trim()
 }
 
 /** A surgical replacement within a single source file. */
@@ -74,11 +74,12 @@ data class ConfigFixProposal(
     /** Map of config key → new value to apply. */
     val configChanges: Map<String, String>,
 ) {
-    fun toDescription(): String = buildString {
-        appendLine(explanation)
-        if (configChanges.isNotEmpty()) {
-            appendLine("Suggested config changes:")
-            configChanges.forEach { (k, v) -> appendLine("  $k = $v") }
-        }
-    }.trim()
+    fun toDescription(): String =
+        buildString {
+            appendLine(explanation)
+            if (configChanges.isNotEmpty()) {
+                appendLine("Suggested config changes:")
+                configChanges.forEach { (k, v) -> appendLine("  $k = $v") }
+            }
+        }.trim()
 }

@@ -21,7 +21,7 @@ fun SidebarSlotContainer(
     slot: Panel,
     sidebarModel: BossDraggableComponent,
     modifier: Modifier = Modifier,
-    content: @Composable ColumnScope.() -> Unit
+    content: @Composable ColumnScope.() -> Unit,
 ) {
     // Determine hover state based on the model's dropTargetSlot
     val isHovered = sidebarModel.dropTargetSlot == slot && sidebarModel.draggingItem != null
@@ -40,16 +40,17 @@ fun SidebarSlotContainer(
     }
 
     Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(backgroundColor)
-            .border(width = 1.dp, color = borderColor)
-            .padding(vertical = 4.dp) // Padding inside the slot
-            .onGloballyPositioned { coordinates ->
-                // Register this slot's bounds (in window coordinates) with the model
-                sidebarModel.slotBounds[currentSlot] = coordinates.boundsInWindow()
-            },
-        horizontalAlignment = Alignment.CenterHorizontally
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .background(backgroundColor)
+                .border(width = 1.dp, color = borderColor)
+                .padding(vertical = 4.dp) // Padding inside the slot
+                .onGloballyPositioned { coordinates ->
+                    // Register this slot's bounds (in window coordinates) with the model
+                    sidebarModel.slotBounds[currentSlot] = coordinates.boundsInWindow()
+                },
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         content()
     }
@@ -74,36 +75,38 @@ fun BossDraggableComponent.DraggableSidebarSection(
     // the customize menu mutates the set. Reading .value inside the model
     // method wouldn't, so the parameter is the contract.
     val visibility by ai.rever.boss.components.sidebar.SidebarVisibilitySettingsManager
-        .currentSettings.collectAsState()
+        .currentSettings
+        .collectAsState()
 
     SidebarSlotContainer(
         slot = slot,
         sidebarModel = this,
-        modifier = modifier
+        modifier = modifier,
     ) {
         val items = getItemsForSlot(slot, visibility.hiddenPanelIds)
-        val visibleItems = if (maxVisibleIcons != null && items.size > maxVisibleIcons) {
-            items.take(maxVisibleIcons.coerceAtLeast(0))
-        } else {
-            items
-        }
+        val visibleItems =
+            if (maxVisibleIcons != null && items.size > maxVisibleIcons) {
+                items.take(maxVisibleIcons.coerceAtLeast(0))
+            } else {
+                items
+            }
         visibleItems.forEachIndexed { index, item ->
 
-            key (item.id) {
+            key(item.id) {
                 DraggableActionButton(
                     item = item,
                     slot = slot,
-                    modifier = Modifier
-                        .run {
-                            if (index == 0) {
-                                padding(bottom = 4.dp)
-                            } else if (index == visibleItems.lastIndex) {
-                                padding(top = 4.dp)
-                            } else {
-                                padding(vertical = 4.dp)
-                            }
-                        }
-                        .size(32.dp)
+                    modifier =
+                        Modifier
+                            .run {
+                                if (index == 0) {
+                                    padding(bottom = 4.dp)
+                                } else if (index == visibleItems.lastIndex) {
+                                    padding(top = 4.dp)
+                                } else {
+                                    padding(vertical = 4.dp)
+                                }
+                            }.size(32.dp),
                 )
             }
         }

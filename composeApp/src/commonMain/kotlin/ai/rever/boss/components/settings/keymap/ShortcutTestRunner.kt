@@ -1,10 +1,10 @@
 package ai.rever.boss.components.settings.keymap
 
-import ai.rever.boss.utils.logging.BossLogger
-import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.keymap.lifecycle.ShortcutLifecycleManager
 import ai.rever.boss.keymap.model.KeyBinding
 import ai.rever.boss.keymap.model.KeymapSettings
-import ai.rever.boss.keymap.lifecycle.ShortcutLifecycleManager
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -17,7 +17,7 @@ data class ShortcutTestResult(
     val binding: KeyBinding,
     val status: TestStatus,
     val message: String,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
 )
 
 /**
@@ -37,7 +37,7 @@ enum class TestStatus {
     SKIPPED,
 
     /** Test not yet run */
-    NOT_TESTED
+    NOT_TESTED,
 }
 
 /**
@@ -59,24 +59,25 @@ object ShortcutTestRunner {
      * Known action handlers that are implemented in BossApp.kt.
      * This list should match the action IDs in KeymapActions.
      */
-    private val knownHandlers = setOf(
-        "window.new",
-        "window.close",
-        "tab.new",
-        "tab.close",
-        "browser.reload",
-        "browser.zoom_reset",
-        "browser.zoom_in",
-        "browser.zoom_out",
-        "panel.navigate_left",
-        "panel.navigate_right",
-        "panel.navigate_up",
-        "panel.navigate_down",
-        "quick_switcher.open",
-        "workspace.save",
-        "codebase.open",
-        "test.external_link"
-    )
+    private val knownHandlers =
+        setOf(
+            "window.new",
+            "window.close",
+            "tab.new",
+            "tab.close",
+            "browser.reload",
+            "browser.zoom_reset",
+            "browser.zoom_in",
+            "browser.zoom_out",
+            "panel.navigate_left",
+            "panel.navigate_right",
+            "panel.navigate_up",
+            "panel.navigate_down",
+            "quick_switcher.open",
+            "workspace.save",
+            "codebase.open",
+            "test.external_link",
+        )
 
     /**
      * Tests a single keyboard shortcut.
@@ -92,12 +93,13 @@ object ShortcutTestRunner {
 
         // Step 1: Check if the binding is enabled
         if (!binding.enabled) {
-            val result = ShortcutTestResult(
-                actionId = binding.actionId,
-                binding = binding,
-                status = TestStatus.SKIPPED,
-                message = "Disabled in settings"
-            )
+            val result =
+                ShortcutTestResult(
+                    actionId = binding.actionId,
+                    binding = binding,
+                    status = TestStatus.SKIPPED,
+                    message = "Disabled in settings",
+                )
             updateResult(result)
             logger.debug(LogCategory.UI, "Skipped (disabled)", mapOf("description" to binding.description))
             return result
@@ -107,12 +109,13 @@ object ShortcutTestRunner {
         val lifecycleState = ShortcutLifecycleManager.getState(binding.actionId)
         if (lifecycleState != null && !lifecycleState.enabled) {
             val reason = lifecycleState.reason ?: "Context not available"
-            val result = ShortcutTestResult(
-                actionId = binding.actionId,
-                binding = binding,
-                status = TestStatus.SKIPPED,
-                message = "Context: $reason"
-            )
+            val result =
+                ShortcutTestResult(
+                    actionId = binding.actionId,
+                    binding = binding,
+                    status = TestStatus.SKIPPED,
+                    message = "Context: $reason",
+                )
             updateResult(result)
             logger.debug(LogCategory.UI, "Skipped (lifecycle)", mapOf("description" to binding.description, "reason" to reason))
             return result
@@ -120,12 +123,13 @@ object ShortcutTestRunner {
 
         // Step 3: Check if handler exists for this action
         if (!knownHandlers.contains(binding.actionId)) {
-            val result = ShortcutTestResult(
-                actionId = binding.actionId,
-                binding = binding,
-                status = TestStatus.FAILED,
-                message = "No handler for '${binding.actionId}'"
-            )
+            val result =
+                ShortcutTestResult(
+                    actionId = binding.actionId,
+                    binding = binding,
+                    status = TestStatus.FAILED,
+                    message = "No handler for '${binding.actionId}'",
+                )
             updateResult(result)
             logger.warn(LogCategory.UI, "Failed (no handler)", mapOf("description" to binding.description, "actionId" to binding.actionId))
             return result
@@ -134,26 +138,32 @@ object ShortcutTestRunner {
         // Step 4: Validate key name - ensure it will match when user presses it
         val keyValidation = validateKeyName(binding.key)
         if (!keyValidation.first) {
-            val result = ShortcutTestResult(
-                actionId = binding.actionId,
-                binding = binding,
-                status = TestStatus.FAILED,
-                message = keyValidation.second
-            )
+            val result =
+                ShortcutTestResult(
+                    actionId = binding.actionId,
+                    binding = binding,
+                    status = TestStatus.FAILED,
+                    message = keyValidation.second,
+                )
             updateResult(result)
-            logger.warn(LogCategory.UI, "Failed (invalid key)", mapOf("description" to binding.description, "error" to keyValidation.second))
+            logger.warn(
+                LogCategory.UI,
+                "Failed (invalid key)",
+                mapOf("description" to binding.description, "error" to keyValidation.second),
+            )
             return result
         }
 
         // Step 5: Context-aware validation for specific action types
         val (status, message) = validateContextRequirements(binding)
 
-        val result = ShortcutTestResult(
-            actionId = binding.actionId,
-            binding = binding,
-            status = status,
-            message = message
-        )
+        val result =
+            ShortcutTestResult(
+                actionId = binding.actionId,
+                binding = binding,
+                status = status,
+                message = message,
+            )
         updateResult(result)
 
         when (status) {
@@ -180,20 +190,52 @@ object ShortcutTestRunner {
      */
     private fun validateKeyName(keyName: String): Pair<Boolean, String> {
         // List of valid key names (word forms that normalizeKeyName handles)
-        val validWordKeyNames = setOf(
-            // Numbers
-            "Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
-            // Symbols
-            "Minus", "Equals", "Plus",
-            "OpenBracket", "CloseBracket", "Slash", "Backslash",
-            "Semicolon", "Apostrophe", "Comma", "Period", "Grave",
-            // Directions
-            "Left", "Right", "Up", "Down",
-            "DirectionLeft", "DirectionRight", "DirectionUp", "DirectionDown",
-            // Special keys
-            "Space", "Spacebar", "Enter", "Return", "Escape", "Esc", "Tab",
-            "Backspace", "Delete"
-        )
+        val validWordKeyNames =
+            setOf(
+                // Numbers
+                "Zero",
+                "One",
+                "Two",
+                "Three",
+                "Four",
+                "Five",
+                "Six",
+                "Seven",
+                "Eight",
+                "Nine",
+                // Symbols
+                "Minus",
+                "Equals",
+                "Plus",
+                "OpenBracket",
+                "CloseBracket",
+                "Slash",
+                "Backslash",
+                "Semicolon",
+                "Apostrophe",
+                "Comma",
+                "Period",
+                "Grave",
+                // Directions
+                "Left",
+                "Right",
+                "Up",
+                "Down",
+                "DirectionLeft",
+                "DirectionRight",
+                "DirectionUp",
+                "DirectionDown",
+                // Special keys
+                "Space",
+                "Spacebar",
+                "Enter",
+                "Return",
+                "Escape",
+                "Esc",
+                "Tab",
+                "Backspace",
+                "Delete",
+            )
 
         // Check if it's a valid word name (case-insensitive)
         if (validWordKeyNames.any { it.equals(keyName, ignoreCase = true) }) {
@@ -206,28 +248,29 @@ object ShortcutTestRunner {
         }
 
         // Check if it's a single character that should be a word name
-        val characterToWordMap = mapOf(
-            // Symbols
-            "-" to "Minus",
-            "=" to "Equals",
-            "+" to "Plus",
-            // Numbers
-            "0" to "Zero",
-            "1" to "One",
-            "2" to "Two",
-            "3" to "Three",
-            "4" to "Four",
-            "5" to "Five",
-            "6" to "Six",
-            "7" to "Seven",
-            "8" to "Eight",
-            "9" to "Nine",
-            // Arrow characters
-            "←" to "Left",
-            "→" to "Right",
-            "↑" to "Up",
-            "↓" to "Down"
-        )
+        val characterToWordMap =
+            mapOf(
+                // Symbols
+                "-" to "Minus",
+                "=" to "Equals",
+                "+" to "Plus",
+                // Numbers
+                "0" to "Zero",
+                "1" to "One",
+                "2" to "Two",
+                "3" to "Three",
+                "4" to "Four",
+                "5" to "Five",
+                "6" to "Six",
+                "7" to "Seven",
+                "8" to "Eight",
+                "9" to "Nine",
+                // Arrow characters
+                "←" to "Left",
+                "→" to "Right",
+                "↑" to "Up",
+                "↓" to "Down",
+            )
 
         if (characterToWordMap.containsKey(keyName)) {
             val correctName = characterToWordMap[keyName]
@@ -242,8 +285,8 @@ object ShortcutTestRunner {
      * Validates context-specific requirements for different action types.
      * Provides more accurate status based on the action's requirements.
      */
-    private fun validateContextRequirements(binding: KeyBinding): Pair<TestStatus, String> {
-        return when {
+    private fun validateContextRequirements(binding: KeyBinding): Pair<TestStatus, String> =
+        when {
             // Browser-specific actions
             binding.actionId.startsWith("browser.") -> {
                 // Browser actions require FluckTabComponent to be active
@@ -261,7 +304,6 @@ object ShortcutTestRunner {
                 Pair(TestStatus.SUCCESS, "Handler exists and enabled")
             }
         }
-    }
 
     /**
      * Tests all shortcuts in the keymap settings.
@@ -285,7 +327,15 @@ object ShortcutTestRunner {
         }
 
         _currentTesting.value = null
-        logger.info(LogCategory.UI, "Batch test complete", mapOf("success" to countByStatus(TestStatus.SUCCESS), "failed" to countByStatus(TestStatus.FAILED), "skipped" to countByStatus(TestStatus.SKIPPED)))
+        logger.info(
+            LogCategory.UI,
+            "Batch test complete",
+            mapOf(
+                "success" to countByStatus(TestStatus.SUCCESS),
+                "failed" to countByStatus(TestStatus.FAILED),
+                "skipped" to countByStatus(TestStatus.SKIPPED),
+            ),
+        )
     }
 
     /**
@@ -294,7 +344,10 @@ object ShortcutTestRunner {
      * @param settings The keymap settings
      * @param category The category to test
      */
-    suspend fun testCategory(settings: KeymapSettings, category: String) {
+    suspend fun testCategory(
+        settings: KeymapSettings,
+        category: String,
+    ) {
         val shortcuts = settings.shortcuts.values.filter { it.category == category }
         logger.info(LogCategory.UI, "Testing category", mapOf("category" to category, "count" to shortcuts.size))
 
@@ -317,16 +370,15 @@ object ShortcutTestRunner {
     /**
      * Gets the count of results by status.
      */
-    fun countByStatus(status: TestStatus): Int {
-        return _testResults.value.values.count { it.status == status }
-    }
+    fun countByStatus(status: TestStatus): Int = _testResults.value.values.count { it.status == status }
 
     /**
      * Gets test results filtered by status.
      */
-    fun getResultsByStatus(status: TestStatus): List<ShortcutTestResult> {
-        return _testResults.value.values.filter { it.status == status }.sortedBy { it.binding.description }
-    }
+    fun getResultsByStatus(status: TestStatus): List<ShortcutTestResult> =
+        _testResults.value.values
+            .filter { it.status == status }
+            .sortedBy { it.binding.description }
 
     /**
      * Updates a test result in the state flow.
@@ -341,7 +393,7 @@ object ShortcutTestRunner {
  */
 data class TestProgress(
     val completed: Int,
-    val total: Int
+    val total: Int,
 ) {
     val percentage: Float
         get() = if (total > 0) completed.toFloat() / total.toFloat() else 0f

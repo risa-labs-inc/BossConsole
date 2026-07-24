@@ -21,20 +21,19 @@ import kotlin.test.assertTrue
  * carry the only behavioural deltas of the recent pivot.
  */
 class BinaryCompatibilityValidatorTest {
-
     // ─── isSoftFailReference ───────────────────────────────────────────
 
     @Test
     fun `runtime package references soft-fail`() {
         assertTrue(
             BinaryCompatibilityValidator.isSoftFailReference(
-                "ai.rever.boss.plugin.runtime.RemotePluginContext"
-            )
+                "ai.rever.boss.plugin.runtime.RemotePluginContext",
+            ),
         )
         assertTrue(
             BinaryCompatibilityValidator.isSoftFailReference(
-                "ai.rever.boss.plugin.runtime.stateholders.ConsoleStateHolder"
-            )
+                "ai.rever.boss.plugin.runtime.stateholders.ConsoleStateHolder",
+            ),
         )
     }
 
@@ -42,13 +41,13 @@ class BinaryCompatibilityValidatorTest {
     fun `api package references do not soft-fail`() {
         assertFalse(
             BinaryCompatibilityValidator.isSoftFailReference(
-                "ai.rever.boss.plugin.api.DynamicPlugin"
-            )
+                "ai.rever.boss.plugin.api.DynamicPlugin",
+            ),
         )
         assertFalse(
             BinaryCompatibilityValidator.isSoftFailReference(
-                "ai.rever.boss.plugin.api.NonExistentClass"
-            )
+                "ai.rever.boss.plugin.api.NonExistentClass",
+            ),
         )
     }
 
@@ -58,8 +57,8 @@ class BinaryCompatibilityValidatorTest {
         // the trailing dot in the prefix prevents false positives.
         assertFalse(
             BinaryCompatibilityValidator.isSoftFailReference(
-                "ai.rever.boss.plugin.runtimeFoo.X"
-            )
+                "ai.rever.boss.plugin.runtimeFoo.X",
+            ),
         )
     }
 
@@ -81,8 +80,8 @@ class BinaryCompatibilityValidatorTest {
             BinaryCompatibilityValidator.hasMethod(
                 java.util.List::class.java,
                 "toString",
-                emptyArray()
-            )
+                emptyArray(),
+            ),
         )
     }
 
@@ -92,8 +91,8 @@ class BinaryCompatibilityValidatorTest {
             BinaryCompatibilityValidator.hasMethod(
                 java.util.List::class.java,
                 "equals",
-                arrayOf(Any::class.java)
-            )
+                arrayOf(Any::class.java),
+            ),
         )
     }
 
@@ -103,8 +102,8 @@ class BinaryCompatibilityValidatorTest {
             BinaryCompatibilityValidator.hasMethod(
                 java.util.List::class.java,
                 "hashCode",
-                emptyArray()
-            )
+                emptyArray(),
+            ),
         )
     }
 
@@ -115,8 +114,8 @@ class BinaryCompatibilityValidatorTest {
             BinaryCompatibilityValidator.hasMethod(
                 java.util.List::class.java,
                 "iterator",
-                emptyArray()
-            )
+                emptyArray(),
+            ),
         )
     }
 
@@ -128,8 +127,8 @@ class BinaryCompatibilityValidatorTest {
             BinaryCompatibilityValidator.hasMethod(
                 java.util.List::class.java,
                 "definitelyNotARealMethod",
-                emptyArray()
-            )
+                emptyArray(),
+            ),
         )
     }
 
@@ -141,8 +140,8 @@ class BinaryCompatibilityValidatorTest {
             BinaryCompatibilityValidator.hasMethod(
                 java.util.ArrayList::class.java,
                 "toString",
-                emptyArray()
-            )
+                emptyArray(),
+            ),
         )
     }
 }

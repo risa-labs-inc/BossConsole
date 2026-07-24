@@ -19,7 +19,6 @@ import kotlin.test.assertSame
  * masked the real load error for Toolbox 1.8.4 on BOSS 9.2.25.
  */
 class PluginClassLoaderManagerCloseTest {
-
     private val tempJars = mutableListOf<File>()
 
     private fun emptyJar(): String {
@@ -29,13 +28,14 @@ class PluginClassLoaderManagerCloseTest {
         return jar.absolutePath
     }
 
-    private fun manifest(pluginId: String) = PluginManifest(
-        pluginId = pluginId,
-        displayName = "Test Plugin",
-        version = "1.0.0",
-        apiVersion = "1.0.0",
-        mainClass = "com.example.Main"
-    )
+    private fun manifest(pluginId: String) =
+        PluginManifest(
+            pluginId = pluginId,
+            displayName = "Test Plugin",
+            version = "1.0.0",
+            apiVersion = "1.0.0",
+            mainClass = "com.example.Main",
+        )
 
     @AfterTest
     fun cleanup() {

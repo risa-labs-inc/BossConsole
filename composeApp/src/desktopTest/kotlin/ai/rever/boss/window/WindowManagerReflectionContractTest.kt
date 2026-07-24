@@ -14,7 +14,6 @@ import kotlin.test.assertNotNull
  * plugin's reflection call in lockstep, then update this test.
  */
 class WindowManagerReflectionContractTest {
-
     private val type = WindowManager::class.java
 
     @Test
@@ -28,12 +27,13 @@ class WindowManagerReflectionContractTest {
     @Test
     fun fitWindowByDelta_isReachableByReflection() {
         // fun fitWindowByDelta(String, Float, Float) → (String, float, float) on the JVM.
-        val method = type.getMethod(
-            "fitWindowByDelta",
-            String::class.java,
-            java.lang.Float.TYPE,
-            java.lang.Float.TYPE,
-        )
+        val method =
+            type.getMethod(
+                "fitWindowByDelta",
+                String::class.java,
+                java.lang.Float.TYPE,
+                java.lang.Float.TYPE,
+            )
         assertNotNull(method)
     }
 

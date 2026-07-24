@@ -1,7 +1,7 @@
 package ai.rever.boss.components.settings.shared
 
-import ai.rever.boss.components.settings.shared.SettingsTheme.TextPrimary
 import ai.rever.boss.components.settings.shared.SettingsTheme.TextMuted
+import ai.rever.boss.components.settings.shared.SettingsTheme.TextPrimary
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -20,14 +20,14 @@ fun DropdownSelector(
     value: String,
     options: List<String>,
     onValueChange: (String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
 
     ExposedDropdownMenuBox(
         expanded = expanded,
         onExpandedChange = { expanded = !expanded },
-        modifier = modifier
+        modifier = modifier,
     ) {
         OutlinedTextField(
             value = value,
@@ -38,20 +38,21 @@ fun DropdownSelector(
                 ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
             },
             modifier = Modifier.fillMaxWidth(),
-            colors = TextFieldDefaults.outlinedTextFieldColors(
-                textColor = TextPrimary,
-                focusedBorderColor = BossTheme.colors.signal,
-                unfocusedBorderColor = BossTheme.colors.line,
-                focusedLabelColor = BossTheme.colors.signal,
-                unfocusedLabelColor = TextMuted,
-                trailingIconColor = TextMuted
-            )
+            colors =
+                TextFieldDefaults.outlinedTextFieldColors(
+                    textColor = TextPrimary,
+                    focusedBorderColor = BossTheme.colors.signal,
+                    unfocusedBorderColor = BossTheme.colors.line,
+                    focusedLabelColor = BossTheme.colors.signal,
+                    unfocusedLabelColor = TextMuted,
+                    trailingIconColor = TextMuted,
+                ),
         )
 
         ExposedDropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            modifier = Modifier.background(BossTheme.colors.raised)
+            modifier = Modifier.background(BossTheme.colors.raised),
         ) {
             options.forEach { option ->
                 DropdownMenuItem(
@@ -59,11 +60,11 @@ fun DropdownSelector(
                         onValueChange(option)
                         expanded = false
                     },
-                    modifier = Modifier.background(BossTheme.colors.raised)
+                    modifier = Modifier.background(BossTheme.colors.raised),
                 ) {
                     Text(
                         text = option,
-                        color = TextPrimary
+                        color = TextPrimary,
                     )
                 }
             }

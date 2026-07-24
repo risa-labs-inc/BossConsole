@@ -1,11 +1,11 @@
 package ai.rever.boss.keymap.handler
 
 import ai.rever.boss.keymap.model.KeyBinding
-import ai.rever.boss.utils.logging.BossLogger
-import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.keymap.model.KeymapActions
 import ai.rever.boss.keymap.model.KeymapSettings
 import ai.rever.boss.keymap.model.ShortcutContext
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.ui.input.key.KeyEvent
 
 /**
@@ -28,7 +28,7 @@ import androidx.compose.ui.input.key.KeyEvent
  * ```
  */
 class KeymapHandler(
-    settings: KeymapSettings
+    settings: KeymapSettings,
 ) {
     private val logger = BossLogger.forComponent("KeymapHandler")
     private val matcher = KeymapMatcher(settings)
@@ -58,7 +58,7 @@ class KeymapHandler(
     fun handleKeyEvent(
         event: KeyEvent,
         context: ShortcutContext,
-        executor: (actionId: String) -> Boolean
+        executor: (actionId: String) -> Boolean,
     ): Boolean {
         // Match the event to a binding
         val binding = matcher.match(event, context) ?: return false
@@ -79,53 +79,45 @@ class KeymapHandler(
      * Get all bindings that would match the given event.
      * Useful for debugging or showing which actions would be triggered.
      */
-    fun getMatchingBindings(event: KeyEvent, context: ShortcutContext): List<KeyBinding> {
-        return matcher.matchAll(event, context)
-    }
+    fun getMatchingBindings(
+        event: KeyEvent,
+        context: ShortcutContext,
+    ): List<KeyBinding> = matcher.matchAll(event, context)
 
     /**
      * Check if an action is bound to any key.
      */
-    fun isBound(actionId: String): Boolean {
-        return _settings.hasBinding(actionId)
-    }
+    fun isBound(actionId: String): Boolean = _settings.hasBinding(actionId)
 
     /**
      * Get the binding for a specific action.
      */
-    fun getBinding(actionId: String): KeyBinding? {
-        return _settings.getBinding(actionId)
-    }
+    fun getBinding(actionId: String): KeyBinding? = _settings.getBinding(actionId)
 
     /**
      * Get display string for an action's key binding.
      * Returns null if action is not bound.
      */
-    fun getDisplayString(actionId: String): String? {
-        return _settings.getBinding(actionId)?.displayString()
-    }
+    fun getDisplayString(actionId: String): String? = _settings.getBinding(actionId)?.displayString()
 
     companion object {
         /**
          * Create a KeymapHandler from settings.
          */
-        fun from(settings: KeymapSettings): KeymapHandler {
-            return KeymapHandler(settings)
-        }
+        fun from(settings: KeymapSettings): KeymapHandler = KeymapHandler(settings)
 
         /**
          * Determine the current context based on active component type.
          * This is a helper function that can be called from BossApp.
          */
-        fun determineContext(activeComponentType: String?): ShortcutContext {
-            return when (activeComponentType) {
+        fun determineContext(activeComponentType: String?): ShortcutContext =
+            when (activeComponentType) {
                 "fluck", "browser" -> ShortcutContext.BROWSER
                 "terminal" -> ShortcutContext.TERMINAL
                 "editor", "code" -> ShortcutContext.EDITOR
                 "workspace" -> ShortcutContext.WORKSPACE
                 else -> ShortcutContext.GLOBAL
             }
-        }
     }
 }
 
@@ -141,7 +133,7 @@ interface KeymapActionExecutor {
  * Simple action executor that delegates to a map of action handlers.
  */
 class MapBasedActionExecutor(
-    private val handlers: Map<String, () -> Unit>
+    private val handlers: Map<String, () -> Unit>,
 ) : KeymapActionExecutor {
     override fun execute(actionId: String): Boolean {
         val handler = handlers[actionId] ?: return false
@@ -158,14 +150,15 @@ class MapBasedActionExecutor(
         class Builder {
             private val handlers = mutableMapOf<String, () -> Unit>()
 
-            fun on(actionId: String, handler: () -> Unit): Builder {
+            fun on(
+                actionId: String,
+                handler: () -> Unit,
+            ): Builder {
                 handlers[actionId] = handler
                 return this
             }
 
-            fun build(): MapBasedActionExecutor {
-                return MapBasedActionExecutor(handlers)
-            }
+            fun build(): MapBasedActionExecutor = MapBasedActionExecutor(handlers)
         }
     }
 }

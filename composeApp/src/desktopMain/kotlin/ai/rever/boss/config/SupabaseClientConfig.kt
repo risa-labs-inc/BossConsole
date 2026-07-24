@@ -24,7 +24,7 @@ object SupabaseClientConfig {
             logger.error(
                 LogCategory.AUTH,
                 "$key not configured — set it as an env var or in local.properties. " +
-                    "Supabase features will be unavailable."
+                    "Supabase features will be unavailable.",
             )
             ""
         }

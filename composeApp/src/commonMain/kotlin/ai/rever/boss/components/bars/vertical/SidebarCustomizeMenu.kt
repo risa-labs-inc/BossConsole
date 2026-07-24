@@ -7,16 +7,16 @@ import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.sidebar.SidebarVisibilitySettings
 import ai.rever.boss.components.sidebar.SidebarVisibilitySettingsManager
 import ai.rever.boss.plugin.api.Panel
-import ai.rever.boss.utils.logging.BossLogger
-import ai.rever.boss.utils.logging.LogCategory
-import ai.rever.boss.window.LocalWindowId
-import ai.rever.boss.window.MenuActionsHandler
 import ai.rever.boss.plugin.api.Panel.Companion.bottom
 import ai.rever.boss.plugin.api.Panel.Companion.isFirst
 import ai.rever.boss.plugin.api.Panel.Companion.left
 import ai.rever.boss.plugin.api.Panel.Companion.opposite
 import ai.rever.boss.plugin.api.Panel.Companion.top
 import ai.rever.boss.plugin.api.SidebarItem
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.window.LocalWindowId
+import ai.rever.boss.window.MenuActionsHandler
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
@@ -115,17 +115,19 @@ fun BossDraggableComponent.SidebarCustomizeMenu(
     // No remember-key on slot: the synthesised SidebarItem doesn't read
     // slot, so re-creating it on every drag-driven slot change is wasted
     // work — the model's drag overlay just needs object identity here.
-    val syntheticItem = remember {
-        SidebarItem(
-            pluginContentId = ai.rever.boss.plugin.api.PanelId(
-                panelId = CUSTOMIZE_BUTTON_ID,
-                defaultOrder = Int.MAX_VALUE,
-                pluginId = "ai.rever.boss.sidebar.customize",
-            ),
-            icon = Icons.Default.MoreHoriz,
-            label = "Customize sidebar",
-        )
-    }
+    val syntheticItem =
+        remember {
+            SidebarItem(
+                pluginContentId =
+                    ai.rever.boss.plugin.api.PanelId(
+                        panelId = CUSTOMIZE_BUTTON_ID,
+                        defaultOrder = Int.MAX_VALUE,
+                        pluginId = "ai.rever.boss.sidebar.customize",
+                    ),
+                icon = Icons.Default.MoreHoriz,
+                label = "Customize sidebar",
+            )
+        }
     val currentItem by rememberUpdatedState(syntheticItem)
     val currentSlot by rememberUpdatedState(slot)
     val isBeingDragged = draggingItem?.first?.id == CUSTOMIZE_BUTTON_ID
@@ -169,16 +171,17 @@ fun BossDraggableComponent.SidebarCustomizeMenu(
     // observations on this composition, so a drag that moves a panel
     // between slots invalidates and rebuilds the menu automatically.
     // Recomputing each composition is cheap (5 slots, ≤ a few items each).
-    val menuItems = buildSlotMenu(this, visibility) { panelId, hidden ->
-        scope.launch {
-            SidebarVisibilitySettingsManager.setHidden(panelId, hidden)
-            if (hidden) {
-                // If the panel was open, close it — otherwise the user is
-                // left with content visible but no icon to dismiss it.
-                closePanelForItem(panelId)
+    val menuItems =
+        buildSlotMenu(this, visibility) { panelId, hidden ->
+            scope.launch {
+                SidebarVisibilitySettingsManager.setHidden(panelId, hidden)
+                if (hidden) {
+                    // If the panel was open, close it — otherwise the user is
+                    // left with content visible but no icon to dismiss it.
+                    closePanelForItem(panelId)
+                }
             }
         }
-    }
 
     // Outer Box constrains the BossActionButton's modifier chain so the
     // selection background ends up the same size as the regular sidebar
@@ -187,9 +190,10 @@ fun BossDraggableComponent.SidebarCustomizeMenu(
     // the larger surviving min constraint and the selection rectangle on
     // the three-dot icon renders visibly bigger than its neighbours.
     Box(
-        modifier = modifier
-            .padding(vertical = 4.dp)
-            .size(32.dp),
+        modifier =
+            modifier
+                .padding(vertical = 4.dp)
+                .size(32.dp),
         contentAlignment = Alignment.Center,
     ) {
         BossActionButton(
@@ -197,56 +201,57 @@ fun BossDraggableComponent.SidebarCustomizeMenu(
             text = "Customize sidebar",
             isSelected = menuExpanded,
             hintDirection = slot.opposite,
-            modifier = Modifier
-                .onGloballyPositioned { layoutCoordinates ->
-                    val newPos = layoutCoordinates.positionInWindow()
-                    if (componentPositionInWindow != newPos) {
-                        componentPositionInWindow = newPos
-                    }
-                }
-                .size(40.dp)
-                .alpha(if (isBeingDragged) 0f else 1f)
-                .pointerInput(Unit) {
-                    detectDragGesturesAfterLongPress(
-                        onDragStart = { touchOffset ->
-                            pendingDragStartOffset = touchOffset
-                        },
-                        onDragEnd = {
-                            // The customize button isn't a real plugin
-                            // panel, so it never goes into itemsBySlot.
-                            // If the drop landed on one of the five
-                            // rendered sidebar slots, persist that as
-                            // the button's new home; otherwise snap
-                            // back to its current position.
-                            pendingDragStartOffset = null
-                            if (draggingItem?.first?.id == CUSTOMIZE_BUTTON_ID) {
-                                val target = dropTargetSlot
-                                val newSlotId = target?.let {
-                                    SidebarVisibilitySettings.slotIdFor(it)
-                                }
-                                if (newSlotId != null) {
-                                    scope.launch {
-                                        SidebarVisibilitySettingsManager
-                                            .setCustomizeButtonSlot(newSlotId)
-                                    }
-                                }
-                                cancelDragSnapBack()
-                            }
-                        },
-                        onDragCancel = {
-                            pendingDragStartOffset = null
-                            if (draggingItem?.first?.id == CUSTOMIZE_BUTTON_ID) {
-                                cancelDragSnapBack()
-                            }
-                        },
-                        onDrag = { change: PointerInputChange, dragAmount: Offset ->
-                            if (draggingItem?.first?.id == CUSTOMIZE_BUTTON_ID) {
-                                change.consume()
-                                updateDragDelta(dragAmount)
-                            }
+            modifier =
+                Modifier
+                    .onGloballyPositioned { layoutCoordinates ->
+                        val newPos = layoutCoordinates.positionInWindow()
+                        if (componentPositionInWindow != newPos) {
+                            componentPositionInWindow = newPos
                         }
-                    )
-                }
+                    }.size(40.dp)
+                    .alpha(if (isBeingDragged) 0f else 1f)
+                    .pointerInput(Unit) {
+                        detectDragGesturesAfterLongPress(
+                            onDragStart = { touchOffset ->
+                                pendingDragStartOffset = touchOffset
+                            },
+                            onDragEnd = {
+                                // The customize button isn't a real plugin
+                                // panel, so it never goes into itemsBySlot.
+                                // If the drop landed on one of the five
+                                // rendered sidebar slots, persist that as
+                                // the button's new home; otherwise snap
+                                // back to its current position.
+                                pendingDragStartOffset = null
+                                if (draggingItem?.first?.id == CUSTOMIZE_BUTTON_ID) {
+                                    val target = dropTargetSlot
+                                    val newSlotId =
+                                        target?.let {
+                                            SidebarVisibilitySettings.slotIdFor(it)
+                                        }
+                                    if (newSlotId != null) {
+                                        scope.launch {
+                                            SidebarVisibilitySettingsManager
+                                                .setCustomizeButtonSlot(newSlotId)
+                                        }
+                                    }
+                                    cancelDragSnapBack()
+                                }
+                            },
+                            onDragCancel = {
+                                pendingDragStartOffset = null
+                                if (draggingItem?.first?.id == CUSTOMIZE_BUTTON_ID) {
+                                    cancelDragSnapBack()
+                                }
+                            },
+                            onDrag = { change: PointerInputChange, dragAmount: Offset ->
+                                if (draggingItem?.first?.id == CUSTOMIZE_BUTTON_ID) {
+                                    change.consume()
+                                    updateDragDelta(dragAmount)
+                                }
+                            },
+                        )
+                    },
         ) {
             // Tap → toggle the context menu. Suppressed if a drag is
             // in flight (matches DraggableActionButton's behaviour).
@@ -301,42 +306,50 @@ private fun buildSlotMenu(
     settings: SidebarVisibilitySettings,
     onToggle: (panelId: String, hide: Boolean) -> Unit,
 ): List<ContextMenuItem> {
-    val slotOrder = listOf(
-        SidebarVisibilitySettings.SLOT_LEFT_TOP_TOP to "Left · Top · Top",
-        SidebarVisibilitySettings.SLOT_LEFT_TOP_BOTTOM to "Left · Top · Bottom",
-        SidebarVisibilitySettings.SLOT_LEFT_BOTTOM to "Left · Bottom",
-        SidebarVisibilitySettings.SLOT_RIGHT_TOP_TOP to "Right · Top · Top",
-        SidebarVisibilitySettings.SLOT_RIGHT_TOP_BOTTOM to "Right · Top · Bottom",
-    )
+    val slotOrder =
+        listOf(
+            SidebarVisibilitySettings.SLOT_LEFT_TOP_TOP to "Left · Top · Top",
+            SidebarVisibilitySettings.SLOT_LEFT_TOP_BOTTOM to "Left · Top · Bottom",
+            SidebarVisibilitySettings.SLOT_LEFT_BOTTOM to "Left · Bottom",
+            SidebarVisibilitySettings.SLOT_RIGHT_TOP_TOP to "Right · Top · Top",
+            SidebarVisibilitySettings.SLOT_RIGHT_TOP_BOTTOM to "Right · Top · Bottom",
+        )
     val hidden = settings.hiddenPanelIds
     val parents = mutableListOf<ContextMenuItem>()
     for ((slotId, label) in slotOrder) {
         val panel = SidebarVisibilitySettings.panelFor(slotId)
-        val rawItems = model.getItemsForSlotUnfiltered(panel)
-            .filter { it.id != CUSTOMIZE_BUTTON_ID }
+        val rawItems =
+            model
+                .getItemsForSlotUnfiltered(panel)
+                .filter { it.id != CUSTOMIZE_BUTTON_ID }
         // De-duplicate defensively (PanelRegistry shouldn't produce
         // duplicates per slot, but if it ever does we'd otherwise render
         // collided checkbox entries that confuse the toggle behaviour).
         // Log if it actually fires so the upstream bug surfaces.
         val items = rawItems.distinctBy { it.id }
         if (items.size != rawItems.size) {
-            sidebarCustomizeLogger.warn(LogCategory.UI, "Duplicate panel ids in slot", mapOf(
-                "slotId" to slotId,
-                "rawCount" to rawItems.size,
-                "uniqueCount" to items.size
-            ))
+            sidebarCustomizeLogger.warn(
+                LogCategory.UI,
+                "Duplicate panel ids in slot",
+                mapOf(
+                    "slotId" to slotId,
+                    "rawCount" to rawItems.size,
+                    "uniqueCount" to items.size,
+                ),
+            )
         }
         if (items.isEmpty()) continue
 
-        val children = items.map { item ->
-            val isHidden = item.id in hidden
-            ContextMenuItem(
-                text = item.label,
-                icon = item.icon,
-                trailingIcon = if (!isHidden) Icons.Default.Check else null,
-                onClick = { onToggle(item.id, !isHidden) },
-            )
-        }
+        val children =
+            items.map { item ->
+                val isHidden = item.id in hidden
+                ContextMenuItem(
+                    text = item.label,
+                    icon = item.icon,
+                    trailingIcon = if (!isHidden) Icons.Default.Check else null,
+                    onClick = { onToggle(item.id, !isHidden) },
+                )
+            }
         parents += ContextMenuItem(text = label, subMenu = children)
     }
     return parents

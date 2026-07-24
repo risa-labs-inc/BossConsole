@@ -33,7 +33,6 @@ import compose.icons.simpleicons.*
  * Total: ~180 icons
  */
 object LanguageIcons {
-
     // ═══════════════════════════════════════════════════════════════════════════
     // PROGRAMMING LANGUAGES (38)
     // ═══════════════════════════════════════════════════════════════════════════
@@ -61,21 +60,21 @@ object LanguageIcons {
     val clojure: ImageVector = SimpleIcons.Clojure
     val julia: ImageVector = SimpleIcons.Julia
     val ocaml: ImageVector = SimpleIcons.Ocaml
-    val zig: ImageVector = Icons.Outlined.Code  // Zig not in Simple Icons 1.1.1
-    val objectivec: ImageVector = Icons.Outlined.Code  // Objective-C not in Simple Icons 1.1.1
-    val fsharp: ImageVector = Icons.Outlined.Code  // F# not in Simple Icons 1.1.1
+    val zig: ImageVector = Icons.Outlined.Code // Zig not in Simple Icons 1.1.1
+    val objectivec: ImageVector = Icons.Outlined.Code // Objective-C not in Simple Icons 1.1.1
+    val fsharp: ImageVector = Icons.Outlined.Code // F# not in Simple Icons 1.1.1
     val erlang: ImageVector = SimpleIcons.Erlang
     val nim: ImageVector = SimpleIcons.Nim
     val crystal: ImageVector = SimpleIcons.Crystal
     val fortran: ImageVector = SimpleIcons.Fortran
-    val cobol: ImageVector = Icons.Outlined.Code  // COBOL not in Simple Icons
+    val cobol: ImageVector = Icons.Outlined.Code // COBOL not in Simple Icons
     val assembly: ImageVector = SimpleIcons.Assemblyscript
     val solidity: ImageVector = SimpleIcons.Solidity
     val vlang: ImageVector = SimpleIcons.V
-    val dlang: ImageVector = Icons.Outlined.Code  // D not in Simple Icons 1.1.1
+    val dlang: ImageVector = Icons.Outlined.Code // D not in Simple Icons 1.1.1
     val groovy: ImageVector = SimpleIcons.Apachegroovy
-    val rescript: ImageVector = Icons.Outlined.Code  // ReScript not in Simple Icons
-    val racket: ImageVector = Icons.Outlined.Code  // Racket not in Simple Icons
+    val rescript: ImageVector = Icons.Outlined.Code // ReScript not in Simple Icons
+    val racket: ImageVector = Icons.Outlined.Code // Racket not in Simple Icons
 
     // ═══════════════════════════════════════════════════════════════════════════
     // WEB FRAMEWORKS & RUNTIMES (37)
@@ -83,9 +82,9 @@ object LanguageIcons {
 
     val nodejs: ImageVector = SimpleIcons.NodeDotJs
     val deno: ImageVector = SimpleIcons.Deno
-    val bun: ImageVector = Icons.Outlined.Terminal  // Bun not in Simple Icons 1.1.1
+    val bun: ImageVector = Icons.Outlined.Terminal // Bun not in Simple Icons 1.1.1
     val spring: ImageVector = SimpleIcons.Spring
-    val springboot: ImageVector = SimpleIcons.Spring  // Use Spring icon
+    val springboot: ImageVector = SimpleIcons.Spring // Use Spring icon
     val django: ImageVector = SimpleIcons.Django
     val flask: ImageVector = SimpleIcons.Flask
     val fastapi: ImageVector = SimpleIcons.Fastapi
@@ -98,25 +97,25 @@ object LanguageIcons {
     val svelte: ImageVector = SimpleIcons.Svelte
     val nextjs: ImageVector = SimpleIcons.NextDotJs
     val nuxt: ImageVector = SimpleIcons.NuxtDotJs
-    val astro: ImageVector = Icons.Outlined.Code  // Astro not in Simple Icons 1.1.1
-    val remix: ImageVector = Icons.Outlined.Code  // Remix not in Simple Icons 1.1.1
+    val astro: ImageVector = Icons.Outlined.Code // Astro not in Simple Icons 1.1.1
+    val remix: ImageVector = Icons.Outlined.Code // Remix not in Simple Icons 1.1.1
     val flutter: ImageVector = SimpleIcons.Flutter
     val express: ImageVector = SimpleIcons.Express
     val nestjs: ImageVector = SimpleIcons.Nestjs
-    val ktor: ImageVector = Icons.Outlined.Code  // Ktor not in Simple Icons 1.1.1
-    val gin: ImageVector = SimpleIcons.Go  // Gin uses Go icon
-    val phoenix: ImageVector = SimpleIcons.Elixir  // Phoenix uses Elixir icon
+    val ktor: ImageVector = Icons.Outlined.Code // Ktor not in Simple Icons 1.1.1
+    val gin: ImageVector = SimpleIcons.Go // Gin uses Go icon
+    val phoenix: ImageVector = SimpleIcons.Elixir // Phoenix uses Elixir icon
     val blazor: ImageVector = SimpleIcons.Blazor
-    val solid: ImageVector = Icons.Outlined.Code  // Solid not in Simple Icons 1.1.1
-    val lit: ImageVector = Icons.Outlined.Code  // Lit not in Simple Icons 1.1.1
-    val qwik: ImageVector = Icons.Outlined.Code  // Qwik not in Simple Icons 1.1.1
-    val htmx: ImageVector = Icons.Outlined.Code  // htmx not in Simple Icons 1.1.1
-    val alpinejs: ImageVector = Icons.Outlined.Code  // Alpine.js not in Simple Icons 1.1.1
+    val solid: ImageVector = Icons.Outlined.Code // Solid not in Simple Icons 1.1.1
+    val lit: ImageVector = Icons.Outlined.Code // Lit not in Simple Icons 1.1.1
+    val qwik: ImageVector = Icons.Outlined.Code // Qwik not in Simple Icons 1.1.1
+    val htmx: ImageVector = Icons.Outlined.Code // htmx not in Simple Icons 1.1.1
+    val alpinejs: ImageVector = Icons.Outlined.Code // Alpine.js not in Simple Icons 1.1.1
     val emberjs: ImageVector = SimpleIcons.EmberDotJs
-    val backbonejs: ImageVector = Icons.Outlined.Code  // Backbone.js not in Simple Icons 1.1.1
-    val preact: ImageVector = SimpleIcons.React  // Preact uses React icon
+    val backbonejs: ImageVector = Icons.Outlined.Code // Backbone.js not in Simple Icons 1.1.1
+    val preact: ImageVector = SimpleIcons.React // Preact uses React icon
     val electron: ImageVector = SimpleIcons.Electron
-    val tauri: ImageVector = Icons.Outlined.Code  // Tauri not in Simple Icons 1.1.1
+    val tauri: ImageVector = Icons.Outlined.Code // Tauri not in Simple Icons 1.1.1
     val fastify: ImageVector = SimpleIcons.Fastify
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -129,11 +128,11 @@ object LanguageIcons {
     val less: ImageVector = SimpleIcons.Less
     val stylus: ImageVector = SimpleIcons.Stylus
     val postcss: ImageVector = SimpleIcons.Postcss
-    val styledcomponents: ImageVector = Icons.Outlined.Code  // styled-components not in Simple Icons 1.1.1
+    val styledcomponents: ImageVector = Icons.Outlined.Code // styled-components not in Simple Icons 1.1.1
     val chakraui: ImageVector = SimpleIcons.Chakraui
-    val mui: ImageVector = SimpleIcons.Materialdesign  // MUI uses Material Design icon
+    val mui: ImageVector = SimpleIcons.Materialdesign // MUI uses Material Design icon
     val bulma: ImageVector = SimpleIcons.Bulma
-    val foundation: ImageVector = Icons.Outlined.Code  // Foundation not in Simple Icons 1.1.1
+    val foundation: ImageVector = Icons.Outlined.Code // Foundation not in Simple Icons 1.1.1
     val antdesign: ImageVector = SimpleIcons.Antdesign
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -149,17 +148,17 @@ object LanguageIcons {
     val oracle: ImageVector = SimpleIcons.Oracle
     val sqlserver: ImageVector = SimpleIcons.Microsoftsqlserver
     val cassandra: ImageVector = SimpleIcons.Apachecassandra
-    val couchdb: ImageVector = Icons.Outlined.Code  // CouchDB not in Simple Icons 1.1.1
+    val couchdb: ImageVector = Icons.Outlined.Code // CouchDB not in Simple Icons 1.1.1
     val dynamodb: ImageVector = SimpleIcons.Amazondynamodb
     val elasticsearch: ImageVector = SimpleIcons.Elasticsearch
-    val neo4j: ImageVector = Icons.Outlined.Code  // Neo4j not in Simple Icons 1.1.1
+    val neo4j: ImageVector = Icons.Outlined.Code // Neo4j not in Simple Icons 1.1.1
     val influxdb: ImageVector = SimpleIcons.Influxdb
     val firebase: ImageVector = SimpleIcons.Firebase
     val supabase: ImageVector = SimpleIcons.Supabase
-    val planetscale: ImageVector = Icons.Outlined.Code  // PlanetScale not in Simple Icons 1.1.1
+    val planetscale: ImageVector = Icons.Outlined.Code // PlanetScale not in Simple Icons 1.1.1
     val prisma: ImageVector = SimpleIcons.Prisma
     val cockroachdb: ImageVector = SimpleIcons.Cockroachlabs
-    val duckdb: ImageVector = Icons.Outlined.Code  // DuckDB not in Simple Icons 1.1.1
+    val duckdb: ImageVector = Icons.Outlined.Code // DuckDB not in Simple Icons 1.1.1
 
     // ═══════════════════════════════════════════════════════════════════════════
     // DEVOPS & CLOUD (25)
@@ -176,15 +175,15 @@ object LanguageIcons {
     val azure: ImageVector = SimpleIcons.Microsoftazure
     val terraform: ImageVector = SimpleIcons.Terraform
     val ansible: ImageVector = SimpleIcons.Ansible
-    val pulumi: ImageVector = Icons.Outlined.Code  // Pulumi not in Simple Icons 1.1.1
+    val pulumi: ImageVector = Icons.Outlined.Code // Pulumi not in Simple Icons 1.1.1
     val jenkins: ImageVector = SimpleIcons.Jenkins
     val githubactions: ImageVector = SimpleIcons.Githubactions
     val circleci: ImageVector = SimpleIcons.Circleci
     val travisci: ImageVector = SimpleIcons.Travisci
     val vercel: ImageVector = SimpleIcons.Vercel
     val netlify: ImageVector = SimpleIcons.Netlify
-    val railway: ImageVector = Icons.Outlined.Code  // Railway not in Simple Icons 1.1.1
-    val render: ImageVector = Icons.Outlined.Code  // Render not in Simple Icons 1.1.1
+    val railway: ImageVector = Icons.Outlined.Code // Railway not in Simple Icons 1.1.1
+    val render: ImageVector = Icons.Outlined.Code // Render not in Simple Icons 1.1.1
     val heroku: ImageVector = SimpleIcons.Heroku
     val digitalocean: ImageVector = SimpleIcons.Digitalocean
     val cloudflare: ImageVector = SimpleIcons.Cloudflare
@@ -199,39 +198,39 @@ object LanguageIcons {
     val maven: ImageVector = SimpleIcons.Apachemaven
     val npm: ImageVector = SimpleIcons.Npm
     val yarn: ImageVector = SimpleIcons.Yarn
-    val pnpm: ImageVector = SimpleIcons.Npm  // PNPM uses NPM icon
-    val cargo: ImageVector = SimpleIcons.Rust  // Cargo uses Rust icon
+    val pnpm: ImageVector = SimpleIcons.Npm // PNPM uses NPM icon
+    val cargo: ImageVector = SimpleIcons.Rust // Cargo uses Rust icon
     val pip: ImageVector = SimpleIcons.Pypi
-    val vite: ImageVector = Icons.Outlined.Code  // Vite not in Simple Icons 1.1.1
+    val vite: ImageVector = Icons.Outlined.Code // Vite not in Simple Icons 1.1.1
     val webpack: ImageVector = SimpleIcons.Webpack
     val rollup: ImageVector = SimpleIcons.RollupDotJs
-    val parcel: ImageVector = Icons.Outlined.Code  // Parcel not in Simple Icons
-    val esbuild: ImageVector = Icons.Outlined.Code  // esbuild not in Simple Icons 1.1.1
-    val swc: ImageVector = Icons.Outlined.Code  // SWC not in Simple Icons 1.1.1
-    val turborepo: ImageVector = Icons.Outlined.Code  // Turborepo not in Simple Icons 1.1.1
+    val parcel: ImageVector = Icons.Outlined.Code // Parcel not in Simple Icons
+    val esbuild: ImageVector = Icons.Outlined.Code // esbuild not in Simple Icons 1.1.1
+    val swc: ImageVector = Icons.Outlined.Code // SWC not in Simple Icons 1.1.1
+    val turborepo: ImageVector = Icons.Outlined.Code // Turborepo not in Simple Icons 1.1.1
     val nx: ImageVector = SimpleIcons.Nx
-    val lerna: ImageVector = Icons.Outlined.Code  // Lerna not in Simple Icons 1.1.1
-    val bazel: ImageVector = Icons.Outlined.Code  // Bazel not in Simple Icons
+    val lerna: ImageVector = Icons.Outlined.Code // Lerna not in Simple Icons 1.1.1
+    val bazel: ImageVector = Icons.Outlined.Code // Bazel not in Simple Icons
     val cmake: ImageVector = SimpleIcons.Cmake
-    val gnumake: ImageVector = Icons.Outlined.Terminal  // GNU Make not in Simple Icons 1.1.1
-    val meson: ImageVector = Icons.Outlined.Code  // Meson not in Simple Icons 1.1.1
+    val gnumake: ImageVector = Icons.Outlined.Terminal // GNU Make not in Simple Icons 1.1.1
+    val meson: ImageVector = Icons.Outlined.Code // Meson not in Simple Icons 1.1.1
     val gulp: ImageVector = SimpleIcons.Gulp
     val grunt: ImageVector = SimpleIcons.Grunt
-    val sbt: ImageVector = SimpleIcons.Scala  // SBT uses Scala icon
+    val sbt: ImageVector = SimpleIcons.Scala // SBT uses Scala icon
 
     // ═══════════════════════════════════════════════════════════════════════════
     // TESTING TOOLS (10)
     // ═══════════════════════════════════════════════════════════════════════════
 
     val jest: ImageVector = SimpleIcons.Jest
-    val vitest: ImageVector = Icons.Outlined.Code  // Vitest not in Simple Icons 1.1.1
+    val vitest: ImageVector = Icons.Outlined.Code // Vitest not in Simple Icons 1.1.1
     val cypress: ImageVector = SimpleIcons.Cypress
-    val playwright: ImageVector = Icons.Outlined.Code  // Playwright not in Simple Icons 1.1.1
+    val playwright: ImageVector = Icons.Outlined.Code // Playwright not in Simple Icons 1.1.1
     val selenium: ImageVector = SimpleIcons.Selenium
-    val pytest: ImageVector = SimpleIcons.Python  // Pytest uses Python icon
+    val pytest: ImageVector = SimpleIcons.Python // Pytest uses Python icon
     val mocha: ImageVector = SimpleIcons.Mocha
     val jasmine: ImageVector = SimpleIcons.Jasmine
-    val testinglibrary: ImageVector = Icons.Outlined.Code  // Testing Library not in Simple Icons 1.1.1
+    val testinglibrary: ImageVector = Icons.Outlined.Code // Testing Library not in Simple Icons 1.1.1
     val storybook: ImageVector = SimpleIcons.Storybook
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -240,9 +239,9 @@ object LanguageIcons {
 
     val eslint: ImageVector = SimpleIcons.Eslint
     val prettier: ImageVector = SimpleIcons.Prettier
-    val biome: ImageVector = Icons.Outlined.Code  // Biome not in Simple Icons 1.1.1
+    val biome: ImageVector = Icons.Outlined.Code // Biome not in Simple Icons 1.1.1
     val stylelint: ImageVector = SimpleIcons.Stylelint
-    val editorconfig: ImageVector = Icons.Outlined.Settings  // EditorConfig not in Simple Icons 1.1.1
+    val editorconfig: ImageVector = Icons.Outlined.Settings // EditorConfig not in Simple Icons 1.1.1
 
     // ═══════════════════════════════════════════════════════════════════════════
     // API & DATA (11)
@@ -250,15 +249,15 @@ object LanguageIcons {
 
     val graphql: ImageVector = SimpleIcons.Graphql
     val apollographql: ImageVector = SimpleIcons.Apollographql
-    val trpc: ImageVector = Icons.Outlined.Code  // tRPC not in Simple Icons 1.1.1
+    val trpc: ImageVector = Icons.Outlined.Code // tRPC not in Simple Icons 1.1.1
     val swagger: ImageVector = SimpleIcons.Swagger
     val openapi: ImageVector = SimpleIcons.Openapiinitiative
     val postman: ImageVector = SimpleIcons.Postman
     val insomnia: ImageVector = SimpleIcons.Insomnia
     val kafka: ImageVector = SimpleIcons.Apachekafka
     val rabbitmq: ImageVector = SimpleIcons.Rabbitmq
-    val grpc: ImageVector = Icons.Outlined.Code  // gRPC not in Simple Icons
-    val protobuf: ImageVector = Icons.Outlined.Code  // Protocol Buffers not in Simple Icons
+    val grpc: ImageVector = Icons.Outlined.Code // gRPC not in Simple Icons
+    val protobuf: ImageVector = Icons.Outlined.Code // Protocol Buffers not in Simple Icons
 
     // ═══════════════════════════════════════════════════════════════════════════
     // AI/ML (5)
@@ -267,8 +266,8 @@ object LanguageIcons {
     val openai: ImageVector = SimpleIcons.Openai
     val tensorflow: ImageVector = SimpleIcons.Tensorflow
     val pytorch: ImageVector = SimpleIcons.Pytorch
-    val huggingface: ImageVector = Icons.Outlined.Code  // Hugging Face not in Simple Icons 1.1.1
-    val langchain: ImageVector = Icons.Outlined.Code  // LangChain not in Simple Icons 1.1.1
+    val huggingface: ImageVector = Icons.Outlined.Code // Hugging Face not in Simple Icons 1.1.1
+    val langchain: ImageVector = Icons.Outlined.Code // LangChain not in Simple Icons 1.1.1
 
     // ═══════════════════════════════════════════════════════════════════════════
     // MOBILE (6)
@@ -276,7 +275,7 @@ object LanguageIcons {
 
     val android: ImageVector = SimpleIcons.Android
     val ios: ImageVector = SimpleIcons.Apple
-    val reactnative: ImageVector = SimpleIcons.React  // React Native uses React icon
+    val reactnative: ImageVector = SimpleIcons.React // React Native uses React icon
     val expo: ImageVector = SimpleIcons.Expo
     val capacitor: ImageVector = SimpleIcons.Capacitor
     val ionic: ImageVector = SimpleIcons.Ionic
@@ -293,8 +292,8 @@ object LanguageIcons {
     // ═══════════════════════════════════════════════════════════════════════════
 
     val json: ImageVector = SimpleIcons.Json
-    val yaml: ImageVector = Icons.Outlined.Settings  // YAML not in Simple Icons 1.1.1
-    val toml: ImageVector = Icons.Outlined.Settings  // TOML not in Simple Icons 1.1.1
+    val yaml: ImageVector = Icons.Outlined.Settings // YAML not in Simple Icons 1.1.1
+    val toml: ImageVector = Icons.Outlined.Settings // TOML not in Simple Icons 1.1.1
     val markdown: ImageVector = SimpleIcons.Markdown
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -332,11 +331,11 @@ object LanguageIcons {
         val php = Color(0xFF777BB4)
         val scala = Color(0xFFDC322F)
         val haskell = Color(0xFF5D4F85)
-        val lua = Color(0xFF5C5CFF)       // Dark theme: lighter blue (was #2C2D72)
-        val perl = Color(0xFF6B7EB8)       // Dark theme: lighter blue (was #39457E)
+        val lua = Color(0xFF5C5CFF) // Dark theme: lighter blue (was #2C2D72)
+        val perl = Color(0xFF6B7EB8) // Dark theme: lighter blue (was #39457E)
         val r = Color(0xFF276DC3)
         val dart = Color(0xFF0175C2)
-        val elixir = Color(0xFF9B59B6)      // Dark theme: lighter purple (was #4B275F)
+        val elixir = Color(0xFF9B59B6) // Dark theme: lighter purple (was #4B275F)
         val clojure = Color(0xFF5881D8)
         val julia = Color(0xFF9558B2)
         val ocaml = Color(0xFFEC6813)
@@ -345,11 +344,11 @@ object LanguageIcons {
         val fsharp = Color(0xFF378BBA)
         val erlang = Color(0xFFA90533)
         val nim = Color(0xFFFFE953)
-        val crystal = Color(0xFFFFFFFF)     // Dark theme: white (was #000000)
+        val crystal = Color(0xFFFFFFFF) // Dark theme: white (was #000000)
         val fortran = Color(0xFF734F96)
         val cobol = Color(0xFF005CA5)
         val assembly = Color(0xFF007AAC)
-        val solidity = Color(0xFF8C8C8C)    // Dark theme: lighter gray (was #363636)
+        val solidity = Color(0xFF8C8C8C) // Dark theme: lighter gray (was #363636)
         val vlang = Color(0xFF5D87BF)
         val dlang = Color(0xFFB03931)
         val groovy = Color(0xFF4298B8)
@@ -358,26 +357,26 @@ object LanguageIcons {
 
         // Web Frameworks & Runtimes
         val nodejs = Color(0xFF339933)
-        val deno = Color(0xFFFFFFFF)        // Dark theme: white (was #000000)
+        val deno = Color(0xFFFFFFFF) // Dark theme: white (was #000000)
         val bun = Color(0xFFFBF0DF)
         val spring = Color(0xFF6DB33F)
         val springboot = Color(0xFF6DB33F)
-        val django = Color(0xFF44B78B)      // Dark theme: lighter green (was #092E20)
-        val flask = Color(0xFFFFFFFF)       // Dark theme: white (was #000000)
+        val django = Color(0xFF44B78B) // Dark theme: lighter green (was #092E20)
+        val flask = Color(0xFFFFFFFF) // Dark theme: white (was #000000)
         val fastapi = Color(0xFF009688)
         val rails = Color(0xFFCC0000)
         val laravel = Color(0xFFFF2D20)
-        val symfony = Color(0xFFFFFFFF)     // Dark theme: white (was #000000)
+        val symfony = Color(0xFFFFFFFF) // Dark theme: white (was #000000)
         val react = Color(0xFF61DAFB)
         val vue = Color(0xFF4FC08D)
         val angular = Color(0xFFDD0031)
         val svelte = Color(0xFFFF3E00)
-        val nextjs = Color(0xFFFFFFFF)      // Dark theme: white (was #000000)
+        val nextjs = Color(0xFFFFFFFF) // Dark theme: white (was #000000)
         val nuxt = Color(0xFF00DC82)
         val astro = Color(0xFFFF5D01)
-        val remix = Color(0xFFFFFFFF)       // Dark theme: white (was #000000)
+        val remix = Color(0xFFFFFFFF) // Dark theme: white (was #000000)
         val flutter = Color(0xFF02569B)
-        val express = Color(0xFFFFFFFF)     // Dark theme: white (was #000000)
+        val express = Color(0xFFFFFFFF) // Dark theme: white (was #000000)
         val nestjs = Color(0xFFE0234E)
         val ktor = Color(0xFF087CFA)
         val gin = Color(0xFF00ADD8)
@@ -393,14 +392,14 @@ object LanguageIcons {
         val preact = Color(0xFF673AB8)
         val electron = Color(0xFF47848F)
         val tauri = Color(0xFF24C8D8)
-        val fastify = Color(0xFFFFFFFF)     // Dark theme: white (was #000000)
+        val fastify = Color(0xFFFFFFFF) // Dark theme: white (was #000000)
 
         // CSS Frameworks
         val tailwindcss = Color(0xFF06B6D4)
         val bootstrap = Color(0xFF7952B3)
         val sass = Color(0xFFCC6699)
         val less = Color(0xFF1D365D)
-        val stylus = Color(0xFF8C8C8C)      // Dark theme: lighter gray (was #333333)
+        val stylus = Color(0xFF8C8C8C) // Dark theme: lighter gray (was #333333)
         val postcss = Color(0xFFDD3A0A)
         val styledcomponents = Color(0xFFDB7093)
         val chakraui = Color(0xFF319795)
@@ -414,8 +413,8 @@ object LanguageIcons {
         val mysql = Color(0xFF4479A1)
         val mongodb = Color(0xFF47A248)
         val redis = Color(0xFFDC382D)
-        val sqlite = Color(0xFF0F80CC)      // Dark theme: lighter blue (was #003B57)
-        val mariadb = Color(0xFF00A0B0)     // Dark theme: lighter teal (was #003545)
+        val sqlite = Color(0xFF0F80CC) // Dark theme: lighter blue (was #003B57)
+        val mariadb = Color(0xFF00A0B0) // Dark theme: lighter teal (was #003545)
         val oracle = Color(0xFFF80000)
         val sqlserver = Color(0xFFCC2927)
         val cassandra = Color(0xFF1287B1)
@@ -435,10 +434,10 @@ object LanguageIcons {
         val docker = Color(0xFF2496ED)
         val kubernetes = Color(0xFF326CE5)
         val git = Color(0xFFF05032)
-        val github = Color(0xFFFFFFFF)      // Dark theme: white (was #181717)
+        val github = Color(0xFFFFFFFF) // Dark theme: white (was #181717)
         val gitlab = Color(0xFFFC6D26)
         val bitbucket = Color(0xFF0052CC)
-        val aws = Color(0xFFFF9900)         // Dark theme: AWS Orange (was #232F3E)
+        val aws = Color(0xFFFF9900) // Dark theme: AWS Orange (was #232F3E)
         val googlecloud = Color(0xFF4285F4)
         val azure = Color(0xFF0078D4)
         val terraform = Color(0xFF7B42BC)
@@ -446,11 +445,11 @@ object LanguageIcons {
         val pulumi = Color(0xFF8A3391)
         val jenkins = Color(0xFFD24939)
         val githubactions = Color(0xFF2088FF)
-        val circleci = Color(0xFF8C8C8C)    // Dark theme: lighter gray (was #343434)
+        val circleci = Color(0xFF8C8C8C) // Dark theme: lighter gray (was #343434)
         val travisci = Color(0xFF3EAAAF)
-        val vercel = Color(0xFFFFFFFF)      // Dark theme: white (was #000000)
+        val vercel = Color(0xFFFFFFFF) // Dark theme: white (was #000000)
         val netlify = Color(0xFF00C7B7)
-        val railway = Color(0xFFFFFFFF)     // Dark theme: white (was #0B0D0E)
+        val railway = Color(0xFFFFFFFF) // Dark theme: white (was #0B0D0E)
         val render = Color(0xFF46E3B7)
         val heroku = Color(0xFF430098)
         val digitalocean = Color(0xFF0080FF)
@@ -459,7 +458,7 @@ object LanguageIcons {
         val apache = Color(0xFFD22128)
 
         // Build Tools
-        val gradle = Color(0xFF02ACC1)      // Dark theme: lighter teal (was #02303A)
+        val gradle = Color(0xFF02ACC1) // Dark theme: lighter teal (was #02303A)
         val maven = Color(0xFFC71A36)
         val npm = Color(0xFFCB3837)
         val yarn = Color(0xFF2C8EBB)
@@ -508,7 +507,7 @@ object LanguageIcons {
         val openapi = Color(0xFF6BA539)
         val postman = Color(0xFFFF6C37)
         val insomnia = Color(0xFF4000BF)
-        val kafka = Color(0xFFFFFFFF)       // Dark theme: white (was #231F20)
+        val kafka = Color(0xFFFFFFFF) // Dark theme: white (was #231F20)
         val rabbitmq = Color(0xFFFF6600)
         val grpc = Color(0xFF244C5A)
         val protobuf = Color(0xFF4285F4)
@@ -518,13 +517,13 @@ object LanguageIcons {
         val tensorflow = Color(0xFFFF6F00)
         val pytorch = Color(0xFFEE4C2C)
         val huggingface = Color(0xFFFFD21E)
-        val langchain = Color(0xFF3FCF8E)   // Dark theme: green (was #1C3C3C)
+        val langchain = Color(0xFF3FCF8E) // Dark theme: green (was #1C3C3C)
 
         // Mobile
         val android = Color(0xFF34A853)
-        val ios = Color(0xFFFFFFFF)         // Dark theme: white (was #000000)
+        val ios = Color(0xFFFFFFFF) // Dark theme: white (was #000000)
         val reactnative = Color(0xFF61DAFB)
-        val expo = Color(0xFFFFFFFF)        // Dark theme: white (was #000020)
+        val expo = Color(0xFFFFFFFF) // Dark theme: white (was #000020)
         val capacitor = Color(0xFF119EFF)
         val ionic = Color(0xFF3880FF)
 
@@ -533,10 +532,10 @@ object LanguageIcons {
         val powershell = Color(0xFF5391FE)
 
         // Data formats
-        val json = Color(0xFFCBCB41)        // Dark theme: JSON yellow (was #000000)
+        val json = Color(0xFFCBCB41) // Dark theme: JSON yellow (was #000000)
         val yaml = Color(0xFFCB171E)
         val toml = Color(0xFF9C4121)
-        val markdown = Color(0xFFFFFFFF)    // Dark theme: white (was #000000)
+        val markdown = Color(0xFFFFFFFF) // Dark theme: white (was #000000)
 
         // Web
         val html = Color(0xFFE34F26)
@@ -555,8 +554,8 @@ object LanguageIcons {
      * @param extension File extension without the dot (e.g., "kt", "py", "js")
      * @return Pair of ImageVector icon and Color
      */
-    fun forExtension(extension: String): Pair<ImageVector, Color> {
-        return when (extension.lowercase()) {
+    fun forExtension(extension: String): Pair<ImageVector, Color> =
+        when (extension.lowercase()) {
             // Kotlin
             "kt", "kts" -> kotlin to Colors.kotlin
 
@@ -571,7 +570,9 @@ object LanguageIcons {
 
             // TypeScript
             "ts", "mts", "cts" -> typescript to Colors.typescript
+
             "tsx" -> react to Colors.react
+
             "jsx" -> react to Colors.react
 
             // Go
@@ -588,6 +589,7 @@ object LanguageIcons {
 
             // C/C++
             "c", "h" -> c to Colors.c
+
             "cpp", "cc", "cxx", "hpp", "hxx", "hh" -> cpp to Colors.cpp
 
             // C#
@@ -676,8 +678,11 @@ object LanguageIcons {
 
             // CSS
             "css" -> css to Colors.css
+
             "scss", "sass" -> sass to Colors.sass
+
             "less" -> less to Colors.less
+
             "styl" -> stylus to Colors.stylus
 
             // Vue
@@ -691,8 +696,11 @@ object LanguageIcons {
 
             // Data formats
             "json" -> json to Colors.json
+
             "yaml", "yml" -> yaml to Colors.yaml
+
             "toml" -> toml to Colors.toml
+
             "md", "markdown" -> markdown to Colors.markdown
 
             // GraphQL
@@ -706,10 +714,12 @@ object LanguageIcons {
 
             // Config files
             "gradle" -> gradle to Colors.gradle
+
             "xml", "pom" -> maven to Colors.maven
 
             // Shell
             "sh", "bash", "zsh" -> gnubash to Colors.gnubash
+
             "ps1", "psm1", "psd1" -> powershell to Colors.powershell
 
             // Docker
@@ -723,19 +733,19 @@ object LanguageIcons {
 
             // Config
             "eslintrc", "eslintignore" -> eslint to Colors.eslint
+
             "prettierrc", "prettierignore" -> prettier to Colors.prettier
 
             else -> unknown to Colors.unknown
         }
-    }
 
     /**
      * Get icon and color for a language name.
      * @param language Language name (case-insensitive)
      * @return Pair of ImageVector icon and Color
      */
-    fun forLanguage(language: String): Pair<ImageVector, Color> {
-        return when (language.lowercase()) {
+    fun forLanguage(language: String): Pair<ImageVector, Color> =
+        when (language.lowercase()) {
             "kotlin" -> kotlin to Colors.kotlin
             "java" -> java to Colors.java
             "python", "python3" -> python to Colors.python
@@ -785,99 +795,152 @@ object LanguageIcons {
             "powershell" -> powershell to Colors.powershell
             else -> unknown to Colors.unknown
         }
-    }
 
     /**
      * Get icon and color for a framework/runtime name.
      * @param framework Framework name (case-insensitive)
      * @return Pair of ImageVector icon and Color
      */
-    fun forFramework(framework: String): Pair<ImageVector, Color> {
-        return when (framework.lowercase()) {
+    fun forFramework(framework: String): Pair<ImageVector, Color> =
+        when (framework.lowercase()) {
             // Backend Frameworks
             "spring", "spring boot", "springboot" -> spring to Colors.spring
+
             "django" -> django to Colors.django
+
             "flask" -> flask to Colors.flask
+
             "fastapi" -> fastapi to Colors.fastapi
+
             "rails", "ruby on rails" -> rails to Colors.rails
+
             "laravel" -> laravel to Colors.laravel
+
             "symfony" -> symfony to Colors.symfony
+
             "express", "expressjs" -> express to Colors.express
+
             "nestjs", "nest" -> nestjs to Colors.nestjs
+
             "ktor" -> ktor to Colors.ktor
+
             "gin" -> gin to Colors.gin
+
             "phoenix" -> phoenix to Colors.phoenix
+
             "fastify" -> fastify to Colors.fastify
 
             // Frontend Frameworks
             "react", "reactjs" -> react to Colors.react
+
             "vue", "vuejs", "vue.js" -> vue to Colors.vue
+
             "angular" -> angular to Colors.angular
+
             "svelte" -> svelte to Colors.svelte
+
             "next", "nextjs", "next.js" -> nextjs to Colors.nextjs
+
             "nuxt", "nuxtjs", "nuxt.js" -> nuxt to Colors.nuxt
+
             "astro" -> astro to Colors.astro
+
             "remix" -> remix to Colors.remix
+
             "solid", "solidjs" -> solid to Colors.solid
+
             "lit" -> lit to Colors.lit
+
             "qwik" -> qwik to Colors.qwik
+
             "htmx" -> htmx to Colors.htmx
+
             "alpine", "alpinejs", "alpine.js" -> alpinejs to Colors.alpinejs
+
             "ember", "emberjs", "ember.js" -> emberjs to Colors.emberjs
+
             "backbone", "backbonejs", "backbone.js" -> backbonejs to Colors.backbonejs
+
             "preact" -> preact to Colors.preact
+
             "blazor" -> blazor to Colors.blazor
 
             // Mobile/Desktop
             "flutter" -> flutter to Colors.flutter
+
             "electron" -> electron to Colors.electron
+
             "tauri" -> tauri to Colors.tauri
+
             "react native", "reactnative" -> reactnative to Colors.reactnative
+
             "expo" -> expo to Colors.expo
+
             "capacitor" -> capacitor to Colors.capacitor
+
             "ionic" -> ionic to Colors.ionic
 
             // CSS Frameworks
             "tailwind", "tailwindcss" -> tailwindcss to Colors.tailwindcss
+
             "bootstrap" -> bootstrap to Colors.bootstrap
+
             "chakra", "chakraui" -> chakraui to Colors.chakraui
+
             "material ui", "mui" -> mui to Colors.mui
+
             "bulma" -> bulma to Colors.bulma
+
             "foundation" -> foundation to Colors.foundation
+
             "ant design", "antdesign" -> antdesign to Colors.antdesign
 
             // Build Tools
             "gradle" -> gradle to Colors.gradle
+
             "maven" -> maven to Colors.maven
+
             "npm" -> npm to Colors.npm
+
             "yarn" -> yarn to Colors.yarn
+
             "pnpm" -> pnpm to Colors.pnpm
+
             "vite" -> vite to Colors.vite
+
             "webpack" -> webpack to Colors.webpack
+
             "rollup" -> rollup to Colors.rollup
+
             "parcel" -> parcel to Colors.parcel
+
             "esbuild" -> esbuild to Colors.esbuild
+
             "swc" -> swc to Colors.swc
+
             "turborepo" -> turborepo to Colors.turborepo
+
             "nx" -> nx to Colors.nx
 
             // DevOps
             "docker" -> docker to Colors.docker
+
             "kubernetes", "k8s" -> kubernetes to Colors.kubernetes
+
             "terraform" -> terraform to Colors.terraform
+
             "ansible" -> ansible to Colors.ansible
 
             else -> unknown to Colors.unknown
         }
-    }
 
     /**
      * Get icon and color for a database name.
      * @param database Database name (case-insensitive)
      * @return Pair of ImageVector icon and Color
      */
-    fun forDatabase(database: String): Pair<ImageVector, Color> {
-        return when (database.lowercase()) {
+    fun forDatabase(database: String): Pair<ImageVector, Color> =
+        when (database.lowercase()) {
             "postgresql", "postgres" -> postgresql to Colors.postgresql
             "mysql" -> mysql to Colors.mysql
             "mongodb", "mongo" -> mongodb to Colors.mongodb
@@ -900,15 +963,14 @@ object LanguageIcons {
             "duckdb", "duck" -> duckdb to Colors.duckdb
             else -> unknown to Colors.unknown
         }
-    }
 
     /**
      * Get icon and color for a cloud platform name.
      * @param cloud Cloud platform name (case-insensitive)
      * @return Pair of ImageVector icon and Color
      */
-    fun forCloud(cloud: String): Pair<ImageVector, Color> {
-        return when (cloud.lowercase()) {
+    fun forCloud(cloud: String): Pair<ImageVector, Color> =
+        when (cloud.lowercase()) {
             "aws", "amazon" -> aws to Colors.aws
             "gcp", "google cloud", "googlecloud" -> googlecloud to Colors.googlecloud
             "azure", "microsoft azure" -> azure to Colors.azure
@@ -921,15 +983,14 @@ object LanguageIcons {
             "cloudflare" -> cloudflare to Colors.cloudflare
             else -> unknown to Colors.unknown
         }
-    }
 
     /**
      * Get icon and color for a testing framework name.
      * @param testing Testing framework name (case-insensitive)
      * @return Pair of ImageVector icon and Color
      */
-    fun forTesting(testing: String): Pair<ImageVector, Color> {
-        return when (testing.lowercase()) {
+    fun forTesting(testing: String): Pair<ImageVector, Color> =
+        when (testing.lowercase()) {
             "jest" -> jest to Colors.jest
             "vitest" -> vitest to Colors.vitest
             "cypress" -> cypress to Colors.cypress
@@ -942,15 +1003,14 @@ object LanguageIcons {
             "storybook" -> storybook to Colors.storybook
             else -> unknown to Colors.unknown
         }
-    }
 
     /**
      * Get icon and color for an AI/ML framework name.
      * @param aiml AI/ML framework name (case-insensitive)
      * @return Pair of ImageVector icon and Color
      */
-    fun forAI(aiml: String): Pair<ImageVector, Color> {
-        return when (aiml.lowercase()) {
+    fun forAI(aiml: String): Pair<ImageVector, Color> =
+        when (aiml.lowercase()) {
             "openai", "gpt", "chatgpt" -> openai to Colors.openai
             "tensorflow", "tf" -> tensorflow to Colors.tensorflow
             "pytorch", "torch" -> pytorch to Colors.pytorch
@@ -958,5 +1018,4 @@ object LanguageIcons {
             "langchain" -> langchain to Colors.langchain
             else -> unknown to Colors.unknown
         }
-    }
 }

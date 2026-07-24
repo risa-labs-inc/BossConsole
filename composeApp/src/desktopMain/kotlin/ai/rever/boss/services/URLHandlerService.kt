@@ -1,9 +1,9 @@
 package ai.rever.boss.services
 
-import ai.rever.boss.utils.logging.BossLogger
-import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.components.events.URLEventBus
 import ai.rever.boss.utils.WindowFocusManager
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.runtime.mutableStateOf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -145,21 +145,25 @@ actual object URLHandlerService {
             // Increment processing counter BEFORE launching coroutine
             val count = processingCount.incrementAndGet()
             _isProcessing.value = (count > 0)
-            incremented = true  // Mark that THIS invocation incremented
-            logger.debug(LogCategory.BROWSER, "Processing count incremented", mapOf("count" to count, "isProcessing" to _isProcessing.value))
+            incremented = true // Mark that THIS invocation incremented
+            logger.debug(
+                LogCategory.BROWSER,
+                "Processing count incremented",
+                mapOf("count" to count, "isProcessing" to _isProcessing.value),
+            )
 
             // Emit URL open event - focused window will handle it
             CoroutineScope(Dispatchers.Main).launch {
                 try {
                     URLEventBus.openURL(url, title, sourceWindowId = focusedWindowId)
                     logger.debug(LogCategory.BROWSER, "Emitted URL open event", mapOf("url" to url, "windowId" to focusedWindowId))
-                    
+
                     // CRITICAL: Wait for tab to actually be created before decrementing
                     // The event emission is instant, but tab creation (splitViewState.openUrlInActivePanel)
                     // is async and takes time. If we decrement immediately, BossApp's state check
                     // will see 0 tabs + isProcessing=false and show New Tab Dialog / load Last Session,
                     // which clears panels and destroys the tab being created.
-                    // 
+                    //
                     // Timeline without delay:
                     // - t=0ms: Event emitted, counter decremented to 0
                     // - t=0ms: Tab creation starts (async)
@@ -177,7 +181,14 @@ actual object URLHandlerService {
                     // Decrement counter after tab has time to be created
                     val count = processingCount.decrementAndGet()
                     _isProcessing.value = (count > 0)
-                    logger.debug(LogCategory.BROWSER, "Processing count decremented", mapOf("count" to count, "isProcessing" to _isProcessing.value))
+                    logger.debug(
+                        LogCategory.BROWSER,
+                        "Processing count decremented",
+                        mapOf(
+                            "count" to count,
+                            "isProcessing" to _isProcessing.value,
+                        ),
+                    )
                 }
             }
         } catch (e: Exception) {
@@ -187,7 +198,14 @@ actual object URLHandlerService {
             if (incremented) {
                 val count = processingCount.decrementAndGet()
                 _isProcessing.value = (count > 0)
-                logger.debug(LogCategory.BROWSER, "Processing count decremented due to error", mapOf("count" to count, "isProcessing" to _isProcessing.value))
+                logger.debug(
+                    LogCategory.BROWSER,
+                    "Processing count decremented due to error",
+                    mapOf(
+                        "count" to count,
+                        "isProcessing" to _isProcessing.value,
+                    ),
+                )
             }
         }
     }
@@ -217,11 +235,12 @@ actual object URLHandlerService {
 
             // Must have at least a domain name
             val domainEnd = afterProtocol.indexOfAny(charArrayOf('/', '?', '#'))
-            val domain = if (domainEnd >= 0) {
-                afterProtocol.substring(0, domainEnd)
-            } else {
-                afterProtocol
-            }
+            val domain =
+                if (domainEnd >= 0) {
+                    afterProtocol.substring(0, domainEnd)
+                } else {
+                    afterProtocol
+                }
 
             // Domain must not be empty and should contain at least one character
             return domain.isNotEmpty() && domain.contains(".")
@@ -249,21 +268,23 @@ actual object URLHandlerService {
             val afterProtocol = url.substring(protocolEnd + 3)
             val domainEnd = afterProtocol.indexOfAny(charArrayOf('/', '?', '#'))
 
-            val fullDomain = if (domainEnd >= 0) {
-                afterProtocol.substring(0, domainEnd)
-            } else {
-                afterProtocol
-            }
+            val fullDomain =
+                if (domainEnd >= 0) {
+                    afterProtocol.substring(0, domainEnd)
+                } else {
+                    afterProtocol
+                }
 
             // Remove port if present
             val domain = fullDomain.substringBefore(':')
 
             // Remove "www." prefix for cleaner display
-            val cleanDomain = if (domain.startsWith("www.")) {
-                domain.substring(4)
-            } else {
-                domain
-            }
+            val cleanDomain =
+                if (domain.startsWith("www.")) {
+                    domain.substring(4)
+                } else {
+                    domain
+                }
 
             cleanDomain.ifEmpty { null }
         } catch (e: Exception) {

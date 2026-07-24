@@ -20,11 +20,12 @@ object PluginManifestReader {
     /**
      * JSON parser with lenient settings for reading manifests.
      */
-    private val json = Json {
-        ignoreUnknownKeys = true
-        isLenient = true
-        coerceInputValues = true
-    }
+    private val json =
+        Json {
+            ignoreUnknownKeys = true
+            isLenient = true
+            coerceInputValues = true
+        }
 
     /**
      * Read a plugin manifest from a JAR file.
@@ -37,27 +38,29 @@ object PluginManifestReader {
         val file = File(jarPath)
         if (!file.exists()) {
             throw PluginManifestException(
-                "Plugin JAR not found: $jarPath"
+                "Plugin JAR not found: $jarPath",
             )
         }
 
         if (!file.name.endsWith(".jar")) {
             throw PluginManifestException(
-                "File is not a JAR: $jarPath"
+                "File is not a JAR: $jarPath",
             )
         }
 
         return try {
             JarFile(file).use { jar ->
-                val manifestEntry = jar.getJarEntry(PluginManifestConstants.MANIFEST_PATH)
-                    ?: throw PluginManifestException(
-                        "Plugin manifest not found at ${PluginManifestConstants.MANIFEST_PATH}",
-                        null
-                    )
+                val manifestEntry =
+                    jar.getJarEntry(PluginManifestConstants.MANIFEST_PATH)
+                        ?: throw PluginManifestException(
+                            "Plugin manifest not found at ${PluginManifestConstants.MANIFEST_PATH}",
+                            null,
+                        )
 
-                val manifestContent = jar.getInputStream(manifestEntry).bufferedReader().use {
-                    it.readText()
-                }
+                val manifestContent =
+                    jar.getInputStream(manifestEntry).bufferedReader().use {
+                        it.readText()
+                    }
 
                 parseManifest(manifestContent, jarPath)
             }
@@ -66,7 +69,7 @@ object PluginManifestReader {
         } catch (e: Exception) {
             throw PluginManifestException(
                 "Failed to read manifest from JAR: ${e.message}",
-                cause = e
+                cause = e,
             )
         }
     }
@@ -79,8 +82,11 @@ object PluginManifestReader {
      * @return The parsed manifest
      * @throws PluginManifestException if the manifest is invalid
      */
-    fun parseManifest(content: String, source: String = "unknown"): PluginManifest {
-        return try {
+    fun parseManifest(
+        content: String,
+        source: String = "unknown",
+    ): PluginManifest =
+        try {
             val manifest = json.decodeFromString<PluginManifest>(content)
             validateManifest(manifest)
             manifest
@@ -89,10 +95,9 @@ object PluginManifestReader {
         } catch (e: Exception) {
             throw PluginManifestException(
                 "Failed to parse plugin manifest from $source: ${e.message}",
-                cause = e
+                cause = e,
             )
         }
-    }
 
     /**
      * Validate a parsed manifest.
@@ -132,24 +137,32 @@ object PluginManifestReader {
 
         // API version compatibility
         if (!isCompatibleApiVersion(manifest.apiVersion)) {
-            logger.warn(LogCategory.SYSTEM, "Plugin API version may be incompatible", mapOf(
-                "pluginId" to manifest.pluginId,
-                "requiredVersion" to manifest.apiVersion,
-                "currentVersion" to PluginManifestConstants.CURRENT_API_VERSION
-            ))
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Plugin API version may be incompatible",
+                mapOf(
+                    "pluginId" to manifest.pluginId,
+                    "requiredVersion" to manifest.apiVersion,
+                    "currentVersion" to PluginManifestConstants.CURRENT_API_VERSION,
+                ),
+            )
         }
 
         if (errors.isNotEmpty()) {
             throw PluginManifestException(
                 "Invalid plugin manifest: ${errors.joinToString("; ")}",
-                manifest.pluginId.ifBlank { null }
+                manifest.pluginId.ifBlank { null },
             )
         }
 
-        logger.debug(LogCategory.SYSTEM, "Manifest validated successfully", mapOf(
-            "pluginId" to manifest.pluginId,
-            "version" to manifest.version
-        ))
+        logger.debug(
+            LogCategory.SYSTEM,
+            "Manifest validated successfully",
+            mapOf(
+                "pluginId" to manifest.pluginId,
+                "version" to manifest.version,
+            ),
+        )
     }
 
     /**
@@ -186,7 +199,11 @@ object PluginManifestReader {
     private fun isCompatibleApiVersion(requiredVersion: String): Boolean {
         // Simple comparison for now - just check major version matches
         val required = requiredVersion.split(".").firstOrNull()?.toIntOrNull() ?: return false
-        val current = PluginManifestConstants.CURRENT_API_VERSION.split(".").firstOrNull()?.toIntOrNull() ?: return false
+        val current =
+            PluginManifestConstants.CURRENT_API_VERSION
+                .split(".")
+                .firstOrNull()
+                ?.toIntOrNull() ?: return false
         return required <= current
     }
 
@@ -196,8 +213,8 @@ object PluginManifestReader {
      * @param jarPath Path to the JAR file
      * @return True if the JAR contains a valid manifest
      */
-    fun hasValidManifest(jarPath: String): Boolean {
-        return try {
+    fun hasValidManifest(jarPath: String): Boolean =
+        try {
             readFromJar(jarPath)
             true
         } catch (e: Exception) {
@@ -208,7 +225,6 @@ object PluginManifestReader {
             )
             false
         }
-    }
 
     /**
      * Read all plugin manifests from a directory.
@@ -219,22 +235,31 @@ object PluginManifestReader {
     fun readFromDirectory(directory: String): List<Pair<String, PluginManifest>> {
         val dir = File(directory)
         if (!dir.exists() || !dir.isDirectory) {
-            logger.warn(LogCategory.SYSTEM, "Plugin directory does not exist", mapOf(
-                "path" to directory
-            ))
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Plugin directory does not exist",
+                mapOf(
+                    "path" to directory,
+                ),
+            )
             return emptyList()
         }
 
-        return dir.listFiles { file -> file.extension == "jar" }
+        return dir
+            .listFiles { file -> file.extension == "jar" }
             ?.mapNotNull { file ->
                 try {
                     val manifest = readFromJar(file.absolutePath)
                     file.absolutePath to manifest
                 } catch (e: Exception) {
-                    logger.warn(LogCategory.SYSTEM, "Failed to read manifest from JAR", mapOf(
-                        "path" to file.absolutePath,
-                        "error" to (e.message ?: "unknown")
-                    ))
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Failed to read manifest from JAR",
+                        mapOf(
+                            "path" to file.absolutePath,
+                            "error" to (e.message ?: "unknown"),
+                        ),
+                    )
                     null
                 }
             }

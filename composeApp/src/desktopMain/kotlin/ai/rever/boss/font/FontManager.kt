@@ -25,7 +25,6 @@ import java.io.File
  * Inspired by BossTerm's FontUtils and IntelliJ's FontPreferences.
  */
 object FontManager {
-
     private val logger = BossLogger.forComponent("FontManager")
 
     // ===================
@@ -108,7 +107,8 @@ object FontManager {
      * Cached AWT font family names (lazy-loaded).
      */
     private val awtFontFamilies: Set<String> by lazy {
-        GraphicsEnvironment.getLocalGraphicsEnvironment()
+        GraphicsEnvironment
+            .getLocalGraphicsEnvironment()
             .availableFontFamilyNames
             .toSet()
     }
@@ -148,19 +148,17 @@ object FontManager {
     /**
      * Get list of available monospace fonts including bundled fonts.
      */
-    fun getAvailableMonospaceFonts(): List<String> {
-        return (cachedCategorizedFonts[SECTION_BUNDLED] ?: emptyList()) +
-               (cachedCategorizedFonts[SECTION_FIXED_PITCH] ?: emptyList())
-    }
+    fun getAvailableMonospaceFonts(): List<String> =
+        (cachedCategorizedFonts[SECTION_BUNDLED] ?: emptyList()) +
+            (cachedCategorizedFonts[SECTION_FIXED_PITCH] ?: emptyList())
 
     /**
      * Get list of all available fonts including bundled fonts.
      */
-    fun getAllAvailableFonts(): List<String> {
-        return (cachedCategorizedFonts[SECTION_BUNDLED] ?: emptyList()) +
-               (cachedCategorizedFonts[SECTION_FIXED_PITCH] ?: emptyList()) +
-               (cachedCategorizedFonts[SECTION_VARIABLE_PITCH] ?: emptyList())
-    }
+    fun getAllAvailableFonts(): List<String> =
+        (cachedCategorizedFonts[SECTION_BUNDLED] ?: emptyList()) +
+            (cachedCategorizedFonts[SECTION_FIXED_PITCH] ?: emptyList()) +
+            (cachedCategorizedFonts[SECTION_VARIABLE_PITCH] ?: emptyList())
 
     // ===================
     // Public API: Font Availability
@@ -184,8 +182,9 @@ object FontManager {
         }
 
         // Check Skia font families
-        val allFonts = (cachedCategorizedFonts[SECTION_FIXED_PITCH] ?: emptyList()) +
-                       (cachedCategorizedFonts[SECTION_VARIABLE_PITCH] ?: emptyList())
+        val allFonts =
+            (cachedCategorizedFonts[SECTION_FIXED_PITCH] ?: emptyList()) +
+                (cachedCategorizedFonts[SECTION_VARIABLE_PITCH] ?: emptyList())
         return allFonts.any { normalizeFontName(it) == normalizedName }
     }
 
@@ -201,16 +200,22 @@ object FontManager {
      * @param size Font size in points
      * @return AWT Font instance
      */
-    fun loadAWTFont(fontName: String, style: Int = Font.PLAIN, size: Int = 14): Font {
+    fun loadAWTFont(
+        fontName: String,
+        style: Int = Font.PLAIN,
+        size: Int = 14,
+    ): Font {
         ensureBundledFontsRegistered()
 
         return when (fontName) {
             BUNDLED_JETBRAINS_MONO, "JetBrains Mono" -> {
                 loadBundledAWTFont("JetBrains Mono", style, size)
             }
+
             BUNDLED_FIRA_CODE, "Fira Code" -> {
                 loadBundledAWTFont("Fira Code", style, size)
             }
+
             else -> {
                 // Try system font
                 if (isFontAvailable(fontName)) {
@@ -231,9 +236,10 @@ object FontManager {
      * @param size Font size in points
      * @return AWT Font instance (guaranteed non-null)
      */
-    fun createEditorFont(fontName: String, size: Int): Font {
-        return loadAWTFont(fontName, Font.PLAIN, size)
-    }
+    fun createEditorFont(
+        fontName: String,
+        size: Int,
+    ): Font = loadAWTFont(fontName, Font.PLAIN, size)
 
     // ===================
     // Public API: Compose FontFamily Loading
@@ -245,14 +251,16 @@ object FontManager {
      * @param fontName Font family name (or bundled font marker)
      * @return Compose FontFamily instance
      */
-    fun loadComposeFontFamily(fontName: String): FontFamily {
-        return when (fontName) {
+    fun loadComposeFontFamily(fontName: String): FontFamily =
+        when (fontName) {
             BUNDLED_JETBRAINS_MONO, "JetBrains Mono" -> {
                 loadBundledComposeFontFamily("fonts/JetBrainsMono-Regular.ttf")
             }
+
             BUNDLED_FIRA_CODE, "Fira Code" -> {
                 loadBundledComposeFontFamily("fonts/FiraCode-Regular.ttf")
             }
+
             else -> {
                 // Try system font via Skia
                 try {
@@ -272,7 +280,6 @@ object FontManager {
                 }
             }
         }
-    }
 
     // ===================
     // Private: Font Discovery
@@ -285,9 +292,10 @@ object FontManager {
         val fontMgr = FontMgr.default
         val familyCount = fontMgr.familiesCount
 
-        val allFamilies = (0 until familyCount)
-            .map { fontMgr.getFamilyName(it) }
-            .filter { it.isNotEmpty() }
+        val allFamilies =
+            (0 until familyCount)
+                .map { fontMgr.getFamilyName(it) }
+                .filter { it.isNotEmpty() }
 
         val fixedPitch = mutableListOf<String>()
         val variablePitch = mutableListOf<String>()
@@ -320,7 +328,7 @@ object FontManager {
         return mapOf(
             SECTION_BUNDLED to listOf(BUNDLED_JETBRAINS_MONO, BUNDLED_FIRA_CODE),
             SECTION_FIXED_PITCH to fixedPitch.sorted(),
-            SECTION_VARIABLE_PITCH to variablePitch.sorted()
+            SECTION_VARIABLE_PITCH to variablePitch.sorted(),
         )
     }
 
@@ -364,7 +372,10 @@ object FontManager {
     /**
      * Extract a font resource to a temporary file.
      */
-    private fun extractFontResource(resourcePath: String, prefix: String): File? {
+    private fun extractFontResource(
+        resourcePath: String,
+        prefix: String,
+    ): File? {
         return try {
             val fontStream = javaClass.classLoader?.getResourceAsStream(resourcePath)
             if (fontStream == null) {
@@ -391,7 +402,10 @@ object FontManager {
     /**
      * Register a font file with AWT GraphicsEnvironment.
      */
-    private fun registerFontFile(ge: GraphicsEnvironment, file: File) {
+    private fun registerFontFile(
+        ge: GraphicsEnvironment,
+        file: File,
+    ) {
         try {
             val font = Font.createFont(Font.TRUETYPE_FONT, file)
             ge.registerFont(font)
@@ -407,7 +421,11 @@ object FontManager {
     /**
      * Load a bundled AWT font with the specified style.
      */
-    private fun loadBundledAWTFont(familyName: String, style: Int, size: Int): Font {
+    private fun loadBundledAWTFont(
+        familyName: String,
+        style: Int,
+        size: Int,
+    ): Font {
         ensureBundledFontsRegistered()
 
         // After registration, the font should be available by family name
@@ -446,8 +464,8 @@ object FontManager {
             FontFamily(
                 androidx.compose.ui.text.platform.Font(
                     file = tempFile,
-                    weight = FontWeight.Normal
-                )
+                    weight = FontWeight.Normal,
+                ),
             )
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Failed to load bundled Compose font", error = e)
@@ -462,7 +480,5 @@ object FontManager {
     /**
      * Normalize font name for comparison (lowercase, no spaces).
      */
-    private fun normalizeFontName(name: String): String {
-        return name.lowercase().replace(" ", "").replace("-", "")
-    }
+    private fun normalizeFontName(name: String): String = name.lowercase().replace(" ", "").replace("-", "")
 }

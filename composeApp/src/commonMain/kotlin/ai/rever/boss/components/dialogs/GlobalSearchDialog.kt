@@ -63,12 +63,13 @@ private val globalSearchLogger = BossLogger.forComponent("GlobalSearchDialog")
 
 // Theme colors — reactive getters into the BOSS design system tokens
 // (getters, not cached vals, so theme switches re-skin the dialog).
-private val SelectionAccent get() = BossThemeController.current.colors.signal      // signal — selection / primary
-private val TabsAccent get() = BossThemeController.current.colors.ok    // ok — tabs
-private val BookmarksAccent get() = BossThemeController.current.colors.warn   // warn — bookmarks
+private val SelectionAccent get() = BossThemeController.current.colors.signal // signal — selection / primary
+private val TabsAccent get() = BossThemeController.current.colors.ok // ok — tabs
+private val BookmarksAccent get() = BossThemeController.current.colors.warn // warn — bookmarks
+
 // Deliberate one-off: the design system has no purple token (run-config identity color).
 private val RunConfigAccent = Color(0xFF9C27B0)
-private val CommandsAccent get() = BossThemeController.current.colors.data   // data — commands
+private val CommandsAccent get() = BossThemeController.current.colors.data // data — commands
 private val HoverBackground get() = BossThemeController.current.colors.raised
 private val CardShape = RoundedCornerShape(12.dp)
 private val SmallCardShape = RoundedCornerShape(8.dp)
@@ -97,7 +98,7 @@ fun GlobalSearchDialog(
     onTabSelect: ((windowId: String, panelId: String, tabId: String) -> Unit)? = null,
     onBookmarkSelect: ((bookmarkId: String, collectionId: String) -> Unit)? = null,
     onRunConfigSelect: ((configId: String) -> Unit)? = null,
-    onCommandSelect: ((actionId: String) -> Unit)? = null
+    onCommandSelect: ((actionId: String) -> Unit)? = null,
 ) {
     var searchQuery by remember { mutableStateOf("") }
     var selectedIndex by remember { mutableStateOf(0) }
@@ -112,14 +113,16 @@ fun GlobalSearchDialog(
     val searchFieldFocusRequester = remember { FocusRequester() }
 
     // Get filtered results based on active category
-    val filteredResults = remember(allResults, activeCategory) {
-        GlobalSearchService.getFilteredResults()
-    }
+    val filteredResults =
+        remember(allResults, activeCategory) {
+            GlobalSearchService.getFilteredResults()
+        }
 
     // Get result counts by category
-    val resultCounts = remember(allResults) {
-        GlobalSearchService.getResultCounts()
-    }
+    val resultCounts =
+        remember(allResults) {
+            GlobalSearchService.getResultCounts()
+        }
 
     // Animation state for staggered appearance
     var showContent by remember { mutableStateOf(false) }
@@ -200,6 +203,7 @@ fun GlobalSearchDialog(
                 globalSearchLogger.debug(LogCategory.UI, "File selected from search", mapOf("file" to result.path))
                 onFileSelect(result.path)
             }
+
             is SearchResult.TabResult -> {
                 globalSearchLogger.debug(LogCategory.UI, "Tab selected from search", mapOf("tab" to result.tabId))
                 if (onTabSelect != null) {
@@ -209,6 +213,7 @@ fun GlobalSearchDialog(
                     onDismiss()
                 }
             }
+
             is SearchResult.BookmarkResult -> {
                 globalSearchLogger.debug(LogCategory.UI, "Bookmark selected from search", mapOf("bookmark" to result.bookmarkId))
                 if (onBookmarkSelect != null) {
@@ -218,6 +223,7 @@ fun GlobalSearchDialog(
                     onDismiss()
                 }
             }
+
             is SearchResult.RunConfigResult -> {
                 globalSearchLogger.debug(LogCategory.UI, "Run config selected from search", mapOf("config" to result.configId))
                 if (onRunConfigSelect != null) {
@@ -227,6 +233,7 @@ fun GlobalSearchDialog(
                     onDismiss()
                 }
             }
+
             is SearchResult.CommandResult -> {
                 globalSearchLogger.debug(LogCategory.UI, "Command selected from search", mapOf("actionId" to result.actionId))
                 if (onCommandSelect != null) {
@@ -241,79 +248,90 @@ fun GlobalSearchDialog(
 
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            dismissOnBackPress = true,
-            dismissOnClickOutside = true,
-            usePlatformDefaultWidth = false
-        )
+        properties =
+            DialogProperties(
+                dismissOnBackPress = true,
+                dismissOnClickOutside = true,
+                usePlatformDefaultWidth = false,
+            ),
     ) {
         Surface(
-            modifier = Modifier
-                .width(700.dp)
-                .heightIn(min = 450.dp, max = 600.dp)
-                .onPreviewKeyEvent { event ->
-                    if (event.type == KeyEventType.KeyDown) {
-                        when (event.key) {
-                            Key.Escape -> {
-                                onDismiss()
-                                true
-                            }
-                            Key.DirectionUp -> {
-                                if (filteredResults.isNotEmpty()) {
-                                    selectedIndex = (selectedIndex - 1).coerceAtLeast(0)
-                                    scrollToSelected = true
+            modifier =
+                Modifier
+                    .width(700.dp)
+                    .heightIn(min = 450.dp, max = 600.dp)
+                    .onPreviewKeyEvent { event ->
+                        if (event.type == KeyEventType.KeyDown) {
+                            when (event.key) {
+                                Key.Escape -> {
+                                    onDismiss()
+                                    true
                                 }
-                                true
-                            }
-                            Key.DirectionDown -> {
-                                if (filteredResults.isNotEmpty()) {
-                                    selectedIndex = (selectedIndex + 1).coerceAtMost(filteredResults.size - 1)
-                                    scrollToSelected = true
+
+                                Key.DirectionUp -> {
+                                    if (filteredResults.isNotEmpty()) {
+                                        selectedIndex = (selectedIndex - 1).coerceAtLeast(0)
+                                        scrollToSelected = true
+                                    }
+                                    true
                                 }
-                                true
-                            }
-                            Key.Enter -> {
-                                if (filteredResults.isNotEmpty() && selectedIndex < filteredResults.size) {
-                                    selectResult(filteredResults[selectedIndex])
+
+                                Key.DirectionDown -> {
+                                    if (filteredResults.isNotEmpty()) {
+                                        selectedIndex = (selectedIndex + 1).coerceAtMost(filteredResults.size - 1)
+                                        scrollToSelected = true
+                                    }
+                                    true
                                 }
-                                true
-                            }
-                            Key.Tab -> {
-                                // Cycle through categories
-                                val categories = SearchCategory.entries
-                                val currentIndex = categories.indexOf(activeCategory)
-                                val nextIndex = if (event.isShiftPressed) {
-                                    (currentIndex - 1 + categories.size) % categories.size
-                                } else {
-                                    (currentIndex + 1) % categories.size
+
+                                Key.Enter -> {
+                                    if (filteredResults.isNotEmpty() && selectedIndex < filteredResults.size) {
+                                        selectResult(filteredResults[selectedIndex])
+                                    }
+                                    true
                                 }
-                                GlobalSearchService.setActiveCategory(categories[nextIndex])
-                                true
+
+                                Key.Tab -> {
+                                    // Cycle through categories
+                                    val categories = SearchCategory.entries
+                                    val currentIndex = categories.indexOf(activeCategory)
+                                    val nextIndex =
+                                        if (event.isShiftPressed) {
+                                            (currentIndex - 1 + categories.size) % categories.size
+                                        } else {
+                                            (currentIndex + 1) % categories.size
+                                        }
+                                    GlobalSearchService.setActiveCategory(categories[nextIndex])
+                                    true
+                                }
+
+                                else -> {
+                                    false
+                                }
                             }
-                            else -> false
+                        } else {
+                            false
                         }
-                    } else {
-                        false
-                    }
-                },
+                    },
             shape = RoundedCornerShape(16.dp),
             color = BossTheme.colors.panel,
-            elevation = 16.dp
+            elevation = 16.dp,
         ) {
             Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(24.dp)
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .padding(24.dp),
             ) {
                 // Header with title
                 AnimatedVisibility(
                     visible = showContent,
-                    enter = fadeIn(tween(200)) + slideInVertically(tween(200)) { -it / 2 }
+                    enter = fadeIn(tween(200)) + slideInVertically(tween(200)) { -it / 2 },
                 ) {
                     SearchDialogHeader(
                         fileCount = GlobalSearchService.getIndexedFileCount(),
                         isIndexing = isIndexing,
-                        onClose = onDismiss
+                        onClose = onDismiss,
                     )
                 }
 
@@ -322,7 +340,7 @@ fun GlobalSearchDialog(
                 // Search input field
                 AnimatedVisibility(
                     visible = showContent,
-                    enter = fadeIn(tween(200, delayMillis = 50)) + slideInVertically(tween(200, delayMillis = 50)) { -it / 2 }
+                    enter = fadeIn(tween(200, delayMillis = 50)) + slideInVertically(tween(200, delayMillis = 50)) { -it / 2 },
                 ) {
                     SearchInputField(
                         query = searchQuery,
@@ -331,7 +349,7 @@ fun GlobalSearchDialog(
                             selectedIndex = 0
                         },
                         focusRequester = searchFieldFocusRequester,
-                        isSearching = isSearching
+                        isSearching = isSearching,
                     )
                 }
 
@@ -340,7 +358,7 @@ fun GlobalSearchDialog(
                 // Category filter tabs (only show when there are results)
                 AnimatedVisibility(
                     visible = showContent && searchQuery.isNotBlank() && allResults.isNotEmpty(),
-                    enter = fadeIn(tween(200, delayMillis = 75))
+                    enter = fadeIn(tween(200, delayMillis = 75)),
                 ) {
                     CategoryTabs(
                         activeCategory = activeCategory,
@@ -348,7 +366,7 @@ fun GlobalSearchDialog(
                         onCategorySelect = { category ->
                             GlobalSearchService.setActiveCategory(category)
                             selectedIndex = 0
-                        }
+                        },
                     )
                 }
 
@@ -359,30 +377,34 @@ fun GlobalSearchDialog(
                 // Content area
                 AnimatedVisibility(
                     visible = showContent,
-                    enter = fadeIn(tween(200, delayMillis = 100)) + slideInVertically(tween(200, delayMillis = 100)) { it / 2 }
+                    enter = fadeIn(tween(200, delayMillis = 100)) + slideInVertically(tween(200, delayMillis = 100)) { it / 2 },
                 ) {
                     Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f)
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
                     ) {
                         when {
                             searchQuery.isBlank() -> {
                                 EmptySearchState()
                             }
+
                             isIndexing -> {
                                 IndexingState()
                             }
+
                             filteredResults.isEmpty() && !isSearching -> {
                                 NoResultsState(query = searchQuery, category = activeCategory)
                             }
+
                             else -> {
                                 SearchResultsList(
                                     results = filteredResults,
                                     selectedIndex = selectedIndex,
                                     listState = listState,
                                     showSections = activeCategory == SearchCategory.ALL,
-                                    onResultClick = { result -> selectResult(result) }
+                                    onResultClick = { result -> selectResult(result) },
                                 )
                             }
                         }
@@ -394,7 +416,7 @@ fun GlobalSearchDialog(
                 // Footer with keyboard hints
                 AnimatedVisibility(
                     visible = showContent,
-                    enter = fadeIn(tween(200, delayMillis = 150))
+                    enter = fadeIn(tween(200, delayMillis = 150)),
                 ) {
                     KeyboardHints()
                 }
@@ -410,62 +432,64 @@ fun GlobalSearchDialog(
 private fun SearchDialogHeader(
     fileCount: Int,
     isIndexing: Boolean,
-    onClose: () -> Unit
+    onClose: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             // Spotlight-style icon
             Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(SelectionAccent.copy(alpha = 0.15f)),
-                contentAlignment = Alignment.Center
+                modifier =
+                    Modifier
+                        .size(36.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(SelectionAccent.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = Icons.Outlined.Search,
                     contentDescription = null,
                     tint = SelectionAccent,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(20.dp),
                 )
             }
 
             Column {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
                         text = "BOSS Search",
                         color = BossTheme.colors.textPrimary,
                         fontSize = 18.sp,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
                     )
                     // Shortcut hint
                     Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(BossTheme.colors.raised)
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                        modifier =
+                            Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(BossTheme.colors.raised)
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
                     ) {
                         Text(
                             text = "⇧⇧",
                             color = BossTheme.colors.textSecondary,
-                            fontSize = 11.sp
+                            fontSize = 11.sp,
                         )
                     }
                 }
                 Text(
                     text = if (isIndexing) "Indexing files..." else "$fileCount files indexed",
                     color = BossTheme.colors.textSecondary,
-                    fontSize = 11.sp
+                    fontSize = 11.sp,
                 )
             }
         }
@@ -473,13 +497,13 @@ private fun SearchDialogHeader(
         // Close button
         IconButton(
             onClick = onClose,
-            modifier = Modifier.size(32.dp)
+            modifier = Modifier.size(32.dp),
         ) {
             Icon(
                 imageVector = Icons.Outlined.Close,
                 contentDescription = "Close",
                 tint = BossTheme.colors.textSecondary,
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier.size(20.dp),
             )
         }
     }
@@ -492,23 +516,25 @@ private fun SearchDialogHeader(
 private fun CategoryTabs(
     activeCategory: SearchCategory,
     resultCounts: Map<SearchCategory, Int>,
-    onCategorySelect: (SearchCategory) -> Unit
+    onCategorySelect: (SearchCategory) -> Unit,
 ) {
     val scrollState = rememberScrollState()
 
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(SmallCardShape)
-            .background(BossTheme.colors.raised)
-            .horizontalScroll(scrollState)
-            .padding(4.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp)
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clip(SmallCardShape)
+                .background(BossTheme.colors.raised)
+                .horizontalScroll(scrollState)
+                .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         // Only show categories that have results (or ALL)
-        val visibleCategories = SearchCategory.entries.filter { category ->
-            category == SearchCategory.ALL || (resultCounts[category] ?: 0) > 0
-        }
+        val visibleCategories =
+            SearchCategory.entries.filter { category ->
+                category == SearchCategory.ALL || (resultCounts[category] ?: 0) > 0
+            }
 
         for (category in visibleCategories) {
             val count = resultCounts[category] ?: 0
@@ -518,7 +544,7 @@ private fun CategoryTabs(
                 category = category,
                 count = count,
                 isActive = isActive,
-                onClick = { onCategorySelect(category) }
+                onClick = { onCategorySelect(category) },
             )
         }
     }
@@ -529,33 +555,35 @@ private fun CategoryTab(
     category: SearchCategory,
     count: Int,
     isActive: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
 ) {
     val backgroundColor = if (isActive) SelectionAccent.copy(alpha = 0.2f) else Color.Transparent
     val textColor = if (isActive) SelectionAccent else BossTheme.colors.textSecondary
 
-    val icon = when (category) {
-        SearchCategory.ALL -> Icons.Outlined.Apps
-        SearchCategory.FILES -> Icons.Outlined.Description
-        SearchCategory.TABS -> Icons.Outlined.Tab
-        SearchCategory.BOOKMARKS -> Icons.Outlined.Bookmark
-        SearchCategory.RUN_CONFIGS -> Icons.Outlined.PlayArrow
-        SearchCategory.COMMANDS -> Icons.Outlined.Terminal
-    }
+    val icon =
+        when (category) {
+            SearchCategory.ALL -> Icons.Outlined.Apps
+            SearchCategory.FILES -> Icons.Outlined.Description
+            SearchCategory.TABS -> Icons.Outlined.Tab
+            SearchCategory.BOOKMARKS -> Icons.Outlined.Bookmark
+            SearchCategory.RUN_CONFIGS -> Icons.Outlined.PlayArrow
+            SearchCategory.COMMANDS -> Icons.Outlined.Terminal
+        }
 
     Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
-            .background(backgroundColor)
-            .clickable { onClick() }
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+        modifier =
+            Modifier
+                .clip(RoundedCornerShape(6.dp))
+                .background(backgroundColor)
+                .clickable { onClick() }
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
             imageVector = icon,
             contentDescription = null,
             tint = textColor,
-            modifier = Modifier.size(14.dp)
+            modifier = Modifier.size(14.dp),
         )
         Spacer(modifier = Modifier.width(6.dp))
         Text(
@@ -563,14 +591,14 @@ private fun CategoryTab(
             color = textColor,
             fontSize = 12.sp,
             fontWeight = if (isActive) FontWeight.Medium else FontWeight.Normal,
-            maxLines = 1
+            maxLines = 1,
         )
         if (count > 0 && category != SearchCategory.ALL) {
             Spacer(modifier = Modifier.width(4.dp))
             Text(
                 text = count.toString(),
                 color = textColor.copy(alpha = 0.7f),
-                fontSize = 10.sp
+                fontSize = 10.sp,
             )
         }
     }
@@ -584,22 +612,23 @@ private fun SearchInputField(
     query: String,
     onQueryChange: (String) -> Unit,
     focusRequester: FocusRequester,
-    isSearching: Boolean
+    isSearching: Boolean,
 ) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(52.dp)
-            .clip(CardShape)
-            .background(BossTheme.colors.raised)
-            .padding(horizontal = 16.dp),
-        verticalAlignment = Alignment.CenterVertically
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+                .clip(CardShape)
+                .background(BossTheme.colors.raised)
+                .padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
             imageVector = Icons.Outlined.Search,
             contentDescription = "Search",
             tint = if (query.isNotEmpty()) SelectionAccent else BossTheme.colors.textSecondary,
-            modifier = Modifier.size(22.dp)
+            modifier = Modifier.size(22.dp),
         )
 
         Spacer(modifier = Modifier.width(12.dp))
@@ -607,13 +636,15 @@ private fun SearchInputField(
         BasicTextField(
             value = query,
             onValueChange = onQueryChange,
-            modifier = Modifier
-                .weight(1f)
-                .focusRequester(focusRequester),
-            textStyle = TextStyle(
-                color = BossTheme.colors.textPrimary,
-                fontSize = 16.sp
-            ),
+            modifier =
+                Modifier
+                    .weight(1f)
+                    .focusRequester(focusRequester),
+            textStyle =
+                TextStyle(
+                    color = BossTheme.colors.textPrimary,
+                    fontSize = 16.sp,
+                ),
             singleLine = true,
             cursorBrush = SolidColor(SelectionAccent),
             decorationBox = { innerTextField ->
@@ -622,30 +653,30 @@ private fun SearchInputField(
                         Text(
                             text = "Search files, tabs, commands...",
                             color = BossTheme.colors.textSecondary,
-                            fontSize = 16.sp
+                            fontSize = 16.sp,
                         )
                     }
                     innerTextField()
                 }
-            }
+            },
         )
 
         if (isSearching) {
             CircularProgressIndicator(
                 modifier = Modifier.size(18.dp),
                 color = SelectionAccent,
-                strokeWidth = 2.dp
+                strokeWidth = 2.dp,
             )
         } else if (query.isNotEmpty()) {
             IconButton(
                 onClick = { onQueryChange("") },
-                modifier = Modifier.size(24.dp)
+                modifier = Modifier.size(24.dp),
             ) {
                 Icon(
                     imageVector = Icons.Outlined.Close,
                     contentDescription = "Clear",
                     tint = BossTheme.colors.textSecondary,
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier.size(16.dp),
                 )
             }
         }
@@ -660,11 +691,11 @@ private fun EmptySearchState() {
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        verticalArrangement = Arrangement.Center,
     ) {
         // Search categories preview
         Row(
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             SearchCategoryPreview(Icons.Outlined.Tab, "Tabs", TabsAccent)
             SearchCategoryPreview(Icons.Outlined.Description, "Files", SelectionAccent)
@@ -679,7 +710,7 @@ private fun EmptySearchState() {
             text = "Search Everything",
             color = BossTheme.colors.textPrimary,
             fontSize = 18.sp,
-            fontWeight = FontWeight.Medium
+            fontWeight = FontWeight.Medium,
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -688,30 +719,31 @@ private fun EmptySearchState() {
             text = "Find files, switch tabs, run commands, open bookmarks, or run configs",
             color = BossTheme.colors.textSecondary,
             fontSize = 13.sp,
-            textAlign = TextAlign.Center
+            textAlign = TextAlign.Center,
         )
 
         Spacer(modifier = Modifier.height(20.dp))
 
         // Quick tips
         Row(
-            modifier = Modifier
-                .clip(SmallCardShape)
-                .background(BossTheme.colors.raised)
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+            modifier =
+                Modifier
+                    .clip(SmallCardShape)
+                    .background(BossTheme.colors.raised)
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
                 text = "Tip:",
                 color = SelectionAccent,
                 fontSize = 12.sp,
-                fontWeight = FontWeight.Medium
+                fontWeight = FontWeight.Medium,
             )
             Text(
                 text = "Use Tab to switch between categories",
                 color = BossTheme.colors.textSecondary,
-                fontSize = 12.sp
+                fontSize = 12.sp,
             )
         }
     }
@@ -721,30 +753,31 @@ private fun EmptySearchState() {
 private fun SearchCategoryPreview(
     icon: ImageVector,
     label: String,
-    color: Color
+    color: Color,
 ) {
     Column(
-        horizontalAlignment = Alignment.CenterHorizontally
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
-            modifier = Modifier
-                .size(48.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(color.copy(alpha = 0.15f)),
-            contentAlignment = Alignment.Center
+            modifier =
+                Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(color.copy(alpha = 0.15f)),
+            contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
                 tint = color,
-                modifier = Modifier.size(24.dp)
+                modifier = Modifier.size(24.dp),
             )
         }
         Spacer(modifier = Modifier.height(8.dp))
         Text(
             text = label,
             color = BossTheme.colors.textSecondary,
-            fontSize = 11.sp
+            fontSize = 11.sp,
         )
     }
 }
@@ -757,12 +790,12 @@ private fun IndexingState() {
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        verticalArrangement = Arrangement.Center,
     ) {
         CircularProgressIndicator(
             modifier = Modifier.size(40.dp),
             color = SelectionAccent,
-            strokeWidth = 3.dp
+            strokeWidth = 3.dp,
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -771,7 +804,7 @@ private fun IndexingState() {
             text = "Indexing Project",
             color = BossTheme.colors.textPrimary,
             fontSize = 16.sp,
-            fontWeight = FontWeight.Medium
+            fontWeight = FontWeight.Medium,
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -779,7 +812,7 @@ private fun IndexingState() {
         Text(
             text = "This only happens once per session",
             color = BossTheme.colors.textSecondary,
-            fontSize = 13.sp
+            fontSize = 13.sp,
         )
     }
 }
@@ -788,17 +821,20 @@ private fun IndexingState() {
  * No results state.
  */
 @Composable
-private fun NoResultsState(query: String, category: SearchCategory) {
+private fun NoResultsState(
+    query: String,
+    category: SearchCategory,
+) {
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        verticalArrangement = Arrangement.Center,
     ) {
         Icon(
             imageVector = Icons.Outlined.SearchOff,
             contentDescription = null,
             tint = BossTheme.colors.textSecondary.copy(alpha = 0.5f),
-            modifier = Modifier.size(48.dp)
+            modifier = Modifier.size(48.dp),
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -807,7 +843,7 @@ private fun NoResultsState(query: String, category: SearchCategory) {
             text = if (category == SearchCategory.ALL) "No Results Found" else "No ${category.displayName} Found",
             color = BossTheme.colors.textPrimary,
             fontSize = 16.sp,
-            fontWeight = FontWeight.Medium
+            fontWeight = FontWeight.Medium,
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -815,7 +851,7 @@ private fun NoResultsState(query: String, category: SearchCategory) {
         Text(
             text = "No matches for \"$query\"",
             color = BossTheme.colors.textSecondary,
-            fontSize = 13.sp
+            fontSize = 13.sp,
         )
 
         if (category != SearchCategory.ALL) {
@@ -823,7 +859,7 @@ private fun NoResultsState(query: String, category: SearchCategory) {
             Text(
                 text = "Try searching in \"All\" categories",
                 color = SelectionAccent,
-                fontSize = 12.sp
+                fontSize = 12.sp,
             )
         }
     }
@@ -838,21 +874,22 @@ private fun SearchResultsList(
     selectedIndex: Int,
     listState: androidx.compose.foundation.lazy.LazyListState,
     showSections: Boolean,
-    onResultClick: (SearchResult) -> Unit
+    onResultClick: (SearchResult) -> Unit,
 ) {
     // Group results by category for section display
-    val groupedResults = remember(results, showSections) {
-        if (showSections) {
-            results.groupBy { it.category }
-        } else {
-            mapOf(results.firstOrNull()?.category to results)
+    val groupedResults =
+        remember(results, showSections) {
+            if (showSections) {
+                results.groupBy { it.category }
+            } else {
+                mapOf(results.firstOrNull()?.category to results)
+            }
         }
-    }
 
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         if (showSections) {
             // Show results grouped by category with section headers
@@ -876,7 +913,7 @@ private fun SearchResultsList(
                     SearchResultItem(
                         result = result,
                         isSelected = isSelected,
-                        onClick = { onResultClick(result) }
+                        onClick = { onResultClick(result) },
                     )
                 }
 
@@ -896,7 +933,7 @@ private fun SearchResultsList(
                 SearchResultItem(
                     result = result,
                     isSelected = isSelected,
-                    onClick = { onResultClick(result) }
+                    onClick = { onResultClick(result) },
                 )
             }
         }
@@ -907,27 +944,32 @@ private fun SearchResultsList(
  * Section header for grouped results.
  */
 @Composable
-private fun SectionHeader(category: SearchCategory, count: Int) {
+private fun SectionHeader(
+    category: SearchCategory,
+    count: Int,
+) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp, horizontal = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp, horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        val icon = when (category) {
-            SearchCategory.FILES -> Icons.Outlined.Description
-            SearchCategory.TABS -> Icons.Outlined.Tab
-            SearchCategory.BOOKMARKS -> Icons.Outlined.Bookmark
-            SearchCategory.RUN_CONFIGS -> Icons.Outlined.PlayArrow
-            SearchCategory.COMMANDS -> Icons.Outlined.Terminal
-            else -> Icons.Outlined.Apps
-        }
+        val icon =
+            when (category) {
+                SearchCategory.FILES -> Icons.Outlined.Description
+                SearchCategory.TABS -> Icons.Outlined.Tab
+                SearchCategory.BOOKMARKS -> Icons.Outlined.Bookmark
+                SearchCategory.RUN_CONFIGS -> Icons.Outlined.PlayArrow
+                SearchCategory.COMMANDS -> Icons.Outlined.Terminal
+                else -> Icons.Outlined.Apps
+            }
 
         Icon(
             imageVector = icon,
             contentDescription = null,
             tint = SectionTitleColor,
-            modifier = Modifier.size(14.dp)
+            modifier = Modifier.size(14.dp),
         )
         Spacer(modifier = Modifier.width(8.dp))
         Text(
@@ -935,13 +977,13 @@ private fun SectionHeader(category: SearchCategory, count: Int) {
             color = SectionTitleColor,
             fontSize = 11.sp,
             fontWeight = FontWeight.SemiBold,
-            letterSpacing = 0.5.sp
+            letterSpacing = 0.5.sp,
         )
         Spacer(modifier = Modifier.width(6.dp))
         Text(
             text = "($count)",
             color = SectionTitleColor.copy(alpha = 0.6f),
-            fontSize = 10.sp
+            fontSize = 10.sp,
         )
     }
 }
@@ -953,28 +995,67 @@ private fun SectionHeader(category: SearchCategory, count: Int) {
 private fun SearchResultItem(
     result: SearchResult,
     isSelected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
 
     val scale by animateFloatAsState(
         targetValue = if (isHovered || isSelected) 1.01f else 1f,
-        animationSpec = spring(dampingRatio = 0.7f)
+        animationSpec = spring(dampingRatio = 0.7f),
     )
 
-    val backgroundColor = when {
-        isSelected -> SelectionAccent.copy(alpha = 0.15f)
-        isHovered -> HoverBackground
-        else -> BossTheme.colors.raised
-    }
+    val backgroundColor =
+        when {
+            isSelected -> SelectionAccent.copy(alpha = 0.15f)
+            isHovered -> HoverBackground
+            else -> BossTheme.colors.raised
+        }
 
     when (result) {
-        is SearchResult.FileResult -> FileResultItem(result, isSelected, isHovered, scale, backgroundColor, interactionSource, onClick)
-        is SearchResult.TabResult -> TabResultItem(result, isSelected, isHovered, scale, backgroundColor, interactionSource, onClick)
-        is SearchResult.BookmarkResult -> BookmarkResultItem(result, isSelected, isHovered, scale, backgroundColor, interactionSource, onClick)
-        is SearchResult.RunConfigResult -> RunConfigResultItem(result, isSelected, isHovered, scale, backgroundColor, interactionSource, onClick)
-        is SearchResult.CommandResult -> CommandResultItem(result, isSelected, isHovered, scale, backgroundColor, interactionSource, onClick)
+        is SearchResult.FileResult -> {
+            FileResultItem(result, isSelected, isHovered, scale, backgroundColor, interactionSource, onClick)
+        }
+
+        is SearchResult.TabResult -> {
+            TabResultItem(result, isSelected, isHovered, scale, backgroundColor, interactionSource, onClick)
+        }
+
+        is SearchResult.BookmarkResult -> {
+            BookmarkResultItem(
+                result,
+                isSelected,
+                isHovered,
+                scale,
+                backgroundColor,
+                interactionSource,
+                onClick,
+            )
+        }
+
+        is SearchResult.RunConfigResult -> {
+            RunConfigResultItem(
+                result,
+                isSelected,
+                isHovered,
+                scale,
+                backgroundColor,
+                interactionSource,
+                onClick,
+            )
+        }
+
+        is SearchResult.CommandResult -> {
+            CommandResultItem(
+                result,
+                isSelected,
+                isHovered,
+                scale,
+                backgroundColor,
+                interactionSource,
+                onClick,
+            )
+        }
     }
 }
 
@@ -986,27 +1067,28 @@ private fun FileResultItem(
     scale: Float,
     backgroundColor: Color,
     interactionSource: MutableInteractionSource,
-    onClick: () -> Unit
+    onClick: () -> Unit,
 ) {
     val fileIconInfo = FileIcons.forFile(result.name)
     val parentFolder = result.path.extractParentName()
 
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .scale(scale)
-            .clip(SmallCardShape)
-            .background(backgroundColor)
-            .clickable { onClick() }
-            .hoverable(interactionSource)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .scale(scale)
+                .clip(SmallCardShape)
+                .background(backgroundColor)
+                .clickable { onClick() }
+                .hoverable(interactionSource)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
             imageVector = fileIconInfo.icon,
             contentDescription = result.name,
             tint = fileIconInfo.color,
-            modifier = Modifier.size(22.dp)
+            modifier = Modifier.size(22.dp),
         )
 
         Spacer(modifier = Modifier.width(12.dp))
@@ -1016,28 +1098,29 @@ private fun FileResultItem(
                 text = highlightMatches(result.name, result.matchRanges, isSelected || isHovered),
                 fontSize = 13.sp,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = result.relativePath,
                 fontSize = 11.sp,
                 color = BossTheme.colors.textSecondary,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
             )
         }
 
         if (parentFolder.isNotEmpty()) {
             Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(BossTheme.colors.panel)
-                    .padding(horizontal = 6.dp, vertical = 3.dp)
+                modifier =
+                    Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(BossTheme.colors.panel)
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
             ) {
                 Text(
                     text = parentFolder,
                     fontSize = 10.sp,
-                    color = BossTheme.colors.textSecondary
+                    color = BossTheme.colors.textSecondary,
                 )
             }
         }
@@ -1052,24 +1135,25 @@ private fun TabResultItem(
     scale: Float,
     backgroundColor: Color,
     interactionSource: MutableInteractionSource,
-    onClick: () -> Unit
+    onClick: () -> Unit,
 ) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .scale(scale)
-            .clip(SmallCardShape)
-            .background(backgroundColor)
-            .clickable { onClick() }
-            .hoverable(interactionSource)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .scale(scale)
+                .clip(SmallCardShape)
+                .background(backgroundColor)
+                .clickable { onClick() }
+                .hoverable(interactionSource)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
             imageVector = Icons.Outlined.Tab,
             contentDescription = null,
             tint = TabsAccent,
-            modifier = Modifier.size(22.dp)
+            modifier = Modifier.size(22.dp),
         )
 
         Spacer(modifier = Modifier.width(12.dp))
@@ -1079,27 +1163,28 @@ private fun TabResultItem(
                 text = highlightMatches(result.title, result.matchRanges, isSelected || isHovered),
                 fontSize = 13.sp,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = "${result.tabType} • ${result.workspaceName}",
                 fontSize = 11.sp,
                 color = BossTheme.colors.textSecondary,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
             )
         }
 
         Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(4.dp))
-                .background(TabsAccent.copy(alpha = 0.15f))
-                .padding(horizontal = 6.dp, vertical = 3.dp)
+            modifier =
+                Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(TabsAccent.copy(alpha = 0.15f))
+                    .padding(horizontal = 6.dp, vertical = 3.dp),
         ) {
             Text(
                 text = "Open",
                 fontSize = 10.sp,
-                color = TabsAccent
+                color = TabsAccent,
             )
         }
     }
@@ -1113,24 +1198,25 @@ private fun BookmarkResultItem(
     scale: Float,
     backgroundColor: Color,
     interactionSource: MutableInteractionSource,
-    onClick: () -> Unit
+    onClick: () -> Unit,
 ) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .scale(scale)
-            .clip(SmallCardShape)
-            .background(backgroundColor)
-            .clickable { onClick() }
-            .hoverable(interactionSource)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .scale(scale)
+                .clip(SmallCardShape)
+                .background(backgroundColor)
+                .clickable { onClick() }
+                .hoverable(interactionSource)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
             imageVector = Icons.Outlined.Bookmark,
             contentDescription = null,
             tint = BookmarksAccent,
-            modifier = Modifier.size(22.dp)
+            modifier = Modifier.size(22.dp),
         )
 
         Spacer(modifier = Modifier.width(12.dp))
@@ -1140,28 +1226,29 @@ private fun BookmarkResultItem(
                 text = highlightMatches(result.title, result.matchRanges, isSelected || isHovered),
                 fontSize = 13.sp,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = "${result.tabType} • ${result.collectionName}",
                 fontSize = 11.sp,
                 color = BossTheme.colors.textSecondary,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
             )
         }
 
         Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(4.dp))
-                .background(BookmarksAccent.copy(alpha = 0.15f))
-                .padding(horizontal = 6.dp, vertical = 3.dp)
+            modifier =
+                Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(BookmarksAccent.copy(alpha = 0.15f))
+                    .padding(horizontal = 6.dp, vertical = 3.dp),
         ) {
             Text(
                 text = result.collectionName,
                 fontSize = 10.sp,
                 color = BookmarksAccent,
-                maxLines = 1
+                maxLines = 1,
             )
         }
     }
@@ -1175,24 +1262,25 @@ private fun RunConfigResultItem(
     scale: Float,
     backgroundColor: Color,
     interactionSource: MutableInteractionSource,
-    onClick: () -> Unit
+    onClick: () -> Unit,
 ) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .scale(scale)
-            .clip(SmallCardShape)
-            .background(backgroundColor)
-            .clickable { onClick() }
-            .hoverable(interactionSource)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .scale(scale)
+                .clip(SmallCardShape)
+                .background(backgroundColor)
+                .clickable { onClick() }
+                .hoverable(interactionSource)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
             imageVector = Icons.Outlined.PlayArrow,
             contentDescription = null,
             tint = RunConfigAccent,
-            modifier = Modifier.size(22.dp)
+            modifier = Modifier.size(22.dp),
         )
 
         Spacer(modifier = Modifier.width(12.dp))
@@ -1202,27 +1290,28 @@ private fun RunConfigResultItem(
                 text = highlightMatches(result.name, result.matchRanges, isSelected || isHovered),
                 fontSize = 13.sp,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = "${result.language} • ${result.configType}",
                 fontSize = 11.sp,
                 color = BossTheme.colors.textSecondary,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
             )
         }
 
         Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(4.dp))
-                .background(RunConfigAccent.copy(alpha = 0.15f))
-                .padding(horizontal = 6.dp, vertical = 3.dp)
+            modifier =
+                Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(RunConfigAccent.copy(alpha = 0.15f))
+                    .padding(horizontal = 6.dp, vertical = 3.dp),
         ) {
             Text(
                 text = "Run",
                 fontSize = 10.sp,
-                color = RunConfigAccent
+                color = RunConfigAccent,
             )
         }
     }
@@ -1236,24 +1325,25 @@ private fun CommandResultItem(
     scale: Float,
     backgroundColor: Color,
     interactionSource: MutableInteractionSource,
-    onClick: () -> Unit
+    onClick: () -> Unit,
 ) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .scale(scale)
-            .clip(SmallCardShape)
-            .background(backgroundColor)
-            .clickable { onClick() }
-            .hoverable(interactionSource)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .scale(scale)
+                .clip(SmallCardShape)
+                .background(backgroundColor)
+                .clickable { onClick() }
+                .hoverable(interactionSource)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
             imageVector = Icons.Outlined.Terminal,
             contentDescription = null,
             tint = CommandsAccent,
-            modifier = Modifier.size(22.dp)
+            modifier = Modifier.size(22.dp),
         )
 
         Spacer(modifier = Modifier.width(12.dp))
@@ -1264,21 +1354,22 @@ private fun CommandResultItem(
                 color = if (isSelected || isHovered) BossTheme.colors.textPrimary else BossTheme.colors.textSecondary,
                 fontSize = 13.sp,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
             )
         }
 
         if (result.shortcut != null) {
             Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(CommandsAccent.copy(alpha = 0.15f))
-                    .padding(horizontal = 6.dp, vertical = 3.dp)
+                modifier =
+                    Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(CommandsAccent.copy(alpha = 0.15f))
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
             ) {
                 Text(
                     text = result.shortcut,
                     fontSize = 10.sp,
-                    color = CommandsAccent
+                    color = CommandsAccent,
                 )
             }
         }
@@ -1291,13 +1382,14 @@ private fun CommandResultItem(
 @Composable
 private fun KeyboardHints() {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(SmallCardShape)
-            .background(BossTheme.colors.raised)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clip(SmallCardShape)
+                .background(BossTheme.colors.raised)
+                .padding(horizontal = 16.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         KeyboardHint(key = "↑↓", action = "Navigate")
         Spacer(modifier = Modifier.width(20.dp))
@@ -1310,28 +1402,32 @@ private fun KeyboardHints() {
 }
 
 @Composable
-private fun KeyboardHint(key: String, action: String) {
+private fun KeyboardHint(
+    key: String,
+    action: String,
+) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(5.dp),
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(4.dp))
-                .background(BossTheme.colors.panel)
-                .padding(horizontal = 7.dp, vertical = 3.dp)
+            modifier =
+                Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(BossTheme.colors.panel)
+                    .padding(horizontal = 7.dp, vertical = 3.dp),
         ) {
             Text(
                 text = key,
                 fontSize = 10.sp,
                 color = BossTheme.colors.textPrimary,
-                fontWeight = FontWeight.Medium
+                fontWeight = FontWeight.Medium,
             )
         }
         Text(
             text = action,
             fontSize = 10.sp,
-            color = BossTheme.colors.textSecondary
+            color = BossTheme.colors.textSecondary,
         )
     }
 }
@@ -1342,7 +1438,7 @@ private fun KeyboardHint(key: String, action: String) {
 private fun highlightMatches(
     text: String,
     matchRanges: List<MatchRange>,
-    isHighlighted: Boolean
+    isHighlighted: Boolean,
 ): AnnotatedString {
     val textColor = if (isHighlighted) BossThemeController.current.colors.textPrimary else BossThemeController.current.colors.textSecondary
 

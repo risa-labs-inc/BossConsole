@@ -2,11 +2,11 @@ package ai.rever.boss.components.settings.sections
 
 import ai.rever.boss.components.settings.shared.SettingsSection
 import ai.rever.boss.components.settings.shared.SettingsSlider
-import ai.rever.boss.components.settings.shared.SettingsToggle
 import ai.rever.boss.components.settings.shared.SettingsTheme.AccentColor
 import ai.rever.boss.components.settings.shared.SettingsTheme.BorderColor
 import ai.rever.boss.components.settings.shared.SettingsTheme.TextPrimary
 import ai.rever.boss.components.settings.shared.SettingsTheme.TextSecondary
+import ai.rever.boss.components.settings.shared.SettingsToggle
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.run.RunnerSettingsManager
 import ai.rever.boss.run.RunnerTerminalTarget
@@ -39,7 +39,7 @@ fun RunnerSettings() {
 
     Column(
         modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         // Terminal Target Selection
         SettingsSection(title = "Terminal Target") {
@@ -52,7 +52,7 @@ fun RunnerSettings() {
                         coroutineScope.launch {
                             RunnerSettingsManager.setTerminalTarget(RunnerTerminalTarget.SIDEBAR_PANEL)
                         }
-                    }
+                    },
                 )
 
                 TerminalTargetOption(
@@ -63,7 +63,7 @@ fun RunnerSettings() {
                         coroutineScope.launch {
                             RunnerSettingsManager.setTerminalTarget(RunnerTerminalTarget.MAIN_PANEL)
                         }
-                    }
+                    },
                 )
             }
         }
@@ -78,7 +78,7 @@ fun RunnerSettings() {
                         RunnerSettingsManager.setFocusOnRun(enabled)
                     }
                 },
-                description = "Automatically focus the terminal when a runner starts"
+                description = "Automatically focus the terminal when a runner starts",
             )
 
             SettingsToggle(
@@ -89,7 +89,7 @@ fun RunnerSettings() {
                         RunnerSettingsManager.setNotifyOnExit(enabled)
                     }
                 },
-                description = "Show a notification when a runner process completes"
+                description = "Show a notification when a runner process completes",
             )
 
             SettingsSlider(
@@ -104,7 +104,7 @@ fun RunnerSettings() {
                 valueRange = 0f..2000f,
                 steps = 19,
                 valueDisplay = { "${it.toInt()} ms" },
-                description = "Delay between Ctrl+C and new command (for sidebar terminal)"
+                description = "Delay between Ctrl+C and new command (for sidebar terminal)",
             )
         }
 
@@ -115,19 +115,19 @@ fun RunnerSettings() {
                     icon = "▶",
                     iconColor = BossTheme.colors.ok,
                     title = "Run",
-                    description = "Execute the selected configuration"
+                    description = "Execute the selected configuration",
                 )
                 RunControlInfoItem(
                     icon = "↻",
                     iconColor = BossTheme.colors.ok,
                     title = "Re-run",
-                    description = "Stop current run and execute again"
+                    description = "Stop current run and execute again",
                 )
                 RunControlInfoItem(
                     icon = "■",
                     iconColor = BossTheme.colors.alert,
                     title = "Stop",
-                    description = "Terminate the running process (Ctrl+C)"
+                    description = "Terminate the running process (Ctrl+C)",
                 )
             }
         }
@@ -147,33 +147,34 @@ private fun TerminalTargetOption(
     title: String,
     description: String,
     selected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
 ) {
     val borderColor = if (selected) AccentColor else BorderColor
     val backgroundColor = if (selected) AccentColor.copy(alpha = 0.15f) else Color.Transparent
 
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
-            .border(1.dp, borderColor, RoundedCornerShape(6.dp))
-            .background(backgroundColor)
-            .clickable(onClick = onClick)
-            .padding(12.dp),
-        verticalAlignment = Alignment.CenterVertically
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
+                .border(1.dp, borderColor, RoundedCornerShape(6.dp))
+                .background(backgroundColor)
+                .clickable(onClick = onClick)
+                .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium,
-                color = if (selected) AccentColor else TextPrimary
+                color = if (selected) AccentColor else TextPrimary,
             )
             Text(
                 text = description,
                 fontSize = 11.sp,
                 color = TextSecondary,
-                modifier = Modifier.padding(top = 2.dp)
+                modifier = Modifier.padding(top = 2.dp),
             )
         }
 
@@ -182,7 +183,7 @@ private fun TerminalTargetOption(
                 imageVector = Icons.Outlined.Check,
                 contentDescription = "Selected",
                 tint = AccentColor,
-                modifier = Modifier.size(18.dp)
+                modifier = Modifier.size(18.dp),
             )
         }
     }
@@ -193,20 +194,21 @@ private fun RunControlInfoItem(
     icon: String,
     iconColor: Color,
     title: String,
-    description: String
+    description: String,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(
-            modifier = Modifier
-                .size(24.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(iconColor),
-            contentAlignment = Alignment.Center
+            modifier =
+                Modifier
+                    .size(24.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(iconColor),
+            contentAlignment = Alignment.Center,
         ) {
             Text(
                 text = icon,
                 fontSize = 12.sp,
-                color = Color.White
+                color = Color.White,
             )
         }
         Spacer(modifier = Modifier.width(12.dp))
@@ -215,12 +217,12 @@ private fun RunControlInfoItem(
                 text = title,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium,
-                color = TextPrimary
+                color = TextPrimary,
             )
             Text(
                 text = description,
                 fontSize = 11.sp,
-                color = TextSecondary
+                color = TextSecondary,
             )
         }
     }
@@ -232,6 +234,6 @@ private fun NoteItem(text: String) {
         text = "• $text",
         fontSize = 12.sp,
         color = TextSecondary,
-        lineHeight = 18.sp
+        lineHeight = 18.sp,
     )
 }

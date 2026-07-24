@@ -1,5 +1,6 @@
 package ai.rever.boss.plugin.search
 
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -15,7 +16,6 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
@@ -49,41 +49,42 @@ fun BossSearchBar(
     modifier: Modifier = Modifier,
     leadingIcon: ImageVector = Icons.Outlined.Search,
     showClearButton: Boolean = true,
-    onFocusChanged: ((Boolean) -> Unit)? = null
+    onFocusChanged: ((Boolean) -> Unit)? = null,
 ) {
     BasicTextField(
         value = query,
         onValueChange = onQueryChange,
-        modifier = modifier
-            .fillMaxWidth()
-            .height(28.dp),
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .height(28.dp),
         singleLine = true,
-        textStyle = MaterialTheme.typography.body2.copy(
-            color = BossTheme.colors.textPrimary
-        ),
+        textStyle =
+            MaterialTheme.typography.body2.copy(
+                color = BossTheme.colors.textPrimary,
+            ),
         cursorBrush = SolidColor(BossTheme.colors.signal), // Amber cursor
         decorationBox = { innerTextField ->
             Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        BossTheme.colors.raised,
-                        RoundedCornerShape(4.dp)
-                    )
-                    .border(
-                        1.dp,
-                        BossTheme.colors.lineStrong, // Input edge
-                        RoundedCornerShape(4.dp)
-                    )
-                    .padding(horizontal = 8.dp, vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .background(
+                            BossTheme.colors.raised,
+                            RoundedCornerShape(4.dp),
+                        ).border(
+                            1.dp,
+                            BossTheme.colors.lineStrong, // Input edge
+                            RoundedCornerShape(4.dp),
+                        ).padding(horizontal = 8.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 // Leading icon (search or custom)
                 Icon(
                     imageVector = leadingIcon,
                     contentDescription = "Search",
                     modifier = Modifier.size(16.dp),
-                    tint = BossTheme.colors.textSecondary
+                    tint = BossTheme.colors.textSecondary,
                 )
 
                 Spacer(modifier = Modifier.width(6.dp))
@@ -94,7 +95,7 @@ fun BossSearchBar(
                             placeholder,
                             style = MaterialTheme.typography.body2,
                             color = BossTheme.colors.textMuted,
-                            fontSize = 12.sp
+                            fontSize = 12.sp,
                         )
                     }
                     innerTextField()
@@ -105,17 +106,17 @@ fun BossSearchBar(
                     Spacer(modifier = Modifier.width(4.dp))
                     IconButton(
                         onClick = { onQueryChange("") },
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(16.dp),
                     ) {
                         Icon(
                             imageVector = Icons.Filled.Clear,
                             contentDescription = "Clear search",
                             modifier = Modifier.size(14.dp),
-                            tint = BossTheme.colors.textSecondary
+                            tint = BossTheme.colors.textSecondary,
                         )
                     }
                 }
             }
-        }
+        },
     )
 }

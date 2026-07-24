@@ -17,8 +17,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Icon
 import androidx.compose.material.Text
@@ -49,7 +49,10 @@ private const val OVERLAY_REVEAL_DELAY_MS = 180L
  * Call this from within a `Box` and pass `Modifier.align(...)` to position the card.
  */
 @Composable
-fun TabCycleOverlayHost(data: TabCycleOverlayData?, modifier: Modifier = Modifier) {
+fun TabCycleOverlayHost(
+    data: TabCycleOverlayData?,
+    modifier: Modifier = Modifier,
+) {
     var visible by remember { mutableStateOf(false) }
     LaunchedEffect(data == null) {
         if (data == null) {
@@ -74,24 +77,29 @@ fun TabCycleOverlayHost(data: TabCycleOverlayData?, modifier: Modifier = Modifie
  * BossTheme.colors.signal / FontWeight.Medium selection emphasis used by the tab bar.
  */
 @Composable
-private fun TabCycleOverlay(data: TabCycleOverlayData, modifier: Modifier = Modifier) {
+private fun TabCycleOverlay(
+    data: TabCycleOverlayData,
+    modifier: Modifier = Modifier,
+) {
     Column(
-        modifier = modifier
-            .background(ContextMenuBackground, RoundedCornerShape(8.dp))
-            .border(1.dp, ContextMenuBorder, RoundedCornerShape(8.dp))
-            .widthIn(min = 280.dp, max = 460.dp)
-            .padding(6.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp)
+        modifier =
+            modifier
+                .background(ContextMenuBackground, RoundedCornerShape(8.dp))
+                .border(1.dp, ContextMenuBorder, RoundedCornerShape(8.dp))
+                .widthIn(min = 280.dp, max = 460.dp)
+                .padding(6.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         data.tabs.forEachIndexed { index, tab ->
             val highlighted = index == data.highlightedIndex
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(if (highlighted) ContextMenuHover else Color.Transparent)
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(if (highlighted) ContextMenuHover else Color.Transparent)
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 TabCycleIcon(tab = tab, highlighted = highlighted)
                 Spacer(modifier = Modifier.width(8.dp))
@@ -102,7 +110,7 @@ private fun TabCycleOverlay(data: TabCycleOverlayData, modifier: Modifier = Modi
                     fontWeight = if (highlighted) FontWeight.Medium else FontWeight.Normal,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f),
                 )
             }
         }
@@ -116,17 +124,23 @@ private fun TabCycleOverlay(data: TabCycleOverlayData, modifier: Modifier = Modi
  * fallback follows the row's emphasis so it reads like the rest of the list.
  */
 @Composable
-private fun TabCycleIcon(tab: TabInfo, highlighted: Boolean) {
+private fun TabCycleIcon(
+    tab: TabInfo,
+    highlighted: Boolean,
+) {
     // Same resolution order as BossTabButtonWithFavicon: loaded favicon > tabIcon > icon.
     val effectiveTabIcon = rememberFaviconLoader(tab) ?: tab.tabIcon
     val painter = effectiveTabIcon?.asPainter() ?: rememberVectorPainter(tab.icon)
     when {
         // Bitmap favicons: use Image to preserve their colors.
-        effectiveTabIcon is TabIcon.Image -> Image(
-            painter = painter,
-            contentDescription = null,
-            modifier = Modifier.size(16.dp)
-        )
+        effectiveTabIcon is TabIcon.Image -> {
+            Image(
+                painter = painter,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+
         // Vector icons with a custom tint (e.g. file-type colors).
         effectiveTabIcon is TabIcon.Vector && effectiveTabIcon.tint != null -> {
             val tintColor = effectiveTabIcon.tint
@@ -134,15 +148,18 @@ private fun TabCycleIcon(tab: TabInfo, highlighted: Boolean) {
                 painter = painter,
                 contentDescription = null,
                 tint = tintColor!!,
-                modifier = Modifier.size(16.dp)
+                modifier = Modifier.size(16.dp),
             )
         }
+
         // Plain vector icons / fallback: follow the row emphasis.
-        else -> Icon(
-            painter = painter,
-            contentDescription = null,
-            tint = if (highlighted) BossTheme.colors.textPrimary else BossTheme.colors.textSecondary,
-            modifier = Modifier.size(16.dp)
-        )
+        else -> {
+            Icon(
+                painter = painter,
+                contentDescription = null,
+                tint = if (highlighted) BossTheme.colors.textPrimary else BossTheme.colors.textSecondary,
+                modifier = Modifier.size(16.dp),
+            )
+        }
     }
 }

@@ -24,11 +24,12 @@ import java.io.File
 actual object StartupSettingsManager {
     private val logger = BossLogger.forComponent("StartupSettingsManager")
     private val settingsFile = BossDirectories.resolve("startup-settings.json")
-    private val json = Json {
-        prettyPrint = true
-        ignoreUnknownKeys = true
-        encodeDefaults = true
-    }
+    private val json =
+        Json {
+            prettyPrint = true
+            ignoreUnknownKeys = true
+            encodeDefaults = true
+        }
 
     // Coroutine scope for async operations - uses SupervisorJob so failures don't cancel other operations
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -48,26 +49,27 @@ actual object StartupSettingsManager {
      * Load settings asynchronously on Dispatchers.IO.
      * Creates parent directories and default settings file if needed.
      */
-    private suspend fun loadSettingsAsync() = withContext(Dispatchers.IO) {
-        try {
-            settingsFile.parentFile?.mkdirs()
+    private suspend fun loadSettingsAsync() =
+        withContext(Dispatchers.IO) {
+            try {
+                settingsFile.parentFile?.mkdirs()
 
-            if (settingsFile.exists()) {
-                val content = settingsFile.readText()
-                val settings = json.decodeFromString<StartupSettings>(content)
-                _currentSettings.value = settings
-                logger.debug(LogCategory.SYSTEM, "Loaded settings")
-            } else {
-                // Create default settings file
-                val content = json.encodeToString(StartupSettings.serializer(), _currentSettings.value)
-                settingsFile.writeText(content)
-                logger.debug(LogCategory.SYSTEM, "Created default settings file")
+                if (settingsFile.exists()) {
+                    val content = settingsFile.readText()
+                    val settings = json.decodeFromString<StartupSettings>(content)
+                    _currentSettings.value = settings
+                    logger.debug(LogCategory.SYSTEM, "Loaded settings")
+                } else {
+                    // Create default settings file
+                    val content = json.encodeToString(StartupSettings.serializer(), _currentSettings.value)
+                    settingsFile.writeText(content)
+                    logger.debug(LogCategory.SYSTEM, "Created default settings file")
+                }
+            } catch (e: Exception) {
+                logger.warn(LogCategory.SYSTEM, "Error loading settings", error = e)
+                // Keep default settings on error
             }
-        } catch (e: Exception) {
-            logger.warn(LogCategory.SYSTEM, "Error loading settings", error = e)
-            // Keep default settings on error
         }
-    }
 
     /**
      * Load settings from disk. Called automatically on first access.
@@ -77,15 +79,16 @@ actual object StartupSettingsManager {
     /**
      * Save current settings to persistent storage.
      */
-    actual suspend fun saveSettings() = withContext(Dispatchers.IO) {
-        try {
-            val content = json.encodeToString(StartupSettings.serializer(), _currentSettings.value)
-            settingsFile.writeText(content)
-            logger.debug(LogCategory.SYSTEM, "Settings saved")
-        } catch (e: Exception) {
-            logger.warn(LogCategory.SYSTEM, "Error saving settings", error = e)
+    actual suspend fun saveSettings() =
+        withContext(Dispatchers.IO) {
+            try {
+                val content = json.encodeToString(StartupSettings.serializer(), _currentSettings.value)
+                settingsFile.writeText(content)
+                logger.debug(LogCategory.SYSTEM, "Settings saved")
+            } catch (e: Exception) {
+                logger.warn(LogCategory.SYSTEM, "Error saving settings", error = e)
+            }
         }
-    }
 
     /**
      * Update settings and persist.

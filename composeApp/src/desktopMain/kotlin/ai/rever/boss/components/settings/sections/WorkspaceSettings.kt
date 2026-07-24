@@ -31,24 +31,29 @@ fun WorkspaceSettings() {
     val settings by WorkspaceSettingsManager.currentSettings.collectAsState()
     val coroutineScope = rememberCoroutineScope()
 
-    val workspaceOptions = buildList {
-        add(WorkspaceOption(
-            id = "none",
-            name = "None",
-            description = "Don't auto-apply workspace when project is selected"
-        ))
-        PredefinedWorkspaces.allWorkspaces.forEach { workspace ->
-            add(WorkspaceOption(
-                id = workspace.id,
-                name = workspace.name,
-                description = workspace.description
-            ))
+    val workspaceOptions =
+        buildList {
+            add(
+                WorkspaceOption(
+                    id = "none",
+                    name = "None",
+                    description = "Don't auto-apply workspace when project is selected",
+                ),
+            )
+            PredefinedWorkspaces.allWorkspaces.forEach { workspace ->
+                add(
+                    WorkspaceOption(
+                        id = workspace.id,
+                        name = workspace.name,
+                        description = workspace.description,
+                    ),
+                )
+            }
         }
-    }
 
     Column(
         modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         SettingsSection(title = "Default Workspace") {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -61,7 +66,7 @@ fun WorkspaceSettings() {
                             coroutineScope.launch {
                                 WorkspaceSettingsManager.setDefaultWorkspaceId(option.id)
                             }
-                        }
+                        },
                     )
                 }
             }
@@ -81,7 +86,7 @@ fun WorkspaceSettings() {
 private data class WorkspaceOption(
     val id: String,
     val name: String,
-    val description: String
+    val description: String,
 )
 
 @Composable
@@ -89,33 +94,34 @@ private fun WorkspaceOptionItem(
     title: String,
     description: String,
     selected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
 ) {
     val borderColor = if (selected) AccentColor else BorderColor
     val backgroundColor = if (selected) AccentColor.copy(alpha = 0.15f) else Color.Transparent
 
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
-            .border(1.dp, borderColor, RoundedCornerShape(6.dp))
-            .background(backgroundColor)
-            .clickable(onClick = onClick)
-            .padding(12.dp),
-        verticalAlignment = Alignment.CenterVertically
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
+                .border(1.dp, borderColor, RoundedCornerShape(6.dp))
+                .background(backgroundColor)
+                .clickable(onClick = onClick)
+                .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium,
-                color = if (selected) AccentColor else TextPrimary
+                color = if (selected) AccentColor else TextPrimary,
             )
             Text(
                 text = description,
                 fontSize = 11.sp,
                 color = TextSecondary,
-                modifier = Modifier.padding(top = 2.dp)
+                modifier = Modifier.padding(top = 2.dp),
             )
         }
 
@@ -124,7 +130,7 @@ private fun WorkspaceOptionItem(
                 imageVector = Icons.Outlined.Check,
                 contentDescription = "Selected",
                 tint = AccentColor,
-                modifier = Modifier.size(18.dp)
+                modifier = Modifier.size(18.dp),
             )
         }
     }
@@ -136,6 +142,6 @@ private fun NoteItem(text: String) {
         text = "• $text",
         fontSize = 12.sp,
         color = TextSecondary,
-        lineHeight = 18.sp
+        lineHeight = 18.sp,
     )
 }

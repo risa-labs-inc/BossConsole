@@ -40,11 +40,30 @@ import androidx.compose.ui.unit.sp
  * [parseReleaseNotes] fails or produces nothing.
  */
 internal sealed interface NotesBlock {
-    data class Heading(val level: Int, val text: String) : NotesBlock
-    data class Paragraph(val text: String) : NotesBlock
-    data class ListItem(val marker: String, val text: String, val indent: Int) : NotesBlock
-    data class CodeBlock(val code: String) : NotesBlock
-    data class Table(val header: List<String>, val rows: List<List<String>>) : NotesBlock
+    data class Heading(
+        val level: Int,
+        val text: String,
+    ) : NotesBlock
+
+    data class Paragraph(
+        val text: String,
+    ) : NotesBlock
+
+    data class ListItem(
+        val marker: String,
+        val text: String,
+        val indent: Int,
+    ) : NotesBlock
+
+    data class CodeBlock(
+        val code: String,
+    ) : NotesBlock
+
+    data class Table(
+        val header: List<String>,
+        val rows: List<List<String>>,
+    ) : NotesBlock
+
     data object ThematicBreak : NotesBlock
 }
 
@@ -86,7 +105,9 @@ internal fun parseReleaseNotes(source: String): List<NotesBlock> {
         val bullet = BULLET.matchEntire(trimmed)
         val ordered = ORDERED.matchEntire(trimmed)
         when {
-            trimmed.isEmpty() -> flushParagraph()
+            trimmed.isEmpty() -> {
+                flushParagraph()
+            }
 
             trimmed.startsWith("```") -> {
                 flushParagraph()
@@ -126,7 +147,9 @@ internal fun parseReleaseNotes(source: String): List<NotesBlock> {
                 blocks += NotesBlock.ListItem("${ordered.groupValues[1]}.", ordered.groupValues[2], indentLevel(line))
             }
 
-            else -> paragraph.append(trimmed).append(' ')
+            else -> {
+                paragraph.append(trimmed).append(' ')
+            }
         }
         i++
     }
@@ -135,163 +158,192 @@ internal fun parseReleaseNotes(source: String): List<NotesBlock> {
     return blocks
 }
 
-private fun indentLevel(line: String): Int =
-    ((line.length - line.trimStart().length) / 2).coerceIn(0, 3)
+private fun indentLevel(line: String): Int = ((line.length - line.trimStart().length) / 2).coerceIn(0, 3)
 
-private fun isTableRow(trimmed: String): Boolean =
-    trimmed.startsWith("|") && trimmed.length > 1
+private fun isTableRow(trimmed: String): Boolean = trimmed.startsWith("|") && trimmed.length > 1
 
-private fun isTableSeparator(trimmed: String): Boolean =
-    trimmed.contains('-') && trimmed.contains('|') && trimmed.all { it in "|-: \t" }
+private fun isTableSeparator(trimmed: String): Boolean = trimmed.contains('-') && trimmed.contains('|') && trimmed.all { it in "|-: \t" }
 
 private fun splitTableRow(trimmed: String): List<String> =
-    trimmed.removePrefix("|").removeSuffix("|").split('|').map { it.trim() }
+    trimmed
+        .removePrefix("|")
+        .removeSuffix("|")
+        .split('|')
+        .map { it.trim() }
 
 // Alternatives ordered so that at any position the longest-delimiter form wins
 // (e.g. ** matches as bold before * can match as italic). `\b_..._\b` keeps
 // snake_case identifiers from reading as italics (`_` is a word character).
-private val INLINE = Regex(
-    "(`[^`]+`)" +
-        "|(\\*\\*[^*]+\\*\\*)|(__[^_]+__)" +
-        "|(~~[^~]+~~)" +
-        "|(\\[[^\\]]+\\]\\([^)\\s]+\\))" +
-        "|(\\*[^*\\s][^*]*\\*)|(\\b_[^_\\s][^_]*_\\b)"
-)
+private val INLINE =
+    Regex(
+        "(`[^`]+`)" +
+            "|(\\*\\*[^*]+\\*\\*)|(__[^_]+__)" +
+            "|(~~[^~]+~~)" +
+            "|(\\[[^\\]]+\\]\\([^)\\s]+\\))" +
+            "|(\\*[^*\\s][^*]*\\*)|(\\b_[^_\\s][^_]*_\\b)",
+    )
 private val LINK = Regex("^\\[([^\\]]+)\\]\\(([^)\\s]+)\\)$")
 
 /** Renders one markdown span run into an [AnnotatedString] (no block nesting). */
-internal fun buildInlineMarkdown(text: String): AnnotatedString = buildAnnotatedString {
-    // Non-composable context: read tokens through the controller. Callers in
-    // composition re-run on theme switches anyway (the whole dialog recomposes).
-    val colors = BossThemeController.current.colors
-    val codeStyle = SpanStyle(
-        fontFamily = FontFamily.Monospace,
-        color = colors.textPrimary,
-        background = colors.raised,
-        fontSize = 11.sp
-    )
-    var pos = 0
-    for (match in INLINE.findAll(text)) {
-        append(text.substring(pos, match.range.first))
-        val token = match.value
-        when {
-            token.startsWith("`") ->
-                withStyle(codeStyle) { append(token.removeSurrounding("`")) }
-            token.startsWith("**") ->
-                withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(token.removeSurrounding("**")) }
-            token.startsWith("__") ->
-                withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(token.removeSurrounding("__")) }
-            token.startsWith("~~") ->
-                withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) { append(token.removeSurrounding("~~")) }
-            token.startsWith("[") -> {
-                val link = LINK.matchEntire(token)
-                if (link != null) {
-                    val styles = TextLinkStyles(
-                        style = SpanStyle(color = colors.signal, textDecoration = TextDecoration.Underline)
-                    )
-                    withLink(LinkAnnotation.Url(link.groupValues[2], styles)) { append(link.groupValues[1]) }
-                } else {
-                    append(token)
+internal fun buildInlineMarkdown(text: String): AnnotatedString =
+    buildAnnotatedString {
+        // Non-composable context: read tokens through the controller. Callers in
+        // composition re-run on theme switches anyway (the whole dialog recomposes).
+        val colors = BossThemeController.current.colors
+        val codeStyle =
+            SpanStyle(
+                fontFamily = FontFamily.Monospace,
+                color = colors.textPrimary,
+                background = colors.raised,
+                fontSize = 11.sp,
+            )
+        var pos = 0
+        for (match in INLINE.findAll(text)) {
+            append(text.substring(pos, match.range.first))
+            val token = match.value
+            when {
+                token.startsWith("`") -> {
+                    withStyle(codeStyle) { append(token.removeSurrounding("`")) }
+                }
+
+                token.startsWith("**") -> {
+                    withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(token.removeSurrounding("**")) }
+                }
+
+                token.startsWith("__") -> {
+                    withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(token.removeSurrounding("__")) }
+                }
+
+                token.startsWith("~~") -> {
+                    withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) { append(token.removeSurrounding("~~")) }
+                }
+
+                token.startsWith("[") -> {
+                    val link = LINK.matchEntire(token)
+                    if (link != null) {
+                        val styles =
+                            TextLinkStyles(
+                                style = SpanStyle(color = colors.signal, textDecoration = TextDecoration.Underline),
+                            )
+                        withLink(LinkAnnotation.Url(link.groupValues[2], styles)) { append(link.groupValues[1]) }
+                    } else {
+                        append(token)
+                    }
+                }
+
+                else -> {
+                    withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(token.substring(1, token.length - 1)) }
                 }
             }
-            else ->
-                withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(token.substring(1, token.length - 1)) }
+            pos = match.range.last + 1
         }
-        pos = match.range.last + 1
+        append(text.substring(pos))
     }
-    append(text.substring(pos))
-}
 
-private fun headingFontSize(level: Int) = when (level) {
-    1 -> 16.sp
-    2 -> 14.sp
-    else -> 13.sp
-}
+private fun headingFontSize(level: Int) =
+    when (level) {
+        1 -> 16.sp
+        2 -> 14.sp
+        else -> 13.sp
+    }
 
 /** One block of rendered release notes; sized for the update dialog (12sp body). */
 @Composable
 internal fun NotesBlockView(block: NotesBlock) {
     when (block) {
-        is NotesBlock.Heading -> Text(
-            buildInlineMarkdown(block.text),
-            color = BossTheme.colors.textPrimary,
-            fontSize = headingFontSize(block.level),
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(top = 6.dp)
-        )
-
-        is NotesBlock.Paragraph -> Text(
-            buildInlineMarkdown(block.text),
-            color = BossTheme.colors.textSecondary,
-            fontSize = 12.sp,
-            lineHeight = 17.sp
-        )
-
-        is NotesBlock.ListItem -> Row(Modifier.padding(start = (12 * block.indent).dp)) {
+        is NotesBlock.Heading -> {
             Text(
-                block.marker,
-                color = BossTheme.colors.textMuted,
-                fontSize = 12.sp,
-                lineHeight = 17.sp,
-                modifier = Modifier.width(18.dp)
+                buildInlineMarkdown(block.text),
+                color = BossTheme.colors.textPrimary,
+                fontSize = headingFontSize(block.level),
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(top = 6.dp),
             )
+        }
+
+        is NotesBlock.Paragraph -> {
             Text(
                 buildInlineMarkdown(block.text),
                 color = BossTheme.colors.textSecondary,
                 fontSize = 12.sp,
-                lineHeight = 17.sp
+                lineHeight = 17.sp,
             )
         }
 
-        is NotesBlock.CodeBlock -> Text(
-            block.code,
-            color = BossTheme.colors.textPrimary,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 11.sp,
-            lineHeight = 15.sp,
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(BossTheme.colors.raised, RoundedCornerShape(4.dp))
-                .padding(8.dp)
-        )
-
-        is NotesBlock.Table -> Column(
-            Modifier
-                .fillMaxWidth()
-                .background(BossTheme.colors.raised.copy(alpha = 0.4f), RoundedCornerShape(4.dp))
-                .padding(vertical = 2.dp)
-        ) {
-            Row(Modifier.padding(horizontal = 6.dp, vertical = 3.dp)) {
-                block.header.forEach { cell ->
-                    Text(
-                        buildInlineMarkdown(cell),
-                        color = BossTheme.colors.textPrimary,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.weight(1f).padding(end = 6.dp)
-                    )
-                }
+        is NotesBlock.ListItem -> {
+            Row(Modifier.padding(start = (12 * block.indent).dp)) {
+                Text(
+                    block.marker,
+                    color = BossTheme.colors.textMuted,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                    modifier = Modifier.width(18.dp),
+                )
+                Text(
+                    buildInlineMarkdown(block.text),
+                    color = BossTheme.colors.textSecondary,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                )
             }
-            Divider(color = BossTheme.colors.line, thickness = 1.dp)
-            block.rows.forEach { row ->
+        }
+
+        is NotesBlock.CodeBlock -> {
+            Text(
+                block.code,
+                color = BossTheme.colors.textPrimary,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 11.sp,
+                lineHeight = 15.sp,
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .background(BossTheme.colors.raised, RoundedCornerShape(4.dp))
+                        .padding(8.dp),
+            )
+        }
+
+        is NotesBlock.Table -> {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .background(BossTheme.colors.raised.copy(alpha = 0.4f), RoundedCornerShape(4.dp))
+                    .padding(vertical = 2.dp),
+            ) {
                 Row(Modifier.padding(horizontal = 6.dp, vertical = 3.dp)) {
-                    // Pad/trim ragged rows to the header width so weights stay aligned.
-                    List(block.header.size) { idx -> row.getOrElse(idx) { "" } }.forEach { cell ->
+                    block.header.forEach { cell ->
                         Text(
                             buildInlineMarkdown(cell),
-                            color = BossTheme.colors.textSecondary,
+                            color = BossTheme.colors.textPrimary,
                             fontSize = 11.sp,
-                            modifier = Modifier.weight(1f).padding(end = 6.dp)
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.weight(1f).padding(end = 6.dp),
                         )
+                    }
+                }
+                Divider(color = BossTheme.colors.line, thickness = 1.dp)
+                block.rows.forEach { row ->
+                    Row(Modifier.padding(horizontal = 6.dp, vertical = 3.dp)) {
+                        // Pad/trim ragged rows to the header width so weights stay aligned.
+                        List(block.header.size) { idx -> row.getOrElse(idx) { "" } }.forEach { cell ->
+                            Text(
+                                buildInlineMarkdown(cell),
+                                color = BossTheme.colors.textSecondary,
+                                fontSize = 11.sp,
+                                modifier = Modifier.weight(1f).padding(end = 6.dp),
+                            )
+                        }
                     }
                 }
             }
         }
 
-        NotesBlock.ThematicBreak -> Divider(
-            color = BossTheme.colors.line,
-            thickness = 1.dp,
-            modifier = Modifier.padding(vertical = 4.dp)
-        )
+        NotesBlock.ThematicBreak -> {
+            Divider(
+                color = BossTheme.colors.line,
+                thickness = 1.dp,
+                modifier = Modifier.padding(vertical = 4.dp),
+            )
+        }
     }
 }

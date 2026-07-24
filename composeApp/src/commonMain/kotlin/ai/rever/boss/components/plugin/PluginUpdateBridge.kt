@@ -13,5 +13,8 @@ expect object PluginUpdateBridge {
     suspend fun checkOne(ref: InstalledPluginRef): UpdateCheckOutcome
 
     /** Download + install the latest compatible version, reusing [manager] to unload/load. */
-    suspend fun performUpdate(pluginId: String, manager: DynamicPluginManager): Result<String>
+    suspend fun performUpdate(
+        pluginId: String,
+        manager: DynamicPluginManager,
+    ): Result<String>
 }

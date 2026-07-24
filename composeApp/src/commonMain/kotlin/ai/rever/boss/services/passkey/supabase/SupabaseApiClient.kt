@@ -2,10 +2,10 @@ package ai.rever.boss.services.passkey.supabase
 
 import ai.rever.boss.services.supabase.getSupabaseAnonKey
 import ai.rever.boss.services.supabase.getSupabaseFunctionUrl
-import io.ktor.client.statement.*
-import io.ktor.client.request.*
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
+import io.ktor.client.request.*
+import io.ktor.client.statement.*
 import io.ktor.http.*
 import kotlinx.serialization.json.Json
 
@@ -23,7 +23,6 @@ import kotlinx.serialization.json.Json
  * - POST /passkey/manage/update - Update passkey display name
  */
 internal object SupabaseApiClient {
-
     private val httpClient = HttpClient(CIO)
 
     // Secure configuration - values loaded from ConfigLoader (environment variables, system properties, or local.properties)
@@ -41,10 +40,11 @@ internal object SupabaseApiClient {
         getSupabaseAnonKey()
     }
 
-    private val json = Json {
-        ignoreUnknownKeys = true
-        encodeDefaults = true
-    }
+    private val json =
+        Json {
+            ignoreUnknownKeys = true
+            encodeDefaults = true
+        }
 
     // ============================================================================
     // Authentication Endpoints
@@ -79,11 +79,10 @@ internal object SupabaseApiClient {
     /**
      * GET /passkey/auth/status/{sessionId} - Check authentication status
      */
-    suspend fun checkAuthenticationStatus(sessionId: String): HttpResponse {
-        return httpClient.get("$passkeyFunctionUrl/auth/status/$sessionId") {
+    suspend fun checkAuthenticationStatus(sessionId: String): HttpResponse =
+        httpClient.get("$passkeyFunctionUrl/auth/status/$sessionId") {
             header("apikey", supabaseAnonKey)
         }
-    }
 
     // ============================================================================
     // Registration Endpoints
@@ -144,5 +143,4 @@ internal object SupabaseApiClient {
             setBody(jsonBody)
         }
     }
-
 }

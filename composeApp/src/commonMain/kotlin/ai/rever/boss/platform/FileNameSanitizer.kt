@@ -14,15 +14,34 @@ import ai.rever.boss.utils.extractFileName
  * - Empty or overly long file names
  */
 object FileNameSanitizer {
-
     private const val MAX_FILENAME_LENGTH = 255
 
     // Windows reserved device names
-    private val WINDOWS_RESERVED_NAMES = setOf(
-        "CON", "PRN", "AUX", "NUL",
-        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
-    )
+    private val WINDOWS_RESERVED_NAMES =
+        setOf(
+            "CON",
+            "PRN",
+            "AUX",
+            "NUL",
+            "COM1",
+            "COM2",
+            "COM3",
+            "COM4",
+            "COM5",
+            "COM6",
+            "COM7",
+            "COM8",
+            "COM9",
+            "LPT1",
+            "LPT2",
+            "LPT3",
+            "LPT4",
+            "LPT5",
+            "LPT6",
+            "LPT7",
+            "LPT8",
+            "LPT9",
+        )
 
     /**
      * Sanitizes a file name to be safe for file system operations.
@@ -31,7 +50,10 @@ object FileNameSanitizer {
      * @param replacement Character to replace invalid characters with (default: underscore)
      * @return A sanitized file name safe for all platforms
      */
-    fun sanitize(fileName: String, replacement: Char = '_'): String {
+    fun sanitize(
+        fileName: String,
+        replacement: Char = '_',
+    ): String {
         if (fileName.isBlank()) {
             return "download"
         }
@@ -40,39 +62,44 @@ object FileNameSanitizer {
 
         // 1. Prevent path traversal - reject absolute paths or path segments
         if (sanitized.startsWith("/") || sanitized.startsWith("\\") ||
-            sanitized.contains("..") || sanitized.contains(":/")) {
+            sanitized.contains("..") || sanitized.contains(":/")
+        ) {
             // Extract just the file name part
             sanitized = sanitized.extractFileName()
         }
 
         // 2. Remove control characters (0x00-0x1F, 0x7F-0x9F)
-        sanitized = sanitized.filter { char ->
-            char.code !in 0x00..0x1F && char.code !in 0x7F..0x9F
-        }
+        sanitized =
+            sanitized.filter { char ->
+                char.code !in 0x00..0x1F && char.code !in 0x7F..0x9F
+            }
 
         // 3. Replace path separators and other invalid characters
         // Invalid on Windows: < > : " / \ | ? *
         // For maximum compatibility, restrict to: a-z A-Z 0-9 _ - . ( ) [ ] space
-        sanitized = sanitized.map { char ->
-            when {
-                char in 'a'..'z' -> char
-                char in 'A'..'Z' -> char
-                char in '0'..'9' -> char
-                char in setOf('_', '-', '.', '(', ')', '[', ']', ' ') -> char
-                else -> replacement
-            }
-        }.joinToString("")
+        sanitized =
+            sanitized
+                .map { char ->
+                    when {
+                        char in 'a'..'z' -> char
+                        char in 'A'..'Z' -> char
+                        char in '0'..'9' -> char
+                        char in setOf('_', '-', '.', '(', ')', '[', ']', ' ') -> char
+                        else -> replacement
+                    }
+                }.joinToString("")
 
         // 4. Handle Windows reserved names
         val nameWithoutExtension = sanitized.substringBeforeLast('.', sanitized)
-        val extension = if (sanitized.contains('.')) {
-            "." + sanitized.substringAfterLast('.')
-        } else {
-            ""
-        }
+        val extension =
+            if (sanitized.contains('.')) {
+                "." + sanitized.substringAfterLast('.')
+            } else {
+                ""
+            }
 
         if (nameWithoutExtension.uppercase() in WINDOWS_RESERVED_NAMES) {
-            sanitized = "${replacement}${nameWithoutExtension}${extension}"
+            sanitized = "${replacement}${nameWithoutExtension}$extension"
         }
 
         // 5. Remove trailing dots and spaces (invalid on Windows)
@@ -80,7 +107,7 @@ object FileNameSanitizer {
 
         // 6. Ensure at least one character remains
         if (sanitized.isBlank() || sanitized == extension) {
-            sanitized = "download${extension}"
+            sanitized = "download$extension"
         }
 
         // 7. Truncate to maximum length while preserving extension
@@ -106,12 +133,16 @@ object FileNameSanitizer {
         return when (extension) {
             // Windows executables
             "exe", "msi", "bat", "cmd", "com", "scr", "vbs", "ps1", "psm1" -> true
+
             // macOS executables
             "app", "pkg", "dmg", "command" -> true
+
             // Linux/Unix executables
             "sh", "run", "bin" -> true
+
             // Scripts
             "js", "jar", "py", "rb", "pl" -> true
+
             else -> false
         }
     }
@@ -122,11 +153,10 @@ object FileNameSanitizer {
      * @param fileName The file name to validate
      * @return true if the file name is safe (no path traversal attempts)
      */
-    fun isValidFileName(fileName: String): Boolean {
-        return !fileName.contains("/") &&
-               !fileName.contains("\\") &&
-               !fileName.contains("..") &&
-               !fileName.startsWith(".") &&
-               fileName.isNotBlank()
-    }
+    fun isValidFileName(fileName: String): Boolean =
+        !fileName.contains("/") &&
+            !fileName.contains("\\") &&
+            !fileName.contains("..") &&
+            !fileName.startsWith(".") &&
+            fileName.isNotBlank()
 }

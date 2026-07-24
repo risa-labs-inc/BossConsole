@@ -27,23 +27,25 @@ class FluckPanelContentProviderImpl : FluckPanelContentProvider {
 
     // Create browser instance with error handling
     private var browserError: Throwable? = null
-    private val browser: Any? = try {
-        createBrowser()
-    } catch (e: Throwable) {
-        browserError = e
-        logger.warn(LogCategory.BROWSER, "Failed to create browser", error = e)
-        null
-    }
-
-    private val browserViewState: Any? = browser?.let {
+    private val browser: Any? =
         try {
-            createBrowserViewState(it)
+            createBrowser()
         } catch (e: Throwable) {
             browserError = e
-            logger.warn(LogCategory.BROWSER, "Failed to create browser view state", error = e)
+            logger.warn(LogCategory.BROWSER, "Failed to create browser", error = e)
             null
         }
-    }
+
+    private val browserViewState: Any? =
+        browser?.let {
+            try {
+                createBrowserViewState(it)
+            } catch (e: Throwable) {
+                browserError = e
+                logger.warn(LogCategory.BROWSER, "Failed to create browser view state", error = e)
+                null
+            }
+        }
 
     private var isDisposed = false
     private val currentTitle = mutableStateOf("Fluck Browser")
@@ -55,11 +57,12 @@ class FluckPanelContentProviderImpl : FluckPanelContentProvider {
                 browserError != null -> {
                     Box(
                         modifier = Modifier.fillMaxSize().background(BossTheme.colors.panel),
-                        contentAlignment = Alignment.Center
+                        contentAlignment = Alignment.Center,
                     ) {
                         FluckPanelErrorView(error = browserError!!)
                     }
                 }
+
                 browser != null && browserViewState != null -> {
                     FluckView(
                         fileId = "fluck_panel",
@@ -74,13 +77,14 @@ class FluckPanelContentProviderImpl : FluckPanelContentProvider {
                         onTabIconUpdate = { },
                         onOpenInNewTab = { },
                         onNavigationUpdate = null,
-                        onNavigationStateChange = null
+                        onNavigationStateChange = null,
                     )
                 }
+
                 else -> {
                     Box(
                         modifier = Modifier.fillMaxSize().background(BossTheme.colors.panel),
-                        contentAlignment = Alignment.Center
+                        contentAlignment = Alignment.Center,
                     ) {
                         CircularProgressIndicator()
                     }
@@ -95,29 +99,33 @@ private fun FluckPanelErrorView(error: Throwable) {
     Column(
         modifier = Modifier.padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        verticalArrangement = Arrangement.Center,
     ) {
         Text(
             text = "Browser Not Available",
             fontSize = 16.sp,
             fontWeight = FontWeight.Bold,
-            color = BossTheme.colors.textPrimary
+            color = BossTheme.colors.textPrimary,
         )
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        val errorMessage = when {
-            error.message?.contains("already in use") == true -> {
-                "Another instance of BOSS is using the browser.\nPlease close other instances and refresh."
+        val errorMessage =
+            when {
+                error.message?.contains("already in use") == true -> {
+                    "Another instance of BOSS is using the browser.\nPlease close other instances and refresh."
+                }
+
+                else -> {
+                    "Unable to initialize the browser component."
+                }
             }
-            else -> "Unable to initialize the browser component."
-        }
 
         Text(
             text = errorMessage,
             fontSize = 12.sp,
             color = BossTheme.colors.textPrimary,
-            textAlign = TextAlign.Center
+            textAlign = TextAlign.Center,
         )
 
         if (error.message?.contains("already in use") == true) {
@@ -126,7 +134,7 @@ private fun FluckPanelErrorView(error: Throwable) {
                 text = "Tip: The browser will automatically try alternative\nprofiles on next restart.",
                 fontSize = 11.sp,
                 color = BossTheme.colors.textSecondary,
-                textAlign = TextAlign.Center
+                textAlign = TextAlign.Center,
             )
         }
     }

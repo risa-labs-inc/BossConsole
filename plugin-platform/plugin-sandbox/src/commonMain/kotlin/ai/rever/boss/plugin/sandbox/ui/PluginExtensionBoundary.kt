@@ -46,10 +46,10 @@ fun PluginExtensionBoundary(
             text = "⚠ $surface failed: ${error.message ?: error::class.simpleName}",
             color = BossTheme.colors.alert,
             fontSize = 11.sp,
-            modifier = Modifier.padding(horizontal = 6.dp)
+            modifier = Modifier.padding(horizontal = 6.dp),
         )
     },
-    content: @Composable () -> Unit
+    content: @Composable () -> Unit,
 ) {
     if (pluginId == null) {
         content()
@@ -64,17 +64,22 @@ fun PluginExtensionBoundary(
     // first composes (DisposableEffect would arm it too late for first-frame
     // crashes like NoSuchMethodError). The callback runs on the crashing
     // thread; snapshot writes are thread-safe.
-    val registration = remember(pluginId) {
-        registerCrashInterceptor(pluginId) { e ->
-            logger.warn(LogCategory.UI, "Plugin extension crashed; showing fallback", mapOf(
-                "pluginId" to pluginId,
-                "surface" to surface,
-                "errorType" to e::class.simpleName
-            ))
-            error = e
-            crashCount++
+    val registration =
+        remember(pluginId) {
+            registerCrashInterceptor(pluginId) { e ->
+                logger.warn(
+                    LogCategory.UI,
+                    "Plugin extension crashed; showing fallback",
+                    mapOf(
+                        "pluginId" to pluginId,
+                        "surface" to surface,
+                        "errorType" to e::class.simpleName,
+                    ),
+                )
+                error = e
+                crashCount++
+            }
         }
-    }
     DisposableEffect(pluginId) {
         onDispose { registration?.invoke() }
     }

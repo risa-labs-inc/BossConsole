@@ -12,7 +12,6 @@ import ai.rever.boss.topofmind.TopOfMindStateHolder
  * consistent tab collection logic across the application.
  */
 object TabCollector {
-
     /**
      * Collect all active tabs from all open windows.
      *

@@ -15,7 +15,10 @@ data class RegistryAccess(
      * [ai.rever.boss.components.plugin.pluginAccessAllowed] so gated
      * extension items follow the exact same rule as whole-plugin gating.
      */
-    fun permits(requiresAdmin: Boolean, requiredPermissions: Set<String>): Boolean =
+    fun permits(
+        requiresAdmin: Boolean,
+        requiredPermissions: Set<String>,
+    ): Boolean =
         ai.rever.boss.components.plugin.pluginAccessAllowed(
             isAdmin = isAdmin,
             userPermissions = permissions,

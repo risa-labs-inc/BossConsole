@@ -8,23 +8,22 @@ import kotlin.random.Random
  * Utility for creating Fluck tabs programmatically
  */
 object FluckTabCreator {
-    
     /**
      * Create a FluckTabInfo for opening a URL
      */
-    fun createFluckTab(url: String, title: String = "Loading..."): FluckTabInfo {
-        return FluckTabInfo(
+    fun createFluckTab(
+        url: String,
+        title: String = "Loading...",
+    ): FluckTabInfo =
+        FluckTabInfo(
             id = "webauthn-${Random.nextLong()}",
             typeId = TabTypeId("fluck"),
             _title = title,
-            url = url
+            url = url,
         )
-    }
-    
+
     /**
      * Create a FluckTabInfo specifically for WebAuthn registration
      */
-    fun createWebAuthnTab(url: String): FluckTabInfo {
-        return createFluckTab(url, "WebAuthn Registration")
-    }
+    fun createWebAuthnTab(url: String): FluckTabInfo = createFluckTab(url, "WebAuthn Registration")
 }

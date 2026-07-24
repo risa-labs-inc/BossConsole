@@ -1,17 +1,17 @@
 package ai.rever.boss.components.settings.sections
 
-import ai.rever.boss.plugin.browser.BrowserSettings
-import ai.rever.boss.plugin.browser.BrowserSettingsManager
-import ai.rever.boss.components.settings.shared.SettingsSection
-import ai.rever.boss.components.settings.shared.SettingsDropdown
-import ai.rever.boss.components.settings.shared.SettingsTextField
-import ai.rever.boss.components.settings.shared.SettingsNumberInput
 import ai.rever.boss.components.settings.shared.SettingsButtonRow
-import ai.rever.boss.components.settings.shared.SettingsToggle
+import ai.rever.boss.components.settings.shared.SettingsDropdown
+import ai.rever.boss.components.settings.shared.SettingsNumberInput
+import ai.rever.boss.components.settings.shared.SettingsSection
+import ai.rever.boss.components.settings.shared.SettingsTextField
 import ai.rever.boss.components.settings.shared.SettingsTheme.AccentColor
 import ai.rever.boss.components.settings.shared.SettingsTheme.SurfaceColor
 import ai.rever.boss.components.settings.shared.SettingsTheme.TextPrimary
 import ai.rever.boss.components.settings.shared.SettingsTheme.TextSecondary
+import ai.rever.boss.components.settings.shared.SettingsToggle
+import ai.rever.boss.plugin.browser.BrowserSettings
+import ai.rever.boss.plugin.browser.BrowserSettingsManager
 import ai.rever.boss.terminal.ExistingSplitTargetMode
 import ai.rever.boss.terminal.TerminalLinkOpenMode
 import ai.rever.boss.terminal.TerminalLinkSettingsManager
@@ -50,8 +50,9 @@ fun FluckBrowserSettings() {
     // Helper to save and check for restart
     fun saveAndCheckRestart() {
         val profileChanged = BrowserSettings.currentProfile != currentProfile
-        val userAgentChanged = BrowserSettings.userAgent != (if (userAgent == "Default") null else userAgent) ||
-            (userAgent == "Custom" && BrowserSettings.customUserAgent != customUserAgent)
+        val userAgentChanged =
+            BrowserSettings.userAgent != (if (userAgent == "Default") null else userAgent) ||
+                (userAgent == "Custom" && BrowserSettings.customUserAgent != customUserAgent)
 
         BrowserSettings.currentProfile = currentProfile
         BrowserSettings.userAgent = if (userAgent == "Default") null else userAgent
@@ -72,7 +73,7 @@ fun FluckBrowserSettings() {
 
     Column(
         modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         // User Agent
         SettingsSection(title = "User Agent") {
@@ -84,7 +85,7 @@ fun FluckBrowserSettings() {
                     userAgent = it
                     BrowserSettings.userAgent = if (it == "Default") null else it
                 },
-                description = "How websites identify your browser"
+                description = "How websites identify your browser",
             )
 
             if (userAgent == "Custom") {
@@ -95,7 +96,7 @@ fun FluckBrowserSettings() {
                         customUserAgent = it
                         BrowserSettings.customUserAgent = it
                     },
-                    placeholder = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)..."
+                    placeholder = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)...",
                 )
             }
 
@@ -104,23 +105,23 @@ fun FluckBrowserSettings() {
                 modifier = Modifier.fillMaxWidth(),
                 backgroundColor = AccentColor.copy(alpha = 0.1f),
                 shape = RoundedCornerShape(6.dp),
-                elevation = 0.dp
+                elevation = 0.dp,
             ) {
                 Row(
                     modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Icon(
                         Icons.Outlined.Info,
                         contentDescription = "Info",
                         tint = AccentColor,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(16.dp),
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "Application restart required for browser settings changes",
                         fontSize = 12.sp,
-                        color = TextSecondary
+                        color = TextSecondary,
                     )
                 }
             }
@@ -131,59 +132,65 @@ fun FluckBrowserSettings() {
 
         // Terminal Link Behavior
         SettingsSection(title = "Terminal Links") {
-            val linkOpenModeOptions = listOf(
-                "Always Ask" to TerminalLinkOpenMode.ALWAYS_ASK,
-                "Existing Split" to TerminalLinkOpenMode.EXISTING_SPLIT,
-                "Vertical Split" to TerminalLinkOpenMode.VERTICAL_SPLIT,
-                "Horizontal Split" to TerminalLinkOpenMode.HORIZONTAL_SPLIT,
-                "New Tab" to TerminalLinkOpenMode.NEW_TAB,
-                "System Default" to TerminalLinkOpenMode.SYSTEM_DEFAULT
-            )
+            val linkOpenModeOptions =
+                listOf(
+                    "Always Ask" to TerminalLinkOpenMode.ALWAYS_ASK,
+                    "Existing Split" to TerminalLinkOpenMode.EXISTING_SPLIT,
+                    "Vertical Split" to TerminalLinkOpenMode.VERTICAL_SPLIT,
+                    "Horizontal Split" to TerminalLinkOpenMode.HORIZONTAL_SPLIT,
+                    "New Tab" to TerminalLinkOpenMode.NEW_TAB,
+                    "System Default" to TerminalLinkOpenMode.SYSTEM_DEFAULT,
+                )
 
             SettingsDropdown(
                 label = "Open links with",
                 options = linkOpenModeOptions.map { it.first },
                 selectedOption = linkOpenModeOptions.find { it.second == terminalLinkOpenMode }?.first ?: "Always Ask",
                 onOptionSelected = { selectedLabel ->
-                    val selectedMode = linkOpenModeOptions.find { it.first == selectedLabel }?.second
-                        ?: TerminalLinkOpenMode.ALWAYS_ASK
+                    val selectedMode =
+                        linkOpenModeOptions.find { it.first == selectedLabel }?.second
+                            ?: TerminalLinkOpenMode.ALWAYS_ASK
                     terminalLinkOpenMode = selectedMode
                     coroutineScope.launch {
                         TerminalLinkSettingsManager.setOpenMode(selectedMode)
                     }
                 },
-                description = when (terminalLinkOpenMode) {
-                    TerminalLinkOpenMode.ALWAYS_ASK -> "A dialog appears each time you click a link"
-                    TerminalLinkOpenMode.EXISTING_SPLIT -> "Opens in an existing split panel if available"
-                    TerminalLinkOpenMode.VERTICAL_SPLIT -> "Opens in a new panel to the right"
-                    TerminalLinkOpenMode.HORIZONTAL_SPLIT -> "Opens in a new panel below"
-                    TerminalLinkOpenMode.NEW_TAB -> "Opens in a new tab"
-                    TerminalLinkOpenMode.SYSTEM_DEFAULT -> "Opens outside BOSS with the system default app"
-                }
+                description =
+                    when (terminalLinkOpenMode) {
+                        TerminalLinkOpenMode.ALWAYS_ASK -> "A dialog appears each time you click a link"
+                        TerminalLinkOpenMode.EXISTING_SPLIT -> "Opens in an existing split panel if available"
+                        TerminalLinkOpenMode.VERTICAL_SPLIT -> "Opens in a new panel to the right"
+                        TerminalLinkOpenMode.HORIZONTAL_SPLIT -> "Opens in a new panel below"
+                        TerminalLinkOpenMode.NEW_TAB -> "Opens in a new tab"
+                        TerminalLinkOpenMode.SYSTEM_DEFAULT -> "Opens outside BOSS with the system default app"
+                    },
             )
 
             if (terminalLinkOpenMode == TerminalLinkOpenMode.EXISTING_SPLIT) {
-                val targetModeOptions = listOf(
-                    "Most Recent Active" to ExistingSplitTargetMode.MOST_RECENT_ACTIVE,
-                    "First Available" to ExistingSplitTargetMode.FIRST_AVAILABLE
-                )
+                val targetModeOptions =
+                    listOf(
+                        "Most Recent Active" to ExistingSplitTargetMode.MOST_RECENT_ACTIVE,
+                        "First Available" to ExistingSplitTargetMode.FIRST_AVAILABLE,
+                    )
 
                 SettingsDropdown(
                     label = "Target panel",
                     options = targetModeOptions.map { it.first },
                     selectedOption = targetModeOptions.find { it.second == existingSplitTarget }?.first ?: "Most Recent Active",
                     onOptionSelected = { selectedLabel ->
-                        val selectedMode = targetModeOptions.find { it.first == selectedLabel }?.second
-                            ?: ExistingSplitTargetMode.MOST_RECENT_ACTIVE
+                        val selectedMode =
+                            targetModeOptions.find { it.first == selectedLabel }?.second
+                                ?: ExistingSplitTargetMode.MOST_RECENT_ACTIVE
                         existingSplitTarget = selectedMode
                         coroutineScope.launch {
                             TerminalLinkSettingsManager.setExistingSplitTarget(selectedMode)
                         }
                     },
-                    description = when (existingSplitTarget) {
-                        ExistingSplitTargetMode.MOST_RECENT_ACTIVE -> "Opens in the most recently used panel"
-                        ExistingSplitTargetMode.FIRST_AVAILABLE -> "Opens in the first available panel"
-                    }
+                    description =
+                        when (existingSplitTarget) {
+                            ExistingSplitTargetMode.MOST_RECENT_ACTIVE -> "Opens in the most recently used panel"
+                            ExistingSplitTargetMode.FIRST_AVAILABLE -> "Opens in the first available panel"
+                        },
                 )
             }
 
@@ -197,7 +204,7 @@ fun FluckBrowserSettings() {
                             TerminalLinkSettingsManager.resetToDefault()
                         }
                     },
-                    description = "Reset to \"Always Ask\" mode"
+                    description = "Reset to \"Always Ask\" mode",
                 )
             }
         }
@@ -216,7 +223,7 @@ fun FluckBrowserSettings() {
                         BrowserSettingsManager.saveSettings()
                     }
                 },
-                description = "Hide filled passwords with blur effect for privacy"
+                description = "Hide filled passwords with blur effect for privacy",
             )
 
             // Info card explaining the feature
@@ -224,23 +231,23 @@ fun FluckBrowserSettings() {
                 modifier = Modifier.fillMaxWidth(),
                 backgroundColor = AccentColor.copy(alpha = 0.1f),
                 shape = RoundedCornerShape(6.dp),
-                elevation = 0.dp
+                elevation = 0.dp,
             ) {
                 Row(
                     modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Icon(
                         Icons.Outlined.VisibilityOff,
                         contentDescription = "Privacy",
                         tint = AccentColor,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(16.dp),
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "When enabled, auto-filled password fields are blurred for shoulder surfing protection. Blur persists even on \"show password\" toggles.",
                         fontSize = 12.sp,
-                        color = TextSecondary
+                        color = TextSecondary,
                     )
                 }
             }
@@ -260,31 +267,32 @@ fun FluckBrowserSettings() {
                         BrowserSettingsManager.saveSettings()
                     }
                 },
-                description = "Adds the co-browse QR / share button to the browser toolbar. Off by default."
+                description = "Adds the co-browse QR / share button to the browser toolbar. Off by default.",
             )
 
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 backgroundColor = AccentColor.copy(alpha = 0.1f),
                 shape = RoundedCornerShape(6.dp),
-                elevation = 0.dp
+                elevation = 0.dp,
             ) {
                 Row(
                     modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Icon(
                         Icons.Outlined.Info,
                         contentDescription = "Info",
                         tint = AccentColor,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(16.dp),
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "When on, each browser tab shows a QR/share button to start a co-browse session. " +
-                            "Open a new browser tab for the change to take effect.",
+                        text =
+                            "When on, each browser tab shows a QR/share button to start a co-browse session. " +
+                                "Open a new browser tab for the change to take effect.",
                         fontSize = 12.sp,
-                        color = TextSecondary
+                        color = TextSecondary,
                     )
                 }
             }
@@ -293,7 +301,7 @@ fun FluckBrowserSettings() {
         // Profile Management
         ProfileManagementSection(
             currentProfile = currentProfile,
-            onProfileChange = { currentProfile = it }
+            onProfileChange = { currentProfile = it },
         )
 
         // Advanced Settings
@@ -303,7 +311,7 @@ fun FluckBrowserSettings() {
                 value = maxInitRetries,
                 onValueChange = { maxInitRetries = it },
                 range = 1..10,
-                description = "Attempts to initialize browser on startup"
+                description = "Attempts to initialize browser on startup",
             )
 
             SettingsNumberInput(
@@ -311,14 +319,14 @@ fun FluckBrowserSettings() {
                 value = maxRecoveryAttempts,
                 onValueChange = { maxRecoveryAttempts = it },
                 range = 1..10,
-                description = "Attempts to recover when browser becomes invalid"
+                description = "Attempts to recover when browser becomes invalid",
             )
 
             SettingsButtonRow(
                 label = "Apply Browser Settings",
                 buttonText = "Apply",
                 onClick = { saveAndCheckRestart() },
-                description = "Save changes (may require restart)"
+                description = "Save changes (may require restart)",
             )
         }
     }
@@ -332,7 +340,7 @@ fun FluckBrowserSettings() {
                     "Restart Required",
                     color = TextPrimary,
                     fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.SemiBold,
                 )
             },
             text = {
@@ -340,13 +348,13 @@ fun FluckBrowserSettings() {
                     Text(
                         "Browser settings have been changed and require an application restart to take effect.",
                         color = TextSecondary,
-                        fontSize = 13.sp
+                        fontSize = 13.sp,
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         "Make sure to save any unsaved work before restarting.",
                         color = TextSecondary.copy(alpha = 0.7f),
-                        fontSize = 12.sp
+                        fontSize = 12.sp,
                     )
                 }
             },
@@ -355,7 +363,7 @@ fun FluckBrowserSettings() {
                     onClick = {
                         showRestartDialog = false
                         ApplicationRestarter.scheduleRestart(delayMillis = 500)
-                    }
+                    },
                 ) {
                     Text("Restart Now", color = AccentColor)
                 }
@@ -366,7 +374,7 @@ fun FluckBrowserSettings() {
                 }
             },
             backgroundColor = SurfaceColor,
-            contentColor = TextPrimary
+            contentColor = TextPrimary,
         )
     }
 }

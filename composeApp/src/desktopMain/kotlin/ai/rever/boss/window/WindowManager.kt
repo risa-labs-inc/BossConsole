@@ -1,9 +1,9 @@
 package ai.rever.boss.window
 
+import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.Project
-import ai.rever.boss.plugin.api.TabInfo
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.WindowPosition
@@ -16,9 +16,9 @@ import java.util.concurrent.ConcurrentHashMap
  * Window type enum for determining appropriate size calculation
  */
 enum class WindowType {
-    MAIN,      // Main application window (70-75% of screen)
-    AUTH,      // Authentication windows (40-45% of screen)
-    SETTINGS   // Settings window (60-65% of screen)
+    MAIN, // Main application window (70-75% of screen)
+    AUTH, // Authentication windows (40-45% of screen)
+    SETTINGS, // Settings window (60-65% of screen)
 }
 
 /**
@@ -71,22 +71,31 @@ object WindowManager {
      */
     fun createNewWindow(
         position: WindowPosition? = null,
-        windowType: WindowType = WindowType.MAIN
+        windowType: WindowType = WindowType.MAIN,
     ): BossWindowState {
         val windowId = UUID.randomUUID().toString()
 
         // Calculate cascade position if not specified
         val windowPosition = position ?: calculateCascadePosition()
 
-        val windowState = BossWindowState(
-            id = windowId,
-            title = "BOSS - Business Operating System + Simulation",
-            position = windowPosition,
-            windowType = windowType
-        )
+        val windowState =
+            BossWindowState(
+                id = windowId,
+                title = "BOSS - Business Operating System + Simulation",
+                position = windowPosition,
+                windowType = windowType,
+            )
 
         _windows.add(windowState)
-        logger.debug(LogCategory.UI, "Created new window", mapOf("windowId" to windowId, "type" to windowType.toString(), "totalWindows" to _windows.size))
+        logger.debug(
+            LogCategory.UI,
+            "Created new window",
+            mapOf(
+                "windowId" to windowId,
+                "type" to windowType.toString(),
+                "totalWindows" to _windows.size,
+            ),
+        )
 
         return windowState
     }
@@ -102,7 +111,7 @@ object WindowManager {
     fun createNewWindowWithTab(
         initialTab: TabInfo,
         position: WindowPosition? = null,
-        windowType: WindowType = WindowType.MAIN
+        windowType: WindowType = WindowType.MAIN,
     ): BossWindowState {
         val windowState = createNewWindow(position, windowType)
         // Store the pending tab for this window
@@ -117,11 +126,10 @@ object WindowManager {
      * @param windowId The window ID to get the pending tab for
      * @return The pending TabInfo, or null if none
      */
-    fun consumePendingTab(windowId: String): TabInfo? {
-        return pendingInitialTabs.remove(windowId)?.also {
+    fun consumePendingTab(windowId: String): TabInfo? =
+        pendingInitialTabs.remove(windowId)?.also {
             logger.debug(LogCategory.UI, "Consumed pending tab", mapOf("tab" to it.title, "windowId" to windowId))
         }
-    }
 
     /**
      * Create a new window with an initial project
@@ -134,12 +142,16 @@ object WindowManager {
     fun createNewWindowWithProject(
         project: Project,
         position: WindowPosition? = null,
-        windowType: WindowType = WindowType.MAIN
+        windowType: WindowType = WindowType.MAIN,
     ): BossWindowState {
         val windowState = createNewWindow(position, windowType)
         // Store the pending project for this window
         pendingInitialProjects[windowState.id] = project
-        logger.debug(LogCategory.UI, "Stored pending project for new window", mapOf("project" to project.name, "windowId" to windowState.id))
+        logger.debug(
+            LogCategory.UI,
+            "Stored pending project for new window",
+            mapOf("project" to project.name, "windowId" to windowState.id),
+        )
         return windowState
     }
 
@@ -149,11 +161,10 @@ object WindowManager {
      * @param windowId The window ID to get the pending project for
      * @return The pending Project, or null if none
      */
-    fun consumePendingProject(windowId: String): Project? {
-        return pendingInitialProjects.remove(windowId)?.also {
+    fun consumePendingProject(windowId: String): Project? =
+        pendingInitialProjects.remove(windowId)?.also {
             logger.debug(LogCategory.UI, "Consumed pending project", mapOf("project" to it.name, "windowId" to windowId))
         }
-    }
 
     /**
      * Close a window by ID
@@ -194,9 +205,7 @@ object WindowManager {
      * @return The newly created window
      */
     @Deprecated("Tab management moved to BossApp/SplitViewState")
-    fun moveTabToNewWindow(
-        sourceWindowId: String
-    ): BossWindowState {
+    fun moveTabToNewWindow(sourceWindowId: String): BossWindowState {
         logger.debug(LogCategory.UI, "Creating new window (tab will be moved by caller)")
 
         // Create new window - tab will be moved by caller through BossApp
@@ -222,9 +231,7 @@ object WindowManager {
      * @param windowId The window ID to search for
      * @return The window state, or null if not found
      */
-    fun getWindow(windowId: String): BossWindowState? {
-        return _windows.find { it.id == windowId }
-    }
+    fun getWindow(windowId: String): BossWindowState? = _windows.find { it.id == windowId }
 
     /**
      * Calculate cascade position for new windows
@@ -237,7 +244,7 @@ object WindowManager {
         val cascadeOffset = _windows.size * 30
         return WindowPosition(
             x = (100 + cascadeOffset).dp,
-            y = (100 + cascadeOffset).dp
+            y = (100 + cascadeOffset).dp,
         )
     }
 
@@ -266,12 +273,22 @@ object WindowManager {
      * a no-op if the window is unknown. Safe to call off the UI thread — it only
      * emits an event the composable applies on the composition thread.
      */
-    fun fitWindowByDelta(windowId: String, deltaWidthPx: Float, deltaHeightPx: Float) {
+    fun fitWindowByDelta(
+        windowId: String,
+        deltaWidthPx: Float,
+        deltaHeightPx: Float,
+    ) {
         val window = _windows.toList().find { it.id == windowId } ?: return
         window.sizeRequests.tryEmit(WindowSizeRequest.FitByDelta(deltaWidthPx, deltaHeightPx))
-        logger.debug(LogCategory.UI, "Fit window by delta", mapOf(
-            "windowId" to windowId, "dWpx" to deltaWidthPx, "dHpx" to deltaHeightPx
-        ))
+        logger.debug(
+            LogCategory.UI,
+            "Fit window by delta",
+            mapOf(
+                "windowId" to windowId,
+                "dWpx" to deltaWidthPx,
+                "dHpx" to deltaHeightPx,
+            ),
+        )
     }
 
     /**
@@ -304,7 +321,7 @@ data class BossWindowState(
     val id: String,
     var title: String,
     val position: WindowPosition?,
-    val windowType: WindowType = WindowType.MAIN
+    val windowType: WindowType = WindowType.MAIN,
 ) {
     /**
      * Stream of programmatic resize requests (BossTerm "Fit host to my screen").
@@ -321,11 +338,12 @@ data class BossWindowState(
      * is keyed on a stable window state and never restarts, so there is no stale
      * re-delivery on recomposition.
      */
-    val sizeRequests: MutableSharedFlow<WindowSizeRequest> = MutableSharedFlow(
-        replay = 1,
-        extraBufferCapacity = 16,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST
-    )
+    val sizeRequests: MutableSharedFlow<WindowSizeRequest> =
+        MutableSharedFlow(
+            replay = 1,
+            extraBufferCapacity = 16,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
 }
 
 /**
@@ -338,7 +356,10 @@ sealed interface WindowSizeRequest {
      * by the window's display scale to get the logical dp Compose expects, so the
      * fit stays correct on HiDPI / scaled displays.
      */
-    data class FitByDelta(val deltaWidthPx: Float, val deltaHeightPx: Float) : WindowSizeRequest
+    data class FitByDelta(
+        val deltaWidthPx: Float,
+        val deltaHeightPx: Float,
+    ) : WindowSizeRequest
 
     /** Undo the most recent fit, restoring the pre-fit size and placement. */
     data object Restore : WindowSizeRequest

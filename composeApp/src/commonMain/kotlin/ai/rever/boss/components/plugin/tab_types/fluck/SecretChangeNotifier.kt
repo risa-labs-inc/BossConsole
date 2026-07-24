@@ -29,22 +29,30 @@ object SecretChangeNotifier {
      */
     sealed class SecretChangeEvent {
         /** A new secret was created */
-        data class Created(val secretId: String, val website: String) : SecretChangeEvent()
+        data class Created(
+            val secretId: String,
+            val website: String,
+        ) : SecretChangeEvent()
 
         /** An existing secret was updated */
-        data class Updated(val secretId: String) : SecretChangeEvent()
+        data class Updated(
+            val secretId: String,
+        ) : SecretChangeEvent()
 
         /** A secret was deleted */
-        data class Deleted(val secretId: String) : SecretChangeEvent()
+        data class Deleted(
+            val secretId: String,
+        ) : SecretChangeEvent()
 
         /** Multiple secrets changed (bulk operation or unknown) */
         object Refresh : SecretChangeEvent()
     }
 
-    private val _secretChangeEvents = MutableSharedFlow<SecretChangeEvent>(
-        replay = 0,  // Don't replay past events to new subscribers
-        extraBufferCapacity = 10  // Buffer up to 10 events if consumers are slow
-    )
+    private val _secretChangeEvents =
+        MutableSharedFlow<SecretChangeEvent>(
+            replay = 0, // Don't replay past events to new subscribers
+            extraBufferCapacity = 10, // Buffer up to 10 events if consumers are slow
+        )
 
     /**
      * Flow of secret change events.
@@ -55,7 +63,10 @@ object SecretChangeNotifier {
     /**
      * Notify observers that a secret was created.
      */
-    suspend fun notifySecretCreated(secretId: String, website: String) {
+    suspend fun notifySecretCreated(
+        secretId: String,
+        website: String,
+    ) {
         logger.debug(LogCategory.GENERAL, "Notifying secret created", mapOf("secretId" to secretId, "website" to website))
         _secretChangeEvents.emit(SecretChangeEvent.Created(secretId, website))
     }

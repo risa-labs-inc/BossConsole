@@ -51,13 +51,13 @@ fun DefaultBrowserSection() {
             onFailure = { error ->
                 errorMessage = error.message
                 isDefault = null
-            }
+            },
         )
     }
 
     SettingsSection(
         title = "Default Browser",
-        description = "Make BOSS your default web browser"
+        description = "Make BOSS your default web browser",
     ) {
         // Status Card
         Card(
@@ -65,20 +65,20 @@ fun DefaultBrowserSection() {
             backgroundColor = BossTheme.colors.ink,
             shape = RoundedCornerShape(8.dp),
             elevation = 0.dp,
-            border = BorderStroke(1.dp, BossTheme.colors.line)
+            border = BorderStroke(1.dp, BossTheme.colors.line),
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 // Status Display
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column {
                         Text(
                             text = "Status",
                             color = BossTheme.colors.textSecondary,
-                            fontSize = 13.sp
+                            fontSize = 13.sp,
                         )
                         Spacer(modifier = Modifier.height(4.dp))
 
@@ -88,64 +88,67 @@ fun DefaultBrowserSection() {
                                     CircularProgressIndicator(
                                         modifier = Modifier.size(16.dp),
                                         strokeWidth = 2.dp,
-                                        color = BossTheme.colors.signal
+                                        color = BossTheme.colors.signal,
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
                                         text = "Checking...",
                                         color = BossTheme.colors.textSecondary,
-                                        fontSize = 14.sp
+                                        fontSize = 14.sp,
                                     )
                                 }
                             }
+
                             errorMessage != null -> {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(
                                         Icons.Outlined.Error,
                                         contentDescription = "Error",
                                         tint = BossTheme.colors.alert,
-                                        modifier = Modifier.size(18.dp)
+                                        modifier = Modifier.size(18.dp),
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
                                         text = "Error checking status",
                                         color = BossTheme.colors.alert,
                                         fontSize = 14.sp,
-                                        fontWeight = FontWeight.Medium
+                                        fontWeight = FontWeight.Medium,
                                     )
                                 }
                             }
+
                             isDefault == true -> {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(
                                         Icons.Outlined.CheckCircle,
                                         contentDescription = "Default",
                                         tint = BossTheme.colors.ok,
-                                        modifier = Modifier.size(18.dp)
+                                        modifier = Modifier.size(18.dp),
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
                                         text = "BOSS is your default browser",
                                         color = BossTheme.colors.textPrimary,
                                         fontSize = 14.sp,
-                                        fontWeight = FontWeight.Medium
+                                        fontWeight = FontWeight.Medium,
                                     )
                                 }
                             }
+
                             isDefault == false -> {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(
                                         Icons.Outlined.Cancel,
                                         contentDescription = "Not Default",
                                         tint = BossTheme.colors.textSecondary,
-                                        modifier = Modifier.size(18.dp)
+                                        modifier = Modifier.size(18.dp),
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
                                         text = "BOSS is not your default browser",
                                         color = BossTheme.colors.textSecondary,
                                         fontSize = 14.sp,
-                                        fontWeight = FontWeight.Medium
+                                        fontWeight = FontWeight.Medium,
                                     )
                                 }
                             }
@@ -169,16 +172,16 @@ fun DefaultBrowserSection() {
                                         onFailure = { error ->
                                             errorMessage = error.message
                                             isDefault = null
-                                        }
+                                        },
                                     )
                                 }
                             },
-                            colors = ButtonDefaults.textButtonColors(contentColor = BossTheme.colors.textSecondary)
+                            colors = ButtonDefaults.textButtonColors(contentColor = BossTheme.colors.textSecondary),
                         ) {
                             Icon(
                                 Icons.Outlined.Refresh,
                                 contentDescription = "Refresh",
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(16.dp),
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("Refresh", fontSize = 13.sp)
@@ -207,21 +210,22 @@ fun DefaultBrowserSection() {
                                         },
                                         onFailure = { error ->
                                             errorMessage = error.message
-                                        }
+                                        },
                                     )
                                 }
                             },
                             enabled = !isLoading && isDefault != true,
-                            colors = ButtonDefaults.textButtonColors(
-                                contentColor = BossTheme.colors.signal,
-                                disabledContentColor = BossTheme.colors.textSecondary
-                            )
+                            colors =
+                                ButtonDefaults.textButtonColors(
+                                    contentColor = BossTheme.colors.signal,
+                                    disabledContentColor = BossTheme.colors.textSecondary,
+                                ),
                         ) {
                             if (isLoading) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(16.dp),
                                     strokeWidth = 2.dp,
-                                    color = BossTheme.colors.signal
+                                    color = BossTheme.colors.signal,
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text("Setting...", fontSize = 13.sp)
@@ -229,7 +233,7 @@ fun DefaultBrowserSection() {
                                 Icon(
                                     Icons.AutoMirrored.Outlined.OpenInNew,
                                     contentDescription = "Set",
-                                    modifier = Modifier.size(16.dp)
+                                    modifier = Modifier.size(16.dp),
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text("Set as Default", fontSize = 13.sp)
@@ -244,7 +248,7 @@ fun DefaultBrowserSection() {
                     Text(
                         text = "Error: $errorMessage",
                         color = BossTheme.colors.alert,
-                        fontSize = 12.sp
+                        fontSize = 12.sp,
                     )
                 }
             }
@@ -257,17 +261,17 @@ fun DefaultBrowserSection() {
             modifier = Modifier.fillMaxWidth(),
             backgroundColor = BossTheme.colors.signal.copy(alpha = 0.1f),
             shape = RoundedCornerShape(6.dp),
-            elevation = 0.dp
+            elevation = 0.dp,
         ) {
             Row(
                 modifier = Modifier.padding(12.dp),
-                verticalAlignment = Alignment.Top
+                verticalAlignment = Alignment.Top,
             ) {
                 Icon(
                     Icons.Outlined.Info,
                     contentDescription = "Info",
                     tint = BossTheme.colors.signal,
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier.size(16.dp),
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Column {
@@ -275,17 +279,18 @@ fun DefaultBrowserSection() {
                         text = "Platform: $platformName",
                         fontSize = 12.sp,
                         color = BossTheme.colors.textPrimary,
-                        fontWeight = FontWeight.Medium
+                        fontWeight = FontWeight.Medium,
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = when (platformName) {
-                            "macOS" -> "BOSS will attempt to set itself as default automatically"
-                            "Windows" -> "Windows requires manual selection in Settings"
-                            else -> "Uses XDG standards for Linux desktop environments"
-                        },
+                        text =
+                            when (platformName) {
+                                "macOS" -> "BOSS will attempt to set itself as default automatically"
+                                "Windows" -> "Windows requires manual selection in Settings"
+                                else -> "Uses XDG standards for Linux desktop environments"
+                            },
                         fontSize = 11.sp,
-                        color = BossTheme.colors.textSecondary
+                        color = BossTheme.colors.textSecondary,
                     )
                 }
             }
@@ -301,14 +306,14 @@ fun DefaultBrowserSection() {
                     "Success",
                     color = BossTheme.colors.textPrimary,
                     fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.SemiBold,
                 )
             },
             text = {
                 Text(
                     "BOSS has been set as your default web browser. Links will now open in BOSS.",
                     color = BossTheme.colors.textSecondary,
-                    fontSize = 13.sp
+                    fontSize = 13.sp,
                 )
             },
             confirmButton = {
@@ -317,7 +322,7 @@ fun DefaultBrowserSection() {
                 }
             },
             backgroundColor = BossTheme.colors.panel,
-            contentColor = BossTheme.colors.textPrimary
+            contentColor = BossTheme.colors.textPrimary,
         )
     }
 
@@ -334,7 +339,7 @@ fun DefaultBrowserSection() {
                     },
                     color = BossTheme.colors.textPrimary,
                     fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.SemiBold,
                 )
             },
             text = {
@@ -346,38 +351,40 @@ fun DefaultBrowserSection() {
                             else -> "Please complete these steps in your system settings:"
                         },
                         color = BossTheme.colors.textSecondary,
-                        fontSize = 13.sp
+                        fontSize = 13.sp,
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
                         when (platformName) {
                             "macOS" -> {
                                 "1. Find \"Default web browser\" in Desktop & Dock\n" +
-                                "2. Click the dropdown menu\n" +
-                                "3. Select \"BOSS Console\" from the list"
+                                    "2. Click the dropdown menu\n" +
+                                    "3. Select \"BOSS Console\" from the list"
                             }
+
                             "Windows" -> {
                                 "1. Scroll down to \"Web browser\"\n" +
-                                "2. Click on the current browser\n" +
-                                "3. Select \"BOSS Console\" from the list\n" +
-                                "4. Close Settings"
+                                    "2. Click on the current browser\n" +
+                                    "3. Select \"BOSS Console\" from the list\n" +
+                                    "4. Close Settings"
                             }
+
                             else -> {
                                 "1. Open \"Default Applications\" in your desktop settings\n" +
-                                "2. Find \"Web Browser\"\n" +
-                                "3. Select \"BOSS Console\" from the list"
+                                    "2. Find \"Web Browser\"\n" +
+                                    "3. Select \"BOSS Console\" from the list"
                             }
                         },
                         color = BossTheme.colors.textPrimary,
                         fontSize = 13.sp,
-                        lineHeight = 22.sp
+                        lineHeight = 22.sp,
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
                         "After completing these steps, click \"Refresh\" to verify.",
                         color = BossTheme.colors.textSecondary,
                         fontSize = 12.sp,
-                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
                     )
                 }
             },
@@ -387,7 +394,7 @@ fun DefaultBrowserSection() {
                 }
             },
             backgroundColor = BossTheme.colors.panel,
-            contentColor = BossTheme.colors.textPrimary
+            contentColor = BossTheme.colors.textPrimary,
         )
     }
 }

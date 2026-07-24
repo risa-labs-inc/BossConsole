@@ -14,21 +14,24 @@ fun HorizontalBar(
     modifier: Modifier = Modifier,
     backgroundColor: Color = BossTheme.colors.raised,
     height: Dp,
-    content: @Composable BoxScope.() -> Unit
+    content: @Composable BoxScope.() -> Unit,
 ) {
     // Title bar with BOSS centered
     Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(height)
-            .background(backgroundColor),
-        content = content
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .height(height)
+                .background(backgroundColor),
+        content = content,
     )
 }
 
 @Composable
-fun HorizontalBarRow(modifier: Modifier = Modifier.fillMaxHeight(),
-                     vertical: Alignment.Vertical = Alignment.CenterVertically,
-                              content: @Composable RowScope.() -> Unit) {
+fun HorizontalBarRow(
+    modifier: Modifier = Modifier.fillMaxHeight(),
+    vertical: Alignment.Vertical = Alignment.CenterVertically,
+    content: @Composable RowScope.() -> Unit,
+) {
     Row(modifier = modifier, verticalAlignment = vertical, content = content)
 }

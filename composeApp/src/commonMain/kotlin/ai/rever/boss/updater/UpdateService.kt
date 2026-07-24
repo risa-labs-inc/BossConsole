@@ -15,7 +15,7 @@ data class GitHubRelease(
     val draft: Boolean = false,
     val prerelease: Boolean = false,
     val published_at: String,
-    val assets: List<GitHubAsset> = emptyList()
+    val assets: List<GitHubAsset> = emptyList(),
 )
 
 @Serializable
@@ -27,7 +27,7 @@ data class GitHubAsset(
     // Optional integrity hash. GitHub releases don't provide this (stays null);
     // the Supabase source populates it from the `app_releases` manifest so the
     // download can be verified.
-    val sha256: String? = null
+    val sha256: String? = null,
 )
 
 /**
@@ -43,7 +43,7 @@ data class UpdateInfo(
     val assetName: String = "",
     // Optional integrity hash for the asset (populated by the Supabase source).
     // When present, the download is verified against it before install.
-    val sha256: String? = null
+    val sha256: String? = null,
 ) {
     val isNewerVersionAvailable: Boolean
         get() = available && latestVersion.isNewerThan(currentVersion)
@@ -60,7 +60,7 @@ data class VersionInfo(
     val downloadUrl: String,
     val isDraft: Boolean,
     val isPrerelease: Boolean,
-    val sha256: String? = null
+    val sha256: String? = null,
 )
 
 /**
@@ -68,13 +68,21 @@ data class VersionInfo(
  */
 expect class UpdateService() {
     suspend fun checkForUpdates(): UpdateInfo
-    suspend fun downloadUpdate(updateInfo: UpdateInfo, onProgress: (progress: Float) -> Unit): String?
+
+    suspend fun downloadUpdate(
+        updateInfo: UpdateInfo,
+        onProgress: (progress: Float) -> Unit,
+    ): String?
+
     suspend fun installUpdate(downloadPath: String): Boolean
+
     fun getCurrentPlatform(): String
+
     fun getExpectedAssetName(version: Version): String
 
     // New methods for version selection
     suspend fun fetchAllReleases(): List<VersionInfo>
+
     suspend fun fetchVersionDetails(version: Version): UpdateInfo?
 }
 
@@ -83,6 +91,13 @@ expect class UpdateService() {
  */
 sealed class UpdateResult {
     object NoUpdateAvailable : UpdateResult()
-    data class UpdateAvailable(val updateInfo: UpdateInfo) : UpdateResult()
-    data class Error(val message: String, val exception: Exception? = null) : UpdateResult()
+
+    data class UpdateAvailable(
+        val updateInfo: UpdateInfo,
+    ) : UpdateResult()
+
+    data class Error(
+        val message: String,
+        val exception: Exception? = null,
+    ) : UpdateResult()
 }

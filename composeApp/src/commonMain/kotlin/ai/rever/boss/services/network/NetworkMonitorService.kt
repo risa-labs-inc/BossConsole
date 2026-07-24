@@ -37,8 +37,8 @@ object NetworkMonitorService {
 
     private const val CONNECTIVITY_CHECK_URL = "https://api.risaboss.com/health"
     private const val FALLBACK_CHECK_URL = "https://www.google.com"
-    private const val INITIAL_CONNECTION_TIMEOUT_MS = 10000  // 10s for initial check (slow networks)
-    private const val RETRY_CONNECTION_TIMEOUT_MS = 3000     // 3s for auto-retry (more responsive)
+    private const val INITIAL_CONNECTION_TIMEOUT_MS = 10000 // 10s for initial check (slow networks)
+    private const val RETRY_CONNECTION_TIMEOUT_MS = 3000 // 3s for auto-retry (more responsive)
     private const val AUTO_RETRY_INTERVAL_SECONDS = 5
 
     // Track if this is an auto-retry check (uses shorter timeout)
@@ -47,36 +47,40 @@ object NetworkMonitorService {
     /**
      * Check network connectivity
      */
-    suspend fun checkConnectivity(): Boolean = withContext(Dispatchers.IO) {
-        _networkState.value = NetworkState.Checking
+    suspend fun checkConnectivity(): Boolean =
+        withContext(Dispatchers.IO) {
+            _networkState.value = NetworkState.Checking
 
-        val isConnected = try {
-            // Race both probes: this check gates the first usable screen, and
-            // probing sequentially made the worst case timeout*2 (20s).
-            raceConnectivityProbes()
-        } catch (e: Exception) {
-            logger.warn(LogCategory.NETWORK, "Connectivity check failed", error = e)
-            false
+            val isConnected =
+                try {
+                    // Race both probes: this check gates the first usable screen, and
+                    // probing sequentially made the worst case timeout*2 (20s).
+                    raceConnectivityProbes()
+                } catch (e: Exception) {
+                    logger.warn(LogCategory.NETWORK, "Connectivity check failed", error = e)
+                    false
+                }
+
+            val currentState = _networkState.value
+            val retryAttempt =
+                if (currentState is NetworkState.Disconnected) {
+                    currentState.retryAttempt + 1
+                } else {
+                    0
+                }
+
+            _networkState.value =
+                if (isConnected) {
+                    NetworkState.Connected
+                } else {
+                    NetworkState.Disconnected(
+                        lastCheckTime = System.currentTimeMillis(),
+                        retryAttempt = retryAttempt,
+                    )
+                }
+
+            isConnected
         }
-
-        val currentState = _networkState.value
-        val retryAttempt = if (currentState is NetworkState.Disconnected) {
-            currentState.retryAttempt + 1
-        } else {
-            0
-        }
-
-        _networkState.value = if (isConnected) {
-            NetworkState.Connected
-        } else {
-            NetworkState.Disconnected(
-                lastCheckTime = System.currentTimeMillis(),
-                retryAttempt = retryAttempt
-            )
-        }
-
-        isConnected
-    }
 
     /**
      * Run all probes concurrently and return as soon as one succeeds, or when
@@ -92,20 +96,21 @@ object NetworkMonitorService {
         val result = CompletableDeferred<Boolean>()
         val probesRemaining = AtomicInteger(urls.size)
         for (url in urls) {
-            scope.launch {
-                if (performConnectivityCheck(url)) {
-                    result.complete(true)
+            scope
+                .launch {
+                    if (performConnectivityCheck(url)) {
+                        result.complete(true)
+                    }
+                }.invokeOnCompletion {
+                    // Runs on every completion path, including a probe cancelled
+                    // before its body executed (e.g. cleanup() cancelling the
+                    // scope), so await() can never hang: when the last probe
+                    // finishes without a success, fail. complete() is a no-op if
+                    // the result was already completed with true.
+                    if (probesRemaining.decrementAndGet() == 0) {
+                        result.complete(false)
+                    }
                 }
-            }.invokeOnCompletion {
-                // Runs on every completion path, including a probe cancelled
-                // before its body executed (e.g. cleanup() cancelling the
-                // scope), so await() can never hang: when the last probe
-                // finishes without a success, fail. complete() is a no-op if
-                // the result was already completed with true.
-                if (probesRemaining.decrementAndGet() == 0) {
-                    result.complete(false)
-                }
-            }
         }
         return result.await()
     }
@@ -139,24 +144,25 @@ object NetworkMonitorService {
         if (autoRetryJob?.isActive == true) return
 
         _isAutoRetrying.value = true
-        isAutoRetryCheck = true  // Use shorter timeout for retry checks
-        autoRetryJob = scope.launch {
-            while (isActive && _networkState.value !is NetworkState.Connected) {
-                for (i in AUTO_RETRY_INTERVAL_SECONDS downTo 1) {
-                    _nextRetryCountdown.value = i
-                    delay(1000)
-                }
-                _nextRetryCountdown.value = 0
+        isAutoRetryCheck = true // Use shorter timeout for retry checks
+        autoRetryJob =
+            scope.launch {
+                while (isActive && _networkState.value !is NetworkState.Connected) {
+                    for (i in AUTO_RETRY_INTERVAL_SECONDS downTo 1) {
+                        _nextRetryCountdown.value = i
+                        delay(1000)
+                    }
+                    _nextRetryCountdown.value = 0
 
-                val connected = checkConnectivity()
-                if (connected) {
-                    _isAutoRetrying.value = false
-                    isAutoRetryCheck = false
-                    onConnected()
-                    break
+                    val connected = checkConnectivity()
+                    if (connected) {
+                        _isAutoRetrying.value = false
+                        isAutoRetryCheck = false
+                        onConnected()
+                        break
+                    }
                 }
             }
-        }
     }
 
     /**

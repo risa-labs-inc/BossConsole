@@ -17,7 +17,6 @@ import kotlin.test.assertTrue
  * named-profile metadata persistence.
  */
 class BrowserServiceImplTest {
-
     @Test
     fun `closing one window drains only its browser handles`() {
         val registry = BrowserWindowOwnershipRegistry()
@@ -61,12 +60,13 @@ class BrowserServiceImplTest {
     }
 
     @Test
-    fun `browser creation requires a window cleanup owner`() = runBlocking {
-        assertNull(getBrowserServiceInstance(null))
-        assertNull(getBrowserServiceInstance(""))
-        assertNull(getBrowserServiceInstance("   "))
-        assertNull(BrowserServiceImpl.createBrowser(BrowserConfig()))
-    }
+    fun `browser creation requires a window cleanup owner`() =
+        runBlocking {
+            assertNull(getBrowserServiceInstance(null))
+            assertNull(getBrowserServiceInstance(""))
+            assertNull(getBrowserServiceInstance("   "))
+            assertNull(BrowserServiceImpl.createBrowser(BrowserConfig()))
+        }
 
     @Test
     fun `cookieDomain strips scheme, path, query, fragment and port`() {
@@ -91,23 +91,32 @@ class BrowserServiceImplTest {
         assertEquals("https___x.com_p", BrowserServiceImpl.sanitize("https://x.com/p"))
     }
 
-    private fun c(id: String, lastUsedMs: Long, sizeBytes: Long) =
-        BrowserServiceImpl.EvictCandidate(id, "rpa-named-$id", lastUsedMs, sizeBytes)
+    private fun c(
+        id: String,
+        lastUsedMs: Long,
+        sizeBytes: Long,
+    ) = BrowserServiceImpl.EvictCandidate(id, "rpa-named-$id", lastUsedMs, sizeBytes)
 
     @Test
     fun `selectEvictionVictims returns nothing when under cap`() {
-        val victims = BrowserServiceImpl.selectEvictionVictims(
-            listOf(c("a", 1, 100), c("b", 2, 100)), emptySet(), capBytes = 1000
-        )
+        val victims =
+            BrowserServiceImpl.selectEvictionVictims(
+                listOf(c("a", 1, 100), c("b", 2, 100)),
+                emptySet(),
+                capBytes = 1000,
+            )
         assertTrue(victims.isEmpty())
     }
 
     @Test
     fun `selectEvictionVictims evicts oldest first until under cap`() {
         // total 300 > cap 150: drop a (oldest) -> 200, still > 150 -> drop b -> 100, stop.
-        val victims = BrowserServiceImpl.selectEvictionVictims(
-            listOf(c("c", 30, 100), c("a", 10, 100), c("b", 20, 100)), emptySet(), capBytes = 150
-        )
+        val victims =
+            BrowserServiceImpl.selectEvictionVictims(
+                listOf(c("c", 30, 100), c("a", 10, 100), c("b", 20, 100)),
+                emptySet(),
+                capBytes = 150,
+            )
         assertEquals(listOf("a", "b"), victims)
     }
 
@@ -116,19 +125,22 @@ class BrowserServiceImplTest {
         // total 300 > cap 250: a is the oldest but in use, so it's skipped; evicting
         // b (next oldest, not in use) brings the total to 200 <= 250 and we stop —
         // d (newest) is kept and in-use a is never touched.
-        val victims = BrowserServiceImpl.selectEvictionVictims(
-            listOf(c("a", 10, 100), c("b", 20, 100), c("d", 30, 100)),
-            inUseNames = setOf("rpa-named-a"), capBytes = 250
-        )
+        val victims =
+            BrowserServiceImpl.selectEvictionVictims(
+                listOf(c("a", 10, 100), c("b", 20, 100), c("d", 30, 100)),
+                inUseNames = setOf("rpa-named-a"),
+                capBytes = 250,
+            )
         assertEquals(listOf("b"), victims)
     }
 
     @Test
     fun `meta json round-trips and tolerates missing diskBytes (back-compat)`() {
-        val list = listOf(
-            BrowserServiceImpl.NamedMeta("id1", "rpa-named-id1", "/p/1", 123L, 456L),
-            BrowserServiceImpl.NamedMeta("id2", "rpa-named-id2", "/p/2", 789L), // diskBytes default 0
-        )
+        val list =
+            listOf(
+                BrowserServiceImpl.NamedMeta("id1", "rpa-named-id1", "/p/1", 123L, 456L),
+                BrowserServiceImpl.NamedMeta("id2", "rpa-named-id2", "/p/2", 789L), // diskBytes default 0
+            )
         assertEquals(list, BrowserServiceImpl.decodeMeta(BrowserServiceImpl.encodeMeta(list)))
 
         // Metadata written before diskBytes existed must decode with diskBytes = 0.

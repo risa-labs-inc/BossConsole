@@ -7,7 +7,6 @@ import ai.rever.boss.plugin.api.SplitViewOperations
 class SplitViewServiceBridge(
     private val provider: SplitViewOperations,
 ) : SplitViewServiceGrpcKt.SplitViewServiceCoroutineImplBase() {
-
     override suspend fun openUrlInActivePanel(request: SplitViewOpenUrlRequest): Empty {
         provider.openUrlInActivePanel(request.url, request.title, request.forceNewTab)
         return Empty.getDefaultInstance()

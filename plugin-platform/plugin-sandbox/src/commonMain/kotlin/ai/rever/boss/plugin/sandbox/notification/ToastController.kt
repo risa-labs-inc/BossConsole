@@ -45,7 +45,7 @@ data class ToastMessage(
     val title: String,
     val message: String,
     val action: ToastAction? = null,
-    val duration: ToastDuration = ToastDuration.SHORT
+    val duration: ToastDuration = ToastDuration.SHORT,
 )
 
 /**
@@ -62,7 +62,7 @@ enum class ToastType {
     WARNING,
 
     /** Error message (red/negative color) */
-    ERROR
+    ERROR,
 }
 
 /**
@@ -76,7 +76,7 @@ enum class ToastDuration {
     LONG,
 
     /** Stays visible until dismissed by user or programmatically */
-    INDEFINITE
+    INDEFINITE,
 }
 
 /**
@@ -87,5 +87,5 @@ enum class ToastDuration {
  */
 data class ToastAction(
     val label: String,
-    val onClick: () -> Unit
+    val onClick: () -> Unit,
 )

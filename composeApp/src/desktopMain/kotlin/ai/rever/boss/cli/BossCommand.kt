@@ -1,5 +1,6 @@
 package ai.rever.boss.cli
 
+import ai.rever.boss.utils.DeepLinkHandler
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.Context
 import com.github.ajalt.clikt.core.NoOpCliktCommand
@@ -7,7 +8,6 @@ import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.parameters.arguments.argument
 import com.github.ajalt.clikt.parameters.arguments.optional
 import com.github.ajalt.clikt.parameters.options.option
-import ai.rever.boss.utils.DeepLinkHandler
 import java.net.URLEncoder
 
 /**
@@ -31,6 +31,7 @@ class BossCommand : NoOpCliktCommand(name = "boss") {
  */
 class BossUrlCommand : CliktCommand(name = "url") {
     override fun help(context: Context) = "Opens a URL in Fluck browser"
+
     val url by argument(help = "URL to open")
 
     override fun run() {
@@ -47,6 +48,7 @@ class BossUrlCommand : CliktCommand(name = "url") {
  */
 class BossWorkspaceCommand : CliktCommand(name = "workspace") {
     override fun help(context: Context) = "Loads a workspace configuration"
+
     val configPath by argument(help = "Path to workspace config file")
 
     override fun run() {
@@ -63,6 +65,7 @@ class BossWorkspaceCommand : CliktCommand(name = "workspace") {
  */
 class BossFileCommand : CliktCommand(name = "file") {
     override fun help(context: Context) = "Opens a file in the editor"
+
     val filePath by argument(help = "Path to file")
 
     override fun run() {
@@ -79,6 +82,7 @@ class BossFileCommand : CliktCommand(name = "file") {
  */
 class BossFolderCommand : CliktCommand(name = "folder") {
     override fun help(context: Context) = "Opens a folder in the codebase plugin"
+
     val folderPath by argument(help = "Path to folder")
 
     override fun run() {
@@ -97,16 +101,18 @@ class BossFolderCommand : CliktCommand(name = "folder") {
  */
 class BossTerminalCommand : CliktCommand(name = "terminal") {
     override fun help(context: Context) = "Opens a terminal tab"
+
     val command by option("-c", "--command", help = "Command to run in terminal")
 
     override fun run() {
         // Convert to deep link
-        val deepLink = if (command != null) {
-            val encodedCommand = URLEncoder.encode(command, "UTF-8")
-            "boss://terminal?command=$encodedCommand"
-        } else {
-            "boss://terminal"
-        }
+        val deepLink =
+            if (command != null) {
+                val encodedCommand = URLEncoder.encode(command, "UTF-8")
+                "boss://terminal?command=$encodedCommand"
+            } else {
+                "boss://terminal"
+            }
         DeepLinkHandler.processDeepLink(deepLink)
     }
 }
@@ -114,12 +120,11 @@ class BossTerminalCommand : CliktCommand(name = "terminal") {
 /**
  * Configures Clikt command structure.
  */
-fun createBossCLI(): BossCommand {
-    return BossCommand().subcommands(
+fun createBossCLI(): BossCommand =
+    BossCommand().subcommands(
         BossUrlCommand(),
         BossWorkspaceCommand(),
         BossFileCommand(),
         BossFolderCommand(),
-        BossTerminalCommand()
+        BossTerminalCommand(),
     )
-}

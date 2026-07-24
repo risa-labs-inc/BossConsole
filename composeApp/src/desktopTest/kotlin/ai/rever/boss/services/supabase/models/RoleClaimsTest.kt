@@ -12,17 +12,17 @@ import kotlin.test.assertTrue
  * alongside the existing role/admin claims.
  */
 class RoleClaimsTest {
-
     @Test
     fun `parses user_permissions, user_roles and is_admin`() {
-        val claims = RoleClaims.fromJWTClaims(
-            mapOf(
-                "user_role" to "boss_admin",
-                "user_roles" to listOf("boss_admin", "user"),
-                "is_admin" to false,
-                "user_permissions" to listOf("role.read", "role.create", "role.assign", "user.read"),
+        val claims =
+            RoleClaims.fromJWTClaims(
+                mapOf(
+                    "user_role" to "boss_admin",
+                    "user_roles" to listOf("boss_admin", "user"),
+                    "is_admin" to false,
+                    "user_permissions" to listOf("role.read", "role.create", "role.assign", "user.read"),
+                ),
             )
-        )
         assertNotNull(claims)
         assertEquals("boss_admin", claims.userRole)
         assertEquals(listOf("boss_admin", "user"), claims.userRoles)
@@ -36,13 +36,14 @@ class RoleClaimsTest {
 
     @Test
     fun `missing user_permissions yields empty permissions`() {
-        val claims = RoleClaims.fromJWTClaims(
-            mapOf(
-                "user_role" to "user",
-                "user_roles" to listOf("user"),
-                "is_admin" to false,
+        val claims =
+            RoleClaims.fromJWTClaims(
+                mapOf(
+                    "user_role" to "user",
+                    "user_roles" to listOf("user"),
+                    "is_admin" to false,
+                ),
             )
-        )
         assertNotNull(claims)
         assertTrue(claims.permissions.isEmpty())
         assertFalse(claims.hasPermission("user.read"))
@@ -50,11 +51,12 @@ class RoleClaimsTest {
 
     @Test
     fun `non-string entries in user_permissions are filtered out`() {
-        val claims = RoleClaims.fromJWTClaims(
-            mapOf(
-                "user_permissions" to listOf("role.read", 42, null, "user.read"),
+        val claims =
+            RoleClaims.fromJWTClaims(
+                mapOf(
+                    "user_permissions" to listOf("role.read", 42, null, "user.read"),
+                ),
             )
-        )
         assertNotNull(claims)
         assertEquals(listOf("role.read", "user.read"), claims.permissions)
     }
@@ -71,14 +73,15 @@ class RoleClaimsTest {
 
     @Test
     fun `admin claim parsed and effective permissions surfaced`() {
-        val claims = RoleClaims.fromJWTClaims(
-            mapOf(
-                "user_role" to "admin",
-                "user_roles" to listOf("admin", "user"),
-                "is_admin" to true,
-                "user_permissions" to listOf("role.delete", "finance.read", "user.read"),
+        val claims =
+            RoleClaims.fromJWTClaims(
+                mapOf(
+                    "user_role" to "admin",
+                    "user_roles" to listOf("admin", "user"),
+                    "is_admin" to true,
+                    "user_permissions" to listOf("role.delete", "finance.read", "user.read"),
+                ),
             )
-        )
         assertNotNull(claims)
         assertTrue(claims.isAdmin)
         assertTrue(claims.hasPermission("finance.read"))

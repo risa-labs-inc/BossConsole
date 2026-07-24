@@ -47,8 +47,10 @@ enum class ProcessType {
 enum class RestartPolicy {
     /** Never restart, even on failure */
     NEVER,
+
     /** Restart only on non-zero exit code */
     ON_FAILURE,
+
     /** Always restart, even on clean exit */
     ALWAYS,
 }

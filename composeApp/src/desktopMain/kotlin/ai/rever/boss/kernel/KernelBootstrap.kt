@@ -2,6 +2,7 @@ package ai.rever.boss.kernel
 
 import ai.rever.boss.ipc.BossIpcServer
 import ai.rever.boss.ipc.IpcAddressResolver
+import ai.rever.boss.ipc.proto.ProcessState
 import ai.rever.boss.ipc.services.EventBusServiceImpl
 import ai.rever.boss.ipc.services.KernelServiceImpl
 import ai.rever.boss.ipc.services.StateServiceImpl
@@ -15,7 +16,6 @@ import ai.rever.boss.process.ProcessRegistry
 import ai.rever.boss.process.ProcessSpawner
 import ai.rever.boss.process.ProcessType
 import ai.rever.boss.process.RestartPolicy
-import ai.rever.boss.ipc.proto.ProcessState
 import io.grpc.BindableService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -36,8 +36,9 @@ import java.util.concurrent.TimeUnit
  * 4. Monitors all child processes via ProcessMonitor, auto-respawns on failure
  * 5. Provides graceful shutdown cascade
  */
-class KernelBootstrap(private val mode: ProcessMode = ProcessMode.MONOLITH) {
-
+class KernelBootstrap(
+    private val mode: ProcessMode = ProcessMode.MONOLITH,
+) {
     companion object {
         /** Singleton instance, set during initialize(). Access from DefaultPlugin via reflection. */
         @Volatile
@@ -49,14 +50,22 @@ class KernelBootstrap(private val mode: ProcessMode = ProcessMode.MONOLITH) {
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
     // Infrastructure components (null when in MONOLITH mode)
-    var ipcServer: BossIpcServer? = null; private set
-    var processRegistry: ProcessRegistry? = null; private set
-    var processSpawner: ProcessSpawner? = null; private set
-    var processMonitor: ProcessMonitor? = null; private set
-    var kernelService: KernelServiceImpl? = null; private set
-    var eventBusService: EventBusServiceImpl? = null; private set
-    var stateService: StateServiceImpl? = null; private set
-    var kernelAddress: String? = null; private set
+    var ipcServer: BossIpcServer? = null
+        private set
+    var processRegistry: ProcessRegistry? = null
+        private set
+    var processSpawner: ProcessSpawner? = null
+        private set
+    var processMonitor: ProcessMonitor? = null
+        private set
+    var kernelService: KernelServiceImpl? = null
+        private set
+    var eventBusService: EventBusServiceImpl? = null
+        private set
+    var stateService: StateServiceImpl? = null
+        private set
+    var kernelAddress: String? = null
+        private set
 
     /**
      * Initialize the kernel infrastructure. No-op in MONOLITH mode.
@@ -78,50 +87,55 @@ class KernelBootstrap(private val mode: ProcessMode = ProcessMode.MONOLITH) {
         processMonitor = ProcessMonitor(registry, scope)
 
         // Register JVM shutdown hook to kill child processes on exit/crash
-        Runtime.getRuntime().addShutdownHook(Thread({
-            try {
-                logger.info("JVM shutdown hook: cleaning up child processes...")
-                processRegistry?.getAllProcesses()?.forEach { process ->
-                    try {
-                        process.destroy()
-                        process.process.waitFor(2, TimeUnit.SECONDS)
-                        if (process.isAlive) process.destroyForcibly()
-                    } catch (_: Exception) {
-                        process.destroyForcibly()
+        Runtime.getRuntime().addShutdownHook(
+            Thread({
+                try {
+                    logger.info("JVM shutdown hook: cleaning up child processes...")
+                    processRegistry?.getAllProcesses()?.forEach { process ->
+                        try {
+                            process.destroy()
+                            process.process.waitFor(2, TimeUnit.SECONDS)
+                            if (process.isAlive) process.destroyForcibly()
+                        } catch (_: Exception) {
+                            process.destroyForcibly()
+                        }
                     }
+                    ipcServer?.stop()
+                } catch (_: Exception) {
                 }
-                ipcServer?.stop()
-            } catch (_: Exception) {}
-        }, "kernel-shutdown-hook"))
+            }, "kernel-shutdown-hook"),
+        )
 
         // Create gRPC services
-        kernelService = KernelServiceImpl(
-            onProcessRegistered = { id, manifest, _ ->
-                logger.info("Process registered via IPC: {}", id)
-                registry.updateManifest(id, manifest)
-                registry.getProcess(id)?.updateState(ProcessState.PROCESS_STATE_RUNNING)
-            },
-            onShutdownRequested = { id, force ->
-                val process = registry.getProcess(id)
-                if (process != null) {
-                    if (force) process.destroyForcibly() else process.destroy()
-                    // Don't unregister — process monitor will detect the exit and
-                    // trigger auto-respawn if restartPolicy == ON_FAILURE
-                    true
-                } else {
-                    false
-                }
-            },
-        )
+        kernelService =
+            KernelServiceImpl(
+                onProcessRegistered = { id, manifest, _ ->
+                    logger.info("Process registered via IPC: {}", id)
+                    registry.updateManifest(id, manifest)
+                    registry.getProcess(id)?.updateState(ProcessState.PROCESS_STATE_RUNNING)
+                },
+                onShutdownRequested = { id, force ->
+                    val process = registry.getProcess(id)
+                    if (process != null) {
+                        if (force) process.destroyForcibly() else process.destroy()
+                        // Don't unregister — process monitor will detect the exit and
+                        // trigger auto-respawn if restartPolicy == ON_FAILURE
+                        true
+                    } else {
+                        false
+                    }
+                },
+            )
         eventBusService = EventBusServiceImpl()
         stateService = StateServiceImpl()
 
         // Start gRPC server
-        ipcServer = BossIpcServer(kernelAddress!!)
-            .addService(kernelService!!)
-            .addService(eventBusService!!)
-            .addService(stateService!!)
-            .start()
+        ipcServer =
+            BossIpcServer(kernelAddress!!)
+                .addService(kernelService!!)
+                .addService(eventBusService!!)
+                .addService(stateService!!)
+                .start()
 
         // Wire IPC event bridge to forward events cross-process (M8 fix)
         val bridge = IpcEventBridgeImpl(eventBusService!!, scope)
@@ -139,7 +153,9 @@ class KernelBootstrap(private val mode: ProcessMode = ProcessMode.MONOLITH) {
                     if (restartCount < process.config.maxRestarts) {
                         logger.info(
                             "Auto-respawning process {} (attempt {}/{})",
-                            failure.processId, restartCount + 1, process.config.maxRestarts
+                            failure.processId,
+                            restartCount + 1,
+                            process.config.maxRestarts,
                         )
                         try {
                             val newProcess = spawner.spawn(process.config)
@@ -151,7 +167,8 @@ class KernelBootstrap(private val mode: ProcessMode = ProcessMode.MONOLITH) {
                     } else {
                         logger.error(
                             "Process {} exceeded max restarts ({}), not respawning",
-                            failure.processId, process.config.maxRestarts
+                            failure.processId,
+                            process.config.maxRestarts,
                         )
                     }
                 } else {
@@ -182,19 +199,24 @@ class KernelBootstrap(private val mode: ProcessMode = ProcessMode.MONOLITH) {
      *   ./gradlew :boss-orchestrator:shadowJar :boss-service-auth:shadowJar
      * to build them first.
      */
-    private fun spawnServices(registry: ProcessRegistry, spawner: ProcessSpawner) {
-        val bossDataDir = System.getenv("BOSS_DATA_DIR")
-            ?: try {
-                ai.rever.boss.plugin.pathutils.BossDirectories.rootDir.absolutePath
-            } catch (_: Exception) {
-                "${System.getProperty("user.home")}/.boss"
-            }
+    private fun spawnServices(
+        registry: ProcessRegistry,
+        spawner: ProcessSpawner,
+    ) {
+        val bossDataDir =
+            System.getenv("BOSS_DATA_DIR")
+                ?: try {
+                    ai.rever.boss.plugin.pathutils.BossDirectories.rootDir.absolutePath
+                } catch (_: Exception) {
+                    "${System.getProperty("user.home")}/.boss"
+                }
 
         val orchestratorJar = "$bossDataDir/services/boss-orchestrator-all.jar"
         val authJar = "$bossDataDir/services/boss-service-auth-all.jar"
 
         spawnIfJarExists(
-            spawner, registry,
+            spawner,
+            registry,
             ProcessConfig(
                 processId = "boss-orchestrator",
                 processType = ProcessType.ORCHESTRATOR,
@@ -208,7 +230,8 @@ class KernelBootstrap(private val mode: ProcessMode = ProcessMode.MONOLITH) {
         )
 
         spawnIfJarExists(
-            spawner, registry,
+            spawner,
+            registry,
             ProcessConfig(
                 processId = "boss-service-auth",
                 processType = ProcessType.SERVICE,
@@ -223,7 +246,8 @@ class KernelBootstrap(private val mode: ProcessMode = ProcessMode.MONOLITH) {
 
         val masteryOrchestratorJar = "$bossDataDir/services/boss-mastery-orchestrator-all.jar"
         spawnIfJarExists(
-            spawner, registry,
+            spawner,
+            registry,
             ProcessConfig(
                 processId = "boss-mastery-orchestrator",
                 processType = ProcessType.SERVICE,
@@ -238,7 +262,8 @@ class KernelBootstrap(private val mode: ProcessMode = ProcessMode.MONOLITH) {
 
         val workspaceJar = "$bossDataDir/services/boss-service-workspace-all.jar"
         spawnIfJarExists(
-            spawner, registry,
+            spawner,
+            registry,
             ProcessConfig(
                 processId = "boss-service-workspace",
                 processType = ProcessType.SERVICE,
@@ -253,7 +278,8 @@ class KernelBootstrap(private val mode: ProcessMode = ProcessMode.MONOLITH) {
 
         val settingsJar = "$bossDataDir/services/boss-service-settings-all.jar"
         spawnIfJarExists(
-            spawner, registry,
+            spawner,
+            registry,
             ProcessConfig(
                 processId = "boss-service-settings",
                 processType = ProcessType.SERVICE,
@@ -268,7 +294,8 @@ class KernelBootstrap(private val mode: ProcessMode = ProcessMode.MONOLITH) {
 
         val filesystemJar = "$bossDataDir/services/boss-service-filesystem-all.jar"
         spawnIfJarExists(
-            spawner, registry,
+            spawner,
+            registry,
             ProcessConfig(
                 processId = "boss-service-filesystem",
                 processType = ProcessType.SERVICE,
@@ -283,7 +310,8 @@ class KernelBootstrap(private val mode: ProcessMode = ProcessMode.MONOLITH) {
 
         val terminalJar = "$bossDataDir/services/boss-app-terminal-all.jar"
         spawnIfJarExists(
-            spawner, registry,
+            spawner,
+            registry,
             ProcessConfig(
                 processId = "boss-app-terminal",
                 processType = ProcessType.APP,
@@ -298,7 +326,8 @@ class KernelBootstrap(private val mode: ProcessMode = ProcessMode.MONOLITH) {
 
         val editorJar = "$bossDataDir/services/boss-app-editor-all.jar"
         spawnIfJarExists(
-            spawner, registry,
+            spawner,
+            registry,
             ProcessConfig(
                 processId = "boss-app-editor",
                 processType = ProcessType.APP,
@@ -313,7 +342,8 @@ class KernelBootstrap(private val mode: ProcessMode = ProcessMode.MONOLITH) {
 
         val browserJar = "$bossDataDir/services/boss-app-browser-all.jar"
         spawnIfJarExists(
-            spawner, registry,
+            spawner,
+            registry,
             ProcessConfig(
                 processId = "boss-app-browser",
                 processType = ProcessType.APP,
@@ -345,7 +375,8 @@ class KernelBootstrap(private val mode: ProcessMode = ProcessMode.MONOLITH) {
         } else {
             logger.info(
                 "Service JAR not found for {} at {} — skipping spawn (build fat JARs first)",
-                config.processId, jarPath
+                config.processId,
+                jarPath,
             )
         }
     }

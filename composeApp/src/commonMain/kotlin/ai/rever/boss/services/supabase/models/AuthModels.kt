@@ -7,22 +7,25 @@ data class UserExistence(
     val exists: Boolean,
     val hasPasskeys: Boolean,
     val email: String,
-    val availableCredentials: List<AvailableWebAuthnCredential> = emptyList()
+    val availableCredentials: List<AvailableWebAuthnCredential> = emptyList(),
 )
 
 data class AvailableWebAuthnCredential(
     val credentialId: String,
     val displayName: String,
     val transports: List<String>,
-    val credentialType: WebAuthnCredentialType
+    val credentialType: WebAuthnCredentialType,
 )
 
-enum class WebAuthnCredentialType(val displayName: String, val icon: String) {
+enum class WebAuthnCredentialType(
+    val displayName: String,
+    val icon: String,
+) {
     PLATFORM("Touch ID / Face ID", "fingerprint"),
     CROSS_DEVICE("Authenticator App", "smartphone"),
     USB_KEY("USB Security Key", "usb"),
     NFC_KEY("NFC Security Key", "nfc"),
-    UNKNOWN("Security Credential", "security")
+    UNKNOWN("Security Credential", "security"),
 }
 
 /**
@@ -32,7 +35,7 @@ data class UserInfo(
     val id: String,
     val email: String,
     val createdAt: String,
-    val roleClaims: RoleClaims? = null
+    val roleClaims: RoleClaims? = null,
 ) {
     /**
      * Get user's primary role (defaults to "user" if no claims)
@@ -61,13 +64,11 @@ data class UserInfo(
     /**
      * Check if user has a specific role
      */
-    fun hasRole(role: String): Boolean =
-        roleClaims?.hasRole(role) ?: (role == "user")
+    fun hasRole(role: String): Boolean = roleClaims?.hasRole(role) ?: (role == "user")
 
     /**
      * Check if user has a specific effective permission.
      * Admins implicitly hold every permission.
      */
-    fun hasPermission(permission: String): Boolean =
-        isAdmin || (roleClaims?.hasPermission(permission) ?: false)
+    fun hasPermission(permission: String): Boolean = isAdmin || (roleClaims?.hasPermission(permission) ?: false)
 }

@@ -23,7 +23,7 @@ object BossDirectories {
 
     val isDevMode: Boolean =
         isTruthy(System.getProperty("boss.dev.mode")) ||
-        isTruthy(System.getenv("BOSS_DEV_MODE"))
+            isTruthy(System.getenv("BOSS_DEV_MODE"))
 
     private val rootDirName: String = if (isDevMode) ".boss_debug" else ".boss"
 

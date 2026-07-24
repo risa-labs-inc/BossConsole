@@ -1,16 +1,16 @@
 package ai.rever.boss.components.dialogs
 
 import ai.rever.boss.components.common.rememberFaviconLoader
-import ai.rever.boss.plugin.ui.BossTheme
-import ai.rever.boss.utils.logging.BossLogger
-import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
+import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.components.workspaces.WorkspaceManager
+import ai.rever.boss.plugin.api.TabIcon
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.topofmind.ActiveTab
 import ai.rever.boss.topofmind.TopOfMindStateHolder
-import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
-import ai.rever.boss.plugin.api.TabIcon
-import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.utils.WindowFocusManager
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -43,7 +43,7 @@ fun TopOfMindDialog(
     splitViewState: SplitViewState? = null, // Kept for backward compatibility but not used
     workspaceManager: WorkspaceManager,
     onDismiss: () -> Unit,
-    onTabSelect: (ActiveTab) -> Unit
+    onTabSelect: (ActiveTab) -> Unit,
 ) {
     var searchQuery by remember { mutableStateOf("") }
     val activeTabs by TopOfMindStateHolder.activeTabs.collectAsState()
@@ -75,20 +75,21 @@ fun TopOfMindDialog(
             }
         }
     }
-    
+
     // Filter tabs based on search query
-    val filteredTabs = if (searchQuery.isBlank()) {
-        activeTabs
-    } else {
-        activeTabs.filter { tab ->
-            val tabInfo = tab.tabInfo
-            tabInfo.title.contains(searchQuery, ignoreCase = true) ||
-            // Only check URL for Fluck tabs that have URL property
-            ((tabInfo as? FluckTabInfo)?.url?.contains(searchQuery, ignoreCase = true) == true) ||
-            tab.workspaceName.contains(searchQuery, ignoreCase = true)
+    val filteredTabs =
+        if (searchQuery.isBlank()) {
+            activeTabs
+        } else {
+            activeTabs.filter { tab ->
+                val tabInfo = tab.tabInfo
+                tabInfo.title.contains(searchQuery, ignoreCase = true) ||
+                    // Only check URL for Fluck tabs that have URL property
+                    ((tabInfo as? FluckTabInfo)?.url?.contains(searchQuery, ignoreCase = true) == true) ||
+                    tab.workspaceName.contains(searchQuery, ignoreCase = true)
+            }
         }
-    }
-    
+
     // Handle keyboard navigation
     LaunchedEffect(selectedIndex, filteredTabs.size) {
         if (filteredTabs.isNotEmpty()) {
@@ -104,87 +105,96 @@ fun TopOfMindDialog(
 
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            dismissOnBackPress = true,
-            dismissOnClickOutside = true
-        )
+        properties =
+            DialogProperties(
+                dismissOnBackPress = true,
+                dismissOnClickOutside = true,
+            ),
     ) {
         Surface(
-            modifier = Modifier
-                .width(600.dp)
-                .height(500.dp)
-                .onPreviewKeyEvent { event ->
-                    if (event.type == KeyEventType.KeyDown) {
-                        when (event.key) {
-                            Key.Escape -> {
-                                onDismiss()
-                                true
-                            }
-                            Key.DirectionUp -> {
-                                if (filteredTabs.isNotEmpty()) {
-                                    selectedIndex = (selectedIndex - 1).coerceAtLeast(0)
+            modifier =
+                Modifier
+                    .width(600.dp)
+                    .height(500.dp)
+                    .onPreviewKeyEvent { event ->
+                        if (event.type == KeyEventType.KeyDown) {
+                            when (event.key) {
+                                Key.Escape -> {
+                                    onDismiss()
+                                    true
                                 }
-                                true
-                            }
-                            Key.DirectionDown -> {
-                                if (filteredTabs.isNotEmpty()) {
-                                    selectedIndex = (selectedIndex + 1).coerceAtMost(filteredTabs.size - 1)
+
+                                Key.DirectionUp -> {
+                                    if (filteredTabs.isNotEmpty()) {
+                                        selectedIndex = (selectedIndex - 1).coerceAtLeast(0)
+                                    }
+                                    true
                                 }
-                                true
-                            }
-                            Key.Enter -> {
-                                if (filteredTabs.isNotEmpty() && selectedIndex < filteredTabs.size) {
-                                    handleTabSelect(filteredTabs[selectedIndex])
+
+                                Key.DirectionDown -> {
+                                    if (filteredTabs.isNotEmpty()) {
+                                        selectedIndex = (selectedIndex + 1).coerceAtMost(filteredTabs.size - 1)
+                                    }
+                                    true
                                 }
-                                true
+
+                                Key.Enter -> {
+                                    if (filteredTabs.isNotEmpty() && selectedIndex < filteredTabs.size) {
+                                        handleTabSelect(filteredTabs[selectedIndex])
+                                    }
+                                    true
+                                }
+
+                                else -> {
+                                    false
+                                }
                             }
-                            else -> false
+                        } else {
+                            false
                         }
-                    } else {
-                        false
-                    }
-                },
+                    },
             shape = RoundedCornerShape(8.dp),
             color = BossTheme.colors.panel,
-            elevation = 8.dp
+            elevation = 8.dp,
         ) {
             Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(16.dp)
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .padding(16.dp),
             ) {
                 // Title
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Icon(
                         Icons.Outlined.Language,
                         contentDescription = "Browser tabs",
                         tint = BossTheme.colors.textPrimary,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(20.dp),
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         "Top of mind",
                         color = BossTheme.colors.textPrimary,
                         fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
                     )
                     Spacer(modifier = Modifier.weight(1f))
                     Text(
                         "${filteredTabs.size} tab${if (filteredTabs.size != 1) "s" else ""}",
                         color = BossTheme.colors.textSecondary,
-                        fontSize = 12.sp
+                        fontSize = 12.sp,
                     )
                 }
-                
+
                 Spacer(modifier = Modifier.height(12.dp))
-                
+
                 // Search bar
                 OutlinedTextField(
                     value = searchQuery,
-                    onValueChange = { 
+                    onValueChange = {
                         searchQuery = it
                         selectedIndex = 0 // Reset selection when searching
                     },
@@ -193,69 +203,71 @@ fun TopOfMindDialog(
                         Text(
                             "Search tabs by title, type, or workspace...",
                             color = BossTheme.colors.textSecondary,
-                            fontSize = 14.sp
+                            fontSize = 14.sp,
                         )
                     },
                     leadingIcon = {
                         Icon(
                             Icons.Outlined.Search,
                             contentDescription = "Search",
-                            tint = BossTheme.colors.textSecondary
+                            tint = BossTheme.colors.textSecondary,
                         )
                     },
-                    colors = TextFieldDefaults.outlinedTextFieldColors(
-                        backgroundColor = BossTheme.colors.raised,
-                        focusedBorderColor = BossTheme.colors.line,
-                        unfocusedBorderColor = BossTheme.colors.line,
-                        textColor = BossTheme.colors.textPrimary,
-                        cursorColor = BossTheme.colors.textPrimary
-                    ),
-                    singleLine = true
+                    colors =
+                        TextFieldDefaults.outlinedTextFieldColors(
+                            backgroundColor = BossTheme.colors.raised,
+                            focusedBorderColor = BossTheme.colors.line,
+                            unfocusedBorderColor = BossTheme.colors.line,
+                            textColor = BossTheme.colors.textPrimary,
+                            cursorColor = BossTheme.colors.textPrimary,
+                        ),
+                    singleLine = true,
                 )
-                
+
                 Spacer(modifier = Modifier.height(12.dp))
-                
+
                 // Tabs list
                 if (filteredTabs.isEmpty()) {
                     Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(32.dp),
-                        contentAlignment = Alignment.Center
+                        modifier =
+                            Modifier
+                                .fillMaxSize()
+                                .padding(32.dp),
+                        contentAlignment = Alignment.Center,
                     ) {
                         Text(
                             text = if (searchQuery.isBlank()) "No active tabs found" else "No tabs matching \"$searchQuery\"",
                             color = BossTheme.colors.textSecondary,
-                            fontSize = 14.sp
+                            fontSize = 14.sp,
                         )
                     }
                 } else {
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         items(filteredTabs.size) { index ->
                             val activeTab = filteredTabs[index]
                             val isSelected = index == selectedIndex
-                            
+
                             ActiveTabDialogItem(
                                 activeTab = activeTab,
                                 isSelected = isSelected,
-                                onTabClick = { handleTabSelect(activeTab) }
+                                onTabClick = { handleTabSelect(activeTab) },
                             )
                         }
                     }
                 }
-                
+
                 Spacer(modifier = Modifier.height(8.dp))
-                
+
                 // Instructions
                 Text(
                     "↑↓ to navigate • Enter to select • Esc to close",
                     color = BossTheme.colors.textSecondary,
                     fontSize = 11.sp,
-                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
                 )
             }
         }
@@ -266,24 +278,26 @@ fun TopOfMindDialog(
 private fun ActiveTabDialogItem(
     activeTab: ActiveTab,
     isSelected: Boolean,
-    onTabClick: () -> Unit
+    onTabClick: () -> Unit,
 ) {
     // Load favicon using shared composable (with error handling and caching)
     val loadedFavicon = rememberFaviconLoader(activeTab.tabInfo)
 
     Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
-            .clickable { onTabClick() },
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
+                .clickable { onTabClick() },
         color = if (isSelected) BossTheme.colors.signal.copy(alpha = 0.3f) else BossTheme.colors.raised,
-        elevation = if (isSelected) 2.dp else 0.dp
+        elevation = if (isSelected) 2.dp else 0.dp,
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             // Display favicon if available, otherwise fallback icon
             loadedFavicon?.let { favicon ->
@@ -291,26 +305,29 @@ private fun ActiveTabDialogItem(
                 Image(
                     painter = favicon.asPainter(),
                     contentDescription = "Tab icon",
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier.size(16.dp),
                 )
             } ?: run {
                 // Fallback to appropriate vector icon based on tab type
-                val fallbackIcon = when (activeTab.tabInfo) {
-                    is FluckTabInfo -> Icons.Outlined.Language // Browser tabs
-                    else -> Icons.Outlined.Tab // Other tab types
-                }
+                val fallbackIcon =
+                    when (activeTab.tabInfo) {
+                        is FluckTabInfo -> Icons.Outlined.Language
+
+                        // Browser tabs
+                        else -> Icons.Outlined.Tab // Other tab types
+                    }
                 Icon(
                     fallbackIcon,
                     contentDescription = "Tab icon",
                     tint = if (isSelected) BossTheme.colors.textPrimary else BossTheme.colors.textSecondary,
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier.size(16.dp),
                 )
             }
-            
+
             Spacer(modifier = Modifier.width(12.dp))
-            
+
             Column(
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f),
             ) {
                 // Tab title
                 Text(
@@ -319,39 +336,44 @@ private fun ActiveTabDialogItem(
                     color = if (isSelected) BossTheme.colors.textPrimary else BossTheme.colors.textPrimary,
                     fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
                 )
-                
+
                 // URL or tab type info
-                val secondaryText = when (val tabInfo = activeTab.tabInfo) {
-                    is FluckTabInfo -> tabInfo.url
-                    else -> tabInfo.typeId.typeId // Show tab type for non-browser tabs
-                }
-                
+                val secondaryText =
+                    when (val tabInfo = activeTab.tabInfo) {
+                        is FluckTabInfo -> tabInfo.url
+                        else -> tabInfo.typeId.typeId // Show tab type for non-browser tabs
+                    }
+
                 if (secondaryText.isNotEmpty()) {
                     Text(
                         text = secondaryText,
                         fontSize = 12.sp,
-                        color = if (isSelected) BossTheme.colors.textSecondary.copy(alpha = 0.9f)
-                        else BossTheme.colors.textSecondary,
+                        color =
+                            if (isSelected) {
+                                BossTheme.colors.textSecondary.copy(alpha = 0.9f)
+                            } else {
+                                BossTheme.colors.textSecondary
+                            },
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
-            
+
             Spacer(modifier = Modifier.width(8.dp))
-            
+
             // Workspace badge
             Surface(
                 color = BossTheme.colors.line,
-                shape = RoundedCornerShape(12.dp)
+                shape = RoundedCornerShape(12.dp),
             ) {
                 Text(
                     text = activeTab.workspaceName,
                     fontSize = 10.sp,
                     color = BossTheme.colors.textSecondary,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                 )
             }
         }

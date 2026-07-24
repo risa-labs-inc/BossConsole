@@ -5,9 +5,9 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class ReleaseNotesMarkdownTest {
-
     // The shape our release workflow actually generates (see the 9.2.21 notes).
-    private val realNotes = """
+    private val realNotes =
+        """
         # 🚀 BOSS 9.2.21
 
         ## 📦 Downloads
@@ -17,7 +17,7 @@ class ReleaseNotesMarkdownTest {
         | **macOS** | Universal (Apple Silicon + Intel via Rosetta) | `BOSS-9.2.21-Universal.dmg` |
         | **Windows** | x64 | `BOSS-9.2.21.msi` |
         | **Windows** | ARM64 | `BOSS-9.2.21-arm64.msi` |
-    """.trimIndent()
+        """.trimIndent()
 
     @Test
     fun `parses generated release notes into heading and table blocks`() {
@@ -40,26 +40,27 @@ class ReleaseNotesMarkdownTest {
 
     @Test
     fun `parses lists, code fences, breaks, and paragraphs`() {
-        val blocks = parseReleaseNotes(
-            """
-            Intro line one
-            continues here.
+        val blocks =
+            parseReleaseNotes(
+                """
+                Intro line one
+                continues here.
 
-            - first fix
-            - second fix
-              - nested detail
-            1. step one
+                - first fix
+                - second fix
+                  - nested detail
+                1. step one
 
-            ---
+                ---
 
-            ```
-            some literal
-            ```
-            """.trimIndent()
-        )
+                ```
+                some literal
+                ```
+                """.trimIndent(),
+            )
         assertEquals(
             listOf("Intro line one continues here."),
-            blocks.filterIsInstance<NotesBlock.Paragraph>().map { it.text }
+            blocks.filterIsInstance<NotesBlock.Paragraph>().map { it.text },
         )
         val items = blocks.filterIsInstance<NotesBlock.ListItem>()
         assertEquals(listOf("•" to 0, "•" to 0, "•" to 1, "1." to 0), items.map { it.marker to it.indent })

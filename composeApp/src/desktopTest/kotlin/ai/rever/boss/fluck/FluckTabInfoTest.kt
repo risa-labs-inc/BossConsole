@@ -24,19 +24,17 @@ import kotlin.test.assertTrue
  * - Empty URL handling
  */
 class FluckTabInfoTest {
-
     private fun createTabInfo(
         url: String = "https://example.com",
-        currentUrl: String = url
-    ): FluckTabInfo {
-        return FluckTabInfo(
+        currentUrl: String = url,
+    ): FluckTabInfo =
+        FluckTabInfo(
             id = "test-tab",
             typeId = TabTypeId("fluck"),
             _title = "Test Tab",
             url = url,
-            _currentUrl = currentUrl
+            _currentUrl = currentUrl,
         )
-    }
 
     // ==================== URL NAVIGATION TESTS (Issue #379) ====================
 
@@ -218,7 +216,7 @@ class FluckTabInfoTest {
         readResults.forEach { url ->
             assertTrue(
                 url == "https://initial.com" || url.startsWith("https://page"),
-                "Invalid URL read: $url"
+                "Invalid URL read: $url",
             )
         }
     }
@@ -320,19 +318,21 @@ class FluckTabInfoTest {
 
     @Test
     fun `equals returns false for different ids`() {
-        val tab1 = FluckTabInfo(
-            id = "tab-1",
-            typeId = TabTypeId("fluck"),
-            _title = "Tab 1",
-            url = "https://a.com"
-        )
+        val tab1 =
+            FluckTabInfo(
+                id = "tab-1",
+                typeId = TabTypeId("fluck"),
+                _title = "Tab 1",
+                url = "https://a.com",
+            )
 
-        val tab2 = FluckTabInfo(
-            id = "tab-2",
-            typeId = TabTypeId("fluck"),
-            _title = "Tab 2",
-            url = "https://a.com"
-        )
+        val tab2 =
+            FluckTabInfo(
+                id = "tab-2",
+                typeId = TabTypeId("fluck"),
+                _title = "Tab 2",
+                url = "https://a.com",
+            )
 
         // Different ids should not be equal
         assertTrue(tab1 != tab2)
@@ -347,7 +347,7 @@ class FluckTabInfoTest {
         assertEquals(Icons.Outlined.Home, createTabInfo(url = "about:blank").icon)
         assertEquals(
             TabIcon.Vector(Icons.Outlined.Home),
-            createTabInfo(url = "about:blank").tabIcon
+            createTabInfo(url = "about:blank").tabIcon,
         )
     }
 
@@ -391,17 +391,20 @@ class FluckTabInfoTest {
         // The exact transform BossTabUpdateProvider.updateUrl applies when a
         // navigation lands on home: the previous page's title and favicon must
         // both be replaced by the home identity.
-        val onPage = FluckTabInfo(
-            id = "test-tab",
-            typeId = TabTypeId("fluck"),
-            _title = "Google",
-            url = "https://google.com",
-            faviconCacheKey = "stale-favicon-key"
-        )
+        val onPage =
+            FluckTabInfo(
+                id = "test-tab",
+                typeId = TabTypeId("fluck"),
+                _title = "Google",
+                url = "https://google.com",
+                faviconCacheKey = "stale-favicon-key",
+            )
 
-        val home = onPage.updateNavigation(FluckTabInfo.HOME_TITLE, "about:blank")
-            .updateTitle(FluckTabInfo.HOME_TITLE)
-            .updateFaviconCacheKey(null)
+        val home =
+            onPage
+                .updateNavigation(FluckTabInfo.HOME_TITLE, "about:blank")
+                .updateTitle(FluckTabInfo.HOME_TITLE)
+                .updateFaviconCacheKey(null)
 
         assertEquals(FluckTabInfo.HOME_TITLE, home.title)
         assertEquals(null, home.faviconCacheKey)
@@ -414,21 +417,23 @@ class FluckTabInfoTest {
     @Test
     fun `copy for split view preserves current URL as initial URL`() {
         // Create tab and navigate away from initial URL
-        val original = FluckTabInfo(
-            id = "original-tab",
-            typeId = TabTypeId("fluck"),
-            _title = "Original",
-            url = "https://initial.com"
-        )
+        val original =
+            FluckTabInfo(
+                id = "original-tab",
+                typeId = TabTypeId("fluck"),
+                _title = "Original",
+                url = "https://initial.com",
+            )
         original.navigateToPage("Current Page", "https://current.com")
 
         // Simulate split view copy with new ID and current URL
-        val splitCopy = original.copy(
-            id = "split-123",
-            url = original.currentUrl,  // Should be current URL
-            _currentUrl = original.currentUrl,
-            navigationHistory = original.navigationHistory.toMutableList()
-        )
+        val splitCopy =
+            original.copy(
+                id = "split-123",
+                url = original.currentUrl, // Should be current URL
+                _currentUrl = original.currentUrl,
+                navigationHistory = original.navigationHistory.toMutableList(),
+            )
 
         // Split copy should have current URL as both url and _currentUrl
         assertEquals("https://current.com", splitCopy.url)

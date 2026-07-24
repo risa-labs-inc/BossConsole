@@ -12,9 +12,8 @@ import ai.rever.boss.plugin.api.RoleWithPermissionsData
  * plugin modules while keeping the actual Supabase services in composeApp.
  */
 class RoleManagementProviderImpl : RoleManagementProvider {
-
-    override suspend fun getAllRoles(): Result<List<RoleInfoData>> {
-        return RoleCreationService.getAllRoles().map { roles ->
+    override suspend fun getAllRoles(): Result<List<RoleInfoData>> =
+        RoleCreationService.getAllRoles().map { roles ->
             roles.map { role ->
                 RoleInfoData(
                     id = role.id ?: "",
@@ -22,81 +21,76 @@ class RoleManagementProviderImpl : RoleManagementProvider {
                     description = role.description,
                     permissions = emptyList(), // Permissions are fetched separately
                     createdAt = 0L, // Role has string date
-                    isSystem = role.isSystem
+                    isSystem = role.isSystem,
                 )
             }
         }
-    }
 
-    override suspend fun getAllPermissions(): Result<List<PermissionInfoData>> {
-        return RoleCreationService.getAllPermissions().map { permissions ->
+    override suspend fun getAllPermissions(): Result<List<PermissionInfoData>> =
+        RoleCreationService.getAllPermissions().map { permissions ->
             permissions.map { perm ->
                 PermissionInfoData(
                     id = perm.id ?: "",
                     name = perm.name,
                     description = perm.description,
                     createdAt = 0L, // Permission has string date
-                    isSystem = perm.isSystem
+                    isSystem = perm.isSystem,
                 )
             }
         }
-    }
 
-    override suspend fun createRole(name: String, description: String?): Result<RoleInfoData> {
-        return RoleCreationService.createRole(name, description).map { role ->
+    override suspend fun createRole(
+        name: String,
+        description: String?,
+    ): Result<RoleInfoData> =
+        RoleCreationService.createRole(name, description).map { role ->
             RoleInfoData(
                 id = "",
                 name = role.name,
                 description = role.description,
                 permissions = emptyList(),
                 createdAt = 0L,
-                isSystem = role.isSystem
+                isSystem = role.isSystem,
             )
         }
-    }
 
-    override suspend fun createPermission(name: String, description: String?): Result<PermissionInfoData> {
-        return RoleCreationService.createPermission(name, description).map { perm ->
+    override suspend fun createPermission(
+        name: String,
+        description: String?,
+    ): Result<PermissionInfoData> =
+        RoleCreationService.createPermission(name, description).map { perm ->
             PermissionInfoData(
                 id = "",
                 name = perm.name,
                 description = perm.description,
                 createdAt = 0L,
-                isSystem = perm.isSystem
+                isSystem = perm.isSystem,
             )
         }
-    }
 
-    override suspend fun deleteRole(roleName: String): Result<Unit> {
-        return RoleCreationService.deleteRole(roleName)
-    }
+    override suspend fun deleteRole(roleName: String): Result<Unit> = RoleCreationService.deleteRole(roleName)
 
-    override suspend fun deletePermission(permissionName: String): Result<Unit> {
-        return RoleCreationService.deletePermission(permissionName)
-    }
+    override suspend fun deletePermission(permissionName: String): Result<Unit> = RoleCreationService.deletePermission(permissionName)
 
-    override suspend fun assignPermissionToRole(roleName: String, permissionName: String): Result<Unit> {
-        return RoleCreationService.assignPermissionToRole(roleName, permissionName)
-    }
+    override suspend fun assignPermissionToRole(
+        roleName: String,
+        permissionName: String,
+    ): Result<Unit> = RoleCreationService.assignPermissionToRole(roleName, permissionName)
 
-    override suspend fun removePermissionFromRole(roleName: String, permissionName: String): Result<Unit> {
-        return RoleCreationService.removePermissionFromRole(roleName, permissionName)
-    }
+    override suspend fun removePermissionFromRole(
+        roleName: String,
+        permissionName: String,
+    ): Result<Unit> = RoleCreationService.removePermissionFromRole(roleName, permissionName)
 
-    override suspend fun getRolePermissions(roleName: String): Result<RoleWithPermissionsData> {
-        return RoleCreationService.getRolePermissions(roleName).map { roleWithPerms ->
+    override suspend fun getRolePermissions(roleName: String): Result<RoleWithPermissionsData> =
+        RoleCreationService.getRolePermissions(roleName).map { roleWithPerms ->
             RoleWithPermissionsData(
                 roleName = roleWithPerms.roleName,
-                permissions = roleWithPerms.permissions
+                permissions = roleWithPerms.permissions,
             )
         }
-    }
 
-    override fun validateRoleName(roleName: String): String? {
-        return RoleCreationService.validateRoleName(roleName)
-    }
+    override fun validateRoleName(roleName: String): String? = RoleCreationService.validateRoleName(roleName)
 
-    override fun validatePermissionName(permissionName: String): String? {
-        return RoleCreationService.validatePermissionName(permissionName)
-    }
+    override fun validatePermissionName(permissionName: String): String? = RoleCreationService.validatePermissionName(permissionName)
 }

@@ -17,5 +17,5 @@ data class FocusModeSettings(
     val enabled: Boolean = false,
     val autoRevealEnabled: Boolean = true,
     val revealOffsetPx: Float = 30f,
-    val revealDelayMs: Long = 500L
+    val revealDelayMs: Long = 500L,
 )

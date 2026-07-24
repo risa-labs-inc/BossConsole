@@ -19,7 +19,6 @@ expect class ContextMenuHandler() {
     fun Modifier.applyContextMenuBehavior(
         showMenu: Boolean,
         setShowMenu: (Boolean) -> Unit,
-        setMenuPosition: (IntOffset) -> Unit
+        setMenuPosition: (IntOffset) -> Unit,
     ): Modifier
-
 }

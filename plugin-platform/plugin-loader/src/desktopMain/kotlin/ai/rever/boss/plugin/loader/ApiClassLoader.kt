@@ -36,9 +36,8 @@ import java.util.jar.JarFile
  */
 class ApiClassLoader(
     apiJarUrl: URL?,
-    parent: ClassLoader
+    parent: ClassLoader,
 ) : URLClassLoader(listOfNotNull(apiJarUrl).toTypedArray(), parent) {
-
     /**
      * Version of the api jar this loader serves (jar manifest
      * Implementation-Version, falling back to plugin.json), or null when no
@@ -66,54 +65,72 @@ class ApiClassLoader(
          * [pluginDir] (typically ~/.boss/plugins after bundled-copy and
          * reconciliation). Returns an empty loader when none is found.
          */
-        fun fromPluginDir(pluginDir: File, parent: ClassLoader): ApiClassLoader {
-            val candidates = pluginDir.listFiles { file ->
-                file.isFile && file.extension == "jar"
-            }.orEmpty().mapNotNull { jar ->
-                val manifest = try {
-                    PluginManifestReader.readFromJar(jar.absolutePath)
-                } catch (e: Exception) {
-                    // not a BOSS plugin jar
-                    logger.debug(
-                        LogCategory.SYSTEM,
-                        "Skipping jar without readable plugin manifest",
-                        mapOf("jar" to jar.name, "error" to e.toString()),
-                    )
-                    null
-                }
-                if (manifest?.pluginId == API_PLUGIN_ID) {
-                    val version = Version.parse(manifest.version)
-                    if (version != null) jar to version else null
-                } else null
-            }
+        fun fromPluginDir(
+            pluginDir: File,
+            parent: ClassLoader,
+        ): ApiClassLoader {
+            val candidates =
+                pluginDir
+                    .listFiles { file ->
+                        file.isFile && file.extension == "jar"
+                    }.orEmpty()
+                    .mapNotNull { jar ->
+                        val manifest =
+                            try {
+                                PluginManifestReader.readFromJar(jar.absolutePath)
+                            } catch (e: Exception) {
+                                // not a BOSS plugin jar
+                                logger.debug(
+                                    LogCategory.SYSTEM,
+                                    "Skipping jar without readable plugin manifest",
+                                    mapOf("jar" to jar.name, "error" to e.toString()),
+                                )
+                                null
+                            }
+                        if (manifest?.pluginId == API_PLUGIN_ID) {
+                            val version = Version.parse(manifest.version)
+                            if (version != null) jar to version else null
+                        } else {
+                            null
+                        }
+                    }
 
             val newest = candidates.maxByOrNull { it.second }
             if (newest == null) {
-                logger.warn(LogCategory.SYSTEM, "No boss-plugin-api jar found; API layer limited to host-compiled classes", mapOf(
-                    "pluginDir" to pluginDir.absolutePath
-                ))
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "No boss-plugin-api jar found; API layer limited to host-compiled classes",
+                    mapOf(
+                        "pluginDir" to pluginDir.absolutePath,
+                    ),
+                )
                 return ApiClassLoader(null, parent)
             }
 
             val loader = ApiClassLoader(newest.first.toURI().toURL(), parent)
-            logger.info(LogCategory.SYSTEM, "API layer resolved", mapOf(
-                "jar" to newest.first.name,
-                "apiVersion" to (loader.apiVersion ?: "unknown")
-            ))
+            logger.info(
+                LogCategory.SYSTEM,
+                "API layer resolved",
+                mapOf(
+                    "jar" to newest.first.name,
+                    "apiVersion" to (loader.apiVersion ?: "unknown"),
+                ),
+            )
             return loader
         }
 
         private fun readVersion(jar: File): String? {
-            val fromManifest = try {
-                JarFile(jar).use { it.manifest?.mainAttributes?.getValue("Implementation-Version") }
-            } catch (e: Exception) {
-                logger.debug(
-                    LogCategory.SYSTEM,
-                    "Could not read Implementation-Version from jar manifest",
-                    mapOf("jar" to jar.name, "error" to e.toString()),
-                )
-                null
-            }
+            val fromManifest =
+                try {
+                    JarFile(jar).use { it.manifest?.mainAttributes?.getValue("Implementation-Version") }
+                } catch (e: Exception) {
+                    logger.debug(
+                        LogCategory.SYSTEM,
+                        "Could not read Implementation-Version from jar manifest",
+                        mapOf("jar" to jar.name, "error" to e.toString()),
+                    )
+                    null
+                }
             if (!fromManifest.isNullOrBlank()) return fromManifest
 
             return try {

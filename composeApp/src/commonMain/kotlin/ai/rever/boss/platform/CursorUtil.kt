@@ -12,11 +12,10 @@ expect object CursorUtil {
      * Used for vertical dividers that can be dragged horizontally.
      */
     fun Modifier.cursorForHorizontalResize(): Modifier
-    
+
     /**
      * Changes the cursor to a vertical resize cursor when hovering.
      * Used for horizontal dividers that can be dragged vertically.
      */
     fun Modifier.cursorForVerticalResize(): Modifier
-
 }

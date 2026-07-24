@@ -15,7 +15,6 @@ import java.util.concurrent.ConcurrentHashMap
  * local sources when the same plugin exists in multiple repositories.
  */
 class PluginRepositoryManager {
-
     private val logger = BossLogger.forComponent("PluginRepositoryManager")
 
     /**
@@ -30,11 +29,15 @@ class PluginRepositoryManager {
      */
     fun addRepository(repository: PluginRepository) {
         repositories[repository.id] = repository
-        logger.info(LogCategory.SYSTEM, "Added repository", mapOf(
-            "id" to repository.id,
-            "name" to repository.name,
-            "isLocal" to repository.isLocal
-        ))
+        logger.info(
+            LogCategory.SYSTEM,
+            "Added repository",
+            mapOf(
+                "id" to repository.id,
+                "name" to repository.name,
+                "isLocal" to repository.isLocal,
+            ),
+        )
     }
 
     /**
@@ -44,9 +47,13 @@ class PluginRepositoryManager {
      */
     fun removeRepository(repositoryId: String) {
         repositories.remove(repositoryId)
-        logger.info(LogCategory.SYSTEM, "Removed repository", mapOf(
-            "id" to repositoryId
-        ))
+        logger.info(
+            LogCategory.SYSTEM,
+            "Removed repository",
+            mapOf(
+                "id" to repositoryId,
+            ),
+        )
     }
 
     /**
@@ -55,65 +62,61 @@ class PluginRepositoryManager {
      * @param repositoryId The repository ID
      * @return The repository, or null if not found
      */
-    fun getRepository(repositoryId: String): PluginRepository? {
-        return repositories[repositoryId]
-    }
+    fun getRepository(repositoryId: String): PluginRepository? = repositories[repositoryId]
 
     /**
      * Get all registered repositories.
      */
-    fun getAllRepositories(): List<PluginRepository> {
-        return repositories.values.toList()
-    }
+    fun getAllRepositories(): List<PluginRepository> = repositories.values.toList()
 
     /**
      * Get all local repositories.
      */
-    fun getLocalRepositories(): List<PluginRepository> {
-        return repositories.values.filter { it.isLocal }
-    }
+    fun getLocalRepositories(): List<PluginRepository> = repositories.values.filter { it.isLocal }
 
     /**
      * Get all remote repositories.
      */
-    fun getRemoteRepositories(): List<PluginRepository> {
-        return repositories.values.filter { !it.isLocal }
-    }
+    fun getRemoteRepositories(): List<PluginRepository> = repositories.values.filter { !it.isLocal }
 
     /**
      * List all plugins from all repositories.
      *
      * @return List of plugins with their source information
      */
-    suspend fun listAllPlugins(): Result<List<PluginWithSource>> = coroutineScope {
-        runCatching {
-            val results = repositories.values.map { repo ->
-                async {
-                    repo.listPlugins().getOrNull()?.map { plugin ->
-                        PluginWithSource(
-                            plugin = plugin,
-                            source = PluginSource(
-                                repositoryId = repo.id,
-                                repositoryName = repo.name,
-                                isLocal = repo.isLocal
-                            )
-                        )
-                    } ?: emptyList()
-                }
-            }.awaitAll()
+    suspend fun listAllPlugins(): Result<List<PluginWithSource>> =
+        coroutineScope {
+            runCatching {
+                val results =
+                    repositories.values
+                        .map { repo ->
+                            async {
+                                repo.listPlugins().getOrNull()?.map { plugin ->
+                                    PluginWithSource(
+                                        plugin = plugin,
+                                        source =
+                                            PluginSource(
+                                                repositoryId = repo.id,
+                                                repositoryName = repo.name,
+                                                isLocal = repo.isLocal,
+                                            ),
+                                    )
+                                } ?: emptyList()
+                            }
+                        }.awaitAll()
 
-            // Flatten and deduplicate (prefer local sources)
-            val pluginMap = mutableMapOf<String, PluginWithSource>()
-            results.flatten().forEach { pluginWithSource ->
-                val existing = pluginMap[pluginWithSource.plugin.pluginId]
-                if (existing == null || pluginWithSource.source.isLocal) {
-                    pluginMap[pluginWithSource.plugin.pluginId] = pluginWithSource
+                // Flatten and deduplicate (prefer local sources)
+                val pluginMap = mutableMapOf<String, PluginWithSource>()
+                results.flatten().forEach { pluginWithSource ->
+                    val existing = pluginMap[pluginWithSource.plugin.pluginId]
+                    if (existing == null || pluginWithSource.source.isLocal) {
+                        pluginMap[pluginWithSource.plugin.pluginId] = pluginWithSource
+                    }
                 }
+
+                pluginMap.values.toList()
             }
-
-            pluginMap.values.toList()
         }
-    }
 
     /**
      * Search for plugins across all repositories.
@@ -121,42 +124,46 @@ class PluginRepositoryManager {
      * @param filter Search filter
      * @return Aggregated search results
      */
-    suspend fun searchPlugins(filter: PluginSearchFilter): Result<PluginSearchResult> = coroutineScope {
-        runCatching {
-            val results = repositories.values.map { repo ->
-                async {
-                    repo.searchPlugins(filter).getOrNull()?.plugins?.map { plugin ->
-                        PluginWithSource(
-                            plugin = plugin,
-                            source = PluginSource(
-                                repositoryId = repo.id,
-                                repositoryName = repo.name,
-                                isLocal = repo.isLocal
-                            )
-                        )
-                    } ?: emptyList()
-                }
-            }.awaitAll()
+    suspend fun searchPlugins(filter: PluginSearchFilter): Result<PluginSearchResult> =
+        coroutineScope {
+            runCatching {
+                val results =
+                    repositories.values
+                        .map { repo ->
+                            async {
+                                repo.searchPlugins(filter).getOrNull()?.plugins?.map { plugin ->
+                                    PluginWithSource(
+                                        plugin = plugin,
+                                        source =
+                                            PluginSource(
+                                                repositoryId = repo.id,
+                                                repositoryName = repo.name,
+                                                isLocal = repo.isLocal,
+                                            ),
+                                    )
+                                } ?: emptyList()
+                            }
+                        }.awaitAll()
 
-            // Flatten and deduplicate
-            val pluginMap = mutableMapOf<String, PluginWithSource>()
-            results.flatten().forEach { pluginWithSource ->
-                val existing = pluginMap[pluginWithSource.plugin.pluginId]
-                if (existing == null || pluginWithSource.source.isLocal) {
-                    pluginMap[pluginWithSource.plugin.pluginId] = pluginWithSource
+                // Flatten and deduplicate
+                val pluginMap = mutableMapOf<String, PluginWithSource>()
+                results.flatten().forEach { pluginWithSource ->
+                    val existing = pluginMap[pluginWithSource.plugin.pluginId]
+                    if (existing == null || pluginWithSource.source.isLocal) {
+                        pluginMap[pluginWithSource.plugin.pluginId] = pluginWithSource
+                    }
                 }
+
+                val plugins = pluginMap.values.map { it.plugin }
+
+                PluginSearchResult(
+                    plugins = plugins,
+                    totalCount = plugins.size,
+                    page = filter.page,
+                    pageSize = filter.pageSize,
+                )
             }
-
-            val plugins = pluginMap.values.map { it.plugin }
-
-            PluginSearchResult(
-                plugins = plugins,
-                totalCount = plugins.size,
-                page = filter.page,
-                pageSize = filter.pageSize
-            )
         }
-    }
 
     /**
      * Get a plugin from any repository.
@@ -166,41 +173,44 @@ class PluginRepositoryManager {
      * @param pluginId The plugin ID
      * @return Plugin with source information, or null if not found
      */
-    suspend fun getPlugin(pluginId: String): Result<PluginWithSource?> = coroutineScope {
-        runCatching {
-            // Check local repositories first
-            for (repo in repositories.values.filter { it.isLocal }) {
-                val plugin = repo.getPlugin(pluginId).getOrNull()
-                if (plugin != null) {
-                    return@runCatching PluginWithSource(
-                        plugin = plugin,
-                        source = PluginSource(
-                            repositoryId = repo.id,
-                            repositoryName = repo.name,
-                            isLocal = true
+    suspend fun getPlugin(pluginId: String): Result<PluginWithSource?> =
+        coroutineScope {
+            runCatching {
+                // Check local repositories first
+                for (repo in repositories.values.filter { it.isLocal }) {
+                    val plugin = repo.getPlugin(pluginId).getOrNull()
+                    if (plugin != null) {
+                        return@runCatching PluginWithSource(
+                            plugin = plugin,
+                            source =
+                                PluginSource(
+                                    repositoryId = repo.id,
+                                    repositoryName = repo.name,
+                                    isLocal = true,
+                                ),
                         )
-                    )
+                    }
                 }
-            }
 
-            // Check remote repositories
-            for (repo in repositories.values.filter { !it.isLocal }) {
-                val plugin = repo.getPlugin(pluginId).getOrNull()
-                if (plugin != null) {
-                    return@runCatching PluginWithSource(
-                        plugin = plugin,
-                        source = PluginSource(
-                            repositoryId = repo.id,
-                            repositoryName = repo.name,
-                            isLocal = false
+                // Check remote repositories
+                for (repo in repositories.values.filter { !it.isLocal }) {
+                    val plugin = repo.getPlugin(pluginId).getOrNull()
+                    if (plugin != null) {
+                        return@runCatching PluginWithSource(
+                            plugin = plugin,
+                            source =
+                                PluginSource(
+                                    repositoryId = repo.id,
+                                    repositoryName = repo.name,
+                                    isLocal = false,
+                                ),
                         )
-                    )
+                    }
                 }
-            }
 
-            null
+                null
+            }
         }
-    }
 
     /**
      * Get the full version history of a plugin from its source repository.
@@ -213,19 +223,21 @@ class PluginRepositoryManager {
      * @param pluginId The plugin ID
      * @return Result with the list of versions (newest first), or empty if not found
      */
-    suspend fun getPluginVersions(pluginId: String): Result<List<PluginInfo>> = coroutineScope {
-        runCatching {
-            val orderedRepos = repositories.values.filter { it.isLocal } +
-                repositories.values.filter { !it.isLocal }
-            for (repo in orderedRepos) {
-                val versions = repo.getPluginVersions(pluginId).getOrNull()
-                if (!versions.isNullOrEmpty()) {
-                    return@runCatching versions
+    suspend fun getPluginVersions(pluginId: String): Result<List<PluginInfo>> =
+        coroutineScope {
+            runCatching {
+                val orderedRepos =
+                    repositories.values.filter { it.isLocal } +
+                        repositories.values.filter { !it.isLocal }
+                for (repo in orderedRepos) {
+                    val versions = repo.getPluginVersions(pluginId).getOrNull()
+                    if (!versions.isNullOrEmpty()) {
+                        return@runCatching versions
+                    }
                 }
+                emptyList()
             }
-            emptyList()
         }
-    }
 
     /**
      * Download a plugin from its source repository.
@@ -238,18 +250,20 @@ class PluginRepositoryManager {
     suspend fun downloadPlugin(
         pluginId: String,
         version: String? = null,
-        targetPath: String
+        targetPath: String,
     ): Result<String> {
         // Find the plugin and its source
-        val pluginWithSource = getPlugin(pluginId).getOrNull()
-            ?: return Result.failure(
-                PluginNotFoundException(pluginId, "any")
-            )
+        val pluginWithSource =
+            getPlugin(pluginId).getOrNull()
+                ?: return Result.failure(
+                    PluginNotFoundException(pluginId, "any"),
+                )
 
-        val repository = repositories[pluginWithSource.source.repositoryId]
-            ?: return Result.failure(
-                RepositoryException("Repository not found", pluginWithSource.source.repositoryId)
-            )
+        val repository =
+            repositories[pluginWithSource.source.repositoryId]
+                ?: return Result.failure(
+                    RepositoryException("Repository not found", pluginWithSource.source.repositoryId),
+                )
 
         return repository.downloadPlugin(pluginId, version, targetPath)
     }
@@ -273,17 +287,23 @@ class PluginRepositoryManager {
     /**
      * Refresh all repositories.
      */
-    suspend fun refreshAll(): Result<Unit> = coroutineScope {
-        runCatching {
-            repositories.values.map { repo ->
-                async { repo.refresh() }
-            }.awaitAll()
+    suspend fun refreshAll(): Result<Unit> =
+        coroutineScope {
+            runCatching {
+                repositories.values
+                    .map { repo ->
+                        async { repo.refresh() }
+                    }.awaitAll()
 
-            logger.info(LogCategory.SYSTEM, "Refreshed all repositories", mapOf(
-                "count" to repositories.size
-            ))
+                logger.info(
+                    LogCategory.SYSTEM,
+                    "Refreshed all repositories",
+                    mapOf(
+                        "count" to repositories.size,
+                    ),
+                )
+            }
         }
-    }
 
     /**
      * Check if any updates are available for installed plugins.
@@ -291,27 +311,29 @@ class PluginRepositoryManager {
      * @param installedPlugins Map of plugin ID to installed version
      * @return List of plugins with available updates
      */
-    suspend fun checkForUpdates(
-        installedPlugins: Map<String, String>
-    ): Result<List<PluginWithSource>> = coroutineScope {
-        runCatching {
-            val updates = mutableListOf<PluginWithSource>()
+    suspend fun checkForUpdates(installedPlugins: Map<String, String>): Result<List<PluginWithSource>> =
+        coroutineScope {
+            runCatching {
+                val updates = mutableListOf<PluginWithSource>()
 
-            for ((pluginId, installedVersion) in installedPlugins) {
-                val latestPlugin = getPlugin(pluginId).getOrNull()
-                if (latestPlugin != null && isNewerVersion(latestPlugin.plugin.version, installedVersion)) {
-                    updates.add(latestPlugin)
+                for ((pluginId, installedVersion) in installedPlugins) {
+                    val latestPlugin = getPlugin(pluginId).getOrNull()
+                    if (latestPlugin != null && isNewerVersion(latestPlugin.plugin.version, installedVersion)) {
+                        updates.add(latestPlugin)
+                    }
                 }
-            }
 
-            updates
+                updates
+            }
         }
-    }
 
     /**
      * Compare two version strings to determine if the first is newer.
      */
-    private fun isNewerVersion(version1: String, version2: String): Boolean {
+    private fun isNewerVersion(
+        version1: String,
+        version2: String,
+    ): Boolean {
         val v1Parts = version1.split(".").mapNotNull { it.toIntOrNull() }
         val v2Parts = version2.split(".").mapNotNull { it.toIntOrNull() }
 

@@ -43,9 +43,7 @@ object TabTreeState {
         _modifiedWorkspaces.value = current
     }
 
-    fun isWorkspaceModified(workspaceId: String): Boolean {
-        return _modifiedWorkspaces.value.contains(workspaceId)
-    }
+    fun isWorkspaceModified(workspaceId: String): Boolean = _modifiedWorkspaces.value.contains(workspaceId)
 
     // Track expanded sections (workspace:sectionPath) - sections collapsed by default
     private val _expandedSections = MutableStateFlow<Set<String>>(emptySet())
@@ -61,9 +59,7 @@ object TabTreeState {
         _expandedSections.value = current
     }
 
-    fun isSectionExpanded(sectionKey: String): Boolean {
-        return _expandedSections.value.contains(sectionKey)
-    }
+    fun isSectionExpanded(sectionKey: String): Boolean = _expandedSections.value.contains(sectionKey)
 }
 
 /**

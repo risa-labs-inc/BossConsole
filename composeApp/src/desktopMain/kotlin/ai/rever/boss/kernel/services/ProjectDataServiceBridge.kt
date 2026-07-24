@@ -10,22 +10,25 @@ import kotlinx.coroutines.flow.flow
 class ProjectDataServiceBridge(
     private val provider: ProjectDataProvider,
 ) : ProjectDataServiceGrpcKt.ProjectDataServiceCoroutineImplBase() {
-
-    override fun watchRecentProjects(request: Empty): Flow<ProjectListResponse> = flow {
-        provider.recentProjects.collect { projects ->
-            emit(
-                ProjectListResponse.newBuilder()
-                    .addAllProjects(projects.map { project ->
-                        ProjectProto.newBuilder()
-                            .setName(project.name)
-                            .setPath(project.path)
-                            .setLastOpened(project.lastOpened)
-                            .build()
-                    })
-                    .build()
-            )
+    override fun watchRecentProjects(request: Empty): Flow<ProjectListResponse> =
+        flow {
+            provider.recentProjects.collect { projects ->
+                emit(
+                    ProjectListResponse
+                        .newBuilder()
+                        .addAllProjects(
+                            projects.map { project ->
+                                ProjectProto
+                                    .newBuilder()
+                                    .setName(project.name)
+                                    .setPath(project.path)
+                                    .setLastOpened(project.lastOpened)
+                                    .build()
+                            },
+                        ).build(),
+                )
+            }
         }
-    }
 
     override suspend fun updateRecentProjects(request: ProjectProto): Empty {
         provider.updateRecentProjects(
@@ -33,7 +36,7 @@ class ProjectDataServiceBridge(
                 name = request.name,
                 path = request.path,
                 lastOpened = request.lastOpened,
-            )
+            ),
         )
         return Empty.getDefaultInstance()
     }
@@ -49,7 +52,7 @@ class ProjectDataServiceBridge(
                 name = request.name,
                 path = request.path,
                 lastOpened = request.lastOpened,
-            )
+            ),
         )
         return Empty.getDefaultInstance()
     }

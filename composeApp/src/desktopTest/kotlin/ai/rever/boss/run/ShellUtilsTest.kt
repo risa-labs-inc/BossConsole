@@ -13,11 +13,13 @@ import kotlin.test.assertEquals
  * branch on Windows runners.
  */
 class ShellUtilsTest {
-
     private val win = ShellUtils.isWindows
     private val sep = ShellUtils.commandSeparator
 
-    private fun expect(unix: String, windows: String): String = if (win) windows else unix
+    private fun expect(
+        unix: String,
+        windows: String,
+    ): String = if (win) windows else unix
 
     // ==================== commandSeparator ====================
 
@@ -60,7 +62,7 @@ class ShellUtilsTest {
     fun `double quote is escaped`() {
         assertEquals(
             expect(unix = "say \\\"hi\\\"", windows = "say `\"hi`\""),
-            ShellUtils.escapeForDoubleQuotes("say \"hi\"")
+            ShellUtils.escapeForDoubleQuotes("say \"hi\""),
         )
     }
 
@@ -68,7 +70,7 @@ class ShellUtilsTest {
     fun `dollar is escaped to block variable expansion`() {
         assertEquals(
             expect(unix = "\\\$HOME", windows = "`\$HOME"),
-            ShellUtils.escapeForDoubleQuotes("\$HOME")
+            ShellUtils.escapeForDoubleQuotes("\$HOME"),
         )
     }
 
@@ -76,7 +78,7 @@ class ShellUtilsTest {
     fun `command substitution via dollar-paren is neutralized`() {
         assertEquals(
             expect(unix = "\\\$(rm -rf ~)", windows = "`\$(rm -rf ~)"),
-            ShellUtils.escapeForDoubleQuotes("\$(rm -rf ~)")
+            ShellUtils.escapeForDoubleQuotes("\$(rm -rf ~)"),
         )
     }
 
@@ -84,7 +86,7 @@ class ShellUtilsTest {
     fun `backtick is escaped to block command substitution`() {
         assertEquals(
             expect(unix = "a\\`whoami\\`b", windows = "a``whoami``b"),
-            ShellUtils.escapeForDoubleQuotes("a`whoami`b")
+            ShellUtils.escapeForDoubleQuotes("a`whoami`b"),
         )
     }
 
@@ -93,7 +95,7 @@ class ShellUtilsTest {
         // PowerShell's escape character is the backtick; backslash is a literal there.
         assertEquals(
             expect(unix = "C:\\\\Temp", windows = "C:\\Temp"),
-            ShellUtils.escapeForDoubleQuotes("C:\\Temp")
+            ShellUtils.escapeForDoubleQuotes("C:\\Temp"),
         )
     }
 
@@ -101,7 +103,7 @@ class ShellUtilsTest {
     fun `exclamation is escaped on unix only - history expansion`() {
         assertEquals(
             expect(unix = "deploy\\!", windows = "deploy!"),
-            ShellUtils.escapeForDoubleQuotes("deploy!")
+            ShellUtils.escapeForDoubleQuotes("deploy!"),
         )
     }
 
@@ -111,7 +113,7 @@ class ShellUtilsTest {
         // so the two-char input backslash+quote becomes \\ + \" (four chars).
         assertEquals(
             expect(unix = "\\\\\\\"", windows = "\\`\""),
-            ShellUtils.escapeForDoubleQuotes("\\\"")
+            ShellUtils.escapeForDoubleQuotes("\\\""),
         )
     }
 
@@ -132,7 +134,7 @@ class ShellUtilsTest {
     fun `working directory is quoted and chained with the platform separator`() {
         assertEquals(
             "cd \"/Users/dev/My Project\"${sep}ls -la",
-            ShellUtils.buildCommandWithWorkingDirectory("ls -la", "/Users/dev/My Project")
+            ShellUtils.buildCommandWithWorkingDirectory("ls -la", "/Users/dev/My Project"),
         )
     }
 
@@ -141,9 +143,9 @@ class ShellUtilsTest {
         assertEquals(
             expect(
                 unix = "cd \"/data/\\\$USER files\" && ls",
-                windows = "cd \"/data/`\$USER files\"; ls"
+                windows = "cd \"/data/`\$USER files\"; ls",
             ),
-            ShellUtils.buildCommandWithWorkingDirectory("ls", "/data/\$USER files")
+            ShellUtils.buildCommandWithWorkingDirectory("ls", "/data/\$USER files"),
         )
     }
 

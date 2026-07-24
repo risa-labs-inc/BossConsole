@@ -12,7 +12,6 @@ import kotlin.test.assertTrue
  * (fresh ids, cross-platform basename, retitle-by-copy).
  */
 class JupyterTabInfoTest {
-
     @Test
     fun `create derives title from unix path basename`() {
         val tab = JupyterTabInfo.create("/home/me/analysis.ipynb")

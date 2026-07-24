@@ -94,7 +94,11 @@ interface BrowserService {
      * @param postData Bytes of the POST body to replay
      * @param contentType Content-Type header for [postData]
      */
-    fun stashPopupPost(url: String, postData: ByteArray, contentType: String) {
+    fun stashPopupPost(
+        url: String,
+        postData: ByteArray,
+        contentType: String,
+    ) {
         // Default: no-op for hosts that don't support POST preservation.
     }
 
@@ -107,7 +111,10 @@ interface BrowserService {
      * Create or refresh a persistent named profile and seed [auth] into it (so a
      * later [createBrowser] with the same `profileName` is pre-authenticated).
      */
-    suspend fun seedProfile(profileName: String, auth: BrowserAuthSpec?) {}
+    suspend fun seedProfile(
+        profileName: String,
+        auth: BrowserAuthSpec?,
+    ) {}
 
     /** Delete a persistent named profile. Returns false if unsupported or in use. */
     fun deleteProfile(profileName: String): Boolean = false

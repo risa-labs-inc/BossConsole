@@ -34,30 +34,26 @@ data class ScrollbarSettings(
      * Default: 6dp
      */
     val panelThickness: Int = 6,
-
     /**
      * Thickness of horizontal bar scrollbars in dp (Tab Bar, Bottom Bar).
      * Default: 2dp
      */
     val barThickness: Int = 2,
-
     /**
      * Whether to always show scrollbars or only when scrolling.
      * Default: false (show only when scrolling)
      */
     val alwaysShowScrollbars: Boolean = false,
-
     /**
      * Fade delay in milliseconds before scrollbar fades out after scrolling stops.
      * Default: 1500ms
      */
     val fadeDelayMs: Int = 1500,
-
     /**
      * Fade duration in milliseconds for scrollbar fade animation.
      * Default: 500ms
      */
-    val fadeDurationMs: Int = 500
+    val fadeDurationMs: Int = 500,
 ) {
     /**
      * Get panel thickness as Dp

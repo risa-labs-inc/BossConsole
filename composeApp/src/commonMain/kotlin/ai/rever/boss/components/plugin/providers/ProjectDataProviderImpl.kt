@@ -7,11 +7,11 @@ import ai.rever.boss.plugin.api.ProjectDataProvider
 import ai.rever.boss.window.Project
 import ai.rever.boss.window.WindowProjectState
 import ai.rever.boss.window.selectProjectInWindow
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 /**
@@ -19,9 +19,8 @@ import kotlinx.coroutines.launch
  * Converts between composeApp's Project type and plugin's ProjectData type.
  */
 class ProjectDataProviderImpl(
-    private val windowProjectState: WindowProjectState?
+    private val windowProjectState: WindowProjectState?,
 ) : ProjectDataProvider {
-
     private val scope = CoroutineScope(Dispatchers.Main)
 
     // Map ProjectState's recentProjects to plugin's ProjectData type
@@ -53,20 +52,22 @@ class ProjectDataProviderImpl(
                 projectPath = project.path,
                 previousProjectPath = previousPath,
                 windowId = windowProjectState?.windowId ?: "",
-            )
+            ),
         )
     }
 
     // Extension functions for type conversion
-    private fun Project.toProjectData(): ProjectData = ProjectData(
-        name = name,
-        path = path,
-        lastOpened = lastOpened
-    )
+    private fun Project.toProjectData(): ProjectData =
+        ProjectData(
+            name = name,
+            path = path,
+            lastOpened = lastOpened,
+        )
 
-    private fun ProjectData.toProject(): Project = Project(
-        name = name,
-        path = path,
-        lastOpened = lastOpened
-    )
+    private fun ProjectData.toProject(): Project =
+        Project(
+            name = name,
+            path = path,
+            lastOpened = lastOpened,
+        )
 }

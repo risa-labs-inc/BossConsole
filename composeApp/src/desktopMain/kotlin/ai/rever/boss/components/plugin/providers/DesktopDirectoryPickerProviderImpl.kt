@@ -14,7 +14,6 @@ import javax.swing.UIManager
  * Uses native file dialogs (AWT FileDialog on macOS, JFileChooser on Windows/Linux).
  */
 actual class DirectoryPickerProviderImpl : DirectoryPickerProvider {
-
     private val logger = BossLogger.forComponent("DirectoryPickerProvider")
 
     override fun pickDirectory(onResult: (String?) -> Unit) {
@@ -42,8 +41,10 @@ actual class DirectoryPickerProviderImpl : DirectoryPickerProvider {
                 // With a null owner the native dialog can open BEHIND the Compose
                 // window (or without activating the app), so a click looks like it
                 // did nothing. The active window here is the ComposeWindow (a Frame).
-                val owner = java.awt.KeyboardFocusManager
-                    .getCurrentKeyboardFocusManager().activeWindow as? Frame
+                val owner =
+                    java.awt.KeyboardFocusManager
+                        .getCurrentKeyboardFocusManager()
+                        .activeWindow as? Frame
                 val dialog = FileDialog(owner, "Select Project Directory", FileDialog.LOAD)
                 dialog.isAlwaysOnTop = true
                 dialog.isVisible = true
@@ -62,15 +63,18 @@ actual class DirectoryPickerProviderImpl : DirectoryPickerProvider {
                 }
             } else {
                 // For Windows/Linux, use JFileChooser
-                val fileChooser = javax.swing.JFileChooser().apply {
-                    fileSelectionMode = javax.swing.JFileChooser.DIRECTORIES_ONLY
-                    dialogTitle = "Select Project Directory"
-                    isAcceptAllFileFilterUsed = false
-                    currentDirectory = File(System.getProperty("user.home"))
-                }
+                val fileChooser =
+                    javax.swing.JFileChooser().apply {
+                        fileSelectionMode = javax.swing.JFileChooser.DIRECTORIES_ONLY
+                        dialogTitle = "Select Project Directory"
+                        isAcceptAllFileFilterUsed = false
+                        currentDirectory = File(System.getProperty("user.home"))
+                    }
 
-                val owner = java.awt.KeyboardFocusManager
-                    .getCurrentKeyboardFocusManager().activeWindow
+                val owner =
+                    java.awt.KeyboardFocusManager
+                        .getCurrentKeyboardFocusManager()
+                        .activeWindow
                 val result = fileChooser.showOpenDialog(owner)
 
                 if (result == javax.swing.JFileChooser.APPROVE_OPTION) {

@@ -1,12 +1,12 @@
 package ai.rever.boss.components.dialogs
 
+import ai.rever.boss.platform.rememberDirectoryPicker
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.ui.BossThemeController
-import ai.rever.boss.window.Project
-import ai.rever.boss.platform.rememberDirectoryPicker
 import ai.rever.boss.project.ProjectCreationService
 import ai.rever.boss.project.ValidationResult
 import ai.rever.boss.project.templates.ProjectTemplate
+import ai.rever.boss.window.Project
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
@@ -21,10 +21,10 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshotFlow
@@ -60,7 +60,7 @@ private val ErrorColor get() = BossThemeController.current.colors.alert
 @Composable
 fun NewProjectWizardDialog(
     onDismiss: () -> Unit,
-    onProjectCreated: (Project) -> Unit
+    onProjectCreated: (Project) -> Unit,
 ) {
     var wizardStep by remember { mutableStateOf<WizardStep>(WizardStep.TemplateSelection) }
 
@@ -71,60 +71,72 @@ fun NewProjectWizardDialog(
                 onDismiss()
             }
         },
-        properties = DialogProperties(
-            dismissOnClickOutside = wizardStep !is WizardStep.Creating,
-            dismissOnBackPress = wizardStep !is WizardStep.Creating,
-            usePlatformDefaultWidth = false
-        )
+        properties =
+            DialogProperties(
+                dismissOnClickOutside = wizardStep !is WizardStep.Creating,
+                dismissOnBackPress = wizardStep !is WizardStep.Creating,
+                usePlatformDefaultWidth = false,
+            ),
     ) {
         Box(
-            modifier = Modifier
-                .width(700.dp)
-                .heightIn(min = 500.dp, max = 650.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(BossTheme.colors.panel)
+            modifier =
+                Modifier
+                    .width(700.dp)
+                    .heightIn(min = 500.dp, max = 650.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(BossTheme.colors.panel),
         ) {
             when (val step = wizardStep) {
-                is WizardStep.TemplateSelection -> TemplateSelectionStep(
-                    onDismiss = onDismiss,
-                    onTemplateSelected = { template ->
-                        wizardStep = WizardStep.Configuration(template)
-                    }
-                )
+                is WizardStep.TemplateSelection -> {
+                    TemplateSelectionStep(
+                        onDismiss = onDismiss,
+                        onTemplateSelected = { template ->
+                            wizardStep = WizardStep.Configuration(template)
+                        },
+                    )
+                }
 
-                is WizardStep.Configuration -> ConfigurationStep(
-                    template = step.template,
-                    onBack = { wizardStep = WizardStep.TemplateSelection },
-                    onCreate = { name, path ->
-                        wizardStep = WizardStep.Creating(name, path, step.template)
-                    }
-                )
+                is WizardStep.Configuration -> {
+                    ConfigurationStep(
+                        template = step.template,
+                        onBack = { wizardStep = WizardStep.TemplateSelection },
+                        onCreate = { name, path ->
+                            wizardStep = WizardStep.Creating(name, path, step.template)
+                        },
+                    )
+                }
 
-                is WizardStep.Creating -> CreatingStep(
-                    name = step.name,
-                    path = step.path,
-                    template = step.template,
-                    onSuccess = { project ->
-                        wizardStep = WizardStep.Success(project)
-                    },
-                    onError = { message ->
-                        wizardStep = WizardStep.Error(message)
-                    }
-                )
+                is WizardStep.Creating -> {
+                    CreatingStep(
+                        name = step.name,
+                        path = step.path,
+                        template = step.template,
+                        onSuccess = { project ->
+                            wizardStep = WizardStep.Success(project)
+                        },
+                        onError = { message ->
+                            wizardStep = WizardStep.Error(message)
+                        },
+                    )
+                }
 
-                is WizardStep.Success -> SuccessStep(
-                    project = step.project,
-                    onOpenProject = {
-                        onProjectCreated(step.project)
-                        onDismiss()
-                    }
-                )
+                is WizardStep.Success -> {
+                    SuccessStep(
+                        project = step.project,
+                        onOpenProject = {
+                            onProjectCreated(step.project)
+                            onDismiss()
+                        },
+                    )
+                }
 
-                is WizardStep.Error -> ErrorStep(
-                    message = step.message,
-                    onRetry = { wizardStep = WizardStep.TemplateSelection },
-                    onClose = onDismiss
-                )
+                is WizardStep.Error -> {
+                    ErrorStep(
+                        message = step.message,
+                        onRetry = { wizardStep = WizardStep.TemplateSelection },
+                        onClose = onDismiss,
+                    )
+                }
             }
         }
     }
@@ -136,43 +148,44 @@ fun NewProjectWizardDialog(
 @Composable
 private fun TemplateSelectionStep(
     onDismiss: () -> Unit,
-    onTemplateSelected: (ProjectTemplate) -> Unit
+    onTemplateSelected: (ProjectTemplate) -> Unit,
 ) {
     var selectedTemplate by remember { mutableStateOf<ProjectTemplate?>(null) }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(32.dp)
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .padding(32.dp),
     ) {
         // Header with close button
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Column {
                 Text(
                     text = "New Project",
                     fontSize = 20.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = BossTheme.colors.textPrimary
+                    color = BossTheme.colors.textPrimary,
                 )
                 Text(
                     text = "Select a project template to get started",
                     fontSize = 13.sp,
-                    color = BossTheme.colors.textSecondary
+                    color = BossTheme.colors.textSecondary,
                 )
             }
 
             IconButton(
                 onClick = onDismiss,
-                modifier = Modifier.size(32.dp)
+                modifier = Modifier.size(32.dp),
             ) {
                 Icon(
                     imageVector = Icons.Outlined.Close,
                     contentDescription = "Close",
-                    tint = BossTheme.colors.textSecondary
+                    tint = BossTheme.colors.textSecondary,
                 )
             }
         }
@@ -184,13 +197,13 @@ private fun TemplateSelectionStep(
             columns = GridCells.Fixed(3),
             modifier = Modifier.weight(1f),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             items(ProjectTemplate.all) { template ->
                 TemplateCard(
                     template = template,
                     isSelected = selectedTemplate == template,
-                    onClick = { selectedTemplate = template }
+                    onClick = { selectedTemplate = template },
                 )
             }
         }
@@ -201,13 +214,14 @@ private fun TemplateSelectionStep(
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             TextButton(
                 onClick = onDismiss,
-                colors = ButtonDefaults.textButtonColors(
-                    contentColor = BossTheme.colors.textSecondary
-                )
+                colors =
+                    ButtonDefaults.textButtonColors(
+                        contentColor = BossTheme.colors.textSecondary,
+                    ),
             ) {
                 Text("Cancel")
             }
@@ -217,14 +231,15 @@ private fun TemplateSelectionStep(
             Button(
                 onClick = { selectedTemplate?.let { onTemplateSelected(it) } },
                 enabled = selectedTemplate != null,
-                colors = ButtonDefaults.buttonColors(
-                    backgroundColor = Accent,
-                    contentColor = BossTheme.colors.onSignal,
-                    disabledBackgroundColor = BossTheme.colors.line,
-                    disabledContentColor = BossTheme.colors.textSecondary
-                ),
+                colors =
+                    ButtonDefaults.buttonColors(
+                        backgroundColor = Accent,
+                        contentColor = BossTheme.colors.onSignal,
+                        disabledBackgroundColor = BossTheme.colors.line,
+                        disabledContentColor = BossTheme.colors.textSecondary,
+                    ),
                 shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.height(40.dp)
+                modifier = Modifier.height(40.dp),
             ) {
                 Text("Next", fontWeight = FontWeight.Medium)
             }
@@ -239,72 +254,78 @@ private fun TemplateSelectionStep(
 private fun TemplateCard(
     template: ProjectTemplate,
     isSelected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
 
     val scale by animateFloatAsState(
         targetValue = if (isHovered) 1.03f else 1f,
-        animationSpec = spring(dampingRatio = 0.6f)
+        animationSpec = spring(dampingRatio = 0.6f),
     )
 
-    val backgroundColor = when {
-        isSelected -> Accent.copy(alpha = 0.15f)
-        isHovered -> HoverBackground
-        else -> BossTheme.colors.raised
-    }
+    val backgroundColor =
+        when {
+            isSelected -> Accent.copy(alpha = 0.15f)
+            isHovered -> HoverBackground
+            else -> BossTheme.colors.raised
+        }
 
-    val iconColor = when {
-        isSelected -> Accent
-        isHovered -> BossTheme.colors.textPrimary
-        else -> BossTheme.colors.textSecondary
-    }
+    val iconColor =
+        when {
+            isSelected -> Accent
+            isHovered -> BossTheme.colors.textPrimary
+            else -> BossTheme.colors.textSecondary
+        }
 
     Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(140.dp)
-            .scale(scale)
-            .clip(RoundedCornerShape(12.dp))
-            .background(backgroundColor)
-            .then(
-                if (isSelected || isHovered) {
-                    Modifier.background(
-                        color = Color.Transparent,
-                        shape = RoundedCornerShape(12.dp)
-                    )
-                } else Modifier
-            )
-            .clickable { onClick() }
-            .hoverable(interactionSource)
-            .padding(1.dp)
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .height(140.dp)
+                .scale(scale)
+                .clip(RoundedCornerShape(12.dp))
+                .background(backgroundColor)
+                .then(
+                    if (isSelected || isHovered) {
+                        Modifier.background(
+                            color = Color.Transparent,
+                            shape = RoundedCornerShape(12.dp),
+                        )
+                    } else {
+                        Modifier
+                    },
+                ).clickable { onClick() }
+                .hoverable(interactionSource)
+                .padding(1.dp),
     ) {
         // Border effect
         if (isSelected) {
             Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(
-                        color = Accent.copy(alpha = 0.3f),
-                        shape = RoundedCornerShape(12.dp)
-                    )
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            color = Accent.copy(alpha = 0.3f),
+                            shape = RoundedCornerShape(12.dp),
+                        ),
             )
         }
 
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+            verticalArrangement = Arrangement.Center,
         ) {
             Icon(
                 imageVector = template.icon,
                 contentDescription = template.name,
                 modifier = Modifier.size(32.dp),
-                tint = iconColor
+                tint = iconColor,
             )
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -316,7 +337,7 @@ private fun TemplateCard(
                 color = if (isSelected || isHovered) BossTheme.colors.textPrimary else BossTheme.colors.textSecondary,
                 textAlign = TextAlign.Center,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
             )
 
             Spacer(modifier = Modifier.height(6.dp))
@@ -328,7 +349,7 @@ private fun TemplateCard(
                 textAlign = TextAlign.Center,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                lineHeight = 16.sp
+                lineHeight = 16.sp,
             )
         }
     }
@@ -341,16 +362,17 @@ private fun TemplateCard(
 private fun ConfigurationStep(
     template: ProjectTemplate,
     onBack: () -> Unit,
-    onCreate: (name: String, path: String) -> Unit
+    onCreate: (name: String, path: String) -> Unit,
 ) {
     var projectName by remember { mutableStateOf("") }
     var projectLocation by remember { mutableStateOf(ProjectCreationService.getDefaultProjectsDirectory()) }
     var validationError by remember { mutableStateOf<String?>(null) }
 
     // Directory picker
-    val directoryPicker = rememberDirectoryPicker { path ->
-        path?.let { projectLocation = it }
-    }
+    val directoryPicker =
+        rememberDirectoryPicker { path ->
+            path?.let { projectLocation = it }
+        }
 
     // Debounce validation to avoid excessive I/O on every keystroke (300ms delay)
     @OptIn(FlowPreview::class)
@@ -358,35 +380,37 @@ private fun ConfigurationStep(
         snapshotFlow { projectName to projectLocation }
             .debounce(300L)
             .collectLatest { (name, location) ->
-                validationError = if (name.isNotBlank()) {
-                    when (val result = ProjectCreationService.validateProjectLocation(location, name)) {
-                        is ValidationResult.Valid -> null
-                        is ValidationResult.Invalid -> result.reason
+                validationError =
+                    if (name.isNotBlank()) {
+                        when (val result = ProjectCreationService.validateProjectLocation(location, name)) {
+                            is ValidationResult.Valid -> null
+                            is ValidationResult.Invalid -> result.reason
+                        }
+                    } else {
+                        null
                     }
-                } else {
-                    null
-                }
             }
     }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(32.dp)
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .padding(32.dp),
     ) {
         // Header with back button
         Row(
             modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(
                 onClick = onBack,
-                modifier = Modifier.size(36.dp)
+                modifier = Modifier.size(36.dp),
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
                     contentDescription = "Back",
-                    tint = BossTheme.colors.textSecondary
+                    tint = BossTheme.colors.textSecondary,
                 )
             }
 
@@ -397,12 +421,12 @@ private fun ConfigurationStep(
                     text = "New ${template.name} Project",
                     fontSize = 20.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = BossTheme.colors.textPrimary
+                    color = BossTheme.colors.textPrimary,
                 )
                 Text(
                     text = template.description,
                     fontSize = 13.sp,
-                    color = BossTheme.colors.textSecondary
+                    color = BossTheme.colors.textSecondary,
                 )
             }
         }
@@ -414,7 +438,7 @@ private fun ConfigurationStep(
             text = "Project Name",
             fontSize = 14.sp,
             fontWeight = FontWeight.Medium,
-            color = BossTheme.colors.textPrimary
+            color = BossTheme.colors.textPrimary,
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -424,17 +448,18 @@ private fun ConfigurationStep(
             onValueChange = { projectName = it },
             placeholder = { Text("my-project", color = BossTheme.colors.textSecondary.copy(alpha = 0.5f)) },
             modifier = Modifier.fillMaxWidth(),
-            colors = TextFieldDefaults.outlinedTextFieldColors(
-                textColor = BossTheme.colors.textPrimary,
-                cursorColor = Accent,
-                focusedBorderColor = Accent,
-                unfocusedBorderColor = BossTheme.colors.line,
-                errorBorderColor = ErrorColor,
-                backgroundColor = BossTheme.colors.raised
-            ),
+            colors =
+                TextFieldDefaults.outlinedTextFieldColors(
+                    textColor = BossTheme.colors.textPrimary,
+                    cursorColor = Accent,
+                    focusedBorderColor = Accent,
+                    unfocusedBorderColor = BossTheme.colors.line,
+                    errorBorderColor = ErrorColor,
+                    backgroundColor = BossTheme.colors.raised,
+                ),
             singleLine = true,
             isError = validationError != null && projectName.isNotBlank(),
-            shape = RoundedCornerShape(8.dp)
+            shape = RoundedCornerShape(8.dp),
         )
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -444,45 +469,47 @@ private fun ConfigurationStep(
             text = "Location",
             fontSize = 14.sp,
             fontWeight = FontWeight.Medium,
-            color = BossTheme.colors.textPrimary
+            color = BossTheme.colors.textPrimary,
         )
 
         Spacer(modifier = Modifier.height(8.dp))
 
         Row(
             modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             OutlinedTextField(
                 value = projectLocation,
                 onValueChange = { projectLocation = it },
                 modifier = Modifier.weight(1f),
-                colors = TextFieldDefaults.outlinedTextFieldColors(
-                    textColor = BossTheme.colors.textPrimary,
-                    cursorColor = Accent,
-                    focusedBorderColor = Accent,
-                    unfocusedBorderColor = BossTheme.colors.line,
-                    backgroundColor = BossTheme.colors.raised
-                ),
+                colors =
+                    TextFieldDefaults.outlinedTextFieldColors(
+                        textColor = BossTheme.colors.textPrimary,
+                        cursorColor = Accent,
+                        focusedBorderColor = Accent,
+                        unfocusedBorderColor = BossTheme.colors.line,
+                        backgroundColor = BossTheme.colors.raised,
+                    ),
                 singleLine = true,
-                shape = RoundedCornerShape(8.dp)
+                shape = RoundedCornerShape(8.dp),
             )
 
             Spacer(modifier = Modifier.width(12.dp))
 
             Button(
                 onClick = { directoryPicker.pickDirectory() },
-                colors = ButtonDefaults.buttonColors(
-                    backgroundColor = BossTheme.colors.raised,
-                    contentColor = BossTheme.colors.textPrimary
-                ),
+                colors =
+                    ButtonDefaults.buttonColors(
+                        backgroundColor = BossTheme.colors.raised,
+                        contentColor = BossTheme.colors.textPrimary,
+                    ),
                 shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.height(56.dp)
+                modifier = Modifier.height(56.dp),
             ) {
                 Icon(
                     imageVector = Icons.Default.FolderOpen,
                     contentDescription = "Browse",
-                    tint = BossTheme.colors.textSecondary
+                    tint = BossTheme.colors.textSecondary,
                 )
             }
         }
@@ -495,7 +522,7 @@ private fun ConfigurationStep(
             fontSize = 12.sp,
             color = BossTheme.colors.textSecondary,
             maxLines = 2,
-            overflow = TextOverflow.Ellipsis
+            overflow = TextOverflow.Ellipsis,
         )
 
         // Show validation error (using safe access instead of !!)
@@ -504,7 +531,7 @@ private fun ConfigurationStep(
             Text(
                 text = error,
                 fontSize = 12.sp,
-                color = ErrorColor
+                color = ErrorColor,
             )
         }
 
@@ -514,13 +541,14 @@ private fun ConfigurationStep(
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             TextButton(
                 onClick = onBack,
-                colors = ButtonDefaults.textButtonColors(
-                    contentColor = BossTheme.colors.textSecondary
-                )
+                colors =
+                    ButtonDefaults.textButtonColors(
+                        contentColor = BossTheme.colors.textSecondary,
+                    ),
             ) {
                 Text("Back")
             }
@@ -530,14 +558,15 @@ private fun ConfigurationStep(
             Button(
                 onClick = { onCreate(projectName.trim(), projectLocation) },
                 enabled = projectName.isNotBlank() && validationError == null,
-                colors = ButtonDefaults.buttonColors(
-                    backgroundColor = Accent,
-                    contentColor = BossTheme.colors.onSignal,
-                    disabledBackgroundColor = BossTheme.colors.line,
-                    disabledContentColor = BossTheme.colors.textSecondary
-                ),
+                colors =
+                    ButtonDefaults.buttonColors(
+                        backgroundColor = Accent,
+                        contentColor = BossTheme.colors.onSignal,
+                        disabledBackgroundColor = BossTheme.colors.line,
+                        disabledContentColor = BossTheme.colors.textSecondary,
+                    ),
                 shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.height(40.dp)
+                modifier = Modifier.height(40.dp),
             ) {
                 Text("Create Project", fontWeight = FontWeight.Medium)
             }
@@ -554,7 +583,7 @@ private fun CreatingStep(
     path: String,
     template: ProjectTemplate,
     onSuccess: (Project) -> Unit,
-    onError: (String) -> Unit
+    onError: (String) -> Unit,
 ) {
     var progress by remember { mutableStateOf(0f) }
     var statusMessage by remember { mutableStateOf("Initializing...") }
@@ -562,33 +591,35 @@ private fun CreatingStep(
     // Trigger project creation on first composition
     // LaunchedEffect already provides a coroutine scope, no need for rememberCoroutineScope
     LaunchedEffect(Unit) {
-        val result = ProjectCreationService.createProject(
-            name = name,
-            parentDirectory = path,
-            template = template,
-            onProgress = { p, msg ->
-                progress = p
-                statusMessage = msg
-            }
-        )
+        val result =
+            ProjectCreationService.createProject(
+                name = name,
+                parentDirectory = path,
+                template = template,
+                onProgress = { p, msg ->
+                    progress = p
+                    statusMessage = msg
+                },
+            )
 
         result.fold(
             onSuccess = { project -> onSuccess(project) },
-            onFailure = { error -> onError(error.message ?: "Unknown error occurred") }
+            onFailure = { error -> onError(error.message ?: "Unknown error occurred") },
         )
     }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(32.dp),
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        verticalArrangement = Arrangement.Center,
     ) {
         CircularProgressIndicator(
             modifier = Modifier.size(72.dp),
             color = Accent,
-            strokeWidth = 4.dp
+            strokeWidth = 4.dp,
         )
 
         Spacer(modifier = Modifier.height(32.dp))
@@ -597,7 +628,7 @@ private fun CreatingStep(
             text = "Creating Project",
             fontSize = 20.sp,
             fontWeight = FontWeight.SemiBold,
-            color = BossTheme.colors.textPrimary
+            color = BossTheme.colors.textPrimary,
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -605,19 +636,20 @@ private fun CreatingStep(
         Text(
             text = statusMessage,
             fontSize = 14.sp,
-            color = BossTheme.colors.textSecondary
+            color = BossTheme.colors.textSecondary,
         )
 
         Spacer(modifier = Modifier.height(24.dp))
 
         LinearProgressIndicator(
             progress = progress,
-            modifier = Modifier
-                .fillMaxWidth(0.6f)
-                .height(4.dp)
-                .clip(RoundedCornerShape(2.dp)),
+            modifier =
+                Modifier
+                    .fillMaxWidth(0.6f)
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp)),
             color = Accent,
-            backgroundColor = BossTheme.colors.raised
+            backgroundColor = BossTheme.colors.raised,
         )
     }
 }
@@ -628,20 +660,21 @@ private fun CreatingStep(
 @Composable
 private fun SuccessStep(
     project: Project,
-    onOpenProject: () -> Unit
+    onOpenProject: () -> Unit,
 ) {
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(32.dp),
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        verticalArrangement = Arrangement.Center,
     ) {
         Icon(
             imageVector = Icons.Default.CheckCircle,
             contentDescription = "Success",
             modifier = Modifier.size(72.dp),
-            tint = SuccessColor
+            tint = SuccessColor,
         )
 
         Spacer(modifier = Modifier.height(28.dp))
@@ -650,7 +683,7 @@ private fun SuccessStep(
             text = "Project Created!",
             fontSize = 20.sp,
             fontWeight = FontWeight.SemiBold,
-            color = BossTheme.colors.textPrimary
+            color = BossTheme.colors.textPrimary,
         )
 
         Spacer(modifier = Modifier.height(12.dp))
@@ -659,7 +692,7 @@ private fun SuccessStep(
             text = project.name,
             fontSize = 16.sp,
             fontWeight = FontWeight.Medium,
-            color = BossTheme.colors.textPrimary
+            color = BossTheme.colors.textPrimary,
         )
 
         Spacer(modifier = Modifier.height(4.dp))
@@ -667,21 +700,23 @@ private fun SuccessStep(
         Text(
             text = project.path,
             fontSize = 13.sp,
-            color = BossTheme.colors.textSecondary
+            color = BossTheme.colors.textSecondary,
         )
 
         Spacer(modifier = Modifier.height(36.dp))
 
         Button(
             onClick = onOpenProject,
-            colors = ButtonDefaults.buttonColors(
-                backgroundColor = Accent,
-                contentColor = BossTheme.colors.onSignal
-            ),
+            colors =
+                ButtonDefaults.buttonColors(
+                    backgroundColor = Accent,
+                    contentColor = BossTheme.colors.onSignal,
+                ),
             shape = RoundedCornerShape(8.dp),
-            modifier = Modifier
-                .fillMaxWidth(0.5f)
-                .height(44.dp)
+            modifier =
+                Modifier
+                    .fillMaxWidth(0.5f)
+                    .height(44.dp),
         ) {
             Text("Open Project", fontWeight = FontWeight.Medium)
         }
@@ -695,20 +730,21 @@ private fun SuccessStep(
 private fun ErrorStep(
     message: String,
     onRetry: () -> Unit,
-    onClose: () -> Unit
+    onClose: () -> Unit,
 ) {
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(32.dp),
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        verticalArrangement = Arrangement.Center,
     ) {
         Icon(
             imageVector = Icons.Default.Error,
             contentDescription = "Error",
             modifier = Modifier.size(72.dp),
-            tint = ErrorColor
+            tint = ErrorColor,
         )
 
         Spacer(modifier = Modifier.height(28.dp))
@@ -717,23 +753,24 @@ private fun ErrorStep(
             text = "Project Creation Failed",
             fontSize = 20.sp,
             fontWeight = FontWeight.SemiBold,
-            color = BossTheme.colors.textPrimary
+            color = BossTheme.colors.textPrimary,
         )
 
         Spacer(modifier = Modifier.height(20.dp))
 
         Box(
-            modifier = Modifier
-                .fillMaxWidth(0.8f)
-                .clip(RoundedCornerShape(8.dp))
-                .background(BossTheme.colors.raised)
-                .padding(16.dp)
+            modifier =
+                Modifier
+                    .fillMaxWidth(0.8f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(BossTheme.colors.raised)
+                    .padding(16.dp),
         ) {
             Text(
                 text = message,
                 fontSize = 13.sp,
                 color = BossTheme.colors.textPrimary.copy(alpha = 0.9f),
-                lineHeight = 20.sp
+                lineHeight = 20.sp,
             )
         }
 
@@ -741,31 +778,35 @@ private fun ErrorStep(
 
         Row(
             modifier = Modifier.fillMaxWidth(0.6f),
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             OutlinedButton(
                 onClick = onClose,
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = BossTheme.colors.textSecondary
-                ),
+                colors =
+                    ButtonDefaults.outlinedButtonColors(
+                        contentColor = BossTheme.colors.textSecondary,
+                    ),
                 shape = RoundedCornerShape(8.dp),
-                modifier = Modifier
-                    .weight(1f)
-                    .height(44.dp)
+                modifier =
+                    Modifier
+                        .weight(1f)
+                        .height(44.dp),
             ) {
                 Text("Close")
             }
 
             Button(
                 onClick = onRetry,
-                colors = ButtonDefaults.buttonColors(
-                    backgroundColor = Accent,
-                    contentColor = BossTheme.colors.onSignal
-                ),
+                colors =
+                    ButtonDefaults.buttonColors(
+                        backgroundColor = Accent,
+                        contentColor = BossTheme.colors.onSignal,
+                    ),
                 shape = RoundedCornerShape(8.dp),
-                modifier = Modifier
-                    .weight(1f)
-                    .height(44.dp)
+                modifier =
+                    Modifier
+                        .weight(1f)
+                        .height(44.dp),
             ) {
                 Text("Try Again", fontWeight = FontWeight.Medium)
             }
@@ -778,8 +819,22 @@ private fun ErrorStep(
  */
 private sealed class WizardStep {
     data object TemplateSelection : WizardStep()
-    data class Configuration(val template: ProjectTemplate) : WizardStep()
-    data class Creating(val name: String, val path: String, val template: ProjectTemplate) : WizardStep()
-    data class Success(val project: Project) : WizardStep()
-    data class Error(val message: String) : WizardStep()
+
+    data class Configuration(
+        val template: ProjectTemplate,
+    ) : WizardStep()
+
+    data class Creating(
+        val name: String,
+        val path: String,
+        val template: ProjectTemplate,
+    ) : WizardStep()
+
+    data class Success(
+        val project: Project,
+    ) : WizardStep()
+
+    data class Error(
+        val message: String,
+    ) : WizardStep()
 }

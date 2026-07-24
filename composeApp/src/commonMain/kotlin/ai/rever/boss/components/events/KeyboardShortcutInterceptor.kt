@@ -22,11 +22,20 @@ import kotlinx.coroutines.launch
  * Set of modifier-only keys that should not trigger shortcut matching.
  * These keys don't have a standalone action and are only used in combination.
  */
-private val MODIFIER_ONLY_KEYS = setOf(
-    Key.CapsLock, Key.ShiftLeft, Key.ShiftRight,
-    Key.CtrlLeft, Key.CtrlRight, Key.AltLeft, Key.AltRight,
-    Key.MetaLeft, Key.MetaRight, Key.NumLock, Key.ScrollLock
-)
+private val MODIFIER_ONLY_KEYS =
+    setOf(
+        Key.CapsLock,
+        Key.ShiftLeft,
+        Key.ShiftRight,
+        Key.CtrlLeft,
+        Key.CtrlRight,
+        Key.AltLeft,
+        Key.AltRight,
+        Key.MetaLeft,
+        Key.MetaRight,
+        Key.NumLock,
+        Key.ScrollLock,
+    )
 
 /**
  * Creates a modifier that intercepts keyboard events and routes matched shortcuts
@@ -44,7 +53,7 @@ private val MODIFIER_ONLY_KEYS = setOf(
 fun Modifier.interceptKeyboardShortcuts(
     windowId: String,
     source: KeyEventSource,
-    context: ShortcutContext
+    context: ShortcutContext,
 ): Modifier {
     val settings by KeymapSettingsManager.currentSettings.collectAsState()
     val matcher = remember(settings) { KeymapMatcher(settings) }
@@ -68,8 +77,8 @@ fun Modifier.interceptKeyboardShortcuts(
                         keyEvent = keyEvent,
                         source = source,
                         context = context,
-                        sourceWindowId = windowId
-                    )
+                        sourceWindowId = windowId,
+                    ),
                 )
             }
             true // Consume the event - don't let wrapped component handle it
@@ -93,12 +102,13 @@ fun KeyboardShortcutInterceptor(
     windowId: String,
     source: KeyEventSource,
     context: ShortcutContext,
-    content: @Composable () -> Unit
+    content: @Composable () -> Unit,
 ) {
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .interceptKeyboardShortcuts(windowId, source, context)
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .interceptKeyboardShortcuts(windowId, source, context),
     ) {
         content()
     }

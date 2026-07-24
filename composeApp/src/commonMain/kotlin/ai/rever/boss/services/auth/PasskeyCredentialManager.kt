@@ -22,7 +22,6 @@ import kotlin.time.ExperimentalTime
  */
 @OptIn(ExperimentalTime::class)
 object PasskeyCredentialManager {
-
     private val logger = BossLogger.forComponent("PasskeyCredentialManager")
 
     /**
@@ -36,24 +35,26 @@ object PasskeyCredentialManager {
      */
     suspend fun getUserPasskeys(): Result<List<PasskeyInfo>> {
         return try {
-            val currentUser = AuthStateManager.currentUser.value
-                ?: return Result.failure(Exception("No user logged in"))
+            val currentUser =
+                AuthStateManager.currentUser.value
+                    ?: return Result.failure(Exception("No user logged in"))
 
             // Get passkeys from Supabase backend (source of truth)
             val credentialsResult = SupabasePasskeyService.getUserPasskeys(currentUser.id)
             if (credentialsResult.isSuccess) {
                 val credentials = credentialsResult.getOrThrow()
-                val passkeyInfos = credentials.map { credential ->
-                    PasskeyInfo(
-                        id = credential.id, // Database ID for deletion
-                        credentialId = credential.credential_id,
-                        displayName = credential.display_name,
-                        createdAt = credential.created_at,
-                        lastUsed = credential.last_used_at,
-                        rpId = "api.risaboss.com",
-                        transports = credential.transports
-                    )
-                }
+                val passkeyInfos =
+                    credentials.map { credential ->
+                        PasskeyInfo(
+                            id = credential.id, // Database ID for deletion
+                            credentialId = credential.credential_id,
+                            displayName = credential.display_name,
+                            createdAt = credential.created_at,
+                            lastUsed = credential.last_used_at,
+                            rpId = "api.risaboss.com",
+                            transports = credential.transports,
+                        )
+                    }
                 Result.success(passkeyInfos)
             } else {
                 Result.failure(credentialsResult.exceptionOrNull() ?: Exception("Failed to fetch passkeys"))
@@ -79,8 +80,9 @@ object PasskeyCredentialManager {
      */
     suspend fun deletePasskey(credentialId: String): Result<Unit> {
         return try {
-            val currentUser = AuthStateManager.currentUser.value
-                ?: return Result.failure(Exception("No user logged in"))
+            val currentUser =
+                AuthStateManager.currentUser.value
+                    ?: return Result.failure(Exception("No user logged in"))
 
             // Delete from Supabase backend only
             val deleteResult = SupabasePasskeyService.deletePasskey(currentUser.id, credentialId)
@@ -96,4 +98,3 @@ object PasskeyCredentialManager {
         }
     }
 }
-

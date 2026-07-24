@@ -37,78 +37,88 @@ import java.util.concurrent.ConcurrentLinkedDeque
 internal class BrowserWindowOwnershipRegistry {
     private data class WindowCreationState(
         var inFlightCreates: Int = 0,
-        var closing: Boolean = false
+        var closing: Boolean = false,
     )
 
     private val lock = Any()
     private val ownerByBrowserId = mutableMapOf<String, String>()
     private val creationStateByWindowId = mutableMapOf<String, WindowCreationState>()
 
-    fun tryBeginCreate(windowId: String): Boolean = synchronized(lock) {
-        val state = creationStateByWindowId.getOrPut(windowId, ::WindowCreationState)
-        if (state.closing) {
-            false
-        } else {
-            state.inFlightCreates++
-            true
-        }
-    }
-
-    fun register(browserId: String, windowId: String): Boolean = synchronized(lock) {
-        val state = creationStateByWindowId[windowId]
-        if (state == null || state.closing) {
-            false
-        } else {
-            ownerByBrowserId[browserId] = windowId
-            true
-        }
-    }
-
-    fun finishCreate(windowId: String): Boolean = synchronized(lock) {
-        val state = creationStateByWindowId[windowId] ?: return@synchronized false
-        if (state.inFlightCreates <= 0) return@synchronized false
-
-        state.inFlightCreates--
-        if (state.inFlightCreates == 0) {
-            // The closed WindowScopedBrowserService instance rejects further work.
-            // A later service created with the same ID represents a new lifecycle,
-            // so this transient state can be discarded once admitted calls drain.
-            creationStateByWindowId.remove(windowId, state)
-        }
-        true
-    }
-
-    fun unregister(browserId: String) = synchronized(lock) {
-        ownerByBrowserId.remove(browserId)
-    }
-
-    fun closeWindow(windowId: String): Set<String> = synchronized(lock) {
-        val state = creationStateByWindowId.getOrPut(windowId, ::WindowCreationState)
-        state.closing = true
-
-        val ownedBrowserIds = mutableSetOf<String>()
-        val owners = ownerByBrowserId.iterator()
-        while (owners.hasNext()) {
-            val (browserId, ownerWindowId) = owners.next()
-            if (ownerWindowId == windowId) {
-                ownedBrowserIds += browserId
-                owners.remove()
+    fun tryBeginCreate(windowId: String): Boolean =
+        synchronized(lock) {
+            val state = creationStateByWindowId.getOrPut(windowId, ::WindowCreationState)
+            if (state.closing) {
+                false
+            } else {
+                state.inFlightCreates++
+                true
             }
         }
 
-        if (state.inFlightCreates == 0) {
-            creationStateByWindowId.remove(windowId, state)
+    fun register(
+        browserId: String,
+        windowId: String,
+    ): Boolean =
+        synchronized(lock) {
+            val state = creationStateByWindowId[windowId]
+            if (state == null || state.closing) {
+                false
+            } else {
+                ownerByBrowserId[browserId] = windowId
+                true
+            }
         }
-        ownedBrowserIds
-    }
 
-    fun count(windowId: String): Int = synchronized(lock) {
-        ownerByBrowserId.values.count { it == windowId }
-    }
+    fun finishCreate(windowId: String): Boolean =
+        synchronized(lock) {
+            val state = creationStateByWindowId[windowId] ?: return@synchronized false
+            if (state.inFlightCreates <= 0) return@synchronized false
 
-    internal fun trackedWindowCount(): Int = synchronized(lock) {
-        creationStateByWindowId.size
-    }
+            state.inFlightCreates--
+            if (state.inFlightCreates == 0) {
+                // The closed WindowScopedBrowserService instance rejects further work.
+                // A later service created with the same ID represents a new lifecycle,
+                // so this transient state can be discarded once admitted calls drain.
+                creationStateByWindowId.remove(windowId, state)
+            }
+            true
+        }
+
+    fun unregister(browserId: String) =
+        synchronized(lock) {
+            ownerByBrowserId.remove(browserId)
+        }
+
+    fun closeWindow(windowId: String): Set<String> =
+        synchronized(lock) {
+            val state = creationStateByWindowId.getOrPut(windowId, ::WindowCreationState)
+            state.closing = true
+
+            val ownedBrowserIds = mutableSetOf<String>()
+            val owners = ownerByBrowserId.iterator()
+            while (owners.hasNext()) {
+                val (browserId, ownerWindowId) = owners.next()
+                if (ownerWindowId == windowId) {
+                    ownedBrowserIds += browserId
+                    owners.remove()
+                }
+            }
+
+            if (state.inFlightCreates == 0) {
+                creationStateByWindowId.remove(windowId, state)
+            }
+            ownedBrowserIds
+        }
+
+    fun count(windowId: String): Int =
+        synchronized(lock) {
+            ownerByBrowserId.values.count { it == windowId }
+        }
+
+    internal fun trackedWindowCount(): Int =
+        synchronized(lock) {
+            creationStateByWindowId.size
+        }
 }
 
 /**
@@ -125,7 +135,6 @@ internal class BrowserWindowOwnershipRegistry {
  * Singleton, shared across all plugins.
  */
 object BrowserServiceImpl : BrowserService {
-
     private val logger = BossLogger.forComponent("BrowserServiceImpl")
 
     // Track active browser handles for resource management
@@ -149,10 +158,14 @@ object BrowserServiceImpl : BrowserService {
     private data class PendingPopupPost(
         val postData: ByteArray,
         val contentType: String,
-        val createdAtMs: Long
+        val createdAtMs: Long,
     )
 
-    override fun stashPopupPost(url: String, postData: ByteArray, contentType: String) {
+    override fun stashPopupPost(
+        url: String,
+        postData: ByteArray,
+        contentType: String,
+    ) {
         val now = System.currentTimeMillis()
         // compute (not computeIfAbsent + addLast) so the append is atomic with
         // the queue's membership in the map. Otherwise a concurrent consume or
@@ -194,7 +207,10 @@ object BrowserServiceImpl : BrowserService {
         }
     }
 
-    private fun dropStaleHeads(queue: ConcurrentLinkedDeque<PendingPopupPost>, now: Long) {
+    private fun dropStaleHeads(
+        queue: ConcurrentLinkedDeque<PendingPopupPost>,
+        now: Long,
+    ) {
         while (true) {
             val head = queue.peekFirst() ?: return
             if (now - head.createdAtMs <= PENDING_POPUP_TTL_MS) return
@@ -202,8 +218,8 @@ object BrowserServiceImpl : BrowserService {
         }
     }
 
-    override fun isAvailable(): Boolean {
-        return try {
+    override fun isAvailable(): Boolean =
+        try {
             // Deliberately does NOT touch FluckEngine.engine: that getter performs
             // the full synchronous Chromium boot, and this method gets called from
             // browser-tab composition (the UI thread). A not-yet-initialized (or
@@ -213,30 +229,36 @@ object BrowserServiceImpl : BrowserService {
             val initErr = FluckEngine.initError
             val available = initErr == null
             if (!available) {
-                logger.warn(LogCategory.BROWSER, "BrowserService not available", mapOf(
-                    "initError" to (initErr?.toString() ?: "none")
-                ))
+                logger.warn(
+                    LogCategory.BROWSER,
+                    "BrowserService not available",
+                    mapOf(
+                        "initError" to (initErr?.toString() ?: "none"),
+                    ),
+                )
             }
             available
         } catch (e: Exception) {
-            logger.warn(LogCategory.BROWSER, "BrowserService not available - exception", mapOf(
-                "error" to (e.message ?: "unknown"),
-                "errorType" to e.javaClass.simpleName
-            ))
+            logger.warn(
+                LogCategory.BROWSER,
+                "BrowserService not available - exception",
+                mapOf(
+                    "error" to (e.message ?: "unknown"),
+                    "errorType" to e.javaClass.simpleName,
+                ),
+            )
             false
         }
-    }
 
     override suspend fun createBrowser(config: BrowserConfig): BrowserHandle? {
         logger.error(
             LogCategory.BROWSER,
-            "Unscoped browser creation rejected; use a window-scoped BrowserService"
+            "Unscoped browser creation rejected; use a window-scoped BrowserService",
         )
         return null
     }
 
-    internal fun tryBeginBrowserCreation(windowId: String): Boolean =
-        browserOwners.tryBeginCreate(windowId)
+    internal fun tryBeginBrowserCreation(windowId: String): Boolean = browserOwners.tryBeginCreate(windowId)
 
     /**
      * Internal defensive boundary used after the public provider has already
@@ -245,7 +267,7 @@ object BrowserServiceImpl : BrowserService {
      */
     internal suspend fun createBrowserForWindow(
         windowId: String,
-        config: BrowserConfig
+        config: BrowserConfig,
     ): BrowserHandle? {
         require(windowId.isNotBlank()) { "Browser owner windowId must not be blank" }
         return createBrowser(config, ownerWindowId = windowId)
@@ -253,15 +275,19 @@ object BrowserServiceImpl : BrowserService {
 
     internal fun finishBrowserCreation(windowId: String) {
         if (!browserOwners.finishCreate(windowId)) {
-            logger.error(LogCategory.BROWSER, "Unbalanced browser creation finish ignored", mapOf(
-                "windowId" to windowId
-            ))
+            logger.error(
+                LogCategory.BROWSER,
+                "Unbalanced browser creation finish ignored",
+                mapOf(
+                    "windowId" to windowId,
+                ),
+            )
         }
     }
 
     private suspend fun createBrowser(
         config: BrowserConfig,
-        ownerWindowId: String
+        ownerWindowId: String,
     ): BrowserHandle? {
         // Declared outside the try so the outer catch can release the managed profile
         // if anything after newBrowser() throws (see the catch below).
@@ -275,17 +301,21 @@ object BrowserServiceImpl : BrowserService {
             // seeding auth into it first. Null = the engine default profile (tabs).
             val m = acquireManagedProfile(config)
             managed = m
-            val browser: Browser = try {
-                m?.profile?.let { p ->
-                    if (config.auth != null) seedAndAwait(p, config.auth)
-                    else if (!m.ephemeral) installHeaderCallback(p, emptyMap()) // clear stale on named
+            val browser: Browser =
+                try {
+                    m?.profile?.let { p ->
+                        if (config.auth != null) {
+                            seedAndAwait(p, config.auth)
+                        } else if (!m.ephemeral) {
+                            installHeaderCallback(p, emptyMap()) // clear stale on named
+                        }
+                    }
+                    if (m != null) m.profile.newBrowser() else engine.newBrowser()
+                } catch (e: Throwable) {
+                    m?.let { releaseManaged(it) }
+                    managed = null // released here — don't double-release in the outer catch
+                    throw e
                 }
-                if (m != null) m.profile.newBrowser() else engine.newBrowser()
-            } catch (e: Throwable) {
-                m?.let { releaseManaged(it) }
-                managed = null // released here — don't double-release in the outer catch
-                throw e
-            }
 
             // Enable swipe navigation for touchscreen devices
             browser.settings().enableOverscrollHistoryNavigation()
@@ -294,27 +324,29 @@ object BrowserServiceImpl : BrowserService {
 
             // If a popup handed off a POST body for this URL (form-submit target="_blank"),
             // consume it and replay on first navigation. Explicit config wins if set.
-            val effectiveConfig = if (config.initialPostData == null && config.url.isNotBlank()) {
-                consumePopupPost(config.url)?.let { entry ->
-                    // copy() only carries data-class constructor params, so re-apply the
-                    // post-construction managed-profile vars onto the copy — otherwise
-                    // effectiveConfig.profileName/ephemeralProfile/auth silently reset.
-                    config.copy(initialPostData = entry.postData, initialPostContentType = entry.contentType).also {
-                        it.profileName = config.profileName
-                        it.ephemeralProfile = config.ephemeralProfile
-                        it.auth = config.auth
-                    }
-                } ?: config
-            } else {
-                config
-            }
+            val effectiveConfig =
+                if (config.initialPostData == null && config.url.isNotBlank()) {
+                    consumePopupPost(config.url)?.let { entry ->
+                        // copy() only carries data-class constructor params, so re-apply the
+                        // post-construction managed-profile vars onto the copy — otherwise
+                        // effectiveConfig.profileName/ephemeralProfile/auth silently reset.
+                        config.copy(initialPostData = entry.postData, initialPostContentType = entry.contentType).also {
+                            it.profileName = config.profileName
+                            it.ephemeralProfile = config.ephemeralProfile
+                            it.auth = config.auth
+                        }
+                    } ?: config
+                } else {
+                    config
+                }
 
-            val handle = BrowserHandleImpl(
-                browser = browser,
-                config = effectiveConfig,
-                engineGeneration = generation,
-                ownerWindowId = ownerWindowId
-            )
+            val handle =
+                BrowserHandleImpl(
+                    browser = browser,
+                    config = effectiveConfig,
+                    engineGeneration = generation,
+                    ownerWindowId = ownerWindowId,
+                )
             handleId = handle.id
             activeBrowsers[handle.id] = handle
             m?.let {
@@ -331,19 +363,27 @@ object BrowserServiceImpl : BrowserService {
                 // The window closed while browser creation was suspended. Dispose
                 // synchronously so the handle cannot retain its destroyed AWT window.
                 disposeTrackedBrowserBlocking(handle)
-                logger.debug(LogCategory.BROWSER, "Discarded browser created for closed window", mapOf(
-                    "handleId" to handle.id,
-                    "windowId" to ownerWindowId
-                ))
+                logger.debug(
+                    LogCategory.BROWSER,
+                    "Discarded browser created for closed window",
+                    mapOf(
+                        "handleId" to handle.id,
+                        "windowId" to ownerWindowId,
+                    ),
+                )
                 return null
             }
 
-            logger.info(LogCategory.BROWSER, "Browser created via BrowserService", mapOf(
-                "handleId" to handle.id,
-                "url" to config.url,
-                "profile" to (managed?.profileName ?: "default"),
-                "activeBrowsers" to activeBrowsers.size
-            ))
+            logger.info(
+                LogCategory.BROWSER,
+                "Browser created via BrowserService",
+                mapOf(
+                    "handleId" to handle.id,
+                    "url" to config.url,
+                    "profile" to (managed?.profileName ?: "default"),
+                    "activeBrowsers" to activeBrowsers.size,
+                ),
+            )
 
             handle
         } catch (e: Exception) {
@@ -392,18 +432,19 @@ object BrowserServiceImpl : BrowserService {
             }
         }
 
-        logger.debug(LogCategory.BROWSER, "Browser disposed via BrowserService", mapOf(
-            "handleId" to handle.id,
-            "remainingBrowsers" to activeBrowsers.size
-        ))
+        logger.debug(
+            LogCategory.BROWSER,
+            "Browser disposed via BrowserService",
+            mapOf(
+                "handleId" to handle.id,
+                "remainingBrowsers" to activeBrowsers.size,
+            ),
+        )
     }
 
-    override fun getActiveBrowserCount(): Int {
-        return activeBrowsers.size
-    }
+    override fun getActiveBrowserCount(): Int = activeBrowsers.size
 
-    internal fun getActiveBrowserCountForWindow(windowId: String): Int =
-        browserOwners.count(windowId)
+    internal fun getActiveBrowserCountForWindow(windowId: String): Int = browserOwners.count(windowId)
 
     /** Return all active browser handles for internal lookup (e.g. RPA recorder). */
     internal fun getActiveHandles(): List<BrowserHandleImpl> = activeBrowsers.values.toList()
@@ -424,17 +465,26 @@ object BrowserServiceImpl : BrowserService {
                     disposedCount++
                 }
             } catch (e: Exception) {
-                logger.warn(LogCategory.BROWSER, "Error disposing browser for window", mapOf(
-                    "handleId" to browserId,
-                    "windowId" to windowId
-                ), e)
+                logger.warn(
+                    LogCategory.BROWSER,
+                    "Error disposing browser for window",
+                    mapOf(
+                        "handleId" to browserId,
+                        "windowId" to windowId,
+                    ),
+                    e,
+                )
             }
         }
 
-        logger.info(LogCategory.BROWSER, "Window browsers disposed", mapOf(
-            "windowId" to windowId,
-            "count" to disposedCount
-        ))
+        logger.info(
+            LogCategory.BROWSER,
+            "Window browsers disposed",
+            mapOf(
+                "windowId" to windowId,
+                "count" to disposedCount,
+            ),
+        )
     }
 
     private fun disposeTrackedBrowserBlocking(handle: BrowserHandleImpl): Boolean {
@@ -460,9 +510,14 @@ object BrowserServiceImpl : BrowserService {
     private const val NAMED_PREFIX = "rpa-named-"
     private const val COOKIE_COMMIT_TIMEOUT_MS = 2_000
 
-    private val json = Json { prettyPrint = true; ignoreUnknownKeys = true }
+    private val json =
+        Json {
+            prettyPrint = true
+            ignoreUnknownKeys = true
+        }
     private val metaDir: File by lazy { BossDirectories.resolve("rpa-profiles").also { it.mkdirs() } }
     private val metaFile: File by lazy { File(metaDir, "meta.json") }
+
     // Bounds the persistent named profiles only (LRU-evicted). Ephemerals are bounded
     // by their lifecycle (deleted on dispose + reclaimed by the orphan sweep).
     private val diskCapBytes: Long by lazy {
@@ -471,9 +526,16 @@ object BrowserServiceImpl : BrowserService {
 
     // Immutable; updates go through replace-in-map (ConcurrentHashMap.put is atomic).
     @Serializable
-    internal data class NamedMeta(val id: String, val name: String, val path: String, val lastUsedMs: Long, val diskBytes: Long = 0)
+    internal data class NamedMeta(
+        val id: String,
+        val name: String,
+        val path: String,
+        val lastUsedMs: Long,
+        val diskBytes: Long = 0,
+    )
 
     internal fun encodeMeta(list: List<NamedMeta>): String = json.encodeToString(list)
+
     internal fun decodeMeta(text: String): List<NamedMeta> = json.decodeFromString(text)
 
     private val meta = ConcurrentHashMap<String, NamedMeta>()
@@ -481,6 +543,7 @@ object BrowserServiceImpl : BrowserService {
     private val inUse = ConcurrentHashMap.newKeySet<String>()
 
     @Volatile private var loaded = false
+
     @Volatile private var sweptOrphans = false
 
     /** A handle's managed profile: its fence name, the JxBrowser profile, and (named only) lock + id. */
@@ -509,6 +572,7 @@ object BrowserServiceImpl : BrowserService {
                 inUse.add(name)
                 ManagedRef(name, FluckEngine.newRpaProfile(name), ephemeral = true, namedId = null, heldMutex = null)
             }
+
             config.profileName != null -> {
                 val namedId = config.profileName!!
                 val fence = NAMED_PREFIX + sanitize(namedId)
@@ -516,34 +580,62 @@ object BrowserServiceImpl : BrowserService {
                 mutex.lock()
                 try {
                     inUse.add(fence)
-                    val profile = FluckEngine.findProfile(fence) ?: run { evictIfNeeded(); FluckEngine.newRpaProfile(fence) }
+                    val profile =
+                        FluckEngine.findProfile(fence) ?: run {
+                            evictIfNeeded()
+                            FluckEngine.newRpaProfile(fence)
+                        }
                     ManagedRef(fence, profile, ephemeral = false, namedId = namedId, heldMutex = mutex)
                 } catch (e: Throwable) {
-                    inUse.remove(fence); mutex.unlock(); throw e
+                    inUse.remove(fence)
+                    mutex.unlock()
+                    throw e
                 }
             }
-            else -> null
+
+            else -> {
+                null
+            }
         }
     }
 
     /** Cleanup if the browser couldn't be created after the profile was acquired. */
     private fun releaseManaged(ref: ManagedRef) {
         inUse.remove(ref.profileName)
-        if (ref.ephemeral) try { FluckEngine.deleteRpaProfile(ref.profile) } catch (_: Exception) {}
+        if (ref.ephemeral) {
+            try {
+                FluckEngine.deleteRpaProfile(ref.profile)
+            } catch (_: Exception) {
+            }
+        }
         ref.heldMutex?.unlock()
     }
 
-    override suspend fun seedProfile(profileName: String, auth: BrowserAuthSpec?) {
+    override suspend fun seedProfile(
+        profileName: String,
+        auth: BrowserAuthSpec?,
+    ) {
         ensureLoaded()
         require(profileName.isNotBlank()) { "profileName must not be blank" }
         mutexFor(profileName).withLock {
             val fence = NAMED_PREFIX + sanitize(profileName)
             inUse.add(fence)
             try {
-                val profile = FluckEngine.findProfile(fence) ?: run { evictIfNeeded(); FluckEngine.newRpaProfile(fence) }
+                val profile =
+                    FluckEngine.findProfile(fence) ?: run {
+                        evictIfNeeded()
+                        FluckEngine.newRpaProfile(fence)
+                    }
                 if (auth != null) {
                     val tmp = profile.newBrowser()
-                    try { seedAndAwait(profile, auth) } finally { try { tmp.close() } catch (_: Exception) {} }
+                    try {
+                        seedAndAwait(profile, auth)
+                    } finally {
+                        try {
+                            tmp.close()
+                        } catch (_: Exception) {
+                        }
+                    }
                 } else {
                     installHeaderCallback(profile, emptyMap())
                 }
@@ -578,17 +670,25 @@ object BrowserServiceImpl : BrowserService {
 
     // ---- auth seeding (cookies + headers) ----
 
-    private suspend fun seedAndAwait(profile: Profile, auth: BrowserAuthSpec?) {
+    private suspend fun seedAndAwait(
+        profile: Profile,
+        auth: BrowserAuthSpec?,
+    ) {
         if (auth == null) return
         seedCookiesAndHeaders(profile, auth)
-        val expected = auth.cookies.filter { it.url.isNotBlank() }.map { it.name }.toSet()
+        val expected =
+            auth.cookies
+                .filter { it.url.isNotBlank() }
+                .map { it.name }
+                .toSet()
         if (expected.isEmpty()) return
         val store = profile.cookieStore()
         var waited = 0
         while (waited < COOKIE_COMMIT_TIMEOUT_MS) {
             val have = store.cookies().map { it.name() }.toSet()
             if (have.containsAll(expected)) break
-            delay(100); waited += 100
+            delay(100)
+            waited += 100
         }
         if (waited >= COOKIE_COMMIT_TIMEOUT_MS) {
             val missing = expected - store.cookies().map { it.name() }.toSet()
@@ -596,13 +696,16 @@ object BrowserServiceImpl : BrowserService {
                 logger.warn(
                     LogCategory.BROWSER,
                     "Cookie seeding timed out; some cookies never committed (likely a domain mismatch)",
-                    mapOf("missing" to missing.joinToString(","), "profile" to profile.name())
+                    mapOf("missing" to missing.joinToString(","), "profile" to profile.name()),
                 )
             }
         }
     }
 
-    private fun seedCookiesAndHeaders(profile: Profile, auth: BrowserAuthSpec) {
+    private fun seedCookiesAndHeaders(
+        profile: Profile,
+        auth: BrowserAuthSpec,
+    ) {
         val store = profile.cookieStore()
         var set = 0
         for (c in auth.cookies) {
@@ -612,29 +715,44 @@ object BrowserServiceImpl : BrowserService {
                 // Chromium rejects SameSite=None cookies that aren't Secure — coerce so they seed.
                 val secure = c.secure || sameSite == "NONE"
                 if (sameSite == "NONE" && !c.secure) {
-                    logger.debug(LogCategory.BROWSER, "Forcing Secure on a SameSite=None cookie (Chromium requires it)", mapOf("name" to c.name))
+                    logger.debug(
+                        LogCategory.BROWSER,
+                        "Forcing Secure on a SameSite=None cookie (Chromium requires it)",
+                        mapOf("name" to c.name),
+                    )
                 }
-                val builder = Cookie.newBuilder(cookieDomain(c.url))
-                    .name(c.name).value(c.value).path(c.path.ifBlank { "/" })
-                    .secure(secure).httpOnly(c.httpOnly)
+                val builder =
+                    Cookie
+                        .newBuilder(cookieDomain(c.url))
+                        .name(c.name)
+                        .value(c.value)
+                        .path(c.path.ifBlank { "/" })
+                        .secure(secure)
+                        .httpOnly(c.httpOnly)
                 if (c.expirationEpochMs > 0) builder.expirationTime(Timestamp.fromMillis(c.expirationEpochMs))
                 builder.sameSite(
                     when (sameSite) {
                         "NONE" -> SameSite.NONE
                         "STRICT" -> SameSite.STRICT_MODE
                         else -> SameSite.LAX_MODE
-                    }
+                    },
                 )
-                store.set(builder.build()); set++
+                store.set(builder.build())
+                set++
             } catch (e: Exception) {
                 logger.warn(
                     LogCategory.BROWSER,
                     "Cookie rejected",
-                    mapOf("name" to c.name, "url" to LogSanitizer.maskUriParams(c.url), "error" to (e.message ?: "unknown"))
+                    mapOf("name" to c.name, "url" to LogSanitizer.maskUriParams(c.url), "error" to (e.message ?: "unknown")),
                 )
             }
         }
-        if (set > 0) try { store.persist() } catch (_: Exception) {}
+        if (set > 0) {
+            try {
+                store.persist()
+            } catch (_: Exception) {
+            }
+        }
 
         val headers = LinkedHashMap<String, String>()
         headers.putAll(auth.headers)
@@ -649,16 +767,22 @@ object BrowserServiceImpl : BrowserService {
      * (Re)install the request-header callback, replacing any from a previous run on
      * a persistent profile. Empty [headers] = pass-through, clearing stale ones.
      */
-    private fun installHeaderCallback(profile: Profile, headers: Map<String, String>) {
+    private fun installHeaderCallback(
+        profile: Profile,
+        headers: Map<String, String>,
+    ) {
         try {
-            profile.network().set(BeforeStartTransactionCallback::class.java, BeforeStartTransactionCallback { params ->
-                val merged = ArrayList(params.httpHeaders())
-                headers.forEach { (k, v) ->
-                    merged.removeAll { it.name().equals(k, ignoreCase = true) }
-                    merged.add(HttpHeader.of(k, v))
-                }
-                BeforeStartTransactionCallback.Response.override(merged)
-            })
+            profile.network().set(
+                BeforeStartTransactionCallback::class.java,
+                BeforeStartTransactionCallback { params ->
+                    val merged = ArrayList(params.httpHeaders())
+                    headers.forEach { (k, v) ->
+                        merged.removeAll { it.name().equals(k, ignoreCase = true) }
+                        merged.add(HttpHeader.of(k, v))
+                    }
+                    BeforeStartTransactionCallback.Response.override(merged)
+                },
+            )
         } catch (e: Exception) {
             logger.warn(LogCategory.BROWSER, "Header injection failed", mapOf("error" to (e.message ?: "unknown")))
         }
@@ -667,7 +791,8 @@ object BrowserServiceImpl : BrowserService {
     /** URL or bare host -> cookie domain (JxBrowser's Cookie.newBuilder takes a domain). */
     internal fun cookieDomain(raw: String): String {
         var s = raw.trim()
-        val scheme = s.indexOf("://"); if (scheme >= 0) s = s.substring(scheme + 3)
+        val scheme = s.indexOf("://")
+        if (scheme >= 0) s = s.substring(scheme + 3)
         s = s.substringBefore('/').substringBefore('?').substringBefore('#') // authority
         s = s.substringAfterLast('@') // drop userinfo (user:pass@) before the port split
         if (s.startsWith("[")) return s.substringBefore(']') + "]" // IPv6 literal: keep through ']'
@@ -677,6 +802,7 @@ object BrowserServiceImpl : BrowserService {
     // ---- profile bookkeeping ----
 
     internal fun sanitize(id: String): String = id.replace(Regex("[^A-Za-z0-9_.-]"), "_")
+
     // One mutex per distinct named profileId, cached for the process lifetime (few/long-lived ids).
     private fun mutexFor(id: String): Mutex = idMutexes.computeIfAbsent(id) { Mutex() }
 
@@ -724,38 +850,45 @@ object BrowserServiceImpl : BrowserService {
      * walks the FS when over cap. A freshly-created profile caches diskBytes=0 until
      * its first dispose refreshes it, so the cap can be transiently exceeded.
      */
-    private suspend fun evictIfNeeded() = withContext(Dispatchers.IO) {
-        try {
-            if (meta.values.sumOf { it.diskBytes } <= diskCapBytes) return@withContext
-            val candidates = meta.values.map { m ->
-                val s = dirSize(File(m.path)); meta[m.id] = m.copy(diskBytes = s)
-                EvictCandidate(m.id, m.name, m.lastUsedMs, s)
-            }
-            val victims = selectEvictionVictims(candidates, inUse.toSet(), diskCapBytes)
-            if (victims.isNotEmpty()) {
-                for (id in victims) {
-                    val vm = mutexFor(id)
-                    if (!vm.tryLock()) continue
-                    try {
-                        val m = meta[id] ?: continue
-                        FluckEngine.findProfile(m.name)?.let { FluckEngine.deleteRpaProfile(it) }
-                        meta.remove(id)
-                        logger.info(LogCategory.BROWSER, "Evicted LRU managed profile", mapOf("id" to id))
-                    } finally {
-                        vm.unlock()
+    private suspend fun evictIfNeeded() =
+        withContext(Dispatchers.IO) {
+            try {
+                if (meta.values.sumOf { it.diskBytes } <= diskCapBytes) return@withContext
+                val candidates =
+                    meta.values.map { m ->
+                        val s = dirSize(File(m.path))
+                        meta[m.id] = m.copy(diskBytes = s)
+                        EvictCandidate(m.id, m.name, m.lastUsedMs, s)
                     }
+                val victims = selectEvictionVictims(candidates, inUse.toSet(), diskCapBytes)
+                if (victims.isNotEmpty()) {
+                    for (id in victims) {
+                        val vm = mutexFor(id)
+                        if (!vm.tryLock()) continue
+                        try {
+                            val m = meta[id] ?: continue
+                            FluckEngine.findProfile(m.name)?.let { FluckEngine.deleteRpaProfile(it) }
+                            meta.remove(id)
+                            logger.info(LogCategory.BROWSER, "Evicted LRU managed profile", mapOf("id" to id))
+                        } finally {
+                            vm.unlock()
+                        }
+                    }
+                    persistMeta()
                 }
-                persistMeta()
+            } catch (e: Exception) {
+                logger.warn(LogCategory.BROWSER, "Managed-profile eviction failed", error = e)
             }
-        } catch (e: Exception) {
-            logger.warn(LogCategory.BROWSER, "Managed-profile eviction failed", error = e)
         }
-    }
 
-    private fun dirSize(dir: File): Long =
-        if (!dir.exists()) 0L else dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+    private fun dirSize(dir: File): Long = if (!dir.exists()) 0L else dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
 
-    internal data class EvictCandidate(val id: String, val name: String, val lastUsedMs: Long, val sizeBytes: Long)
+    internal data class EvictCandidate(
+        val id: String,
+        val name: String,
+        val lastUsedMs: Long,
+        val sizeBytes: Long,
+    )
 
     /**
      * Pure LRU victim selection (engine-free, unit-tested): oldest-first, skipping

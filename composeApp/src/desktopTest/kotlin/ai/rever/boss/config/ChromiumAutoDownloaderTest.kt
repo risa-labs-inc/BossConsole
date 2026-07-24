@@ -14,7 +14,6 @@ import kotlin.test.assertTrue
  * promote / restore file logic in [ChromiumAutoDownloader.promotePendingInstall].
  */
 class ChromiumAutoDownloaderTest {
-
     @TempDir
     lateinit var root: File
 
@@ -119,8 +118,11 @@ class ChromiumAutoDownloaderTest {
 
     // ---- installFromCandidates: source fallback + checksum verification ----
 
-    private fun candidate(source: String, url: String, sha: String? = null) =
-        EngineDownloadCandidate(source, url, sha)
+    private fun candidate(
+        source: String,
+        url: String,
+        sha: String? = null,
+    ) = EngineDownloadCandidate(source, url, sha)
 
     /** Fake extraction: produce the one file the installer verifies. */
     private val fakeExtract: (java.nio.file.Path, java.nio.file.Path) -> Unit = { _, dest ->
@@ -129,111 +131,123 @@ class ChromiumAutoDownloaderTest {
     }
 
     @Test
-    fun `falls back to the next source when a fetch fails`() = runBlocking {
-        val attempted = mutableListOf<String>()
+    fun `falls back to the next source when a fetch fails`() =
+        runBlocking {
+            val attempted = mutableListOf<String>()
 
-        val result = ChromiumAutoDownloader.installFromCandidates(
-            candidates = listOf(candidate("supabase", "https://supabase/a.zip"), candidate("github", "https://github/a.zip")),
-            version = "9.2.0",
-            targetDir = target.toPath(),
-            staged = false,
-            onProgress = {},
-            fetch = { url, dest ->
-                attempted += url
-                if (url.startsWith("https://supabase")) throw IllegalStateException("supabase down")
-                dest.toFile().writeText("zip-bytes")
-            },
-            extract = fakeExtract
-        )
+            val result =
+                ChromiumAutoDownloader.installFromCandidates(
+                    candidates = listOf(candidate("supabase", "https://supabase/a.zip"), candidate("github", "https://github/a.zip")),
+                    version = "9.2.0",
+                    targetDir = target.toPath(),
+                    staged = false,
+                    onProgress = {},
+                    fetch = { url, dest ->
+                        attempted += url
+                        if (url.startsWith("https://supabase")) throw IllegalStateException("supabase down")
+                        dest.toFile().writeText("zip-bytes")
+                    },
+                    extract = fakeExtract,
+                )
 
-        assertTrue(result.isSuccess)
-        assertEquals(listOf("https://supabase/a.zip", "https://github/a.zip"), attempted)
-        assertEquals("9.2.0", File(target, "version.txt").readText())
-    }
-
-    @Test
-    fun `checksum mismatch rejects the candidate and falls through to the next source`() = runBlocking {
-        val goodSha = sha256Of(File(root, "sha-src").apply { writeText("good-bytes") })
-        val attempted = mutableListOf<String>()
-
-        val result = ChromiumAutoDownloader.installFromCandidates(
-            candidates = listOf(
-                candidate("supabase", "https://supabase/a.zip", sha = goodSha),
-                candidate("github", "https://github/a.zip") // no hash available
-            ),
-            version = "9.2.0",
-            targetDir = target.toPath(),
-            staged = false,
-            onProgress = {},
-            fetch = { url, dest ->
-                attempted += url
-                // Supabase serves corrupted bytes that won't match goodSha
-                dest.toFile().writeText(if (url.startsWith("https://supabase")) "corrupted" else "good-bytes")
-            },
-            extract = fakeExtract
-        )
-
-        assertTrue(result.isSuccess)
-        assertEquals(listOf("https://supabase/a.zip", "https://github/a.zip"), attempted)
-    }
+            assertTrue(result.isSuccess)
+            assertEquals(listOf("https://supabase/a.zip", "https://github/a.zip"), attempted)
+            assertEquals("9.2.0", File(target, "version.txt").readText())
+        }
 
     @Test
-    fun `matching checksum is accepted`() = runBlocking {
-        val goodSha = sha256Of(File(root, "sha-src").apply { writeText("good-bytes") })
-        val attempted = mutableListOf<String>()
+    fun `checksum mismatch rejects the candidate and falls through to the next source`() =
+        runBlocking {
+            val goodSha = sha256Of(File(root, "sha-src").apply { writeText("good-bytes") })
+            val attempted = mutableListOf<String>()
 
-        val result = ChromiumAutoDownloader.installFromCandidates(
-            candidates = listOf(
-                candidate("supabase", "https://supabase/a.zip", sha = goodSha),
-                candidate("github", "https://github/a.zip")
-            ),
-            version = "9.2.0",
-            targetDir = target.toPath(),
-            staged = false,
-            onProgress = {},
-            fetch = { url, dest ->
-                attempted += url
-                dest.toFile().writeText("good-bytes")
-            },
-            extract = fakeExtract
-        )
+            val result =
+                ChromiumAutoDownloader.installFromCandidates(
+                    candidates =
+                        listOf(
+                            candidate("supabase", "https://supabase/a.zip", sha = goodSha),
+                            candidate("github", "https://github/a.zip"), // no hash available
+                        ),
+                    version = "9.2.0",
+                    targetDir = target.toPath(),
+                    staged = false,
+                    onProgress = {},
+                    fetch = { url, dest ->
+                        attempted += url
+                        // Supabase serves corrupted bytes that won't match goodSha
+                        dest.toFile().writeText(if (url.startsWith("https://supabase")) "corrupted" else "good-bytes")
+                    },
+                    extract = fakeExtract,
+                )
 
-        assertTrue(result.isSuccess)
-        assertEquals(listOf("https://supabase/a.zip"), attempted, "github must not be attempted after a verified supabase download")
-    }
-
-    @Test
-    fun `staged install writes the commit marker last`() = runBlocking {
-        val result = ChromiumAutoDownloader.installFromCandidates(
-            candidates = listOf(candidate("github", "https://github/a.zip")),
-            version = "9.2.0",
-            targetDir = pending.toPath(),
-            staged = true,
-            onProgress = {},
-            fetch = { _, dest -> dest.toFile().writeText("zip-bytes") },
-            extract = fakeExtract
-        )
-
-        assertTrue(result.isSuccess)
-        assertEquals("9.2.0", File(pending, ".staging-complete").readText())
-    }
+            assertTrue(result.isSuccess)
+            assertEquals(listOf("https://supabase/a.zip", "https://github/a.zip"), attempted)
+        }
 
     @Test
-    fun `all candidates failing returns failure and reports the error`() = runBlocking {
-        var reportedError: String? = null
+    fun `matching checksum is accepted`() =
+        runBlocking {
+            val goodSha = sha256Of(File(root, "sha-src").apply { writeText("good-bytes") })
+            val attempted = mutableListOf<String>()
 
-        val result = ChromiumAutoDownloader.installFromCandidates(
-            candidates = listOf(candidate("supabase", "https://supabase/a.zip"), candidate("github", "https://github/a.zip")),
-            version = "9.2.0",
-            targetDir = target.toPath(),
-            staged = false,
-            onProgress = { p -> if (p.error != null) reportedError = p.error },
-            fetch = { _, _ -> throw IllegalStateException("network down") },
-            extract = fakeExtract
-        )
+            val result =
+                ChromiumAutoDownloader.installFromCandidates(
+                    candidates =
+                        listOf(
+                            candidate("supabase", "https://supabase/a.zip", sha = goodSha),
+                            candidate("github", "https://github/a.zip"),
+                        ),
+                    version = "9.2.0",
+                    targetDir = target.toPath(),
+                    staged = false,
+                    onProgress = {},
+                    fetch = { url, dest ->
+                        attempted += url
+                        dest.toFile().writeText("good-bytes")
+                    },
+                    extract = fakeExtract,
+                )
 
-        assertTrue(result.isFailure)
-        assertEquals("network down", reportedError)
-        assertFalse(File(target, "version.txt").exists())
-    }
+            assertTrue(result.isSuccess)
+            assertEquals(listOf("https://supabase/a.zip"), attempted, "github must not be attempted after a verified supabase download")
+        }
+
+    @Test
+    fun `staged install writes the commit marker last`() =
+        runBlocking {
+            val result =
+                ChromiumAutoDownloader.installFromCandidates(
+                    candidates = listOf(candidate("github", "https://github/a.zip")),
+                    version = "9.2.0",
+                    targetDir = pending.toPath(),
+                    staged = true,
+                    onProgress = {},
+                    fetch = { _, dest -> dest.toFile().writeText("zip-bytes") },
+                    extract = fakeExtract,
+                )
+
+            assertTrue(result.isSuccess)
+            assertEquals("9.2.0", File(pending, ".staging-complete").readText())
+        }
+
+    @Test
+    fun `all candidates failing returns failure and reports the error`() =
+        runBlocking {
+            var reportedError: String? = null
+
+            val result =
+                ChromiumAutoDownloader.installFromCandidates(
+                    candidates = listOf(candidate("supabase", "https://supabase/a.zip"), candidate("github", "https://github/a.zip")),
+                    version = "9.2.0",
+                    targetDir = target.toPath(),
+                    staged = false,
+                    onProgress = { p -> if (p.error != null) reportedError = p.error },
+                    fetch = { _, _ -> throw IllegalStateException("network down") },
+                    extract = fakeExtract,
+                )
+
+            assertTrue(result.isFailure)
+            assertEquals("network down", reportedError)
+            assertFalse(File(target, "version.txt").exists())
+        }
 }

@@ -90,14 +90,15 @@ sealed class ProjectTemplate {
         /**
          * All available project templates
          */
-        val all: List<ProjectTemplate> = listOf(
-            Empty,
-            KotlinJvm,
-            NodeJs,
-            Go,
-            Rust,
-            Python
-        )
+        val all: List<ProjectTemplate> =
+            listOf(
+                Empty,
+                KotlinJvm,
+                NodeJs,
+                Go,
+                Rust,
+                Python,
+            )
 
         /**
          * Find a template by its ID
@@ -116,5 +117,5 @@ sealed class ProjectTemplate {
 data class TemplateFile(
     val relativePath: String,
     val content: String,
-    val isExecutable: Boolean = false
+    val isExecutable: Boolean = false,
 )

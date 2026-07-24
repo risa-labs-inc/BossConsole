@@ -43,14 +43,24 @@ object PluginSignatureEnforcement {
         get() {
             val raw = System.getProperty(PROPERTY) ?: System.getenv(ENV_VAR) ?: return DEFAULT
             return when (raw.trim().lowercase()) {
-                "true", "1", "yes", "on" -> true
-                "false", "0", "no", "off" -> false
+                "true", "1", "yes", "on" -> {
+                    true
+                }
+
+                "false", "0", "no", "off" -> {
+                    false
+                }
+
                 else -> {
                     // getAndSet keeps warn-once atomic under concurrent reads
                     if (warnedValue.getAndSet(raw) != raw) {
-                        logger.warn(LogCategory.SYSTEM, "Unrecognized plugin-signature enforcement flag value — flag IGNORED, falling back to default (enforcement ${if (DEFAULT) "ON" else "OFF"})", mapOf(
-                            "value" to raw
-                        ))
+                        logger.warn(
+                            LogCategory.SYSTEM,
+                            "Unrecognized plugin-signature enforcement flag value — flag IGNORED, falling back to default (enforcement ${if (DEFAULT) "ON" else "OFF"})",
+                            mapOf(
+                                "value" to raw,
+                            ),
+                        )
                     }
                     DEFAULT
                 }

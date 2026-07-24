@@ -20,15 +20,18 @@ fun interface ProjectSelectionCallback {
  *
  * @property windowId Unique identifier for the window
  */
-class WindowProjectState(val windowId: String) {
+class WindowProjectState(
+    val windowId: String,
+) {
     private val logger = BossLogger.forComponent("WindowProjectState")
-    private val _selectedProject = MutableStateFlow(
-        Project(
-            name = "No Project",
-            path = "",
-            lastOpened = 0L
+    private val _selectedProject =
+        MutableStateFlow(
+            Project(
+                name = "No Project",
+                path = "",
+                lastOpened = 0L,
+            ),
         )
-    )
     val selectedProject: StateFlow<Project> = _selectedProject.asStateFlow()
 
     // Callback for project selection (e.g., to update recent projects)

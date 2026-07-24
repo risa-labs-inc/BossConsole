@@ -14,12 +14,13 @@ private val macOSScreenCaptureLogger = BossLogger.forComponent("MacOSScreenCaptu
 
 private interface CoreGraphics : Library {
     companion object {
-        val INSTANCE: CoreGraphics? = try {
-            Native.load("CoreGraphics", CoreGraphics::class.java)
-        } catch (e: Exception) {
-            macOSScreenCaptureLogger.debug(LogCategory.SYSTEM, "CoreGraphics not available", mapOf("error" to (e.message ?: "unknown")))
-            null
-        }
+        val INSTANCE: CoreGraphics? =
+            try {
+                Native.load("CoreGraphics", CoreGraphics::class.java)
+            } catch (e: Exception) {
+                macOSScreenCaptureLogger.debug(LogCategory.SYSTEM, "CoreGraphics not available", mapOf("error" to (e.message ?: "unknown")))
+                null
+            }
     }
 
     /**

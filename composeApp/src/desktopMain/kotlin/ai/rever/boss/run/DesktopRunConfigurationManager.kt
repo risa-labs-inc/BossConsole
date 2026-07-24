@@ -18,10 +18,11 @@ import java.io.File
 actual object RunConfigurationManager {
     private val logger = BossLogger.forComponent("RunConfigurationManager")
     private val settingsFile = BossDirectories.resolve("run-configurations.json")
-    private val json = Json {
-        prettyPrint = true
-        ignoreUnknownKeys = true
-    }
+    private val json =
+        Json {
+            prettyPrint = true
+            ignoreUnknownKeys = true
+        }
 
     private val detector = DesktopMainFunctionDetector()
 
@@ -57,19 +58,31 @@ actual object RunConfigurationManager {
                 val settings = json.decodeFromString<RunConfigurationSettings>(content)
 
                 // Deduplicate by filePath and make names unique
-                val deduplicated = settings.configurations
-                    .distinctBy { it.filePath }
+                val deduplicated =
+                    settings.configurations
+                        .distinctBy { it.filePath }
                 val withUniqueNames = makeStoredNamesUnique(deduplicated)
 
                 val cleanedSettings = settings.copy(configurations = withUniqueNames)
                 _currentSettings.value = cleanedSettings
 
-                logger.debug(LogCategory.SYSTEM, "Loaded run configurations", mapOf("count" to cleanedSettings.configurations.size, "path" to settingsFile.absolutePath))
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Loaded run configurations",
+                    mapOf(
+                        "count" to cleanedSettings.configurations.size,
+                        "path" to settingsFile.absolutePath,
+                    ),
+                )
 
                 // Save cleaned settings if we deduplicated anything
                 if (deduplicated.size != settings.configurations.size) {
                     settingsFile.writeText(json.encodeToString(RunConfigurationSettings.serializer(), cleanedSettings))
-                    logger.debug(LogCategory.SYSTEM, "Cleaned up duplicate run configurations", mapOf("removed" to (settings.configurations.size - deduplicated.size)))
+                    logger.debug(
+                        LogCategory.SYSTEM,
+                        "Cleaned up duplicate run configurations",
+                        mapOf("removed" to (settings.configurations.size - deduplicated.size)),
+                    )
                 }
             } else {
                 logger.debug(LogCategory.SYSTEM, "No settings file found, starting with empty configurations")
@@ -93,12 +106,13 @@ actual object RunConfigurationManager {
             } else {
                 // Add parent directory to make unique
                 val parts = config.filePath.split("/")
-                val uniqueName = if (parts.size >= 2) {
-                    val parentAndFile = parts.takeLast(2).joinToString("/")
-                    config.name.replace(Regex("\\([^)]+\\)$")) { "($parentAndFile)" }
-                } else {
-                    config.name
-                }
+                val uniqueName =
+                    if (parts.size >= 2) {
+                        val parentAndFile = parts.takeLast(2).joinToString("/")
+                        config.name.replace(Regex("\\([^)]+\\)$")) { "($parentAndFile)" }
+                    } else {
+                        config.name
+                    }
                 config.copy(name = uniqueName)
             }
         }
@@ -110,26 +124,27 @@ actual object RunConfigurationManager {
      * Names are made unique by adding path context when duplicates exist.
      * Clears previous detected configs before scanning to prevent unbounded growth.
      */
-    actual suspend fun scanProject(projectPath: String) = withContext(Dispatchers.IO) {
-        _isScanning.value = true
-        _lastError.value = null // Clear previous error
-        // Clear previous detections to prevent memory leak on project switches
-        _detectedConfigurations.value = emptyList()
-        try {
-            logger.debug(LogCategory.SYSTEM, "Scanning project for run configurations", mapOf("path" to projectPath))
-            val detected = detector.scanProject(projectPath)
-            val detectedWithUniqueNames = makeNamesUnique(detected, projectPath)
-            _detectedConfigurations.value = detectedWithUniqueNames
-            logger.debug(LogCategory.SYSTEM, "Found runnable configurations", mapOf("count" to detectedWithUniqueNames.size))
-            // Don't auto-select - user must choose from dropdown
-        } catch (e: Exception) {
-            val errorMsg = "Failed to scan project: ${e.message}"
-            logger.warn(LogCategory.SYSTEM, "Failed to scan project", error = e)
-            _lastError.value = errorMsg
-        } finally {
-            _isScanning.value = false
+    actual suspend fun scanProject(projectPath: String) =
+        withContext(Dispatchers.IO) {
+            _isScanning.value = true
+            _lastError.value = null // Clear previous error
+            // Clear previous detections to prevent memory leak on project switches
+            _detectedConfigurations.value = emptyList()
+            try {
+                logger.debug(LogCategory.SYSTEM, "Scanning project for run configurations", mapOf("path" to projectPath))
+                val detected = detector.scanProject(projectPath)
+                val detectedWithUniqueNames = makeNamesUnique(detected, projectPath)
+                _detectedConfigurations.value = detectedWithUniqueNames
+                logger.debug(LogCategory.SYSTEM, "Found runnable configurations", mapOf("count" to detectedWithUniqueNames.size))
+                // Don't auto-select - user must choose from dropdown
+            } catch (e: Exception) {
+                val errorMsg = "Failed to scan project: ${e.message}"
+                logger.warn(LogCategory.SYSTEM, "Failed to scan project", error = e)
+                _lastError.value = errorMsg
+            } finally {
+                _isScanning.value = false
+            }
         }
-    }
 
     /**
      * Clear the last error.
@@ -143,7 +158,10 @@ actual object RunConfigurationManager {
      * E.g., two "main (Main.kt [Project])" become "main (app/Main.kt [Project])" and "main (lib/Main.kt [Project])"
      * Preserves the project name in brackets if present.
      */
-    private fun makeNamesUnique(configs: List<RunConfiguration>, projectPath: String): List<RunConfiguration> {
+    private fun makeNamesUnique(
+        configs: List<RunConfiguration>,
+        projectPath: String,
+    ): List<RunConfiguration> {
         // Group by name to find duplicates
         val nameGroups = configs.groupBy { it.name }
         val projectName = projectPath.substringAfterLast('/').takeIf { it.isNotBlank() }
@@ -156,14 +174,15 @@ actual object RunConfigurationManager {
                 // Add parent directory to make unique, preserving project name
                 val relativePath = config.filePath.removePrefix(projectPath).removePrefix("/")
                 val parts = relativePath.split("/")
-                val uniqueName = if (parts.size >= 2) {
-                    // Include parent directory: "main (parent/Main.kt [Project])"
-                    val parentAndFile = parts.takeLast(2).joinToString("/")
-                    val projectSuffix = if (projectName != null) " [$projectName]" else ""
-                    config.name.replace(Regex("\\([^)]+\\)$")) { "($parentAndFile$projectSuffix)" }
-                } else {
-                    config.name
-                }
+                val uniqueName =
+                    if (parts.size >= 2) {
+                        // Include parent directory: "main (parent/Main.kt [Project])"
+                        val parentAndFile = parts.takeLast(2).joinToString("/")
+                        val projectSuffix = if (projectName != null) " [$projectName]" else ""
+                        config.name.replace(Regex("\\([^)]+\\)$")) { "($parentAndFile$projectSuffix)" }
+                    } else {
+                        config.name
+                    }
                 config.copy(name = uniqueName)
             }
         }
@@ -186,15 +205,17 @@ actual object RunConfigurationManager {
 
         // Generate unique name if needed
         val uniqueName = generateUniqueName(config.name, current.configurations.map { it.name })
-        val configWithUniqueName = if (uniqueName != config.name) {
-            config.copy(name = uniqueName)
-        } else {
-            config
-        }
+        val configWithUniqueName =
+            if (uniqueName != config.name) {
+                config.copy(name = uniqueName)
+            } else {
+                config
+            }
 
-        val updated = current.copy(
-            configurations = current.configurations + configWithUniqueName
-        )
+        val updated =
+            current.copy(
+                configurations = current.configurations + configWithUniqueName,
+            )
         _currentSettings.value = updated
         saveSettings()
         logger.debug(LogCategory.SYSTEM, "Added run configuration", mapOf("name" to configWithUniqueName.name))
@@ -204,7 +225,10 @@ actual object RunConfigurationManager {
      * Generate a unique name by appending a number suffix if needed.
      * E.g., "Main" -> "Main", "Main" (if exists) -> "Main (2)", etc.
      */
-    private fun generateUniqueName(baseName: String, existingNames: List<String>): String {
+    private fun generateUniqueName(
+        baseName: String,
+        existingNames: List<String>,
+    ): String {
         if (baseName !in existingNames) {
             return baseName
         }
@@ -224,11 +248,12 @@ actual object RunConfigurationManager {
      */
     actual suspend fun removeConfiguration(configId: String) {
         val current = _currentSettings.value
-        val updated = current.copy(
-            configurations = current.configurations.filter { it.id != configId },
-            lastUsedConfigId = if (current.lastUsedConfigId == configId) null else current.lastUsedConfigId,
-            recentConfigIds = current.recentConfigIds.filter { it != configId }
-        )
+        val updated =
+            current.copy(
+                configurations = current.configurations.filter { it.id != configId },
+                lastUsedConfigId = if (current.lastUsedConfigId == configId) null else current.lastUsedConfigId,
+                recentConfigIds = current.recentConfigIds.filter { it != configId },
+            )
         _currentSettings.value = updated
         saveSettings()
     }
@@ -238,11 +263,13 @@ actual object RunConfigurationManager {
      */
     actual suspend fun updateConfiguration(config: RunConfiguration) {
         val current = _currentSettings.value
-        val updated = current.copy(
-            configurations = current.configurations.map {
-                if (it.id == config.id) config else it
-            }
-        )
+        val updated =
+            current.copy(
+                configurations =
+                    current.configurations.map {
+                        if (it.id == config.id) config else it
+                    },
+            )
         _currentSettings.value = updated
         saveSettings()
     }
@@ -257,13 +284,14 @@ actual object RunConfigurationManager {
     /**
      * Save current settings to disk.
      */
-    actual suspend fun saveSettings() = withContext(Dispatchers.IO) {
-        try {
-            val content = json.encodeToString(RunConfigurationSettings.serializer(), _currentSettings.value)
-            settingsFile.writeText(content)
-            logger.debug(LogCategory.SYSTEM, "Run settings saved", mapOf("path" to settingsFile.absolutePath))
-        } catch (e: Exception) {
-            logger.warn(LogCategory.SYSTEM, "Failed to save run settings", error = e)
+    actual suspend fun saveSettings() =
+        withContext(Dispatchers.IO) {
+            try {
+                val content = json.encodeToString(RunConfigurationSettings.serializer(), _currentSettings.value)
+                settingsFile.writeText(content)
+                logger.debug(LogCategory.SYSTEM, "Run settings saved", mapOf("path" to settingsFile.absolutePath))
+            } catch (e: Exception) {
+                logger.warn(LogCategory.SYSTEM, "Failed to save run settings", error = e)
+            }
         }
-    }
 }

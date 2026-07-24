@@ -3,11 +3,11 @@ package ai.rever.boss.components.plugin.panels.left_top
 import ai.rever.boss.components.plugin.tab_types.fluck.DownloadItem
 import ai.rever.boss.components.plugin.tab_types.fluck.DownloadManager
 import ai.rever.boss.components.plugin.tab_types.fluck.DownloadStatus
-import ai.rever.boss.plugin.browser.FluckEngine
 import ai.rever.boss.platform.FileSystemUtils
 import ai.rever.boss.plugin.api.DownloadDataProvider
 import ai.rever.boss.plugin.api.DownloadItemData
 import ai.rever.boss.plugin.api.DownloadStatusData
+import ai.rever.boss.plugin.browser.FluckEngine
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CoroutineScope
@@ -39,38 +39,35 @@ class DownloadDataProviderImpl : DownloadDataProvider {
         }
     }
 
-    override suspend fun pauseDownload(id: String): Result<Unit> {
-        return try {
+    override suspend fun pauseDownload(id: String): Result<Unit> =
+        try {
             FluckEngine.pauseDownload(id)
             Result.success(Unit)
         } catch (e: Exception) {
             logger.warn(LogCategory.BROWSER, "Failed to pause download", error = e)
             Result.failure(e)
         }
-    }
 
-    override suspend fun resumeDownload(id: String): Result<Unit> {
-        return try {
+    override suspend fun resumeDownload(id: String): Result<Unit> =
+        try {
             FluckEngine.resumeDownload(id)
             Result.success(Unit)
         } catch (e: Exception) {
             logger.warn(LogCategory.BROWSER, "Failed to resume download", error = e)
             Result.failure(e)
         }
-    }
 
-    override suspend fun cancelDownload(id: String): Result<Unit> {
-        return try {
+    override suspend fun cancelDownload(id: String): Result<Unit> =
+        try {
             FluckEngine.cancelDownload(id)
             Result.success(Unit)
         } catch (e: Exception) {
             logger.warn(LogCategory.BROWSER, "Failed to cancel download", error = e)
             Result.failure(e)
         }
-    }
 
-    override suspend fun removeDownload(id: String): Result<Unit> {
-        return try {
+    override suspend fun removeDownload(id: String): Result<Unit> =
+        try {
             // Find the download to get its path
             val download = downloadManager.downloads.value.find { it.id == id }
             if (download != null && download.status == DownloadStatus.COMPLETED) {
@@ -94,13 +91,13 @@ class DownloadDataProviderImpl : DownloadDataProvider {
             logger.warn(LogCategory.FILE, "Failed to remove download", error = e)
             Result.failure(e)
         }
-    }
 
-    override suspend fun clearCompleted(): Result<Unit> {
-        return try {
-            val completedIds = downloadManager.downloads.value
-                .filter { it.status == DownloadStatus.COMPLETED }
-                .map { it.id }
+    override suspend fun clearCompleted(): Result<Unit> =
+        try {
+            val completedIds =
+                downloadManager.downloads.value
+                    .filter { it.status == DownloadStatus.COMPLETED }
+                    .map { it.id }
             completedIds.forEach { id ->
                 downloadManager.removeDownload(id)
             }
@@ -109,7 +106,6 @@ class DownloadDataProviderImpl : DownloadDataProvider {
             logger.warn(LogCategory.FILE, "Failed to clear completed downloads", error = e)
             Result.failure(e)
         }
-    }
 
     override fun revealInFolder(path: String) {
         FileSystemUtils.revealInFolder(path)
@@ -121,28 +117,30 @@ class DownloadDataProviderImpl : DownloadDataProvider {
 
     // ===== Type Conversion Extension =====
 
-    private fun DownloadItem.toData(): DownloadItemData = DownloadItemData(
-        id = id,
-        fileName = fileName,
-        destinationPath = destinationPath,
-        url = url,
-        status = status.toData(),
-        receivedBytes = receivedBytes,
-        totalBytes = totalBytes,
-        speed = speed,
-        canPause = canPause,
-        canResume = canResume,
-        errorReason = errorReason,
-        startTime = startedAt,
-        endTime = finishedAt
-    )
+    private fun DownloadItem.toData(): DownloadItemData =
+        DownloadItemData(
+            id = id,
+            fileName = fileName,
+            destinationPath = destinationPath,
+            url = url,
+            status = status.toData(),
+            receivedBytes = receivedBytes,
+            totalBytes = totalBytes,
+            speed = speed,
+            canPause = canPause,
+            canResume = canResume,
+            errorReason = errorReason,
+            startTime = startedAt,
+            endTime = finishedAt,
+        )
 
-    private fun DownloadStatus.toData(): DownloadStatusData = when (this) {
-        DownloadStatus.QUEUED -> DownloadStatusData.QUEUED
-        DownloadStatus.DOWNLOADING -> DownloadStatusData.DOWNLOADING
-        DownloadStatus.PAUSED -> DownloadStatusData.PAUSED
-        DownloadStatus.COMPLETED -> DownloadStatusData.COMPLETED
-        DownloadStatus.FAILED -> DownloadStatusData.FAILED
-        DownloadStatus.CANCELLED -> DownloadStatusData.CANCELLED
-    }
+    private fun DownloadStatus.toData(): DownloadStatusData =
+        when (this) {
+            DownloadStatus.QUEUED -> DownloadStatusData.QUEUED
+            DownloadStatus.DOWNLOADING -> DownloadStatusData.DOWNLOADING
+            DownloadStatus.PAUSED -> DownloadStatusData.PAUSED
+            DownloadStatus.COMPLETED -> DownloadStatusData.COMPLETED
+            DownloadStatus.FAILED -> DownloadStatusData.FAILED
+            DownloadStatus.CANCELLED -> DownloadStatusData.CANCELLED
+        }
 }

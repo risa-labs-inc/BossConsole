@@ -81,16 +81,25 @@ object McpToolRegistryImpl : McpToolRegistry {
 
     fun unregisterProvider(providerId: String) = core.unregisterProvider(providerId)
 
-    override fun setToolEnabled(toolName: String, enabled: Boolean) = core.setToolEnabled(toolName, enabled)
+    override fun setToolEnabled(
+        toolName: String,
+        enabled: Boolean,
+    ) = core.setToolEnabled(toolName, enabled)
 
     /**
      * Update the current user's RBAC state. Pushed by the host (DynamicPluginManager's
      * access collector) on login / role change so permission-gated tools appear or
      * disappear live. Mirrors `pluginAccessAllowed` semantics (admin bypass).
      */
-    fun updateAccess(isAdmin: Boolean, permissions: Set<String>) = core.updateAccess(isAdmin, permissions)
+    fun updateAccess(
+        isAdmin: Boolean,
+        permissions: Set<String>,
+    ) = core.updateAccess(isAdmin, permissions)
 
-    override suspend fun invoke(toolName: String, arguments: String): McpToolResult = core.invoke(toolName, arguments)
+    override suspend fun invoke(
+        toolName: String,
+        arguments: String,
+    ): McpToolResult = core.invoke(toolName, arguments)
 }
 
 /**
@@ -159,22 +168,25 @@ internal class McpToolRegistryCore(
         // A throwing provider registers with an empty tool set (and a warning)
         // rather than being silently dropped: its id stays tracked so teardown
         // and re-registration behave normally.
-        val defs = try {
-            provider.tools()
-        } catch (t: Throwable) {
-            logger.warn(
-                LogCategory.SYSTEM, "MCP provider tools() failed; registering with no tools",
-                mapOf("providerId" to provider.providerId, "error" to (t.message ?: t::class.simpleName)),
-            )
-            emptyList()
-        }
+        val defs =
+            try {
+                provider.tools()
+            } catch (t: Throwable) {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "MCP provider tools() failed; registering with no tools",
+                    mapOf("providerId" to provider.providerId, "error" to (t.message ?: t::class.simpleName)),
+                )
+                emptyList()
+            }
         synchronized(mutationLock) {
             if (_providers.value.containsKey(provider.providerId)) {
                 // Same-id re-registration replaces the previous provider. Legitimate on
                 // plugin reload, but worth a trace: two plugins sharing an id would
                 // clobber each other and the first teardown would kill both tool sets.
                 logger.warn(
-                    LogCategory.SYSTEM, "MCP tool provider re-registered (replacing previous)",
+                    LogCategory.SYSTEM,
+                    "MCP tool provider re-registered (replacing previous)",
                     mapOf("providerId" to provider.providerId),
                 )
             }
@@ -182,32 +194,42 @@ internal class McpToolRegistryCore(
             recompute()
         }
         logger.info(
-            LogCategory.SYSTEM, "MCP tool provider registered",
+            LogCategory.SYSTEM,
+            "MCP tool provider registered",
             mapOf("providerId" to provider.providerId, "tools" to defs.size),
         )
     }
 
-    fun unregisterProvider(providerId: String): Unit = synchronized(mutationLock) {
-        if (!_providers.value.containsKey(providerId)) return@synchronized
-        _providers.update { it - providerId }
-        recompute()
-        logger.info(
-            LogCategory.SYSTEM, "MCP tool provider unregistered",
-            mapOf("providerId" to providerId),
-        )
-    }
+    fun unregisterProvider(providerId: String): Unit =
+        synchronized(mutationLock) {
+            if (!_providers.value.containsKey(providerId)) return@synchronized
+            _providers.update { it - providerId }
+            recompute()
+            logger.info(
+                LogCategory.SYSTEM,
+                "MCP tool provider unregistered",
+                mapOf("providerId" to providerId),
+            )
+        }
 
-    fun setToolEnabled(toolName: String, enabled: Boolean) = synchronized(mutationLock) {
+    fun setToolEnabled(
+        toolName: String,
+        enabled: Boolean,
+    ) = synchronized(mutationLock) {
         _disabled.update { if (enabled) it - toolName else it + toolName }
         saveDisabled(_disabled.value)
         applyExposed()
         logger.info(
-            LogCategory.SYSTEM, "MCP tool ${if (enabled) "enabled" else "disabled"}",
+            LogCategory.SYSTEM,
+            "MCP tool ${if (enabled) "enabled" else "disabled"}",
             mapOf("tool" to toolName),
         )
     }
 
-    fun updateAccess(isAdmin: Boolean, permissions: Set<String>) = synchronized(mutationLock) {
+    fun updateAccess(
+        isAdmin: Boolean,
+        permissions: Set<String>,
+    ) = synchronized(mutationLock) {
         this.isAdmin = isAdmin
         this.permissions = permissions
         applyExposed()
@@ -236,7 +258,8 @@ internal class McpToolRegistryCore(
             for (def in defs) {
                 if (!seen.add(def.name)) {
                     logger.warn(
-                        LogCategory.SYSTEM, "Duplicate MCP tool name skipped",
+                        LogCategory.SYSTEM,
+                        "Duplicate MCP tool name skipped",
                         mapOf("providerId" to providerId, "tool" to def.name),
                     )
                     continue
@@ -265,16 +288,21 @@ internal class McpToolRegistryCore(
         return permissions.containsAll(def.requiredPermissions)
     }
 
-    suspend fun invoke(toolName: String, arguments: String): McpToolResult {
+    suspend fun invoke(
+        toolName: String,
+        arguments: String,
+    ): McpToolResult {
         // Only enabled tools are reachable (the bridge exposes exactly _tools).
-        val tool = _tools.value.firstOrNull { it.definition.name == toolName }
-            ?: return McpToolResult("Unknown or disabled MCP tool: $toolName", isError = true)
+        val tool =
+            _tools.value.firstOrNull { it.definition.name == toolName }
+                ?: return McpToolResult("Unknown or disabled MCP tool: $toolName", isError = true)
         val args = parseArgs(arguments)
         return try {
             withTimeout(invokeTimeoutMs) { tool.definition.handler.call(args) }
         } catch (t: TimeoutCancellationException) {
             logger.warn(
-                LogCategory.SYSTEM, "MCP tool handler timed out",
+                LogCategory.SYSTEM,
+                "MCP tool handler timed out",
                 mapOf("tool" to toolName, "providerId" to tool.providerId, "timeoutMs" to invokeTimeoutMs),
                 error = t,
             )
@@ -285,7 +313,8 @@ internal class McpToolRegistryCore(
             throw t
         } catch (t: Throwable) {
             logger.warn(
-                LogCategory.SYSTEM, "MCP tool handler failed",
+                LogCategory.SYSTEM,
+                "MCP tool handler failed",
                 mapOf(
                     "tool" to toolName,
                     "providerId" to tool.providerId,
@@ -299,8 +328,11 @@ internal class McpToolRegistryCore(
     private fun loadDisabled(): Set<String> {
         if (disabledFile == null) return emptySet()
         return try {
-            if (disabledFile.exists()) json.decodeFromString<List<String>>(disabledFile.readText()).toSet()
-            else emptySet()
+            if (disabledFile.exists()) {
+                json.decodeFromString<List<String>>(disabledFile.readText()).toSet()
+            } else {
+                emptySet()
+            }
         } catch (t: Throwable) {
             logger.warn(LogCategory.SYSTEM, "Failed to load disabled MCP tools", mapOf("error" to (t.message ?: "")))
             emptySet()
@@ -321,29 +353,39 @@ internal class McpToolRegistryCore(
 
     /** Parse a JSON-object arguments string into a typed [McpToolArgs] of scalars. */
     private fun parseArgs(arguments: String): McpToolArgs {
-        val map: Map<String, Any?> = try {
-            (json.parseToJsonElement(arguments) as? JsonObject)
-                ?.mapValues { (_, el) -> scalarOf(el) }
-                ?: emptyMap()
-        } catch (t: Throwable) {
-            logger.debug(
-                LogCategory.SYSTEM,
-                "MCP tool arguments are not a JSON object - using empty args",
-                mapOf("error" to t.toString()),
-            )
-            emptyMap()
-        }
+        val map: Map<String, Any?> =
+            try {
+                (json.parseToJsonElement(arguments) as? JsonObject)
+                    ?.mapValues { (_, el) -> scalarOf(el) }
+                    ?: emptyMap()
+            } catch (t: Throwable) {
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "MCP tool arguments are not a JSON object - using empty args",
+                    mapOf("error" to t.toString()),
+                )
+                emptyMap()
+            }
         return McpToolArgs(map, arguments.ifBlank { "{}" })
     }
 
     /** Convert a JSON element to a Kotlin scalar; nested objects/arrays become their raw JSON. */
-    private fun scalarOf(el: JsonElement): Any? = when {
-        el is JsonNull -> null
-        el is JsonPrimitive -> if (el.isString) {
-            el.content
-        } else {
-            el.booleanOrNull ?: el.longOrNull ?: el.doubleOrNull ?: el.content
+    private fun scalarOf(el: JsonElement): Any? =
+        when {
+            el is JsonNull -> {
+                null
+            }
+
+            el is JsonPrimitive -> {
+                if (el.isString) {
+                    el.content
+                } else {
+                    el.booleanOrNull ?: el.longOrNull ?: el.doubleOrNull ?: el.content
+                }
+            }
+
+            else -> {
+                el.toString()
+            }
         }
-        else -> el.toString()
-    }
 }

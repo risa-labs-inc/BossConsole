@@ -13,9 +13,8 @@ class PluginException(
     val pluginId: String,
     val pluginName: String? = null,
     message: String? = null,
-    cause: Throwable? = null
+    cause: Throwable? = null,
 ) : RuntimeException(message ?: cause?.message, cause) {
-
     companion object {
         /**
          * Wrap any throwable with plugin attribution.
@@ -27,17 +26,19 @@ class PluginException(
          * @param cause The original error
          * @return A PluginException wrapping the error
          */
-        fun createByPlugin(pluginId: String, cause: Throwable): PluginException {
-            return if (cause is PluginException) {
+        fun createByPlugin(
+            pluginId: String,
+            cause: Throwable,
+        ): PluginException =
+            if (cause is PluginException) {
                 cause
             } else {
                 PluginException(
                     pluginId = pluginId,
                     message = "Error in plugin '$pluginId': ${cause.message}",
-                    cause = cause
+                    cause = cause,
                 )
             }
-        }
 
         /**
          * Wrap any throwable with plugin attribution, including plugin name.
@@ -47,18 +48,21 @@ class PluginException(
          * @param cause The original error
          * @return A PluginException wrapping the error
          */
-        fun createByPlugin(pluginId: String, pluginName: String, cause: Throwable): PluginException {
-            return if (cause is PluginException) {
+        fun createByPlugin(
+            pluginId: String,
+            pluginName: String,
+            cause: Throwable,
+        ): PluginException =
+            if (cause is PluginException) {
                 cause
             } else {
                 PluginException(
                     pluginId = pluginId,
                     pluginName = pluginName,
                     message = "Error in plugin '$pluginName' ($pluginId): ${cause.message}",
-                    cause = cause
+                    cause = cause,
                 )
             }
-        }
 
         /**
          * Extract plugin ID from an exception if it's a PluginException.
@@ -66,9 +70,7 @@ class PluginException(
          * @param throwable The exception to check
          * @return The plugin ID, or null if the exception is not a PluginException
          */
-        fun getPluginId(throwable: Throwable): String? {
-            return (throwable as? PluginException)?.pluginId
-        }
+        fun getPluginId(throwable: Throwable): String? = (throwable as? PluginException)?.pluginId
 
         /**
          * Check if the given exception is attributed to a specific plugin.
@@ -77,9 +79,10 @@ class PluginException(
          * @param pluginId The plugin ID to match
          * @return True if the exception is a PluginException for the given plugin
          */
-        fun isFromPlugin(throwable: Throwable, pluginId: String): Boolean {
-            return getPluginId(throwable) == pluginId
-        }
+        fun isFromPlugin(
+            throwable: Throwable,
+            pluginId: String,
+        ): Boolean = getPluginId(throwable) == pluginId
     }
 
     /**

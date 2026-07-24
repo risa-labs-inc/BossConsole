@@ -23,7 +23,7 @@ data class JupyterTabInfo(
     override val title: String = "Notebook",
     override val icon: ImageVector = Icons.Outlined.Code,
     override val tabIcon: TabIcon? = null,
-    val filePath: String = ""
+    val filePath: String = "",
 ) : TabInfo {
     /**
      * Return a copy retitled to [newTitle]. The host's `BossTabUpdateProvider` resolves
@@ -47,13 +47,17 @@ data class JupyterTabInfo(
          * The derived title is intentionally the full basename — extension included,
          * `analysis.ipynb` not `analysis` — matching how editor tabs title themselves.
          */
-        fun create(filePath: String, title: String? = null): JupyterTabInfo {
+        fun create(
+            filePath: String,
+            title: String? = null,
+        ): JupyterTabInfo {
             val path = filePath.trim()
             return JupyterTabInfo(
                 id = newId(),
-                title = title?.ifBlank { null }
-                    ?: path.substringAfterLast('/').substringAfterLast('\\').ifBlank { "Notebook" },
-                filePath = path
+                title =
+                    title?.ifBlank { null }
+                        ?: path.substringAfterLast('/').substringAfterLast('\\').ifBlank { "Notebook" },
+                filePath = path,
             )
         }
 

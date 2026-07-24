@@ -16,4 +16,7 @@ expect fun loadFaviconFromCache(cacheKey: String?): ai.rever.boss.plugin.api.Tab
  * @param url The page URL to get favicon for
  * @param standardCacheKey The cache key from standard favicon cache (fallback)
  */
-expect suspend fun loadHighQualityFavicon(url: String, standardCacheKey: String?): ai.rever.boss.plugin.api.TabIcon.Image?
+expect suspend fun loadHighQualityFavicon(
+    url: String,
+    standardCacheKey: String?,
+): ai.rever.boss.plugin.api.TabIcon.Image?

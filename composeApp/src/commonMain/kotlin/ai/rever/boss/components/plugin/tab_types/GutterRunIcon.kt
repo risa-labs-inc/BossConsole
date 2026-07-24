@@ -14,8 +14,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.Icon
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.PlayArrow
-import compose.icons.FeatherIcons
-import compose.icons.feathericons.Play
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -28,6 +26,8 @@ import androidx.compose.ui.input.pointer.PointerButton
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.unit.dp
+import compose.icons.FeatherIcons
+import compose.icons.feathericons.Play
 
 /**
  * Run icon displayed in the code editor gutter next to main functions.
@@ -39,32 +39,34 @@ import androidx.compose.ui.unit.dp
 fun GutterRunIcon(
     detected: DetectedMainFunction,
     onRun: (DetectedMainFunction) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
     var showContextMenu by remember { mutableStateOf(false) }
 
-    val iconColor = if (isHovered) {
-        BossTheme.colors.ok // Full-strength run green when hovered
-    } else {
-        BossTheme.colors.ok.copy(alpha = 0.85f) // run green
-    }
+    val iconColor =
+        if (isHovered) {
+            BossTheme.colors.ok // Full-strength run green when hovered
+        } else {
+            BossTheme.colors.ok.copy(alpha = 0.85f) // run green
+        }
 
     Icon(
         imageVector = FeatherIcons.Play,
         contentDescription = "Run ${detected.functionName}",
         tint = iconColor,
-        modifier = modifier
-            .size(20.dp)
-            .hoverable(interactionSource)
-            .clickable { onRun(detected) }
-            .onPointerEvent(PointerEventType.Press) { event ->
-                // Right-click to show context menu
-                if (event.button == PointerButton.Secondary) {
-                    showContextMenu = true
-                }
-            }
+        modifier =
+            modifier
+                .size(20.dp)
+                .hoverable(interactionSource)
+                .clickable { onRun(detected) }
+                .onPointerEvent(PointerEventType.Press) { event ->
+                    // Right-click to show context menu
+                    if (event.button == PointerButton.Secondary) {
+                        showContextMenu = true
+                    }
+                },
     )
 
     // Context menu for additional options
@@ -73,7 +75,7 @@ fun GutterRunIcon(
             detected = detected,
             onDismissRequest = { showContextMenu = false },
             onRun = { onRun(detected) },
-            onRunWithArgs = { /* Future: Show dialog to enter arguments */ }
+            onRunWithArgs = { /* Future: Show dialog to enter arguments */ },
         )
     }
 }
@@ -86,40 +88,45 @@ private fun GutterRunContextMenu(
     detected: DetectedMainFunction,
     onDismissRequest: () -> Unit,
     onRun: () -> Unit,
-    onRunWithArgs: () -> Unit
+    onRunWithArgs: () -> Unit,
 ) {
-    val menuItems = buildList {
-        add(ContextMenuItem(
-            text = "Run '${detected.toShortName()}'",
-            icon = Icons.Outlined.PlayArrow,
-            onClick = {
-                onRun()
-                onDismissRequest()
-            }
-        ))
+    val menuItems =
+        buildList {
+            add(
+                ContextMenuItem(
+                    text = "Run '${detected.toShortName()}'",
+                    icon = Icons.Outlined.PlayArrow,
+                    onClick = {
+                        onRun()
+                        onDismissRequest()
+                    },
+                ),
+            )
 
-        // Future: Debug option
-        // add(ContextMenuItem(
-        //     text = "Debug '${detected.toShortName()}'",
-        //     icon = Icons.Outlined.BugReport,
-        //     onClick = { onDismissRequest() }
-        // ))
+            // Future: Debug option
+            // add(ContextMenuItem(
+            //     text = "Debug '${detected.toShortName()}'",
+            //     icon = Icons.Outlined.BugReport,
+            //     onClick = { onDismissRequest() }
+            // ))
 
-        add(ContextMenuItem(isDivider = true))
+            add(ContextMenuItem(isDivider = true))
 
-        add(ContextMenuItem(
-            text = "Run with Arguments...",
-            icon = null,
-            onClick = {
-                onRunWithArgs()
-                onDismissRequest()
-            }
-        ))
-    }
+            add(
+                ContextMenuItem(
+                    text = "Run with Arguments...",
+                    icon = null,
+                    onClick = {
+                        onRunWithArgs()
+                        onDismissRequest()
+                    },
+                ),
+            )
+        }
 
     ContextMenu(
         items = menuItems,
-        onDismissRequest = onDismissRequest
+        onDismissRequest = onDismissRequest,
     )
 }
 

@@ -35,4 +35,3 @@ object MagicLinkErrorService {
         _verificationError.value = null
     }
 }
-

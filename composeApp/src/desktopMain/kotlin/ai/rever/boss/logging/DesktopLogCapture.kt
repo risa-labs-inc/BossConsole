@@ -64,9 +64,7 @@ class DesktopLogCapture {
     /**
      * Get all captured logs.
      */
-    fun getLogs(): List<LogEntry> {
-        return buffer.toList()
-    }
+    fun getLogs(): List<LogEntry> = buffer.toList()
 
     /**
      * Clear all captured logs.
@@ -99,9 +97,10 @@ class DesktopLogCapture {
      * Uses copy-on-read pattern to avoid holding lock during callback invocation.
      */
     private fun notifyListeners(entry: LogEntry) {
-        val listenersCopy = synchronized(listeners) {
-            listeners.toList()
-        }
+        val listenersCopy =
+            synchronized(listeners) {
+                listeners.toList()
+            }
         listenersCopy.forEach { it(entry) }
     }
 
@@ -112,9 +111,8 @@ class DesktopLogCapture {
         private val originalStream: PrintStream,
         private val buffer: ConcurrentLinkedQueue<LogEntry>,
         private val source: LogSource,
-        private val onNewEntry: (LogEntry) -> Unit
+        private val onNewEntry: (LogEntry) -> Unit,
     ) : OutputStream() {
-
         private val lineBuffer = ByteArrayOutputStream()
 
         override fun write(b: Int) {
@@ -128,11 +126,12 @@ class DesktopLogCapture {
                 if (bytes.isNotEmpty()) {
                     val line = String(bytes, Charsets.UTF_8)
 
-                    val entry = LogEntry(
-                        timestamp = System.currentTimeMillis(),
-                        message = line,
-                        source = source
-                    )
+                    val entry =
+                        LogEntry(
+                            timestamp = System.currentTimeMillis(),
+                            message = line,
+                            source = source,
+                        )
 
                     buffer.add(entry)
 

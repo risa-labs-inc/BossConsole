@@ -56,13 +56,16 @@ class RemotePanelComponent(
                 onEvent = { nodeId, eventType, eventData ->
                     logger.debug(
                         "Panel UI event: panel={}, node={}, type={}, data={}",
-                        panelId, nodeId, eventType, eventData
+                        panelId,
+                        nodeId,
+                        eventType,
+                        eventData,
                     )
                     // Forward event to plugin process via gRPC
                     scope.launch {
                         sendUIEvent(nodeId, eventType, eventData)
                     }
-                }
+                },
             )
         }
     }
@@ -106,7 +109,9 @@ class RemotePanelComponent(
 
     private suspend fun connectToPluginProcess() {
         try {
-            val client = ai.rever.boss.ipc.BossIpcClient(uiAddress)
+            val client =
+                ai.rever.boss.ipc
+                    .BossIpcClient(uiAddress)
             connectWithChannel(client.channel)
         } catch (e: Exception) {
             logger.error("Failed to connect to plugin process: panelId={}", panelId, e)
@@ -123,15 +128,18 @@ class RemotePanelComponent(
             // StreamUI is bidirectional: kernel sends WidgetUpdates, plugin sends UIEvents.
             // We wrap outgoing UIEvents as the request stream and collect incoming UIEvents
             // from the response stream.
-            val widgetUpdateStream = channelFlow {
-                // Forward UI events from kernel to plugin process as WidgetUpdate wrappers
-                outgoingEvents.collect { event ->
-                    val update = ai.rever.boss.ipc.proto.WidgetUpdate.newBuilder()
-                        .setSurfaceId(event.surfaceId)
-                        .build()
-                    send(update)
+            val widgetUpdateStream =
+                channelFlow {
+                    // Forward UI events from kernel to plugin process as WidgetUpdate wrappers
+                    outgoingEvents.collect { event ->
+                        val update =
+                            ai.rever.boss.ipc.proto.WidgetUpdate
+                                .newBuilder()
+                                .setSurfaceId(event.surfaceId)
+                                .build()
+                        send(update)
+                    }
                 }
-            }
 
             stub.streamUI(widgetUpdateStream).collect { uiEvent ->
                 logger.debug("Received UI event from plugin: surface={}", uiEvent.surfaceId)
@@ -144,22 +152,36 @@ class RemotePanelComponent(
         }
     }
 
-    private suspend fun sendUIEvent(nodeId: String, eventType: String, eventData: String) {
-        val eventBuilder = UIEvent.newBuilder()
-            .setSurfaceId(panelId)
-            .setTargetNodeId(nodeId)
-            .setTimestamp(System.currentTimeMillis())
+    private suspend fun sendUIEvent(
+        nodeId: String,
+        eventType: String,
+        eventData: String,
+    ) {
+        val eventBuilder =
+            UIEvent
+                .newBuilder()
+                .setSurfaceId(panelId)
+                .setTargetNodeId(nodeId)
+                .setTimestamp(System.currentTimeMillis())
 
         when (eventType) {
-            "click" -> eventBuilder.setClick(
-                ClickEvent.newBuilder().setEventId(eventData).build()
-            )
-            "textChange" -> eventBuilder.setTextChange(
-                TextChangeEvent.newBuilder().setNewValue(eventData).build()
-            )
-            "toggle" -> eventBuilder.setToggle(
-                ToggleEvent.newBuilder().setChecked(eventData.toBoolean()).build()
-            )
+            "click" -> {
+                eventBuilder.setClick(
+                    ClickEvent.newBuilder().setEventId(eventData).build(),
+                )
+            }
+
+            "textChange" -> {
+                eventBuilder.setTextChange(
+                    TextChangeEvent.newBuilder().setNewValue(eventData).build(),
+                )
+            }
+
+            "toggle" -> {
+                eventBuilder.setToggle(
+                    ToggleEvent.newBuilder().setChecked(eventData.toBoolean()).build(),
+                )
+            }
         }
 
         outgoingEvents.emit(eventBuilder.build())

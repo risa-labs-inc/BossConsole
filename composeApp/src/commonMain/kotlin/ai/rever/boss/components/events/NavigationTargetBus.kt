@@ -18,7 +18,7 @@ data class NavigationTargetEvent(
     val filePath: String,
     val line: Int,
     val column: Int,
-    val sourceWindowId: String
+    val sourceWindowId: String,
 )
 
 /**
@@ -35,10 +35,11 @@ object NavigationTargetBus {
     /** Optional IPC bridge for forwarding events cross-process in kernel mode. */
     @Volatile var ipcBridge: IpcEventBridge? = null
 
-    private val _targets = MutableSharedFlow<NavigationTargetEvent>(
-        replay = 1,  // Replay last event for late subscribers
-        extraBufferCapacity = 5
-    )
+    private val _targets =
+        MutableSharedFlow<NavigationTargetEvent>(
+            replay = 1, // Replay last event for late subscribers
+            extraBufferCapacity = 5,
+        )
     val targets: SharedFlow<NavigationTargetEvent> = _targets.asSharedFlow()
 
     /**
@@ -50,7 +51,12 @@ object NavigationTargetBus {
      * @param column Target column (1-based)
      * @param sourceWindowId The window that initiated the navigation (required for multi-window support)
      */
-    suspend fun navigateTo(filePath: String, line: Int, column: Int, sourceWindowId: String) {
+    suspend fun navigateTo(
+        filePath: String,
+        line: Int,
+        column: Int,
+        sourceWindowId: String,
+    ) {
         if (line > 0) {
             val event = NavigationTargetEvent(filePath, line, column, sourceWindowId)
             _targets.emit(event)

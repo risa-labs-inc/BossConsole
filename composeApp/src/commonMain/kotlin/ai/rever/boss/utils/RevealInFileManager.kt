@@ -24,7 +24,10 @@ fun revealInFileManager(path: String): Result<Unit> {
     val file = File(path)
     return runCatching {
         when {
-            osName.contains("mac") -> Runtime.getRuntime().exec(arrayOf("open", "-R", file.absolutePath))
+            osName.contains("mac") -> {
+                Runtime.getRuntime().exec(arrayOf("open", "-R", file.absolutePath))
+            }
+
             osName.contains("win") -> {
                 val winPath = file.absolutePath
                 if (winPath.contains("  ")) {
@@ -46,6 +49,7 @@ fun revealInFileManager(path: String): Result<Unit> {
                     Runtime.getRuntime().exec("explorer.exe /select,\"$winPath\"")
                 }
             }
+
             else -> {
                 val dir = (file.parentFile ?: file).absolutePath
                 try {
@@ -69,8 +73,9 @@ fun revealInFileManager(path: String): Result<Unit> {
 }
 
 /** Platform-appropriate label for the reveal action. */
-fun revealInFileManagerLabel(): String = when {
-    osName.contains("mac") -> "Reveal in Finder"
-    osName.contains("win") -> "Reveal in Explorer"
-    else -> "Open Containing Folder"
-}
+fun revealInFileManagerLabel(): String =
+    when {
+        osName.contains("mac") -> "Reveal in Finder"
+        osName.contains("win") -> "Reveal in Explorer"
+        else -> "Open Containing Folder"
+    }

@@ -77,20 +77,22 @@ object IpcVersion {
         hostIpcVersion: String = CURRENT,
     ): CompatResult {
         if (runtimeMinIpcVersion.isBlank()) return CompatResult.UnknownRuntime
-        val rt = parse(runtimeMinIpcVersion)
-            ?: return CompatResult.Incompatible(
-                "Runtime declares an unparseable minIpcVersion: '$runtimeMinIpcVersion'"
-            )
-        val host = parse(hostIpcVersion)
-            ?: return CompatResult.Incompatible(
-                "Host IPC version is unparseable: '$hostIpcVersion'"
-            )
+        val rt =
+            parse(runtimeMinIpcVersion)
+                ?: return CompatResult.Incompatible(
+                    "Runtime declares an unparseable minIpcVersion: '$runtimeMinIpcVersion'",
+                )
+        val host =
+            parse(hostIpcVersion)
+                ?: return CompatResult.Incompatible(
+                    "Host IPC version is unparseable: '$hostIpcVersion'",
+                )
 
         if (rt.first != host.first) {
             return CompatResult.Incompatible(
                 "Runtime requires IPC major v${rt.first}.x but host speaks v${host.first}.x " +
                     "(runtime=$runtimeMinIpcVersion, host=$hostIpcVersion). " +
-                    if (rt.first > host.first) "Update BossConsole." else "Update the runtime JAR."
+                    if (rt.first > host.first) "Update BossConsole." else "Update the runtime JAR.",
             )
         }
         val rtMM = rt.second * 1_000_000 + rt.third
@@ -98,7 +100,7 @@ object IpcVersion {
         if (rtMM > hostMM) {
             return CompatResult.Incompatible(
                 "Runtime requires IPC ≥$runtimeMinIpcVersion but host is $hostIpcVersion. " +
-                    "Update BossConsole."
+                    "Update BossConsole.",
             )
         }
         return CompatResult.Compatible
@@ -106,8 +108,12 @@ object IpcVersion {
 
     sealed interface CompatResult {
         data object Compatible : CompatResult
+
         /** Manifest has no `minIpcVersion` — legacy JAR from before Phase 0. */
         data object UnknownRuntime : CompatResult
-        data class Incompatible(val reason: String) : CompatResult
+
+        data class Incompatible(
+            val reason: String,
+        ) : CompatResult
     }
 }

@@ -1,17 +1,15 @@
 package ai.rever.boss.plugin.pathutils
 
-import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Nested
+import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 
 /**
  * Unit tests for PathUtils.
  */
 class PathUtilsTest {
-
     @Nested
     inner class ExtractFileNameTests {
-
         @Test
         fun `handles Unix paths`() {
             assertEquals("file.txt", "/path/to/file.txt".extractFileName())
@@ -47,7 +45,6 @@ class PathUtilsTest {
 
     @Nested
     inner class ExtractParentNameTests {
-
         @Test
         fun `handles Unix paths`() {
             assertEquals("to", "/path/to/file.txt".extractParentName())

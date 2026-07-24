@@ -13,7 +13,7 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class KeyStroke(
     val key: String,
-    val modifiers: List<String> = emptyList()
+    val modifiers: List<String> = emptyList(),
 ) {
     /**
      * Returns a display string for this keystroke.
@@ -21,15 +21,16 @@ data class KeyStroke(
     fun displayString(platform: String = System.getProperty("os.name")): String {
         val isMac = platform.contains("Mac", ignoreCase = true)
 
-        val modifierStrings = modifiers.map { modifier ->
-            when (modifier.lowercase()) {
-                "cmd", "meta" -> if (isMac) "⌘" else "Ctrl"
-                "ctrl", "control" -> if (isMac) "⌃" else "Ctrl"
-                "shift" -> if (isMac) "⇧" else "Shift"
-                "alt", "option" -> if (isMac) "⌥" else "Alt"
-                else -> modifier
+        val modifierStrings =
+            modifiers.map { modifier ->
+                when (modifier.lowercase()) {
+                    "cmd", "meta" -> if (isMac) "⌘" else "Ctrl"
+                    "ctrl", "control" -> if (isMac) "⌃" else "Ctrl"
+                    "shift" -> if (isMac) "⇧" else "Shift"
+                    "alt", "option" -> if (isMac) "⌥" else "Alt"
+                    else -> modifier
+                }
             }
-        }
 
         val keyString = formatKeyDisplay(key)
         return (modifierStrings + keyString).joinToString(if (isMac) "" else "+")
@@ -38,8 +39,8 @@ data class KeyStroke(
     /**
      * Formats the key name for display.
      */
-    private fun formatKeyDisplay(keyName: String): String {
-        return when (keyName.lowercase()) {
+    private fun formatKeyDisplay(keyName: String): String =
+        when (keyName.lowercase()) {
             "space", "spacebar" -> "Space"
             "arrowleft", "directionleft" -> "←"
             "arrowright", "directionright" -> "→"
@@ -52,7 +53,6 @@ data class KeyStroke(
             "tab" -> "Tab"
             else -> keyName.uppercase()
         }
-    }
 
     /**
      * Returns a signature for conflict detection.
@@ -72,7 +72,7 @@ data class KeyStroke(
         isMetaPressed: Boolean,
         isCtrlPressed: Boolean,
         isShiftPressed: Boolean,
-        isAltPressed: Boolean
+        isAltPressed: Boolean,
     ): Boolean {
         // Check if key matches
         if (!key.equals(eventKey, ignoreCase = true)) return false
@@ -84,18 +84,19 @@ data class KeyStroke(
         val hasAlt = modifiers.any { it.equals("Alt", true) || it.equals("Option", true) }
 
         return (hasCmd == isMetaPressed) &&
-                (hasCtrl == isCtrlPressed) &&
-                (hasShift == isShiftPressed) &&
-                (hasAlt == isAltPressed)
+            (hasCtrl == isCtrlPressed) &&
+            (hasShift == isShiftPressed) &&
+            (hasAlt == isAltPressed)
     }
 
     companion object {
         /**
          * Creates a KeyStroke from key name and modifier strings.
          */
-        fun of(key: String, vararg modifiers: String): KeyStroke {
-            return KeyStroke(key, modifiers.toList())
-        }
+        fun of(
+            key: String,
+            vararg modifiers: String,
+        ): KeyStroke = KeyStroke(key, modifiers.toList())
     }
 }
 
@@ -120,7 +121,7 @@ data class KeyBinding(
     val context: ShortcutContext = ShortcutContext.GLOBAL,
     val enabled: Boolean = true,
     val category: String = "Other",
-    val description: String = ""
+    val description: String = "",
 ) {
     /**
      * Returns the primary keystroke for this binding.
@@ -133,21 +134,19 @@ data class KeyBinding(
      */
     val allKeystrokes: List<KeyStroke>
         get() = listOf(primaryKeystroke) + alternateKeystrokes
+
     /**
      * Returns a display string for this key binding (primary keystroke only).
      * Examples: "Cmd+N", "Ctrl+Shift+T", "Alt+Left"
      */
-    fun displayString(platform: String = System.getProperty("os.name")): String {
-        return primaryKeystroke.displayString(platform)
-    }
+    fun displayString(platform: String = System.getProperty("os.name")): String = primaryKeystroke.displayString(platform)
 
     /**
      * Returns a display string showing all keystrokes (primary + alternates).
      * Examples: "⌘N / Ctrl+N", "⌘⇧T / Ctrl+Shift+T"
      */
-    fun displayStringAll(platform: String = System.getProperty("os.name")): String {
-        return allKeystrokes.joinToString(" / ") { it.displayString(platform) }
-    }
+    fun displayStringAll(platform: String = System.getProperty("os.name")): String =
+        allKeystrokes.joinToString(" / ") { it.displayString(platform) }
 
     /**
      * Checks if this key binding matches the given key event properties.
@@ -158,7 +157,7 @@ data class KeyBinding(
         isMetaPressed: Boolean,
         isCtrlPressed: Boolean,
         isShiftPressed: Boolean,
-        isAltPressed: Boolean
+        isAltPressed: Boolean,
     ): Boolean {
         if (!enabled) return false
 
@@ -173,45 +172,37 @@ data class KeyBinding(
      * Format: "context:modifiers+key"
      * Example: "GLOBAL:Cmd+Shift+N"
      */
-    fun signature(): String {
-        return "${context.name}:${primaryKeystroke.signature()}"
-    }
+    fun signature(): String = "${context.name}:${primaryKeystroke.signature()}"
 
     /**
      * Returns all signatures for this key binding (primary + alternates).
      * Used for comprehensive conflict detection.
      */
-    fun allSignatures(): List<String> {
-        return allKeystrokes.map { "${context.name}:${it.signature()}" }
-    }
+    fun allSignatures(): List<String> = allKeystrokes.map { "${context.name}:${it.signature()}" }
 
     /**
      * Creates a copy with an additional alternate keystroke.
      */
-    fun withAlternateKeystroke(keystroke: KeyStroke): KeyBinding {
-        return copy(alternateKeystrokes = alternateKeystrokes + keystroke)
-    }
+    fun withAlternateKeystroke(keystroke: KeyStroke): KeyBinding = copy(alternateKeystrokes = alternateKeystrokes + keystroke)
 
     /**
      * Creates a copy with an additional alternate keystroke from key and modifiers.
      */
-    fun withAlternateKeystroke(key: String, vararg modifiers: String): KeyBinding {
-        return withAlternateKeystroke(KeyStroke(key, modifiers.toList()))
-    }
+    fun withAlternateKeystroke(
+        key: String,
+        vararg modifiers: String,
+    ): KeyBinding = withAlternateKeystroke(KeyStroke(key, modifiers.toList()))
 
     /**
      * Creates a copy without the specified alternate keystroke.
      */
-    fun withoutAlternateKeystroke(keystroke: KeyStroke): KeyBinding {
-        return copy(alternateKeystrokes = alternateKeystrokes.filter { it != keystroke })
-    }
+    fun withoutAlternateKeystroke(keystroke: KeyStroke): KeyBinding =
+        copy(alternateKeystrokes = alternateKeystrokes.filter { it != keystroke })
 
     /**
      * Creates a copy with all alternate keystrokes cleared.
      */
-    fun clearAlternateKeystrokes(): KeyBinding {
-        return copy(alternateKeystrokes = emptyList())
-    }
+    fun clearAlternateKeystrokes(): KeyBinding = copy(alternateKeystrokes = emptyList())
 
     /**
      * Checks if this binding has any alternate keystrokes.
@@ -232,7 +223,7 @@ data class KeyBinding(
             isAltPressed: Boolean,
             context: ShortcutContext = ShortcutContext.GLOBAL,
             category: String = "Other",
-            description: String = ""
+            description: String = "",
         ): KeyBinding {
             val modifiers = mutableListOf<String>()
             if (isMetaPressed) modifiers.add("Cmd")
@@ -247,7 +238,7 @@ data class KeyBinding(
                 context = context,
                 enabled = true,
                 category = category,
-                description = description
+                description = description,
             )
         }
 
@@ -263,7 +254,7 @@ data class KeyBinding(
             vararg additionalModifiers: String,
             context: ShortcutContext = ShortcutContext.GLOBAL,
             category: String = "Other",
-            description: String = ""
+            description: String = "",
         ): KeyBinding {
             val cmdModifiers = listOf("Cmd") + additionalModifiers.toList()
             val ctrlModifiers = listOf("Ctrl") + additionalModifiers.toList()
@@ -276,7 +267,7 @@ data class KeyBinding(
                 context = context,
                 enabled = true,
                 category = category,
-                description = description
+                description = description,
             )
         }
 
@@ -290,9 +281,9 @@ data class KeyBinding(
             alternates: List<KeyStroke>,
             context: ShortcutContext = ShortcutContext.GLOBAL,
             category: String = "Other",
-            description: String = ""
-        ): KeyBinding {
-            return KeyBinding(
+            description: String = "",
+        ): KeyBinding =
+            KeyBinding(
                 actionId = actionId,
                 key = primaryKey,
                 modifiers = primaryModifiers,
@@ -300,9 +291,7 @@ data class KeyBinding(
                 context = context,
                 enabled = true,
                 category = category,
-                description = description
+                description = description,
             )
-        }
     }
 }
-

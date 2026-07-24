@@ -21,7 +21,10 @@ val LocalWindowProjectState = compositionLocalOf<WindowProjectState?> { null }
  * @param windowProjectState The window project state (should not be null in normal operation)
  * @param project The project to select
  */
-fun selectProjectInWindow(windowProjectState: WindowProjectState?, project: Project) {
+fun selectProjectInWindow(
+    windowProjectState: WindowProjectState?,
+    project: Project,
+) {
     if (windowProjectState != null) {
         windowProjectState.selectProject(project)
     }

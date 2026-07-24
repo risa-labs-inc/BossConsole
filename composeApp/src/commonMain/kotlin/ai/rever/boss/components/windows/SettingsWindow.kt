@@ -11,5 +11,5 @@ import androidx.compose.runtime.Composable
 @Composable
 expect fun SettingsWindow(
     onClose: () -> Unit,
-    initialSection: String? = null
+    initialSection: String? = null,
 )

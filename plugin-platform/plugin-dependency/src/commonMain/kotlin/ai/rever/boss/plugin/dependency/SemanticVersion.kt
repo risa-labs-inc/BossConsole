@@ -15,9 +15,8 @@ data class SemanticVersion(
     val major: Int,
     val minor: Int,
     val patch: Int,
-    val prerelease: String? = null
+    val prerelease: String? = null,
 ) : Comparable<SemanticVersion> {
-
     companion object {
         /**
          * Parse a version string, or null if invalid.
@@ -33,11 +32,12 @@ data class SemanticVersion(
 
             // Strip build metadata (ignored per SemVer §10); a trailing '+' is invalid.
             val plus = trimmed.indexOf('+')
-            val withoutBuild = when {
-                plus < 0 -> trimmed
-                plus == trimmed.length - 1 -> return null
-                else -> trimmed.substring(0, plus)
-            }
+            val withoutBuild =
+                when {
+                    plus < 0 -> trimmed
+                    plus == trimmed.length - 1 -> return null
+                    else -> trimmed.substring(0, plus)
+                }
 
             // Split off prerelease; a trailing '-' or empty identifier is invalid.
             val dash = withoutBuild.indexOf('-')
@@ -62,7 +62,7 @@ data class SemanticVersion(
                 major = nums[0],
                 minor = nums.getOrElse(1) { 0 },
                 patch = nums.getOrElse(2) { 0 },
-                prerelease = prerelease
+                prerelease = prerelease,
             )
         }
 
@@ -73,7 +73,10 @@ data class SemanticVersion(
          * a larger set of identifiers wins when all preceding are equal. A null
          * (absent) prerelease has HIGHER precedence than any prerelease.
          */
-        private fun comparePrerelease(a: String?, b: String?): Int {
+        private fun comparePrerelease(
+            a: String?,
+            b: String?,
+        ): Int {
             if (a == null && b == null) return 0
             if (a == null) return 1
             if (b == null) return -1
@@ -84,12 +87,17 @@ data class SemanticVersion(
                 val y = bi[i]
                 val xn = x.toIntOrNull()
                 val yn = y.toIntOrNull()
-                val c = when {
-                    xn != null && yn != null -> xn.compareTo(yn)
-                    xn != null -> -1 // numeric < alphanumeric
-                    yn != null -> 1
-                    else -> x.compareTo(y)
-                }
+                val c =
+                    when {
+                        xn != null && yn != null -> xn.compareTo(yn)
+
+                        xn != null -> -1
+
+                        // numeric < alphanumeric
+                        yn != null -> 1
+
+                        else -> x.compareTo(y)
+                    }
                 if (c != 0) return c
             }
             return ai.size.compareTo(bi.size)
@@ -103,8 +111,9 @@ data class SemanticVersion(
         return comparePrerelease(prerelease, other.prerelease)
     }
 
-    override fun toString(): String = buildString {
-        append("$major.$minor.$patch")
-        prerelease?.let { append("-$it") }
-    }
+    override fun toString(): String =
+        buildString {
+            append("$major.$minor.$patch")
+            prerelease?.let { append("-$it") }
+        }
 }

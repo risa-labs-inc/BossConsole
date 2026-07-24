@@ -7,7 +7,6 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class IpcVersionTest {
-
     @Test
     fun `parse splits well-formed semver`() {
         assertEquals(Triple(1, 2, 3), IpcVersion.parse("1.2.3"))

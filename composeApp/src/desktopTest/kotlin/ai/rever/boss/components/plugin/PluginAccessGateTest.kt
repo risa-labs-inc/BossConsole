@@ -12,7 +12,6 @@ import kotlin.test.assertTrue
  * `requiredPermissions` (including the empty/legacy "visible to all" case).
  */
 class PluginAccessGateTest {
-
     @Test
     fun `legacy plugin (no requirements) is visible to any authenticated user`() {
         assertTrue(
@@ -21,7 +20,7 @@ class PluginAccessGateTest {
                 userPermissions = setOf("user.read"),
                 requiresAdmin = false,
                 requiredPermissions = emptyList(),
-            )
+            ),
         )
     }
 
@@ -33,7 +32,7 @@ class PluginAccessGateTest {
                 userPermissions = setOf("role.read", "role.create"),
                 requiresAdmin = true,
                 requiredPermissions = emptyList(),
-            )
+            ),
         )
     }
 
@@ -45,7 +44,7 @@ class PluginAccessGateTest {
                 userPermissions = emptySet(),
                 requiresAdmin = true,
                 requiredPermissions = emptyList(),
-            )
+            ),
         )
     }
 
@@ -57,7 +56,7 @@ class PluginAccessGateTest {
                 userPermissions = emptySet(),
                 requiresAdmin = false,
                 requiredPermissions = listOf("finance.read", "role.assign"),
-            )
+            ),
         )
     }
 
@@ -70,7 +69,7 @@ class PluginAccessGateTest {
                 userPermissions = setOf("role.read", "role.assign", "user.read"),
                 requiresAdmin = false,
                 requiredPermissions = listOf("role.read", "role.assign"),
-            )
+            ),
         )
     }
 
@@ -83,7 +82,7 @@ class PluginAccessGateTest {
                 userPermissions = setOf("role.read", "role.create", "role.assign", "user.read"),
                 requiresAdmin = false,
                 requiredPermissions = listOf("finance.read"),
-            )
+            ),
         )
     }
 
@@ -96,7 +95,7 @@ class PluginAccessGateTest {
                 userPermissions = setOf("role.read"),
                 requiresAdmin = true,
                 requiredPermissions = listOf("role.read"),
-            )
+            ),
         )
     }
 }

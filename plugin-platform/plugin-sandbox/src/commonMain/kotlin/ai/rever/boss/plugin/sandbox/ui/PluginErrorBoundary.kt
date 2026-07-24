@@ -1,10 +1,10 @@
 package ai.rever.boss.plugin.sandbox.ui
 
+import ai.rever.boss.plugin.logging.BossLogger
+import ai.rever.boss.plugin.logging.LogCategory
 import ai.rever.boss.plugin.sandbox.PluginErrorClassifier
 import ai.rever.boss.plugin.sandbox.PluginSandbox
 import ai.rever.boss.plugin.sandbox.SandboxState
-import ai.rever.boss.plugin.logging.BossLogger
-import ai.rever.boss.plugin.logging.LogCategory
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -40,7 +40,7 @@ object PluginCrashRegistry {
      */
     data class CrashInfo(
         val error: Throwable,
-        val isBinaryIncompatibility: Boolean
+        val isBinaryIncompatibility: Boolean,
     )
 
     /** Thread-safe tracking store for crashed plugins. Used by watchdog and non-UI queries. */
@@ -76,12 +76,19 @@ object PluginCrashRegistry {
      * a direct reference to the owning BossTabsComponent.removeTabById(),
      * so it works even before SplitViewStateRegistry is populated.
      */
-    fun registerActiveTab(pluginId: String, tabId: String, closeAction: () -> Unit) {
+    fun registerActiveTab(
+        pluginId: String,
+        tabId: String,
+        closeAction: () -> Unit,
+    ) {
         activeTabMappings[pluginId] = tabId to closeAction
     }
 
     /** Unregister the active tab mapping for a plugin's tab (called on dispose). */
-    fun unregisterActiveTab(pluginId: String, tabId: String) {
+    fun unregisterActiveTab(
+        pluginId: String,
+        tabId: String,
+    ) {
         // Only clear the mapping if it still points at this tab — a newer tab of the
         // same plugin may have replaced it before this (older) tab's dispose runs.
         activeTabMappings.computeIfPresent(pluginId) { _, current ->
@@ -97,13 +104,17 @@ object PluginCrashRegistry {
      * closes the crashed tab via Decompose navigation (which lives outside Compose)
      * and shows a status message notification.
      */
-    fun recordCrash(pluginId: String, error: Throwable) {
+    fun recordCrash(
+        pluginId: String,
+        error: Throwable,
+    ) {
         // Store crash info in thread-safe map (for watchdog / non-UI tracking).
         // This runs on the crashing thread — ConcurrentHashMap is safe here.
-        _crashedPluginsMap[pluginId] = CrashInfo(
-            error = error,
-            isBinaryIncompatibility = PluginErrorClassifier.isBinaryIncompatibility(error)
-        )
+        _crashedPluginsMap[pluginId] =
+            CrashInfo(
+                error = error,
+                isBinaryIncompatibility = PluginErrorClassifier.isBinaryIncompatibility(error),
+            )
 
         val mapping = activeTabMappings[pluginId]
 
@@ -113,29 +124,44 @@ object PluginCrashRegistry {
             // closeAction directly calls BossTabsComponent.removeTabById(),
             // bypassing the corrupted SubcomposeLayout entirely.
             javax.swing.SwingUtilities.invokeLater {
-                logger.info(LogCategory.UI, "Closing crashed plugin tab", mapOf(
-                    "pluginId" to pluginId,
-                    "tabId" to tabId
-                ))
+                logger.info(
+                    LogCategory.UI,
+                    "Closing crashed plugin tab",
+                    mapOf(
+                        "pluginId" to pluginId,
+                        "tabId" to tabId,
+                    ),
+                )
                 try {
                     closeAction()
                 } catch (e: Throwable) {
-                    logger.warn(LogCategory.UI, "closeAction threw during crash cleanup", mapOf(
-                        "pluginId" to pluginId
-                    ), e)
+                    logger.warn(
+                        LogCategory.UI,
+                        "closeAction threw during crash cleanup",
+                        mapOf(
+                            "pluginId" to pluginId,
+                        ),
+                        e,
+                    )
                 }
                 _crashedPluginsMap.remove(pluginId)
                 _crashedPluginsState.value = _crashedPluginsMap.toMap()
                 onCrashNotify?.invoke(pluginId, error)
             }
         } else {
-            logger.warn(LogCategory.UI, "Cannot close crashed tab — no active tab registered", mapOf(
-                "pluginId" to pluginId
-            ))
+            logger.warn(
+                LogCategory.UI,
+                "Cannot close crashed tab — no active tab registered",
+                mapOf(
+                    "pluginId" to pluginId,
+                ),
+            )
             // Sync Compose state on EDT, then force repaint as fallback
             javax.swing.SwingUtilities.invokeLater {
                 _crashedPluginsState.value = _crashedPluginsMap.toMap()
-                java.awt.Window.getWindows().forEach { it.repaint() }
+                java.awt.Window
+                    .getWindows()
+                    .forEach { it.repaint() }
             }
         }
     }
@@ -230,7 +256,7 @@ fun PluginErrorBoundary(
     pluginId: String,
     sandbox: PluginSandbox,
     onRestart: () -> Unit,
-    content: @Composable () -> Unit
+    content: @Composable () -> Unit,
 ) {
     val logger = remember { BossLogger.forComponent("PluginErrorBoundary") }
 
@@ -241,20 +267,26 @@ fun PluginErrorBoundary(
     // the first successful composition — but crashes like NoSuchMethodError happen
     // DURING the first composition of content(). Uses expect/actual: on desktop, this
     // hooks into Thread.UncaughtExceptionHandler; on other platforms, this is a no-op.
-    val crashRegistration = remember(pluginId) {
-        registerCrashInterceptor(pluginId) { e ->
-            logger.error(LogCategory.UI, "Composition crash intercepted for plugin", mapOf(
-                "pluginId" to pluginId,
-                "errorType" to e.javaClass.simpleName
-            ), e)
-            sandbox.recordError(e)
-            // Record in the crash registry so the parent (BossMainPanelContent) can
-            // force a full subtree rebuild via key() change. This is necessary because
-            // after a composition crash, the SubcomposeLayout tree is corrupted and
-            // can't recompose in-place — we need the parent to tear it down entirely.
-            PluginCrashRegistry.recordCrash(pluginId, e)
+    val crashRegistration =
+        remember(pluginId) {
+            registerCrashInterceptor(pluginId) { e ->
+                logger.error(
+                    LogCategory.UI,
+                    "Composition crash intercepted for plugin",
+                    mapOf(
+                        "pluginId" to pluginId,
+                        "errorType" to e.javaClass.simpleName,
+                    ),
+                    e,
+                )
+                sandbox.recordError(e)
+                // Record in the crash registry so the parent (BossMainPanelContent) can
+                // force a full subtree rebuild via key() change. This is necessary because
+                // after a composition crash, the SubcomposeLayout tree is corrupted and
+                // can't recompose in-place — we need the parent to tear it down entirely.
+                PluginCrashRegistry.recordCrash(pluginId, e)
+            }
         }
-    }
     DisposableEffect(pluginId) {
         onDispose {
             crashRegistration?.invoke()
@@ -272,20 +304,25 @@ fun PluginErrorBoundary(
     // (via key() change), this boundary is recreated fresh and reads from the registry.
     val registryCrash = PluginCrashRegistry.crashedPlugins[pluginId]
     val localError = error
-    val activeError = when {
-        sandboxState == SandboxState.DISABLED -> {
-            // Sandbox was disabled (e.g. binary incompatibility) — synthesize an error
-            // if none is already recorded, so the fallback UI always shows.
-            localError ?: registryCrash?.error
-                ?: RuntimeException("Plugin is disabled")
+    val activeError =
+        when {
+            sandboxState == SandboxState.DISABLED -> {
+                // Sandbox was disabled (e.g. binary incompatibility) — synthesize an error
+                // if none is already recorded, so the fallback UI always shows.
+                localError ?: registryCrash?.error
+                    ?: RuntimeException("Plugin is disabled")
+            }
+
+            else -> {
+                localError ?: registryCrash?.error
+            }
         }
-        else -> localError ?: registryCrash?.error
-    }
     // Three distinct sources: persisted flag (survives crash clear), transient crash info,
     // and locally-caught errors that bypassed the registry.
-    val isIncompatible = PluginCrashRegistry.isIncompatible(pluginId) ||
-        registryCrash?.isBinaryIncompatibility == true ||
-        (localError != null && PluginErrorClassifier.isBinaryIncompatibility(localError))
+    val isIncompatible =
+        PluginCrashRegistry.isIncompatible(pluginId) ||
+            registryCrash?.isBinaryIncompatibility == true ||
+            (localError != null && PluginErrorClassifier.isBinaryIncompatibility(localError))
 
     if (activeError != null) {
         PluginErrorFallback(
@@ -293,20 +330,28 @@ fun PluginErrorBoundary(
             error = activeError,
             isIncompatible = isIncompatible,
             onRestart = {
-                logger.info(LogCategory.UI, "User requested plugin restart", mapOf(
-                    "pluginId" to pluginId
-                ))
+                logger.info(
+                    LogCategory.UI,
+                    "User requested plugin restart",
+                    mapOf(
+                        "pluginId" to pluginId,
+                    ),
+                )
                 error = null
                 PluginCrashRegistry.clearCrash(pluginId)
                 onRestart()
             },
             onDismiss = {
-                logger.debug(LogCategory.UI, "User dismissed error", mapOf(
-                    "pluginId" to pluginId
-                ))
+                logger.debug(
+                    LogCategory.UI,
+                    "User dismissed error",
+                    mapOf(
+                        "pluginId" to pluginId,
+                    ),
+                )
                 error = null
                 PluginCrashRegistry.clearCrash(pluginId)
-            }
+            },
         )
     } else {
         // Note: Heartbeats are recorded automatically by the sandbox's heartbeat job
@@ -314,13 +359,18 @@ fun PluginErrorBoundary(
 
         CompositionLocalProvider(
             LocalPluginErrorHandler provides { e ->
-                logger.error(LogCategory.UI, "Error reported from plugin", mapOf(
-                    "pluginId" to pluginId
-                ), e)
+                logger.error(
+                    LogCategory.UI,
+                    "Error reported from plugin",
+                    mapOf(
+                        "pluginId" to pluginId,
+                    ),
+                    e,
+                )
                 sandbox.recordError(e)
                 error = e
             },
-            LocalPluginSandbox provides sandbox
+            LocalPluginSandbox provides sandbox,
         ) {
             content()
         }
@@ -357,7 +407,7 @@ fun SafePluginContent(
     pluginId: String,
     sandbox: PluginSandbox,
     fallback: @Composable (Throwable) -> Unit,
-    content: @Composable () -> Unit
+    content: @Composable () -> Unit,
 ) {
     val logger = remember { BossLogger.forComponent("SafePluginContent") }
 
@@ -371,13 +421,18 @@ fun SafePluginContent(
 
         CompositionLocalProvider(
             LocalPluginErrorHandler provides { e ->
-                logger.error(LogCategory.UI, "Error in plugin content", mapOf(
-                    "pluginId" to pluginId
-                ), e)
+                logger.error(
+                    LogCategory.UI,
+                    "Error in plugin content",
+                    mapOf(
+                        "pluginId" to pluginId,
+                    ),
+                    e,
+                )
                 sandbox.recordError(e)
                 error = e
             },
-            LocalPluginSandbox provides sandbox
+            LocalPluginSandbox provides sandbox,
         ) {
             content()
         }

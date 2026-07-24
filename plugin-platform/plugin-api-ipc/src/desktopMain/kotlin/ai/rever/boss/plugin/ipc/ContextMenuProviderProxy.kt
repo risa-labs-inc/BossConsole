@@ -26,7 +26,6 @@ class ContextMenuProviderProxy(
     channel: ManagedChannel,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
 ) : ContextMenuProvider {
-
     private val stub = ContextMenuServiceGrpcKt.ContextMenuServiceCoroutineStub(channel)
 
     @Composable
@@ -39,19 +38,23 @@ class ContextMenuProviderProxy(
         val contextMenuId = "ctx_${items.hashCode()}"
         scope.launch {
             try {
-                val protoItems = items.map { item ->
-                    ContextMenuItemProto.newBuilder()
-                        .setLabel(item.label)
-                        .setActionId(item.label) // Use label as action ID
-                        .build()
-                }
+                val protoItems =
+                    items.map { item ->
+                        ContextMenuItemProto
+                            .newBuilder()
+                            .setLabel(item.label)
+                            .setActionId(item.label) // Use label as action ID
+                            .build()
+                    }
                 stub.registerContextMenu(
-                    RegisterContextMenuRequest.newBuilder()
+                    RegisterContextMenuRequest
+                        .newBuilder()
                         .setContextMenuId(contextMenuId)
                         .addAllItems(protoItems)
-                        .build()
+                        .build(),
                 )
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
         }
         return modifier
     }

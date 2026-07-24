@@ -10,15 +10,21 @@ package ai.rever.boss.plugin.git
 data class GitBranchInfo(
     val name: String,
     val isCurrent: Boolean = false,
-    val isRemote: Boolean = false
+    val isRemote: Boolean = false,
 )
 
 /**
  * Result of a Git operation.
  */
 sealed class GitOperationResult {
-    data class Success(val message: String = "") : GitOperationResult()
-    data class Error(val message: String, val exitCode: Int = -1) : GitOperationResult()
+    data class Success(
+        val message: String = "",
+    ) : GitOperationResult()
+
+    data class Error(
+        val message: String,
+        val exitCode: Int = -1,
+    ) : GitOperationResult()
 }
 
 /**
@@ -32,7 +38,7 @@ enum class GitFileStatusType {
     COPIED,
     UNTRACKED,
     IGNORED,
-    UNMERGED
+    UNMERGED,
 }
 
 /**
@@ -51,7 +57,7 @@ data class GitFileStatus(
     val workTreeStatus: GitFileStatusType?,
     val isStaged: Boolean,
     val isUnstaged: Boolean,
-    val originalPath: String? = null
+    val originalPath: String? = null,
 )
 
 /**
@@ -76,7 +82,7 @@ data class GitCommitInfo(
     val subject: String,
     val body: String? = null,
     val refs: List<String> = emptyList(),
-    val parentHashes: List<String> = emptyList()
+    val parentHashes: List<String> = emptyList(),
 )
 
 /**
@@ -89,7 +95,7 @@ data class GitCommitInfo(
 data class GitStashInfo(
     val index: Int,
     val message: String,
-    val branch: String?
+    val branch: String?,
 )
 
 /**
@@ -104,5 +110,5 @@ data class GitTerminalOpenEvent(
     val command: String,
     val workingDirectory: String,
     val operationName: String,
-    val sourceWindowId: String
+    val sourceWindowId: String,
 )

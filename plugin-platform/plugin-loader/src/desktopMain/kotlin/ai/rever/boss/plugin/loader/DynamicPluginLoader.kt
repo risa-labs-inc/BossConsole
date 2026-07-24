@@ -8,11 +8,11 @@ import ai.rever.boss.plugin.api.PluginState
 import ai.rever.boss.plugin.api.Version
 import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.lang.ref.WeakReference
 import java.util.concurrent.ConcurrentHashMap
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 /**
  * Interface for loading and unloading plugins dynamically.
@@ -37,7 +37,11 @@ interface DynamicPluginLoader {
      *   parented to a superseded (closed) ApiClassLoader after a swap.
      * @return Result indicating success or failure
      */
-    suspend fun unloadPlugin(pluginId: String, waitForGC: Boolean = false, force: Boolean = false): Result<Unit>
+    suspend fun unloadPlugin(
+        pluginId: String,
+        waitForGC: Boolean = false,
+        force: Boolean = false,
+    ): Result<Unit>
 
     /**
      * Get a loaded plugin by ID.
@@ -73,9 +77,8 @@ class DynamicPluginLoaderImpl(
      * Verifier for load-time store-signature checks. Defaults to the pinned
      * store public key; injectable for tests. Immutable after construction.
      */
-    private val signatureVerifier: PluginSignatureVerifier = PluginSignatureVerifier(PluginStoreTrust.TRUSTED_KEYS)
+    private val signatureVerifier: PluginSignatureVerifier = PluginSignatureVerifier(PluginStoreTrust.TRUSTED_KEYS),
 ) : DynamicPluginLoader {
-
     private val logger = BossLogger.forComponent("DynamicPluginLoader")
 
     /**
@@ -125,210 +128,276 @@ class DynamicPluginLoaderImpl(
 
     // JAR reading, bytecode validation, classloading, and instantiation are
     // heavy; callers typically run on Dispatchers.Main, so keep it all on IO.
-    override suspend fun loadPlugin(jarPath: String): Result<LoadedPlugin> = withContext(Dispatchers.IO) {
-        try {
-            logger.info(LogCategory.SYSTEM, "Loading plugin from JAR", mapOf(
-                "jarPath" to jarPath
-            ))
+    override suspend fun loadPlugin(jarPath: String): Result<LoadedPlugin> =
+        withContext(Dispatchers.IO) {
+            try {
+                logger.info(
+                    LogCategory.SYSTEM,
+                    "Loading plugin from JAR",
+                    mapOf(
+                        "jarPath" to jarPath,
+                    ),
+                )
 
-            // Read and validate manifest
-            val manifest = PluginManifestReader.readFromJar(jarPath)
-            val pluginId = manifest.pluginId
+                // Read and validate manifest
+                val manifest = PluginManifestReader.readFromJar(jarPath)
+                val pluginId = manifest.pluginId
 
-            // Check if already loaded (before hashing the JAR for signature
-            // verification — no point re-hashing to then bail as ALREADY_LOADED).
-            if (loadedPlugins.containsKey(pluginId)) {
-                return@withContext Result.failure(PluginLoadException(
-                    "${PluginLoadException.ALREADY_LOADED_PREFIX}: $pluginId",
-                    pluginId
-                ))
-            }
-
-            // Verify the store signature (sidecar) before loading. This is the
-            // choke point every install path funnels through, so it covers
-            // Toolbox installs/updates, the first-run wizard, and restored
-            // plugins alike.
-            verifySignatureOrThrow(jarPath, manifest)?.let { return@withContext Result.failure(it) }
-
-            // Check API version compatibility
-            if (!isApiVersionCompatible(manifest.apiVersion)) {
-                return@withContext Result.failure(PluginApiVersionException(
-                    "Plugin requires API version ${manifest.apiVersion}, but current version is ${PluginManifestConstants.CURRENT_API_VERSION}",
-                    pluginId,
-                    manifest.apiVersion,
-                    PluginManifestConstants.CURRENT_API_VERSION
-                ))
-            }
-
-            // Check minimum BOSS version compatibility
-            val minBossVersion = manifest.minBossVersion
-            if (!minBossVersion.isNullOrBlank()) {
-                val currentVersion = currentBossVersion
-                if (currentVersion == null) {
-                    logger.warn(LogCategory.SYSTEM, "Skipping minBossVersion validation - currentBossVersion not set", mapOf(
-                        "pluginId" to pluginId,
-                        "requiredVersion" to minBossVersion
-                    ))
-                } else if (!isBossVersionCompatible(minBossVersion, currentVersion)) {
-                    return@withContext Result.failure(PluginBossVersionException(
-                        "Plugin requires BOSS version $minBossVersion or later, but current version is $currentVersion",
-                        pluginId,
-                        minBossVersion,
-                        currentVersion
-                    ))
-                }
-            }
-
-            // Check minimum API-layer version compatibility (the runtime
-            // boss-plugin-api jar; same fail-open semantics as minBossVersion)
-            val minApiVersion = manifest.minApiVersion
-            if (minApiVersion.isNotBlank()) {
-                val installedApiVersion = currentApiVersion
-                if (installedApiVersion == null) {
-                    logger.warn(LogCategory.SYSTEM, "Skipping minApiVersion validation - currentApiVersion not set", mapOf(
-                        "pluginId" to pluginId,
-                        "requiredVersion" to minApiVersion
-                    ))
-                } else if (!isBossVersionCompatible(minApiVersion, installedApiVersion)) {
-                    return@withContext Result.failure(PluginApiLevelException(
-                        "Plugin requires boss-plugin-api $minApiVersion or later, but installed API layer is $installedApiVersion",
-                        pluginId,
-                        minApiVersion,
-                        installedApiVersion
-                    ))
-                }
-            }
-
-            // Create classloader
-            val classLoader = classLoaderManager.createClassLoader(manifest, jarPath)
-
-            // Binary compatibility check
-            val validation = BinaryCompatibilityValidator.validate(classLoader, jarPath)
-            if (!validation.isCompatible) {
-                classLoaderManager.closeClassLoader(pluginId, classLoader)
-                return@withContext Result.failure(PluginBinaryIncompatibilityException(
-                    "Plugin '$pluginId' has binary incompatibilities: ${validation.errors.first()}",
-                    pluginId,
-                    manifest
-                ))
-            }
-
-            // Load main class
-            val pluginClass = try {
-                classLoader.loadClass(manifest.mainClass)
-            } catch (e: ClassNotFoundException) {
-                classLoaderManager.closeClassLoader(pluginId, classLoader)
-                return@withContext Result.failure(PluginClassException(
-                    "Plugin main class not found: ${manifest.mainClass}",
-                    pluginId,
-                    manifest.mainClass,
-                    e
-                ))
-            }
-
-            // Verify it implements Plugin interface
-            if (!Plugin::class.java.isAssignableFrom(pluginClass)) {
-                classLoaderManager.closeClassLoader(pluginId, classLoader)
-                return@withContext Result.failure(PluginClassException(
-                    "Main class does not implement Plugin interface: ${manifest.mainClass}",
-                    pluginId,
-                    manifest.mainClass
-                ))
-            }
-
-            // Instantiate plugin
-            val pluginInstance = try {
-                // Try to get singleton instance (Kotlin object) first
-                val instanceField = try {
-                    pluginClass.getDeclaredField("INSTANCE")
-                } catch (e: NoSuchFieldException) {
-                    // Not a Kotlin object - fall through to constructor instantiation
-                    logger.debug(
-                        LogCategory.SYSTEM,
-                        "Plugin class has no INSTANCE field - using constructor",
-                        mapOf("error" to e.toString()),
+                // Check if already loaded (before hashing the JAR for signature
+                // verification — no point re-hashing to then bail as ALREADY_LOADED).
+                if (loadedPlugins.containsKey(pluginId)) {
+                    return@withContext Result.failure(
+                        PluginLoadException(
+                            "${PluginLoadException.ALREADY_LOADED_PREFIX}: $pluginId",
+                            pluginId,
+                        ),
                     )
-                    null
                 }
 
-                if (instanceField != null) {
-                    instanceField.isAccessible = true
-                    instanceField.get(null) as Plugin
-                } else {
-                    // Try no-arg constructor
-                    pluginClass.getDeclaredConstructor().newInstance() as Plugin
+                // Verify the store signature (sidecar) before loading. This is the
+                // choke point every install path funnels through, so it covers
+                // Toolbox installs/updates, the first-run wizard, and restored
+                // plugins alike.
+                verifySignatureOrThrow(jarPath, manifest)?.let { return@withContext Result.failure(it) }
+
+                // Check API version compatibility
+                if (!isApiVersionCompatible(manifest.apiVersion)) {
+                    return@withContext Result.failure(
+                        PluginApiVersionException(
+                            "Plugin requires API version ${manifest.apiVersion}, but current version is ${PluginManifestConstants.CURRENT_API_VERSION}",
+                            pluginId,
+                            manifest.apiVersion,
+                            PluginManifestConstants.CURRENT_API_VERSION,
+                        ),
+                    )
                 }
+
+                // Check minimum BOSS version compatibility
+                val minBossVersion = manifest.minBossVersion
+                if (!minBossVersion.isNullOrBlank()) {
+                    val currentVersion = currentBossVersion
+                    if (currentVersion == null) {
+                        logger.warn(
+                            LogCategory.SYSTEM,
+                            "Skipping minBossVersion validation - currentBossVersion not set",
+                            mapOf(
+                                "pluginId" to pluginId,
+                                "requiredVersion" to minBossVersion,
+                            ),
+                        )
+                    } else if (!isBossVersionCompatible(minBossVersion, currentVersion)) {
+                        return@withContext Result.failure(
+                            PluginBossVersionException(
+                                "Plugin requires BOSS version $minBossVersion or later, but current version is $currentVersion",
+                                pluginId,
+                                minBossVersion,
+                                currentVersion,
+                            ),
+                        )
+                    }
+                }
+
+                // Check minimum API-layer version compatibility (the runtime
+                // boss-plugin-api jar; same fail-open semantics as minBossVersion)
+                val minApiVersion = manifest.minApiVersion
+                if (minApiVersion.isNotBlank()) {
+                    val installedApiVersion = currentApiVersion
+                    if (installedApiVersion == null) {
+                        logger.warn(
+                            LogCategory.SYSTEM,
+                            "Skipping minApiVersion validation - currentApiVersion not set",
+                            mapOf(
+                                "pluginId" to pluginId,
+                                "requiredVersion" to minApiVersion,
+                            ),
+                        )
+                    } else if (!isBossVersionCompatible(minApiVersion, installedApiVersion)) {
+                        return@withContext Result.failure(
+                            PluginApiLevelException(
+                                "Plugin requires boss-plugin-api $minApiVersion or later, but installed API layer is $installedApiVersion",
+                                pluginId,
+                                minApiVersion,
+                                installedApiVersion,
+                            ),
+                        )
+                    }
+                }
+
+                // Create classloader
+                val classLoader = classLoaderManager.createClassLoader(manifest, jarPath)
+
+                // Binary compatibility check
+                val validation = BinaryCompatibilityValidator.validate(classLoader, jarPath)
+                if (!validation.isCompatible) {
+                    classLoaderManager.closeClassLoader(pluginId, classLoader)
+                    return@withContext Result.failure(
+                        PluginBinaryIncompatibilityException(
+                            "Plugin '$pluginId' has binary incompatibilities: ${validation.errors.first()}",
+                            pluginId,
+                            manifest,
+                        ),
+                    )
+                }
+
+                // Load main class
+                val pluginClass =
+                    try {
+                        classLoader.loadClass(manifest.mainClass)
+                    } catch (e: ClassNotFoundException) {
+                        classLoaderManager.closeClassLoader(pluginId, classLoader)
+                        return@withContext Result.failure(
+                            PluginClassException(
+                                "Plugin main class not found: ${manifest.mainClass}",
+                                pluginId,
+                                manifest.mainClass,
+                                e,
+                            ),
+                        )
+                    }
+
+                // Verify it implements Plugin interface
+                if (!Plugin::class.java.isAssignableFrom(pluginClass)) {
+                    classLoaderManager.closeClassLoader(pluginId, classLoader)
+                    return@withContext Result.failure(
+                        PluginClassException(
+                            "Main class does not implement Plugin interface: ${manifest.mainClass}",
+                            pluginId,
+                            manifest.mainClass,
+                        ),
+                    )
+                }
+
+                // Instantiate plugin
+                val pluginInstance =
+                    try {
+                        // Try to get singleton instance (Kotlin object) first
+                        val instanceField =
+                            try {
+                                pluginClass.getDeclaredField("INSTANCE")
+                            } catch (e: NoSuchFieldException) {
+                                // Not a Kotlin object - fall through to constructor instantiation
+                                logger.debug(
+                                    LogCategory.SYSTEM,
+                                    "Plugin class has no INSTANCE field - using constructor",
+                                    mapOf("error" to e.toString()),
+                                )
+                                null
+                            }
+
+                        if (instanceField != null) {
+                            instanceField.isAccessible = true
+                            instanceField.get(null) as Plugin
+                        } else {
+                            // Try no-arg constructor
+                            pluginClass.getDeclaredConstructor().newInstance() as Plugin
+                        }
+                    } catch (e: Exception) {
+                        classLoaderManager.closeClassLoader(pluginId, classLoader)
+                        return@withContext Result.failure(
+                            PluginClassException(
+                                "Failed to instantiate plugin: ${e.message}",
+                                pluginId,
+                                manifest.mainClass,
+                                e,
+                            ),
+                        )
+                    }
+
+                // Create loaded plugin record
+                val loadedPlugin =
+                    LoadedPlugin(
+                        manifest = manifest,
+                        instance = pluginInstance,
+                        classLoader = classLoader,
+                        jarPath = jarPath,
+                        state = PluginState.LOADED,
+                    )
+
+                loadedPlugins[pluginId] = loadedPlugin
+
+                logger.info(
+                    LogCategory.SYSTEM,
+                    "Plugin loaded successfully",
+                    mapOf(
+                        "pluginId" to pluginId,
+                        "version" to manifest.version,
+                        "mainClass" to manifest.mainClass,
+                    ),
+                )
+
+                Result.success(loadedPlugin)
+            } catch (e: PluginLoadException) {
+                logger.error(
+                    LogCategory.SYSTEM,
+                    "Failed to load plugin",
+                    mapOf(
+                        "jarPath" to jarPath,
+                        "error" to (e.message ?: "unknown"),
+                    ),
+                    e,
+                )
+                Result.failure(e)
             } catch (e: Exception) {
-                classLoaderManager.closeClassLoader(pluginId, classLoader)
-                return@withContext Result.failure(PluginClassException(
-                    "Failed to instantiate plugin: ${e.message}",
-                    pluginId,
-                    manifest.mainClass,
-                    e
-                ))
+                logger.error(
+                    LogCategory.SYSTEM,
+                    "Unexpected error loading plugin",
+                    mapOf(
+                        "jarPath" to jarPath,
+                    ),
+                    e,
+                )
+                Result.failure(
+                    PluginLoadException(
+                        "Unexpected error loading plugin: ${e.message}",
+                        cause = e,
+                    ),
+                )
             }
+        }
 
-            // Create loaded plugin record
-            val loadedPlugin = LoadedPlugin(
-                manifest = manifest,
-                instance = pluginInstance,
-                classLoader = classLoader,
-                jarPath = jarPath,
-                state = PluginState.LOADED
+    override suspend fun unloadPlugin(
+        pluginId: String,
+        waitForGC: Boolean,
+        force: Boolean,
+    ): Result<Unit> {
+        return try {
+            logger.info(
+                LogCategory.SYSTEM,
+                "Unloading plugin",
+                mapOf(
+                    "pluginId" to pluginId,
+                    "waitForGC" to waitForGC,
+                    "force" to force,
+                ),
             )
 
-            loadedPlugins[pluginId] = loadedPlugin
-
-            logger.info(LogCategory.SYSTEM, "Plugin loaded successfully", mapOf(
-                "pluginId" to pluginId,
-                "version" to manifest.version,
-                "mainClass" to manifest.mainClass
-            ))
-
-            Result.success(loadedPlugin)
-        } catch (e: PluginLoadException) {
-            logger.error(LogCategory.SYSTEM, "Failed to load plugin", mapOf(
-                "jarPath" to jarPath,
-                "error" to (e.message ?: "unknown")
-            ), e)
-            Result.failure(e)
-        } catch (e: Exception) {
-            logger.error(LogCategory.SYSTEM, "Unexpected error loading plugin", mapOf(
-                "jarPath" to jarPath
-            ), e)
-            Result.failure(PluginLoadException(
-                "Unexpected error loading plugin: ${e.message}",
-                cause = e
-            ))
-        }
-    }
-
-    override suspend fun unloadPlugin(pluginId: String, waitForGC: Boolean, force: Boolean): Result<Unit> {
-        return try {
-            logger.info(LogCategory.SYSTEM, "Unloading plugin", mapOf(
-                "pluginId" to pluginId,
-                "waitForGC" to waitForGC,
-                "force" to force
-            ))
-
-            val loadedPlugin = loadedPlugins[pluginId]
-                ?: return Result.failure(PluginLoadException(
-                    "Plugin not found: $pluginId",
-                    pluginId
-                ))
+            val loadedPlugin =
+                loadedPlugins[pluginId]
+                    ?: return Result.failure(
+                        PluginLoadException(
+                            "Plugin not found: $pluginId",
+                            pluginId,
+                        ),
+                    )
 
             // Check if the plugin can be unloaded (system plugins may be
             // protected); force bypasses for reload/upgrade/hot-swap flows.
             if (!loadedPlugin.manifest.canUnload && !force) {
-                logger.warn(LogCategory.SYSTEM, "Cannot unload system plugin", mapOf(
-                    "pluginId" to pluginId,
-                    "systemPlugin" to loadedPlugin.manifest.systemPlugin
-                ))
-                return Result.failure(PluginUnloadException(
-                    "Cannot unload system plugin: $pluginId (canUnload=false)",
-                    pluginId,
-                    listOf("System plugin is protected from unloading")
-                ))
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Cannot unload system plugin",
+                    mapOf(
+                        "pluginId" to pluginId,
+                        "systemPlugin" to loadedPlugin.manifest.systemPlugin,
+                    ),
+                )
+                return Result.failure(
+                    PluginUnloadException(
+                        "Cannot unload system plugin: $pluginId (canUnload=false)",
+                        pluginId,
+                        listOf("System plugin is protected from unloading"),
+                    ),
+                )
             }
 
             // Update state
@@ -338,10 +407,14 @@ class DynamicPluginLoaderImpl(
             try {
                 loadedPlugin.instance.dispose()
             } catch (e: Exception) {
-                logger.warn(LogCategory.SYSTEM, "Error disposing plugin", mapOf(
-                    "pluginId" to pluginId,
-                    "error" to (e.message ?: "unknown")
-                ))
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Error disposing plugin",
+                    mapOf(
+                        "pluginId" to pluginId,
+                        "error" to (e.message ?: "unknown"),
+                    ),
+                )
             }
 
             // Remove from loaded plugins
@@ -358,42 +431,51 @@ class DynamicPluginLoaderImpl(
                     if (gcRef != null) {
                         val gcResult = ClassLoaderGCWatcher.waitForGC(pluginId, gcRef)
                         if (!gcResult.isSuccess) {
-                            logger.warn(LogCategory.SYSTEM, "Classloader may not have been garbage collected", mapOf(
-                                "pluginId" to pluginId
-                            ))
+                            logger.warn(
+                                LogCategory.SYSTEM,
+                                "Classloader may not have been garbage collected",
+                                mapOf(
+                                    "pluginId" to pluginId,
+                                ),
+                            )
                         }
                     }
                 }
             }
 
-            logger.info(LogCategory.SYSTEM, "Plugin unloaded successfully", mapOf(
-                "pluginId" to pluginId
-            ))
+            logger.info(
+                LogCategory.SYSTEM,
+                "Plugin unloaded successfully",
+                mapOf(
+                    "pluginId" to pluginId,
+                ),
+            )
 
             Result.success(Unit)
         } catch (e: Exception) {
-            logger.error(LogCategory.SYSTEM, "Error unloading plugin", mapOf(
-                "pluginId" to pluginId
-            ), e)
-            Result.failure(PluginUnloadException(
-                "Error unloading plugin: ${e.message}",
-                pluginId,
-                cause = e
-            ))
+            logger.error(
+                LogCategory.SYSTEM,
+                "Error unloading plugin",
+                mapOf(
+                    "pluginId" to pluginId,
+                ),
+                e,
+            )
+            Result.failure(
+                PluginUnloadException(
+                    "Error unloading plugin: ${e.message}",
+                    pluginId,
+                    cause = e,
+                ),
+            )
         }
     }
 
-    override fun getPlugin(pluginId: String): LoadedPlugin? {
-        return loadedPlugins[pluginId]
-    }
+    override fun getPlugin(pluginId: String): LoadedPlugin? = loadedPlugins[pluginId]
 
-    override fun getLoadedPlugins(): List<LoadedPlugin> {
-        return loadedPlugins.values.toList()
-    }
+    override fun getLoadedPlugins(): List<LoadedPlugin> = loadedPlugins.values.toList()
 
-    override fun isLoaded(pluginId: String): Boolean {
-        return loadedPlugins.containsKey(pluginId)
-    }
+    override fun isLoaded(pluginId: String): Boolean = loadedPlugins.containsKey(pluginId)
 
     /**
      * Check if the plugin's API version is compatible with the current version.
@@ -424,20 +506,31 @@ class DynamicPluginLoaderImpl(
      * This "fail-open" approach prevents blocking plugins due to malformed version strings,
      * while still logging the issue for investigation.
      */
-    private fun isBossVersionCompatible(requiredVersion: String, currentVersion: String): Boolean {
+    private fun isBossVersionCompatible(
+        requiredVersion: String,
+        currentVersion: String,
+    ): Boolean {
         val required = Version.parse(requiredVersion)
         if (required == null) {
-            logger.warn(LogCategory.SYSTEM, "Failed to parse required version, allowing plugin", mapOf(
-                "requiredVersion" to requiredVersion
-            ))
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Failed to parse required version, allowing plugin",
+                mapOf(
+                    "requiredVersion" to requiredVersion,
+                ),
+            )
             return true
         }
 
         val current = Version.parse(currentVersion)
         if (current == null) {
-            logger.warn(LogCategory.SYSTEM, "Failed to parse current version, allowing plugin", mapOf(
-                "currentVersion" to currentVersion
-            ))
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Failed to parse current version, allowing plugin",
+                mapOf(
+                    "currentVersion" to currentVersion,
+                ),
+            )
             return true
         }
 
@@ -457,20 +550,27 @@ class DynamicPluginLoaderImpl(
      * enabled — except in dev mode, where a missing sidecar is always allowed
      * so locally built plugins keep loading.
      */
-    private fun verifySignatureOrThrow(jarPath: String, manifest: PluginManifest): PluginSignatureException? {
+    private fun verifySignatureOrThrow(
+        jarPath: String,
+        manifest: PluginManifest,
+    ): PluginSignatureException? {
         val signature = PluginSignatureSidecar.read(jarPath)
         if (signature == null) {
             val devMode = System.getProperty("boss.dev.mode")?.toBoolean() == true
             if (PluginSignatureEnforcement.enforceUnsigned && !devMode) {
                 return PluginSignatureException(
                     "Plugin has no store signature and signature enforcement is enabled",
-                    manifest.pluginId
+                    manifest.pluginId,
                 )
             }
-            logger.warn(LogCategory.SYSTEM, "Plugin has no store signature — allowing for now, will be rejected once signature enforcement is enabled", mapOf(
-                "pluginId" to manifest.pluginId,
-                "version" to manifest.version
-            ))
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Plugin has no store signature — allowing for now, will be rejected once signature enforcement is enabled",
+                mapOf(
+                    "pluginId" to manifest.pluginId,
+                    "version" to manifest.version,
+                ),
+            )
             return null
         }
 
@@ -488,18 +588,26 @@ class DynamicPluginLoaderImpl(
             // from a shared plugin dir (could race the store's own management).
             // It will be re-rejected on every startup until removed/reinstalled;
             // say so, since the JAR looks installed but never loads.
-            logger.error(LogCategory.SYSTEM, "Plugin signature verification failed — plugin will NOT load and will keep being rejected until it is reinstalled or removed", mapOf(
-                "pluginId" to manifest.pluginId,
-                "version" to manifest.version,
-                "jarPath" to jarPath,
-                "reason" to reason
-            ))
+            logger.error(
+                LogCategory.SYSTEM,
+                "Plugin signature verification failed — plugin will NOT load and will keep being rejected until it is reinstalled or removed",
+                mapOf(
+                    "pluginId" to manifest.pluginId,
+                    "version" to manifest.version,
+                    "jarPath" to jarPath,
+                    "reason" to reason,
+                ),
+            )
             return PluginSignatureException("Plugin signature verification failed: $reason", manifest.pluginId)
         }
-        logger.info(LogCategory.SYSTEM, "Plugin signature verified", mapOf(
-            "pluginId" to manifest.pluginId,
-            "version" to manifest.version
-        ))
+        logger.info(
+            LogCategory.SYSTEM,
+            "Plugin signature verified",
+            mapOf(
+                "pluginId" to manifest.pluginId,
+                "version" to manifest.version,
+            ),
+        )
         return null
     }
 
@@ -519,27 +627,40 @@ class DynamicPluginLoaderImpl(
      */
     suspend fun loadBundledPlugins(bundledDir: java.io.File): List<LoadedPlugin> {
         if (!bundledDir.exists() || !bundledDir.isDirectory) {
-            logger.debug(LogCategory.SYSTEM, "Bundled plugins directory not found", mapOf(
-                "path" to bundledDir.absolutePath
-            ))
+            logger.debug(
+                LogCategory.SYSTEM,
+                "Bundled plugins directory not found",
+                mapOf(
+                    "path" to bundledDir.absolutePath,
+                ),
+            )
             return emptyList()
         }
 
-        val jarFiles = bundledDir.listFiles { file ->
-            file.isFile && file.extension == "jar"
-        } ?: emptyArray()
+        val jarFiles =
+            bundledDir.listFiles { file ->
+                file.isFile && file.extension == "jar"
+            } ?: emptyArray()
 
         if (jarFiles.isEmpty()) {
-            logger.debug(LogCategory.SYSTEM, "No bundled plugins found", mapOf(
-                "path" to bundledDir.absolutePath
-            ))
+            logger.debug(
+                LogCategory.SYSTEM,
+                "No bundled plugins found",
+                mapOf(
+                    "path" to bundledDir.absolutePath,
+                ),
+            )
             return emptyList()
         }
 
-        logger.info(LogCategory.SYSTEM, "Loading bundled plugins", mapOf(
-            "count" to jarFiles.size,
-            "path" to bundledDir.absolutePath
-        ))
+        logger.info(
+            LogCategory.SYSTEM,
+            "Loading bundled plugins",
+            mapOf(
+                "count" to jarFiles.size,
+                "path" to bundledDir.absolutePath,
+            ),
+        )
 
         // Load plugins and collect successful ones
         val loadedBundled = mutableListOf<LoadedPlugin>()
@@ -549,15 +670,24 @@ class DynamicPluginLoaderImpl(
                 if (result.isSuccess) {
                     loadedBundled.add(result.getOrThrow())
                 } else {
-                    logger.error(LogCategory.SYSTEM, "Failed to load bundled plugin", mapOf(
-                        "file" to jarFile.name,
-                        "error" to (result.exceptionOrNull()?.message ?: "unknown")
-                    ))
+                    logger.error(
+                        LogCategory.SYSTEM,
+                        "Failed to load bundled plugin",
+                        mapOf(
+                            "file" to jarFile.name,
+                            "error" to (result.exceptionOrNull()?.message ?: "unknown"),
+                        ),
+                    )
                 }
             } catch (e: Exception) {
-                logger.error(LogCategory.SYSTEM, "Exception loading bundled plugin", mapOf(
-                    "file" to jarFile.name
-                ), e)
+                logger.error(
+                    LogCategory.SYSTEM,
+                    "Exception loading bundled plugin",
+                    mapOf(
+                        "file" to jarFile.name,
+                    ),
+                    e,
+                )
             }
         }
 
@@ -571,9 +701,7 @@ class DynamicPluginLoaderImpl(
      * @param pluginId The plugin ID to check
      * @return True if the plugin is a system plugin
      */
-    fun isSystemPlugin(pluginId: String): Boolean {
-        return loadedPlugins[pluginId]?.manifest?.systemPlugin == true
-    }
+    fun isSystemPlugin(pluginId: String): Boolean = loadedPlugins[pluginId]?.manifest?.systemPlugin == true
 
     /**
      * Check if a plugin can be unloaded.
@@ -581,17 +709,19 @@ class DynamicPluginLoaderImpl(
      * @param pluginId The plugin ID to check
      * @return True if the plugin can be unloaded
      */
-    fun canUnloadPlugin(pluginId: String): Boolean {
-        return loadedPlugins[pluginId]?.manifest?.canUnload != false
-    }
+    fun canUnloadPlugin(pluginId: String): Boolean = loadedPlugins[pluginId]?.manifest?.canUnload != false
 
     /**
      * Dispose all loaded plugins and classloaders.
      */
     suspend fun disposeAll() {
-        logger.info(LogCategory.SYSTEM, "Disposing all plugins", mapOf(
-            "count" to loadedPlugins.size
-        ))
+        logger.info(
+            LogCategory.SYSTEM,
+            "Disposing all plugins",
+            mapOf(
+                "count" to loadedPlugins.size,
+            ),
+        )
 
         // Unload all plugins. force: disposeAll() closes every classloader
         // below regardless, so refusing canUnload=false system plugins here

@@ -1,7 +1,7 @@
 package ai.rever.boss.services.supabase.models
 
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 
 /**
  * Example data models for Supabase integration
@@ -19,6 +19,5 @@ data class User(
     @SerialName("full_name")
     val fullName: String? = null,
     @SerialName("avatar_url")
-    val avatarUrl: String? = null
+    val avatarUrl: String? = null,
 )
-

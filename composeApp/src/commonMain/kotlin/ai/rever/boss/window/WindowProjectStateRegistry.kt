@@ -1,9 +1,10 @@
 @file:Suppress("UNUSED")
+
 package ai.rever.boss.window
 
+import ai.rever.boss.components.plugin.panels.left_top.ProjectState
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
-import ai.rever.boss.components.plugin.panels.left_top.ProjectState
 import androidx.compose.runtime.mutableStateMapOf
 
 /**
@@ -21,8 +22,11 @@ val LocalWindowId = ai.rever.boss.plugin.window.LocalWindowId
 val LocalWindowProjectState = ai.rever.boss.plugin.window.LocalWindowProjectState
 
 // Re-export helper function
-fun selectProjectInWindow(windowProjectState: WindowProjectState?, project: Project) =
-    ai.rever.boss.plugin.window.selectProjectInWindow(windowProjectState, project)
+fun selectProjectInWindow(
+    windowProjectState: WindowProjectState?,
+    project: Project,
+) = ai.rever.boss.plugin.window
+    .selectProjectInWindow(windowProjectState, project)
 
 private val windowProjectStateLogger = BossLogger.forComponent("WindowProjectStateRegistry")
 

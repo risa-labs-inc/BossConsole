@@ -14,29 +14,30 @@ import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import org.jetbrains.compose.resources.painterResource
-import boss_kotlin.composeapp.generated.resources.Res
-import boss_kotlin.composeapp.generated.resources.boss_icon
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import boss_kotlin.composeapp.generated.resources.Res
+import boss_kotlin.composeapp.generated.resources.boss_icon
+import org.jetbrains.compose.resources.painterResource
 
 @Composable
 fun LoadingScreen() {
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(BossTheme.colors.panel),
-        contentAlignment = Alignment.Center
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .background(BossTheme.colors.panel),
+        contentAlignment = Alignment.Center,
     ) {
         Column(
-            horizontalAlignment = Alignment.CenterHorizontally
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             // BOSS Logo
             Image(
                 painter = painterResource(Res.drawable.boss_icon),
                 contentDescription = "BOSS Logo",
-                modifier = Modifier.size(80.dp)
+                modifier = Modifier.size(80.dp),
             )
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -44,7 +45,7 @@ fun LoadingScreen() {
             // Loading indicator
             CircularProgressIndicator(
                 color = BossTheme.colors.signal,
-                modifier = Modifier.size(40.dp)
+                modifier = Modifier.size(40.dp),
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -54,7 +55,7 @@ fun LoadingScreen() {
                 text = "Loading BOSS...",
                 color = BossTheme.colors.textSecondary,
                 fontSize = 14.sp,
-                fontWeight = FontWeight.Medium
+                fontWeight = FontWeight.Medium,
             )
         }
     }

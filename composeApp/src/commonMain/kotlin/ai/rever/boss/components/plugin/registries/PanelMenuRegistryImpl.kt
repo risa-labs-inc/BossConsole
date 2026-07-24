@@ -39,23 +39,34 @@ object PanelMenuRegistryImpl : AccessGatedRegistry {
     fun register(contribution: PanelMenuContribution) {
         _contributions.update { existing ->
             if (existing.containsKey(contribution.contributionId)) {
-                logger.warn(LogCategory.SYSTEM, "Panel menu contribution re-registered (replacing previous)", mapOf(
-                    "contributionId" to contribution.contributionId
-                ))
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Panel menu contribution re-registered (replacing previous)",
+                    mapOf(
+                        "contributionId" to contribution.contributionId,
+                    ),
+                )
             }
             existing + (contribution.contributionId to contribution)
         }
-        logger.info(LogCategory.SYSTEM, "Panel menu contribution registered", mapOf(
-            "contributionId" to contribution.contributionId,
-            "targetPanels" to (contribution.targetPanels?.joinToString(",") ?: "ALL")
-        ))
+        logger.info(
+            LogCategory.SYSTEM,
+            "Panel menu contribution registered",
+            mapOf(
+                "contributionId" to contribution.contributionId,
+                "targetPanels" to (contribution.targetPanels?.joinToString(",") ?: "ALL"),
+            ),
+        )
     }
 
     fun unregister(contributionId: String) {
         _contributions.update { it - contributionId }
     }
 
-    override fun updateAccess(isAdmin: Boolean, permissions: Set<String>) {
+    override fun updateAccess(
+        isAdmin: Boolean,
+        permissions: Set<String>,
+    ) {
         _access.value = RegistryAccess(isAdmin, permissions)
     }
 
@@ -73,31 +84,47 @@ object PanelMenuRegistryImpl : AccessGatedRegistry {
      */
     fun itemsFor(panelId: PanelId): List<Pair<PanelMenuContribution, PanelMenuItem>> {
         val access = _access.value
-        return contributionsFor(panelId).flatMap { contribution ->
-            val items = try {
-                contribution.items(panelId)
-            } catch (t: Throwable) {
-                logger.warn(LogCategory.SYSTEM, "Panel menu contribution items() failed", mapOf(
-                    "contributionId" to contribution.contributionId,
-                    "error" to (t.message ?: t::class.simpleName)
-                ))
-                emptyList()
-            }
-            items.filter { access.permits(it.requiresAdmin, it.requiredPermissions) }
-                .map { contribution to it }
-        }.sortedBy { it.second.order }
+        return contributionsFor(panelId)
+            .flatMap { contribution ->
+                val items =
+                    try {
+                        contribution.items(panelId)
+                    } catch (t: Throwable) {
+                        logger.warn(
+                            LogCategory.SYSTEM,
+                            "Panel menu contribution items() failed",
+                            mapOf(
+                                "contributionId" to contribution.contributionId,
+                                "error" to (t.message ?: t::class.simpleName),
+                            ),
+                        )
+                        emptyList()
+                    }
+                items
+                    .filter { access.permits(it.requiresAdmin, it.requiredPermissions) }
+                    .map { contribution to it }
+            }.sortedBy { it.second.order }
     }
 
     /** Route a click to its contribution, crash-isolated. */
-    fun onItemClick(contribution: PanelMenuContribution, panelId: PanelId, itemId: String, windowId: String?) {
+    fun onItemClick(
+        contribution: PanelMenuContribution,
+        panelId: PanelId,
+        itemId: String,
+        windowId: String?,
+    ) {
         try {
             contribution.onItemClick(panelId, itemId, windowId)
         } catch (t: Throwable) {
-            logger.warn(LogCategory.SYSTEM, "Panel menu item click handler failed", mapOf(
-                "contributionId" to contribution.contributionId,
-                "itemId" to itemId,
-                "error" to (t.message ?: t::class.simpleName)
-            ))
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Panel menu item click handler failed",
+                mapOf(
+                    "contributionId" to contribution.contributionId,
+                    "itemId" to itemId,
+                    "error" to (t.message ?: t::class.simpleName),
+                ),
+            )
         }
     }
 }

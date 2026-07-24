@@ -2,8 +2,8 @@ package ai.rever.boss.keymap
 
 import ai.rever.boss.keymap.handler.KeymapMatcher
 import ai.rever.boss.keymap.model.KeyBinding
-import ai.rever.boss.keymap.model.KeymapSettings
 import ai.rever.boss.keymap.model.KeyStroke
+import ai.rever.boss.keymap.model.KeymapSettings
 import ai.rever.boss.keymap.model.ShortcutContext
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
@@ -22,27 +22,28 @@ import kotlin.test.assertTrue
  * - Platform-specific modifier handling
  */
 class KeymapMatcherTest {
-
     // ==================== CONTEXT PRIORITY TESTS ====================
 
     @Test
     fun `context-specific binding takes priority over global binding`() {
-        val browserBinding = KeyBinding(
-            actionId = "browser.reload",
-            key = "R",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.BROWSER,
-            enabled = true,
-            description = "Reload browser"
-        )
-        val globalBinding = KeyBinding(
-            actionId = "global.action",
-            key = "R",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true,
-            description = "Global action"
-        )
+        val browserBinding =
+            KeyBinding(
+                actionId = "browser.reload",
+                key = "R",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.BROWSER,
+                enabled = true,
+                description = "Reload browser",
+            )
+        val globalBinding =
+            KeyBinding(
+                actionId = "global.action",
+                key = "R",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+                description = "Global action",
+            )
 
         val settings = KeymapSettings.fromBindings(listOf(browserBinding, globalBinding))
         val matcher = KeymapMatcher.from(settings)
@@ -55,14 +56,15 @@ class KeymapMatcherTest {
 
     @Test
     fun `global binding matches when no context-specific binding exists`() {
-        val globalBinding = KeyBinding(
-            actionId = "global.settings",
-            key = "Comma",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true,
-            description = "Open settings"
-        )
+        val globalBinding =
+            KeyBinding(
+                actionId = "global.settings",
+                key = "Comma",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+                description = "Open settings",
+            )
 
         val settings = KeymapSettings.fromBindings(listOf(globalBinding))
 
@@ -74,14 +76,15 @@ class KeymapMatcherTest {
 
     @Test
     fun `workspace binding is checked when context-specific not found`() {
-        val workspaceBinding = KeyBinding(
-            actionId = "workspace.save",
-            key = "S",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.WORKSPACE,
-            enabled = true,
-            description = "Save workspace"
-        )
+        val workspaceBinding =
+            KeyBinding(
+                actionId = "workspace.save",
+                key = "S",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.WORKSPACE,
+                enabled = true,
+                description = "Save workspace",
+            )
 
         val settings = KeymapSettings.fromBindings(listOf(workspaceBinding))
 
@@ -94,14 +97,15 @@ class KeymapMatcherTest {
 
     @Test
     fun `disabled binding is not matched`() {
-        val disabledBinding = KeyBinding(
-            actionId = "test.action",
-            key = "T",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = false,
-            description = "Test action"
-        )
+        val disabledBinding =
+            KeyBinding(
+                actionId = "test.action",
+                key = "T",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = false,
+                description = "Test action",
+            )
 
         val settings = KeymapSettings.fromBindings(listOf(disabledBinding))
 
@@ -111,14 +115,15 @@ class KeymapMatcherTest {
 
     @Test
     fun `enabled binding is matched`() {
-        val enabledBinding = KeyBinding(
-            actionId = "test.action",
-            key = "T",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true,
-            description = "Test action"
-        )
+        val enabledBinding =
+            KeyBinding(
+                actionId = "test.action",
+                key = "T",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+                description = "Test action",
+            )
 
         val settings = KeymapSettings.fromBindings(listOf(enabledBinding))
 
@@ -129,13 +134,14 @@ class KeymapMatcherTest {
 
     @Test
     fun `display string formats correctly on macOS`() {
-        val binding = KeyBinding(
-            actionId = "test.action",
-            key = "N",
-            modifiers = listOf("Cmd", "Shift"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
+        val binding =
+            KeyBinding(
+                actionId = "test.action",
+                key = "N",
+                modifiers = listOf("Cmd", "Shift"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
 
         val display = binding.displayString("Mac OS X")
         // macOS uses symbols without separators
@@ -144,13 +150,14 @@ class KeymapMatcherTest {
 
     @Test
     fun `display string formats correctly on Windows`() {
-        val binding = KeyBinding(
-            actionId = "test.action",
-            key = "N",
-            modifiers = listOf("Cmd", "Shift"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
+        val binding =
+            KeyBinding(
+                actionId = "test.action",
+                key = "N",
+                modifiers = listOf("Cmd", "Shift"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
 
         val display = binding.displayString("Windows 10")
         // Windows uses text with + separators
@@ -159,13 +166,14 @@ class KeymapMatcherTest {
 
     @Test
     fun `display string formats arrow keys correctly`() {
-        val binding = KeyBinding(
-            actionId = "test.action",
-            key = "ArrowLeft",
-            modifiers = listOf("Alt"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
+        val binding =
+            KeyBinding(
+                actionId = "test.action",
+                key = "ArrowLeft",
+                modifiers = listOf("Alt"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
 
         val display = binding.displayString("Mac OS X")
         assertEquals("⌥←", display)
@@ -173,13 +181,14 @@ class KeymapMatcherTest {
 
     @Test
     fun `display string formats special keys correctly`() {
-        val binding = KeyBinding(
-            actionId = "test.action",
-            key = "Enter",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
+        val binding =
+            KeyBinding(
+                actionId = "test.action",
+                key = "Enter",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
 
         val display = binding.displayString("Mac OS X")
         assertEquals("⌘↩", display)
@@ -189,13 +198,14 @@ class KeymapMatcherTest {
 
     @Test
     fun `signature includes context and modifiers`() {
-        val binding = KeyBinding(
-            actionId = "test.action",
-            key = "n",
-            modifiers = listOf("Cmd", "Shift"),
-            context = ShortcutContext.BROWSER,
-            enabled = true
-        )
+        val binding =
+            KeyBinding(
+                actionId = "test.action",
+                key = "n",
+                modifiers = listOf("Cmd", "Shift"),
+                context = ShortcutContext.BROWSER,
+                enabled = true,
+            )
 
         val signature = binding.signature()
         // Should be sorted modifiers + uppercase key
@@ -204,13 +214,14 @@ class KeymapMatcherTest {
 
     @Test
     fun `signature without modifiers formats correctly`() {
-        val binding = KeyBinding(
-            actionId = "test.action",
-            key = "Escape",
-            modifiers = emptyList(),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
+        val binding =
+            KeyBinding(
+                actionId = "test.action",
+                key = "Escape",
+                modifiers = emptyList(),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
 
         val signature = binding.signature()
         assertEquals("GLOBAL:ESCAPE", signature)
@@ -220,63 +231,69 @@ class KeymapMatcherTest {
 
     @Test
     fun `matches returns true for matching key and modifiers`() {
-        val binding = KeyBinding(
-            actionId = "test.action",
-            key = "N",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
+        val binding =
+            KeyBinding(
+                actionId = "test.action",
+                key = "N",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
 
-        val result = binding.matches(
-            eventKey = "N",
-            isMetaPressed = true,
-            isCtrlPressed = false,
-            isShiftPressed = false,
-            isAltPressed = false
-        )
+        val result =
+            binding.matches(
+                eventKey = "N",
+                isMetaPressed = true,
+                isCtrlPressed = false,
+                isShiftPressed = false,
+                isAltPressed = false,
+            )
 
         assertEquals(true, result)
     }
 
     @Test
     fun `matches returns false for wrong key`() {
-        val binding = KeyBinding(
-            actionId = "test.action",
-            key = "N",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
+        val binding =
+            KeyBinding(
+                actionId = "test.action",
+                key = "N",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
 
-        val result = binding.matches(
-            eventKey = "M",
-            isMetaPressed = true,
-            isCtrlPressed = false,
-            isShiftPressed = false,
-            isAltPressed = false
-        )
+        val result =
+            binding.matches(
+                eventKey = "M",
+                isMetaPressed = true,
+                isCtrlPressed = false,
+                isShiftPressed = false,
+                isAltPressed = false,
+            )
 
         assertEquals(false, result)
     }
 
     @Test
     fun `matches returns false for disabled binding`() {
-        val binding = KeyBinding(
-            actionId = "test.action",
-            key = "N",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = false
-        )
+        val binding =
+            KeyBinding(
+                actionId = "test.action",
+                key = "N",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = false,
+            )
 
-        val result = binding.matches(
-            eventKey = "N",
-            isMetaPressed = true,
-            isCtrlPressed = false,
-            isShiftPressed = false,
-            isAltPressed = false
-        )
+        val result =
+            binding.matches(
+                eventKey = "N",
+                isMetaPressed = true,
+                isCtrlPressed = false,
+                isShiftPressed = false,
+                isAltPressed = false,
+            )
 
         assertEquals(false, result)
     }
@@ -285,20 +302,22 @@ class KeymapMatcherTest {
 
     @Test
     fun `getBindingsForContext returns only matching context`() {
-        val browserBinding = KeyBinding(
-            actionId = "browser.action",
-            key = "R",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.BROWSER,
-            enabled = true
-        )
-        val terminalBinding = KeyBinding(
-            actionId = "terminal.action",
-            key = "T",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.TERMINAL,
-            enabled = true
-        )
+        val browserBinding =
+            KeyBinding(
+                actionId = "browser.action",
+                key = "R",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.BROWSER,
+                enabled = true,
+            )
+        val terminalBinding =
+            KeyBinding(
+                actionId = "terminal.action",
+                key = "T",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.TERMINAL,
+                enabled = true,
+            )
 
         val settings = KeymapSettings.fromBindings(listOf(browserBinding, terminalBinding))
 
@@ -309,20 +328,22 @@ class KeymapMatcherTest {
 
     @Test
     fun `getEnabledBindings filters out disabled`() {
-        val enabledBinding = KeyBinding(
-            actionId = "enabled.action",
-            key = "E",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
-        val disabledBinding = KeyBinding(
-            actionId = "disabled.action",
-            key = "D",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = false
-        )
+        val enabledBinding =
+            KeyBinding(
+                actionId = "enabled.action",
+                key = "E",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
+        val disabledBinding =
+            KeyBinding(
+                actionId = "disabled.action",
+                key = "D",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = false,
+            )
 
         val settings = KeymapSettings.fromBindings(listOf(enabledBinding, disabledBinding))
 
@@ -333,22 +354,24 @@ class KeymapMatcherTest {
 
     @Test
     fun `getBindingsByCategory groups correctly`() {
-        val windowBinding = KeyBinding(
-            actionId = "window.new",
-            key = "N",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true,
-            category = "Window"
-        )
-        val tabBinding = KeyBinding(
-            actionId = "tab.new",
-            key = "T",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true,
-            category = "Tabs"
-        )
+        val windowBinding =
+            KeyBinding(
+                actionId = "window.new",
+                key = "N",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+                category = "Window",
+            )
+        val tabBinding =
+            KeyBinding(
+                actionId = "tab.new",
+                key = "T",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+                category = "Tabs",
+            )
 
         val settings = KeymapSettings.fromBindings(listOf(windowBinding, tabBinding))
 
@@ -402,14 +425,15 @@ class KeymapMatcherTest {
 
     @Test
     fun `binding with alternate keystrokes has correct allKeystrokes`() {
-        val binding = KeyBinding(
-            actionId = "test.action",
-            key = "C",
-            modifiers = listOf("Cmd"),
-            alternateKeystrokes = listOf(KeyStroke("C", listOf("Ctrl"))),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
+        val binding =
+            KeyBinding(
+                actionId = "test.action",
+                key = "C",
+                modifiers = listOf("Cmd"),
+                alternateKeystrokes = listOf(KeyStroke("C", listOf("Ctrl"))),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
 
         assertEquals(2, binding.allKeystrokes.size)
         assertEquals("C", binding.allKeystrokes[0].key)
@@ -420,42 +444,45 @@ class KeymapMatcherTest {
 
     @Test
     fun `binding matches primary keystroke`() {
-        val binding = KeyBinding(
-            actionId = "test.action",
-            key = "C",
-            modifiers = listOf("Cmd"),
-            alternateKeystrokes = listOf(KeyStroke("C", listOf("Ctrl"))),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
+        val binding =
+            KeyBinding(
+                actionId = "test.action",
+                key = "C",
+                modifiers = listOf("Cmd"),
+                alternateKeystrokes = listOf(KeyStroke("C", listOf("Ctrl"))),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
 
         assertTrue(binding.matches("C", isMetaPressed = true, isCtrlPressed = false, isShiftPressed = false, isAltPressed = false))
     }
 
     @Test
     fun `binding matches alternate keystroke`() {
-        val binding = KeyBinding(
-            actionId = "test.action",
-            key = "C",
-            modifiers = listOf("Cmd"),
-            alternateKeystrokes = listOf(KeyStroke("C", listOf("Ctrl"))),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
+        val binding =
+            KeyBinding(
+                actionId = "test.action",
+                key = "C",
+                modifiers = listOf("Cmd"),
+                alternateKeystrokes = listOf(KeyStroke("C", listOf("Ctrl"))),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
 
         assertTrue(binding.matches("C", isMetaPressed = false, isCtrlPressed = true, isShiftPressed = false, isAltPressed = false))
     }
 
     @Test
     fun `binding displayStringAll shows all keystrokes`() {
-        val binding = KeyBinding(
-            actionId = "test.action",
-            key = "C",
-            modifiers = listOf("Cmd"),
-            alternateKeystrokes = listOf(KeyStroke("C", listOf("Ctrl"))),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
+        val binding =
+            KeyBinding(
+                actionId = "test.action",
+                key = "C",
+                modifiers = listOf("Cmd"),
+                alternateKeystrokes = listOf(KeyStroke("C", listOf("Ctrl"))),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
 
         val display = binding.displayStringAll("Mac OS X")
         assertTrue(display.contains("⌘C"))
@@ -465,14 +492,15 @@ class KeymapMatcherTest {
 
     @Test
     fun `binding allSignatures returns all signatures`() {
-        val binding = KeyBinding(
-            actionId = "test.action",
-            key = "C",
-            modifiers = listOf("Cmd"),
-            alternateKeystrokes = listOf(KeyStroke("C", listOf("Ctrl"))),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
+        val binding =
+            KeyBinding(
+                actionId = "test.action",
+                key = "C",
+                modifiers = listOf("Cmd"),
+                alternateKeystrokes = listOf(KeyStroke("C", listOf("Ctrl"))),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
 
         val signatures = binding.allSignatures()
         assertEquals(2, signatures.size)
@@ -482,13 +510,14 @@ class KeymapMatcherTest {
 
     @Test
     fun `withAlternateKeystroke adds new alternate`() {
-        val binding = KeyBinding(
-            actionId = "test.action",
-            key = "C",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
+        val binding =
+            KeyBinding(
+                actionId = "test.action",
+                key = "C",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
 
         val updated = binding.withAlternateKeystroke("C", "Ctrl")
         assertEquals(1, updated.alternateKeystrokes.size)
@@ -498,14 +527,15 @@ class KeymapMatcherTest {
 
     @Test
     fun `withoutAlternateKeystroke removes alternate`() {
-        val binding = KeyBinding(
-            actionId = "test.action",
-            key = "C",
-            modifiers = listOf("Cmd"),
-            alternateKeystrokes = listOf(KeyStroke("C", listOf("Ctrl"))),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
+        val binding =
+            KeyBinding(
+                actionId = "test.action",
+                key = "C",
+                modifiers = listOf("Cmd"),
+                alternateKeystrokes = listOf(KeyStroke("C", listOf("Ctrl"))),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
 
         val updated = binding.withoutAlternateKeystroke(KeyStroke("C", listOf("Ctrl")))
         assertTrue(updated.alternateKeystrokes.isEmpty())
@@ -513,17 +543,19 @@ class KeymapMatcherTest {
 
     @Test
     fun `clearAlternateKeystrokes removes all alternates`() {
-        val binding = KeyBinding(
-            actionId = "test.action",
-            key = "C",
-            modifiers = listOf("Cmd"),
-            alternateKeystrokes = listOf(
-                KeyStroke("C", listOf("Ctrl")),
-                KeyStroke("Insert", listOf("Ctrl"))
-            ),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
+        val binding =
+            KeyBinding(
+                actionId = "test.action",
+                key = "C",
+                modifiers = listOf("Cmd"),
+                alternateKeystrokes =
+                    listOf(
+                        KeyStroke("C", listOf("Ctrl")),
+                        KeyStroke("Insert", listOf("Ctrl")),
+                    ),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
 
         val updated = binding.clearAlternateKeystrokes()
         assertTrue(updated.alternateKeystrokes.isEmpty())
@@ -531,39 +563,42 @@ class KeymapMatcherTest {
 
     @Test
     fun `hasAlternates returns true when alternates exist`() {
-        val binding = KeyBinding(
-            actionId = "test.action",
-            key = "C",
-            modifiers = listOf("Cmd"),
-            alternateKeystrokes = listOf(KeyStroke("C", listOf("Ctrl"))),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
+        val binding =
+            KeyBinding(
+                actionId = "test.action",
+                key = "C",
+                modifiers = listOf("Cmd"),
+                alternateKeystrokes = listOf(KeyStroke("C", listOf("Ctrl"))),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
 
         assertTrue(binding.hasAlternates)
     }
 
     @Test
     fun `hasAlternates returns false when no alternates`() {
-        val binding = KeyBinding(
-            actionId = "test.action",
-            key = "C",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
+        val binding =
+            KeyBinding(
+                actionId = "test.action",
+                key = "C",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
 
         assertFalse(binding.hasAlternates)
     }
 
     @Test
     fun `crossPlatform creates binding with Cmd and Ctrl alternates`() {
-        val binding = KeyBinding.crossPlatform(
-            actionId = "copy",
-            key = "C",
-            context = ShortcutContext.GLOBAL,
-            description = "Copy"
-        )
+        val binding =
+            KeyBinding.crossPlatform(
+                actionId = "copy",
+                key = "C",
+                context = ShortcutContext.GLOBAL,
+                description = "Copy",
+            )
 
         assertEquals("C", binding.key)
         assertEquals(listOf("Cmd"), binding.modifiers)
@@ -574,13 +609,14 @@ class KeymapMatcherTest {
 
     @Test
     fun `crossPlatform with additional modifiers works correctly`() {
-        val binding = KeyBinding.crossPlatform(
-            actionId = "copy.special",
-            key = "C",
-            "Shift",
-            context = ShortcutContext.GLOBAL,
-            description = "Copy special"
-        )
+        val binding =
+            KeyBinding.crossPlatform(
+                actionId = "copy.special",
+                key = "C",
+                "Shift",
+                context = ShortcutContext.GLOBAL,
+                description = "Copy special",
+            )
 
         assertEquals(listOf("Cmd", "Shift"), binding.modifiers)
         assertEquals(listOf("Ctrl", "Shift"), binding.alternateKeystrokes[0].modifiers)

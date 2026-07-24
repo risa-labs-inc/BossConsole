@@ -46,9 +46,7 @@ internal object PasskeyAuthService {
     /**
      * Check if passkey authentication is available
      */
-    suspend fun isPasskeySupported(): Boolean {
-        return passkeyService?.isPasskeySupported() ?: false
-    }
+    suspend fun isPasskeySupported(): Boolean = passkeyService?.isPasskeySupported() ?: false
 
     /**
      * Register a new passkey for the current user
@@ -58,41 +56,48 @@ internal object PasskeyAuthService {
         return try {
             val currentUser = AuthStateManager.currentUser.value ?: return Result.failure(Exception("No user logged in"))
             val passkeyService = passkeyService ?: return Result.failure(Exception("Passkey service not available"))
-            
+
             logger.info(LogCategory.PASSKEY, "Starting passkey registration", mapOf("userId" to LogSanitizer.maskUserId(currentUser.id)))
-            
-            val displayName = currentUser.email.ifBlank {
-                "BOSS User ${currentUser.id.take(8)}"
-            }
-            
+
+            val displayName =
+                currentUser.email.ifBlank {
+                    "BOSS User ${currentUser.id.take(8)}"
+                }
+
             // Step 1: Request registration challenge from Supabase without forcing authenticator type
             // Let the browser/platform choose the best available method
-            val challengeResult = SupabasePasskeyService.requestRegistrationChallenge(
-                userId = currentUser.id,
-                displayName = displayName,
-                authenticatorSelection = null  // Let browser decide
-            )
-            
+            val challengeResult =
+                SupabasePasskeyService.requestRegistrationChallenge(
+                    userId = currentUser.id,
+                    displayName = displayName,
+                    authenticatorSelection = null, // Let browser decide
+                )
+
             if (challengeResult.isFailure) {
                 return Result.failure(challengeResult.exceptionOrNull() ?: Exception("Failed to get challenge"))
             }
-            
+
             val challenge = challengeResult.getOrThrow()
-            
+
             // Step 2: Create passkey using platform service
-            val registrationResult = passkeyService.registerPasskey(
-                userId = currentUser.id,
-                displayName = displayName,
-                challenge = Base64.getUrlDecoder().decode(challenge.challenge),
-                rpId = challenge.rpId
-            )
-            
+            val registrationResult =
+                passkeyService.registerPasskey(
+                    userId = currentUser.id,
+                    displayName = displayName,
+                    challenge = Base64.getUrlDecoder().decode(challenge.challenge),
+                    rpId = challenge.rpId,
+                )
+
             if (registrationResult.isFailure) {
                 return Result.failure(registrationResult.exceptionOrNull() ?: Exception("Passkey registration failed"))
             }
-            
+
             val registration = registrationResult.getOrThrow()
-            logger.debug(LogCategory.PASSKEY, "About to call completeRegistration", mapOf("credentialId" to LogSanitizer.maskCredentialId(registration.credentialId)))
+            logger.debug(
+                LogCategory.PASSKEY,
+                "About to call completeRegistration",
+                mapOf("credentialId" to LogSanitizer.maskCredentialId(registration.credentialId)),
+            )
 
             // Check if this is a browser-initiated registration (skip completion)
             if (registration.credentialId.startsWith("browser-registration-")) {
@@ -101,17 +106,18 @@ internal object PasskeyAuthService {
             }
 
             // Step 3: Complete registration with Supabase backend
-            val completionResult = try {
-                logger.debug(LogCategory.PASSKEY, "Calling SupabasePasskeyService.completeRegistration")
-                SupabasePasskeyService.completeRegistration(
-                    userId = currentUser.id,
-                    registration = registration,
-                    challenge = challenge.challenge
-                )
-            } catch (e: Exception) {
-                logger.error(LogCategory.PASSKEY, "Exception in completeRegistration", error = e)
-                throw e
-            }
+            val completionResult =
+                try {
+                    logger.debug(LogCategory.PASSKEY, "Calling SupabasePasskeyService.completeRegistration")
+                    SupabasePasskeyService.completeRegistration(
+                        userId = currentUser.id,
+                        registration = registration,
+                        challenge = challenge.challenge,
+                    )
+                } catch (e: Exception) {
+                    logger.error(LogCategory.PASSKEY, "Exception in completeRegistration", error = e)
+                    throw e
+                }
 
             if (completionResult.isFailure) {
                 return Result.failure(completionResult.exceptionOrNull() ?: Exception("Failed to complete registration"))
@@ -126,67 +132,85 @@ internal object PasskeyAuthService {
             Result.failure(e)
         }
     }
-    
+
     /**
      * Authenticate using passkey
      * Supports both user-identified and usernameless authentication
      */
-    suspend fun authenticateWithPasskey(email: String? = null, credentialId: String? = null): Result<Unit> {
+    suspend fun authenticateWithPasskey(
+        email: String? = null,
+        credentialId: String? = null,
+    ): Result<Unit> {
         return try {
             val passkeyService = passkeyService ?: return Result.failure(Exception("Passkey service not available"))
-            
-            logger.info(LogCategory.PASSKEY, "Starting passkey authentication", mapOf("email" to (email?.let { LogSanitizer.maskEmail(it) } ?: "usernameless")))
-            
+
+            logger.info(
+                LogCategory.PASSKEY,
+                "Starting passkey authentication",
+                mapOf(
+                    "email" to (
+                        email?.let {
+                            LogSanitizer.maskEmail(it)
+                        } ?: "usernameless"
+                    ),
+                ),
+            )
+
             // Step 1: Request authentication challenge from Supabase with sessionId for cross-device coordination
             val sessionId = UUID.randomUUID().toString()
             val challengeResult = SupabasePasskeyService.requestAuthenticationChallenge(email, sessionId)
-            
+
             if (challengeResult.isFailure) {
                 return Result.failure(challengeResult.exceptionOrNull() ?: Exception("Failed to get challenge"))
             }
-            
+
             val challenge = challengeResult.getOrThrow()
-            
+
             // Step 2: Try platform authentication first, let browser handle fallbacks
             // No more manual flow determination - let WebAuthn API decide the best method
             logger.debug(LogCategory.PASSKEY, "Attempting passkey authentication with browser-native flow selection")
 
             // Filter to specific credential if provided (for multi-passkey selection)
-            val filteredCredentials = if (credentialId != null) {
-                challenge.allowCredentials?.filter { it.id == credentialId }
-            } else {
-                challenge.allowCredentials
-            }
+            val filteredCredentials =
+                if (credentialId != null) {
+                    challenge.allowCredentials?.filter { it.id == credentialId }
+                } else {
+                    challenge.allowCredentials
+                }
 
             val allowedCredentials = filteredCredentials?.map { it.id }
-            val allowedCredentialTransports = filteredCredentials?.associate {
-                it.id to (it.transports ?: emptyList())
-            }
-            val assertionResult = passkeyService.authenticateWithPasskey(
-                challenge = Base64.getUrlDecoder().decode(challenge.challenge),
-                allowedCredentials = allowedCredentials,
-                rpId = challenge.rpId,
-                userEmail = email ?: return Result.failure(Exception("User email is required for passkey authentication")),
-                sessionId = sessionId,
-                allowedCredentialTransports = allowedCredentialTransports
-            )
-    
+            val allowedCredentialTransports =
+                filteredCredentials?.associate {
+                    it.id to (it.transports ?: emptyList())
+                }
+            val assertionResult =
+                passkeyService.authenticateWithPasskey(
+                    challenge = Base64.getUrlDecoder().decode(challenge.challenge),
+                    allowedCredentials = allowedCredentials,
+                    rpId = challenge.rpId,
+                    userEmail = email ?: return Result.failure(Exception("User email is required for passkey authentication")),
+                    sessionId = sessionId,
+                    allowedCredentialTransports = allowedCredentialTransports,
+                )
+
             if (assertionResult.isFailure) {
                 val exception = assertionResult.exceptionOrNull()
-                
+
                 // Check if this is a cross-device authentication requirement
                 return if (exception is CrossDeviceAuthenticationRequired) {
-                    val result = CrossDeviceAuthService.handleCrossDeviceAuthentication(exception) { authData ->
-                        // Add email to authData if missing (cross-device flow doesn't always return it)
-                        // Note: email is guaranteed non-null here due to check at line 166
-                        val enrichedAuthData = if (authData.email == null) {
-                            authData.copy(email = email)
-                        } else {
-                            authData
+                    val result =
+                        CrossDeviceAuthService.handleCrossDeviceAuthentication(exception) { authData ->
+                            // Add email to authData if missing (cross-device flow doesn't always return it)
+                            // Note: email is guaranteed non-null here due to check at line 166
+                            val enrichedAuthData =
+                                if (authData.email == null) {
+                                    authData.copy(email = email)
+                                } else {
+                                    authData
+                                }
+                            // Use PasskeySessionHandler for session establishment
+                            PasskeySessionHandler.completeAuthentication(enrichedAuthData)
                         }
-                        // Use PasskeySessionHandler for session establishment
-                        PasskeySessionHandler.completeAuthentication(enrichedAuthData)
-                    }
 
                     // Reset passkey state after cross-device authentication
                     if (result.isSuccess) {
@@ -198,19 +222,20 @@ internal object PasskeyAuthService {
                     Result.failure(exception ?: Exception("Passkey authentication failed"))
                 }
             }
-    
+
             val assertion = assertionResult.getOrThrow()
-    
+
             // Step 3: Complete authentication with Supabase backend (only for local auth success)
-            val authResult = SupabasePasskeyService.completeAuthentication(
-                assertion = assertion,
-                challenge = challenge.challenge
-            )
-            
+            val authResult =
+                SupabasePasskeyService.completeAuthentication(
+                    assertion = assertion,
+                    challenge = challenge.challenge,
+                )
+
             if (authResult.isFailure) {
                 return Result.failure(authResult.exceptionOrNull() ?: Exception("Failed to complete authentication"))
             }
-            
+
             val authData = authResult.getOrThrow()
 
             // Step 4: Use PasskeySessionHandler to complete authentication
@@ -232,17 +257,13 @@ internal object PasskeyAuthService {
      * Get user's registered passkeys
      * Delegated to PasskeyCredentialManager
      */
-    suspend fun getUserPasskeys(): Result<List<ai.rever.boss.services.passkey.PasskeyInfo>> {
-        return PasskeyCredentialManager.getUserPasskeys()
-    }
+    suspend fun getUserPasskeys(): Result<List<ai.rever.boss.services.passkey.PasskeyInfo>> = PasskeyCredentialManager.getUserPasskeys()
 
     /**
      * Delete a passkey
      * Delegated to PasskeyCredentialManager
      */
-    suspend fun deletePasskey(credentialId: String): Result<Unit> {
-        return PasskeyCredentialManager.deletePasskey(credentialId)
-    }
+    suspend fun deletePasskey(credentialId: String): Result<Unit> = PasskeyCredentialManager.deletePasskey(credentialId)
 
     /**
      * Reset passkey state to Idle

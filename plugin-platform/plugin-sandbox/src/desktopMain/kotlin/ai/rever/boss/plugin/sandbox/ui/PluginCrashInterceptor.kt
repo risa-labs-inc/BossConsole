@@ -25,7 +25,6 @@ import java.util.concurrent.ConcurrentHashMap
  * the crashing thread (usually AWT EDT for composition errors).
  */
 object PluginCrashInterceptor {
-
     private val logger = BossLogger.forComponent("PluginCrashInterceptor")
 
     /**
@@ -89,7 +88,10 @@ object PluginCrashInterceptor {
      * @param onError Callback invoked when an error is attributed to this plugin
      * @return A [Registration] that should be disposed when the composable leaves composition
      */
-    fun register(pluginId: String, onError: (Throwable) -> Unit): Registration {
+    fun register(
+        pluginId: String,
+        onError: (Throwable) -> Unit,
+    ): Registration {
         interceptors.getOrPut(pluginId) { java.util.concurrent.CopyOnWriteArrayList() }.add(onError)
 
         // Cache classloader mapping at registration time so we don't need
@@ -114,10 +116,14 @@ object PluginCrashInterceptor {
             // Don't let caching fail registration
         }
 
-        logger.debug(LogCategory.SYSTEM, "Registered crash interceptor", mapOf(
-            "pluginId" to pluginId,
-            "activeInterceptors" to interceptors.size
-        ))
+        logger.debug(
+            LogCategory.SYSTEM,
+            "Registered crash interceptor",
+            mapOf(
+                "pluginId" to pluginId,
+                "activeInterceptors" to interceptors.size,
+            ),
+        )
         return Registration(pluginId, onError)
     }
 
@@ -126,16 +132,23 @@ object PluginCrashInterceptor {
      *
      * @return true if the error was attributed to a plugin and handled
      */
-    private fun tryHandlePluginCrash(thread: Thread, throwable: Throwable): Boolean {
+    private fun tryHandlePluginCrash(
+        thread: Thread,
+        throwable: Throwable,
+    ): Boolean {
         val pluginId = attributeToPlugin(throwable, thread) ?: return false
         val callbacks = interceptors[pluginId]?.takeIf { it.isNotEmpty() } ?: return false
 
-        logger.warn(LogCategory.SYSTEM, "Intercepted plugin crash during composition", mapOf(
-            "pluginId" to pluginId,
-            "errorType" to throwable.javaClass.simpleName,
-            "thread" to thread.name,
-            "message" to (throwable.message ?: "no message")
-        ))
+        logger.warn(
+            LogCategory.SYSTEM,
+            "Intercepted plugin crash during composition",
+            mapOf(
+                "pluginId" to pluginId,
+                "errorType" to throwable.javaClass.simpleName,
+                "thread" to thread.name,
+                "message" to (throwable.message ?: "no message"),
+            ),
+        )
 
         return invokeAll(pluginId, callbacks, throwable)
     }
@@ -148,14 +161,21 @@ object PluginCrashInterceptor {
      *
      * @return true if the callback was invoked successfully
      */
-    fun tryHandle(pluginId: String, throwable: Throwable): Boolean {
+    fun tryHandle(
+        pluginId: String,
+        throwable: Throwable,
+    ): Boolean {
         val callbacks = interceptors[pluginId]?.takeIf { it.isNotEmpty() } ?: return false
 
-        logger.warn(LogCategory.SYSTEM, "Handling plugin crash via WindowExceptionHandler", mapOf(
-            "pluginId" to pluginId,
-            "errorType" to throwable.javaClass.simpleName,
-            "message" to (throwable.message ?: "no message")
-        ))
+        logger.warn(
+            LogCategory.SYSTEM,
+            "Handling plugin crash via WindowExceptionHandler",
+            mapOf(
+                "pluginId" to pluginId,
+                "errorType" to throwable.javaClass.simpleName,
+                "message" to (throwable.message ?: "no message"),
+            ),
+        )
 
         return invokeAll(pluginId, callbacks, throwable)
     }
@@ -168,7 +188,7 @@ object PluginCrashInterceptor {
     private fun invokeAll(
         pluginId: String,
         callbacks: List<(Throwable) -> Unit>,
-        throwable: Throwable
+        throwable: Throwable,
     ): Boolean {
         var handled = false
         for (callback in callbacks) {
@@ -176,9 +196,14 @@ object PluginCrashInterceptor {
                 callback(throwable)
                 handled = true
             } catch (e: Exception) {
-                logger.error(LogCategory.SYSTEM, "Error in plugin crash callback", mapOf(
-                    "pluginId" to pluginId
-                ), e)
+                logger.error(
+                    LogCategory.SYSTEM,
+                    "Error in plugin crash callback",
+                    mapOf(
+                        "pluginId" to pluginId,
+                    ),
+                    e,
+                )
             }
         }
         return handled
@@ -190,7 +215,10 @@ object PluginCrashInterceptor {
      * Called by plugin loading infrastructure to pre-cache the mapping,
      * avoiding [Class.forName] during exception handling.
      */
-    fun registerClassLoader(classLoader: ClassLoader, pluginId: String) {
+    fun registerClassLoader(
+        classLoader: ClassLoader,
+        pluginId: String,
+    ) {
         classLoaderToPluginId[classLoader] = pluginId
     }
 
@@ -204,7 +232,10 @@ object PluginCrashInterceptor {
      *
      * @return The plugin ID if attributed, null otherwise
      */
-    fun attributeToPlugin(throwable: Throwable, thread: Thread? = null): String? {
+    fun attributeToPlugin(
+        throwable: Throwable,
+        thread: Thread? = null,
+    ): String? {
         // Strategy 1: Check thread name for plugin sandbox threads
         val threadName = thread?.name ?: Thread.currentThread().name
         for (pluginId in interceptors.keys) {
@@ -233,20 +264,25 @@ object PluginCrashInterceptor {
         // This is the slow path (O(stackFrames × classloaders) with Class.forName calls).
         // Strategies 1 and 2 should cover most cases; log when we fall through here.
         if (classLoaderToPluginId.isNotEmpty()) {
-            logger.debug(LogCategory.UI, "Attribution falling through to strategy 3 (classloader resolution)", mapOf(
-                "errorType" to throwable.javaClass.simpleName,
-                "stackDepth" to throwable.stackTrace.size,
-                "loaderCount" to classLoaderToPluginId.size
-            ))
+            logger.debug(
+                LogCategory.UI,
+                "Attribution falling through to strategy 3 (classloader resolution)",
+                mapOf(
+                    "errorType" to throwable.javaClass.simpleName,
+                    "stackDepth" to throwable.stackTrace.size,
+                    "loaderCount" to classLoaderToPluginId.size,
+                ),
+            )
             try {
                 for (element in throwable.stackTrace) {
                     for ((loader, pId) in classLoaderToPluginId) {
                         if (!interceptors.containsKey(pId)) continue
-                        val clazz = try {
-                            Class.forName(element.className, false, loader)
-                        } catch (_: Throwable) {
-                            null
-                        }
+                        val clazz =
+                            try {
+                                Class.forName(element.className, false, loader)
+                            } catch (_: Throwable) {
+                                null
+                            }
                         if (clazz != null && clazz.classLoader == loader) {
                             return pId
                         }
@@ -267,7 +303,7 @@ object PluginCrashInterceptor {
      */
     class Registration(
         private val pluginId: String,
-        private val callback: (Throwable) -> Unit
+        private val callback: (Throwable) -> Unit,
     ) {
         fun unregister() {
             val callbacks = interceptors[pluginId]
@@ -278,10 +314,14 @@ object PluginCrashInterceptor {
                 // for this plugin remains.
                 classLoaderToPluginId.entries.removeIf { it.value == pluginId }
             }
-            logger.debug(LogCategory.SYSTEM, "Unregistered crash interceptor", mapOf(
-                "pluginId" to pluginId,
-                "activeInterceptors" to interceptors.size
-            ))
+            logger.debug(
+                LogCategory.SYSTEM,
+                "Unregistered crash interceptor",
+                mapOf(
+                    "pluginId" to pluginId,
+                    "activeInterceptors" to interceptors.size,
+                ),
+            )
         }
     }
 }

@@ -20,7 +20,6 @@ class DirectoryPickerProviderProxy(
     channel: ManagedChannel,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
 ) : DirectoryPickerProvider {
-
     private val stub = DirectoryPickerServiceGrpcKt.DirectoryPickerServiceCoroutineStub(channel)
 
     override fun pickDirectory(onResult: (String?) -> Unit) {

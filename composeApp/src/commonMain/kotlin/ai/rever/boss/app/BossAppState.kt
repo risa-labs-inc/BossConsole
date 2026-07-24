@@ -107,7 +107,9 @@ internal class BossAppState(
 
     // Track if handlers have been marked ready (prevents race condition between workspace load and timeout)
     // Uses atomic flag to ensure handler marking happens exactly once
-    private val handlersMarked = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val handlersMarked =
+        java.util.concurrent.atomic
+            .AtomicBoolean(false)
 
     /**
      * Mark the URL/file/workspace/terminal handlers ready exactly once.
@@ -147,21 +149,24 @@ internal fun ComponentContext.rememberBossAppState(
     val tabsComponent = remember { BossTabsComponent(this, tabRegistry, windowId) }
 
     // Create split view state that manages all tab panels
-    val splitViewState = rememberSplitViewState(
-        tabRegistry = tabRegistry,
-        windowId = windowId,
-        initialTabsComponent = tabsComponent
-    )
+    val splitViewState =
+        rememberSplitViewState(
+            tabRegistry = tabRegistry,
+            windowId = windowId,
+            initialTabsComponent = tabsComponent,
+        )
 
     // Create split view operations wrapper for plugins
-    val splitViewOperations = remember(splitViewState, windowId) {
-        SplitViewOperationsImpl(splitViewState, windowId)
-    }
+    val splitViewOperations =
+        remember(splitViewState, windowId) {
+            SplitViewOperationsImpl(splitViewState, windowId)
+        }
 
     // Create workspace data provider wrapper for plugins
-    val workspaceDataProvider = remember(workspaceManager) {
-        WorkspaceDataProviderImpl(workspaceManager)
-    }
+    val workspaceDataProvider =
+        remember(workspaceManager) {
+            WorkspaceDataProviderImpl(workspaceManager)
+        }
 
     // Create per-window project/runner/git state (each window is independent).
     // Per-window git state fixes the issue where opening a new window with no

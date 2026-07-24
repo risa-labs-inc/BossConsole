@@ -23,19 +23,19 @@ import kotlin.test.assertTrue
  * - MapBasedActionExecutor
  */
 class KeymapHandlerTest {
-
     // ==================== BINDING RETRIEVAL TESTS ====================
 
     @Test
     fun `getBinding returns correct binding`() {
-        val binding = KeyBinding(
-            actionId = "test.action",
-            key = "N",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true,
-            description = "Test action"
-        )
+        val binding =
+            KeyBinding(
+                actionId = "test.action",
+                key = "N",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+                description = "Test action",
+            )
 
         val settings = KeymapSettings.fromBindings(listOf(binding))
         val handler = KeymapHandler.from(settings)
@@ -59,13 +59,14 @@ class KeymapHandlerTest {
 
     @Test
     fun `isBound returns true for bound action`() {
-        val binding = KeyBinding(
-            actionId = "test.action",
-            key = "N",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
+        val binding =
+            KeyBinding(
+                actionId = "test.action",
+                key = "N",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
 
         val settings = KeymapSettings.fromBindings(listOf(binding))
         val handler = KeymapHandler.from(settings)
@@ -75,13 +76,14 @@ class KeymapHandlerTest {
 
     @Test
     fun `isBound returns false for disabled binding`() {
-        val binding = KeyBinding(
-            actionId = "test.action",
-            key = "N",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = false
-        )
+        val binding =
+            KeyBinding(
+                actionId = "test.action",
+                key = "N",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = false,
+            )
 
         val settings = KeymapSettings.fromBindings(listOf(binding))
         val handler = KeymapHandler.from(settings)
@@ -101,13 +103,14 @@ class KeymapHandlerTest {
 
     @Test
     fun `getDisplayString returns formatted string for bound action`() {
-        val binding = KeyBinding(
-            actionId = "test.action",
-            key = "N",
-            modifiers = listOf("Cmd", "Shift"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
+        val binding =
+            KeyBinding(
+                actionId = "test.action",
+                key = "N",
+                modifiers = listOf("Cmd", "Shift"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
 
         val settings = KeymapSettings.fromBindings(listOf(binding))
         val handler = KeymapHandler.from(settings)
@@ -133,13 +136,14 @@ class KeymapHandlerTest {
 
     @Test
     fun `updateSettings changes handler settings`() {
-        val binding1 = KeyBinding(
-            actionId = "action1",
-            key = "N",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
+        val binding1 =
+            KeyBinding(
+                actionId = "action1",
+                key = "N",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
 
         val settings1 = KeymapSettings.fromBindings(listOf(binding1))
         val handler = KeymapHandler.from(settings1)
@@ -148,13 +152,14 @@ class KeymapHandlerTest {
         assertFalse(handler.isBound("action2"))
 
         // Update with new settings
-        val binding2 = KeyBinding(
-            actionId = "action2",
-            key = "T",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
+        val binding2 =
+            KeyBinding(
+                actionId = "action2",
+                key = "T",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
 
         val settings2 = KeymapSettings.fromBindings(listOf(binding2))
         handler.updateSettings(settings2)
@@ -165,13 +170,14 @@ class KeymapHandlerTest {
 
     @Test
     fun `settings property returns current settings`() {
-        val binding = KeyBinding(
-            actionId = "test.action",
-            key = "N",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
+        val binding =
+            KeyBinding(
+                actionId = "test.action",
+                key = "N",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
 
         val settings = KeymapSettings.fromBindings(listOf(binding), presetName = "Test Preset")
         val handler = KeymapHandler.from(settings)
@@ -235,9 +241,11 @@ class KeymapHandlerTest {
     fun `MapBasedActionExecutor executes registered handler`() {
         var executed = false
 
-        val executor = MapBasedActionExecutor.builder()
-            .on("test.action") { executed = true }
-            .build()
+        val executor =
+            MapBasedActionExecutor
+                .builder()
+                .on("test.action") { executed = true }
+                .build()
 
         val result = executor.execute("test.action")
 
@@ -247,9 +255,11 @@ class KeymapHandlerTest {
 
     @Test
     fun `MapBasedActionExecutor returns false for unregistered action`() {
-        val executor = MapBasedActionExecutor.builder()
-            .on("test.action") { }
-            .build()
+        val executor =
+            MapBasedActionExecutor
+                .builder()
+                .on("test.action") { }
+                .build()
 
         val result = executor.execute("unknown.action")
 
@@ -262,11 +272,13 @@ class KeymapHandlerTest {
         var action2Executed = false
         var action3Executed = false
 
-        val executor = MapBasedActionExecutor.builder()
-            .on("action1") { action1Executed = true }
-            .on("action2") { action2Executed = true }
-            .on("action3") { action3Executed = true }
-            .build()
+        val executor =
+            MapBasedActionExecutor
+                .builder()
+                .on("action1") { action1Executed = true }
+                .on("action2") { action2Executed = true }
+                .on("action3") { action3Executed = true }
+                .build()
 
         executor.execute("action1")
         executor.execute("action2")
@@ -281,9 +293,11 @@ class KeymapHandlerTest {
     fun `MapBasedActionExecutor handles multiple executions`() {
         var counter = 0
 
-        val executor = MapBasedActionExecutor.builder()
-            .on("increment") { counter++ }
-            .build()
+        val executor =
+            MapBasedActionExecutor
+                .builder()
+                .on("increment") { counter++ }
+                .build()
 
         executor.execute("increment")
         executor.execute("increment")
@@ -296,13 +310,14 @@ class KeymapHandlerTest {
 
     @Test
     fun `from factory creates handler with settings`() {
-        val binding = KeyBinding(
-            actionId = "test.action",
-            key = "N",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
+        val binding =
+            KeyBinding(
+                actionId = "test.action",
+                key = "N",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
 
         val settings = KeymapSettings.fromBindings(listOf(binding))
         val handler = KeymapHandler.from(settings)

@@ -10,7 +10,7 @@ import java.io.File
 object WindowsProtocolHandler {
     private val logger = BossLogger.forComponent("WindowsProtocolHandler")
     private val isWindows = System.getProperty("os.name").lowercase().contains("windows")
-    
+
     /**
      * Register the boss:// protocol in Windows Registry
      * This should be called on first launch or during installation
@@ -33,31 +33,47 @@ object WindowsProtocolHandler {
             val currentCommand = getCurrentRegistryCommand()
 
             // 3. Determine if registration is needed
-            val needsRegistration = when {
-                currentCommand == null -> {
-                    logger.info(LogCategory.SYSTEM, "Protocol not registered. Registering...")
-                    true
-                }
-                !commandPointsToValidExecutable(currentCommand) -> {
-                    logger.info(LogCategory.SYSTEM, "Protocol points to invalid path, re-registering", mapOf("command" to currentCommand))
-                    true
-                }
-                !currentCommand.contains(appPath, ignoreCase = true) -> {
-                    // SAFETY CHECK: Only re-register if current path doesn't exist
-                    val currentExePath = extractExecutablePath(currentCommand)
-                    if (currentExePath != null && File(currentExePath).exists()) {
-                        logger.info(LogCategory.SYSTEM, "Protocol already registered to different valid BOSS installation, skipping", mapOf("path" to currentExePath))
-                        false
-                    } else {
-                        logger.info(LogCategory.SYSTEM, "Protocol points to non-existent path, re-registering", mapOf("command" to currentCommand))
+            val needsRegistration =
+                when {
+                    currentCommand == null -> {
+                        logger.info(LogCategory.SYSTEM, "Protocol not registered. Registering...")
                         true
                     }
+
+                    !commandPointsToValidExecutable(currentCommand) -> {
+                        logger.info(
+                            LogCategory.SYSTEM,
+                            "Protocol points to invalid path, re-registering",
+                            mapOf("command" to currentCommand),
+                        )
+                        true
+                    }
+
+                    !currentCommand.contains(appPath, ignoreCase = true) -> {
+                        // SAFETY CHECK: Only re-register if current path doesn't exist
+                        val currentExePath = extractExecutablePath(currentCommand)
+                        if (currentExePath != null && File(currentExePath).exists()) {
+                            logger.info(
+                                LogCategory.SYSTEM,
+                                "Protocol already registered to different valid BOSS installation, skipping",
+                                mapOf("path" to currentExePath),
+                            )
+                            false
+                        } else {
+                            logger.info(
+                                LogCategory.SYSTEM,
+                                "Protocol points to non-existent path, re-registering",
+                                mapOf("command" to currentCommand),
+                            )
+                            true
+                        }
+                    }
+
+                    else -> {
+                        logger.debug(LogCategory.SYSTEM, "Protocol already correctly registered")
+                        false
+                    }
                 }
-                else -> {
-                    logger.debug(LogCategory.SYSTEM, "Protocol already correctly registered")
-                    false
-                }
-            }
 
             // 4. Perform registration if needed
             if (needsRegistration) {
@@ -74,17 +90,16 @@ object WindowsProtocolHandler {
     private fun performRegistration(appPath: String) {
         logger.info(LogCategory.SYSTEM, "Starting BOSS protocol registration", mapOf("appPath" to appPath))
 
-        val commands = listOf(
-            // Create protocol key
-            """reg add "HKEY_CURRENT_USER\Software\Classes\boss" /ve /d "URL:BOSS Protocol" /f""",
-            """reg add "HKEY_CURRENT_USER\Software\Classes\boss" /v "URL Protocol" /d "" /f""",
-
-            // Set icon
-            """reg add "HKEY_CURRENT_USER\Software\Classes\boss\DefaultIcon" /ve /d "$appPath,0" /f""",
-
-            // Set command to open the app with URL
-            """reg add "HKEY_CURRENT_USER\Software\Classes\boss\shell\open\command" /ve /d "\"$appPath\" \"%1\"" /f"""
-        )
+        val commands =
+            listOf(
+                // Create protocol key
+                """reg add "HKEY_CURRENT_USER\Software\Classes\boss" /ve /d "URL:BOSS Protocol" /f""",
+                """reg add "HKEY_CURRENT_USER\Software\Classes\boss" /v "URL Protocol" /d "" /f""",
+                // Set icon
+                """reg add "HKEY_CURRENT_USER\Software\Classes\boss\DefaultIcon" /ve /d "$appPath,0" /f""",
+                // Set command to open the app with URL
+                """reg add "HKEY_CURRENT_USER\Software\Classes\boss\shell\open\command" /ve /d "\"$appPath\" \"%1\"" /f""",
+            )
 
         var successCount = 0
         commands.forEach { command ->
@@ -104,19 +119,23 @@ object WindowsProtocolHandler {
         if (successCount == commands.size) {
             logger.info(LogCategory.SYSTEM, "Protocol registration successful")
         } else {
-            logger.warn(LogCategory.SYSTEM, "Protocol registration partial", mapOf(
-                "successCount" to successCount,
-                "totalCommands" to commands.size
-            ))
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Protocol registration partial",
+                mapOf(
+                    "successCount" to successCount,
+                    "totalCommands" to commands.size,
+                ),
+            )
         }
     }
-    
+
     /**
      * Check if the protocol is already registered
      */
     fun isProtocolRegistered(): Boolean {
         if (!isWindows) return false
-        
+
         return try {
             val process = Runtime.getRuntime().exec("""reg query "HKEY_CURRENT_USER\Software\Classes\boss" """)
             process.waitFor()
@@ -130,7 +149,7 @@ object WindowsProtocolHandler {
             false
         }
     }
-    
+
     /**
      * Get the path to the running application
      */
@@ -150,7 +169,10 @@ object WindowsProtocolHandler {
             }
 
             // Priority 2: Try to get the path from the running JAR/EXE
-            val jarPath = WindowsProtocolHandler::class.java.protectionDomain.codeSource.location.toURI().path
+            val jarPath =
+                WindowsProtocolHandler::class.java.protectionDomain.codeSource.location
+                    .toURI()
+                    .path
 
             // Convert to Windows path format and handle different packaging scenarios
             when {
@@ -166,10 +188,12 @@ object WindowsProtocolHandler {
                         null
                     }
                 }
+
                 jarPath.contains("BOSS.exe") -> {
                     // Already an executable
                     File(jarPath).absolutePath
                 }
+
                 else -> {
                     // Development environment - return null to skip registration
                     logger.debug(LogCategory.SYSTEM, "Running in development mode - deep links require MSI installation")
@@ -181,7 +205,7 @@ object WindowsProtocolHandler {
             null
         }
     }
-    
+
     /**
      * Parse command line arguments to extract deep link URL
      */
@@ -193,13 +217,15 @@ object WindowsProtocolHandler {
     /**
      * Get the current command registered in the Windows registry for boss:// protocol
      */
-    private fun getCurrentRegistryCommand(): String? {
-        return try {
-            val process = ProcessBuilder(
-                "reg", "query",
-                "HKEY_CURRENT_USER\\Software\\Classes\\boss\\shell\\open\\command",
-                "/ve"
-            ).redirectErrorStream(true).start()
+    private fun getCurrentRegistryCommand(): String? =
+        try {
+            val process =
+                ProcessBuilder(
+                    "reg",
+                    "query",
+                    "HKEY_CURRENT_USER\\Software\\Classes\\boss\\shell\\open\\command",
+                    "/ve",
+                ).redirectErrorStream(true).start()
 
             val output = process.inputStream.bufferedReader().readText()
             process.waitFor()
@@ -215,7 +241,6 @@ object WindowsProtocolHandler {
             )
             null
         }
-    }
 
     /**
      * Extract executable path from registry command string

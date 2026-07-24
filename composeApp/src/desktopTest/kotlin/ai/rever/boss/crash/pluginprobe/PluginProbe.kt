@@ -10,13 +10,9 @@ package ai.rever.boss.crash.pluginprobe
  * exactly like a crash inside a dynamically loaded plugin.
  */
 class PluginProbe {
-    fun boom() {
-        throw IllegalStateException("probe boom")
-    }
+    fun boom(): Unit = throw IllegalStateException("probe boom")
 
-    fun boomCustom() {
-        throw ProbeException()
-    }
+    fun boomCustom(): Unit = throw ProbeException()
 }
 
 class ProbeException : RuntimeException("custom probe exception")

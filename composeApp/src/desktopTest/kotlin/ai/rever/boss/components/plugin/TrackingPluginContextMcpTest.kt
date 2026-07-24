@@ -26,7 +26,6 @@ import kotlin.test.assertTrue
  * unregistered without touching live singleton state.
  */
 class TrackingPluginContextMcpTest {
-
     /** Fake delegate that records MCP provider register/unregister calls. */
     private class RecordingContext : PluginContext {
         override val panelRegistry = PanelRegistry()
@@ -45,26 +44,30 @@ class TrackingPluginContextMcpTest {
         }
     }
 
-    private fun provider(id: String) = object : McpToolProvider {
-        override val providerId = id
-        override fun tools() = listOf(
-            McpToolDefinition(
-                name = "tool_of_$id",
-                description = "test",
-                handler = McpToolHandler { McpToolResult("ok") },
-            )
-        )
-    }
+    private fun provider(id: String) =
+        object : McpToolProvider {
+            override val providerId = id
+
+            override fun tools() =
+                listOf(
+                    McpToolDefinition(
+                        name = "tool_of_$id",
+                        description = "test",
+                        handler = McpToolHandler { McpToolResult("ok") },
+                    ),
+                )
+        }
 
     @Test
     fun `unregisterAll unregisters every MCP tool provider the plugin registered`() {
         val delegate = RecordingContext()
         val tracker = PluginRegistrationTracker()
-        val tracking = TrackingPluginContext(
-            pluginId = "test.plugin",
-            delegate = delegate,
-            tracker = tracker,
-        )
+        val tracking =
+            TrackingPluginContext(
+                pluginId = "test.plugin",
+                delegate = delegate,
+                tracker = tracker,
+            )
 
         tracking.registerMcpToolProvider(provider("test.plugin"))
         tracking.registerMcpToolProvider(provider("test.plugin.extra"))
@@ -83,11 +86,12 @@ class TrackingPluginContextMcpTest {
     fun `unregisterAll clears the tracker so a second call does not re-unregister`() {
         val delegate = RecordingContext()
         val tracker = PluginRegistrationTracker()
-        val tracking = TrackingPluginContext(
-            pluginId = "test.plugin",
-            delegate = delegate,
-            tracker = tracker,
-        )
+        val tracking =
+            TrackingPluginContext(
+                pluginId = "test.plugin",
+                delegate = delegate,
+                tracker = tracker,
+            )
 
         tracking.registerMcpToolProvider(provider("test.plugin"))
         tracking.unregisterAll()

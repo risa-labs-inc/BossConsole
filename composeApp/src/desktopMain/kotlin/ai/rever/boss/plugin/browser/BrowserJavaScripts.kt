@@ -13,7 +13,6 @@ package ai.rever.boss.plugin.browser
  * - Enables future testing of JavaScript snippets if needed
  */
 object BrowserJavaScripts {
-
     /**
      * Get the currently selected text in the browser.
      *
@@ -24,12 +23,13 @@ object BrowserJavaScripts {
      *
      * @return Selected text (trimmed) or null
      */
-    val getSelectedText = """
+    val getSelectedText =
+        """
         (function() {
             const sel = window.getSelection();
             return sel ? sel.toString().trim() : null;
         })();
-    """.trimIndent()
+        """.trimIndent()
 
     /**
      * Get the URL of a right-clicked link.
@@ -41,11 +41,12 @@ object BrowserJavaScripts {
      *
      * @return Link URL or null
      */
-    val getRightClickedLinkUrl = """
+    val getRightClickedLinkUrl =
+        """
         (function() {
             return window._rightClickedLinkUrl || null;
         })();
-    """.trimIndent()
+        """.trimIndent()
 
     /**
      * Check if there are any video elements on the current page.
@@ -58,13 +59,14 @@ object BrowserJavaScripts {
      *
      * @return true if video elements exist, false otherwise
      */
-    val hasVideoElements = """
+    val hasVideoElements =
+        """
         (function() {
             const videos = document.querySelectorAll('video');
             const ytVideo = document.querySelector('video.html5-main-video, video.video-stream');
             return videos.length > 0 || ytVideo !== null;
         })();
-    """.trimIndent()
+        """.trimIndent()
 
     /**
      * Check if the right-clicked element is a video or inside a video container.
@@ -76,11 +78,12 @@ object BrowserJavaScripts {
      *
      * @return true if clicked on/inside video element, false otherwise
      */
-    val isClickedOnVideo = """
+    val isClickedOnVideo =
+        """
         (function() {
             return window._rightClickedOnVideo || false;
         })();
-    """.trimIndent()
+        """.trimIndent()
 
     /**
      * JavaScript to inject for tracking right-click on video elements.
@@ -95,7 +98,8 @@ object BrowserJavaScripts {
      * - video.readyState >= 1: video has loaded metadata (filters unloaded previews)
      * - video.videoWidth > 0: video actually has a video track
      */
-    val injectVideoClickTracker = """
+    val injectVideoClickTracker =
+        """
         (function() {
             if (!window._videoClickTrackerAdded) {
                 document.addEventListener('contextmenu', function(event) {
@@ -120,7 +124,7 @@ object BrowserJavaScripts {
                 window._videoClickTrackerAdded = true;
             }
         })();
-    """.trimIndent()
+        """.trimIndent()
 
     /**
      * JavaScript to inject for tracking right-click on link elements.
@@ -132,7 +136,8 @@ object BrowserJavaScripts {
      * This enables the context menu to show "Copy Link URL" and "Open Link in New Tab"
      * options when right-clicking on a link.
      */
-    val injectLinkClickTracker = """
+    val injectLinkClickTracker =
+        """
         (function() {
             if (!window._linkClickTrackerAdded) {
                 document.addEventListener('contextmenu', function(event) {
@@ -146,7 +151,7 @@ object BrowserJavaScripts {
                 window._linkClickTrackerAdded = true;
             }
         })();
-    """.trimIndent()
+        """.trimIndent()
 
     /**
      * JavaScript to inject for Cmd+Click (Mac) / Ctrl+Click (Windows/Linux) to open links in new tabs.
@@ -158,7 +163,8 @@ object BrowserJavaScripts {
      *
      * Uses capture phase (true) to intercept before normal click handlers.
      */
-    val injectCmdClickHandler = """
+    val injectCmdClickHandler =
+        """
         (function() {
             if (!window._cmdClickHandlerAdded) {
                 document.addEventListener('click', function(event) {
@@ -174,7 +180,7 @@ object BrowserJavaScripts {
                 window._cmdClickHandlerAdded = true;
             }
         })();
-    """.trimIndent()
+        """.trimIndent()
 
     /**
      * Generate JavaScript to find a link element at given screen coordinates.
@@ -188,7 +194,11 @@ object BrowserJavaScripts {
      * @param y The y coordinate in the viewport
      * @return JavaScript code that returns the link URL or null
      */
-    fun getLinkAtPoint(x: Int, y: Int): String = """
+    fun getLinkAtPoint(
+        x: Int,
+        y: Int,
+    ): String =
+        """
         (function() {
             var el = document.elementFromPoint($x, $y);
             while (el) {
@@ -197,7 +207,7 @@ object BrowserJavaScripts {
             }
             return null;
         })()
-    """.trimIndent()
+        """.trimIndent()
 
     /**
      * Enable Picture-in-Picture mode for videos on the page.
@@ -211,7 +221,8 @@ object BrowserJavaScripts {
      *
      * **Usage**: `frame.executeJavaScript<Unit>(BrowserJavaScripts.enablePictureInPicture)`
      */
-    val enablePictureInPicture = """
+    val enablePictureInPicture =
+        """
         (function() {
             // Find all video elements on the page
             const videos = document.querySelectorAll('video');
@@ -248,5 +259,5 @@ object BrowserJavaScripts {
                 }
             }
         })();
-    """.trimIndent()
+        """.trimIndent()
 }

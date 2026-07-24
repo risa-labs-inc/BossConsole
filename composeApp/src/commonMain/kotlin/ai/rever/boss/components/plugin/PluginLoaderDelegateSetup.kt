@@ -20,6 +20,6 @@ expect object PluginLoaderDelegateSetup {
      */
     fun register(
         context: PluginContext,
-        dynamicPluginManager: DynamicPluginManager
+        dynamicPluginManager: DynamicPluginManager,
     )
 }

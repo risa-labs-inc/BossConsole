@@ -30,8 +30,8 @@ import androidx.compose.ui.window.DialogProperties
  * Selection mode for collection dialog
  */
 enum class CollectionSelectionMode {
-    COPY,  // Multi-select for copying to multiple collections
-    MOVE   // Single-select for moving to one collection
+    COPY, // Multi-select for copying to multiple collections
+    MOVE, // Single-select for moving to one collection
 }
 
 /**
@@ -51,7 +51,7 @@ fun CollectionSelectionDialog(
     excludeCollectionId: String? = null,
     mode: CollectionSelectionMode = CollectionSelectionMode.COPY,
     onDismiss: () -> Unit,
-    onConfirm: (selectedCollectionIds: Set<String>) -> Unit
+    onConfirm: (selectedCollectionIds: Set<String>) -> Unit,
 ) {
     // Filter out excluded collection
     val availableCollections = collections.filter { it.id != excludeCollectionId }
@@ -61,63 +61,68 @@ fun CollectionSelectionDialog(
 
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            dismissOnClickOutside = true,
-            dismissOnBackPress = true
-        )
+        properties =
+            DialogProperties(
+                dismissOnClickOutside = true,
+                dismissOnBackPress = true,
+            ),
     ) {
         Surface(
-            modifier = Modifier
-                .width(500.dp)
-                .heightIn(max = 600.dp),
+            modifier =
+                Modifier
+                    .width(500.dp)
+                    .heightIn(max = 600.dp),
             shape = RoundedCornerShape(8.dp),
-            color = BossTheme.colors.panel
+            color = BossTheme.colors.panel,
         ) {
             Column(
-                modifier = Modifier.padding(20.dp)
+                modifier = Modifier.padding(20.dp),
             ) {
                 // Title
                 Text(
                     text = title,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
-                    color = BossTheme.colors.textPrimary
+                    color = BossTheme.colors.textPrimary,
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
 
                 // Subtitle
                 Text(
-                    text = if (mode == CollectionSelectionMode.COPY) {
-                        "Select collections to copy bookmark to (multi-select)"
-                    } else {
-                        "Select a collection to move bookmark to"
-                    },
+                    text =
+                        if (mode == CollectionSelectionMode.COPY) {
+                            "Select collections to copy bookmark to (multi-select)"
+                        } else {
+                            "Select a collection to move bookmark to"
+                        },
                     fontSize = 13.sp,
-                    color = BossTheme.colors.textSecondary
+                    color = BossTheme.colors.textSecondary,
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // Collections list
                 LazyColumn(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
+                    modifier =
+                        Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
                 ) {
                     if (availableCollections.isEmpty()) {
                         item {
                             Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(32.dp),
-                                contentAlignment = Alignment.Center
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .padding(32.dp),
+                                contentAlignment = Alignment.Center,
                             ) {
                                 Text(
                                     text = "No other collections available",
                                     fontSize = 13.sp,
                                     color = BossTheme.colors.textSecondary,
-                                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
                                 )
                             }
                         }
@@ -128,18 +133,19 @@ fun CollectionSelectionDialog(
                                 isSelected = selectedCollections.contains(collection.id),
                                 mode = mode,
                                 onClick = {
-                                    selectedCollections = if (mode == CollectionSelectionMode.MOVE) {
-                                        // Single selection for MOVE
-                                        setOf(collection.id)
-                                    } else {
-                                        // Multi-selection for COPY
-                                        if (selectedCollections.contains(collection.id)) {
-                                            selectedCollections - collection.id
+                                    selectedCollections =
+                                        if (mode == CollectionSelectionMode.MOVE) {
+                                            // Single selection for MOVE
+                                            setOf(collection.id)
                                         } else {
-                                            selectedCollections + collection.id
+                                            // Multi-selection for COPY
+                                            if (selectedCollections.contains(collection.id)) {
+                                                selectedCollections - collection.id
+                                            } else {
+                                                selectedCollections + collection.id
+                                            }
                                         }
-                                    }
-                                }
+                                },
                             )
                         }
                     }
@@ -150,13 +156,14 @@ fun CollectionSelectionDialog(
                 // Action buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
+                    horizontalArrangement = Arrangement.End,
                 ) {
                     TextButton(
                         onClick = onDismiss,
-                        colors = ButtonDefaults.textButtonColors(
-                            contentColor = BossTheme.colors.textSecondary
-                        )
+                        colors =
+                            ButtonDefaults.textButtonColors(
+                                contentColor = BossTheme.colors.textSecondary,
+                            ),
                     ) {
                         Text("Cancel")
                     }
@@ -169,17 +176,18 @@ fun CollectionSelectionDialog(
                             onDismiss()
                         },
                         enabled = selectedCollections.isNotEmpty(),
-                        colors = ButtonDefaults.buttonColors(
-                            backgroundColor = BossTheme.colors.signal,
-                            contentColor = Color.Black,
-                            disabledBackgroundColor = BossTheme.colors.line,
-                            disabledContentColor = BossTheme.colors.textSecondary
-                        ),
-                        shape = RoundedCornerShape(6.dp)
+                        colors =
+                            ButtonDefaults.buttonColors(
+                                backgroundColor = BossTheme.colors.signal,
+                                contentColor = Color.Black,
+                                disabledBackgroundColor = BossTheme.colors.line,
+                                disabledContentColor = BossTheme.colors.textSecondary,
+                            ),
+                        shape = RoundedCornerShape(6.dp),
                     ) {
                         Text(
                             text = if (mode == CollectionSelectionMode.COPY) "Copy" else "Move",
-                            fontWeight = FontWeight.Medium
+                            fontWeight = FontWeight.Medium,
                         )
                     }
                 }
@@ -196,37 +204,40 @@ private fun CollectionSelectionItem(
     collection: BookmarkCollection,
     isSelected: Boolean,
     mode: CollectionSelectionMode,
-    onClick: () -> Unit
+    onClick: () -> Unit,
 ) {
     Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp)
-            .clickable(onClick = onClick),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp)
+                .clickable(onClick = onClick),
         shape = RoundedCornerShape(8.dp),
         color = if (isSelected) BossTheme.colors.raised else Color.Transparent,
-        border = if (isSelected) {
-            androidx.compose.foundation.BorderStroke(1.dp, BossTheme.colors.signal)
-        } else {
-            androidx.compose.foundation.BorderStroke(1.dp, BossTheme.colors.line)
-        }
+        border =
+            if (isSelected) {
+                androidx.compose.foundation.BorderStroke(1.dp, BossTheme.colors.signal)
+            } else {
+                androidx.compose.foundation.BorderStroke(1.dp, BossTheme.colors.line)
+            },
     ) {
         Row(
             modifier = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             // Selection indicator
             Icon(
-                imageVector = if (mode == CollectionSelectionMode.MOVE) {
-                    // Radio button for single selection
-                    if (isSelected) Icons.Filled.CheckCircle else Icons.Outlined.Circle
-                } else {
-                    // Checkbox for multi-selection
-                    if (isSelected) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked
-                },
+                imageVector =
+                    if (mode == CollectionSelectionMode.MOVE) {
+                        // Radio button for single selection
+                        if (isSelected) Icons.Filled.CheckCircle else Icons.Outlined.Circle
+                    } else {
+                        // Checkbox for multi-selection
+                        if (isSelected) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked
+                    },
                 contentDescription = if (isSelected) "Selected" else "Not selected",
                 tint = if (isSelected) BossTheme.colors.signal else BossTheme.colors.textSecondary,
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier.size(20.dp),
             )
 
             Spacer(modifier = Modifier.width(12.dp))
@@ -236,7 +247,7 @@ private fun CollectionSelectionItem(
                 imageVector = if (collection.isFavorite) Icons.Outlined.Star else Icons.Outlined.Folder,
                 contentDescription = null,
                 tint = if (collection.isFavorite) BossTheme.colors.signal else BossTheme.colors.textSecondary,
-                modifier = Modifier.size(18.dp)
+                modifier = Modifier.size(18.dp),
             )
 
             Spacer(modifier = Modifier.width(8.dp))
@@ -247,12 +258,12 @@ private fun CollectionSelectionItem(
                     text = collection.name,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
-                    color = BossTheme.colors.textPrimary
+                    color = BossTheme.colors.textPrimary,
                 )
                 Text(
                     text = "${collection.bookmarks.size} bookmarks",
                     fontSize = 12.sp,
-                    color = BossTheme.colors.textSecondary
+                    color = BossTheme.colors.textSecondary,
                 )
             }
         }

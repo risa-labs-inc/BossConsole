@@ -8,17 +8,21 @@ package ai.rever.boss.components.plugin.registries
  * items visible to everyone).
  */
 interface AccessGatedRegistry {
-    fun updateAccess(isAdmin: Boolean, permissions: Set<String>)
+    fun updateAccess(
+        isAdmin: Boolean,
+        permissions: Set<String>,
+    )
 
     companion object {
         /**
          * All RBAC-gated extension registries. The one place
          * DynamicPluginManager's access collector iterates.
          */
-        val ACCESS_GATED: List<AccessGatedRegistry> = listOf(
-            PanelMenuRegistryImpl,
-            SettingsPageRegistryImpl,
-            StatusBarRegistryImpl,
-        )
+        val ACCESS_GATED: List<AccessGatedRegistry> =
+            listOf(
+                PanelMenuRegistryImpl,
+                SettingsPageRegistryImpl,
+                StatusBarRegistryImpl,
+            )
     }
 }

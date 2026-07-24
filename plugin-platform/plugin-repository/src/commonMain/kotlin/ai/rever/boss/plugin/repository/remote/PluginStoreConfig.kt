@@ -16,15 +16,17 @@ object PluginStoreConfig {
      * Supabase Functions base URL (e.g., "https://api.risaboss.com/functions/v1")
      */
     val functionUrl: String
-        get() = _functionUrl
-            ?: throw IllegalStateException("PluginStoreConfig not initialized. Call initialize() first.")
+        get() =
+            _functionUrl
+                ?: throw IllegalStateException("PluginStoreConfig not initialized. Call initialize() first.")
 
     /**
      * Supabase anonymous key for API access
      */
     val anonKey: String
-        get() = _anonKey
-            ?: throw IllegalStateException("PluginStoreConfig not initialized. Call initialize() first.")
+        get() =
+            _anonKey
+                ?: throw IllegalStateException("PluginStoreConfig not initialized. Call initialize() first.")
 
     /**
      * Optional JWT access token for authenticated requests (ratings, publishing)
@@ -56,7 +58,8 @@ object PluginStoreConfig {
         get() {
             val url = functionUrl
             // Remove /functions/v1 suffix to get base URL
-            return url.replace("/functions/v1", "")
+            return url
+                .replace("/functions/v1", "")
                 .replace("/functions", "")
         }
 
@@ -73,7 +76,11 @@ object PluginStoreConfig {
      * @param anonKey Supabase anonymous key
      * @param accessToken Optional JWT access token for authenticated requests
      */
-    fun initialize(functionUrl: String, anonKey: String, accessToken: String? = null) {
+    fun initialize(
+        functionUrl: String,
+        anonKey: String,
+        accessToken: String? = null,
+    ) {
         _functionUrl = functionUrl.removeSuffix("/")
         _anonKey = anonKey
         _accessToken = accessToken
@@ -100,16 +107,21 @@ object PluginStoreConfig {
             val parts = token.split(".")
             if (parts.size != 3) return false
             // Base64 decode the payload (middle part)
-            val payload = parts[1]
-                .replace("-", "+")
-                .replace("_", "/")
+            val payload =
+                parts[1]
+                    .replace("-", "+")
+                    .replace("_", "/")
             // Add padding if needed
-            val paddedPayload = when (payload.length % 4) {
-                2 -> payload + "=="
-                3 -> payload + "="
-                else -> payload
-            }
-            val decodedBytes = java.util.Base64.getDecoder().decode(paddedPayload)
+            val paddedPayload =
+                when (payload.length % 4) {
+                    2 -> payload + "=="
+                    3 -> payload + "="
+                    else -> payload
+                }
+            val decodedBytes =
+                java.util.Base64
+                    .getDecoder()
+                    .decode(paddedPayload)
             val payloadJson = String(decodedBytes, Charsets.UTF_8)
             // Check for is_admin:true
             if (payloadJson.contains("\"is_admin\":true") || payloadJson.contains("\"is_admin\": true")) {

@@ -1,13 +1,13 @@
 package ai.rever.boss.utils
 
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.awt.Window
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
 import java.util.concurrent.ConcurrentHashMap
 import javax.swing.SwingUtilities
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Captures AWT focus lifecycle events on the EDT and exposes a volatile
@@ -17,7 +17,10 @@ internal class AwtWindowFocusTracker {
     @Volatile
     private var focusedWindowId: String? = null
 
-    fun snapshotRegistration(windowId: String, isFocused: Boolean) {
+    fun snapshotRegistration(
+        windowId: String,
+        isFocused: Boolean,
+    ) {
         if (isFocused) {
             focusedWindowId = windowId
         }
@@ -25,19 +28,20 @@ internal class AwtWindowFocusTracker {
 
     fun createListener(
         windowId: String,
-        onFocusGained: () -> Unit = {}
-    ): WindowAdapter = object : WindowAdapter() {
-        override fun windowGainedFocus(e: WindowEvent?) {
-            focusedWindowId = windowId
-            onFocusGained()
-        }
+        onFocusGained: () -> Unit = {},
+    ): WindowAdapter =
+        object : WindowAdapter() {
+            override fun windowGainedFocus(e: WindowEvent?) {
+                focusedWindowId = windowId
+                onFocusGained()
+            }
 
-        override fun windowLostFocus(e: WindowEvent?) {
-            if (focusedWindowId == windowId) {
-                focusedWindowId = null
+            override fun windowLostFocus(e: WindowEvent?) {
+                if (focusedWindowId == windowId) {
+                    focusedWindowId = null
+                }
             }
         }
-    }
 
     fun onUnregistered(windowId: String) {
         if (focusedWindowId == windowId) {
@@ -56,11 +60,12 @@ internal class AwtWindowFocusTracker {
  */
 actual object WindowFocusManager {
     private val windows = ConcurrentHashMap<String, Window>()
+
     // EDT-confined; registerWindow/unregisterWindow enforce this before mutation.
     private val windowListeners = mutableMapOf<String, WindowAdapter>()
     private val awtFocusTracker = AwtWindowFocusTracker()
     private var focusedWindowId: String? = null
-    private var mainWindow: Window? = null  // Kept for backward compatibility
+    private var mainWindow: Window? = null // Kept for backward compatibility
 
     // StateFlow to observe focus changes (for elegant focus restoration)
     private val _focusedWindowFlow = MutableStateFlow<String?>(null)
@@ -74,7 +79,10 @@ actual object WindowFocusManager {
      * @param windowId Unique identifier for the window
      * @param window The AWT window instance
      */
-    fun registerWindow(windowId: String, window: Window) {
+    fun registerWindow(
+        windowId: String,
+        window: Window,
+    ) {
         check(SwingUtilities.isEventDispatchThread()) {
             "WindowFocusManager.registerWindow must run on the EDT"
         }
@@ -90,10 +98,11 @@ actual object WindowFocusManager {
         // case its focus-gained event happened before the listener was attached.
         awtFocusTracker.snapshotRegistration(windowId, window.isFocused)
 
-        val listener = awtFocusTracker.createListener(windowId) {
-            focusedWindowId = windowId
-            _focusedWindowFlow.value = windowId
-        }
+        val listener =
+            awtFocusTracker.createListener(windowId) {
+                focusedWindowId = windowId
+                _focusedWindowFlow.value = windowId
+            }
 
         windowListeners[windowId] = listener
         window.addWindowFocusListener(listener)
@@ -147,8 +156,7 @@ actual object WindowFocusManager {
      * It intentionally returns false before the first focus-gained event and
      * after unregister, keeping orphaned owner-scoped browsers fail-closed.
      */
-    actual fun isWindowFocused(windowId: String): Boolean =
-        awtFocusTracker.isFocused(windowId)
+    actual fun isWindowFocused(windowId: String): Boolean = awtFocusTracker.isFocused(windowId)
 
     /**
      * Best-effort window id for actions that need "the" active window but may run
@@ -160,8 +168,7 @@ actual object WindowFocusManager {
      * available), falling back to any registered window. Returns null only if no
      * window is registered at all.
      */
-    fun resolveActionableWindowId(): String? =
-        focusedWindowId ?: focusedWindowFlow.value ?: windows.keys.firstOrNull()
+    fun resolveActionableWindowId(): String? = focusedWindowId ?: focusedWindowFlow.value ?: windows.keys.firstOrNull()
 
     /**
      * Bring a specific window to front by its ID

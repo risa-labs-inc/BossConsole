@@ -1,26 +1,26 @@
 package ai.rever.boss.utils
 
-import ai.rever.boss.services.URLHandlerService
-import ai.rever.boss.window.MenuActionsHandler
-import ai.rever.boss.window.Project
-import ai.rever.boss.components.plugin.panels.left_top.ProjectState
-import ai.rever.boss.components.plugin.PanelIds
 import ai.rever.boss.components.events.PanelEventBus
+import ai.rever.boss.components.plugin.PanelIds
+import ai.rever.boss.components.plugin.panels.left_top.ProjectState
 import ai.rever.boss.plugin.api.PanelId
+import ai.rever.boss.services.URLHandlerService
 import ai.rever.boss.utils.extractFileName
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.LogSanitizer
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
+import ai.rever.boss.window.MenuActionsHandler
+import ai.rever.boss.window.Project
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import java.awt.Desktop
+import java.io.File
 import java.net.URI
 import java.net.URLDecoder
-import java.io.File
 
 actual object DeepLinkHandler {
     private val _deepLinkFlow = MutableStateFlow<String?>(null)
@@ -35,7 +35,7 @@ actual object DeepLinkHandler {
     init {
         setupPlatformHandler()
     }
-    
+
     private fun setupPlatformHandler() {
         when {
             isMacOS -> setupMacOSHandler()
@@ -43,7 +43,7 @@ actual object DeepLinkHandler {
             else -> setupDefaultHandler()
         }
     }
-    
+
     private fun setupMacOSHandler() {
         // macOS uses Desktop.setOpenURIHandler which works well
         if (Desktop.isDesktopSupported()) {
@@ -67,7 +67,7 @@ actual object DeepLinkHandler {
             }
         }
     }
-    
+
     private fun setupWindowsHandler() {
         // Windows requires registry setup and command line argument handling
         try {
@@ -86,7 +86,11 @@ actual object DeepLinkHandler {
                 try {
                     Desktop.getDesktop().setOpenURIHandler { event ->
                         val uri = event.uri.toString()
-                        logger.info(LogCategory.SYSTEM, "Received deep link (Windows via Desktop)", mapOf("uri" to LogSanitizer.maskUriParams(uri)))
+                        logger.info(
+                            LogCategory.SYSTEM,
+                            "Received deep link (Windows via Desktop)",
+                            mapOf("uri" to LogSanitizer.maskUriParams(uri)),
+                        )
 
                         // Handle http/https URLs for default browser functionality
                         if (uri.startsWith("http://") || uri.startsWith("https://")) {
@@ -105,7 +109,7 @@ actual object DeepLinkHandler {
             logger.error(LogCategory.SYSTEM, "Failed to set up Windows deep link handler", error = e)
         }
     }
-    
+
     private fun setupDefaultHandler() {
         // Linux and other platforms
         if (Desktop.isDesktopSupported()) {
@@ -128,7 +132,7 @@ actual object DeepLinkHandler {
             }
         }
     }
-    
+
     /**
      * Process command line arguments for deep links (needed for Windows)
      */
@@ -145,20 +149,41 @@ actual object DeepLinkHandler {
         logger.info(LogCategory.SYSTEM, "Processing deep link", mapOf("uri" to LogSanitizer.maskUriParams(uri)))
 
         when {
-            uri.startsWith("boss://url") -> handleUrlLink(uri)
-            uri.startsWith("boss://workspace") -> handleWorkspaceLink(uri)
-            uri.startsWith("boss://file") -> handleFileLink(uri)
-            uri.startsWith("boss://terminal") -> handleTerminalLink(uri)
-            uri.startsWith("boss://folder") -> handleFolderLink(uri)
-            uri.startsWith("boss://plugin") -> handlePluginLink(uri)
-            uri.startsWith("boss://split") -> handleSplitLink(uri)
+            uri.startsWith("boss://url") -> {
+                handleUrlLink(uri)
+            }
+
+            uri.startsWith("boss://workspace") -> {
+                handleWorkspaceLink(uri)
+            }
+
+            uri.startsWith("boss://file") -> {
+                handleFileLink(uri)
+            }
+
+            uri.startsWith("boss://terminal") -> {
+                handleTerminalLink(uri)
+            }
+
+            uri.startsWith("boss://folder") -> {
+                handleFolderLink(uri)
+            }
+
+            uri.startsWith("boss://plugin") -> {
+                handlePluginLink(uri)
+            }
+
+            uri.startsWith("boss://split") -> {
+                handleSplitLink(uri)
+            }
+
             else -> {
                 // Default: emit to flow for auth/other handlers
                 _deepLinkFlow.value = uri
             }
         }
     }
-    
+
     actual fun clearDeepLink() {
         _deepLinkFlow.value = null
     }
@@ -176,8 +201,12 @@ actual object DeepLinkHandler {
         val command = params["command"]?.urlDecode()
 
         // Create a CLI command and queue it
-        val cliCommand = ai.rever.boss.cli.CLICommand.OpenTerminal(command)
-        ai.rever.boss.cli.CLICommandHandler.getInstance().queueCommand(cliCommand)
+        val cliCommand =
+            ai.rever.boss.cli.CLICommand
+                .OpenTerminal(command)
+        ai.rever.boss.cli.CLICommandHandler
+            .getInstance()
+            .queueCommand(cliCommand)
 
         logger.info(LogCategory.TERMINAL, "Terminal command queued", mapOf("hasCommand" to (command != null)))
     }
@@ -216,13 +245,18 @@ actual object DeepLinkHandler {
         // Update project state (use per-window state if available)
         scope.launch(Dispatchers.Main) {
             val focusedWindowId = WindowFocusManager.focusedWindowFlow.value
-            val windowProjectState = focusedWindowId?.let { ai.rever.boss.window.WindowProjectStateRegistry.get(it) }
+            val windowProjectState =
+                focusedWindowId?.let {
+                    ai.rever.boss.window.WindowProjectStateRegistry
+                        .get(it)
+                }
 
-            val project = Project(
-                name = name,
-                path = folder.absolutePath,
-                lastOpened = System.currentTimeMillis()
-            )
+            val project =
+                Project(
+                    name = name,
+                    path = folder.absolutePath,
+                    lastOpened = System.currentTimeMillis(),
+                )
 
             if (windowProjectState != null) {
                 windowProjectState.selectProject(project)
@@ -269,9 +303,10 @@ actual object DeepLinkHandler {
         // warns); external input, so handlers own validation.
         val action = params["action"]?.urlDecode()
         if (action != null) {
-            val actionParams = params
-                .filterKeys { it != "id" && it != "action" }
-                .mapValues { (_, value) -> value.urlDecode() }
+            val actionParams =
+                params
+                    .filterKeys { it != "id" && it != "action" }
+                    .mapValues { (_, value) -> value.urlDecode() }
             scope.launch(Dispatchers.Main) {
                 ai.rever.boss.components.plugin.registries.DeepLinkActionRegistryImpl
                     .dispatch(panelIdStr, action, actionParams)
@@ -283,11 +318,12 @@ actual object DeepLinkHandler {
         scope.launch(Dispatchers.Main) {
             // Create PanelId with panelId string
             // The event handler in BossApp will look it up in the registry
-            val panelId = PanelId(
-                panelId = panelIdStr,
-                defaultOrder = 0,  // Will be ignored, registry has real value
-                pluginId = "ai.rever.boss"  // Default plugin
-            )
+            val panelId =
+                PanelId(
+                    panelId = panelIdStr,
+                    defaultOrder = 0, // Will be ignored, registry has real value
+                    pluginId = "ai.rever.boss", // Default plugin
+                )
 
             val focusedWindowId = WindowFocusManager.focusedWindowFlow.value
             if (focusedWindowId == null) {
@@ -311,15 +347,25 @@ actual object DeepLinkHandler {
 
         val params = parseQueryParams(uri)
         val requested = params["orientation"]?.urlDecode()?.lowercase()
-        val horizontal = when (requested) {
-            null, "vertical" -> false
-            "horizontal" -> true
-            else -> {
-                logger.warn(LogCategory.UI, "Unknown split orientation, defaulting to vertical",
-                    mapOf("orientation" to requested))
-                false
+        val horizontal =
+            when (requested) {
+                null, "vertical" -> {
+                    false
+                }
+
+                "horizontal" -> {
+                    true
+                }
+
+                else -> {
+                    logger.warn(
+                        LogCategory.UI,
+                        "Unknown split orientation, defaulting to vertical",
+                        mapOf("orientation" to requested),
+                    )
+                    false
+                }
             }
-        }
 
         scope.launch(Dispatchers.Main) {
             // Use the registration/focus-gain-backed lookup, not focusedWindowFlow
@@ -337,8 +383,11 @@ actual object DeepLinkHandler {
             } else {
                 MenuActionsHandler.triggerSplitVertically(focusedWindowId)
             }
-            logger.info(LogCategory.UI, "Emitted split event",
-                mapOf("windowId" to focusedWindowId, "horizontal" to horizontal.toString()))
+            logger.info(
+                LogCategory.UI,
+                "Emitted split event",
+                mapOf("windowId" to focusedWindowId, "horizontal" to horizontal.toString()),
+            )
         }
     }
 
@@ -359,8 +408,12 @@ actual object DeepLinkHandler {
         }
 
         // Queue command via CLI handler
-        val cliCommand = ai.rever.boss.cli.CLICommand.OpenUrl(url)
-        ai.rever.boss.cli.CLICommandHandler.getInstance().queueCommand(cliCommand)
+        val cliCommand =
+            ai.rever.boss.cli.CLICommand
+                .OpenUrl(url)
+        ai.rever.boss.cli.CLICommandHandler
+            .getInstance()
+            .queueCommand(cliCommand)
 
         logger.info(LogCategory.BROWSER, "URL command queued", mapOf("url" to url))
     }
@@ -382,8 +435,12 @@ actual object DeepLinkHandler {
         }
 
         // Queue command via CLI handler
-        val cliCommand = ai.rever.boss.cli.CLICommand.LoadWorkspace(path)
-        ai.rever.boss.cli.CLICommandHandler.getInstance().queueCommand(cliCommand)
+        val cliCommand =
+            ai.rever.boss.cli.CLICommand
+                .LoadWorkspace(path)
+        ai.rever.boss.cli.CLICommandHandler
+            .getInstance()
+            .queueCommand(cliCommand)
 
         logger.info(LogCategory.WORKSPACE, "Workspace command queued", mapOf("path" to path))
     }
@@ -405,8 +462,12 @@ actual object DeepLinkHandler {
         }
 
         // Queue command via CLI handler
-        val cliCommand = ai.rever.boss.cli.CLICommand.OpenFile(path)
-        ai.rever.boss.cli.CLICommandHandler.getInstance().queueCommand(cliCommand)
+        val cliCommand =
+            ai.rever.boss.cli.CLICommand
+                .OpenFile(path)
+        ai.rever.boss.cli.CLICommandHandler
+            .getInstance()
+            .queueCommand(cliCommand)
 
         logger.info(LogCategory.FILE, "File command queued", mapOf("path" to path))
     }
@@ -419,52 +480,53 @@ actual object DeepLinkHandler {
         val query = uri.substringAfter("?", "")
         if (query.isEmpty() || query == uri) return emptyMap()
 
-        return query.split("&")
+        return query
+            .split("&")
             .mapNotNull { param ->
                 val parts = param.split("=", limit = 2)
                 if (parts.size == 2) parts[0] to parts[1] else null
-            }
-            .toMap()
+            }.toMap()
     }
 
     /**
      * URL decode a string
      */
-    private fun String.urlDecode(): String {
-        return try {
+    private fun String.urlDecode(): String =
+        try {
             URLDecoder.decode(this, "UTF-8")
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Error decoding URL", error = e)
             this
         }
-    }
 
     actual fun extractVerificationToken(uri: String): String? {
         // Extract token from URLs like: boss://auth/verify#access_token=xxx or boss://auth/verify?token=xxx
         return try {
             val url = URI(uri)
-            
+
             // First try URL fragment (after #) - this is what Supabase sends
             val fragment = url.fragment
             if (fragment != null) {
-                val params = fragment.split("&").associate {
-                    val parts = it.split("=", limit = 2)
-                    if (parts.size == 2) parts[0] to parts[1] else parts[0] to ""
-                }
+                val params =
+                    fragment.split("&").associate {
+                        val parts = it.split("=", limit = 2)
+                        if (parts.size == 2) parts[0] to parts[1] else parts[0] to ""
+                    }
                 // Return access_token from Supabase success redirect
                 params["access_token"]?.let { return it }
             }
-            
+
             // Fallback: try query parameters (after ?) for manual token input
             val query = url.query
             if (query != null) {
-                val params = query.split("&").associate {
-                    val parts = it.split("=", limit = 2)
-                    if (parts.size == 2) parts[0] to parts[1] else parts[0] to ""
-                }
+                val params =
+                    query.split("&").associate {
+                        val parts = it.split("=", limit = 2)
+                        if (parts.size == 2) parts[0] to parts[1] else parts[0] to ""
+                    }
                 return params["token"]
             }
-            
+
             null
         } catch (e: Exception) {
             logger.warn(LogCategory.AUTH, "Error extracting verification token", error = e)
@@ -476,27 +538,29 @@ actual object DeepLinkHandler {
         // Extract type from URLs like: boss://auth/verify#access_token=xxx&type=recovery
         return try {
             val url = URI(uri)
-            
+
             // First try URL fragment (after #) - this is what Supabase sends
             val fragment = url.fragment
             if (fragment != null) {
-                val params = fragment.split("&").associate {
-                    val parts = it.split("=", limit = 2)
-                    if (parts.size == 2) parts[0] to parts[1] else parts[0] to ""
-                }
+                val params =
+                    fragment.split("&").associate {
+                        val parts = it.split("=", limit = 2)
+                        if (parts.size == 2) parts[0] to parts[1] else parts[0] to ""
+                    }
                 params["type"]?.let { return it }
             }
-            
-            // Fallback: try query parameters (after ?) 
+
+            // Fallback: try query parameters (after ?)
             val query = url.query
             if (query != null) {
-                val params = query.split("&").associate {
-                    val parts = it.split("=", limit = 2)
-                    if (parts.size == 2) parts[0] to parts[1] else parts[0] to ""
-                }
+                val params =
+                    query.split("&").associate {
+                        val parts = it.split("=", limit = 2)
+                        if (parts.size == 2) parts[0] to parts[1] else parts[0] to ""
+                    }
                 return params["type"]
             }
-            
+
             null
         } catch (e: Exception) {
             logger.warn(LogCategory.AUTH, "Error extracting verification type", error = e)

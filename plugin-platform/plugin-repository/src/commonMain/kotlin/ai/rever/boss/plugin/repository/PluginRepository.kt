@@ -71,7 +71,7 @@ interface PluginRepository {
     suspend fun downloadPlugin(
         pluginId: String,
         version: String? = null,
-        targetPath: String
+        targetPath: String,
     ): Result<String>
 
     /**
@@ -99,7 +99,7 @@ interface PluginRepository {
 class RepositoryException(
     message: String,
     val repositoryId: String,
-    cause: Throwable? = null
+    cause: Throwable? = null,
 ) : Exception(message, cause)
 
 /**
@@ -107,7 +107,7 @@ class RepositoryException(
  */
 class PluginNotFoundException(
     val pluginId: String,
-    val repositoryId: String
+    val repositoryId: String,
 ) : Exception("Plugin not found: $pluginId in repository: $repositoryId")
 
 /**
@@ -117,5 +117,5 @@ class DownloadException(
     message: String,
     val pluginId: String,
     val repositoryId: String,
-    cause: Throwable? = null
+    cause: Throwable? = null,
 ) : Exception(message, cause)

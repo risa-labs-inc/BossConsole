@@ -19,42 +19,44 @@ import androidx.compose.ui.window.DialogProperties
 fun RemoveBookmarkConfirmationDialog(
     bookmarkTitle: String,
     onDismiss: () -> Unit,
-    onConfirm: () -> Unit
+    onConfirm: () -> Unit,
 ) {
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            dismissOnClickOutside = true,
-            dismissOnBackPress = true
-        )
+        properties =
+            DialogProperties(
+                dismissOnClickOutside = true,
+                dismissOnBackPress = true,
+            ),
     ) {
         Surface(
-            modifier = Modifier
-                .width(400.dp)
-                .wrapContentHeight(),
+            modifier =
+                Modifier
+                    .width(400.dp)
+                    .wrapContentHeight(),
             shape = RoundedCornerShape(8.dp),
-            color = BossTheme.colors.panel
+            color = BossTheme.colors.panel,
         ) {
             Column(
-                modifier = Modifier.padding(24.dp)
+                modifier = Modifier.padding(24.dp),
             ) {
                 // Icon and title
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
                     Icon(
                         imageVector = Icons.Outlined.Star,
                         contentDescription = "Remove Bookmark",
                         tint = BossTheme.colors.signal,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(24.dp),
                     )
                     Spacer(modifier = Modifier.width(12.dp))
                     Text(
                         text = "Remove Bookmark?",
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold,
-                        color = BossTheme.colors.textPrimary
+                        color = BossTheme.colors.textPrimary,
                     )
                 }
 
@@ -65,7 +67,7 @@ fun RemoveBookmarkConfirmationDialog(
                     text = "'$bookmarkTitle' will be removed from your bookmarks.",
                     fontSize = 14.sp,
                     color = BossTheme.colors.textSecondary,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
                 )
 
                 Spacer(modifier = Modifier.height(24.dp))
@@ -73,13 +75,14 @@ fun RemoveBookmarkConfirmationDialog(
                 // Action buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
+                    horizontalArrangement = Arrangement.End,
                 ) {
                     TextButton(
                         onClick = onDismiss,
-                        colors = ButtonDefaults.textButtonColors(
-                            contentColor = BossTheme.colors.textSecondary
-                        )
+                        colors =
+                            ButtonDefaults.textButtonColors(
+                                contentColor = BossTheme.colors.textSecondary,
+                            ),
                     ) {
                         Text("Cancel")
                     }
@@ -91,11 +94,12 @@ fun RemoveBookmarkConfirmationDialog(
                             onConfirm()
                             onDismiss()
                         },
-                        colors = ButtonDefaults.buttonColors(
-                            backgroundColor = BossTheme.colors.alert, // Red color for destructive action
-                            contentColor = BossTheme.colors.onSignal
-                        ),
-                        shape = RoundedCornerShape(6.dp)
+                        colors =
+                            ButtonDefaults.buttonColors(
+                                backgroundColor = BossTheme.colors.alert, // Red color for destructive action
+                                contentColor = BossTheme.colors.onSignal,
+                            ),
+                        shape = RoundedCornerShape(6.dp),
                     ) {
                         Text("Remove", fontWeight = FontWeight.Medium)
                     }

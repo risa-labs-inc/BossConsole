@@ -6,6 +6,4 @@ import ai.rever.boss.plugin.api.DownloadDataProvider
  * Desktop implementation of download data provider factory.
  * Returns DownloadDataProviderImpl that wraps FluckEngine.
  */
-actual fun createDownloadDataProvider(): DownloadDataProvider {
-    return DownloadDataProviderImpl()
-}
+actual fun createDownloadDataProvider(): DownloadDataProvider = DownloadDataProviderImpl()

@@ -35,6 +35,7 @@ class PerformanceDataProviderImpl : PerformanceDataProvider {
 
     /** Cache child process data to avoid spawning ps every sample tick. Refresh every 5s. */
     @Volatile private var cachedChildProcesses: List<ChildProcessData> = emptyList()
+
     @Volatile private var childProcessCacheTime: Long = 0L
     private val childProcessCacheIntervalMs = 5_000L
     override val history: StateFlow<List<PerformanceSnapshotData>> = _history.asStateFlow()
@@ -69,32 +70,31 @@ class PerformanceDataProviderImpl : PerformanceDataProvider {
         PerformanceMonitor.requestGC()
     }
 
-    override suspend fun exportMetrics(): Result<String> {
-        return PerformanceMonitor.exportMetrics()
-    }
+    override suspend fun exportMetrics(): Result<String> = PerformanceMonitor.exportMetrics()
 
     override suspend fun updateSettings(settings: PerformanceSettingsData) {
-        val internalSettings = PerformanceSettings(
-            enabled = settings.enabled,
-            showIndicator = settings.showIndicator,
-            memoryWarningThresholdPercent = settings.memoryWarningThresholdPercent,
-            memoryCriticalThresholdPercent = settings.memoryCriticalThresholdPercent,
-            cpuWarningThresholdPercent = settings.cpuWarningThresholdPercent,
-            cpuCriticalThresholdPercent = settings.cpuCriticalThresholdPercent,
-            memorySampleIntervalMs = settings.memorySampleIntervalMs,
-            cpuSampleIntervalMs = settings.cpuSampleIntervalMs,
-            historyRetentionMinutes = settings.historyRetentionMinutes,
-            pluginJvmHeapMb = settings.pluginJvmHeapMb,
-            pluginJvmInitialHeapMb = settings.pluginJvmInitialHeapMb,
-        )
+        val internalSettings =
+            PerformanceSettings(
+                enabled = settings.enabled,
+                showIndicator = settings.showIndicator,
+                memoryWarningThresholdPercent = settings.memoryWarningThresholdPercent,
+                memoryCriticalThresholdPercent = settings.memoryCriticalThresholdPercent,
+                cpuWarningThresholdPercent = settings.cpuWarningThresholdPercent,
+                cpuCriticalThresholdPercent = settings.cpuCriticalThresholdPercent,
+                memorySampleIntervalMs = settings.memorySampleIntervalMs,
+                cpuSampleIntervalMs = settings.cpuSampleIntervalMs,
+                historyRetentionMinutes = settings.historyRetentionMinutes,
+                pluginJvmHeapMb = settings.pluginJvmHeapMb,
+                pluginJvmInitialHeapMb = settings.pluginJvmInitialHeapMb,
+            )
         PerformanceSettingsManager.updateSettings(internalSettings)
     }
 
     /**
      * Convert internal PerformanceSnapshot to plugin PerformanceSnapshotData.
      */
-    private fun PerformanceSnapshot.toSnapshotData(): PerformanceSnapshotData {
-        return PerformanceSnapshotData(
+    private fun PerformanceSnapshot.toSnapshotData(): PerformanceSnapshotData =
+        PerformanceSnapshotData(
             timestamp = timestamp,
             heapUsedBytes = memory.heapUsedBytes,
             heapMaxBytes = memory.heapMaxBytes,
@@ -110,36 +110,38 @@ class PerformanceDataProviderImpl : PerformanceDataProvider {
             editorTabCount = resources.editorTabCount,
             panelCount = resources.panelCount,
             windowCount = resources.windowCount,
-            memoryPools = memory.memoryPools.map { pool ->
-                MemoryPoolData(
-                    name = pool.name,
-                    type = pool.type,
-                    usedBytes = pool.usedBytes,
-                    maxBytes = pool.maxBytes,
-                    committedBytes = pool.committedBytes
-                )
-            },
-            threads = cpu.threads.map { thread ->
-                ThreadData(
-                    id = thread.id,
-                    name = thread.name,
-                    state = thread.state,
-                    cpuTimeMs = thread.cpuTimeMs,
-                    userTimeMs = thread.userTimeMs,
-                    blockedCount = thread.blockedCount,
-                    waitedCount = thread.waitedCount
-                )
-            },
-            gcCollectors = gc.gcCollectors.map { collector ->
-                GcCollectorData(
-                    name = collector.name,
-                    collectionCount = collector.collectionCount,
-                    collectionTimeMs = collector.collectionTimeMs
-                )
-            },
-            childProcesses = collectChildProcesses()
+            memoryPools =
+                memory.memoryPools.map { pool ->
+                    MemoryPoolData(
+                        name = pool.name,
+                        type = pool.type,
+                        usedBytes = pool.usedBytes,
+                        maxBytes = pool.maxBytes,
+                        committedBytes = pool.committedBytes,
+                    )
+                },
+            threads =
+                cpu.threads.map { thread ->
+                    ThreadData(
+                        id = thread.id,
+                        name = thread.name,
+                        state = thread.state,
+                        cpuTimeMs = thread.cpuTimeMs,
+                        userTimeMs = thread.userTimeMs,
+                        blockedCount = thread.blockedCount,
+                        waitedCount = thread.waitedCount,
+                    )
+                },
+            gcCollectors =
+                gc.gcCollectors.map { collector ->
+                    GcCollectorData(
+                        name = collector.name,
+                        collectionCount = collector.collectionCount,
+                        collectionTimeMs = collector.collectionTimeMs,
+                    )
+                },
+            childProcesses = collectChildProcesses(),
         )
-    }
 
     /**
      * Collect metrics from out-of-process plugin child JVMs.
@@ -170,9 +172,19 @@ class PerformanceDataProviderImpl : PerformanceDataProvider {
             val now = Instant.now()
 
             // Batch query RSS and thread counts for all PIDs via ps
-            val pids = descendants.mapNotNull { h ->
-                if (h.info().commandLine().orElse("").contains("PluginProcessMainKt")) h.pid() else null
-            }
+            val pids =
+                descendants.mapNotNull { h ->
+                    if (h
+                            .info()
+                            .commandLine()
+                            .orElse("")
+                            .contains("PluginProcessMainKt")
+                    ) {
+                        h.pid()
+                    } else {
+                        null
+                    }
+                }
             val processMetrics = if (pids.isNotEmpty()) queryProcessMetrics(pids) else emptyMap()
 
             descendants.mapNotNull { handle ->
@@ -184,15 +196,21 @@ class PerformanceDataProviderImpl : PerformanceDataProvider {
                     val pluginJarRegex = Regex("""boss-plugin-([a-z\-]+)-\d+""")
                     val match = pluginJarRegex.find(cmdLine)
                     val pluginId = match?.groupValues?.get(1) ?: "unknown-${handle.pid()}"
-                    val displayName = pluginId.split("-").joinToString(" ") { part ->
-                        part.replaceFirstChar { it.uppercase() }
-                    }
+                    val displayName =
+                        pluginId.split("-").joinToString(" ") { part ->
+                            part.replaceFirstChar { it.uppercase() }
+                        }
 
                     // Compute uptime from process start time
                     val startInstant = handle.info().startInstant().orElse(null)
-                    val uptimeMs = if (startInstant != null) {
-                        java.time.Duration.between(startInstant, now).toMillis()
-                    } else 0L
+                    val uptimeMs =
+                        if (startInstant != null) {
+                            java.time.Duration
+                                .between(startInstant, now)
+                                .toMillis()
+                        } else {
+                            0L
+                        }
 
                     // Get OS-level metrics (RSS memory, thread count) from ps query
                     val metrics = processMetrics[handle.pid()]
@@ -221,18 +239,23 @@ class PerformanceDataProviderImpl : PerformanceDataProvider {
         }
     }
 
-    private data class OsProcessMetrics(val rssBytes: Long, val threadCount: Int)
+    private data class OsProcessMetrics(
+        val rssBytes: Long,
+        val threadCount: Int,
+    )
 
     /**
      * Query RSS memory (bytes) and thread count for a batch of PIDs using two `ps` calls.
      */
-    private fun queryProcessMetrics(pids: List<Long>): Map<Long, OsProcessMetrics> {
-        return try {
+    private fun queryProcessMetrics(pids: List<Long>): Map<Long, OsProcessMetrics> =
+        try {
             val pidStr = pids.joinToString(",")
 
             // Single ps call for RSS (KB)
-            val rssProcess = ProcessBuilder("ps", "-o", "pid=,rss=", "-p", pidStr)
-                .redirectErrorStream(true).start()
+            val rssProcess =
+                ProcessBuilder("ps", "-o", "pid=,rss=", "-p", pidStr)
+                    .redirectErrorStream(true)
+                    .start()
             val rssOutput = rssProcess.inputStream.bufferedReader().readText()
             rssProcess.waitFor()
 
@@ -248,8 +271,10 @@ class PerformanceDataProviderImpl : PerformanceDataProvider {
 
             // Single ps -M call for all PIDs, count thread lines per PID
             // macOS ps -M ignores -o formatting, so parse PID from output columns
-            val threadProcess = ProcessBuilder("ps", "-M", "-p", pidStr)
-                .redirectErrorStream(true).start()
+            val threadProcess =
+                ProcessBuilder("ps", "-M", "-p", pidStr)
+                    .redirectErrorStream(true)
+                    .start()
             val threadOutput = threadProcess.inputStream.bufferedReader().readText()
             threadProcess.waitFor()
 
@@ -259,9 +284,10 @@ class PerformanceDataProviderImpl : PerformanceDataProvider {
                 if (trimmed.isEmpty()) continue
                 val tokens = trimmed.split(Regex("\\s+"))
                 // PID is first token if numeric (thread lines), second token if first is username
-                val pid = tokens[0].toLongOrNull()
-                    ?: tokens.getOrNull(1)?.toLongOrNull()
-                    ?: continue
+                val pid =
+                    tokens[0].toLongOrNull()
+                        ?: tokens.getOrNull(1)?.toLongOrNull()
+                        ?: continue
                 threadMap[pid] = (threadMap[pid] ?: 0) + 1
             }
 
@@ -275,7 +301,6 @@ class PerformanceDataProviderImpl : PerformanceDataProvider {
             logger.debug("Failed to query process metrics: {}", e.message)
             emptyMap()
         }
-    }
 
     /**
      * Fallback: query kernel ProcessRegistry via reflection.
@@ -301,20 +326,22 @@ class PerformanceDataProviderImpl : PerformanceDataProvider {
             logger.debug("ProcessRegistry class: {}", registryCls.name)
 
             @Suppress("UNCHECKED_CAST")
-            val processes = try {
-                val protoTypeCls = Class.forName("ai.rever.boss.process.ProcessType")
-                val pluginType = protoTypeCls.enumConstants?.find { it.toString() == "PLUGIN" }
-                if (pluginType != null) {
-                    registryCls.getMethod("getProcessesByType", protoTypeCls)
-                        .invoke(registry, pluginType) as? List<*> ?: emptyList<Any>()
-                } else {
-                    logger.warn("PLUGIN enum value not found in ProcessType")
+            val processes =
+                try {
+                    val protoTypeCls = Class.forName("ai.rever.boss.process.ProcessType")
+                    val pluginType = protoTypeCls.enumConstants?.find { it.toString() == "PLUGIN" }
+                    if (pluginType != null) {
+                        registryCls
+                            .getMethod("getProcessesByType", protoTypeCls)
+                            .invoke(registry, pluginType) as? List<*> ?: emptyList<Any>()
+                    } else {
+                        logger.warn("PLUGIN enum value not found in ProcessType")
+                        registryCls.getMethod("getAllProcesses").invoke(registry) as? List<*> ?: emptyList<Any>()
+                    }
+                } catch (e: Exception) {
+                    logger.warn("getProcessesByType failed, trying getAllProcesses: {}", e.message)
                     registryCls.getMethod("getAllProcesses").invoke(registry) as? List<*> ?: emptyList<Any>()
                 }
-            } catch (e: Exception) {
-                logger.warn("getProcessesByType failed, trying getAllProcesses: {}", e.message)
-                registryCls.getMethod("getAllProcesses").invoke(registry) as? List<*> ?: emptyList<Any>()
-            }
 
             logger.debug("ProcessRegistry returned {} processes", processes.size)
 
@@ -326,8 +353,18 @@ class PerformanceDataProviderImpl : PerformanceDataProvider {
 
                     val processId = configCls.getMethod("getProcessId").invoke(config) as String
                     val displayName = configCls.getMethod("getDisplayName").invoke(config) as String
-                    val pid = try { processCls.getMethod("getPid").invoke(process) as Long } catch (_: Exception) { -1L }
-                    val isAlive = try { processCls.getMethod("isAlive").invoke(process) as Boolean } catch (_: Exception) { false }
+                    val pid =
+                        try {
+                            processCls.getMethod("getPid").invoke(process) as Long
+                        } catch (_: Exception) {
+                            -1L
+                        }
+                    val isAlive =
+                        try {
+                            processCls.getMethod("isAlive").invoke(process) as Boolean
+                        } catch (_: Exception) {
+                            false
+                        }
 
                     ChildProcessData(
                         processId = processId,
@@ -353,8 +390,8 @@ class PerformanceDataProviderImpl : PerformanceDataProvider {
     /**
      * Convert internal PerformanceSettings to plugin PerformanceSettingsData.
      */
-    private fun PerformanceSettings.toSettingsData(): PerformanceSettingsData {
-        return PerformanceSettingsData(
+    private fun PerformanceSettings.toSettingsData(): PerformanceSettingsData =
+        PerformanceSettingsData(
             enabled = enabled,
             showIndicator = showIndicator,
             memoryWarningThresholdPercent = memoryWarningThresholdPercent,
@@ -367,5 +404,4 @@ class PerformanceDataProviderImpl : PerformanceDataProvider {
             pluginJvmHeapMb = pluginJvmHeapMb,
             pluginJvmInitialHeapMb = pluginJvmInitialHeapMb,
         )
-    }
 }

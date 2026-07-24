@@ -1,8 +1,8 @@
 package ai.rever.boss.components.model
 
+import ai.rever.boss.components.window_panel.SplitOrientation
 import ai.rever.boss.plugin.api.TabIcon
 import ai.rever.boss.plugin.api.TabInfo
-import ai.rever.boss.components.window_panel.SplitOrientation
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -18,7 +18,7 @@ import java.util.concurrent.atomic.AtomicLong
  */
 data class TabBoundInfo(
     val bounds: Rect,
-    val actualIndex: Int
+    val actualIndex: Int,
 )
 
 /**
@@ -34,7 +34,7 @@ data class DraggingTabInfo(
     val sourcePanelId: String,
     val sourceIndex: Int,
     val title: String,
-    val icon: TabIcon?
+    val icon: TabIcon?,
 )
 
 /**
@@ -46,7 +46,7 @@ sealed class TabDropTarget {
      */
     data class Reorder(
         val panelId: String,
-        val targetIndex: Int
+        val targetIndex: Int,
     ) : TabDropTarget()
 
     /**
@@ -54,14 +54,14 @@ sealed class TabDropTarget {
      */
     data class SplitPanel(
         val panelId: String,
-        val orientation: SplitOrientation
+        val orientation: SplitOrientation,
     ) : TabDropTarget()
 
     /**
      * Move to an existing panel's tab bar.
      */
     data class ExistingPanel(
-        val panelId: String
+        val panelId: String,
     ) : TabDropTarget()
 }
 
@@ -72,14 +72,14 @@ sealed class TabDropResult {
     data class Reorder(
         val panelId: String,
         val fromIndex: Int,
-        val toIndex: Int
+        val toIndex: Int,
     ) : TabDropResult()
 
     data class MoveToPanel(
         val tabInfo: TabInfo,
         val sourcePanelId: String,
         val sourceIndex: Int,
-        val targetPanelId: String
+        val targetPanelId: String,
     ) : TabDropResult()
 
     data class CreateSplit(
@@ -87,7 +87,7 @@ sealed class TabDropResult {
         val sourcePanelId: String,
         val sourceIndex: Int,
         val targetPanelId: String,
-        val orientation: SplitOrientation
+        val orientation: SplitOrientation,
     ) : TabDropResult()
 }
 
@@ -100,44 +100,52 @@ data class PanelDropZones(
     val rightZone: Rect,
     val topZone: Rect,
     val bottomZone: Rect,
-    val centerZone: Rect
+    val centerZone: Rect,
 ) {
     companion object {
-        fun fromBounds(bounds: Rect, edgeSize: Float = 60f): PanelDropZones {
+        fun fromBounds(
+            bounds: Rect,
+            edgeSize: Float = 60f,
+        ): PanelDropZones {
             val effectiveEdgeSize = minOf(edgeSize, bounds.width / 4, bounds.height / 4)
 
             return PanelDropZones(
                 panelBounds = bounds,
-                leftZone = Rect(
-                    left = bounds.left,
-                    top = bounds.top + effectiveEdgeSize,
-                    right = bounds.left + effectiveEdgeSize,
-                    bottom = bounds.bottom - effectiveEdgeSize
-                ),
-                rightZone = Rect(
-                    left = bounds.right - effectiveEdgeSize,
-                    top = bounds.top + effectiveEdgeSize,
-                    right = bounds.right,
-                    bottom = bounds.bottom - effectiveEdgeSize
-                ),
-                topZone = Rect(
-                    left = bounds.left + effectiveEdgeSize,
-                    top = bounds.top,
-                    right = bounds.right - effectiveEdgeSize,
-                    bottom = bounds.top + effectiveEdgeSize
-                ),
-                bottomZone = Rect(
-                    left = bounds.left + effectiveEdgeSize,
-                    top = bounds.bottom - effectiveEdgeSize,
-                    right = bounds.right - effectiveEdgeSize,
-                    bottom = bounds.bottom
-                ),
-                centerZone = Rect(
-                    left = bounds.left + effectiveEdgeSize,
-                    top = bounds.top + effectiveEdgeSize,
-                    right = bounds.right - effectiveEdgeSize,
-                    bottom = bounds.bottom - effectiveEdgeSize
-                )
+                leftZone =
+                    Rect(
+                        left = bounds.left,
+                        top = bounds.top + effectiveEdgeSize,
+                        right = bounds.left + effectiveEdgeSize,
+                        bottom = bounds.bottom - effectiveEdgeSize,
+                    ),
+                rightZone =
+                    Rect(
+                        left = bounds.right - effectiveEdgeSize,
+                        top = bounds.top + effectiveEdgeSize,
+                        right = bounds.right,
+                        bottom = bounds.bottom - effectiveEdgeSize,
+                    ),
+                topZone =
+                    Rect(
+                        left = bounds.left + effectiveEdgeSize,
+                        top = bounds.top,
+                        right = bounds.right - effectiveEdgeSize,
+                        bottom = bounds.top + effectiveEdgeSize,
+                    ),
+                bottomZone =
+                    Rect(
+                        left = bounds.left + effectiveEdgeSize,
+                        top = bounds.bottom - effectiveEdgeSize,
+                        right = bounds.right - effectiveEdgeSize,
+                        bottom = bounds.bottom,
+                    ),
+                centerZone =
+                    Rect(
+                        left = bounds.left + effectiveEdgeSize,
+                        top = bounds.top + effectiveEdgeSize,
+                        right = bounds.right - effectiveEdgeSize,
+                        bottom = bounds.bottom - effectiveEdgeSize,
+                    ),
             )
         }
     }
@@ -148,7 +156,6 @@ data class PanelDropZones(
  */
 @Stable
 class TabDraggableComponent {
-
     /**
      * The tab currently being dragged, or null if no drag is in progress.
      */
@@ -243,7 +250,10 @@ class TabDraggableComponent {
      * @param panelId The unique identifier for the panel
      * @param callback Callback invoked with scroll direction when drag reaches edge
      */
-    fun registerEdgeScrollCallback(panelId: String, callback: (ScrollDirection) -> Unit) {
+    fun registerEdgeScrollCallback(
+        panelId: String,
+        callback: (ScrollDirection) -> Unit,
+    ) {
         edgeScrollCallbacks[panelId] = callback
     }
 
@@ -264,17 +274,18 @@ class TabDraggableComponent {
         tabInfo: TabInfo,
         panelId: String,
         index: Int,
-        startPosition: Offset
+        startPosition: Offset,
     ) {
         if (draggingTab != null) return
 
-        draggingTab = DraggingTabInfo(
-            tabInfo = tabInfo,
-            sourcePanelId = panelId,
-            sourceIndex = index,
-            title = tabInfo.title,
-            icon = tabInfo.tabIcon
-        )
+        draggingTab =
+            DraggingTabInfo(
+                tabInfo = tabInfo,
+                sourcePanelId = panelId,
+                sourceIndex = index,
+                title = tabInfo.title,
+                icon = tabInfo.tabIcon,
+            )
         dragStartPosition = startPosition
         dragDelta = Offset.Zero
         updateDropTarget()
@@ -295,7 +306,7 @@ class TabDraggableComponent {
             // Use compareAndSet to avoid race conditions
             if (lastDropTargetUpdateTime.compareAndSet(lastUpdate, now)) {
                 updateDropTarget()
-                checkEdgeScroll()  // Check if we should trigger auto-scroll
+                checkEdgeScroll() // Check if we should trigger auto-scroll
             }
         }
     }
@@ -338,18 +349,22 @@ class TabDraggableComponent {
                     dropTarget = TabDropTarget.SplitPanel(panelId, SplitOrientation.VERTICAL)
                     return
                 }
+
                 zones.rightZone.contains(currentPosition) -> {
                     dropTarget = TabDropTarget.SplitPanel(panelId, SplitOrientation.VERTICAL)
                     return
                 }
+
                 zones.topZone.contains(currentPosition) -> {
                     dropTarget = TabDropTarget.SplitPanel(panelId, SplitOrientation.HORIZONTAL)
                     return
                 }
+
                 zones.bottomZone.contains(currentPosition) -> {
                     dropTarget = TabDropTarget.SplitPanel(panelId, SplitOrientation.HORIZONTAL)
                     return
                 }
+
                 zones.centerZone.contains(currentPosition) -> {
                     // Center means add to existing panel
                     if (panelId != dragging.sourcePanelId) {
@@ -368,10 +383,14 @@ class TabDraggableComponent {
      * Calculate the index where a tab would be inserted during reorder.
      * Uses the actual tab index stored in TabBoundInfo to handle LazyRow virtualization.
      */
-    private fun calculateReorderIndex(panelId: String, position: Offset): Int {
-        val relevantTabs = tabBounds.entries
-            .filter { (tabId, _) -> tabId.startsWith("$panelId:") }
-            .sortedBy { it.value.bounds.left }
+    private fun calculateReorderIndex(
+        panelId: String,
+        position: Offset,
+    ): Int {
+        val relevantTabs =
+            tabBounds.entries
+                .filter { (tabId, _) -> tabId.startsWith("$panelId:") }
+                .sortedBy { it.value.bounds.left }
 
         if (relevantTabs.isEmpty()) return 0
 
@@ -380,12 +399,16 @@ class TabDraggableComponent {
             val midpoint = info.bounds.left + info.bounds.width / 2
 
             if (position.x < midpoint) {
-                return info.actualIndex  // Use actual tab index, not loop index
+                return info.actualIndex // Use actual tab index, not loop index
             }
         }
 
         // Return index after the last visible tab
-        return relevantTabs.lastOrNull()?.value?.actualIndex?.plus(1) ?: 0
+        return relevantTabs
+            .lastOrNull()
+            ?.value
+            ?.actualIndex
+            ?.plus(1) ?: 0
     }
 
     /**
@@ -405,43 +428,49 @@ class TabDraggableComponent {
 
         return when (target) {
             is TabDropTarget.Reorder -> {
-                val toIndex = if (target.targetIndex > dragging.sourceIndex) {
-                    target.targetIndex - 1
-                } else {
-                    target.targetIndex
-                }
+                val toIndex =
+                    if (target.targetIndex > dragging.sourceIndex) {
+                        target.targetIndex - 1
+                    } else {
+                        target.targetIndex
+                    }
                 if (toIndex != dragging.sourceIndex) {
                     TabDropResult.Reorder(
                         panelId = target.panelId,
                         fromIndex = dragging.sourceIndex,
-                        toIndex = toIndex
+                        toIndex = toIndex,
                     )
                 } else {
                     null
                 }
             }
+
             is TabDropTarget.ExistingPanel -> {
                 if (target.panelId != dragging.sourcePanelId) {
                     TabDropResult.MoveToPanel(
                         tabInfo = dragging.tabInfo,
                         sourcePanelId = dragging.sourcePanelId,
                         sourceIndex = dragging.sourceIndex,
-                        targetPanelId = target.panelId
+                        targetPanelId = target.panelId,
                     )
                 } else {
                     null
                 }
             }
+
             is TabDropTarget.SplitPanel -> {
                 TabDropResult.CreateSplit(
                     tabInfo = dragging.tabInfo,
                     sourcePanelId = dragging.sourcePanelId,
                     sourceIndex = dragging.sourceIndex,
                     targetPanelId = target.panelId,
-                    orientation = target.orientation
+                    orientation = target.orientation,
                 )
             }
-            null -> null
+
+            null -> {
+                null
+            }
         }
     }
 
@@ -473,11 +502,12 @@ class TabDraggableComponent {
         val rightEdge = barBounds.right - edgeScrollThreshold
 
         // Determine scroll direction based on position
-        val direction: ScrollDirection? = when {
-            currentPosition.x < leftEdge -> ScrollDirection.LEFT
-            currentPosition.x > rightEdge -> ScrollDirection.RIGHT
-            else -> null
-        }
+        val direction: ScrollDirection? =
+            when {
+                currentPosition.x < leftEdge -> ScrollDirection.LEFT
+                currentPosition.x > rightEdge -> ScrollDirection.RIGHT
+                else -> null
+            }
 
         // If at an edge, trigger scroll with throttling
         if (direction != null) {
@@ -498,7 +528,11 @@ class TabDraggableComponent {
      * @param bounds The tab's bounds in window coordinates
      * @param actualIndex The tab's actual index in the tab list (important for LazyRow)
      */
-    fun registerTabBounds(compositeTabId: String, bounds: Rect, actualIndex: Int) {
+    fun registerTabBounds(
+        compositeTabId: String,
+        bounds: Rect,
+        actualIndex: Int,
+    ) {
         tabBounds[compositeTabId] = TabBoundInfo(bounds, actualIndex)
     }
 
@@ -512,14 +546,20 @@ class TabDraggableComponent {
     /**
      * Register tab bar bounds for a panel.
      */
-    fun registerTabBarBounds(panelId: String, bounds: Rect) {
+    fun registerTabBarBounds(
+        panelId: String,
+        bounds: Rect,
+    ) {
         tabBarBounds[panelId] = bounds
     }
 
     /**
      * Register panel drop zones for split creation.
      */
-    fun registerPanelDropZones(panelId: String, bounds: Rect) {
+    fun registerPanelDropZones(
+        panelId: String,
+        bounds: Rect,
+    ) {
         panelDropZones[panelId] = PanelDropZones.fromBounds(bounds)
     }
 

@@ -12,5 +12,5 @@ expect fun PluginWizardWindow(
     state: PluginInstallWizardState,
     onDismiss: () -> Unit,
     onComplete: () -> Unit,
-    onInstallPlugins: suspend (List<WizardPluginInfo>, (Float, String) -> Unit) -> Result<PluginInstallResult>
+    onInstallPlugins: suspend (List<WizardPluginInfo>, (Float, String) -> Unit) -> Result<PluginInstallResult>,
 )

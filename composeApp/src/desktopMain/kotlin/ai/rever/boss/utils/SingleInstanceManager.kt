@@ -158,10 +158,14 @@ object SingleInstanceManager {
 
         if (!boundSuccessfully) {
             // Port exhaustion - clean up lock file and fail gracefully
-            logger.error(LogCategory.SYSTEM, "Failed to start IPC server on any port", mapOf(
-                "portRange" to "$IPC_PORT_BASE-${IPC_PORT_BASE + IPC_PORT_RANGE - 1}",
-                "lastError" to (lastException?.message ?: "unknown")
-            ))
+            logger.error(
+                LogCategory.SYSTEM,
+                "Failed to start IPC server on any port",
+                mapOf(
+                    "portRange" to "$IPC_PORT_BASE-${IPC_PORT_BASE + IPC_PORT_RANGE - 1}",
+                    "lastError" to (lastException?.message ?: "unknown"),
+                ),
+            )
 
             // Delete lock file so next instance can try again
             try {
@@ -173,35 +177,36 @@ object SingleInstanceManager {
 
             throw java.io.IOException(
                 "Unable to bind IPC server: All ports $IPC_PORT_BASE-${IPC_PORT_BASE + IPC_PORT_RANGE - 1} are in use. " +
-                "This may indicate port conflicts or firewall issues. Original error: ${lastException?.message}"
+                    "This may indicate port conflicts or firewall issues. Original error: ${lastException?.message}",
             )
         }
 
         // Start listener thread
         isListening = true
-        listenerThread = thread(isDaemon = true, name = "BOSS-IPC-Listener") {
-            logger.trace(LogCategory.SYSTEM, "IPC listener thread started")
+        listenerThread =
+            thread(isDaemon = true, name = "BOSS-IPC-Listener") {
+                logger.trace(LogCategory.SYSTEM, "IPC listener thread started")
 
-            while (isListening && !Thread.currentThread().isInterrupted) {
-                try {
-                    val clientSocket = serverSocket?.accept()
-                    if (clientSocket != null) {
-                        handleClient(clientSocket)
-                    }
-                } catch (e: SocketException) {
-                    if (isListening) {
-                        logger.warn(LogCategory.SYSTEM, "Socket error in IPC listener", error = e)
-                    }
-                    break
-                } catch (e: Exception) {
-                    if (isListening) {
-                        logger.warn(LogCategory.SYSTEM, "Error in IPC listener", error = e)
+                while (isListening && !Thread.currentThread().isInterrupted) {
+                    try {
+                        val clientSocket = serverSocket?.accept()
+                        if (clientSocket != null) {
+                            handleClient(clientSocket)
+                        }
+                    } catch (e: SocketException) {
+                        if (isListening) {
+                            logger.warn(LogCategory.SYSTEM, "Socket error in IPC listener", error = e)
+                        }
+                        break
+                    } catch (e: Exception) {
+                        if (isListening) {
+                            logger.warn(LogCategory.SYSTEM, "Error in IPC listener", error = e)
+                        }
                     }
                 }
-            }
 
-            logger.trace(LogCategory.SYSTEM, "IPC listener thread stopped")
-        }
+                logger.trace(LogCategory.SYSTEM, "IPC listener thread stopped")
+            }
     }
 
     /**
@@ -262,7 +267,7 @@ object SingleInstanceManager {
             val socket = Socket()
             socket.connect(
                 java.net.InetSocketAddress(InetAddress.getLoopbackAddress(), port),
-                CONNECTION_TIMEOUT_MS
+                CONNECTION_TIMEOUT_MS,
             )
 
             socket.use {
@@ -319,9 +324,10 @@ object SingleInstanceManager {
     /**
      * Check if a process with the given PID is alive
      */
-    private fun isProcessAlive(pid: Long): Boolean {
-        return try {
-            ProcessHandle.of(pid)
+    private fun isProcessAlive(pid: Long): Boolean =
+        try {
+            ProcessHandle
+                .of(pid)
                 .map { it.isAlive }
                 .orElse(false)
         } catch (e: Exception) {
@@ -332,7 +338,6 @@ object SingleInstanceManager {
             )
             false
         }
-    }
 
     /**
      * Start listening for URLs from new instances

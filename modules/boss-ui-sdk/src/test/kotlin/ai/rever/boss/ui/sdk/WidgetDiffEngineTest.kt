@@ -6,16 +6,16 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class WidgetDiffEngineTest {
-
     private fun simpleTree(): WidgetTree {
         val colId = "col1"
         val textId = "text1"
         return WidgetTree(
             rootId = colId,
-            nodes = mapOf(
-                colId to WidgetNode(colId, WidgetType.COLUMN, childIds = listOf(textId)),
-                textId to WidgetNode(textId, WidgetType.TEXT, properties = mapOf("value" to "Hello")),
-            ),
+            nodes =
+                mapOf(
+                    colId to WidgetNode(colId, WidgetType.COLUMN, childIds = listOf(textId)),
+                    textId to WidgetNode(textId, WidgetType.TEXT, properties = mapOf("value" to "Hello")),
+                ),
         )
     }
 
@@ -32,14 +32,16 @@ class WidgetDiffEngineTest {
         val colId = "col1"
         val textId = "text1"
         val text2Id = "text2"
-        val newTree = WidgetTree(
-            rootId = colId,
-            nodes = mapOf(
-                colId to WidgetNode(colId, WidgetType.COLUMN, childIds = listOf(textId, text2Id)),
-                textId to WidgetNode(textId, WidgetType.TEXT, properties = mapOf("value" to "Hello")),
-                text2Id to WidgetNode(text2Id, WidgetType.TEXT, properties = mapOf("value" to "World")),
-            ),
-        )
+        val newTree =
+            WidgetTree(
+                rootId = colId,
+                nodes =
+                    mapOf(
+                        colId to WidgetNode(colId, WidgetType.COLUMN, childIds = listOf(textId, text2Id)),
+                        textId to WidgetNode(textId, WidgetType.TEXT, properties = mapOf("value" to "Hello")),
+                        text2Id to WidgetNode(text2Id, WidgetType.TEXT, properties = mapOf("value" to "World")),
+                    ),
+            )
 
         val ops = WidgetDiffEngine.diff(base, newTree)
         val added = ops.filterIsInstance<DiffOperation.NodeAdded>()
@@ -54,12 +56,14 @@ class WidgetDiffEngineTest {
         val base = simpleTree()
         val colId = "col1"
         val textId = "text1"
-        val newTree = WidgetTree(
-            rootId = colId,
-            nodes = mapOf(
-                colId to WidgetNode(colId, WidgetType.COLUMN, childIds = emptyList()),
-            ),
-        )
+        val newTree =
+            WidgetTree(
+                rootId = colId,
+                nodes =
+                    mapOf(
+                        colId to WidgetNode(colId, WidgetType.COLUMN, childIds = emptyList()),
+                    ),
+            )
 
         val ops = WidgetDiffEngine.diff(base, newTree)
         val removed = ops.filterIsInstance<DiffOperation.NodeRemoved>()
@@ -72,13 +76,15 @@ class WidgetDiffEngineTest {
         val base = simpleTree()
         val colId = "col1"
         val textId = "text1"
-        val newTree = WidgetTree(
-            rootId = colId,
-            nodes = mapOf(
-                colId to WidgetNode(colId, WidgetType.COLUMN, childIds = listOf(textId)),
-                textId to WidgetNode(textId, WidgetType.TEXT, properties = mapOf("value" to "Changed")),
-            ),
-        )
+        val newTree =
+            WidgetTree(
+                rootId = colId,
+                nodes =
+                    mapOf(
+                        colId to WidgetNode(colId, WidgetType.COLUMN, childIds = listOf(textId)),
+                        textId to WidgetNode(textId, WidgetType.TEXT, properties = mapOf("value" to "Changed")),
+                    ),
+            )
 
         val ops = WidgetDiffEngine.diff(base, newTree)
         val updated = ops.filterIsInstance<DiffOperation.NodeUpdated>()
@@ -93,16 +99,21 @@ class WidgetDiffEngineTest {
         val colId = "col1"
         val textId = "text1"
         val newModifier = WidgetModifier(width = 100, height = 50)
-        val newTree = WidgetTree(
-            rootId = colId,
-            nodes = mapOf(
-                colId to WidgetNode(colId, WidgetType.COLUMN, childIds = listOf(textId)),
-                textId to WidgetNode(textId, WidgetType.TEXT,
-                    properties = mapOf("value" to "Hello"),
-                    modifier = newModifier,
-                ),
-            ),
-        )
+        val newTree =
+            WidgetTree(
+                rootId = colId,
+                nodes =
+                    mapOf(
+                        colId to WidgetNode(colId, WidgetType.COLUMN, childIds = listOf(textId)),
+                        textId to
+                            WidgetNode(
+                                textId,
+                                WidgetType.TEXT,
+                                properties = mapOf("value" to "Hello"),
+                                modifier = newModifier,
+                            ),
+                    ),
+            )
 
         val ops = WidgetDiffEngine.diff(base, newTree)
         val updated = ops.filterIsInstance<DiffOperation.NodeUpdated>()
@@ -133,14 +144,16 @@ class WidgetDiffEngineTest {
         val colId = "col1"
         val text1Id = "text1"
         val text2Id = "text2"
-        val base = WidgetTree(
-            rootId = colId,
-            nodes = mapOf(
-                colId to WidgetNode(colId, WidgetType.COLUMN, childIds = listOf(text1Id, text2Id)),
-                text1Id to WidgetNode(text1Id, WidgetType.TEXT, properties = mapOf("value" to "A")),
-                text2Id to WidgetNode(text2Id, WidgetType.TEXT, properties = mapOf("value" to "B")),
-            ),
-        )
+        val base =
+            WidgetTree(
+                rootId = colId,
+                nodes =
+                    mapOf(
+                        colId to WidgetNode(colId, WidgetType.COLUMN, childIds = listOf(text1Id, text2Id)),
+                        text1Id to WidgetNode(text1Id, WidgetType.TEXT, properties = mapOf("value" to "A")),
+                        text2Id to WidgetNode(text2Id, WidgetType.TEXT, properties = mapOf("value" to "B")),
+                    ),
+            )
 
         val ops = listOf(DiffOperation.NodeRemoved(text1Id))
         val result = WidgetDiffEngine.apply(base, ops)
@@ -166,14 +179,16 @@ class WidgetDiffEngineTest {
         val colId = "col1"
         val textId = "text1"
         val text2Id = "text2"
-        val expected = WidgetTree(
-            rootId = colId,
-            nodes = mapOf(
-                colId to WidgetNode(colId, WidgetType.COLUMN, childIds = listOf(textId, text2Id)),
-                textId to WidgetNode(textId, WidgetType.TEXT, properties = mapOf("value" to "Hello")),
-                text2Id to WidgetNode(text2Id, WidgetType.TEXT, properties = mapOf("value" to "World")),
-            ),
-        )
+        val expected =
+            WidgetTree(
+                rootId = colId,
+                nodes =
+                    mapOf(
+                        colId to WidgetNode(colId, WidgetType.COLUMN, childIds = listOf(textId, text2Id)),
+                        textId to WidgetNode(textId, WidgetType.TEXT, properties = mapOf("value" to "Hello")),
+                        text2Id to WidgetNode(text2Id, WidgetType.TEXT, properties = mapOf("value" to "World")),
+                    ),
+            )
 
         val ops = WidgetDiffEngine.diff(base, expected)
         val result = WidgetDiffEngine.apply(base, ops)

@@ -5,13 +5,16 @@ import ai.rever.boss.components.wizard.WizardStep
 /**
  * Categories for organizing plugins in the installation wizard.
  */
-enum class PluginCategory(val displayName: String, val description: String) {
+enum class PluginCategory(
+    val displayName: String,
+    val description: String,
+) {
     ESSENTIAL("Essential", "Core tools for basic functionality"),
     DEVELOPER("Developer Tools", "Tools for code development and version control"),
     PRODUCTIVITY("Productivity", "Tools to enhance your workflow"),
     AUTOMATION("Automation", "Automate repetitive tasks"),
     ADMIN("Admin Tools", "Administrative and management tools"),
-    OTHER("Other", "Additional tools")
+    OTHER("Other", "Additional tools"),
 }
 
 /**
@@ -30,16 +33,15 @@ enum class PluginCategory(val displayName: String, val description: String) {
 sealed class PluginInstallStep(
     override val title: String,
     val category: PluginCategory? = null,
-    override val canSkip: Boolean = false
+    override val canSkip: Boolean = false,
 ) : WizardStep {
-
     /**
      * Welcome step introducing the plugin system.
      */
     data object Welcome : PluginInstallStep(
         title = "Welcome",
         category = null,
-        canSkip = false
+        canSkip = false,
     )
 
     /**
@@ -49,7 +51,7 @@ sealed class PluginInstallStep(
     data object EssentialPlugins : PluginInstallStep(
         title = "Essential Tools",
         category = PluginCategory.ESSENTIAL,
-        canSkip = true
+        canSkip = true,
     )
 
     /**
@@ -58,7 +60,7 @@ sealed class PluginInstallStep(
     data object DeveloperPlugins : PluginInstallStep(
         title = "Developer Tools",
         category = PluginCategory.DEVELOPER,
-        canSkip = true
+        canSkip = true,
     )
 
     /**
@@ -67,7 +69,7 @@ sealed class PluginInstallStep(
     data object ProductivityPlugins : PluginInstallStep(
         title = "Productivity",
         category = PluginCategory.PRODUCTIVITY,
-        canSkip = true
+        canSkip = true,
     )
 
     /**
@@ -76,7 +78,7 @@ sealed class PluginInstallStep(
     data object AutomationPlugins : PluginInstallStep(
         title = "Automation",
         category = PluginCategory.AUTOMATION,
-        canSkip = true
+        canSkip = true,
     )
 
     /**
@@ -85,7 +87,7 @@ sealed class PluginInstallStep(
     data object AdminPlugins : PluginInstallStep(
         title = "Admin Tools",
         category = PluginCategory.ADMIN,
-        canSkip = true
+        canSkip = true,
     )
 
     /**
@@ -94,7 +96,7 @@ sealed class PluginInstallStep(
     data object OtherPlugins : PluginInstallStep(
         title = "Other Tools",
         category = PluginCategory.OTHER,
-        canSkip = true
+        canSkip = true,
     )
 
     /**
@@ -103,7 +105,7 @@ sealed class PluginInstallStep(
     data object Installing : PluginInstallStep(
         title = "Installing",
         category = null,
-        canSkip = false
+        canSkip = false,
     )
 
     /**
@@ -112,24 +114,25 @@ sealed class PluginInstallStep(
     data object Complete : PluginInstallStep(
         title = "Complete",
         category = null,
-        canSkip = false
+        canSkip = false,
     )
 
     companion object {
         /**
          * All steps in the wizard in order.
          */
-        val allSteps: List<PluginInstallStep> = listOf(
-            Welcome,
-            EssentialPlugins,
-            DeveloperPlugins,
-            ProductivityPlugins,
-            AutomationPlugins,
-            AdminPlugins,
-            OtherPlugins,
-            Installing,
-            Complete
-        )
+        val allSteps: List<PluginInstallStep> =
+            listOf(
+                Welcome,
+                EssentialPlugins,
+                DeveloperPlugins,
+                ProductivityPlugins,
+                AutomationPlugins,
+                AdminPlugins,
+                OtherPlugins,
+                Installing,
+                Complete,
+            )
 
         /**
          * Category selection steps only.

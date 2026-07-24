@@ -1,5 +1,7 @@
 package ai.rever.boss.plugin.browser
 
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import com.teamdev.jxbrowser.browser.Browser
 import com.teamdev.jxbrowser.devtools.DevTools
 import com.teamdev.jxbrowser.event.Subscription
@@ -10,8 +12,6 @@ import com.teamdev.jxbrowser.search.FindResult
 import com.teamdev.jxbrowser.search.TextFinder
 import com.teamdev.jxbrowser.zoom.Zoom
 import com.teamdev.jxbrowser.zoom.ZoomLevel
-import ai.rever.boss.utils.logging.BossLogger
-import ai.rever.boss.utils.logging.LogCategory
 import java.util.Optional
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import java.util.function.Consumer
@@ -38,7 +38,7 @@ private val logger = BossLogger.forComponent("LockedBrowser")
  */
 class LockedBrowser(
     private val browser: Browser,
-    private val lock: ReentrantReadWriteLock
+    private val lock: ReentrantReadWriteLock,
 ) {
     fun url(): String = lock.read { browser.url() }
 
@@ -50,19 +50,20 @@ class LockedBrowser(
      * The try-catch is the real protection against the race condition where disposal
      * could complete between the check and the url() call.
      */
-    fun urlOrEmpty(): String = try {
-        lock.read {
-            if (browser.isClosed) "" else browser.url()
+    fun urlOrEmpty(): String =
+        try {
+            lock.read {
+                if (browser.isClosed) "" else browser.url()
+            }
+        } catch (e: Exception) {
+            // Disposal race between the isClosed check and url() - empty is the safe answer
+            logger.debug(
+                LogCategory.BROWSER,
+                "browser.url() failed during disposal race - returning empty",
+                mapOf("error" to e.toString()),
+            )
+            ""
         }
-    } catch (e: Exception) {
-        // Disposal race between the isClosed check and url() - empty is the safe answer
-        logger.debug(
-            LogCategory.BROWSER,
-            "browser.url() failed during disposal race - returning empty",
-            mapOf("error" to e.toString()),
-        )
-        ""
-    }
 
     fun title(): String = lock.read { browser.title() }
 
@@ -93,7 +94,7 @@ class LockedBrowser(
  */
 class LockedNavigation(
     private val navigation: Navigation,
-    private val lock: ReentrantReadWriteLock
+    private val lock: ReentrantReadWriteLock,
 ) {
     fun loadUrl(url: String) = lock.read { navigation.loadUrl(url) }
 
@@ -115,7 +116,7 @@ class LockedNavigation(
  */
 class LockedDevTools(
     private val devTools: DevTools,
-    private val lock: ReentrantReadWriteLock
+    private val lock: ReentrantReadWriteLock,
 ) {
     fun show() = lock.read { devTools.show() }
 }
@@ -125,7 +126,7 @@ class LockedDevTools(
  */
 class LockedZoom(
     private val zoom: Zoom,
-    private val lock: ReentrantReadWriteLock
+    private val lock: ReentrantReadWriteLock,
 ) {
     fun level(): ZoomLevel = lock.read { zoom.level() }
 
@@ -137,17 +138,25 @@ class LockedZoom(
  */
 class LockedTextFinder(
     private val textFinder: TextFinder,
-    private val lock: ReentrantReadWriteLock
+    private val lock: ReentrantReadWriteLock,
 ) {
-    fun find(text: String, callback: Consumer<FindResult>) = lock.read {
+    fun find(
+        text: String,
+        callback: Consumer<FindResult>,
+    ) = lock.read {
         textFinder.find(text, callback)
     }
 
-    fun find(text: String, options: FindOptions, callback: Consumer<FindResult>) = lock.read {
+    fun find(
+        text: String,
+        options: FindOptions,
+        callback: Consumer<FindResult>,
+    ) = lock.read {
         textFinder.find(text, options, callback)
     }
 
-    fun stopFindingAndClearSelection() = lock.read {
-        textFinder.stopFindingAndClearSelection()
-    }
+    fun stopFindingAndClearSelection() =
+        lock.read {
+            textFinder.stopFindingAndClearSelection()
+        }
 }

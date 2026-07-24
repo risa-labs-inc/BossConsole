@@ -30,7 +30,6 @@ class ActiveTabsProviderProxy(
     channel: ManagedChannel,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
 ) : ActiveTabsProvider {
-
     private val stub = ActiveTabsServiceGrpcKt.ActiveTabsServiceCoroutineStub(channel)
 
     private val _activeTabs = MutableStateFlow<List<ActiveTabData>>(emptyList())
@@ -48,38 +47,61 @@ class ActiveTabsProviderProxy(
                     _activeTabs.value = response.tabsList.map { it.toData() }
                 }
                 delayMs = 1_000L
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (_: Exception) { delay(delayMs); delayMs = (delayMs * 2).coerceAtMost(30_000L) }
+            } catch (
+                e: kotlinx.coroutines.CancellationException,
+            ) {
+                throw e
+            } catch (_: Exception) {
+                delay(delayMs)
+                delayMs = (delayMs * 2).coerceAtMost(30_000L)
+            }
         }
     }
 
     override suspend fun refreshTabs() {
-        try { stub.refreshTabs(Empty.getDefaultInstance()) } catch (_: Exception) {}
+        try {
+            stub.refreshTabs(Empty.getDefaultInstance())
+        } catch (_: Exception) {
+        }
     }
 
-    override fun selectTab(tabId: String, panelId: String) {
+    override fun selectTab(
+        tabId: String,
+        panelId: String,
+    ) {
         scope.launch {
             try {
                 stub.selectTab(
-                    SelectTabRequest.newBuilder().setTabId(tabId).setPanelId(panelId).build()
+                    SelectTabRequest
+                        .newBuilder()
+                        .setTabId(tabId)
+                        .setPanelId(panelId)
+                        .build(),
                 )
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
         }
     }
 
-    override fun getTabUrl(tabId: String): String? = try {
-        runBlocking {
-            val resp: ActiveTabStringResponse = stub.getTabUrl(TabIdRequest.newBuilder().setTabId(tabId).build())
-            resp.value.takeIf { it.isNotEmpty() }
+    override fun getTabUrl(tabId: String): String? =
+        try {
+            runBlocking {
+                val resp: ActiveTabStringResponse = stub.getTabUrl(TabIdRequest.newBuilder().setTabId(tabId).build())
+                resp.value.takeIf { it.isNotEmpty() }
+            }
+        } catch (_: Exception) {
+            null
         }
-    } catch (_: Exception) { null }
 
-    override fun getFaviconCacheKey(tabId: String): String? = try {
-        runBlocking {
-            val resp: ActiveTabStringResponse = stub.getFaviconCacheKey(TabIdRequest.newBuilder().setTabId(tabId).build())
-            resp.value.takeIf { it.isNotEmpty() }
+    override fun getFaviconCacheKey(tabId: String): String? =
+        try {
+            runBlocking {
+                val resp: ActiveTabStringResponse = stub.getFaviconCacheKey(TabIdRequest.newBuilder().setTabId(tabId).build())
+                resp.value.takeIf { it.isNotEmpty() }
+            }
+        } catch (_: Exception) {
+            null
         }
-    } catch (_: Exception) { null }
 
     @Composable
     override fun loadFavicon(cacheKey: String?): Painter? {
@@ -97,31 +119,46 @@ class ActiveTabsProviderProxy(
         return null
     }
 
-    override fun createBrowserTab(url: String, title: String): String? = try {
-        runBlocking {
-            val resp = stub.createBrowserTab(
-                CreateBrowserTabRequest.newBuilder().setUrl(url).setTitle(title).build()
-            )
-            resp.value.takeIf { it.isNotEmpty() }
+    override fun createBrowserTab(
+        url: String,
+        title: String,
+    ): String? =
+        try {
+            runBlocking {
+                val resp =
+                    stub.createBrowserTab(
+                        CreateBrowserTabRequest
+                            .newBuilder()
+                            .setUrl(url)
+                            .setTitle(title)
+                            .build(),
+                    )
+                resp.value.takeIf { it.isNotEmpty() }
+            }
+        } catch (_: Exception) {
+            null
         }
-    } catch (_: Exception) { null }
 
-    override fun closeTab(tabId: String): Boolean = try {
-        runBlocking {
-            stub.closeTab(TabIdRequest.newBuilder().setTabId(tabId).build()).value
+    override fun closeTab(tabId: String): Boolean =
+        try {
+            runBlocking {
+                stub.closeTab(TabIdRequest.newBuilder().setTabId(tabId).build()).value
+            }
+        } catch (_: Exception) {
+            false
         }
-    } catch (_: Exception) { false }
 
-    private fun ActiveTabProto.toData() = ActiveTabData(
-        tabId = tabId,
-        typeId = typeId,
-        title = title,
-        workspaceId = workspaceId,
-        workspaceName = workspaceName,
-        panelId = panelId,
-        windowId = windowId,
-        splitPosition = splitPosition.takeIf { it.isNotEmpty() },
-        url = url.takeIf { it.isNotEmpty() },
-        faviconCacheKey = faviconCacheKey.takeIf { it.isNotEmpty() },
-    )
+    private fun ActiveTabProto.toData() =
+        ActiveTabData(
+            tabId = tabId,
+            typeId = typeId,
+            title = title,
+            workspaceId = workspaceId,
+            workspaceName = workspaceName,
+            panelId = panelId,
+            windowId = windowId,
+            splitPosition = splitPosition.takeIf { it.isNotEmpty() },
+            url = url.takeIf { it.isNotEmpty() },
+            faviconCacheKey = faviconCacheKey.takeIf { it.isNotEmpty() },
+        )
 }

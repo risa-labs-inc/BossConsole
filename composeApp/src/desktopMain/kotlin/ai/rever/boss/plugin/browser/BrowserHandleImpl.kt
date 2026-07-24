@@ -1,8 +1,10 @@
 package ai.rever.boss.plugin.browser
 
+import ai.rever.boss.cache.FaviconCache
+import ai.rever.boss.plugin.window.LocalWindowId
 import ai.rever.boss.tabfullscreen.FullscreenBrowserWindow
-import java.util.concurrent.locks.ReentrantReadWriteLock
 import ai.rever.boss.utils.MacOSGestureHandler
+import ai.rever.boss.utils.WindowFocusManager
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,27 +16,34 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
-import androidx.compose.ui.graphics.toComposeImageBitmap
-import ai.rever.boss.cache.FaviconCache
 import com.teamdev.jxbrowser.browser.Browser
 import com.teamdev.jxbrowser.browser.callback.CreatePopupCallback
 import com.teamdev.jxbrowser.browser.callback.InjectJsCallback
 import com.teamdev.jxbrowser.browser.callback.OpenPopupCallback
 import com.teamdev.jxbrowser.browser.callback.ShowContextMenuCallback
 import com.teamdev.jxbrowser.browser.event.BrowserClosed
-import com.teamdev.jxbrowser.frame.Frame
-import com.teamdev.jxbrowser.js.JsObject
 import com.teamdev.jxbrowser.browser.event.FaviconChanged
 import com.teamdev.jxbrowser.browser.event.TitleChanged
 import com.teamdev.jxbrowser.engine.Engine
 import com.teamdev.jxbrowser.event.Subscription
+import com.teamdev.jxbrowser.frame.Frame
+import com.teamdev.jxbrowser.js.JsObject
 import com.teamdev.jxbrowser.navigation.LoadUrlParams
+import com.teamdev.jxbrowser.navigation.event.LoadFinished
+import com.teamdev.jxbrowser.navigation.event.LoadStarted
+import com.teamdev.jxbrowser.navigation.event.NavigationFinished
+import com.teamdev.jxbrowser.navigation.event.NavigationStarted
+import com.teamdev.jxbrowser.net.ByteData
+import com.teamdev.jxbrowser.net.HttpHeader
+import com.teamdev.jxbrowser.net.callback.BeforeSendUploadDataCallback
 import com.teamdev.jxbrowser.ui.KeyCode
 import com.teamdev.jxbrowser.ui.KeyModifiers
 import com.teamdev.jxbrowser.ui.MouseButton
 import com.teamdev.jxbrowser.ui.Point
+import com.teamdev.jxbrowser.ui.Rect
 import com.teamdev.jxbrowser.ui.ScrollType
 import com.teamdev.jxbrowser.ui.event.KeyPressed
 import com.teamdev.jxbrowser.ui.event.KeyReleased
@@ -44,30 +53,11 @@ import com.teamdev.jxbrowser.ui.event.MouseMoved
 import com.teamdev.jxbrowser.ui.event.MousePressed
 import com.teamdev.jxbrowser.ui.event.MouseReleased
 import com.teamdev.jxbrowser.ui.event.MouseWheel
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.floatOrNull
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import com.teamdev.jxbrowser.navigation.event.LoadFinished
-import com.teamdev.jxbrowser.navigation.event.LoadStarted
-import com.teamdev.jxbrowser.navigation.event.NavigationFinished
-import com.teamdev.jxbrowser.navigation.event.NavigationStarted
-import com.teamdev.jxbrowser.net.ByteData
-import com.teamdev.jxbrowser.net.HttpHeader
-import com.teamdev.jxbrowser.net.callback.BeforeSendUploadDataCallback
-import com.teamdev.jxbrowser.ui.Rect
-import com.teamdev.jxbrowser.zoom.ZoomLevel
-import com.teamdev.jxbrowser.zoom.ZoomMode
-import ai.rever.boss.plugin.window.LocalWindowId
-import ai.rever.boss.utils.WindowFocusManager
 import com.teamdev.jxbrowser.view.compose.BrowserView
 import com.teamdev.jxbrowser.view.compose.BrowserViewState
-import java.awt.Toolkit
-import java.awt.datatransfer.StringSelection
-import java.awt.datatransfer.DataFlavor
-import java.util.concurrent.atomic.AtomicBoolean
+import com.teamdev.jxbrowser.zoom.ZoomLevel
+import com.teamdev.jxbrowser.zoom.ZoomMode
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -76,15 +66,25 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.floatOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import java.awt.Toolkit
 import java.awt.Window
+import java.awt.datatransfer.DataFlavor
+import java.awt.datatransfer.StringSelection
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.locks.ReentrantReadWriteLock
 import javax.swing.JFrame
 import javax.swing.SwingUtilities
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Desktop implementation of [BrowserHandle] that wraps a JxBrowser [Browser] instance.
@@ -97,9 +97,8 @@ internal class BrowserHandleImpl(
     private val browser: Browser,
     private val config: BrowserConfig,
     private val engineGeneration: Long,
-    private val ownerWindowId: String
+    private val ownerWindowId: String,
 ) : BrowserHandle {
-
     private val logger = BossLogger.forComponent("BrowserHandleImpl")
 
     override val id: String = UUID.randomUUID().toString()
@@ -138,31 +137,44 @@ internal class BrowserHandleImpl(
     // handle is alive; logs suppressions since the hover flag depends on Compose
     // Enter/Exit events reaching the view — a stuck flag would otherwise present
     // as pinch silently not working (or zooming a non-hovered view).
-    private inline fun gatedPinchZoom(direction: String, zoom: () -> Unit) {
+    private inline fun gatedPinchZoom(
+        direction: String,
+        zoom: () -> Unit,
+    ) {
         if (pointerOverBrowserView && isValid) {
             zoom()
         } else {
-            logger.debug(LogCategory.BROWSER, "Pinch zoom suppressed", mapOf(
-                "direction" to direction,
-                "hovered" to pointerOverBrowserView.toString(),
-                "valid" to isValid.toString()
-            ))
+            logger.debug(
+                LogCategory.BROWSER,
+                "Pinch zoom suppressed",
+                mapOf(
+                    "direction" to direction,
+                    "hovered" to pointerOverBrowserView.toString(),
+                    "valid" to isValid.toString(),
+                ),
+            )
         }
     }
 
     // --- Co-browse / tab sharing (DOM state-sync) ---
     // Whether the rrweb recorder is actively streaming this tab to viewers.
     @Volatile private var coBrowseCapturing = false
+
     // Whether a remote viewer is allowed to actuate this tab (gates applyCoBrowseControl).
     @Volatile private var coBrowseControlGranted = false
+
     // Whether rrweb masks form-input values (maskAllInputs) for this capture.
     @Volatile private var coBrowseMaskInputs = false
+
     // Sink for rrweb events (set by the plugin's share manager). MUST be non-blocking.
     @Volatile private var coBrowseSink: ((String) -> Unit)? = null
+
     // True once the InjectJsCallback is registered (kept inert when not capturing).
     @Volatile private var coBrowseInjectRegistered = false
+
     // Page→host bridge injected onto window.__bossCoBrowse; its onEvent is repointed per capture.
     private val coBrowseBridge = CoBrowseBridge()
+
     // Main-thread scope for injection/teardown (rrweb inject + executeJavaScript run on Main).
     private val coBrowseScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -198,10 +210,12 @@ internal class BrowserHandleImpl(
             val contentType = config.initialPostContentType
             if (postData != null && contentType != null) {
                 // Replay a form-submit popup as POST on first navigation.
-                val params = LoadUrlParams.newBuilder(config.url)
-                    .uploadData(ByteData.of(postData))
-                    .addExtraHeader(HttpHeader.of("Content-Type", contentType))
-                    .build()
+                val params =
+                    LoadUrlParams
+                        .newBuilder(config.url)
+                        .uploadData(ByteData.of(postData))
+                        .addExtraHeader(HttpHeader.of("Content-Type", contentType))
+                        .build()
                 browser.navigation().loadUrl(params)
             } else {
                 browser.navigation().loadUrl(config.url)
@@ -211,125 +225,130 @@ internal class BrowserHandleImpl(
 
     private fun setupEventListeners() {
         // Navigation started - track loading state
-        subscriptions += browser.navigation().on(NavigationStarted::class.java) { _ ->
-            _isLoading = true
-            loadingListeners.forEach { listener ->
-                try {
-                    listener(true)
-                } catch (e: Exception) {
-                    logger.warn(LogCategory.BROWSER, "Loading listener threw exception", error = e)
+        subscriptions +=
+            browser.navigation().on(NavigationStarted::class.java) { _ ->
+                _isLoading = true
+                loadingListeners.forEach { listener ->
+                    try {
+                        listener(true)
+                    } catch (e: Exception) {
+                        logger.warn(LogCategory.BROWSER, "Loading listener threw exception", error = e)
+                    }
                 }
             }
-        }
 
         // Navigation finished - track loading state, notify URL change, and inject trackers
-        subscriptions += browser.navigation().on(NavigationFinished::class.java) { event ->
-            _isLoading = false
-            loadingListeners.forEach { listener ->
-                try {
-                    listener(false)
-                } catch (e: Exception) {
-                    logger.warn(LogCategory.BROWSER, "Loading listener threw exception", error = e)
-                }
-            }
-
-            // Only notify navigation listeners for main frame navigations
-            // This prevents iframe navigations (which often load about:blank) from
-            // incorrectly updating the URL bar in plugins
-            if (event.isInMainFrame) {
-                val url = event.url()
-                navigationListeners.forEach { listener ->
+        subscriptions +=
+            browser.navigation().on(NavigationFinished::class.java) { event ->
+                _isLoading = false
+                loadingListeners.forEach { listener ->
                     try {
-                        listener(url)
+                        listener(false)
                     } catch (e: Exception) {
-                        logger.warn(LogCategory.BROWSER, "Navigation listener threw exception", error = e)
+                        logger.warn(LogCategory.BROWSER, "Loading listener threw exception", error = e)
                     }
                 }
 
-                // Skip injection for about:blank pages (used for dashboard display)
-                // Only inject context menu trackers for actual web pages
-                if (url.isNotEmpty() && url != "about:blank") {
-                    // Inject context menu trackers (video click and link click tracking)
-                    // These set window._rightClickedOnVideo and window._rightClickedLinkUrl
-                    // which are read by setupContextMenuHandler when building the menu
-                    injectContextMenuTrackers()
+                // Only notify navigation listeners for main frame navigations
+                // This prevents iframe navigations (which often load about:blank) from
+                // incorrectly updating the URL bar in plugins
+                if (event.isInMainFrame) {
+                    val url = event.url()
+                    navigationListeners.forEach { listener ->
+                        try {
+                            listener(url)
+                        } catch (e: Exception) {
+                            logger.warn(LogCategory.BROWSER, "Navigation listener threw exception", error = e)
+                        }
+                    }
+
+                    // Skip injection for about:blank pages (used for dashboard display)
+                    // Only inject context menu trackers for actual web pages
+                    if (url.isNotEmpty() && url != "about:blank") {
+                        // Inject context menu trackers (video click and link click tracking)
+                        // These set window._rightClickedOnVideo and window._rightClickedLinkUrl
+                        // which are read by setupContextMenuHandler when building the menu
+                        injectContextMenuTrackers()
+                    }
                 }
             }
-        }
 
         // Title changed
-        subscriptions += browser.on(TitleChanged::class.java) { event ->
-            val title = event.title()
-            titleListeners.forEach { listener ->
-                try {
-                    listener(title)
-                } catch (e: Exception) {
-                    logger.warn(LogCategory.BROWSER, "Title listener threw exception", error = e)
+        subscriptions +=
+            browser.on(TitleChanged::class.java) { event ->
+                val title = event.title()
+                titleListeners.forEach { listener ->
+                    try {
+                        listener(title)
+                    } catch (e: Exception) {
+                        logger.warn(LogCategory.BROWSER, "Title listener threw exception", error = e)
+                    }
                 }
             }
-        }
 
         // Favicon changed - save to cache and notify listeners with cache key
-        subscriptions += browser.on(FaviconChanged::class.java) { event ->
-            try {
-                val favicon = event.favicon()
-                if (favicon == null || favicon.size().isEmpty) {
-                    // No favicon, notify with null
-                    faviconListeners.forEach { listener ->
-                        try {
-                            listener(null)
-                        } catch (e: Exception) {
-                            logger.warn(LogCategory.BROWSER, "Favicon listener threw exception", error = e)
+        subscriptions +=
+            browser.on(FaviconChanged::class.java) { event ->
+                try {
+                    val favicon = event.favicon()
+                    if (favicon == null || favicon.size().isEmpty) {
+                        // No favicon, notify with null
+                        faviconListeners.forEach { listener ->
+                            try {
+                                listener(null)
+                            } catch (e: Exception) {
+                                logger.warn(LogCategory.BROWSER, "Favicon listener threw exception", error = e)
+                            }
+                        }
+                    } else {
+                        // Convert JxBrowser Bitmap to AWT BufferedImage then to Compose ImageBitmap
+                        val size = favicon.size()
+                        val width = size.width()
+                        val height = size.height()
+
+                        val bufferedImage = java.awt.image.BufferedImage(width, height, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+                        val pixels = favicon.pixels()
+
+                        // Convert BGRA bytes to ARGB integers and set pixels
+                        var pixelIndex = 0
+                        for (y in 0 until height) {
+                            for (x in 0 until width) {
+                                val b = pixels[pixelIndex++].toInt() and 0xFF
+                                val g = pixels[pixelIndex++].toInt() and 0xFF
+                                val r = pixels[pixelIndex++].toInt() and 0xFF
+                                val a = pixels[pixelIndex++].toInt() and 0xFF
+                                val argb = (a shl 24) or (r shl 16) or (g shl 8) or b
+                                bufferedImage.setRGB(x, y, argb)
+                            }
+                        }
+
+                        val imageBitmap = bufferedImage.toComposeImageBitmap()
+                        val currentUrl = browser.url()
+                        val cacheKey = FaviconCache.saveFavicon(currentUrl, imageBitmap)
+
+                        faviconListeners.forEach { listener ->
+                            try {
+                                listener(cacheKey)
+                            } catch (e: Exception) {
+                                logger.warn(LogCategory.BROWSER, "Favicon listener threw exception", error = e)
+                            }
                         }
                     }
-                } else {
-                    // Convert JxBrowser Bitmap to AWT BufferedImage then to Compose ImageBitmap
-                    val size = favicon.size()
-                    val width = size.width()
-                    val height = size.height()
-
-                    val bufferedImage = java.awt.image.BufferedImage(width, height, java.awt.image.BufferedImage.TYPE_INT_ARGB)
-                    val pixels = favicon.pixels()
-
-                    // Convert BGRA bytes to ARGB integers and set pixels
-                    var pixelIndex = 0
-                    for (y in 0 until height) {
-                        for (x in 0 until width) {
-                            val b = pixels[pixelIndex++].toInt() and 0xFF
-                            val g = pixels[pixelIndex++].toInt() and 0xFF
-                            val r = pixels[pixelIndex++].toInt() and 0xFF
-                            val a = pixels[pixelIndex++].toInt() and 0xFF
-                            val argb = (a shl 24) or (r shl 16) or (g shl 8) or b
-                            bufferedImage.setRGB(x, y, argb)
-                        }
-                    }
-
-                    val imageBitmap = bufferedImage.toComposeImageBitmap()
-                    val currentUrl = browser.url()
-                    val cacheKey = FaviconCache.saveFavicon(currentUrl, imageBitmap)
-
-                    faviconListeners.forEach { listener ->
-                        try {
-                            listener(cacheKey)
-                        } catch (e: Exception) {
-                            logger.warn(LogCategory.BROWSER, "Favicon listener threw exception", error = e)
-                        }
-                    }
+                } catch (e: Exception) {
+                    logger.warn(LogCategory.BROWSER, "Error processing favicon", error = e)
                 }
-            } catch (e: Exception) {
-                logger.warn(LogCategory.BROWSER, "Error processing favicon", error = e)
             }
-        }
 
         // Browser closed
-        subscriptions += browser.on(BrowserClosed::class.java) {
-            logger.debug(LogCategory.BROWSER, "Browser closed", mapOf("handleId" to id))
-            disposed.set(true)
-            // Stop streaming: the underlying page is gone.
-            coBrowseCapturing = false
-            coBrowseSink = null
-            coBrowseBridge.onEvent = null
-        }
+        subscriptions +=
+            browser.on(BrowserClosed::class.java) {
+                logger.debug(LogCategory.BROWSER, "Browser closed", mapOf("handleId" to id))
+                disposed.set(true)
+                // Stop streaming: the underlying page is gone.
+                coBrowseCapturing = false
+                coBrowseSink = null
+                coBrowseBridge.onEvent = null
+            }
     }
 
     private fun setupBrowserHandlers() {
@@ -349,83 +368,92 @@ internal class BrowserHandleImpl(
     }
 
     private fun setupContextMenuHandler() {
-        browser.set(ShowContextMenuCallback::class.java, ShowContextMenuCallback { params, tell ->
-            val callback = contextMenuCallback
-            if (callback != null) {
-                // Get page URL from params
-                val pageUrl = try {
-                    params.browser().url()
-                } catch (e: Exception) {
-                    logger.debug(
-                        LogCategory.BROWSER, "Could not read page URL for context menu - using empty",
-                        mapOf("error" to e.toString()),
-                    )
-                    ""
-                }
-
-                // Use JavaScript to get link URL, selected text, video status, and editable state
-                // This is more reliable than the native PointInspection API
-                var linkUrl: String? = null
-                var selectedText: String? = null
-                var hasVideo = false
-                var isEditable = false
-                var formFieldInfo: FormFieldInfo? = null
-
-                try {
-                    browser.mainFrame().ifPresent { frame ->
-                        // Get link URL at click position
-                        linkUrl = frame.executeJavaScript<String?>(BrowserJavaScripts.getRightClickedLinkUrl)
-
-                        // Get selected text
-                        val selection = frame.executeJavaScript<String?>(BrowserJavaScripts.getSelectedText)
-                        selectedText = if (!selection.isNullOrBlank()) selection else null
-
-                        // Check if right-clicked on a video element (not just if page has videos)
-                        hasVideo = frame.executeJavaScript<Boolean>(BrowserJavaScripts.isClickedOnVideo) ?: false
-
-                        // Check if focused element is editable
-                        isEditable = frame.executeJavaScript<Boolean>("""
-                            (function() {
-                                var el = document.activeElement;
-                                if (!el) return false;
-                                var tag = el.tagName.toLowerCase();
-                                if (tag === 'input' || tag === 'textarea') return true;
-                                if (el.isContentEditable) return true;
-                                return false;
-                            })()
-                        """.trimIndent()) ?: false
-
-                        // If editable, get form field info for secret auto-fill
-                        if (isEditable) {
-                            formFieldInfo = getFormFieldInfoFromJS(frame)
+        browser.set(
+            ShowContextMenuCallback::class.java,
+            ShowContextMenuCallback { params, tell ->
+                val callback = contextMenuCallback
+                if (callback != null) {
+                    // Get page URL from params
+                    val pageUrl =
+                        try {
+                            params.browser().url()
+                        } catch (e: Exception) {
+                            logger.debug(
+                                LogCategory.BROWSER,
+                                "Could not read page URL for context menu - using empty",
+                                mapOf("error" to e.toString()),
+                            )
+                            ""
                         }
+
+                    // Use JavaScript to get link URL, selected text, video status, and editable state
+                    // This is more reliable than the native PointInspection API
+                    var linkUrl: String? = null
+                    var selectedText: String? = null
+                    var hasVideo = false
+                    var isEditable = false
+                    var formFieldInfo: FormFieldInfo? = null
+
+                    try {
+                        browser.mainFrame().ifPresent { frame ->
+                            // Get link URL at click position
+                            linkUrl = frame.executeJavaScript<String?>(BrowserJavaScripts.getRightClickedLinkUrl)
+
+                            // Get selected text
+                            val selection = frame.executeJavaScript<String?>(BrowserJavaScripts.getSelectedText)
+                            selectedText = if (!selection.isNullOrBlank()) selection else null
+
+                            // Check if right-clicked on a video element (not just if page has videos)
+                            hasVideo = frame.executeJavaScript<Boolean>(BrowserJavaScripts.isClickedOnVideo) ?: false
+
+                            // Check if focused element is editable
+                            isEditable = frame.executeJavaScript<Boolean>(
+                                """
+                                (function() {
+                                    var el = document.activeElement;
+                                    if (!el) return false;
+                                    var tag = el.tagName.toLowerCase();
+                                    if (tag === 'input' || tag === 'textarea') return true;
+                                    if (el.isContentEditable) return true;
+                                    return false;
+                                })()
+                                """.trimIndent(),
+                            ) ?: false
+
+                            // If editable, get form field info for secret auto-fill
+                            if (isEditable) {
+                                formFieldInfo = getFormFieldInfoFromJS(frame)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // JavaScript execution failed - proceed with defaults
+                        logger.debug(
+                            LogCategory.BROWSER,
+                            "Context-menu JS inspection failed - proceeding with defaults",
+                            mapOf("error" to e.toString()),
+                        )
                     }
-                } catch (e: Exception) {
-                    // JavaScript execution failed - proceed with defaults
-                    logger.debug(
-                        LogCategory.BROWSER, "Context-menu JS inspection failed - proceeding with defaults",
-                        mapOf("error" to e.toString()),
-                    )
+
+                    val info =
+                        BrowserContextMenuInfo(
+                            linkUrl = linkUrl,
+                            selectedText = selectedText,
+                            isEditable = isEditable,
+                            hasVideo = hasVideo,
+                            pageUrl = pageUrl,
+                            pageTitle = browser.title(),
+                            formFieldInfo = formFieldInfo,
+                        )
+
+                    // Suppress JxBrowser's native context menu
+                    tell.close()
+
+                    // Invoke callback (runs on JxBrowser thread, caller should dispatch to main thread if needed)
+                    callback(info)
                 }
-
-                val info = BrowserContextMenuInfo(
-                    linkUrl = linkUrl,
-                    selectedText = selectedText,
-                    isEditable = isEditable,
-                    hasVideo = hasVideo,
-                    pageUrl = pageUrl,
-                    pageTitle = browser.title(),
-                    formFieldInfo = formFieldInfo
-                )
-
-                // Suppress JxBrowser's native context menu
-                tell.close()
-
-                // Invoke callback (runs on JxBrowser thread, caller should dispatch to main thread if needed)
-                callback(info)
-            }
-            // If no custom callback, don't call tell.close() - default context menu will appear
-        })
+                // If no custom callback, don't call tell.close() - default context menu will appear
+            },
+        )
     }
 
     /**
@@ -433,25 +461,28 @@ internal class BrowserHandleImpl(
      */
     private fun getFormFieldInfoFromJS(frame: com.teamdev.jxbrowser.frame.Frame): FormFieldInfo? {
         return try {
-            val jsonString = frame.executeJavaScript<String?>("""
-                (function() {
-                    var field = document.activeElement;
-                    if (!field || (field.tagName !== 'INPUT' && field.tagName !== 'TEXTAREA')) {
-                        return null;
-                    }
-                    var form = field.closest('form');
-                    return JSON.stringify({
-                        type: field.type || 'text',
-                        name: field.name || '',
-                        id: field.id || '',
-                        placeholder: field.placeholder || '',
-                        value: field.value || '',
-                        formAction: form ? form.action : '',
-                        autocomplete: field.getAttribute('autocomplete') || '',
-                        className: field.className || ''
-                    });
-                })()
-            """.trimIndent())
+            val jsonString =
+                frame.executeJavaScript<String?>(
+                    """
+                    (function() {
+                        var field = document.activeElement;
+                        if (!field || (field.tagName !== 'INPUT' && field.tagName !== 'TEXTAREA')) {
+                            return null;
+                        }
+                        var form = field.closest('form');
+                        return JSON.stringify({
+                            type: field.type || 'text',
+                            name: field.name || '',
+                            id: field.id || '',
+                            placeholder: field.placeholder || '',
+                            value: field.value || '',
+                            formAction: form ? form.action : '',
+                            autocomplete: field.getAttribute('autocomplete') || '',
+                            className: field.className || ''
+                        });
+                    })()
+                    """.trimIndent(),
+                )
 
             if (jsonString.isNullOrBlank() || jsonString == "null") {
                 return null
@@ -473,23 +504,33 @@ internal class BrowserHandleImpl(
             val autocomplete = extractValue("autocomplete")
 
             // Determine field type
-            val fieldType = when {
-                inputType == "password" -> FormFieldType.PASSWORD
-                inputType == "email" -> FormFieldType.EMAIL
-                autocomplete.contains("username", ignoreCase = true) -> FormFieldType.USERNAME
-                autocomplete.contains("email", ignoreCase = true) -> FormFieldType.EMAIL
-                autocomplete.contains("password", ignoreCase = true) -> FormFieldType.PASSWORD
-                fieldName.contains("user", ignoreCase = true) ||
-                fieldId.contains("user", ignoreCase = true) ||
-                fieldName.contains("login", ignoreCase = true) ||
-                fieldId.contains("login", ignoreCase = true) -> FormFieldType.USERNAME
-                fieldName.contains("email", ignoreCase = true) ||
-                fieldId.contains("email", ignoreCase = true) -> FormFieldType.EMAIL
-                fieldName.contains("pass", ignoreCase = true) ||
-                fieldId.contains("pass", ignoreCase = true) -> FormFieldType.PASSWORD
-                inputType == "text" -> FormFieldType.TEXT
-                else -> FormFieldType.UNKNOWN
-            }
+            val fieldType =
+                when {
+                    inputType == "password" -> FormFieldType.PASSWORD
+
+                    inputType == "email" -> FormFieldType.EMAIL
+
+                    autocomplete.contains("username", ignoreCase = true) -> FormFieldType.USERNAME
+
+                    autocomplete.contains("email", ignoreCase = true) -> FormFieldType.EMAIL
+
+                    autocomplete.contains("password", ignoreCase = true) -> FormFieldType.PASSWORD
+
+                    fieldName.contains("user", ignoreCase = true) ||
+                        fieldId.contains("user", ignoreCase = true) ||
+                        fieldName.contains("login", ignoreCase = true) ||
+                        fieldId.contains("login", ignoreCase = true) -> FormFieldType.USERNAME
+
+                    fieldName.contains("email", ignoreCase = true) ||
+                        fieldId.contains("email", ignoreCase = true) -> FormFieldType.EMAIL
+
+                    fieldName.contains("pass", ignoreCase = true) ||
+                        fieldId.contains("pass", ignoreCase = true) -> FormFieldType.PASSWORD
+
+                    inputType == "text" -> FormFieldType.TEXT
+
+                    else -> FormFieldType.UNKNOWN
+                }
 
             FormFieldInfo(
                 fieldType = fieldType,
@@ -499,7 +540,7 @@ internal class BrowserHandleImpl(
                 fieldValue = value,
                 parentFormAction = formAction,
                 inputType = inputType,
-                autocomplete = autocomplete
+                autocomplete = autocomplete,
             )
         } catch (e: Exception) {
             logger.debug(LogCategory.BROWSER, "Failed to get form field info", mapOf("error" to e.message))
@@ -573,23 +614,29 @@ internal class BrowserHandleImpl(
         if (coBrowseInjectRegistered) return
         coBrowseInjectRegistered = true
         try {
-            browser.set(InjectJsCallback::class.java, InjectJsCallback { params ->
-                try {
-                    if (coBrowseCapturing && params.frame().isMain) {
-                        injectCoBrowseRecorder(params.frame())
+            browser.set(
+                InjectJsCallback::class.java,
+                InjectJsCallback { params ->
+                    try {
+                        if (coBrowseCapturing && params.frame().isMain) {
+                            injectCoBrowseRecorder(params.frame())
+                        }
+                    } catch (e: Exception) {
+                        logger.warn(LogCategory.BROWSER, "InjectJsCallback failed", error = e)
                     }
-                } catch (e: Exception) {
-                    logger.warn(LogCategory.BROWSER, "InjectJsCallback failed", error = e)
-                }
-                InjectJsCallback.Response.proceed()
-            })
+                    InjectJsCallback.Response.proceed()
+                },
+            )
         } catch (e: Exception) {
             coBrowseInjectRegistered = false
             logger.warn(LogCategory.BROWSER, "Failed to register InjectJsCallback", error = e)
         }
     }
 
-    override fun startCoBrowseCapture(onEvent: (String) -> Unit, maskInputs: Boolean) {
+    override fun startCoBrowseCapture(
+        onEvent: (String) -> Unit,
+        maskInputs: Boolean,
+    ) {
         if (!isValid) return
         if (CoBrowseScripts.recorderLib.isBlank()) {
             logger.error(LogCategory.BROWSER, "Co-browse recorder bundle missing; capture not started", mapOf("handleId" to id))
@@ -645,15 +692,28 @@ internal class BrowserHandleImpl(
 
     override fun dispatchCoBrowseInput(inputJson: String) {
         if (!isValid || !coBrowseControlGranted) return
-        val o = try {
-            kotlinx.serialization.json.Json.parseToJsonElement(inputJson).jsonObject
-        } catch (e: Exception) {
-            logger.warn(LogCategory.BROWSER, "Co-browse input unparsable", mapOf("handleId" to id), error = e)
-            return
-        }
-        fun int(k: String, d: Int = 0) = o[k]?.jsonPrimitive?.intOrNull ?: d
-        fun fl(k: String, d: Float = 0f) = o[k]?.jsonPrimitive?.floatOrNull ?: d
+        val o =
+            try {
+                kotlinx.serialization.json.Json
+                    .parseToJsonElement(inputJson)
+                    .jsonObject
+            } catch (e: Exception) {
+                logger.warn(LogCategory.BROWSER, "Co-browse input unparsable", mapOf("handleId" to id), error = e)
+                return
+            }
+
+        fun int(
+            k: String,
+            d: Int = 0,
+        ) = o[k]?.jsonPrimitive?.intOrNull ?: d
+
+        fun fl(
+            k: String,
+            d: Float = 0f,
+        ) = o[k]?.jsonPrimitive?.floatOrNull ?: d
+
         fun str(k: String) = o[k]?.jsonPrimitive?.contentOrNull ?: ""
+
         fun bool(k: String) = o[k]?.jsonPrimitive?.booleanOrNull ?: false
         val kind = str("kind")
         coBrowseScope.launch {
@@ -661,48 +721,89 @@ internal class BrowserHandleImpl(
                 val point = Point.of(int("x"), int("y"))
                 when (kind) {
                     "down", "up" -> {
-                        val button = when (int("button")) {
-                            1 -> MouseButton.MIDDLE
-                            2 -> MouseButton.SECONDARY
-                            else -> MouseButton.PRIMARY
-                        }
+                        val button =
+                            when (int("button")) {
+                                1 -> MouseButton.MIDDLE
+                                2 -> MouseButton.SECONDARY
+                                else -> MouseButton.PRIMARY
+                            }
                         val clicks = int("clicks", 1)
                         if (kind == "down") {
-                            browser.dispatch(MousePressed.newBuilder(point).button(button).clickCount(clicks).build())
+                            browser.dispatch(
+                                MousePressed
+                                    .newBuilder(point)
+                                    .button(button)
+                                    .clickCount(clicks)
+                                    .build(),
+                            )
                         } else {
-                            browser.dispatch(MouseReleased.newBuilder(point).button(button).clickCount(clicks).build())
+                            browser.dispatch(
+                                MouseReleased
+                                    .newBuilder(point)
+                                    .button(button)
+                                    .clickCount(clicks)
+                                    .build(),
+                            )
                         }
                     }
-                    "move" -> browser.dispatch(MouseMoved.newBuilder(point).build())
-                    "drag" -> browser.dispatch(MouseDragged.newBuilder(point).button(MouseButton.PRIMARY).build())
-                    "wheel" -> browser.dispatch(
-                        MouseWheel.newBuilder(point)
-                            .deltaX(fl("dx"))
-                            .deltaY(fl("dy"))
-                            .scrollType(ScrollType.UNIT_SCROLL)
-                            .build()
-                    )
+
+                    "move" -> {
+                        browser.dispatch(MouseMoved.newBuilder(point).build())
+                    }
+
+                    "drag" -> {
+                        browser.dispatch(MouseDragged.newBuilder(point).button(MouseButton.PRIMARY).build())
+                    }
+
+                    "wheel" -> {
+                        browser.dispatch(
+                            MouseWheel
+                                .newBuilder(point)
+                                .deltaX(fl("dx"))
+                                .deltaY(fl("dy"))
+                                .scrollType(ScrollType.UNIT_SCROLL)
+                                .build(),
+                        )
+                    }
+
                     "keydown", "keyup" -> {
                         val keyCode = jsKeyToKeyCode(str("key"), str("code"))
                         val ch = str("ch").firstOrNull() ?: '\u0000'
-                        val mods = KeyModifiers.newBuilder()
-                            .shiftDown(bool("shift"))
-                            .controlDown(bool("ctrl"))
-                            .altDown(bool("alt"))
-                            .metaDown(bool("meta"))
-                            .build()
+                        val mods =
+                            KeyModifiers
+                                .newBuilder()
+                                .shiftDown(bool("shift"))
+                                .controlDown(bool("ctrl"))
+                                .altDown(bool("alt"))
+                                .metaDown(bool("meta"))
+                                .build()
                         if (kind == "keydown") {
-                            browser.dispatch(KeyPressed.newBuilder(keyCode).keyChar(ch).keyModifiers(mods).build())
+                            browser.dispatch(
+                                KeyPressed
+                                    .newBuilder(keyCode)
+                                    .keyChar(ch)
+                                    .keyModifiers(mods)
+                                    .build(),
+                            )
                             // KeyTyped delivers the character to the focused field; only for
                             // printable input (modifier chords and control keys must not type).
                             if (ch != '\u0000' && !ch.isISOControl() && !bool("ctrl") && !bool("meta")) {
-                                browser.dispatch(KeyTyped.newBuilder(keyCode).keyChar(ch).keyModifiers(mods).build())
+                                browser.dispatch(
+                                    KeyTyped
+                                        .newBuilder(keyCode)
+                                        .keyChar(ch)
+                                        .keyModifiers(mods)
+                                        .build(),
+                                )
                             }
                         } else {
                             browser.dispatch(KeyReleased.newBuilder(keyCode).keyModifiers(mods).build())
                         }
                     }
-                    else -> logger.warn(LogCategory.BROWSER, "Co-browse input unknown kind", mapOf("handleId" to id, "kind" to kind))
+
+                    else -> {
+                        logger.warn(LogCategory.BROWSER, "Co-browse input unknown kind", mapOf("handleId" to id, "kind" to kind))
+                    }
                 }
             } catch (e: Exception) {
                 logger.warn(LogCategory.BROWSER, "Co-browse input dispatch failed", mapOf("handleId" to id, "kind" to kind), error = e)
@@ -711,50 +812,67 @@ internal class BrowserHandleImpl(
     }
 
     /** Map a JS KeyboardEvent key/code pair onto the engine's key codes. */
-    private fun jsKeyToKeyCode(key: String, code: String): KeyCode = when {
-        code.length == 4 && code.startsWith("Key") -> runCatching { KeyCode.valueOf("KEY_CODE_${code[3]}") }.getOrDefault(KeyCode.UNKNOWN)
-        code.length == 6 && code.startsWith("Digit") -> runCatching { KeyCode.valueOf("KEY_CODE_${code[5]}") }.getOrDefault(KeyCode.UNKNOWN)
-        else -> when (key) {
-            "Enter" -> KeyCode.KEY_CODE_RETURN
-            "Backspace" -> KeyCode.KEY_CODE_BACK
-            "Tab" -> KeyCode.KEY_CODE_TAB
-            "Escape" -> KeyCode.KEY_CODE_ESCAPE
-            " ", "Spacebar" -> KeyCode.KEY_CODE_SPACE
-            "ArrowLeft" -> KeyCode.KEY_CODE_LEFT
-            "ArrowRight" -> KeyCode.KEY_CODE_RIGHT
-            "ArrowUp" -> KeyCode.KEY_CODE_UP
-            "ArrowDown" -> KeyCode.KEY_CODE_DOWN
-            "Delete" -> KeyCode.KEY_CODE_DELETE
-            "Home" -> KeyCode.KEY_CODE_HOME
-            "End" -> KeyCode.KEY_CODE_END
-            "PageUp" -> KeyCode.KEY_CODE_PRIOR
-            "PageDown" -> KeyCode.KEY_CODE_NEXT
-            "Shift" -> KeyCode.KEY_CODE_SHIFT
-            "Control" -> KeyCode.KEY_CODE_CONTROL
-            "Alt" -> KeyCode.KEY_CODE_MENU
-            else -> KeyCode.UNKNOWN
+    private fun jsKeyToKeyCode(
+        key: String,
+        code: String,
+    ): KeyCode =
+        when {
+            code.length == 4 && code.startsWith("Key") -> {
+                runCatching { KeyCode.valueOf("KEY_CODE_${code[3]}") }.getOrDefault(KeyCode.UNKNOWN)
+            }
+
+            code.length == 6 && code.startsWith("Digit") -> {
+                runCatching { KeyCode.valueOf("KEY_CODE_${code[5]}") }.getOrDefault(KeyCode.UNKNOWN)
+            }
+
+            else -> {
+                when (key) {
+                    "Enter" -> KeyCode.KEY_CODE_RETURN
+                    "Backspace" -> KeyCode.KEY_CODE_BACK
+                    "Tab" -> KeyCode.KEY_CODE_TAB
+                    "Escape" -> KeyCode.KEY_CODE_ESCAPE
+                    " ", "Spacebar" -> KeyCode.KEY_CODE_SPACE
+                    "ArrowLeft" -> KeyCode.KEY_CODE_LEFT
+                    "ArrowRight" -> KeyCode.KEY_CODE_RIGHT
+                    "ArrowUp" -> KeyCode.KEY_CODE_UP
+                    "ArrowDown" -> KeyCode.KEY_CODE_DOWN
+                    "Delete" -> KeyCode.KEY_CODE_DELETE
+                    "Home" -> KeyCode.KEY_CODE_HOME
+                    "End" -> KeyCode.KEY_CODE_END
+                    "PageUp" -> KeyCode.KEY_CODE_PRIOR
+                    "PageDown" -> KeyCode.KEY_CODE_NEXT
+                    "Shift" -> KeyCode.KEY_CODE_SHIFT
+                    "Control" -> KeyCode.KEY_CODE_CONTROL
+                    "Alt" -> KeyCode.KEY_CODE_MENU
+                    else -> KeyCode.UNKNOWN
+                }
+            }
         }
-    }
 
     override suspend fun applyCoBrowseControl(eventJson: String): String? {
         if (!isValid || !coBrowseControlGranted) {
             logger.warn(
-                LogCategory.BROWSER, "Co-browse control refused by handle guard",
-                mapOf("handleId" to id, "valid" to isValid.toString(), "granted" to coBrowseControlGranted.toString())
+                LogCategory.BROWSER,
+                "Co-browse control refused by handle guard",
+                mapOf("handleId" to id, "valid" to isValid.toString(), "granted" to coBrowseControlGranted.toString()),
             )
             return null
         }
         return withContext(Dispatchers.Main) {
             try {
-                val status = browser.mainFrame().map { frame ->
-                    frame.executeJavaScript<String?>(CoBrowseScripts.applyControl(eventJson))
-                }.orElse(null)
+                val status =
+                    browser
+                        .mainFrame()
+                        .map { frame ->
+                            frame.executeJavaScript<String?>(CoBrowseScripts.applyControl(eventJson))
+                        }.orElse(null)
                 if (status != "ok") {
                     // Non-ok statuses ("stale"/"denied"/"nomirror"/"err:…") are how
                     // control failures surface — keep them visible for live debugging.
                     logger.warn(
-                        LogCategory.BROWSER, "Co-browse control not applied",
-                        mapOf("handleId" to id, "status" to (status ?: "null"), "event" to eventJson.take(120))
+                        LogCategory.BROWSER,
+                        "Co-browse control not applied",
+                        mapOf("handleId" to id, "status" to (status ?: "null"), "event" to eventJson.take(120)),
                     )
                 }
                 status
@@ -766,7 +884,8 @@ internal class BrowserHandleImpl(
     }
 
     override val isValid: Boolean
-        get() = !disposed.get() && !browser.isClosed &&
+        get() =
+            !disposed.get() && !browser.isClosed &&
                 FluckEngine.currentEngineGeneration == engineGeneration
 
     override suspend fun loadUrl(url: String) {
@@ -865,13 +984,9 @@ internal class BrowserHandleImpl(
         }
     }
 
-    override fun canGoBack(): Boolean {
-        return isValid && browser.navigation().canGoBack()
-    }
+    override fun canGoBack(): Boolean = isValid && browser.navigation().canGoBack()
 
-    override fun canGoForward(): Boolean {
-        return isValid && browser.navigation().canGoForward()
-    }
+    override fun canGoForward(): Boolean = isValid && browser.navigation().canGoForward()
 
     // ============================================================
     // ZOOM CONTROLS
@@ -929,9 +1044,7 @@ internal class BrowserHandleImpl(
     // LOADING STATE
     // ============================================================
 
-    override fun isLoading(): Boolean {
-        return _isLoading
-    }
+    override fun isLoading(): Boolean = _isLoading
 
     override fun addLoadingListener(listener: (Boolean) -> Unit) {
         loadingListeners.add(listener)
@@ -985,168 +1098,187 @@ internal class BrowserHandleImpl(
      */
     private fun setupPopupHandler() {
         // Phase 1: Allow popup browser creation
-        browser.set(CreatePopupCallback::class.java, CreatePopupCallback {
-            CreatePopupCallback.Response.create()
-        })
+        browser.set(
+            CreatePopupCallback::class.java,
+            CreatePopupCallback {
+                CreatePopupCallback.Response.create()
+            },
+        )
 
         // Phase 2: Handle popup display based on bounds
         // Based on the original BrowserFunctions.kt implementation
-        browser.set(OpenPopupCallback::class.java, OpenPopupCallback { params ->
-            val popupBrowser = params.popupBrowser()
-            val initialBounds = params.initialBounds()
-            val targetUrl = popupBrowser.url()
+        browser.set(
+            OpenPopupCallback::class.java,
+            OpenPopupCallback { params ->
+                val popupBrowser = params.popupBrowser()
+                val initialBounds = params.initialBounds()
+                val targetUrl = popupBrowser.url()
 
-            // Check if popup has specific window dimensions
-            val isEmptyBounds = initialBounds == Rect.empty()
+                // Check if popup has specific window dimensions
+                val isEmptyBounds = initialBounds == Rect.empty()
 
-            if (isEmptyBounds) {
-                // No dimensions = regular link (target="_blank", cmd+click, form.submit with target="_blank")
-                // Open as tab in BOSS instead of OS window. Race-resolve a destination URL and
-                // (for POST navigations) the upload body, then dispatch via the data-aware
-                // callback if registered, else the legacy URL-only one.
-                installUploadCallbackIfNeeded(popupBrowser.engine())
-                val captureDeferred = CompletableDeferred<PopupCapture?>()
-                pendingPopupCaptures[popupBrowser] = captureDeferred
+                if (isEmptyBounds) {
+                    // No dimensions = regular link (target="_blank", cmd+click, form.submit with target="_blank")
+                    // Open as tab in BOSS instead of OS window. Race-resolve a destination URL and
+                    // (for POST navigations) the upload body, then dispatch via the data-aware
+                    // callback if registered, else the legacy URL-only one.
+                    installUploadCallbackIfNeeded(popupBrowser.engine())
+                    val captureDeferred = CompletableDeferred<PopupCapture?>()
+                    pendingPopupCaptures[popupBrowser] = captureDeferred
 
-                val urlDeferred = CompletableDeferred<String>()
-                val cleanedUp = AtomicBoolean(false)
-                var subscription: Subscription? = null
-                val scope = CoroutineScope(Dispatchers.Default + Job())
+                    val urlDeferred = CompletableDeferred<String>()
+                    val cleanedUp = AtomicBoolean(false)
+                    var subscription: Subscription? = null
+                    val scope = CoroutineScope(Dispatchers.Default + Job())
 
-                fun resolveUrlIfReady() {
-                    if (urlDeferred.isCompleted) return
-                    val u = try { popupBrowser.url() } catch (_: Exception) { "" }
-                    if (u.isNotEmpty() && u != "about:blank") urlDeferred.complete(u)
-                }
-
-                if (targetUrl.isNotEmpty() && targetUrl != "about:blank") {
-                    urlDeferred.complete(targetUrl)
-                } else {
-                    subscription = popupBrowser.navigation().on(LoadStarted::class.java) {
-                        resolveUrlIfReady()
+                    fun resolveUrlIfReady() {
+                        if (urlDeferred.isCompleted) return
+                        val u =
+                            try {
+                                popupBrowser.url()
+                            } catch (_: Exception) {
+                                ""
+                            }
+                        if (u.isNotEmpty() && u != "about:blank") urlDeferred.complete(u)
                     }
-                }
 
-                scope.launch {
-                    try {
-                        // Wait up to 3s for a real URL.
-                        val url = withTimeoutOrNull(3_000) { urlDeferred.await() } ?: ""
-                        // Brief grace period for the POST upload callback to fire after URL is known.
-                        // For POST navigations the upload typically fires within tens of ms of LoadStarted.
-                        val capture = withTimeoutOrNull(500) { captureDeferred.await() }
-
-                        if (cleanedUp.compareAndSet(false, true)) {
-                            subscription?.unsubscribe()
-                            pendingPopupCaptures.remove(popupBrowser)
-                            if (!popupBrowser.isClosed) {
-                                popupBrowser.close()
+                    if (targetUrl.isNotEmpty() && targetUrl != "about:blank") {
+                        urlDeferred.complete(targetUrl)
+                    } else {
+                        subscription =
+                            popupBrowser.navigation().on(LoadStarted::class.java) {
+                                resolveUrlIfReady()
                             }
-                        }
-
-                        val finalUrl = capture?.url?.takeIf { it.isNotEmpty() } ?: url
-                        if (finalUrl.isEmpty() || finalUrl == "about:blank") {
-                            logger.warn(LogCategory.BROWSER, "Popup navigation produced no URL, dropping")
-                            return@launch
-                        }
-
-                        val withDataCb = openInNewTabWithDataCallback
-                        if (withDataCb != null) {
-                            val nav = PopupNavigation(
-                                url = finalUrl,
-                                postData = capture?.body,
-                                contentType = capture?.contentType
-                            )
-                            withContext(Dispatchers.Main) { withDataCb(nav) }
-                        } else {
-                            withContext(Dispatchers.Main) { openInNewTabCallback?.invoke(finalUrl) }
-                        }
-
-                        logger.debug(
-                            LogCategory.BROWSER,
-                            "Popup dispatched",
-                            mapOf(
-                                "url" to finalUrl,
-                                "hasPost" to (capture != null).toString()
-                            )
-                        )
-                    } catch (e: Exception) {
-                        if (cleanedUp.compareAndSet(false, true)) {
-                            subscription?.unsubscribe()
-                            pendingPopupCaptures.remove(popupBrowser)
-                            if (!popupBrowser.isClosed) {
-                                popupBrowser.close()
-                            }
-                        }
-                        logger.warn(LogCategory.BROWSER, "Popup handler error", error = e)
-                    } finally {
-                        scope.cancel()
                     }
-                }
-            } else {
-                // Has dimensions = OAuth/payment popup (window.open with features)
-                // Create Swing window to display the popup browser
-                SwingUtilities.invokeLater {
-                    try {
-                        // Create JFrame for the popup
-                        val frame = JFrame()
-                        val subscriptions = mutableListOf<Subscription>()
 
-                        frame.title = "Popup" // Will be updated by page title
-                        frame.defaultCloseOperation = JFrame.DISPOSE_ON_CLOSE
+                    scope.launch {
+                        try {
+                            // Wait up to 3s for a real URL.
+                            val url = withTimeoutOrNull(3_000) { urlDeferred.await() } ?: ""
+                            // Brief grace period for the POST upload callback to fire after URL is known.
+                            // For POST navigations the upload typically fires within tens of ms of LoadStarted.
+                            val capture = withTimeoutOrNull(500) { captureDeferred.await() }
 
-                        // Set position and size from bounds
-                        frame.setLocation(initialBounds.origin().x(), initialBounds.origin().y())
-                        frame.setSize(initialBounds.size().width(), initialBounds.size().height())
-
-                        // Create BrowserView (Swing version) and add to frame
-                        val browserView = com.teamdev.jxbrowser.view.swing.BrowserView.newInstance(popupBrowser)
-                        frame.contentPane.add(browserView)
-
-                        // Update frame title when page title changes
-                        subscriptions += popupBrowser.on(TitleChanged::class.java) { event ->
-                            SwingUtilities.invokeLater {
-                                frame.title = event.title()
-                            }
-                        }
-
-                        // Close frame when browser closes
-                        subscriptions += popupBrowser.on(BrowserClosed::class.java) {
-                            SwingUtilities.invokeLater {
-                                subscriptions.forEach { it.unsubscribe() }
-                                frame.dispose()
-                            }
-                        }
-
-                        // Close browser when frame closes
-                        frame.addWindowListener(object : java.awt.event.WindowAdapter() {
-                            override fun windowClosing(e: java.awt.event.WindowEvent?) {
-                                subscriptions.forEach {
-                                    try {
-                                        it.unsubscribe()
-                                    } catch (_: Exception) {
-                                        // Ignore errors during cleanup
-                                    }
-                                }
+                            if (cleanedUp.compareAndSet(false, true)) {
+                                subscription?.unsubscribe()
+                                pendingPopupCaptures.remove(popupBrowser)
                                 if (!popupBrowser.isClosed) {
                                     popupBrowser.close()
                                 }
                             }
-                        })
 
-                        // Show the popup window
-                        frame.isVisible = true
-                    } catch (e: Exception) {
-                        logger.error(LogCategory.BROWSER, "Error creating popup window", error = e)
-                        if (!popupBrowser.isClosed) {
-                            popupBrowser.close()
+                            val finalUrl = capture?.url?.takeIf { it.isNotEmpty() } ?: url
+                            if (finalUrl.isEmpty() || finalUrl == "about:blank") {
+                                logger.warn(LogCategory.BROWSER, "Popup navigation produced no URL, dropping")
+                                return@launch
+                            }
+
+                            val withDataCb = openInNewTabWithDataCallback
+                            if (withDataCb != null) {
+                                val nav =
+                                    PopupNavigation(
+                                        url = finalUrl,
+                                        postData = capture?.body,
+                                        contentType = capture?.contentType,
+                                    )
+                                withContext(Dispatchers.Main) { withDataCb(nav) }
+                            } else {
+                                withContext(Dispatchers.Main) { openInNewTabCallback?.invoke(finalUrl) }
+                            }
+
+                            logger.debug(
+                                LogCategory.BROWSER,
+                                "Popup dispatched",
+                                mapOf(
+                                    "url" to finalUrl,
+                                    "hasPost" to (capture != null).toString(),
+                                ),
+                            )
+                        } catch (e: Exception) {
+                            if (cleanedUp.compareAndSet(false, true)) {
+                                subscription?.unsubscribe()
+                                pendingPopupCaptures.remove(popupBrowser)
+                                if (!popupBrowser.isClosed) {
+                                    popupBrowser.close()
+                                }
+                            }
+                            logger.warn(LogCategory.BROWSER, "Popup handler error", error = e)
+                        } finally {
+                            scope.cancel()
+                        }
+                    }
+                } else {
+                    // Has dimensions = OAuth/payment popup (window.open with features)
+                    // Create Swing window to display the popup browser
+                    SwingUtilities.invokeLater {
+                        try {
+                            // Create JFrame for the popup
+                            val frame = JFrame()
+                            val subscriptions = mutableListOf<Subscription>()
+
+                            frame.title = "Popup" // Will be updated by page title
+                            frame.defaultCloseOperation = JFrame.DISPOSE_ON_CLOSE
+
+                            // Set position and size from bounds
+                            frame.setLocation(initialBounds.origin().x(), initialBounds.origin().y())
+                            frame.setSize(initialBounds.size().width(), initialBounds.size().height())
+
+                            // Create BrowserView (Swing version) and add to frame
+                            val browserView =
+                                com.teamdev.jxbrowser.view.swing.BrowserView
+                                    .newInstance(popupBrowser)
+                            frame.contentPane.add(browserView)
+
+                            // Update frame title when page title changes
+                            subscriptions +=
+                                popupBrowser.on(TitleChanged::class.java) { event ->
+                                    SwingUtilities.invokeLater {
+                                        frame.title = event.title()
+                                    }
+                                }
+
+                            // Close frame when browser closes
+                            subscriptions +=
+                                popupBrowser.on(BrowserClosed::class.java) {
+                                    SwingUtilities.invokeLater {
+                                        subscriptions.forEach { it.unsubscribe() }
+                                        frame.dispose()
+                                    }
+                                }
+
+                            // Close browser when frame closes
+                            frame.addWindowListener(
+                                object : java.awt.event.WindowAdapter() {
+                                    override fun windowClosing(e: java.awt.event.WindowEvent?) {
+                                        subscriptions.forEach {
+                                            try {
+                                                it.unsubscribe()
+                                            } catch (_: Exception) {
+                                                // Ignore errors during cleanup
+                                            }
+                                        }
+                                        if (!popupBrowser.isClosed) {
+                                            popupBrowser.close()
+                                        }
+                                    }
+                                },
+                            )
+
+                            // Show the popup window
+                            frame.isVisible = true
+                        } catch (e: Exception) {
+                            logger.error(LogCategory.BROWSER, "Error creating popup window", error = e)
+                            if (!popupBrowser.isClosed) {
+                                popupBrowser.close()
+                            }
                         }
                     }
                 }
-            }
 
-            // Return proceed() to notify the engine we've handled the popup
-            OpenPopupCallback.Response.proceed()
-        })
+                // Return proceed() to notify the engine we've handled the popup
+                OpenPopupCallback.Response.proceed()
+            },
+        )
 
         logger.debug(LogCategory.BROWSER, "Popup handler configured", mapOf("handleId" to id))
     }
@@ -1174,7 +1306,7 @@ internal class BrowserHandleImpl(
     override fun setFullscreenHandler(
         tabId: String,
         onEnterFullscreen: () -> Unit,
-        onExitFullscreen: () -> Unit
+        onExitFullscreen: () -> Unit,
     ) {
         if (!isValid || tabId.isEmpty()) return
 
@@ -1188,7 +1320,7 @@ internal class BrowserHandleImpl(
             onFullscreenExit = {
                 logger.info(LogCategory.BROWSER, "Tab exited fullscreen", mapOf("tabId" to tabId, "handleId" to id))
                 onExitFullscreen()
-            }
+            },
         )
 
         logger.debug(LogCategory.BROWSER, "Fullscreen handler configured", mapOf("tabId" to tabId, "handleId" to id))
@@ -1216,28 +1348,38 @@ internal class BrowserHandleImpl(
     // SECRET AUTO-FILL
     // ============================================================
 
-    override suspend fun fillCredentials(username: String, password: String, fillBoth: Boolean): Boolean {
+    override suspend fun fillCredentials(
+        username: String,
+        password: String,
+        fillBoth: Boolean,
+    ): Boolean {
         if (!isValid) return false
         return try {
-            val mode = if (fillBoth) {
-                FormFieldInjector.FillMode.BOTH
-            } else {
-                // Determine which field to fill based on focused field type
-                val focusedType = browser.mainFrame().map { frame ->
-                    frame.executeJavaScript<String?>("""
-                        (function() {
-                            var el = document.activeElement;
-                            if (!el || el.tagName !== 'INPUT') return null;
-                            return el.type || 'text';
-                        })()
-                    """.trimIndent())
-                }.orElse(null)
+            val mode =
+                if (fillBoth) {
+                    FormFieldInjector.FillMode.BOTH
+                } else {
+                    // Determine which field to fill based on focused field type
+                    val focusedType =
+                        browser
+                            .mainFrame()
+                            .map { frame ->
+                                frame.executeJavaScript<String?>(
+                                    """
+                                    (function() {
+                                        var el = document.activeElement;
+                                        if (!el || el.tagName !== 'INPUT') return null;
+                                        return el.type || 'text';
+                                    })()
+                                    """.trimIndent(),
+                                )
+                            }.orElse(null)
 
-                when (focusedType) {
-                    "password" -> FormFieldInjector.FillMode.PASSWORD_ONLY
-                    else -> FormFieldInjector.FillMode.USERNAME_ONLY
+                    when (focusedType) {
+                        "password" -> FormFieldInjector.FillMode.PASSWORD_ONLY
+                        else -> FormFieldInjector.FillMode.USERNAME_ONLY
+                    }
                 }
-            }
 
             val lockedBrowser = createLockedBrowser()
             val result = FormFieldInjector.fillCredentials(lockedBrowser, username, password, mode)
@@ -1266,12 +1408,14 @@ internal class BrowserHandleImpl(
             val clipboardText = clipboard.getData(DataFlavor.stringFlavor) as? String
             if (!clipboardText.isNullOrEmpty()) {
                 browser.mainFrame().ifPresent { frame ->
-                    val escapedText = clipboardText
-                        .replace("\\", "\\\\")
-                        .replace("'", "\\'")
-                        .replace("\n", "\\n")
-                        .replace("\r", "")
-                    frame.executeJavaScript<Unit>("""
+                    val escapedText =
+                        clipboardText
+                            .replace("\\", "\\\\")
+                            .replace("'", "\\'")
+                            .replace("\n", "\\n")
+                            .replace("\r", "")
+                    frame.executeJavaScript<Unit>(
+                        """
                         (function() {
                             var el = document.activeElement;
                             if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) {
@@ -1287,7 +1431,8 @@ internal class BrowserHandleImpl(
                                 }
                             }
                         })()
-                    """.trimIndent())
+                        """.trimIndent(),
+                    )
                 }
             }
         } catch (e: Exception) {
@@ -1333,20 +1478,21 @@ internal class BrowserHandleImpl(
 
         DisposableEffect(browser, hostWindowId) {
             // Find a valid window to associate with the BrowserView
-            val awtWindow = hostWindowId?.let { WindowFocusManager.getWindow(it) }
-                ?: Window.getWindows().firstOrNull { window ->
-                    try {
-                        window.isDisplayable && window.isShowing
-                    } catch (e: Exception) {
-                        // Window can be mid-disposal - treat as not a candidate
-                        logger.debug(
-                            LogCategory.BROWSER,
-                            "Window state probe failed - skipping window",
-                            mapOf("error" to e.toString()),
-                        )
-                        false
+            val awtWindow =
+                hostWindowId?.let { WindowFocusManager.getWindow(it) }
+                    ?: Window.getWindows().firstOrNull { window ->
+                        try {
+                            window.isDisplayable && window.isShowing
+                        } catch (e: Exception) {
+                            // Window can be mid-disposal - treat as not a candidate
+                            logger.debug(
+                                LogCategory.BROWSER,
+                                "Window state probe failed - skipping window",
+                                mapOf("error" to e.toString()),
+                            )
+                            false
+                        }
                     }
-                }
 
             if (awtWindow != null) {
                 try {
@@ -1375,11 +1521,12 @@ internal class BrowserHandleImpl(
                     val rootPane = (awtWindow as? javax.swing.RootPaneContainer)?.rootPane
 
                     if (rootPane != null) {
-                        gestureToken = MacOSGestureHandler.addMagnificationListener(
-                            rootPane,
-                            onZoomIn = { gatedPinchZoom("in") { zoomIn() } },
-                            onZoomOut = { gatedPinchZoom("out") { zoomOut() } }
-                        )
+                        gestureToken =
+                            MacOSGestureHandler.addMagnificationListener(
+                                rootPane,
+                                onZoomIn = { gatedPinchZoom("in") { zoomIn() } },
+                                onZoomOut = { gatedPinchZoom("out") { zoomOut() } },
+                            )
                         if (gestureToken != null) {
                             gesturePane = rootPane
                             logger.debug(LogCategory.BROWSER, "Added macOS pinch-to-zoom gesture handler")
@@ -1407,40 +1554,41 @@ internal class BrowserHandleImpl(
         viewState?.let { state ->
             BrowserView(
                 state = state,
-                modifier = Modifier
-                    .fillMaxSize()
-                    // Hover tracking that gates the window-wide pinch gesture
-                    // listener to this view (see the DisposableEffect above)
-                    .onPointerEvent(PointerEventType.Enter) { pointerOverBrowserView = true }
-                    .onPointerEvent(PointerEventType.Exit) { pointerOverBrowserView = false }
-                    .onPointerEvent(PointerEventType.Press) { event ->
-                        // Get the native AWT mouse event to check button codes
-                        val awtEvent = event.nativeEvent as? java.awt.event.MouseEvent
-                        
-                        // Handle mouse back button - navigate back
-                        // Windows/macOS: awtButton=4, Linux: awtButton=6 or 8 (varies by mouse)
-                        if (awtEvent?.button in listOf(4, 6, 8)) {
-                            val now = System.currentTimeMillis()
-                            if (isValid && (now - lastNavigationTime) > 100 && canGoBack()) {
-                                lastNavigationTime = now
-                                goBack()
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        // Hover tracking that gates the window-wide pinch gesture
+                        // listener to this view (see the DisposableEffect above)
+                        .onPointerEvent(PointerEventType.Enter) { pointerOverBrowserView = true }
+                        .onPointerEvent(PointerEventType.Exit) { pointerOverBrowserView = false }
+                        .onPointerEvent(PointerEventType.Press) { event ->
+                            // Get the native AWT mouse event to check button codes
+                            val awtEvent = event.nativeEvent as? java.awt.event.MouseEvent
+
+                            // Handle mouse back button - navigate back
+                            // Windows/macOS: awtButton=4, Linux: awtButton=6 or 8 (varies by mouse)
+                            if (awtEvent?.button in listOf(4, 6, 8)) {
+                                val now = System.currentTimeMillis()
+                                if (isValid && (now - lastNavigationTime) > 100 && canGoBack()) {
+                                    lastNavigationTime = now
+                                    goBack()
+                                }
+                                event.changes.forEach { it.consume() }
+                                return@onPointerEvent
                             }
-                            event.changes.forEach { it.consume() }
-                            return@onPointerEvent
-                        }
-                        
-                        // Handle mouse forward button - navigate forward
-                        // Windows/macOS: awtButton=5, Linux: awtButton=7 or 9 (varies by mouse)
-                        if (awtEvent?.button in listOf(5, 7, 9)) {
-                            val now = System.currentTimeMillis()
-                            if (isValid && (now - lastNavigationTime) > 100 && canGoForward()) {
-                                lastNavigationTime = now
-                                goForward()
+
+                            // Handle mouse forward button - navigate forward
+                            // Windows/macOS: awtButton=5, Linux: awtButton=7 or 9 (varies by mouse)
+                            if (awtEvent?.button in listOf(5, 7, 9)) {
+                                val now = System.currentTimeMillis()
+                                if (isValid && (now - lastNavigationTime) > 100 && canGoForward()) {
+                                    lastNavigationTime = now
+                                    goForward()
+                                }
+                                event.changes.forEach { it.consume() }
+                                return@onPointerEvent
                             }
-                            event.changes.forEach { it.consume() }
-                            return@onPointerEvent
-                        }
-                    }
+                        },
             )
         }
     }
@@ -1455,7 +1603,10 @@ internal class BrowserHandleImpl(
         coBrowseBridge.onEvent = null
         coBrowseScope.cancel()
         if (coBrowseInjectRegistered) {
-            try { browser.remove(InjectJsCallback::class.java) } catch (_: Exception) {}
+            try {
+                browser.remove(InjectJsCallback::class.java)
+            } catch (_: Exception) {
+            }
             coBrowseInjectRegistered = false
         }
 
@@ -1492,7 +1643,7 @@ internal class BrowserHandleImpl(
     private data class PopupCapture(
         val url: String,
         val body: ByteArray,
-        val contentType: String
+        val contentType: String,
     )
 
     companion object {
@@ -1532,10 +1683,12 @@ internal class BrowserHandleImpl(
                                 val deferred = pendingPopupCaptures.remove(popupBrowser)
                                 if (deferred != null) {
                                     val bytes = params.uploadData().bytes() ?: ByteArray(0)
-                                    val contentType = params.httpHeaders()
-                                        .firstOrNull { it.name().equals("Content-Type", ignoreCase = true) }
-                                        ?.value()
-                                        ?: "application/x-www-form-urlencoded"
+                                    val contentType =
+                                        params
+                                            .httpHeaders()
+                                            .firstOrNull { it.name().equals("Content-Type", ignoreCase = true) }
+                                            ?.value()
+                                            ?: "application/x-www-form-urlencoded"
                                     deferred.complete(PopupCapture(req.url(), bytes, contentType))
                                 }
                             }
@@ -1543,7 +1696,7 @@ internal class BrowserHandleImpl(
                             staticLogger.warn(LogCategory.BROWSER, "Upload capture failed", error = e)
                         }
                         BeforeSendUploadDataCallback.Response.proceed()
-                    }
+                    },
                 )
                 staticLogger.debug(LogCategory.BROWSER, "BeforeSendUploadDataCallback installed")
             } catch (e: Exception) {

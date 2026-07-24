@@ -26,9 +26,13 @@ object DeepLinkActionRegistryImpl {
     fun register(handler: DeepLinkActionHandler) {
         _handlers.update { existing ->
             if (existing.containsKey(handler.handlerId)) {
-                logger.warn(LogCategory.SYSTEM, "Deep-link handler re-registered (replacing previous)", mapOf(
-                    "handlerId" to handler.handlerId
-                ))
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Deep-link handler re-registered (replacing previous)",
+                    mapOf(
+                        "handlerId" to handler.handlerId,
+                    ),
+                )
             }
             existing + (handler.handlerId to handler)
         }
@@ -43,31 +47,47 @@ object DeepLinkActionRegistryImpl {
      * Route an action deep link to its handler. Returns true only when a
      * handler exists AND reports the action handled; crash-isolated.
      */
-    fun dispatch(handlerId: String, action: String, params: Map<String, String>): Boolean {
+    fun dispatch(
+        handlerId: String,
+        action: String,
+        params: Map<String, String>,
+    ): Boolean {
         val handler = _handlers.value[handlerId]
         if (handler == null) {
-            logger.warn(LogCategory.SYSTEM, "No deep-link action handler registered", mapOf(
-                "handlerId" to handlerId,
-                "action" to action
-            ))
+            logger.warn(
+                LogCategory.SYSTEM,
+                "No deep-link action handler registered",
+                mapOf(
+                    "handlerId" to handlerId,
+                    "action" to action,
+                ),
+            )
             return false
         }
         return try {
             val handled = handler.handle(action, params)
             if (!handled) {
-                logger.warn(LogCategory.SYSTEM, "Deep-link action not handled", mapOf(
-                    "handlerId" to handlerId,
-                    "action" to action,
-                    "paramKeys" to params.keys.joinToString(",")
-                ))
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Deep-link action not handled",
+                    mapOf(
+                        "handlerId" to handlerId,
+                        "action" to action,
+                        "paramKeys" to params.keys.joinToString(","),
+                    ),
+                )
             }
             handled
         } catch (t: Throwable) {
-            logger.warn(LogCategory.SYSTEM, "Deep-link action handler failed", mapOf(
-                "handlerId" to handlerId,
-                "action" to action,
-                "error" to (t.message ?: t::class.simpleName)
-            ))
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Deep-link action handler failed",
+                mapOf(
+                    "handlerId" to handlerId,
+                    "action" to action,
+                    "error" to (t.message ?: t::class.simpleName),
+                ),
+            )
             false
         }
     }

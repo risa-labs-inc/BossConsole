@@ -52,6 +52,7 @@ private fun RenderNode(
                 }
             }
         }
+
         WidgetType.ROW -> {
             Row(modifier = modifier) {
                 node.childIds.forEach { childId ->
@@ -61,6 +62,7 @@ private fun RenderNode(
                 }
             }
         }
+
         WidgetType.BOX -> {
             Box(modifier = modifier) {
                 node.childIds.forEach { childId ->
@@ -70,6 +72,7 @@ private fun RenderNode(
                 }
             }
         }
+
         WidgetType.SCROLL -> {
             val scrollState = rememberScrollState()
             Column(modifier = modifier.verticalScroll(scrollState)) {
@@ -80,6 +83,7 @@ private fun RenderNode(
                 }
             }
         }
+
         WidgetType.TEXT -> {
             val value = node.properties["value"] ?: ""
             val fontSize = node.properties["fontSize"]?.toFloatOrNull() ?: 14f
@@ -89,6 +93,7 @@ private fun RenderNode(
                 modifier = modifier,
             )
         }
+
         WidgetType.BUTTON -> {
             val label = node.properties["label"] ?: ""
             val clickEventId = node.properties["clickEventId"] ?: node.modifier.clickEventId
@@ -99,6 +104,7 @@ private fun RenderNode(
                 Text(label)
             }
         }
+
         WidgetType.TEXT_FIELD -> {
             var value by remember { mutableStateOf(node.properties["value"] ?: "") }
             val placeholder = node.properties["placeholder"] ?: ""
@@ -112,6 +118,7 @@ private fun RenderNode(
                 modifier = modifier,
             )
         }
+
         WidgetType.CHECKBOX -> {
             var checked by remember { mutableStateOf(node.properties["checked"]?.toBoolean() ?: false) }
             val label = node.properties["label"] ?: ""
@@ -129,6 +136,7 @@ private fun RenderNode(
                 }
             }
         }
+
         WidgetType.TOGGLE -> {
             var checked by remember { mutableStateOf(node.properties["checked"]?.toBoolean() ?: false) }
             Switch(
@@ -140,6 +148,7 @@ private fun RenderNode(
                 modifier = modifier,
             )
         }
+
         WidgetType.PROGRESS -> {
             val value = node.properties["value"]?.toFloatOrNull() ?: 0f
             val indeterminate = node.properties["indeterminate"]?.toBoolean() ?: false
@@ -149,13 +158,16 @@ private fun RenderNode(
                 LinearProgressIndicator(progress = value, modifier = modifier.fillMaxWidth())
             }
         }
+
         WidgetType.SPACER -> {
             val height = node.properties["height"]?.toIntOrNull() ?: 8
             Spacer(modifier = Modifier.height(height.dp))
         }
+
         WidgetType.DIVIDER -> {
             Divider(modifier = modifier)
         }
+
         WidgetType.LIST -> {
             val items = node.childIds.mapNotNull { tree.nodes[it] }
             LazyColumn(modifier = modifier) {
@@ -164,6 +176,7 @@ private fun RenderNode(
                 }
             }
         }
+
         WidgetType.ICON -> {
             // Icon rendering — use a Text placeholder for now
             // Full icon mapping from BossEditor icon set to be wired in Phase 7
@@ -175,6 +188,7 @@ private fun RenderNode(
                 modifier = modifier,
             )
         }
+
         WidgetType.DROPDOWN -> {
             var expanded by remember { mutableStateOf(false) }
             val selected = node.properties["selected"] ?: ""
@@ -196,20 +210,23 @@ private fun RenderNode(
                 }
             }
         }
+
         // Complex widgets (CODE_EDITOR, TERMINAL, BROWSER) delegate to host composites
         // These are rendered in-process using the host's actual implementations
         WidgetType.CODE_EDITOR, WidgetType.TERMINAL, WidgetType.BROWSER -> {
-            val message = when (node.type) {
-                WidgetType.CODE_EDITOR -> "Editor (host-rendered)"
-                WidgetType.TERMINAL -> "Terminal (host-rendered)"
-                else -> "Browser (host-rendered)"
-            }
+            val message =
+                when (node.type) {
+                    WidgetType.CODE_EDITOR -> "Editor (host-rendered)"
+                    WidgetType.TERMINAL -> "Terminal (host-rendered)"
+                    else -> "Browser (host-rendered)"
+                }
             Text(
                 text = message,
                 modifier = modifier.background(BossTheme.colors.raised).padding(8.dp),
                 color = BossTheme.colors.textPrimary,
             )
         }
+
         // Remaining types render as placeholders
         else -> {
             val typeName = node.type.name
@@ -223,23 +240,32 @@ private fun RenderNode(
 /**
  * Parse a CSS hex color string (#RGB, #RRGGBB, or #AARRGGBB) into a Compose [Color].
  */
-private fun parseHexColor(hex: String): Color? = runCatching {
-    val clean = hex.trimStart('#')
-    when (clean.length) {
-        6 -> Color(
-            red = clean.substring(0, 2).toInt(16) / 255f,
-            green = clean.substring(2, 4).toInt(16) / 255f,
-            blue = clean.substring(4, 6).toInt(16) / 255f,
-        )
-        8 -> Color(
-            alpha = clean.substring(0, 2).toInt(16) / 255f,
-            red = clean.substring(2, 4).toInt(16) / 255f,
-            green = clean.substring(4, 6).toInt(16) / 255f,
-            blue = clean.substring(6, 8).toInt(16) / 255f,
-        )
-        else -> null
-    }
-}.getOrNull()
+private fun parseHexColor(hex: String): Color? =
+    runCatching {
+        val clean = hex.trimStart('#')
+        when (clean.length) {
+            6 -> {
+                Color(
+                    red = clean.substring(0, 2).toInt(16) / 255f,
+                    green = clean.substring(2, 4).toInt(16) / 255f,
+                    blue = clean.substring(4, 6).toInt(16) / 255f,
+                )
+            }
+
+            8 -> {
+                Color(
+                    alpha = clean.substring(0, 2).toInt(16) / 255f,
+                    red = clean.substring(2, 4).toInt(16) / 255f,
+                    green = clean.substring(4, 6).toInt(16) / 255f,
+                    blue = clean.substring(6, 8).toInt(16) / 255f,
+                )
+            }
+
+            else -> {
+                null
+            }
+        }
+    }.getOrNull()
 
 /**
  * Convert [WidgetModifier] to a Compose [Modifier].
@@ -250,20 +276,27 @@ private fun WidgetModifier.toComposeModifier(
 ): Modifier {
     var m: Modifier = Modifier
 
-    if (width > 0) m = m.width(width.dp)
-    else if (width == -1) m = m.fillMaxWidth()
+    if (width > 0) {
+        m = m.width(width.dp)
+    } else if (width == -1) {
+        m = m.fillMaxWidth()
+    }
 
-    if (height > 0) m = m.height(height.dp)
-    else if (height == -1) m = m.fillMaxHeight()
+    if (height > 0) {
+        m = m.height(height.dp)
+    } else if (height == -1) {
+        m = m.fillMaxHeight()
+    }
 
     val hasPadding = paddingStart > 0 || paddingTop > 0 || paddingEnd > 0 || paddingBottom > 0
     if (hasPadding) {
-        m = m.padding(
-            start = paddingStart.dp,
-            top = paddingTop.dp,
-            end = paddingEnd.dp,
-            bottom = paddingBottom.dp,
-        )
+        m =
+            m.padding(
+                start = paddingStart.dp,
+                top = paddingTop.dp,
+                end = paddingEnd.dp,
+                bottom = paddingBottom.dp,
+            )
     }
 
     if (backgroundColor.isNotEmpty()) {

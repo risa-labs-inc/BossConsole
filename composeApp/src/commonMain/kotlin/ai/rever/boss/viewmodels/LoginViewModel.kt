@@ -3,12 +3,12 @@ package ai.rever.boss.viewmodels
 import ai.rever.boss.services.supabase.models.*
 import ai.rever.boss.viewmodels.auth.AuthOptions
 import ai.rever.boss.viewmodels.auth.AuthOptionsManager
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 
 /**
  * Facade pattern coordinating multiple authentication component ViewModels
@@ -29,17 +29,20 @@ class LoginViewModel {
     val errorMessage: StateFlow<String?> = coreLoginViewModel.errorMessage
 
     // Combined loading state - true when ANY component is loading
-    val isAnyLoading: StateFlow<Boolean> = combine(
-        coreLoginViewModel.isLoading,
-        passkeyAuthViewModel.isLoading,
-        authOptionsManager.isLoading
-    ) { coreLoading, passkeyLoading, optionsLoading ->
-        coreLoading || passkeyLoading || optionsLoading
-    }.stateIn(
-        scope = viewModelScope,
-        started = kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5000),
-        initialValue = false
-    )
+    val isAnyLoading: StateFlow<Boolean> =
+        combine(
+            coreLoginViewModel.isLoading,
+            passkeyAuthViewModel.isLoading,
+            authOptionsManager.isLoading,
+        ) { coreLoading, passkeyLoading, optionsLoading ->
+            coreLoading || passkeyLoading || optionsLoading
+        }.stateIn(
+            scope = viewModelScope,
+            started =
+                kotlinx.coroutines.flow.SharingStarted
+                    .WhileSubscribed(5000),
+            initialValue = false,
+        )
 
     // Cross-device authentication state from PasskeyAuthViewModel
     val showCrossDeviceQR: StateFlow<Boolean> = passkeyAuthViewModel.showCrossDeviceQR
@@ -47,14 +50,20 @@ class LoginViewModel {
     val crossDeviceChallenge: StateFlow<String?> = passkeyAuthViewModel.crossDeviceChallenge
     val crossDeviceSessionId: StateFlow<String?> = passkeyAuthViewModel.crossDeviceSessionId
 
-    fun sendMagicLink(email: String, onSuccess: () -> Unit) {
+    fun sendMagicLink(
+        email: String,
+        onSuccess: () -> Unit,
+    ) {
         coreLoginViewModel.sendMagicLink(email, onSuccess)
     }
 
     /**
      * Authenticate with email and Touch ID - streamlined flow
      */
-    fun authenticateWithEmailAndPasskey(email: String, onSuccess: () -> Unit) {
+    fun authenticateWithEmailAndPasskey(
+        email: String,
+        onSuccess: () -> Unit,
+    ) {
         passkeyAuthViewModel.authenticateWithEmailAndPasskey(email, onSuccess)
     }
 
@@ -64,11 +73,14 @@ class LoginViewModel {
     fun dismissCrossDeviceQR() {
         passkeyAuthViewModel.dismissCrossDeviceQR()
     }
-    
+
     /**
      * Check if a user exists with the given email and return their authentication options
      */
-    fun checkUserExists(email: String, onResult: (AuthOptions) -> Unit) {
+    fun checkUserExists(
+        email: String,
+        onResult: (AuthOptions) -> Unit,
+    ) {
         authOptionsManager.checkUserExists(email, onResult)
     }
 
@@ -87,4 +99,3 @@ class LoginViewModel {
         coreLoginViewModel.setMagicLinkVerificationError(errorMessage)
     }
 }
-

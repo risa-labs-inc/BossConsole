@@ -3,72 +3,90 @@ package ai.rever.boss.components.plugin.providers
 import ai.rever.boss.components.events.FileEventBus
 import ai.rever.boss.components.plugin.panels.left_top.directoryHasChildren
 import ai.rever.boss.components.plugin.panels.left_top.scanDirectory
-import ai.rever.boss.components.plugin.panels.left_top.scanDirectoryWithDepth as platformScanDirectoryWithDepth
+import ai.rever.boss.plugin.api.FileNodeData
+import ai.rever.boss.plugin.api.FileSystemDataProvider
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.revealInFileManager
-import ai.rever.boss.plugin.api.FileNodeData
-import ai.rever.boss.plugin.api.FileSystemDataProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
 import java.io.File
+import ai.rever.boss.components.plugin.panels.left_top.scanDirectoryWithDepth as platformScanDirectoryWithDepth
 
 /**
  * Implementation of FileSystemDataProvider that wraps platform-specific file operations.
  * This allows plugins to access file system without direct platform coupling.
  */
 class FileSystemDataProviderImpl : FileSystemDataProvider {
-
     private val logger = BossLogger.forComponent("FileSystemDataProvider")
     private val ioScope = CoroutineScope(Dispatchers.IO)
 
-    override suspend fun scanDirectory(path: String): FileNodeData? {
-        return kotlinx.coroutines.withContext(Dispatchers.IO) {
-            ai.rever.boss.components.plugin.panels.left_top.scanDirectory(path)
+    override suspend fun scanDirectory(path: String): FileNodeData? =
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+            ai.rever.boss.components.plugin.panels.left_top
+                .scanDirectory(path)
         }
-    }
 
-    override suspend fun scanDirectoryWithDepth(path: String, maxDepth: Int, startDepth: Int): FileNodeData? {
-        return kotlinx.coroutines.withContext(Dispatchers.IO) {
+    override suspend fun scanDirectoryWithDepth(
+        path: String,
+        maxDepth: Int,
+        startDepth: Int,
+    ): FileNodeData? =
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
             platformScanDirectoryWithDepth(path, maxDepth, startDepth)
         }
-    }
 
-    override fun directoryHasChildren(path: String): Boolean {
-        return ai.rever.boss.components.plugin.panels.left_top.directoryHasChildren(path)
-    }
+    override fun directoryHasChildren(path: String): Boolean =
+        ai.rever.boss.components.plugin.panels.left_top
+            .directoryHasChildren(path)
 
     // This host honors the showHidden flag on the read-side scan overloads
     // (api >= 1.0.66, the first published release with the opt-in).
     // Plugins check this before relying on the flag.
     override val supportsHiddenEntries: Boolean get() = true
 
-    override suspend fun scanDirectory(path: String, showHidden: Boolean): FileNodeData? {
-        return kotlinx.coroutines.withContext(Dispatchers.IO) {
-            ai.rever.boss.components.plugin.panels.left_top.scanDirectory(path, showHidden)
+    override suspend fun scanDirectory(
+        path: String,
+        showHidden: Boolean,
+    ): FileNodeData? =
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+            ai.rever.boss.components.plugin.panels.left_top
+                .scanDirectory(path, showHidden)
         }
-    }
 
-    override suspend fun scanDirectoryWithDepth(path: String, maxDepth: Int, startDepth: Int, showHidden: Boolean): FileNodeData? {
-        return kotlinx.coroutines.withContext(Dispatchers.IO) {
+    override suspend fun scanDirectoryWithDepth(
+        path: String,
+        maxDepth: Int,
+        startDepth: Int,
+        showHidden: Boolean,
+    ): FileNodeData? =
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
             platformScanDirectoryWithDepth(path, maxDepth, startDepth, showHidden)
         }
-    }
 
-    override fun directoryHasChildren(path: String, showHidden: Boolean): Boolean {
-        return ai.rever.boss.components.plugin.panels.left_top.directoryHasChildren(path, showHidden)
-    }
+    override fun directoryHasChildren(
+        path: String,
+        showHidden: Boolean,
+    ): Boolean =
+        ai.rever.boss.components.plugin.panels.left_top
+            .directoryHasChildren(path, showHidden)
 
-    override fun openFile(path: String, windowId: String) {
+    override fun openFile(
+        path: String,
+        windowId: String,
+    ) {
         ioScope.launch {
             FileEventBus.openFile(path, sourceWindowId = windowId)
         }
     }
 
-    override suspend fun createFile(parentPath: String, fileName: String): Result<String> {
+    override suspend fun createFile(
+        parentPath: String,
+        fileName: String,
+    ): Result<String> {
         return kotlinx.coroutines.withContext(Dispatchers.IO) {
             try {
                 val parentDir = java.io.File(parentPath)
@@ -82,8 +100,11 @@ class FileSystemDataProviderImpl : FileSystemDataProvider {
                 val canonicalParent = parentDir.canonicalFile
                 val canonicalNew = newFile.canonicalFile
                 if (!canonicalNew.absolutePath.startsWith(canonicalParent.absolutePath + File.separator) &&
-                    canonicalNew.absolutePath != canonicalParent.absolutePath) {
-                    return@withContext Result.failure(SecurityException("Path traversal detected: file would be created outside parent directory"))
+                    canonicalNew.absolutePath != canonicalParent.absolutePath
+                ) {
+                    return@withContext Result.failure(
+                        SecurityException("Path traversal detected: file would be created outside parent directory"),
+                    )
                 }
 
                 if (newFile.exists()) {
@@ -102,7 +123,10 @@ class FileSystemDataProviderImpl : FileSystemDataProvider {
         }
     }
 
-    override suspend fun createFolder(parentPath: String, folderName: String): Result<String> {
+    override suspend fun createFolder(
+        parentPath: String,
+        folderName: String,
+    ): Result<String> {
         return kotlinx.coroutines.withContext(Dispatchers.IO) {
             try {
                 val parentDir = java.io.File(parentPath)
@@ -116,8 +140,11 @@ class FileSystemDataProviderImpl : FileSystemDataProvider {
                 val canonicalParent = parentDir.canonicalFile
                 val canonicalNew = newFolder.canonicalFile
                 if (!canonicalNew.absolutePath.startsWith(canonicalParent.absolutePath + File.separator) &&
-                    canonicalNew.absolutePath != canonicalParent.absolutePath) {
-                    return@withContext Result.failure(SecurityException("Path traversal detected: folder would be created outside parent directory"))
+                    canonicalNew.absolutePath != canonicalParent.absolutePath
+                ) {
+                    return@withContext Result.failure(
+                        SecurityException("Path traversal detected: folder would be created outside parent directory"),
+                    )
                 }
 
                 if (newFolder.exists()) {
@@ -145,17 +172,19 @@ class FileSystemDataProviderImpl : FileSystemDataProvider {
                 val canonicalFile = file.canonicalFile
                 val homeDir = File(System.getProperty("user.home")).canonicalFile
                 if (!canonicalFile.absolutePath.startsWith(homeDir.absolutePath + File.separator) &&
-                    canonicalFile.absolutePath != homeDir.absolutePath) {
+                    canonicalFile.absolutePath != homeDir.absolutePath
+                ) {
                     return@withContext Result.failure(SecurityException("Access denied: file path outside user directory"))
                 }
 
                 // Note: We don't check exists() first to avoid race conditions.
                 // delete() and deleteRecursively() handle non-existent files gracefully.
-                val deleted = if (file.isDirectory) {
-                    file.deleteRecursively()
-                } else {
-                    file.delete()
-                }
+                val deleted =
+                    if (file.isDirectory) {
+                        file.deleteRecursively()
+                    } else {
+                        file.delete()
+                    }
 
                 if (deleted) {
                     Result.success(Unit)
@@ -168,7 +197,10 @@ class FileSystemDataProviderImpl : FileSystemDataProvider {
         }
     }
 
-    override suspend fun rename(path: String, newName: String): Result<String> {
+    override suspend fun rename(
+        path: String,
+        newName: String,
+    ): Result<String> {
         return kotlinx.coroutines.withContext(Dispatchers.IO) {
             try {
                 val file = java.io.File(path)
@@ -176,8 +208,9 @@ class FileSystemDataProviderImpl : FileSystemDataProvider {
                     return@withContext Result.failure(IllegalArgumentException("File or folder does not exist: $path"))
                 }
 
-                val parentDir = file.parentFile
-                    ?: return@withContext Result.failure(IllegalStateException("Cannot determine parent directory"))
+                val parentDir =
+                    file.parentFile
+                        ?: return@withContext Result.failure(IllegalStateException("Cannot determine parent directory"))
 
                 val newFile = java.io.File(parentDir, newName)
 
@@ -185,8 +218,11 @@ class FileSystemDataProviderImpl : FileSystemDataProvider {
                 val canonicalParent = parentDir.canonicalFile
                 val canonicalNew = newFile.canonicalFile
                 if (!canonicalNew.absolutePath.startsWith(canonicalParent.absolutePath + File.separator) &&
-                    canonicalNew.absolutePath != canonicalParent.absolutePath) {
-                    return@withContext Result.failure(SecurityException("Path traversal detected: file would be moved outside parent directory"))
+                    canonicalNew.absolutePath != canonicalParent.absolutePath
+                ) {
+                    return@withContext Result.failure(
+                        SecurityException("Path traversal detected: file would be moved outside parent directory"),
+                    )
                 }
 
                 if (newFile.exists()) {
@@ -205,11 +241,10 @@ class FileSystemDataProviderImpl : FileSystemDataProvider {
         }
     }
 
-    override fun revealInFileManager(path: String): Result<Unit> =
-        revealInFileManager(path)
+    override fun revealInFileManager(path: String): Result<Unit> = revealInFileManager(path)
 
-    override fun copyToClipboard(text: String): Result<Unit> {
-        return try {
+    override fun copyToClipboard(text: String): Result<Unit> =
+        try {
             val clipboard = Toolkit.getDefaultToolkit().systemClipboard
             clipboard.setContents(StringSelection(text), null)
             Result.success(Unit)
@@ -217,9 +252,11 @@ class FileSystemDataProviderImpl : FileSystemDataProvider {
             logger.warn(LogCategory.FILE, "Failed to copy to clipboard", error = e)
             Result.failure(e)
         }
-    }
 
-    override suspend fun writeFile(path: String, content: String): Result<Unit> {
+    override suspend fun writeFile(
+        path: String,
+        content: String,
+    ): Result<Unit> {
         return kotlinx.coroutines.withContext(Dispatchers.IO) {
             try {
                 val file = java.io.File(path)
@@ -228,7 +265,8 @@ class FileSystemDataProviderImpl : FileSystemDataProvider {
                 val canonicalFile = file.canonicalFile
                 val homeDir = File(System.getProperty("user.home")).canonicalFile
                 if (!canonicalFile.absolutePath.startsWith(homeDir.absolutePath + File.separator) &&
-                    canonicalFile.absolutePath != homeDir.absolutePath) {
+                    canonicalFile.absolutePath != homeDir.absolutePath
+                ) {
                     return@withContext Result.failure(SecurityException("Access denied: file path outside user directory"))
                 }
 
@@ -256,7 +294,8 @@ class FileSystemDataProviderImpl : FileSystemDataProvider {
                 val canonicalFile = file.canonicalFile
                 val homeDir = File(System.getProperty("user.home")).canonicalFile
                 if (!canonicalFile.absolutePath.startsWith(homeDir.absolutePath + File.separator) &&
-                    canonicalFile.absolutePath != homeDir.absolutePath) {
+                    canonicalFile.absolutePath != homeDir.absolutePath
+                ) {
                     return@withContext Result.failure(SecurityException("Access denied: file path outside user directory"))
                 }
 
@@ -277,7 +316,5 @@ class FileSystemDataProviderImpl : FileSystemDataProvider {
         return if (downloadsDir.exists()) downloadsDir.absolutePath else homeDir
     }
 
-    override fun getHomeDirectory(): String {
-        return System.getProperty("user.home")
-    }
+    override fun getHomeDirectory(): String = System.getProperty("user.home")
 }

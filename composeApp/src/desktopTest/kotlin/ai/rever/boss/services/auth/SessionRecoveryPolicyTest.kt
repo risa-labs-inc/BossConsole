@@ -11,7 +11,6 @@ import kotlin.time.Duration.Companion.seconds
  * CoreAuthService's session recovery loop.
  */
 class SessionRecoveryPolicyTest {
-
     @Test
     fun `4xx rejections clear the session`() {
         assertEquals(SessionRecoveryPolicy.Action.ClearSession, SessionRecoveryPolicy.actionForStatus(400))

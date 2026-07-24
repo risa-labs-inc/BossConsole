@@ -25,22 +25,26 @@ class SettingsProviderProxy(
     channel: ManagedChannel,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
 ) : SettingsProvider {
-
     private val stub = EventBusServiceGrpcKt.EventBusServiceCoroutineStub(channel)
 
-    override fun openSettings(windowId: String, section: String) {
+    override fun openSettings(
+        windowId: String,
+        section: String,
+    ) {
         scope.launch {
             try {
                 val payload = """{"windowId":${windowId.jsonEscape()},"section":${section.jsonEscape()}}"""
                 stub.publish(
-                    EventEnvelope.newBuilder()
+                    EventEnvelope
+                        .newBuilder()
                         .setEventType("boss.ui.OpenSettingsEvent")
                         .setPayload(ByteString.copyFromUtf8(payload))
                         .setSourceWindowId(windowId)
                         .setTimestamp(System.currentTimeMillis())
-                        .build()
+                        .build(),
                 )
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
         }
     }
 

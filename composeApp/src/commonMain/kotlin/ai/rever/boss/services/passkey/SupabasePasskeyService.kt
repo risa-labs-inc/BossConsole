@@ -18,28 +18,29 @@ import io.ktor.client.statement.bodyAsText
  * - HTTP communication via SupabaseApiClient
  */
 object SupabasePasskeyService {
-
     private val logger = BossLogger.forComponent("SupabasePasskeyService")
 
     suspend fun requestRegistrationChallenge(
         userId: String,
         displayName: String,
-        authenticatorSelection: AuthenticatorSelectionCriteria?
+        authenticatorSelection: AuthenticatorSelectionCriteria?,
     ): Result<PasskeyChallenge> {
         // Validate input parameters
-        PasskeyRegistrationHandler.validateRegistrationRequest(userId, displayName)
+        PasskeyRegistrationHandler
+            .validateRegistrationRequest(userId, displayName)
             .onFailure { return Result.failure(it) }
-            
-        PasskeyRegistrationHandler.validateAuthenticatorSelection(authenticatorSelection)
+
+        PasskeyRegistrationHandler
+            .validateAuthenticatorSelection(authenticatorSelection)
             .onFailure { return Result.failure(it) }
-        
+
         return PasskeyRegistrationHandler.requestChallenge(
             userId = userId,
             displayName = displayName,
-            authenticatorSelection = authenticatorSelection
+            authenticatorSelection = authenticatorSelection,
         )
     }
-    
+
     /**
      * Complete passkey registration with Supabase
      * @param userId User identifier
@@ -50,19 +51,20 @@ object SupabasePasskeyService {
     suspend fun completeRegistration(
         userId: String,
         registration: PasskeyRegistration,
-        challenge: String
+        challenge: String,
     ): Result<PasskeyCredential> {
         // Validate input parameters
-        PasskeyRegistrationHandler.validateRegistrationCompletion(userId, registration, challenge)
+        PasskeyRegistrationHandler
+            .validateRegistrationCompletion(userId, registration, challenge)
             .onFailure { return Result.failure(it) }
-        
+
         return PasskeyRegistrationHandler.completeRegistration(
             userId = userId,
             registration = registration,
-            challenge = challenge
+            challenge = challenge,
         )
     }
-    
+
     /**
      * Request passkey authentication challenge from Supabase
      * @param email Optional user email (for usernameless login)
@@ -70,18 +72,19 @@ object SupabasePasskeyService {
      */
     suspend fun requestAuthenticationChallenge(
         email: String? = null,
-        sessionId: String? = null
+        sessionId: String? = null,
     ): Result<PasskeyAuthenticationChallenge> {
         // Validate input parameters
-        PasskeyAuthenticationHandler.validateAuthenticationRequest(email, sessionId)
+        PasskeyAuthenticationHandler
+            .validateAuthenticationRequest(email, sessionId)
             .onFailure { return Result.failure(it) }
-        
+
         return PasskeyAuthenticationHandler.requestChallenge(
             email = email,
-            sessionId = sessionId
+            sessionId = sessionId,
         )
     }
-    
+
     /**
      * Complete passkey authentication with Supabase
      * @param assertion Authentication assertion from platform service
@@ -90,18 +93,19 @@ object SupabasePasskeyService {
      */
     suspend fun completeAuthentication(
         assertion: PasskeyAssertion,
-        challenge: String
+        challenge: String,
     ): Result<PasskeyAuthenticationResult> {
         // Validate input parameters
-        PasskeyAuthenticationHandler.validateAuthenticationCompletion(assertion, challenge)
+        PasskeyAuthenticationHandler
+            .validateAuthenticationCompletion(assertion, challenge)
             .onFailure { return Result.failure(it) }
-        
+
         return PasskeyAuthenticationHandler.completeAuthentication(
             assertion = assertion,
-            challenge = challenge
+            challenge = challenge,
         )
     }
-    
+
     /**
      * Get user's registered passkey credentials from Supabase
      * @param userId User identifier
@@ -115,10 +119,11 @@ object SupabasePasskeyService {
 
             logger.debug(LogCategory.PASSKEY, "Fetching passkeys for user", mapOf("userId" to LogSanitizer.maskUserId(userId)))
 
-            val requestData = PasskeyDataMapper.createManagementRequest(
-                action = "list",
-                userId = userId
-            )
+            val requestData =
+                PasskeyDataMapper.createManagementRequest(
+                    action = "list",
+                    userId = userId,
+                )
 
             // Call Edge Function for passkey management
             val response = SupabaseApiClient.listPasskeys(requestData)
@@ -128,10 +133,14 @@ object SupabasePasskeyService {
 
             if (managementResponse.success) {
                 val passkeys = managementResponse.passkeyList()
-                logger.info(LogCategory.PASSKEY, "Fetched user passkeys", mapOf(
-                    "userId" to LogSanitizer.maskUserId(userId),
-                    "count" to passkeys.size
-                ))
+                logger.info(
+                    LogCategory.PASSKEY,
+                    "Fetched user passkeys",
+                    mapOf(
+                        "userId" to LogSanitizer.maskUserId(userId),
+                        "count" to passkeys.size,
+                    ),
+                )
                 Result.success(passkeys)
             } else {
                 logger.warn(LogCategory.PASSKEY, "Failed to fetch user passkeys", mapOf("error" to managementResponse.error))
@@ -146,29 +155,37 @@ object SupabasePasskeyService {
             Result.failure(e)
         }
     }
-    
+
     /**
      * Delete a passkey credential
      * @param userId User identifier
      * @param credentialId Credential ID to delete
      * @return Success or failure result
      */
-    suspend fun deletePasskey(userId: String, credentialId: String): Result<Unit> {
+    suspend fun deletePasskey(
+        userId: String,
+        credentialId: String,
+    ): Result<Unit> {
         return try {
             if (userId.isBlank() || credentialId.isBlank()) {
                 return Result.failure(IllegalArgumentException("User ID and credential ID cannot be blank"))
             }
 
-            logger.debug(LogCategory.PASSKEY, "Deleting passkey", mapOf(
-                "userId" to LogSanitizer.maskUserId(userId),
-                "credentialId" to LogSanitizer.maskCredentialId(credentialId)
-            ))
-
-            val requestData = PasskeyDataMapper.createManagementRequest(
-                action = "delete",
-                userId = userId,
-                passkeyId = credentialId
+            logger.debug(
+                LogCategory.PASSKEY,
+                "Deleting passkey",
+                mapOf(
+                    "userId" to LogSanitizer.maskUserId(userId),
+                    "credentialId" to LogSanitizer.maskCredentialId(credentialId),
+                ),
             )
+
+            val requestData =
+                PasskeyDataMapper.createManagementRequest(
+                    action = "delete",
+                    userId = userId,
+                    passkeyId = credentialId,
+                )
 
             // Call Edge Function for passkey management
             val response = SupabaseApiClient.deletePasskey(requestData)
@@ -178,9 +195,13 @@ object SupabasePasskeyService {
             val managementResponse = PasskeyDataMapper.parseManagementResponse(responseText)
 
             if (managementResponse.success) {
-                logger.info(LogCategory.PASSKEY, "Passkey deleted successfully", mapOf(
-                    "userId" to LogSanitizer.maskUserId(userId)
-                ))
+                logger.info(
+                    LogCategory.PASSKEY,
+                    "Passkey deleted successfully",
+                    mapOf(
+                        "userId" to LogSanitizer.maskUserId(userId),
+                    ),
+                )
                 Result.success(Unit)
             } else {
                 logger.warn(LogCategory.PASSKEY, "Failed to delete passkey", mapOf("error" to managementResponse.error))
@@ -191,21 +212,24 @@ object SupabasePasskeyService {
             Result.failure(e)
         }
     }
-    
+
     /**
      * Check authentication status for cross-device flows
      */
-    suspend fun checkAuthenticationStatus(challenge: String, sessionId: String? = null): Result<PasskeyAuthenticationResult> {
+    suspend fun checkAuthenticationStatus(
+        challenge: String,
+        sessionId: String? = null,
+    ): Result<PasskeyAuthenticationResult> {
         // Validate input parameters
-        PasskeyAuthenticationHandler.validateStatusCheck(challenge, sessionId)
+        PasskeyAuthenticationHandler
+            .validateStatusCheck(challenge, sessionId)
             .onFailure { return Result.failure(it) }
-        
+
         return PasskeyAuthenticationHandler.checkStatus(
             challenge = challenge,
-            sessionId = sessionId
+            sessionId = sessionId,
         )
     }
-    
-    // Utility methods for backward compatibility and convenience
 
+    // Utility methods for backward compatibility and convenience
 }

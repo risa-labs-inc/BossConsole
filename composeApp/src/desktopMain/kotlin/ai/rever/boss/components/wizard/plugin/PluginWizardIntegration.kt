@@ -13,9 +13,7 @@ actual object PluginWizardIntegration {
      *
      * @return List of plugins formatted for the wizard UI
      */
-    actual suspend fun getAvailablePlugins(): List<WizardPluginInfo> {
-        return PluginListProvider.getAvailablePlugins()
-    }
+    actual suspend fun getAvailablePlugins(): List<WizardPluginInfo> = PluginListProvider.getAvailablePlugins()
 
     /**
      * Install the selected plugins.
@@ -28,7 +26,7 @@ actual object PluginWizardIntegration {
     actual suspend fun installPlugins(
         dynamicPluginManager: DynamicPluginManager,
         plugins: List<WizardPluginInfo>,
-        onProgress: (Float, String) -> Unit
+        onProgress: (Float, String) -> Unit,
     ): Result<PluginInstallResult> {
         val service = PluginInstallService.create(dynamicPluginManager)
         return service.installPlugins(plugins, onProgress)

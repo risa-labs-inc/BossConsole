@@ -1,9 +1,9 @@
 package ai.rever.boss.project
 
-import ai.rever.boss.window.Project
 import ai.rever.boss.platform.FileSystemUtils
 import ai.rever.boss.project.templates.ProjectTemplate
 import ai.rever.boss.project.templates.TemplateFile
+import ai.rever.boss.window.Project
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -13,13 +13,32 @@ import java.io.File
  * Creates projects by writing static template files with placeholder substitution.
  */
 actual object ProjectCreationService {
-
     // Windows reserved filenames (case-insensitive)
-    private val WINDOWS_RESERVED_NAMES = setOf(
-        "CON", "PRN", "AUX", "NUL",
-        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
-    )
+    private val WINDOWS_RESERVED_NAMES =
+        setOf(
+            "CON",
+            "PRN",
+            "AUX",
+            "NUL",
+            "COM1",
+            "COM2",
+            "COM3",
+            "COM4",
+            "COM5",
+            "COM6",
+            "COM7",
+            "COM8",
+            "COM9",
+            "LPT1",
+            "LPT2",
+            "LPT3",
+            "LPT4",
+            "LPT5",
+            "LPT6",
+            "LPT7",
+            "LPT8",
+            "LPT9",
+        )
 
     // Maximum filename length for most filesystems
     private const val MAX_NAME_LENGTH = 255
@@ -28,71 +47,75 @@ actual object ProjectCreationService {
         name: String,
         parentDirectory: String,
         template: ProjectTemplate,
-        onProgress: (Float, String) -> Unit
-    ): Result<Project> = withContext(Dispatchers.IO) {
-        var projectDir: File? = null
-        try {
-            val trimmedName = name.trim()
-            projectDir = File(parentDirectory, trimmedName)
-            val packageName = derivePackageName(trimmedName)
+        onProgress: (Float, String) -> Unit,
+    ): Result<Project> =
+        withContext(Dispatchers.IO) {
+            var projectDir: File? = null
+            try {
+                val trimmedName = name.trim()
+                projectDir = File(parentDirectory, trimmedName)
+                val packageName = derivePackageName(trimmedName)
 
-            // Step 1: Validate location
-            onProgress(0.05f, "Validating project location...")
-            val validation = validateProjectLocation(parentDirectory, trimmedName)
-            if (validation is ValidationResult.Invalid) {
-                return@withContext Result.failure(IllegalArgumentException(validation.reason))
-            }
-
-            // Step 2: Create project directory (with race condition check)
-            onProgress(0.1f, "Creating project directory...")
-            if (projectDir.exists()) {
-                return@withContext Result.failure(
-                    IllegalStateException("Project directory was created by another process")
-                )
-            }
-            if (!projectDir.mkdirs()) {
-                return@withContext Result.failure(
-                    IllegalStateException("Failed to create project directory: ${projectDir.absolutePath}")
-                )
-            }
-
-            // Step 3: Write template files
-            val totalFiles = template.files.size
-            if (totalFiles > 0) {
-                template.files.forEachIndexed { index, templateFile ->
-                    val progress = 0.1f + (0.8f * (index + 1) / totalFiles)
-                    onProgress(progress, "Creating ${templateFile.relativePath}...")
-
-                    writeTemplateFile(projectDir, templateFile, trimmedName, packageName)
+                // Step 1: Validate location
+                onProgress(0.05f, "Validating project location...")
+                val validation = validateProjectLocation(parentDirectory, trimmedName)
+                if (validation is ValidationResult.Invalid) {
+                    return@withContext Result.failure(IllegalArgumentException(validation.reason))
                 }
-            }
 
-            // Step 4: Complete
-            onProgress(1.0f, "Project created successfully!")
+                // Step 2: Create project directory (with race condition check)
+                onProgress(0.1f, "Creating project directory...")
+                if (projectDir.exists()) {
+                    return@withContext Result.failure(
+                        IllegalStateException("Project directory was created by another process"),
+                    )
+                }
+                if (!projectDir.mkdirs()) {
+                    return@withContext Result.failure(
+                        IllegalStateException("Failed to create project directory: ${projectDir.absolutePath}"),
+                    )
+                }
 
-            Result.success(
-                Project(
-                    name = trimmedName,
-                    path = projectDir.absolutePath,
-                    lastOpened = System.currentTimeMillis()
-                )
-            )
-        } catch (e: Exception) {
-            // Cleanup partial project on failure
-            projectDir?.let { dir ->
-                if (dir.exists()) {
-                    try {
-                        dir.deleteRecursively()
-                    } catch (_: Exception) {
-                        // Best effort cleanup
+                // Step 3: Write template files
+                val totalFiles = template.files.size
+                if (totalFiles > 0) {
+                    template.files.forEachIndexed { index, templateFile ->
+                        val progress = 0.1f + (0.8f * (index + 1) / totalFiles)
+                        onProgress(progress, "Creating ${templateFile.relativePath}...")
+
+                        writeTemplateFile(projectDir, templateFile, trimmedName, packageName)
                     }
                 }
-            }
-            Result.failure(e)
-        }
-    }
 
-    actual fun validateProjectLocation(parentDirectory: String, projectName: String): ValidationResult {
+                // Step 4: Complete
+                onProgress(1.0f, "Project created successfully!")
+
+                Result.success(
+                    Project(
+                        name = trimmedName,
+                        path = projectDir.absolutePath,
+                        lastOpened = System.currentTimeMillis(),
+                    ),
+                )
+            } catch (e: Exception) {
+                // Cleanup partial project on failure
+                projectDir?.let { dir ->
+                    if (dir.exists()) {
+                        try {
+                            dir.deleteRecursively()
+                        } catch (_: Exception) {
+                            // Best effort cleanup
+                        }
+                    }
+                }
+                Result.failure(e)
+            }
+        }
+
+    actual fun validateProjectLocation(
+        parentDirectory: String,
+        projectName: String,
+    ): ValidationResult {
         val trimmedName = projectName.trim()
 
         // Check project name is not empty
@@ -166,19 +189,21 @@ actual object ProjectCreationService {
 
     actual fun derivePackageName(projectName: String): String {
         // Convert to lowercase and replace common separators with dots for better structure
-        val processed = projectName
-            .lowercase()
-            .replace(Regex("[-_ ]+"), ".")  // Convert separators to dots
-            .replace(Regex("[^a-z0-9.]"), "") // Remove invalid chars
-            .replace(Regex("\\.+"), ".")     // Collapse multiple dots
-            .trim('.')                        // Remove leading/trailing dots
+        val processed =
+            projectName
+                .lowercase()
+                .replace(Regex("[-_ ]+"), ".") // Convert separators to dots
+                .replace(Regex("[^a-z0-9.]"), "") // Remove invalid chars
+                .replace(Regex("\\.+"), ".") // Collapse multiple dots
+                .trim('.') // Remove leading/trailing dots
 
         // Ensure it doesn't start with a number (invalid in most languages)
-        val result = if (processed.isNotEmpty() && processed[0].isDigit()) {
-            "p$processed"
-        } else {
-            processed
-        }
+        val result =
+            if (processed.isNotEmpty() && processed[0].isDigit()) {
+                "p$processed"
+            } else {
+                processed
+            }
 
         return result.ifEmpty { "project" }
     }
@@ -192,7 +217,7 @@ actual object ProjectCreationService {
         projectDir: File,
         templateFile: TemplateFile,
         projectName: String,
-        packageName: String
+        packageName: String,
     ) {
         val file = File(projectDir, templateFile.relativePath)
 
@@ -205,9 +230,10 @@ actual object ProjectCreationService {
         file.parentFile?.mkdirs()
 
         // Replace placeholders in content
-        val content = templateFile.content
-            .replace("{PROJECT_NAME}", projectName)
-            .replace("{PACKAGE_NAME}", packageName)
+        val content =
+            templateFile.content
+                .replace("{PROJECT_NAME}", projectName)
+                .replace("{PACKAGE_NAME}", packageName)
 
         // Write the file with error handling
         try {

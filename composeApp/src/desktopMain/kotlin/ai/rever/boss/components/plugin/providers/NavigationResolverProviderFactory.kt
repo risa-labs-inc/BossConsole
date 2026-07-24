@@ -10,6 +10,4 @@ import ai.rever.boss.plugin.api.NavigationResolverProvider
  * No plugin consumed this provider — navigation runs inside the plugin's
  * bundled BossEditor directly.
  */
-actual fun createNavigationResolverProvider(): NavigationResolverProvider? {
-    return null
-}
+actual fun createNavigationResolverProvider(): NavigationResolverProvider? = null

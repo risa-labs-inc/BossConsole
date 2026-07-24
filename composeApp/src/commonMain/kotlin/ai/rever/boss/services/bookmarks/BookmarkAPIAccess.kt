@@ -1,11 +1,11 @@
 package ai.rever.boss.services.bookmarks
 
+import ai.rever.boss.components.plugin.DefaultPlugin
 import ai.rever.boss.plugin.api.BookmarkDataProvider
 import ai.rever.boss.plugin.bookmark.Bookmark
 import ai.rever.boss.plugin.bookmark.BookmarkCollection
 import ai.rever.boss.plugin.bookmark.FavoriteWorkspace
 import ai.rever.boss.plugin.workspace.TabConfig
-import ai.rever.boss.components.plugin.DefaultPlugin
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.runtime.Composable
@@ -58,65 +58,62 @@ object BookmarkAPIAccess {
      * @param defaultPlugin The DefaultPlugin to query
      * @return The provider if the bookmarks plugin is installed, null otherwise
      */
-    fun getProvider(defaultPlugin: DefaultPlugin): BookmarkDataProvider? {
-        return defaultPlugin.getPluginAPI(BookmarkDataProvider::class.java)
-    }
+    fun getProvider(defaultPlugin: DefaultPlugin): BookmarkDataProvider? = defaultPlugin.getPluginAPI(BookmarkDataProvider::class.java)
 
     // ==================== Convenience Methods (Graceful Degradation) ====================
 
     /**
      * Get bookmark collections, or empty list if plugin not available.
      */
-    fun getCollections(): List<BookmarkCollection> {
-        return getProvider()?.collections?.value ?: emptyList()
-    }
+    fun getCollections(): List<BookmarkCollection> = getProvider()?.collections?.value ?: emptyList()
 
     /**
      * Get favorite workspaces, or empty list if plugin not available.
      */
-    fun getFavoriteWorkspaces(): List<FavoriteWorkspace> {
-        return getProvider()?.favoriteWorkspaces?.value ?: emptyList()
-    }
+    fun getFavoriteWorkspaces(): List<FavoriteWorkspace> = getProvider()?.favoriteWorkspaces?.value ?: emptyList()
 
     /**
      * Check if a tab is bookmarked, or false if plugin not available.
      */
-    fun isTabBookmarked(tabConfig: TabConfig): Boolean {
-        return getProvider()?.isTabBookmarked(tabConfig) ?: false
-    }
+    fun isTabBookmarked(tabConfig: TabConfig): Boolean = getProvider()?.isTabBookmarked(tabConfig) ?: false
 
     /**
      * Find bookmark for tab, or null if plugin not available.
      */
-    fun findBookmarkForTab(tabConfig: TabConfig): Pair<String, String>? {
-        return getProvider()?.findBookmarkForTab(tabConfig)
-    }
+    fun findBookmarkForTab(tabConfig: TabConfig): Pair<String, String>? = getProvider()?.findBookmarkForTab(tabConfig)
 
     /**
      * Check if workspace is favorited, or false if plugin not available.
      */
-    fun isFavorite(workspaceId: String): Boolean {
-        return getProvider()?.isFavorite(workspaceId) ?: false
-    }
+    fun isFavorite(workspaceId: String): Boolean = getProvider()?.isFavorite(workspaceId) ?: false
 
     /**
      * Add bookmark (no-op if plugin not available).
      */
-    fun addBookmark(collectionName: String, bookmark: Bookmark) {
+    fun addBookmark(
+        collectionName: String,
+        bookmark: Bookmark,
+    ) {
         getProvider()?.addBookmark(collectionName, bookmark)
     }
 
     /**
      * Remove bookmark (no-op if plugin not available).
      */
-    fun removeBookmark(collectionId: String, bookmarkId: String) {
+    fun removeBookmark(
+        collectionId: String,
+        bookmarkId: String,
+    ) {
         getProvider()?.removeBookmark(collectionId, bookmarkId)
     }
 
     /**
      * Add favorite workspace (no-op if plugin not available).
      */
-    fun addFavoriteWorkspace(workspaceId: String, workspaceName: String) {
+    fun addFavoriteWorkspace(
+        workspaceId: String,
+        workspaceName: String,
+    ) {
         getProvider()?.addFavoriteWorkspace(workspaceId, workspaceName)
     }
 

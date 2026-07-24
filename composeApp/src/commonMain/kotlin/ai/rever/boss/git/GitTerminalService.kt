@@ -5,7 +5,6 @@ package ai.rever.boss.git
  * Uses expect/actual pattern for platform-specific terminal implementations.
  */
 expect object GitTerminalService {
-
     /**
      * Open a git command in the sidebar terminal panel.
      * Creates a new tab in the sidebar terminal with the given command.
@@ -20,6 +19,6 @@ expect object GitTerminalService {
         windowId: String,
         command: String,
         workingDirectory: String,
-        operationName: String
+        operationName: String,
     ): Boolean
 }

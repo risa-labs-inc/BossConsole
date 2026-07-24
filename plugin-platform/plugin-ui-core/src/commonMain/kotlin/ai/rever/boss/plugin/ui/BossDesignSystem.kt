@@ -34,22 +34,22 @@ import androidx.compose.ui.unit.sp
 
 object BossPalette {
     // Surface — host AND terminal share `ink` as the floor.
-    val ink = Color(0xFF0E1217)      // base floor
-    val panel = Color(0xFF161D26)    // chrome / raised surface
-    val raised = Color(0xFF1E2731)   // menus, popovers, hover
-    val line = Color(0xFF2A3744)     // hairline border / divider
+    val ink = Color(0xFF0E1217) // base floor
+    val panel = Color(0xFF161D26) // chrome / raised surface
+    val raised = Color(0xFF1E2731) // menus, popovers, hover
+    val line = Color(0xFF2A3744) // hairline border / divider
     val lineStrong = Color(0xFF3A4B5C) // input edge / strong border
 
     // Ink on surface.
-    val chalk = Color(0xFFE9EEF3)    // primary text
-    val mist = Color(0xFF8593A3)     // secondary text
-    val muted = Color(0xFF5C6977)    // tertiary / disabled
+    val chalk = Color(0xFFE9EEF3) // primary text
+    val mist = Color(0xFF8593A3) // secondary text
+    val muted = Color(0xFF5C6977) // tertiary / disabled
 
     // Signals.
-    val signal = Color(0xFFF2A93B)     // amber — live / active / primary action
-    val signalDim = Color(0xFFC98A2E)  // pressed / variant
+    val signal = Color(0xFFF2A93B) // amber — live / active / primary action
+    val signalDim = Color(0xFFC98A2E) // pressed / variant
     val signalWash = Color(0xFF2A2113) // amber at home on ink (hover fill)
-    val data = Color(0xFF56C7E0)       // cyan — links / info / data
+    val data = Color(0xFF56C7E0) // cyan — links / info / data
 
     // Semantic.
     val ok = Color(0xFF6FD08C)
@@ -85,25 +85,26 @@ data class BossColorScheme(
     val onData: Color,
 )
 
-val BossDarkColorScheme = BossColorScheme(
-    ink = BossPalette.ink,
-    panel = BossPalette.panel,
-    raised = BossPalette.raised,
-    line = BossPalette.line,
-    lineStrong = BossPalette.lineStrong,
-    textPrimary = BossPalette.chalk,
-    textSecondary = BossPalette.mist,
-    textMuted = BossPalette.muted,
-    signal = BossPalette.signal,
-    signalDim = BossPalette.signalDim,
-    signalWash = BossPalette.signalWash,
-    data = BossPalette.data,
-    ok = BossPalette.ok,
-    warn = BossPalette.warn,
-    alert = BossPalette.alert,
-    onSignal = BossPalette.onSignal,
-    onData = BossPalette.onData,
-)
+val BossDarkColorScheme =
+    BossColorScheme(
+        ink = BossPalette.ink,
+        panel = BossPalette.panel,
+        raised = BossPalette.raised,
+        line = BossPalette.line,
+        lineStrong = BossPalette.lineStrong,
+        textPrimary = BossPalette.chalk,
+        textSecondary = BossPalette.mist,
+        textMuted = BossPalette.muted,
+        signal = BossPalette.signal,
+        signalDim = BossPalette.signalDim,
+        signalWash = BossPalette.signalWash,
+        data = BossPalette.data,
+        ok = BossPalette.ok,
+        warn = BossPalette.warn,
+        alert = BossPalette.alert,
+        onSignal = BossPalette.onSignal,
+        onData = BossPalette.onData,
+    )
 
 // ---------------------------------------------------------------------------
 // Spacing — 8.dp base with a 4.dp half-step. "cell" mirrors a Meslo char cell.
@@ -112,7 +113,7 @@ val BossDarkColorScheme = BossColorScheme(
 data class BossSpacing(
     val hairline: androidx.compose.ui.unit.Dp = 2.dp,
     val xs: androidx.compose.ui.unit.Dp = 4.dp,
-    val sm: androidx.compose.ui.unit.Dp = 8.dp,   // base unit
+    val sm: androidx.compose.ui.unit.Dp = 8.dp, // base unit
     val md: androidx.compose.ui.unit.Dp = 12.dp,
     val lg: androidx.compose.ui.unit.Dp = 16.dp,
     val xl: androidx.compose.ui.unit.Dp = 24.dp,
@@ -127,7 +128,7 @@ data class BossSpacing(
 // ---------------------------------------------------------------------------
 
 data class BossRadii(
-    val grid: androidx.compose.ui.unit.Dp = 0.dp,   // terminal, cell grid
+    val grid: androidx.compose.ui.unit.Dp = 0.dp, // terminal, cell grid
     val input: androidx.compose.ui.unit.Dp = 3.dp,
     val button: androidx.compose.ui.unit.Dp = 5.dp,
     val card: androidx.compose.ui.unit.Dp = 5.dp,
@@ -145,8 +146,8 @@ data class BossRadii(
 // ---------------------------------------------------------------------------
 
 data class BossElevation(
-    val floor: androidx.compose.ui.unit.Dp = 0.dp,   // ink
-    val panel: androidx.compose.ui.unit.Dp = 0.dp,   // tint + 1px line
+    val floor: androidx.compose.ui.unit.Dp = 0.dp, // ink
+    val panel: androidx.compose.ui.unit.Dp = 0.dp, // tint + 1px line
     val popover: androidx.compose.ui.unit.Dp = 8.dp, // menus / dialogs
 )
 
@@ -156,9 +157,9 @@ data class BossElevation(
 // ---------------------------------------------------------------------------
 
 object BossMotion {
-    const val instantMs = 0      // cursor, key echo
-    const val fastMs = 90        // hover, press
-    const val baseMs = 160       // menus, panels
+    const val instantMs = 0 // cursor, key echo
+    const val fastMs = 90 // hover, press
+    const val baseMs = 160 // menus, panels
     const val cursorBlinkMs = 530
 
     // Standard easing control points: cubic-bezier(0.2, 0.0, 0.0, 1.0)
@@ -187,15 +188,16 @@ data class BossTypography(
 fun bossTypography(
     mono: FontFamily = FontFamily.Monospace,
     sans: FontFamily = FontFamily.Default,
-): BossTypography = BossTypography(
-    displayLarge = TextStyle(fontFamily = mono, fontWeight = FontWeight.SemiBold, fontSize = 28.sp, letterSpacing = (-0.5).sp),
-    displaySmall = TextStyle(fontFamily = mono, fontWeight = FontWeight.SemiBold, fontSize = 22.sp),
-    title = TextStyle(fontFamily = sans, fontWeight = FontWeight.SemiBold, fontSize = 16.sp),
-    body = TextStyle(fontFamily = sans, fontWeight = FontWeight.Normal, fontSize = 13.sp),
-    data = TextStyle(fontFamily = mono, fontWeight = FontWeight.Normal, fontSize = 14.sp),
-    label = TextStyle(fontFamily = mono, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, letterSpacing = 1.5.sp),
-    micro = TextStyle(fontFamily = mono, fontWeight = FontWeight.Medium, fontSize = 10.sp, letterSpacing = 1.0.sp),
-)
+): BossTypography =
+    BossTypography(
+        displayLarge = TextStyle(fontFamily = mono, fontWeight = FontWeight.SemiBold, fontSize = 28.sp, letterSpacing = (-0.5).sp),
+        displaySmall = TextStyle(fontFamily = mono, fontWeight = FontWeight.SemiBold, fontSize = 22.sp),
+        title = TextStyle(fontFamily = sans, fontWeight = FontWeight.SemiBold, fontSize = 16.sp),
+        body = TextStyle(fontFamily = sans, fontWeight = FontWeight.Normal, fontSize = 13.sp),
+        data = TextStyle(fontFamily = mono, fontWeight = FontWeight.Normal, fontSize = 14.sp),
+        label = TextStyle(fontFamily = mono, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, letterSpacing = 1.5.sp),
+        micro = TextStyle(fontFamily = mono, fontWeight = FontWeight.Medium, fontSize = 10.sp, letterSpacing = 1.0.sp),
+    )
 
 // ---------------------------------------------------------------------------
 // CompositionLocals + accessor. Mirrors the MaterialTheme pattern: there is a
@@ -210,13 +212,18 @@ val LocalBossTypography = staticCompositionLocalOf { bossTypography() }
 
 object BossTheme {
     val colors: BossColorScheme
-        @Composable @ReadOnlyComposable get() = LocalBossColors.current
+        @Composable @ReadOnlyComposable
+        get() = LocalBossColors.current
     val space: BossSpacing
-        @Composable @ReadOnlyComposable get() = LocalBossSpacing.current
+        @Composable @ReadOnlyComposable
+        get() = LocalBossSpacing.current
     val radius: BossRadii
-        @Composable @ReadOnlyComposable get() = LocalBossRadii.current
+        @Composable @ReadOnlyComposable
+        get() = LocalBossRadii.current
     val elevation: BossElevation
-        @Composable @ReadOnlyComposable get() = LocalBossElevation.current
+        @Composable @ReadOnlyComposable
+        get() = LocalBossElevation.current
     val type: BossTypography
-        @Composable @ReadOnlyComposable get() = LocalBossTypography.current
+        @Composable @ReadOnlyComposable
+        get() = LocalBossTypography.current
 }

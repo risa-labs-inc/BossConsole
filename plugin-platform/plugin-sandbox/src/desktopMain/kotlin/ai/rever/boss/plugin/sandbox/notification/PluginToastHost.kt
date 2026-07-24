@@ -1,5 +1,6 @@
 package ai.rever.boss.plugin.sandbox.notification
 
+import ai.rever.boss.plugin.ui.BossThemeColors
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -38,7 +39,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import ai.rever.boss.plugin.ui.BossThemeColors
 
 /**
  * Host composable for displaying plugin toast notifications.
@@ -57,26 +57,27 @@ import ai.rever.boss.plugin.ui.BossThemeColors
 @Composable
 fun PluginToastHost(
     toastState: PluginToastState,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     val toasts by toastState.toasts.collectAsState()
 
     Column(
-        modifier = modifier
-            .padding(16.dp)
-            .widthIn(max = 400.dp),
+        modifier =
+            modifier
+                .padding(16.dp)
+                .widthIn(max = 400.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
-        horizontalAlignment = Alignment.End
+        horizontalAlignment = Alignment.End,
     ) {
         toasts.forEach { toast ->
             AnimatedVisibility(
                 visible = true,
                 enter = fadeIn() + slideInVertically { -it },
-                exit = fadeOut() + slideOutVertically { -it }
+                exit = fadeOut() + slideOutVertically { -it },
             ) {
                 PluginToast(
                     message = toast,
-                    onDismiss = { toastState.dismiss(toast.id) }
+                    onDismiss = { toastState.dismiss(toast.id) },
                 )
             }
         }
@@ -92,48 +93,50 @@ fun PluginToastHost(
 @Composable
 fun PluginToast(
     message: ToastMessage,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
 ) {
     val (accentColor, icon) = toastAccent(message.type)
 
     Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(1.dp, BossThemeColors.BorderColor, RoundedCornerShape(12.dp)),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .border(1.dp, BossThemeColors.BorderColor, RoundedCornerShape(12.dp)),
         shape = RoundedCornerShape(12.dp),
         color = BossThemeColors.SurfaceColor,
-        shadowElevation = 8.dp
+        shadowElevation = 8.dp,
     ) {
         Row(
-            modifier = Modifier
-                .padding(14.dp),
-            verticalAlignment = Alignment.Top
+            modifier =
+                Modifier
+                    .padding(14.dp),
+            verticalAlignment = Alignment.Top,
         ) {
             // Type icon (the only colored element)
             Icon(
                 imageVector = icon,
                 contentDescription = null,
                 tint = accentColor,
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier.size(20.dp),
             )
 
             Spacer(Modifier.width(12.dp))
 
             // Content
             Column(
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f),
             ) {
                 Text(
                     text = message.title,
                     color = BossThemeColors.TextPrimary,
                     fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.SemiBold,
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
                     text = message.message,
                     color = BossThemeColors.TextSecondary,
-                    fontSize = 12.sp
+                    fontSize = 12.sp,
                 )
 
                 // Action button
@@ -143,13 +146,13 @@ fun PluginToast(
                             action.onClick()
                             onDismiss()
                         },
-                        modifier = Modifier.padding(top = 4.dp)
+                        modifier = Modifier.padding(top = 4.dp),
                     ) {
                         Text(
                             text = action.label,
                             color = BossThemeColors.AccentColor,
                             fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium
+                            fontWeight = FontWeight.Medium,
                         )
                     }
                 }
@@ -158,13 +161,13 @@ fun PluginToast(
             // Dismiss button
             IconButton(
                 onClick = onDismiss,
-                modifier = Modifier.size(24.dp)
+                modifier = Modifier.size(24.dp),
             ) {
                 Icon(
                     imageVector = Icons.Outlined.Close,
                     contentDescription = "Dismiss",
                     tint = BossThemeColors.TextMuted,
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier.size(16.dp),
                 )
             }
         }
@@ -175,11 +178,10 @@ fun PluginToast(
  * Accent color + icon for a toast type. The surface and text colors are uniform
  * (BOSS dialog palette); only the icon is tinted to signal the type.
  */
-private fun toastAccent(type: ToastType): Pair<Color, ImageVector> {
-    return when (type) {
+private fun toastAccent(type: ToastType): Pair<Color, ImageVector> =
+    when (type) {
         ToastType.INFO -> BossThemeColors.AccentColor to Icons.Outlined.Info
         ToastType.SUCCESS -> BossThemeColors.SuccessColor to Icons.Outlined.CheckCircle
         ToastType.WARNING -> BossThemeColors.WarningColor to Icons.Outlined.Warning
         ToastType.ERROR -> BossThemeColors.ErrorColor to Icons.Outlined.Error
     }
-}

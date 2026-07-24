@@ -6,11 +6,11 @@ import androidx.compose.runtime.Composable
  * Types of form fields that can be detected.
  */
 enum class FormFieldType {
-    USERNAME,   // Username or login field
-    PASSWORD,   // Password field
-    EMAIL,      // Email field
-    TEXT,       // Generic text field
-    UNKNOWN     // Cannot determine
+    USERNAME, // Username or login field
+    PASSWORD, // Password field
+    EMAIL, // Email field
+    TEXT, // Generic text field
+    UNKNOWN, // Cannot determine
 }
 
 /**
@@ -33,9 +33,10 @@ data class FormFieldInfo(
     /** HTML input type attribute */
     val inputType: String,
     /** Autocomplete attribute value */
-    val autocomplete: String
+    val autocomplete: String,
 ) {
     fun isPasswordField(): Boolean = fieldType == FormFieldType.PASSWORD
+
     fun isUsernameField(): Boolean = fieldType == FormFieldType.USERNAME || fieldType == FormFieldType.EMAIL
 }
 
@@ -60,7 +61,7 @@ data class BrowserContextMenuInfo(
     /** Current page title */
     val pageTitle: String = "",
     /** Form field info if right-clicked on a form field (for secret auto-fill) */
-    val formFieldInfo: FormFieldInfo? = null
+    val formFieldInfo: FormFieldInfo? = null,
 )
 
 /**
@@ -82,7 +83,7 @@ data class PopupNavigation(
     /** POST body bytes, or null for a GET navigation. */
     val postData: ByteArray? = null,
     /** Content-Type for [postData] (e.g. "application/x-www-form-urlencoded"). */
-    val contentType: String? = null
+    val contentType: String? = null,
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -130,7 +131,9 @@ interface BrowserHandle {
      * after a bounded timeout even if load doesn't complete). Default delegates to
      * [loadUrl] without waiting.
      */
-    suspend fun loadUrlAndWait(url: String) { loadUrl(url) }
+    suspend fun loadUrlAndWait(url: String) {
+        loadUrl(url)
+    }
 
     /**
      * Execute JavaScript in the page's main frame and return its value (or null on
@@ -329,7 +332,11 @@ interface BrowserHandle {
      *                 the currently focused field based on its type.
      * @return true if credentials were filled successfully, false otherwise
      */
-    suspend fun fillCredentials(username: String, password: String, fillBoth: Boolean = true): Boolean
+    suspend fun fillCredentials(
+        username: String,
+        password: String,
+        fillBoth: Boolean = true,
+    ): Boolean
 
     // ============================================================
     // CLIPBOARD OPERATIONS
@@ -430,7 +437,7 @@ interface BrowserHandle {
     fun setFullscreenHandler(
         tabId: String,
         onEnterFullscreen: () -> Unit,
-        onExitFullscreen: () -> Unit
+        onExitFullscreen: () -> Unit,
     )
 
     /**
@@ -465,7 +472,10 @@ interface BrowserHandle {
      * @param maskInputs When true, rrweb masks form-input values (maskAllInputs) so typed
      *   content is not streamed. Passwords are masked regardless. Default false.
      */
-    fun startCoBrowseCapture(onEvent: (String) -> Unit, maskInputs: Boolean = false) {
+    fun startCoBrowseCapture(
+        onEvent: (String) -> Unit,
+        maskInputs: Boolean = false,
+    ) {
         // Default: no-op for hosts that don't support DOM capture.
     }
 

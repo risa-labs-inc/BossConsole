@@ -1,10 +1,10 @@
 package ai.rever.boss.keymap.lifecycle.conditions
 
-import ai.rever.boss.keymap.lifecycle.ShortcutLifecycleCondition
-import ai.rever.boss.keymap.lifecycle.AndCondition
-import ai.rever.boss.keymap.lifecycle.OrCondition
 import ai.rever.boss.keymap.lifecycle.AlwaysEnabledCondition
+import ai.rever.boss.keymap.lifecycle.AndCondition
 import ai.rever.boss.keymap.lifecycle.NeverEnabledCondition
+import ai.rever.boss.keymap.lifecycle.OrCondition
+import ai.rever.boss.keymap.lifecycle.ShortcutLifecycleCondition
 
 /**
  * Common lifecycle conditions and fluent builder API for keyboard shortcuts.
@@ -85,13 +85,14 @@ class ConditionBuilder {
      * @throws IllegalStateException if no check function was provided
      */
     fun build(): ShortcutLifecycleCondition {
-        val check = enabledCheck
-            ?: throw IllegalStateException("Condition check not set. Call whenTrue() or whenTrueSync() first.")
+        val check =
+            enabledCheck
+                ?: throw IllegalStateException("Condition check not set. Call whenTrue() or whenTrueSync() first.")
 
         return LambdaCondition(
             check = check,
             disabledReasonText = reason,
-            enabledDescriptionText = description
+            enabledDescriptionText = description,
         )
     }
 }
@@ -102,9 +103,10 @@ class ConditionBuilder {
 internal class LambdaCondition(
     private val check: suspend () -> Boolean,
     private val disabledReasonText: String,
-    private val enabledDescriptionText: String
+    private val enabledDescriptionText: String,
 ) : ShortcutLifecycleCondition {
     override suspend fun isEnabled(): Boolean = check()
+
     override val disabledReason: String get() = disabledReasonText
     override val enabledDescription: String get() = enabledDescriptionText
 }
@@ -122,9 +124,7 @@ internal class LambdaCondition(
  * }
  * ```
  */
-fun condition(block: ConditionBuilder.() -> Unit): ShortcutLifecycleCondition {
-    return ConditionBuilder().apply(block).build()
-}
+fun condition(block: ConditionBuilder.() -> Unit): ShortcutLifecycleCondition = ConditionBuilder().apply(block).build()
 
 /**
  * Creates a condition that is enabled when the lambda returns true.
@@ -133,14 +133,13 @@ fun condition(block: ConditionBuilder.() -> Unit): ShortcutLifecycleCondition {
 fun enabledWhen(
     reason: String = "Condition not met",
     description: String = "Custom condition",
-    check: suspend () -> Boolean
-): ShortcutLifecycleCondition {
-    return LambdaCondition(
+    check: suspend () -> Boolean,
+): ShortcutLifecycleCondition =
+    LambdaCondition(
         check = check,
         disabledReasonText = reason,
-        enabledDescriptionText = description
+        enabledDescriptionText = description,
     )
-}
 
 /**
  * Creates a condition that is enabled when the synchronous lambda returns true.
@@ -148,14 +147,13 @@ fun enabledWhen(
 fun enabledWhenSync(
     reason: String = "Condition not met",
     description: String = "Custom condition",
-    check: () -> Boolean
-): ShortcutLifecycleCondition {
-    return LambdaCondition(
+    check: () -> Boolean,
+): ShortcutLifecycleCondition =
+    LambdaCondition(
         check = { check() },
         disabledReasonText = reason,
-        enabledDescriptionText = description
+        enabledDescriptionText = description,
     )
-}
 
 // ============================================================================
 // Condition Combinators (Extension Functions)
@@ -165,17 +163,13 @@ fun enabledWhenSync(
  * Combines two conditions with AND logic.
  * Both conditions must be enabled for the result to be enabled.
  */
-infix fun ShortcutLifecycleCondition.and(other: ShortcutLifecycleCondition): ShortcutLifecycleCondition {
-    return AndCondition(listOf(this, other))
-}
+infix fun ShortcutLifecycleCondition.and(other: ShortcutLifecycleCondition): ShortcutLifecycleCondition = AndCondition(listOf(this, other))
 
 /**
  * Combines two conditions with OR logic.
  * At least one condition must be enabled for the result to be enabled.
  */
-infix fun ShortcutLifecycleCondition.or(other: ShortcutLifecycleCondition): ShortcutLifecycleCondition {
-    return OrCondition(listOf(this, other))
-}
+infix fun ShortcutLifecycleCondition.or(other: ShortcutLifecycleCondition): ShortcutLifecycleCondition = OrCondition(listOf(this, other))
 
 /**
  * Inverts a condition.
@@ -183,11 +177,12 @@ infix fun ShortcutLifecycleCondition.or(other: ShortcutLifecycleCondition): Shor
  */
 fun ShortcutLifecycleCondition.not(
     invertedReason: String = "Condition is met (should not be)",
-    invertedDescription: String = "When condition is not met"
+    invertedDescription: String = "When condition is not met",
 ): ShortcutLifecycleCondition {
     val original = this
     return object : ShortcutLifecycleCondition {
         override suspend fun isEnabled(): Boolean = !original.isEnabled()
+
         override val disabledReason: String get() = invertedReason
         override val enabledDescription: String get() = invertedDescription
     }
@@ -201,236 +196,212 @@ fun ShortcutLifecycleCondition.not(
  * Factory object with pre-built conditions for common scenarios.
  */
 object Conditions {
-
     // ---- Tab-related conditions ----
 
     /**
      * Condition that is enabled when there are tabs open.
      */
-    fun hasTabs(getTabCount: () -> Int): ShortcutLifecycleCondition {
-        return TabCountCondition(getTabCount, minTabCount = 1)
-    }
+    fun hasTabs(getTabCount: () -> Int): ShortcutLifecycleCondition = TabCountCondition(getTabCount, minTabCount = 1)
 
     /**
      * Condition that is enabled when there are at least N tabs.
      */
-    fun hasMinTabs(minCount: Int, getTabCount: () -> Int): ShortcutLifecycleCondition {
-        return TabCountCondition(getTabCount, minTabCount = minCount)
-    }
+    fun hasMinTabs(
+        minCount: Int,
+        getTabCount: () -> Int,
+    ): ShortcutLifecycleCondition = TabCountCondition(getTabCount, minTabCount = minCount)
 
     /**
      * Condition that is enabled when there are multiple tabs for navigation.
      */
-    fun hasMultipleTabs(getTabCount: () -> Int): ShortcutLifecycleCondition {
-        return TabNavigationCondition(getTabCount)
-    }
+    fun hasMultipleTabs(getTabCount: () -> Int): ShortcutLifecycleCondition = TabNavigationCondition(getTabCount)
 
     /**
      * Condition that is enabled when there is an active tab.
      */
-    fun hasActiveTab(check: () -> Boolean): ShortcutLifecycleCondition {
-        return ActiveTabCondition(check)
-    }
+    fun hasActiveTab(check: () -> Boolean): ShortcutLifecycleCondition = ActiveTabCondition(check)
 
     // ---- Panel/Split-related conditions ----
 
     /**
      * Condition that is enabled when there are active panels.
      */
-    fun hasPanels(check: () -> Boolean): ShortcutLifecycleCondition {
-        return PanelCondition(check)
-    }
+    fun hasPanels(check: () -> Boolean): ShortcutLifecycleCondition = PanelCondition(check)
 
     /**
      * Condition that is enabled when split navigation is possible (2+ panels).
      */
-    fun canNavigateSplits(getSplitCount: () -> Int): ShortcutLifecycleCondition {
-        return SplitNavigationCondition(getSplitCount)
-    }
+    fun canNavigateSplits(getSplitCount: () -> Int): ShortcutLifecycleCondition = SplitNavigationCondition(getSplitCount)
 
     /**
      * Condition that is enabled when more splits can be created.
      */
-    fun canCreateSplit(getSplitCount: () -> Int, maxSplits: Int = 4): ShortcutLifecycleCondition {
-        return CanCreateSplitCondition(getSplitCount, maxSplits)
-    }
+    fun canCreateSplit(
+        getSplitCount: () -> Int,
+        maxSplits: Int = 4,
+    ): ShortcutLifecycleCondition = CanCreateSplitCondition(getSplitCount, maxSplits)
 
     // ---- Clipboard-related conditions ----
 
     /**
      * Condition that is enabled when the clipboard has content.
      */
-    fun hasClipboardContent(check: () -> Boolean): ShortcutLifecycleCondition {
-        return enabledWhenSync(
+    fun hasClipboardContent(check: () -> Boolean): ShortcutLifecycleCondition =
+        enabledWhenSync(
             reason = "Clipboard is empty",
             description = "When clipboard has content",
-            check = check
+            check = check,
         )
-    }
 
     /**
      * Condition that is enabled when the clipboard has text.
      */
-    fun hasClipboardText(check: () -> Boolean): ShortcutLifecycleCondition {
-        return enabledWhenSync(
+    fun hasClipboardText(check: () -> Boolean): ShortcutLifecycleCondition =
+        enabledWhenSync(
             reason = "No text in clipboard",
             description = "When clipboard has text",
-            check = check
+            check = check,
         )
-    }
 
     // ---- Selection-related conditions ----
 
     /**
      * Condition that is enabled when there is a selection.
      */
-    fun hasSelection(check: () -> Boolean): ShortcutLifecycleCondition {
-        return enabledWhenSync(
+    fun hasSelection(check: () -> Boolean): ShortcutLifecycleCondition =
+        enabledWhenSync(
             reason = "No selection",
             description = "When content is selected",
-            check = check
+            check = check,
         )
-    }
 
     /**
      * Condition that is enabled when there is a text selection.
      */
-    fun hasTextSelection(check: () -> Boolean): ShortcutLifecycleCondition {
-        return enabledWhenSync(
+    fun hasTextSelection(check: () -> Boolean): ShortcutLifecycleCondition =
+        enabledWhenSync(
             reason = "No text selected",
             description = "When text is selected",
-            check = check
+            check = check,
         )
-    }
 
     // ---- Edit-related conditions ----
 
     /**
      * Condition that is enabled when content is editable.
      */
-    fun isEditable(check: () -> Boolean): ShortcutLifecycleCondition {
-        return enabledWhenSync(
+    fun isEditable(check: () -> Boolean): ShortcutLifecycleCondition =
+        enabledWhenSync(
             reason = "Content is read-only",
             description = "When content is editable",
-            check = check
+            check = check,
         )
-    }
 
     /**
      * Condition that is enabled when there are unsaved changes.
      */
-    fun hasUnsavedChanges(check: () -> Boolean): ShortcutLifecycleCondition {
-        return enabledWhenSync(
+    fun hasUnsavedChanges(check: () -> Boolean): ShortcutLifecycleCondition =
+        enabledWhenSync(
             reason = "No unsaved changes",
             description = "When there are unsaved changes",
-            check = check
+            check = check,
         )
-    }
 
     /**
      * Condition that is enabled when undo is available.
      */
-    fun canUndo(check: () -> Boolean): ShortcutLifecycleCondition {
-        return enabledWhenSync(
+    fun canUndo(check: () -> Boolean): ShortcutLifecycleCondition =
+        enabledWhenSync(
             reason = "Nothing to undo",
             description = "When undo is available",
-            check = check
+            check = check,
         )
-    }
 
     /**
      * Condition that is enabled when redo is available.
      */
-    fun canRedo(check: () -> Boolean): ShortcutLifecycleCondition {
-        return enabledWhenSync(
+    fun canRedo(check: () -> Boolean): ShortcutLifecycleCondition =
+        enabledWhenSync(
             reason = "Nothing to redo",
             description = "When redo is available",
-            check = check
+            check = check,
         )
-    }
 
     // ---- Context-specific conditions ----
 
     /**
      * Condition that is enabled when a browser tab is active.
      */
-    fun isBrowserActive(check: () -> Boolean): ShortcutLifecycleCondition {
-        return enabledWhenSync(
+    fun isBrowserActive(check: () -> Boolean): ShortcutLifecycleCondition =
+        enabledWhenSync(
             reason = "No browser tab active",
             description = "When browser is active",
-            check = check
+            check = check,
         )
-    }
 
     /**
      * Condition that is enabled when an editor tab is active.
      */
-    fun isEditorActive(check: () -> Boolean): ShortcutLifecycleCondition {
-        return enabledWhenSync(
+    fun isEditorActive(check: () -> Boolean): ShortcutLifecycleCondition =
+        enabledWhenSync(
             reason = "No editor tab active",
             description = "When editor is active",
-            check = check
+            check = check,
         )
-    }
 
     /**
      * Condition that is enabled when a terminal is active.
      */
-    fun isTerminalActive(check: () -> Boolean): ShortcutLifecycleCondition {
-        return enabledWhenSync(
+    fun isTerminalActive(check: () -> Boolean): ShortcutLifecycleCondition =
+        enabledWhenSync(
             reason = "No terminal active",
             description = "When terminal is active",
-            check = check
+            check = check,
         )
-    }
 
     // ---- Project-related conditions ----
 
     /**
      * Condition that is enabled when a project is open.
      */
-    fun hasProjectOpen(check: () -> Boolean): ShortcutLifecycleCondition {
-        return enabledWhenSync(
+    fun hasProjectOpen(check: () -> Boolean): ShortcutLifecycleCondition =
+        enabledWhenSync(
             reason = "No project open",
             description = "When a project is open",
-            check = check
+            check = check,
         )
-    }
 
     /**
      * Condition that is enabled when files are open in the project.
      */
-    fun hasFilesOpen(check: () -> Boolean): ShortcutLifecycleCondition {
-        return enabledWhenSync(
+    fun hasFilesOpen(check: () -> Boolean): ShortcutLifecycleCondition =
+        enabledWhenSync(
             reason = "No files open",
             description = "When files are open",
-            check = check
+            check = check,
         )
-    }
 
     // ---- Navigation-related conditions ----
 
     /**
      * Condition that is enabled when there is navigation history to go back.
      */
-    fun canGoBack(check: () -> Boolean): ShortcutLifecycleCondition {
-        return enabledWhenSync(
+    fun canGoBack(check: () -> Boolean): ShortcutLifecycleCondition =
+        enabledWhenSync(
             reason = "No previous location",
             description = "When back navigation is available",
-            check = check
+            check = check,
         )
-    }
 
     /**
      * Condition that is enabled when there is navigation history to go forward.
      */
-    fun canGoForward(check: () -> Boolean): ShortcutLifecycleCondition {
-        return enabledWhenSync(
+    fun canGoForward(check: () -> Boolean): ShortcutLifecycleCondition =
+        enabledWhenSync(
             reason = "No next location",
             description = "When forward navigation is available",
-            check = check
+            check = check,
         )
-    }
 
     // ---- Special conditions ----
 
@@ -442,31 +413,30 @@ object Conditions {
     /**
      * Condition that is never enabled.
      */
-    fun never(reason: String = "Shortcut disabled"): ShortcutLifecycleCondition {
-        return NeverEnabledCondition(reason)
-    }
+    fun never(reason: String = "Shortcut disabled"): ShortcutLifecycleCondition = NeverEnabledCondition(reason)
 
     /**
      * Condition that is enabled only in debug/development mode.
      */
-    fun debugOnly(isDebugMode: () -> Boolean): ShortcutLifecycleCondition {
-        return enabledWhenSync(
+    fun debugOnly(isDebugMode: () -> Boolean): ShortcutLifecycleCondition =
+        enabledWhenSync(
             reason = "Only available in debug mode",
             description = "Debug mode only",
-            check = isDebugMode
+            check = isDebugMode,
         )
-    }
 
     /**
      * Condition that is enabled based on a feature flag.
      */
-    fun featureFlag(flagName: String, isEnabled: () -> Boolean): ShortcutLifecycleCondition {
-        return enabledWhenSync(
+    fun featureFlag(
+        flagName: String,
+        isEnabled: () -> Boolean,
+    ): ShortcutLifecycleCondition =
+        enabledWhenSync(
             reason = "Feature '$flagName' is disabled",
             description = "When '$flagName' feature is enabled",
-            check = isEnabled
+            check = isEnabled,
         )
-    }
 }
 
 // ============================================================================
@@ -484,7 +454,7 @@ object Conditions {
  */
 fun ai.rever.boss.keymap.lifecycle.ShortcutLifecycleManager.register(
     actionId: String,
-    block: ConditionBuilder.() -> Unit
+    block: ConditionBuilder.() -> Unit,
 ) {
     registerCondition(actionId, condition(block))
 }

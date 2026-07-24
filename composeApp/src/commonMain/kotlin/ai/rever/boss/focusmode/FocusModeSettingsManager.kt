@@ -8,10 +8,16 @@ import kotlinx.coroutines.flow.StateFlow
  */
 expect object FocusModeSettingsManager {
     val currentSettings: StateFlow<FocusModeSettings>
+
     suspend fun saveSettings()
+
     suspend fun updateSettings(settings: FocusModeSettings)
+
     suspend fun toggleFocusMode()
+
     suspend fun enableFocusMode()
+
     suspend fun disableFocusMode()
+
     suspend fun resetToDefault()
 }

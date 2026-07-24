@@ -1,5 +1,7 @@
 package ai.rever.boss.dashboard
 
+import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.extractFileName
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CoroutineScope
@@ -15,8 +17,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
-import ai.rever.boss.plugin.pathutils.BossDirectories
-import ai.rever.boss.utils.extractFileName
 
 private val recentFilesLogger = BossLogger.forComponent("RecentFilesManager")
 
@@ -28,7 +28,7 @@ data class RecentFile(
     val path: String,
     val name: String,
     val lastOpened: Long,
-    val projectPath: String? = null
+    val projectPath: String? = null,
 )
 
 /**
@@ -36,7 +36,7 @@ data class RecentFile(
  */
 @Serializable
 data class RecentFilesData(
-    val files: List<RecentFile> = emptyList()
+    val files: List<RecentFile> = emptyList(),
 )
 
 /**
@@ -50,11 +50,12 @@ object RecentFilesManager {
     private const val MAX_FILES = 20
     private const val SAVE_DEBOUNCE_MS = 5000L // Debounce saves to max once per 5 seconds
     private val settingsFile = BossDirectories.resolve("recent-files.json")
-    private val json = Json {
-        prettyPrint = false
-        ignoreUnknownKeys = true
-        encodeDefaults = false
-    }
+    private val json =
+        Json {
+            prettyPrint = false
+            ignoreUnknownKeys = true
+            encodeDefaults = false
+        }
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var saveJob: Job? = null
@@ -71,20 +72,21 @@ object RecentFilesManager {
     /**
      * Load recent files from disk asynchronously.
      */
-    private suspend fun loadAsync() = withContext(Dispatchers.IO) {
-        try {
-            settingsFile.parentFile?.mkdirs()
+    private suspend fun loadAsync() =
+        withContext(Dispatchers.IO) {
+            try {
+                settingsFile.parentFile?.mkdirs()
 
-            if (settingsFile.exists()) {
-                val content = settingsFile.readText()
-                val data = json.decodeFromString<RecentFilesData>(content)
-                _recentFiles.value = data.files
-                recentFilesLogger.debug(LogCategory.FILE, "Loaded recent files", mapOf("count" to data.files.size))
+                if (settingsFile.exists()) {
+                    val content = settingsFile.readText()
+                    val data = json.decodeFromString<RecentFilesData>(content)
+                    _recentFiles.value = data.files
+                    recentFilesLogger.debug(LogCategory.FILE, "Loaded recent files", mapOf("count" to data.files.size))
+                }
+            } catch (e: Exception) {
+                recentFilesLogger.warn(LogCategory.FILE, "Error loading recent files", error = e)
             }
-        } catch (e: Exception) {
-            recentFilesLogger.warn(LogCategory.FILE, "Error loading recent files", error = e)
         }
-    }
 
     /**
      * Save recent files to disk with debouncing.
@@ -92,25 +94,27 @@ object RecentFilesManager {
      */
     private fun scheduleSave() {
         saveJob?.cancel()
-        saveJob = scope.launch {
-            delay(SAVE_DEBOUNCE_MS)
-            saveImmediately()
-        }
+        saveJob =
+            scope.launch {
+                delay(SAVE_DEBOUNCE_MS)
+                saveImmediately()
+            }
     }
 
     /**
      * Immediately save recent files to disk (bypasses debounce).
      */
-    private suspend fun saveImmediately() = withContext(Dispatchers.IO) {
-        try {
-            settingsFile.parentFile?.mkdirs()
-            val data = RecentFilesData(files = _recentFiles.value)
-            val content = json.encodeToString(RecentFilesData.serializer(), data)
-            settingsFile.writeText(content)
-        } catch (e: Exception) {
-            recentFilesLogger.warn(LogCategory.FILE, "Error saving recent files", error = e)
+    private suspend fun saveImmediately() =
+        withContext(Dispatchers.IO) {
+            try {
+                settingsFile.parentFile?.mkdirs()
+                val data = RecentFilesData(files = _recentFiles.value)
+                val content = json.encodeToString(RecentFilesData.serializer(), data)
+                settingsFile.writeText(content)
+            } catch (e: Exception) {
+                recentFilesLogger.warn(LogCategory.FILE, "Error saving recent files", error = e)
+            }
         }
-    }
 
     /**
      * Record a file open event.
@@ -120,15 +124,19 @@ object RecentFilesManager {
      * @param filePath Absolute path to the file
      * @param projectPath Optional project path the file belongs to
      */
-    fun recordFileOpen(filePath: String, projectPath: String? = null) {
+    fun recordFileOpen(
+        filePath: String,
+        projectPath: String? = null,
+    ) {
         scope.launch {
             val fileName = filePath.extractFileName()
-            val newFile = RecentFile(
-                path = filePath,
-                name = fileName,
-                lastOpened = System.currentTimeMillis(),
-                projectPath = projectPath
-            )
+            val newFile =
+                RecentFile(
+                    path = filePath,
+                    name = fileName,
+                    lastOpened = System.currentTimeMillis(),
+                    projectPath = projectPath,
+                )
 
             // Remove existing entry for this path and add to front
             val currentFiles = _recentFiles.value.toMutableList()
@@ -164,7 +172,5 @@ object RecentFilesManager {
     /**
      * Check if a file still exists on disk.
      */
-    fun fileExists(filePath: String): Boolean {
-        return File(filePath).exists()
-    }
+    fun fileExists(filePath: String): Boolean = File(filePath).exists()
 }

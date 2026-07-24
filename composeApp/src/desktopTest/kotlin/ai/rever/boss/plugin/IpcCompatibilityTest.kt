@@ -11,9 +11,9 @@ import kotlin.test.assertTrue
  * version so the assertions survive a future bump of the IPC contract.
  */
 class IpcCompatibilityTest {
-
-    private val host = IpcVersion.parse(IpcVersion.CURRENT)
-        ?: error("IpcVersion.CURRENT not parseable: ${IpcVersion.CURRENT}")
+    private val host =
+        IpcVersion.parse(IpcVersion.CURRENT)
+            ?: error("IpcVersion.CURRENT not parseable: ${IpcVersion.CURRENT}")
 
     @Test
     fun `hostVersion reflects IpcVersion CURRENT`() {

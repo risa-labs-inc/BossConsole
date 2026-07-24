@@ -12,9 +12,7 @@ private val logger = BossLogger.forComponent("ClipboardProvider")
 /**
  * Desktop implementation of ClipboardProvider factory.
  */
-actual fun createClipboardProvider(): ClipboardProvider? {
-    return DesktopClipboardProvider()
-}
+actual fun createClipboardProvider(): ClipboardProvider? = DesktopClipboardProvider()
 
 /**
  * Desktop clipboard provider using AWT system clipboard.
@@ -24,7 +22,6 @@ actual fun createClipboardProvider(): ClipboardProvider? {
  * cannot access AWT directly due to classloader isolation.
  */
 private class DesktopClipboardProvider : ClipboardProvider {
-
     private val clipboard by lazy {
         try {
             Toolkit.getDefaultToolkit().systemClipboard

@@ -29,7 +29,6 @@ import org.slf4j.LoggerFactory
  * ```
  */
 class ChildProcessBootstrap {
-
     private val logger = LoggerFactory.getLogger(ChildProcessBootstrap::class.java)
     private val startTimeMs = System.currentTimeMillis()
 
@@ -76,24 +75,27 @@ class ChildProcessBootstrap {
 
         // Register with kernel
         val kernelStub = KernelServiceGrpcKt.KernelServiceCoroutineStub(kernelClient.channel)
-        val registerResponse = kernelStub.registerProcess(
-            RegisterProcessRequest.newBuilder()
-                .setManifest(manifest)
-                .setIpcAddress(processAddress)
-                .build()
-        )
+        val registerResponse =
+            kernelStub.registerProcess(
+                RegisterProcessRequest
+                    .newBuilder()
+                    .setManifest(manifest)
+                    .setIpcAddress(processAddress)
+                    .build(),
+            )
 
         if (!registerResponse.success) {
             throw IllegalStateException(
-                "Failed to register with kernel: ${registerResponse.errorMessage}"
+                "Failed to register with kernel: ${registerResponse.errorMessage}",
             )
         }
         logger.info("Registered with kernel. Service addresses: {}", registerResponse.serviceAddressesMap)
 
         // Start heartbeat
-        val heartbeatJob = scope.launch {
-            startHeartbeat(kernelStub, manifest)
-        }
+        val heartbeatJob =
+            scope.launch {
+                startHeartbeat(kernelStub, manifest)
+            }
 
         // Create process gRPC server
         val processServer = BossIpcServer(processAddress)
@@ -116,18 +118,20 @@ class ChildProcessBootstrap {
         val intervalMs = manifest.healthContract.heartbeatIntervalMs.takeIf { it > 0 } ?: 5000L
 
         try {
-            val pingFlow = flow {
-                while (currentCoroutineContext().isActive) {
-                    emit(
-                        HeartbeatPing.newBuilder()
-                            .setProcessId(processId)
-                            .setTimestamp(System.currentTimeMillis())
-                            .setMetrics(collectHealthMetrics())
-                            .build()
-                    )
-                    delay(intervalMs)
+            val pingFlow =
+                flow {
+                    while (currentCoroutineContext().isActive) {
+                        emit(
+                            HeartbeatPing
+                                .newBuilder()
+                                .setProcessId(processId)
+                                .setTimestamp(System.currentTimeMillis())
+                                .setMetrics(collectHealthMetrics())
+                                .build(),
+                        )
+                        delay(intervalMs)
+                    }
                 }
-            }
 
             kernelStub.heartbeat(pingFlow).collect { pong ->
                 if (!pong.acknowledged) {
@@ -143,7 +147,8 @@ class ChildProcessBootstrap {
 
     private fun collectHealthMetrics(): ProcessHealthMetrics {
         val runtime = Runtime.getRuntime()
-        return ProcessHealthMetrics.newBuilder()
+        return ProcessHealthMetrics
+            .newBuilder()
             .setHeapUsedBytes(runtime.totalMemory() - runtime.freeMemory())
             .setHeapMaxBytes(runtime.maxMemory())
             .setActiveThreads(Thread.activeCount())

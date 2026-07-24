@@ -1,8 +1,8 @@
 package ai.rever.boss.utils
 
+import ai.rever.boss.plugin.browser.FluckEngine
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
-import ai.rever.boss.plugin.browser.FluckEngine
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.delay
@@ -15,7 +15,7 @@ object ApplicationRestarter {
     private val logger = BossLogger.forComponent("ApplicationRestarter")
 
     private var isRestarting = false
-    
+
     @OptIn(DelicateCoroutinesApi::class)
     fun restartApplication() {
         if (isRestarting) return // Prevent multiple restart attempts
@@ -47,7 +47,6 @@ object ApplicationRestarter {
 
                 // Exit current instance
                 exitProcess(0)
-
             } catch (e: Exception) {
                 logger.error(LogCategory.SYSTEM, "Failed to restart application", error = e)
                 isRestarting = false
@@ -72,9 +71,17 @@ object ApplicationRestarter {
     private fun buildRelaunchCommand(): List<String> {
         val osName = System.getProperty("os.name").lowercase()
         val pid = runCatching { ProcessHandle.current().pid() }.getOrNull()
-        val launcher = runCatching { ProcessHandle.current().info().command().orElse(null) }.getOrNull()
-        val isJavaLauncher = launcher != null &&
-            Regex(""".*[/\\](java|javaw)(\.exe)?$""").matches(launcher.lowercase())
+        val launcher =
+            runCatching {
+                ProcessHandle
+                    .current()
+                    .info()
+                    .command()
+                    .orElse(null)
+            }.getOrNull()
+        val isJavaLauncher =
+            launcher != null &&
+                Regex(""".*[/\\](java|javaw)(\.exe)?$""").matches(launcher.lowercase())
 
         // macOS packaged .app → relaunch the bundle via LaunchServices once we're gone.
         if (osName.contains("mac")) {
@@ -90,16 +97,28 @@ object ApplicationRestarter {
         // is still alive, so a new instance that starts too early just exits — and
         // nothing comes back (the very bug this fixes).
         if (launcher != null && !isJavaLauncher) {
-            val args = runCatching { ProcessHandle.current().info().arguments().orElse(emptyArray()).toList() }
-                .getOrDefault(emptyList())
+            val args =
+                runCatching {
+                    ProcessHandle
+                        .current()
+                        .info()
+                        .arguments()
+                        .orElse(emptyArray())
+                        .toList()
+                }.getOrDefault(emptyList())
             if (osName.contains("windows")) {
-                val waitPs = if (pid != null) {
-                    "while (Get-Process -Id $pid -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 200 }; "
-                } else {
-                    "Start-Sleep -Milliseconds 1000; "
-                }
-                val argList = if (args.isEmpty()) "" else
-                    " -ArgumentList @(${args.joinToString(",") { psQuote(it) }})"
+                val waitPs =
+                    if (pid != null) {
+                        "while (Get-Process -Id $pid -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 200 }; "
+                    } else {
+                        "Start-Sleep -Milliseconds 1000; "
+                    }
+                val argList =
+                    if (args.isEmpty()) {
+                        ""
+                    } else {
+                        " -ArgumentList @(${args.joinToString(",") { psQuote(it) }})"
+                    }
                 val script = "$waitPs Start-Process -FilePath ${psQuote(launcher)}$argList"
                 return listOf("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
             }
@@ -109,16 +128,26 @@ object ApplicationRestarter {
 
         // Development fallbacks (previous behavior).
         val javaBin = System.getProperty("java.home") + File.separator + "bin" + File.separator + "java"
-        val currentJar = runCatching {
-            File(ApplicationRestarter::class.java.protectionDomain.codeSource.location.toURI())
-        }.getOrNull()
+        val currentJar =
+            runCatching {
+                File(
+                    ApplicationRestarter::class.java.protectionDomain.codeSource.location
+                        .toURI(),
+                )
+            }.getOrNull()
         return when {
-            currentJar?.name?.endsWith(".jar") == true -> listOf(javaBin, "-jar", currentJar.path)
+            currentJar?.name?.endsWith(".jar") == true -> {
+                listOf(javaBin, "-jar", currentJar.path)
+            }
+
             currentJar?.name == "classes" || currentJar?.path?.contains("build") == true -> {
                 val gradlew = if (osName.contains("windows")) "gradlew.bat" else "./gradlew"
                 listOf(gradlew, "desktopRun", "-DmainClass=ai.rever.boss.MainKt", "--quiet")
             }
-            else -> listOf(javaBin, "-cp", System.getProperty("java.class.path"), "ai.rever.boss.MainKt")
+
+            else -> {
+                listOf(javaBin, "-cp", System.getProperty("java.class.path"), "ai.rever.boss.MainKt")
+            }
         }
     }
 
@@ -150,7 +179,8 @@ object ApplicationRestarter {
             }
         }
         // b) java.library.path usually contains the bundle directory.
-        System.getProperty("java.library.path")
+        System
+            .getProperty("java.library.path")
             ?.split(File.pathSeparator)
             ?.firstOrNull { it.contains(".app") }
             ?.let { it.substringBefore(".app") + ".app" }
@@ -159,7 +189,11 @@ object ApplicationRestarter {
         // c) Walk up from the code source looking for a .app bundle (these are real
         //    ancestors of the running code, so they exist by construction).
         runCatching {
-            var current: File? = File(ApplicationRestarter::class.java.protectionDomain.codeSource.location.toURI())
+            var current: File? =
+                File(
+                    ApplicationRestarter::class.java.protectionDomain.codeSource.location
+                        .toURI(),
+                )
             repeat(6) {
                 val f = current ?: return@runCatching
                 if (f.name.endsWith(".app")) return f.absolutePath
@@ -168,7 +202,7 @@ object ApplicationRestarter {
         }
         return null
     }
-    
+
     private suspend fun performGracefulShutdown() {
         try {
             // Close browser engine if it exists
@@ -182,7 +216,7 @@ object ApplicationRestarter {
             logger.warn(LogCategory.SYSTEM, "Error during graceful shutdown", error = e)
         }
     }
-    
+
     @OptIn(DelicateCoroutinesApi::class)
     fun scheduleRestart(delayMillis: Long = 1000) {
         GlobalScope.launch {
@@ -222,7 +256,6 @@ object ApplicationRestarter {
 
                 // Exit cleanly - update script will wait for this PID to terminate
                 exitProcess(0)
-
             } catch (e: Exception) {
                 logger.error(LogCategory.SYSTEM, "Error during quit", error = e)
                 // Exit anyway

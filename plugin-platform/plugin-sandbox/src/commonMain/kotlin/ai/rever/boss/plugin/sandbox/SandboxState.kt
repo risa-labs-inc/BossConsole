@@ -34,5 +34,5 @@ enum class SandboxState {
      * Plugin has been disabled by the user or system.
      * Will not auto-restart. User must explicitly re-enable.
      */
-    DISABLED
+    DISABLED,
 }

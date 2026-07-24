@@ -15,42 +15,47 @@ fun main() {
 
     val bootstrap = ChildProcessBootstrap()
 
-    val manifest = ProcessManifest.newBuilder()
-        .setProcessId(bootstrap.processId)
-        .setProcessType(ProcessType.PROCESS_TYPE_SERVICE)
-        .setDisplayName("BOSS FileSystem Service")
-        .setVersion("1.0.0")
-        .setMainClass("ai.rever.boss.service.filesystem.FileSystemServiceMainKt")
-        .setBehaviorSpec(
-            "Provides file system operations: directory scanning, file read/write, " +
-            "rename, delete, and real-time change watching."
-        )
-        .addAllSourceFiles(listOf(
-            "boss-service-filesystem/src/main/kotlin/ai/rever/boss/service/filesystem/FileSystemServiceMain.kt",
-            "boss-service-filesystem/src/main/kotlin/ai/rever/boss/service/filesystem/FileSystemServiceImpl.kt",
-        ))
-        .addAllExposedServices(listOf("boss.ipc.v1.services.FileSystemService"))
-        .addAllCapabilities(listOf(
-            PluginCapability.newBuilder()
-                .setAction("read_file")
-                .setInputSchemaJson("""{"type":"object","properties":{"path":{"type":"string"}}}""")
-                .setOutputSchemaJson("""{"type":"object","properties":{"content":{"type":"string"}}}""")
-                .setDescription("Read file contents")
-                .build(),
-            PluginCapability.newBuilder()
-                .setAction("write_file")
-                .setInputSchemaJson("""{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}}}""")
-                .setOutputSchemaJson("""{"type":"object","properties":{"success":{"type":"boolean"}}}""")
-                .setDescription("Write content to a file")
-                .build(),
-        ))
-        .setHealthContract(
-            HealthContract.newBuilder()
-                .setHeartbeatIntervalMs(5000)
-                .setStartupTimeoutMs(10000)
-                .build()
-        )
-        .build()
+    val manifest =
+        ProcessManifest
+            .newBuilder()
+            .setProcessId(bootstrap.processId)
+            .setProcessType(ProcessType.PROCESS_TYPE_SERVICE)
+            .setDisplayName("BOSS FileSystem Service")
+            .setVersion("1.0.0")
+            .setMainClass("ai.rever.boss.service.filesystem.FileSystemServiceMainKt")
+            .setBehaviorSpec(
+                "Provides file system operations: directory scanning, file read/write, " +
+                    "rename, delete, and real-time change watching.",
+            ).addAllSourceFiles(
+                listOf(
+                    "boss-service-filesystem/src/main/kotlin/ai/rever/boss/service/filesystem/FileSystemServiceMain.kt",
+                    "boss-service-filesystem/src/main/kotlin/ai/rever/boss/service/filesystem/FileSystemServiceImpl.kt",
+                ),
+            ).addAllExposedServices(listOf("boss.ipc.v1.services.FileSystemService"))
+            .addAllCapabilities(
+                listOf(
+                    PluginCapability
+                        .newBuilder()
+                        .setAction("read_file")
+                        .setInputSchemaJson("""{"type":"object","properties":{"path":{"type":"string"}}}""")
+                        .setOutputSchemaJson("""{"type":"object","properties":{"content":{"type":"string"}}}""")
+                        .setDescription("Read file contents")
+                        .build(),
+                    PluginCapability
+                        .newBuilder()
+                        .setAction("write_file")
+                        .setInputSchemaJson("""{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}}}""")
+                        .setOutputSchemaJson("""{"type":"object","properties":{"success":{"type":"boolean"}}}""")
+                        .setDescription("Write content to a file")
+                        .build(),
+                ),
+            ).setHealthContract(
+                HealthContract
+                    .newBuilder()
+                    .setHeartbeatIntervalMs(5000)
+                    .setStartupTimeoutMs(10000)
+                    .build(),
+            ).build()
 
     runBlocking {
         val connection = bootstrap.connect(manifest)

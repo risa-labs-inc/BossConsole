@@ -31,8 +31,8 @@ object DisplayUtils {
      *
      * @return Scaling factor (e.g., 1.0, 1.25, 1.5, 2.0)
      */
-    private fun getDisplayScalingFactor(): Float {
-        return try {
+    private fun getDisplayScalingFactor(): Float =
+        try {
             if (isWindows) {
                 val toolkit = Toolkit.getDefaultToolkit()
                 val screenResolution = toolkit.screenResolution // DPI
@@ -46,7 +46,6 @@ object DisplayUtils {
             logger.warn(LogCategory.UI, "Error detecting scaling factor", error = e)
             1.0f
         }
-    }
 
     /**
      * Get the primary screen dimensions in pixels.
@@ -57,8 +56,8 @@ object DisplayUtils {
      *
      * @return Pair of (width, height) in pixels
      */
-    fun getPrimaryScreenDimensions(): Pair<Int, Int> {
-        return try {
+    fun getPrimaryScreenDimensions(): Pair<Int, Int> =
+        try {
             val graphicsEnvironment = GraphicsEnvironment.getLocalGraphicsEnvironment()
             val defaultScreenDevice = graphicsEnvironment.defaultScreenDevice
             val displayMode = defaultScreenDevice.displayMode
@@ -72,7 +71,11 @@ object DisplayUtils {
                 if (scalingFactor > 1.0f) {
                     width = (width / scalingFactor).toInt()
                     height = (height / scalingFactor).toInt()
-                    logger.debug(LogCategory.UI, "Adjusted for Windows scaling", mapOf("physical" to "${displayMode.width}x${displayMode.height}", "logical" to "${width}x${height}"))
+                    logger.debug(
+                        LogCategory.UI,
+                        "Adjusted for Windows scaling",
+                        mapOf("physical" to "${displayMode.width}x${displayMode.height}", "logical" to "${width}x$height"),
+                    )
                 }
             }
 
@@ -83,7 +86,6 @@ object DisplayUtils {
             // Fallback to common laptop resolution
             Pair(1920, 1080)
         }
-    }
 
     /**
      * Calculate adaptive size for main application window.
@@ -97,18 +99,17 @@ object DisplayUtils {
      * @return DpSize for main window
      */
     @Composable
-    fun calculateMainWindowSize(): DpSize {
-        return calculateAdaptiveSize(
-            widthPercentage = 0.60f,  // 60% leaves more desktop space
-            heightPercentage = 0.60f,  // 60% of height
+    fun calculateMainWindowSize(): DpSize =
+        calculateAdaptiveSize(
+            widthPercentage = 0.60f, // 60% leaves more desktop space
+            heightPercentage = 0.60f, // 60% of height
             minWidth = 900,
             minHeight = 600,
             maxWidth = 1400,
             maxHeight = 900,
-            taskbarOffset = 100,  // Account for Windows taskbar
-            windowType = "Main"
+            taskbarOffset = 100, // Account for Windows taskbar
+            windowType = "Main",
         )
-    }
 
     /**
      * Calculate adaptive size for settings window.
@@ -120,18 +121,17 @@ object DisplayUtils {
      * @return DpSize for settings window
      */
     @Composable
-    fun calculateSettingsWindowSize(): DpSize {
-        return calculateAdaptiveSize(
-            widthPercentage = 0.60f,  // 60% for settings (larger for BossTerm panel)
+    fun calculateSettingsWindowSize(): DpSize =
+        calculateAdaptiveSize(
+            widthPercentage = 0.60f, // 60% for settings (larger for BossTerm panel)
             heightPercentage = 0.60f,
             minWidth = 900,
             minHeight = 700,
             maxWidth = 1400,
             maxHeight = 900,
             taskbarOffset = 100,
-            windowType = "Settings"
+            windowType = "Settings",
         )
-    }
 
     /**
      * Calculate adaptive size for authentication windows.
@@ -143,18 +143,17 @@ object DisplayUtils {
      * @return DpSize for authentication window
      */
     @Composable
-    fun calculateAuthWindowSize(): DpSize {
-        return calculateAdaptiveSize(
-            widthPercentage = 0.38f,  // 38% for auth dialogs
+    fun calculateAuthWindowSize(): DpSize =
+        calculateAdaptiveSize(
+            widthPercentage = 0.38f, // 38% for auth dialogs
             heightPercentage = 0.38f,
             minWidth = 500,
             minHeight = 450,
             maxWidth = 900,
             maxHeight = 700,
             taskbarOffset = 100,
-            windowType = "Auth"
+            windowType = "Auth",
         )
-    }
 
     /**
      * Internal function to calculate adaptive window size.
@@ -184,7 +183,7 @@ object DisplayUtils {
         maxWidth: Int,
         maxHeight: Int,
         taskbarOffset: Int = 0,
-        windowType: String
+        windowType: String,
     ): DpSize {
         // Memoize screen dimensions to avoid repeated GraphicsEnvironment queries
         val (screenWidth, screenHeight) = remember { getPrimaryScreenDimensions() }
@@ -204,13 +203,17 @@ object DisplayUtils {
         // so we treat them as dp directly without density conversion to avoid double scaling.
         val dpSize = DpSize(constrainedWidth.dp, constrainedHeight.dp)
 
-        logger.debug(LogCategory.UI, "Calculated window size", mapOf(
-            "windowType" to windowType,
-            "size" to "${constrainedWidth}x${constrainedHeight}",
-            "percentage" to "${(widthPercentage * 100).toInt()}%",
-            "screen" to "${screenWidth}x${availableHeight}",
-            "taskbarOffset" to taskbarOffset
-        ))
+        logger.debug(
+            LogCategory.UI,
+            "Calculated window size",
+            mapOf(
+                "windowType" to windowType,
+                "size" to "${constrainedWidth}x$constrainedHeight",
+                "percentage" to "${(widthPercentage * 100).toInt()}%",
+                "screen" to "${screenWidth}x$availableHeight",
+                "taskbarOffset" to taskbarOffset,
+            ),
+        )
 
         return dpSize
     }

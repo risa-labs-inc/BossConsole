@@ -28,9 +28,13 @@ object StatusBarRegistryImpl : AccessGatedRegistry {
     fun register(provider: StatusBarItemProvider) {
         _items.update { existing ->
             if (existing.containsKey(provider.itemId)) {
-                logger.warn(LogCategory.SYSTEM, "Status-bar item re-registered (replacing previous)", mapOf(
-                    "itemId" to provider.itemId
-                ))
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Status-bar item re-registered (replacing previous)",
+                    mapOf(
+                        "itemId" to provider.itemId,
+                    ),
+                )
             }
             existing + (provider.itemId to provider)
         }
@@ -41,7 +45,10 @@ object StatusBarRegistryImpl : AccessGatedRegistry {
         _items.update { it - itemId }
     }
 
-    override fun updateAccess(isAdmin: Boolean, permissions: Set<String>) {
+    override fun updateAccess(
+        isAdmin: Boolean,
+        permissions: Set<String>,
+    ) {
         _access.value = RegistryAccess(isAdmin, permissions)
     }
 

@@ -42,13 +42,14 @@ fun ComponentContext.BossApp(
     windowId: String,
     isFirstWindow: Boolean = false,
     panelRegistry: PanelRegistry,
-    onToggleMaximize: (() -> Unit)? = null
+    onToggleMaximize: (() -> Unit)? = null,
 ) {
-    val state = rememberBossAppState(
-        windowId = windowId,
-        isFirstWindow = isFirstWindow,
-        panelRegistry = panelRegistry,
-    )
+    val state =
+        rememberBossAppState(
+            windowId = windowId,
+            isFirstWindow = isFirstWindow,
+            panelRegistry = panelRegistry,
+        )
 
     // Subscriptions and lifecycle effects (no UI).
     BossAppStartupEffects(state)
@@ -57,10 +58,11 @@ fun ComponentContext.BossApp(
     // Focus mode + window appearance settings drive the chrome.
     val focusModeSettings by FocusModeSettingsManager.currentSettings.collectAsState()
     val windowAppearanceSettings by WindowAppearanceSettingsManager.currentSettings.collectAsState()
-    val reveal = rememberFocusModeReveal(
-        isFocusModeEnabled = focusModeSettings.enabled,
-        revealDelayMs = focusModeSettings.revealDelayMs,
-    )
+    val reveal =
+        rememberFocusModeReveal(
+            isFocusModeEnabled = focusModeSettings.enabled,
+            revealDelayMs = focusModeSettings.revealDelayMs,
+        )
 
     // Menu actions can force-reveal sidebars, so they take the reveal state too.
     BossAppMenuActionEffects(state, reveal)

@@ -25,7 +25,7 @@ enum class ClassLoaderState {
     /**
      * Classloader has been unloaded and should not be used.
      */
-    UNLOADED
+    UNLOADED,
 }
 
 /**
@@ -47,9 +47,8 @@ class PluginClassLoader(
     val pluginId: String,
     urls: Array<URL>,
     parent: ClassLoader,
-    private val sharedPackages: Set<String> = defaultSharedPackages
+    private val sharedPackages: Set<String> = defaultSharedPackages,
 ) : URLClassLoader(urls, parent) {
-
     companion object {
         private val logger = BossLogger.forComponent("PluginClassLoader")
 
@@ -80,43 +79,36 @@ class PluginClassLoader(
          * Default packages that are always shared with the host.
          * These include Kotlin stdlib, coroutines, and BOSS plugin API.
          */
-        val defaultSharedPackages = setOf(
-            // Kotlin stdlib
-            "kotlin.",
-            "kotlinx.coroutines.",
-            "kotlinx.serialization.",
-
-            // BOSS Plugin API
-            "ai.rever.boss.plugin.api.",
-
-            // BOSS Browser Service API
-            "ai.rever.boss.plugin.browser.",
-
-            // BOSS Plugin type modules (must be from host for Compose stability)
-            "ai.rever.boss.plugin.bookmark.",
-            "ai.rever.boss.plugin.workspace.",
-
-            // Compose (shared UI framework)
-            "androidx.compose.",
-
-            // Decompose (shared navigation)
-            "com.arkivanov.decompose.",
-            "com.arkivanov.essenty.",
-
-            // Java stdlib (always from parent)
-            "java.",
-            "javax.",
-            "sun.",
-            "com.sun.",
-
-            // Logging
-            "org.slf4j.",
-            "ai.rever.boss.plugin.logging.",
-
-            // BOSS Plugin UI components
-            "ai.rever.boss.plugin.ui.",
-            "ai.rever.boss.plugin.scrollbar."
-        )
+        val defaultSharedPackages =
+            setOf(
+                // Kotlin stdlib
+                "kotlin.",
+                "kotlinx.coroutines.",
+                "kotlinx.serialization.",
+                // BOSS Plugin API
+                "ai.rever.boss.plugin.api.",
+                // BOSS Browser Service API
+                "ai.rever.boss.plugin.browser.",
+                // BOSS Plugin type modules (must be from host for Compose stability)
+                "ai.rever.boss.plugin.bookmark.",
+                "ai.rever.boss.plugin.workspace.",
+                // Compose (shared UI framework)
+                "androidx.compose.",
+                // Decompose (shared navigation)
+                "com.arkivanov.decompose.",
+                "com.arkivanov.essenty.",
+                // Java stdlib (always from parent)
+                "java.",
+                "javax.",
+                "sun.",
+                "com.sun.",
+                // Logging
+                "org.slf4j.",
+                "ai.rever.boss.plugin.logging.",
+                // BOSS Plugin UI components
+                "ai.rever.boss.plugin.ui.",
+                "ai.rever.boss.plugin.scrollbar.",
+            )
     }
 
     init {
@@ -130,12 +122,13 @@ class PluginClassLoader(
      * crash handling and on closed loaders.
      */
     internal fun definedClassNamed(name: String): Boolean {
-        val cls = try {
-            findLoadedClass(name)
-        } catch (_: Throwable) {
-            // Closed/unloading loaders can throw Errors; attribution is best-effort.
-            null
-        }
+        val cls =
+            try {
+                findLoadedClass(name)
+            } catch (_: Throwable) {
+                // Closed/unloading loaders can throw Errors; attribution is best-effort.
+                null
+            }
         return cls != null && cls.classLoader === this
     }
 
@@ -167,9 +160,13 @@ class PluginClassLoader(
      */
     fun markUnloading() {
         if (_state.compareAndSet(ClassLoaderState.ACTIVE, ClassLoaderState.UNLOAD_IN_PROGRESS)) {
-            logger.debug(LogCategory.SYSTEM, "Classloader marked for unloading", mapOf(
-                "pluginId" to pluginId
-            ))
+            logger.debug(
+                LogCategory.SYSTEM,
+                "Classloader marked for unloading",
+                mapOf(
+                    "pluginId" to pluginId,
+                ),
+            )
         }
     }
 
@@ -178,9 +175,13 @@ class PluginClassLoader(
      */
     fun markUnloaded() {
         _state.set(ClassLoaderState.UNLOADED)
-        logger.debug(LogCategory.SYSTEM, "Classloader marked as unloaded", mapOf(
-            "pluginId" to pluginId
-        ))
+        logger.debug(
+            LogCategory.SYSTEM,
+            "Classloader marked as unloaded",
+            mapOf(
+                "pluginId" to pluginId,
+            ),
+        )
     }
 
     /**
@@ -189,7 +190,10 @@ class PluginClassLoader(
      * For shared packages, delegates to parent first (standard behavior).
      * For plugin packages, tries plugin JAR first (child-first).
      */
-    override fun loadClass(name: String, resolve: Boolean): Class<*> {
+    override fun loadClass(
+        name: String,
+        resolve: Boolean,
+    ): Class<*> {
         // Check if already loaded
         val loadedClass = findLoadedClass(name)
         if (loadedClass != null) {
@@ -198,11 +202,15 @@ class PluginClassLoader(
 
         // Check state
         if (isUnloading) {
-            logger.warn(LogCategory.SYSTEM, "Attempt to load class from unloading classloader", mapOf(
-                "pluginId" to pluginId,
-                "className" to name,
-                "state" to state.name
-            ))
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Attempt to load class from unloading classloader",
+                mapOf(
+                    "pluginId" to pluginId,
+                    "className" to name,
+                    "state" to state.name,
+                ),
+            )
             // Still allow loading during unload process for cleanup
         }
 
@@ -221,7 +229,10 @@ class PluginClassLoader(
     /**
      * Load a class with child-first strategy.
      */
-    private fun loadClassChildFirst(name: String, resolve: Boolean): Class<*> {
+    private fun loadClassChildFirst(
+        name: String,
+        resolve: Boolean,
+    ): Class<*> {
         // Try to find in plugin JAR first
         try {
             val clazz = findClass(name)
@@ -242,9 +253,10 @@ class PluginClassLoader(
      */
     override fun getResource(name: String): URL? {
         // For shared packages, use parent-first
-        val isSharedResource = sharedPackages.any {
-            name.startsWith(it.replace('.', '/'))
-        }
+        val isSharedResource =
+            sharedPackages.any {
+                name.startsWith(it.replace('.', '/'))
+            }
 
         return if (isSharedResource) {
             super.getResource(name)
@@ -263,15 +275,18 @@ class PluginClassLoader(
      * the api jar's copy of non-shared resources ahead of the plugin's own.
      */
     override fun getResources(name: String): java.util.Enumeration<URL> {
-        val isSharedResource = sharedPackages.any {
-            name.startsWith(it.replace('.', '/'))
-        }
+        val isSharedResource =
+            sharedPackages.any {
+                name.startsWith(it.replace('.', '/'))
+            }
         if (isSharedResource) {
             return super.getResources(name)
         }
         val own = java.util.Collections.list(findResources(name))
-        val fromParents = java.util.Collections.list(parent.getResources(name))
-            .filterNot { it in own }
+        val fromParents =
+            java.util.Collections
+                .list(parent.getResources(name))
+                .filterNot { it in own }
         return java.util.Collections.enumeration(own + fromParents)
     }
 
@@ -280,13 +295,15 @@ class PluginClassLoader(
      */
     override fun close() {
         markUnloaded()
-        logger.info(LogCategory.SYSTEM, "Closing plugin classloader", mapOf(
-            "pluginId" to pluginId
-        ))
+        logger.info(
+            LogCategory.SYSTEM,
+            "Closing plugin classloader",
+            mapOf(
+                "pluginId" to pluginId,
+            ),
+        )
         super.close()
     }
 
-    override fun toString(): String {
-        return "PluginClassLoader(pluginId=$pluginId, state=$state, urls=${getURLs().size})"
-    }
+    override fun toString(): String = "PluginClassLoader(pluginId=$pluginId, state=$state, urls=${getURLs().size})"
 }

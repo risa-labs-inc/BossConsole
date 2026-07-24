@@ -20,67 +20,74 @@ import kotlin.test.assertTrue
  * assert that the manager honours the predicate.
  */
 class PluginUpdateManagerCheckCompatTest {
-
     private val pluginId = "com.example.demo"
 
-    private fun candidate(version: String, minIpc: String) = PluginInfo(
+    private fun candidate(
+        version: String,
+        minIpc: String,
+    ) = PluginInfo(
         pluginId = pluginId,
         displayName = "Demo",
         version = version,
-        minIpcVersion = minIpc
+        minIpcVersion = minIpc,
     )
 
     private fun managerReturning(
         latest: PluginInfo,
-        isCompatible: (String) -> Boolean
+        isCompatible: (String) -> Boolean,
     ): PluginUpdateManager {
         val repos = PluginRepositoryManager().apply { addRepository(FakeRemoteRepository(latest)) }
         return PluginUpdateManager(
             repositoryManager = repos,
             hostIpcVersion = "1.0.0",
-            isIpcCompatible = isCompatible
+            isIpcCompatible = isCompatible,
         )
     }
 
     @Test
-    fun `incompatible newer version is reported, not offered`() = runTest {
-        val mgr = managerReturning(candidate("1.1.0", "2.0.0"), isCompatible = { false })
+    fun `incompatible newer version is reported, not offered`() =
+        runTest {
+            val mgr = managerReturning(candidate("1.1.0", "2.0.0"), isCompatible = { false })
 
-        val result = mgr.checkForUpdates(mapOf(pluginId to "1.0.0"))
+            val result = mgr.checkForUpdates(mapOf(pluginId to "1.0.0"))
 
-        assertTrue(result.availableUpdates.isEmpty(), "incompatible update must not be offered")
-        assertEquals(1, result.incompatibleNotices.size)
-        val notice = result.incompatibleNotices.first()
-        assertEquals(pluginId, notice.pluginId)
-        assertEquals("1.1.0", notice.advertisedLatest)
-        assertEquals("2.0.0", notice.requiredIpcVersion)
-        assertEquals("1.0.0", notice.hostIpcVersion)
-    }
-
-    @Test
-    fun `compatible newer version is offered`() = runTest {
-        val mgr = managerReturning(candidate("1.1.0", "1.0.0"), isCompatible = { true })
-
-        val result = mgr.checkForUpdates(mapOf(pluginId to "1.0.0"))
-
-        assertEquals(1, result.availableUpdates.size)
-        assertEquals("1.1.0", result.availableUpdates.first().newVersion)
-        assertTrue(result.incompatibleNotices.isEmpty())
-    }
+            assertTrue(result.availableUpdates.isEmpty(), "incompatible update must not be offered")
+            assertEquals(1, result.incompatibleNotices.size)
+            val notice = result.incompatibleNotices.first()
+            assertEquals(pluginId, notice.pluginId)
+            assertEquals("1.1.0", notice.advertisedLatest)
+            assertEquals("2.0.0", notice.requiredIpcVersion)
+            assertEquals("1.0.0", notice.hostIpcVersion)
+        }
 
     @Test
-    fun `no update when installed version is already current`() = runTest {
-        val mgr = managerReturning(candidate("1.0.0", "1.0.0"), isCompatible = { true })
+    fun `compatible newer version is offered`() =
+        runTest {
+            val mgr = managerReturning(candidate("1.1.0", "1.0.0"), isCompatible = { true })
 
-        val result = mgr.checkForUpdates(mapOf(pluginId to "1.0.0"))
+            val result = mgr.checkForUpdates(mapOf(pluginId to "1.0.0"))
 
-        assertTrue(result.availableUpdates.isEmpty())
-        assertTrue(result.incompatibleNotices.isEmpty())
-    }
+            assertEquals(1, result.availableUpdates.size)
+            assertEquals("1.1.0", result.availableUpdates.first().newVersion)
+            assertTrue(result.incompatibleNotices.isEmpty())
+        }
+
+    @Test
+    fun `no update when installed version is already current`() =
+        runTest {
+            val mgr = managerReturning(candidate("1.0.0", "1.0.0"), isCompatible = { true })
+
+            val result = mgr.checkForUpdates(mapOf(pluginId to "1.0.0"))
+
+            assertTrue(result.availableUpdates.isEmpty())
+            assertTrue(result.incompatibleNotices.isEmpty())
+        }
 }
 
 /** Minimal remote [PluginRepository] that always resolves to [latest]. */
-private class FakeRemoteRepository(private val latest: PluginInfo) : PluginRepository {
+private class FakeRemoteRepository(
+    private val latest: PluginInfo,
+) : PluginRepository {
     override val id = "fake-remote"
     override val name = "Fake Remote"
     override val isLocal = false
@@ -97,8 +104,11 @@ private class FakeRemoteRepository(private val latest: PluginInfo) : PluginRepos
     override suspend fun getPluginVersions(pluginId: String): Result<List<PluginInfo>> =
         Result.success(if (pluginId == latest.pluginId) listOf(latest) else emptyList())
 
-    override suspend fun downloadPlugin(pluginId: String, version: String?, targetPath: String): Result<String> =
-        Result.success(targetPath)
+    override suspend fun downloadPlugin(
+        pluginId: String,
+        version: String?,
+        targetPath: String,
+    ): Result<String> = Result.success(targetPath)
 
     override fun getDownloadProgress(pluginId: String): Flow<Float>? = null
 

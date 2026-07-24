@@ -1,12 +1,12 @@
 package ai.rever.boss.components.settings.sections
 
-import ai.rever.boss.plugin.ui.BossTheme
-import ai.rever.boss.utils.logging.BossLogger
-import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.components.settings.shared.SettingsSection
-import ai.rever.boss.services.supabase.AuthService
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.services.passkey.PasskeyInfo
 import ai.rever.boss.services.passkey.PasskeyState
+import ai.rever.boss.services.supabase.AuthService
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -36,65 +36,71 @@ data class WebAuthnCapabilities(
     val hasNfcSupport: Boolean,
     val hasHybridTransport: Boolean,
     val supportedTransports: List<String>,
-    val platformName: String
+    val platformName: String,
 )
 
 /**
  * Detect WebAuthn capabilities on the current platform
  */
-private suspend fun detectWebAuthnCapabilities(): WebAuthnCapabilities {
-    return try {
+private suspend fun detectWebAuthnCapabilities(): WebAuthnCapabilities =
+    try {
         val os = System.getProperty("os.name").lowercase()
-        val platformName = when {
-            os.contains("mac") -> "macOS"
-            os.contains("windows") -> "Windows"  
-            os.contains("linux") -> "Linux"
-            else -> "Unknown"
-        }
-        
-        // Try to check if JxBrowser is available by checking if passkey is supported
-        val hasJxBrowser = try {
-            // This is a simplified check - we assume JxBrowser is available if passkeys are supported
-            AuthService.isPasskeySupported()
-        } catch (e: Exception) {
-            securitySettingsLogger.debug(
-                LogCategory.PASSKEY,
-                "Passkey support probe failed - assuming no JxBrowser",
-                mapOf("error" to e.toString()),
-            )
-            false
-        }
+        val platformName =
+            when {
+                os.contains("mac") -> "macOS"
+                os.contains("windows") -> "Windows"
+                os.contains("linux") -> "Linux"
+                else -> "Unknown"
+            }
 
-        val hasTouchId = when {
-            os.contains("mac") -> {
-                try {
-                    AuthService.isPasskeySupported()
-                } catch (e: Exception) {
-                    securitySettingsLogger.debug(
-                        LogCategory.PASSKEY,
-                        "Passkey support probe failed - assuming no Touch ID",
-                        mapOf("error" to e.toString()),
-                    )
+        // Try to check if JxBrowser is available by checking if passkey is supported
+        val hasJxBrowser =
+            try {
+                // This is a simplified check - we assume JxBrowser is available if passkeys are supported
+                AuthService.isPasskeySupported()
+            } catch (e: Exception) {
+                securitySettingsLogger.debug(
+                    LogCategory.PASSKEY,
+                    "Passkey support probe failed - assuming no JxBrowser",
+                    mapOf("error" to e.toString()),
+                )
+                false
+            }
+
+        val hasTouchId =
+            when {
+                os.contains("mac") -> {
+                    try {
+                        AuthService.isPasskeySupported()
+                    } catch (e: Exception) {
+                        securitySettingsLogger.debug(
+                            LogCategory.PASSKEY,
+                            "Passkey support probe failed - assuming no Touch ID",
+                            mapOf("error" to e.toString()),
+                        )
+                        false
+                    }
+                }
+
+                else -> {
                     false
                 }
             }
-            else -> false
-        }
-        
+
         // Enhanced capabilities when JxBrowser is available
         val supportedTransports = mutableListOf<String>()
         supportedTransports.add("internal")
-        
+
         var hasSecurityKey = false
         var hasNfc = false
         var hasHybrid = false
-        
+
         if (hasJxBrowser) {
             // Enhanced capabilities with JxBrowser
             hasSecurityKey = true
             hasNfc = true
             supportedTransports.addAll(listOf("usb", "nfc"))
-            
+
             if (os.contains("mac")) {
                 hasHybrid = true
                 supportedTransports.add("hybrid")
@@ -103,7 +109,7 @@ private suspend fun detectWebAuthnCapabilities(): WebAuthnCapabilities {
             // Basic capabilities without JxBrowser
             hasSecurityKey = os.contains("mac") || os.contains("windows")
         }
-        
+
         WebAuthnCapabilities(
             hasJxBrowserEngine = hasJxBrowser,
             hasTouchId = hasTouchId,
@@ -111,9 +117,8 @@ private suspend fun detectWebAuthnCapabilities(): WebAuthnCapabilities {
             hasNfcSupport = hasNfc,
             hasHybridTransport = hasHybrid,
             supportedTransports = supportedTransports,
-            platformName = platformName
+            platformName = platformName,
         )
-        
     } catch (e: Exception) {
         // Fallback capabilities
         securitySettingsLogger.warn(
@@ -129,10 +134,16 @@ private suspend fun detectWebAuthnCapabilities(): WebAuthnCapabilities {
             hasNfcSupport = false,
             hasHybridTransport = false,
             supportedTransports = listOf("internal"),
-            platformName = if (os.contains("mac")) "macOS" else if (os.contains("windows")) "Windows" else "Linux"
+            platformName =
+                if (os.contains("mac")) {
+                    "macOS"
+                } else if (os.contains("windows")) {
+                    "Windows"
+                } else {
+                    "Linux"
+                },
         )
     }
-}
 
 @Composable
 fun SecuritySettings() {
@@ -144,7 +155,7 @@ fun SecuritySettings() {
     var showEmbeddedBrowser by remember { mutableStateOf(false) }
     var passkeyBrowserUrl by remember { mutableStateOf("") }
     var passkeyBrowserSessionId by remember { mutableStateOf("") }
-    var initialPasskeyCount by remember { mutableStateOf(0) }  // Track count when browser opens for polling fallback
+    var initialPasskeyCount by remember { mutableStateOf(0) } // Track count when browser opens for polling fallback
 
     var passkeyFactors by remember { mutableStateOf<List<PasskeyInfo>>(emptyList()) }
     var isLoadingPasskeys by remember { mutableStateOf(false) }
@@ -155,26 +166,27 @@ fun SecuritySettings() {
     var showEnhancedEnrollDialog by remember { mutableStateOf(false) }
     var refreshKey by remember { mutableStateOf(0) } // Add refresh trigger
     val coroutineScope = rememberCoroutineScope()
-    
+
     // Function to refresh passkey list
-    val refreshPasskeyList = suspend {
-        isLoadingPasskeys = true
-        AuthService.getUserPasskeys().fold(
-            onSuccess = { passkeys ->
-                passkeyFactors = passkeys
-                isLoadingPasskeys = false
-                errorMessage = null
-            },
-            onFailure = { error ->
-                // Don't show error for passkeys if Touch ID not supported
-                if (touchIDSupported) {
-                    errorMessage = "Failed to load WebAuthn credentials: ${error.message}"
-                }
-                isLoadingPasskeys = false
-            }
-        )
-    }
-    
+    val refreshPasskeyList =
+        suspend {
+            isLoadingPasskeys = true
+            AuthService.getUserPasskeys().fold(
+                onSuccess = { passkeys ->
+                    passkeyFactors = passkeys
+                    isLoadingPasskeys = false
+                    errorMessage = null
+                },
+                onFailure = { error ->
+                    // Don't show error for passkeys if Touch ID not supported
+                    if (touchIDSupported) {
+                        errorMessage = "Failed to load WebAuthn credentials: ${error.message}"
+                    }
+                    isLoadingPasskeys = false
+                },
+            )
+        }
+
     // Load passkeys when component mounts or refreshKey changes
     LaunchedEffect(refreshKey) {
         if (authState is AuthService.AuthState.Authenticated) {
@@ -193,12 +205,12 @@ fun SecuritySettings() {
                     webAuthnCapabilities = null
                 }
             }
-            
+
             // Refresh passkey list
             refreshPasskeyList()
         }
     }
-    
+
     // Add periodic refresh to catch passkeys added outside of settings
     LaunchedEffect(authState) {
         if (authState is AuthService.AuthState.Authenticated) {
@@ -215,12 +227,16 @@ fun SecuritySettings() {
 
                                 // Fallback: Close embedded browser if new passkey detected during registration
                                 if (showEmbeddedBrowser && passkeys.size > initialPasskeyCount) {
-                                        securitySettingsLogger.debug(LogCategory.PASSKEY, "New passkey detected via polling, closing embedded browser", mapOf("previousCount" to currentCount, "newCount" to passkeys.size))
+                                    securitySettingsLogger.debug(
+                                        LogCategory.PASSKEY,
+                                        "New passkey detected via polling, closing embedded browser",
+                                        mapOf("previousCount" to currentCount, "newCount" to passkeys.size),
+                                    )
                                     showEmbeddedBrowser = false
                                 }
                             }
                         },
-                        onFailure = { /* Ignore periodic refresh errors */ }
+                        onFailure = { /* Ignore periodic refresh errors */ },
                     )
                 }
             }
@@ -234,76 +250,77 @@ fun SecuritySettings() {
             securitySettingsLogger.debug(LogCategory.PASSKEY, "Passkey state changed to ShowEmbeddedBrowser, showing browser screen")
             passkeyBrowserUrl = browserState.url
             passkeyBrowserSessionId = browserState.sessionId
-            initialPasskeyCount = passkeyFactors.size  // Track initial count for polling fallback detection
+            initialPasskeyCount = passkeyFactors.size // Track initial count for polling fallback detection
             showEmbeddedBrowser = true
-            showEnhancedEnrollDialog = false  // Close the enrollment dialog if it's open
+            showEnhancedEnrollDialog = false // Close the enrollment dialog if it's open
         }
     }
 
     Column(
         modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        
         // Authentication status check
         if (authState !is AuthService.AuthState.Authenticated) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 backgroundColor = BossTheme.colors.alert.copy(alpha = 0.1f),
                 shape = RoundedCornerShape(8.dp),
-                elevation = 0.dp
+                elevation = 0.dp,
             ) {
                 Row(
                     modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Icon(
                         Icons.Outlined.Warning,
                         contentDescription = "Warning",
                         tint = BossTheme.colors.alert,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(20.dp),
                     )
                     Spacer(modifier = Modifier.width(12.dp))
                     Text(
                         text = "You must be logged in to manage security settings",
                         fontSize = 14.sp,
-                        color = BossTheme.colors.textPrimary
+                        color = BossTheme.colors.textPrimary,
                     )
                 }
             }
             return@Column
         }
-        
+
         // WebAuthn / Touch ID Authentication
         SettingsSection(
             title = "WebAuthn Authentication",
-            description = if (touchIDSupported) 
-                "Manage WebAuthn credentials for secure, passwordless authentication"
-            else 
-                "WebAuthn is not available on this device"
+            description =
+                if (touchIDSupported) {
+                    "Manage WebAuthn credentials for secure, passwordless authentication"
+                } else {
+                    "WebAuthn is not available on this device"
+                },
         ) {
             if (!touchIDSupported) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     backgroundColor = BossTheme.colors.warn.copy(alpha = 0.1f),
                     shape = RoundedCornerShape(8.dp),
-                    elevation = 0.dp
+                    elevation = 0.dp,
                 ) {
                     Row(
                         modifier = Modifier.padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(
                             Icons.Outlined.Warning,
                             contentDescription = "Warning",
                             tint = BossTheme.colors.warn,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(20.dp),
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         Text(
                             text = "WebAuthn is not supported on this device. Please ensure you have biometric authentication enabled in System Preferences.",
                             fontSize = 14.sp,
-                            color = BossTheme.colors.textPrimary
+                            color = BossTheme.colors.textPrimary,
                         )
                     }
                 }
@@ -315,22 +332,22 @@ fun SecuritySettings() {
                         backgroundColor = BossTheme.colors.ink,
                         shape = RoundedCornerShape(8.dp),
                         elevation = 0.dp,
-                        border = BorderStroke(1.dp, BossTheme.colors.line)
+                        border = BorderStroke(1.dp, BossTheme.colors.line),
                     ) {
                         Row(
                             modifier = Modifier.padding(20.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(20.dp),
                                 color = BossTheme.colors.signal,
-                                strokeWidth = 2.dp
+                                strokeWidth = 2.dp,
                             )
                             Spacer(modifier = Modifier.width(16.dp))
                             Text(
                                 text = "Loading WebAuthn credentials...",
                                 fontSize = 14.sp,
-                                color = BossTheme.colors.textPrimary
+                                color = BossTheme.colors.textPrimary,
                             )
                         }
                     }
@@ -342,81 +359,81 @@ fun SecuritySettings() {
                             backgroundColor = BossTheme.colors.ink,
                             shape = RoundedCornerShape(8.dp),
                             elevation = 0.dp,
-                            border = BorderStroke(1.dp, BossTheme.colors.line)
+                            border = BorderStroke(1.dp, BossTheme.colors.line),
                         ) {
                             Column(
-                                modifier = Modifier.padding(20.dp)
+                                modifier = Modifier.padding(20.dp),
                             ) {
                                 Text(
                                     text = "WebAuthn Capabilities",
                                     fontSize = 16.sp,
                                     fontWeight = FontWeight.Medium,
-                                    color = BossTheme.colors.textPrimary
+                                    color = BossTheme.colors.textPrimary,
                                 )
-                                
+
                                 Spacer(modifier = Modifier.height(16.dp))
-                                
+
                                 Column(
-                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                    verticalArrangement = Arrangement.spacedBy(12.dp),
                                 ) {
                                     WebAuthnCapabilityRow(
                                         icon = if (capabilities.hasJxBrowserEngine) Icons.Outlined.CheckCircle else Icons.Outlined.Error,
                                         label = "WebAuthn Support",
                                         status = if (capabilities.hasJxBrowserEngine) "Available" else "Not supported",
-                                        enabled = capabilities.hasJxBrowserEngine
+                                        enabled = capabilities.hasJxBrowserEngine,
                                     )
-                                    
+
                                     WebAuthnCapabilityRow(
                                         icon = if (capabilities.hasTouchId) Icons.Outlined.Fingerprint else Icons.Outlined.Error,
                                         label = "Platform Authenticator",
                                         status = if (capabilities.hasTouchId) "Touch ID/Windows Hello" else "Not available",
-                                        enabled = capabilities.hasTouchId
+                                        enabled = capabilities.hasTouchId,
                                     )
-                                    
+
                                     WebAuthnCapabilityRow(
                                         icon = if (capabilities.hasSecurityKeySupport) Icons.Outlined.Usb else Icons.Outlined.Error,
                                         label = "Security Key Support",
                                         status = if (capabilities.hasSecurityKeySupport) "USB/NFC keys supported" else "Not supported",
-                                        enabled = capabilities.hasSecurityKeySupport
+                                        enabled = capabilities.hasSecurityKeySupport,
                                     )
-                                    
+
                                     WebAuthnCapabilityRow(
                                         icon = if (capabilities.hasHybridTransport) Icons.Outlined.Smartphone else Icons.Outlined.Error,
                                         label = "Cross-Device Authentication",
                                         status = if (capabilities.hasHybridTransport) "QR Code/Bluetooth available" else "Not supported",
-                                        enabled = capabilities.hasHybridTransport
+                                        enabled = capabilities.hasHybridTransport,
                                     )
-                                    
+
                                     WebAuthnCapabilityRow(
                                         icon = if (capabilities.hasNfcSupport) Icons.Outlined.Nfc else Icons.Outlined.Error,
                                         label = "NFC Support",
                                         status = if (capabilities.hasNfcSupport) "NFC authenticators supported" else "Not supported",
-                                        enabled = capabilities.hasNfcSupport
+                                        enabled = capabilities.hasNfcSupport,
                                     )
                                 }
                             }
                         }
                     }
-                    
+
                     // Current WebAuthn status
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         backgroundColor = BossTheme.colors.ink,
                         shape = RoundedCornerShape(8.dp),
                         elevation = 0.dp,
-                        border = BorderStroke(1.dp, BossTheme.colors.line)
+                        border = BorderStroke(1.dp, BossTheme.colors.line),
                     ) {
                         Column(modifier = Modifier.padding(20.dp)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(
                                         Icons.Outlined.Security,
                                         contentDescription = "WebAuthn",
                                         tint = BossTheme.colors.signal,
-                                        modifier = Modifier.size(24.dp)
+                                        modifier = Modifier.size(24.dp),
                                     )
                                     Spacer(modifier = Modifier.width(16.dp))
                                     Column {
@@ -424,12 +441,12 @@ fun SecuritySettings() {
                                             text = "WebAuthn Credentials",
                                             fontSize = 16.sp,
                                             fontWeight = FontWeight.Medium,
-                                            color = BossTheme.colors.textPrimary
+                                            color = BossTheme.colors.textPrimary,
                                         )
                                         Text(
                                             text = if (passkeyFactors.isEmpty()) "No credentials enrolled" else "${passkeyFactors.size} credential(s) enrolled",
                                             fontSize = 14.sp,
-                                            color = BossTheme.colors.textSecondary
+                                            color = BossTheme.colors.textSecondary,
                                         )
                                     }
                                 }
@@ -441,15 +458,16 @@ fun SecuritySettings() {
                                         onClick = {
                                             showEnhancedEnrollDialog = true
                                         },
-                                        colors = ButtonDefaults.buttonColors(
-                                            backgroundColor = BossTheme.colors.signal,
-                                            contentColor = BossTheme.colors.onSignal
-                                        )
+                                        colors =
+                                            ButtonDefaults.buttonColors(
+                                                backgroundColor = BossTheme.colors.signal,
+                                                contentColor = BossTheme.colors.onSignal,
+                                            ),
                                     ) {
                                         Icon(
                                             Icons.Outlined.Add,
                                             contentDescription = "Setup",
-                                            modifier = Modifier.size(16.dp)
+                                            modifier = Modifier.size(16.dp),
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Text("Set Up Passkey")
@@ -458,7 +476,7 @@ fun SecuritySettings() {
                             }
                         }
                     }
-                    
+
                     // List enrolled WebAuthn credentials
                     if (passkeyFactors.isNotEmpty()) {
                         passkeyFactors.forEach { passkey ->
@@ -467,11 +485,11 @@ fun SecuritySettings() {
                                 backgroundColor = BossTheme.colors.ink,
                                 shape = RoundedCornerShape(8.dp),
                                 elevation = 0.dp,
-                                border = BorderStroke(1.dp, BossTheme.colors.line)
+                                border = BorderStroke(1.dp, BossTheme.colors.line),
                             ) {
                                 Row(
                                     modifier = Modifier.padding(16.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                    verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Icon(
                                         when (getAuthenticatorTypeDescription(passkey)) {
@@ -482,7 +500,7 @@ fun SecuritySettings() {
                                         },
                                         contentDescription = passkey.displayName,
                                         tint = BossTheme.colors.signal,
-                                        modifier = Modifier.size(20.dp)
+                                        modifier = Modifier.size(20.dp),
                                     )
                                     Spacer(modifier = Modifier.width(12.dp))
                                     Column(modifier = Modifier.weight(1f)) {
@@ -490,12 +508,12 @@ fun SecuritySettings() {
                                             text = passkey.displayName,
                                             fontSize = 14.sp,
                                             fontWeight = FontWeight.Medium,
-                                            color = BossTheme.colors.textPrimary
+                                            color = BossTheme.colors.textPrimary,
                                         )
                                         Text(
                                             text = "Added ${formatTimestamp(passkey.createdAt)}",
                                             fontSize = 12.sp,
-                                            color = BossTheme.colors.textSecondary
+                                            color = BossTheme.colors.textSecondary,
                                         )
 
                                         // Show additional details
@@ -503,19 +521,19 @@ fun SecuritySettings() {
                                             text = formatPasskeyDetails(passkey),
                                             fontSize = 11.sp,
                                             color = BossTheme.colors.textSecondary.copy(alpha = 0.7f),
-                                            maxLines = 1
+                                            maxLines = 1,
                                         )
                                     }
 
                                     IconButton(
                                         onClick = { showRemovePasskeyDialog = passkey },
-                                        modifier = Modifier.size(32.dp)
+                                        modifier = Modifier.size(32.dp),
                                     ) {
                                         Icon(
                                             Icons.Outlined.Delete,
                                             contentDescription = "Remove",
                                             tint = BossTheme.colors.alert,
-                                            modifier = Modifier.size(18.dp)
+                                            modifier = Modifier.size(18.dp),
                                         )
                                     }
                                 }
@@ -527,17 +545,18 @@ fun SecuritySettings() {
                             onClick = {
                                 showEnhancedEnrollDialog = true
                             },
-                            colors = ButtonDefaults.buttonColors(
-                                backgroundColor = BossTheme.colors.ink,
-                                contentColor = BossTheme.colors.signal
-                            ),
+                            colors =
+                                ButtonDefaults.buttonColors(
+                                    backgroundColor = BossTheme.colors.ink,
+                                    contentColor = BossTheme.colors.signal,
+                                ),
                             border = BorderStroke(1.dp, BossTheme.colors.line),
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth(),
                         ) {
                             Icon(
                                 Icons.Outlined.Add,
                                 contentDescription = "Add",
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(16.dp),
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text("Add Another Passkey")
@@ -546,45 +565,45 @@ fun SecuritySettings() {
                 }
             }
         }
-        
+
         Spacer(modifier = Modifier.height(32.dp))
-        
+
         // Security Tips
         SettingsSection(
             title = "Security Best Practices",
-            description = "Tips for secure authentication"
+            description = "Tips for secure authentication",
         ) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 backgroundColor = BossTheme.colors.ink,
                 shape = RoundedCornerShape(8.dp),
                 elevation = 0.dp,
-                border = BorderStroke(1.dp, BossTheme.colors.line)
+                border = BorderStroke(1.dp, BossTheme.colors.line),
             ) {
                 Column(modifier = Modifier.padding(20.dp)) {
                     SecurityTip(
                         icon = Icons.Outlined.Key,
-                        text = "Use WebAuthn for passwordless, secure authentication"
+                        text = "Use WebAuthn for passwordless, secure authentication",
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     SecurityTip(
                         icon = Icons.Outlined.DeviceHub,
-                        text = "Register multiple devices for redundancy"
+                        text = "Register multiple devices for redundancy",
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     SecurityTip(
                         icon = Icons.Outlined.Security,
-                        text = "WebAuthn provides superior security over traditional passwords"
+                        text = "WebAuthn provides superior security over traditional passwords",
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     SecurityTip(
                         icon = Icons.Outlined.Fingerprint,
-                        text = "Biometric authentication keeps your credentials secure on-device"
+                        text = "Biometric authentication keeps your credentials secure on-device",
                     )
                 }
             }
         }
-        
+
         // Error message
         errorMessage?.let { message ->
             Spacer(modifier = Modifier.height(16.dp))
@@ -593,29 +612,29 @@ fun SecuritySettings() {
                 backgroundColor = BossTheme.colors.alert.copy(alpha = 0.1f),
                 shape = RoundedCornerShape(8.dp),
                 elevation = 0.dp,
-                border = BorderStroke(1.dp, BossTheme.colors.alert.copy(alpha = 0.3f))
+                border = BorderStroke(1.dp, BossTheme.colors.alert.copy(alpha = 0.3f)),
             ) {
                 Row(
                     modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Icon(
                         Icons.Outlined.Error,
                         contentDescription = "Error",
                         tint = BossTheme.colors.alert,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(20.dp),
                     )
                     Spacer(modifier = Modifier.width(12.dp))
                     Text(
                         text = message,
                         fontSize = 14.sp,
-                        color = BossTheme.colors.textPrimary
+                        color = BossTheme.colors.textPrimary,
                     )
                 }
             }
         }
     }
-    
+
     // Show remove passkey confirmation dialog
     showRemovePasskeyDialog?.let { passkey ->
         AlertDialog(
@@ -625,7 +644,7 @@ fun SecuritySettings() {
                     "Remove WebAuthn Credential",
                     color = BossTheme.colors.textPrimary,
                     fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
                 )
             },
             text = {
@@ -633,17 +652,17 @@ fun SecuritySettings() {
                     Text(
                         "Are you sure you want to remove this WebAuthn credential?",
                         color = BossTheme.colors.textSecondary,
-                        fontSize = 14.sp
+                        fontSize = 14.sp,
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Card(
                         backgroundColor = BossTheme.colors.ink,
                         shape = RoundedCornerShape(8.dp),
-                        border = BorderStroke(1.dp, BossTheme.colors.line)
+                        border = BorderStroke(1.dp, BossTheme.colors.line),
                     ) {
                         Row(
                             modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Icon(
                                 when (getAuthenticatorTypeDescription(passkey)) {
@@ -654,13 +673,13 @@ fun SecuritySettings() {
                                 },
                                 contentDescription = passkey.displayName,
                                 tint = BossTheme.colors.signal,
-                                modifier = Modifier.size(20.dp)
+                                modifier = Modifier.size(20.dp),
                             )
                             Spacer(modifier = Modifier.width(12.dp))
                             Text(
                                 text = passkey.displayName,
                                 color = BossTheme.colors.textPrimary,
-                                fontSize = 14.sp
+                                fontSize = 14.sp,
                             )
                         }
                     }
@@ -668,7 +687,7 @@ fun SecuritySettings() {
                     Text(
                         "Warning: You will no longer be able to use this credential to sign in.",
                         color = BossTheme.colors.alert,
-                        fontSize = 12.sp
+                        fontSize = 12.sp,
                     )
                 }
             },
@@ -687,10 +706,10 @@ fun SecuritySettings() {
                                 onFailure = { error ->
                                     errorMessage = "Failed to remove WebAuthn credential: ${error.message}"
                                     showRemovePasskeyDialog = null
-                                }
+                                },
                             )
                         }
-                    }
+                    },
                 ) {
                     Text("Remove", color = BossTheme.colors.alert)
                 }
@@ -701,10 +720,10 @@ fun SecuritySettings() {
                 }
             },
             backgroundColor = BossTheme.colors.panel,
-            contentColor = BossTheme.colors.textPrimary
+            contentColor = BossTheme.colors.textPrimary,
         )
     }
-    
+
     // Show enhanced enroll dialog
     if (showEnhancedEnrollDialog) {
         PasskeyEnrollmentDialog(
@@ -717,7 +736,7 @@ fun SecuritySettings() {
             onError = { error ->
                 errorMessage = error
                 showEnhancedEnrollDialog = false
-            }
+            },
         )
     }
 
@@ -735,7 +754,7 @@ fun SecuritySettings() {
             onBack = {
                 securitySettingsLogger.debug(LogCategory.PASSKEY, "User cancelled passkey registration from browser")
                 showEmbeddedBrowser = false
-            }
+            },
         )
     }
 }
@@ -744,7 +763,7 @@ fun SecuritySettings() {
 private fun PasskeyEnrollmentDialog(
     onDismiss: () -> Unit,
     onSuccess: () -> Unit,
-    onError: (String) -> Unit
+    onError: (String) -> Unit,
 ) {
     var isEnrolling by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
@@ -756,50 +775,50 @@ private fun PasskeyEnrollmentDialog(
                 "Set Up Passkey",
                 color = BossTheme.colors.textPrimary,
                 fontSize = 20.sp,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Bold,
             )
         },
         text = {
             Column {
                 if (isEnrolling) {
                     Row(
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(20.dp),
                             color = BossTheme.colors.signal,
-                            strokeWidth = 2.dp
+                            strokeWidth = 2.dp,
                         )
                         Spacer(modifier = Modifier.width(16.dp))
                         Text(
                             "Setting up your passkey...",
                             color = BossTheme.colors.textSecondary,
-                            fontSize = 14.sp
+                            fontSize = 14.sp,
                         )
                     }
                 } else {
                     Text(
                         "Set up a passkey for secure, passwordless authentication using Touch ID or Windows Hello.",
                         color = BossTheme.colors.textSecondary,
-                        fontSize = 14.sp
+                        fontSize = 14.sp,
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
                         "• No passwords to remember",
                         color = BossTheme.colors.textSecondary,
-                        fontSize = 12.sp
+                        fontSize = 12.sp,
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         "• More secure than traditional passwords",
                         color = BossTheme.colors.textSecondary,
-                        fontSize = 12.sp
+                        fontSize = 12.sp,
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         "• Works across all your devices",
                         color = BossTheme.colors.textSecondary,
-                        fontSize = 12.sp
+                        fontSize = 12.sp,
                     )
                 }
             }
@@ -820,7 +839,7 @@ private fun PasskeyEnrollmentDialog(
                                     onFailure = { error ->
                                         isEnrolling = false
                                         onError("Failed to enroll passkey: ${error.message}")
-                                    }
+                                    },
                                 )
                             } catch (e: Exception) {
                                 isEnrolling = false
@@ -828,10 +847,11 @@ private fun PasskeyEnrollmentDialog(
                             }
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(
-                        backgroundColor = BossTheme.colors.signal,
-                        contentColor = BossTheme.colors.onSignal
-                    )
+                    colors =
+                        ButtonDefaults.buttonColors(
+                            backgroundColor = BossTheme.colors.signal,
+                            contentColor = BossTheme.colors.onSignal,
+                        ),
                 ) {
                     Text("Set Up Passkey")
                 }
@@ -845,30 +865,30 @@ private fun PasskeyEnrollmentDialog(
             }
         },
         backgroundColor = BossTheme.colors.panel,
-        contentColor = BossTheme.colors.textPrimary
+        contentColor = BossTheme.colors.textPrimary,
     )
 }
 
 @Composable
 private fun SecurityTip(
     icon: ImageVector,
-    text: String
+    text: String,
 ) {
     Row(
-        verticalAlignment = Alignment.Top
+        verticalAlignment = Alignment.Top,
     ) {
         Icon(
             icon,
             contentDescription = null,
             tint = BossTheme.colors.signal,
-            modifier = Modifier.size(20.dp)
+            modifier = Modifier.size(20.dp),
         )
         Spacer(modifier = Modifier.width(12.dp))
         Text(
             text = text,
             fontSize = 13.sp,
             color = BossTheme.colors.textPrimary.copy(alpha = 0.9f),
-            lineHeight = 18.sp
+            lineHeight = 18.sp,
         )
     }
 }
@@ -881,34 +901,34 @@ private fun WebAuthnCapabilityRow(
     icon: ImageVector,
     label: String,
     status: String,
-    enabled: Boolean
+    enabled: Boolean,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.weight(1f)
+            modifier = Modifier.weight(1f),
         ) {
             Icon(
                 icon,
                 contentDescription = label,
                 tint = if (enabled) BossTheme.colors.ok else BossTheme.colors.alert,
-                modifier = Modifier.size(16.dp)
+                modifier = Modifier.size(16.dp),
             )
             Spacer(modifier = Modifier.width(12.dp))
             Text(
                 text = label,
                 fontSize = 14.sp,
-                color = BossTheme.colors.textPrimary
+                color = BossTheme.colors.textPrimary,
             )
         }
         Text(
             text = status,
             fontSize = 12.sp,
-            color = if (enabled) BossTheme.colors.ok else BossTheme.colors.textSecondary
+            color = if (enabled) BossTheme.colors.ok else BossTheme.colors.textSecondary,
         )
     }
 }
@@ -916,60 +936,61 @@ private fun WebAuthnCapabilityRow(
 /**
  * Helper functions for enhanced passkey display
  */
-private fun getAuthenticatorTypeDescription(passkey: PasskeyInfo): String {
-    return when {
+private fun getAuthenticatorTypeDescription(passkey: PasskeyInfo): String =
+    when {
         passkey.transports.contains("usb") -> "USB Security Key"
         passkey.transports.contains("nfc") -> "NFC Authenticator"
         passkey.transports.contains("hybrid") -> "Cross-device Authentication"
         else -> "Touch ID"
     }
-}
 
 private fun formatPasskeyDetails(passkey: PasskeyInfo): String {
     val status = "Verified"
-    val createdDate = try {
-        val date = java.util.Date(passkey.createdAt)
-        java.text.SimpleDateFormat("MMM dd, yyyy", java.util.Locale.getDefault()).format(date)
-    } catch (e: Exception) {
-        securitySettingsLogger.debug(
-            LogCategory.UI,
-            "Failed to format passkey creation date",
-            mapOf("error" to e.toString()),
-        )
-        "Unknown date"
-    }
-    
-    val lastUsed = if (passkey.lastUsed != null) {
+    val createdDate =
         try {
-            val date = java.util.Date(passkey.lastUsed)
-            val now = System.currentTimeMillis()
-            val diffDays = (now - passkey.lastUsed) / (24 * 60 * 60 * 1000)
-            when {
-                diffDays == 0L -> "today"
-                diffDays == 1L -> "yesterday"  
-                diffDays < 30 -> "${diffDays} days ago"
-                else -> java.text.SimpleDateFormat("MMM dd", java.util.Locale.getDefault()).format(date)
-            }
+            val date = java.util.Date(passkey.createdAt)
+            java.text.SimpleDateFormat("MMM dd, yyyy", java.util.Locale.getDefault()).format(date)
         } catch (e: Exception) {
             securitySettingsLogger.debug(
                 LogCategory.UI,
-                "Failed to format passkey last-used date",
+                "Failed to format passkey creation date",
                 mapOf("error" to e.toString()),
             )
-            "recently"
+            "Unknown date"
         }
-    } else {
-        "never used"
-    }
-    
+
+    val lastUsed =
+        if (passkey.lastUsed != null) {
+            try {
+                val date = java.util.Date(passkey.lastUsed)
+                val now = System.currentTimeMillis()
+                val diffDays = (now - passkey.lastUsed) / (24 * 60 * 60 * 1000)
+                when {
+                    diffDays == 0L -> "today"
+                    diffDays == 1L -> "yesterday"
+                    diffDays < 30 -> "$diffDays days ago"
+                    else -> java.text.SimpleDateFormat("MMM dd", java.util.Locale.getDefault()).format(date)
+                }
+            } catch (e: Exception) {
+                securitySettingsLogger.debug(
+                    LogCategory.UI,
+                    "Failed to format passkey last-used date",
+                    mapOf("error" to e.toString()),
+                )
+                "recently"
+            }
+        } else {
+            "never used"
+        }
+
     return "$status • Created $createdDate • Last used $lastUsed"
 }
 
 /**
  * Helper function to format timestamps for display in the Touch ID credentials list
  */
-private fun formatTimestamp(timestamp: Long): String {
-    return try {
+private fun formatTimestamp(timestamp: Long): String =
+    try {
         val date = java.util.Date(timestamp)
         val format = java.text.SimpleDateFormat("MMM dd, yyyy", java.util.Locale.getDefault())
         format.format(date)
@@ -981,4 +1002,3 @@ private fun formatTimestamp(timestamp: Long): String {
         )
         "Unknown"
     }
-}

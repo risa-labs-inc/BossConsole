@@ -53,7 +53,9 @@ class PluginProcessMonitor(
     val healthStates: StateFlow<Map<String, PluginHealthInfo>> = _healthStates.asStateFlow()
 
     /** Plugins that have been switched to in-process fallback. Thread-safe. */
-    private val inProcessFallbacks = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val inProcessFallbacks =
+        java.util.concurrent.ConcurrentHashMap
+            .newKeySet<String>()
 
     /** Stored manifests and jar paths for re-spawning after crash. */
     private val pluginSpawnInfo = java.util.concurrent.ConcurrentHashMap<String, Pair<PluginManifest, String>>()
@@ -71,14 +73,15 @@ class PluginProcessMonitor(
         if (manifest != null && jarPath != null) {
             pluginSpawnInfo[pluginId] = manifest to jarPath
         }
-        val info = PluginHealthInfo(
-            pluginId = pluginId,
-            displayName = displayName,
-            processState = PluginProcessState.RUNNING,
-            pid = spawner.getManagedProcess(pluginId)?.pid,
-            maxRestarts = maxRestarts,
-            connected = spawner.getStateBridge(pluginId)?.connected?.value == true,
-        )
+        val info =
+            PluginHealthInfo(
+                pluginId = pluginId,
+                displayName = displayName,
+                processState = PluginProcessState.RUNNING,
+                pid = spawner.getManagedProcess(pluginId)?.pid,
+                maxRestarts = maxRestarts,
+                connected = spawner.getStateBridge(pluginId)?.connected?.value == true,
+            )
         _healthStates.value = _healthStates.value + (pluginId to info)
     }
 
@@ -110,10 +113,13 @@ class PluginProcessMonitor(
         val spawnInfo = pluginSpawnInfo[pluginId]
         if (spawnInfo == null) {
             logger.error("Cannot restart plugin {}: no stored manifest/jarPath", pluginId)
-            updateState(pluginId, current.copy(
-                processState = PluginProcessState.FAILED,
-                lastError = "No spawn info stored for restart",
-            ))
+            updateState(
+                pluginId,
+                current.copy(
+                    processState = PluginProcessState.FAILED,
+                    lastError = "No spawn info stored for restart",
+                ),
+            )
             return
         }
 
@@ -124,20 +130,26 @@ class PluginProcessMonitor(
             val (manifest, jarPath) = spawnInfo
             spawner.terminate(pluginId)
             spawner.spawn(manifest, jarPath).getOrThrow()
-            updateState(pluginId, current.copy(
-                processState = PluginProcessState.RUNNING,
-                pid = spawner.getManagedProcess(pluginId)?.pid,
-                restartCount = current.restartCount + 1,
-                lastError = null,
-                connected = true,
-            ))
+            updateState(
+                pluginId,
+                current.copy(
+                    processState = PluginProcessState.RUNNING,
+                    pid = spawner.getManagedProcess(pluginId)?.pid,
+                    restartCount = current.restartCount + 1,
+                    lastError = null,
+                    connected = true,
+                ),
+            )
             logger.info("Plugin restarted successfully: {}", pluginId)
         } catch (e: Exception) {
             logger.error("Failed to restart plugin: {}", pluginId, e)
-            updateState(pluginId, current.copy(
-                processState = PluginProcessState.FAILED,
-                lastError = e.message,
-            ))
+            updateState(
+                pluginId,
+                current.copy(
+                    processState = PluginProcessState.FAILED,
+                    lastError = e.message,
+                ),
+            )
         }
     }
 
@@ -176,38 +188,46 @@ class PluginProcessMonitor(
                 val error = process?.lastError ?: "Process exited unexpectedly"
                 val restartCount = info.restartCount + 1
 
-                val newState = if (restartCount >= info.maxRestarts) {
-                    PluginProcessState.FAILED
-                } else {
-                    PluginProcessState.CRASHED
-                }
+                val newState =
+                    if (restartCount >= info.maxRestarts) {
+                        PluginProcessState.FAILED
+                    } else {
+                        PluginProcessState.CRASHED
+                    }
 
-                states[pluginId] = info.copy(
-                    processState = newState,
-                    restartCount = restartCount,
-                    lastError = error,
-                    connected = false,
-                )
+                states[pluginId] =
+                    info.copy(
+                        processState = newState,
+                        restartCount = restartCount,
+                        lastError = error,
+                        connected = false,
+                    )
 
                 logger.warn(
                     "Plugin process crashed: id={}, restarts={}/{}",
-                    pluginId, restartCount, info.maxRestarts
+                    pluginId,
+                    restartCount,
+                    info.maxRestarts,
                 )
             } else if (isAlive) {
                 val process = spawner.getManagedProcess(pluginId)
-                states[pluginId] = info.copy(
-                    processState = PluginProcessState.RUNNING,
-                    pid = process?.pid,
-                    connected = isConnected,
-                    uptimeMs = process?.let { System.currentTimeMillis() - it.startTime } ?: 0,
-                )
+                states[pluginId] =
+                    info.copy(
+                        processState = PluginProcessState.RUNNING,
+                        pid = process?.pid,
+                        connected = isConnected,
+                        uptimeMs = process?.let { System.currentTimeMillis() - it.startTime } ?: 0,
+                    )
             }
         }
 
         _healthStates.value = states
     }
 
-    private fun updateState(pluginId: String, info: PluginHealthInfo) {
+    private fun updateState(
+        pluginId: String,
+        info: PluginHealthInfo,
+    ) {
         _healthStates.value = _healthStates.value + (pluginId to info)
     }
 }

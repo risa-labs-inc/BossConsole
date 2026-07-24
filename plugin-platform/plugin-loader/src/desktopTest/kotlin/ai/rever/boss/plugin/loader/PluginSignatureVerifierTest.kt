@@ -11,30 +11,37 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class PluginSignatureVerifierTest {
-
-    private val keyPair: KeyPair = KeyPairGenerator.getInstance("RSA").apply {
-        initialize(2048)
-    }.generateKeyPair()
+    private val keyPair: KeyPair =
+        KeyPairGenerator
+            .getInstance("RSA")
+            .apply {
+                initialize(2048)
+            }.generateKeyPair()
 
     private fun publicKeyPem(pair: KeyPair = keyPair): String {
-        val b64 = Base64.getMimeEncoder(64, "\n".toByteArray())
-            .encodeToString(pair.public.encoded)
+        val b64 =
+            Base64
+                .getMimeEncoder(64, "\n".toByteArray())
+                .encodeToString(pair.public.encoded)
         return "-----BEGIN PUBLIC KEY-----\n$b64\n-----END PUBLIC KEY-----"
     }
 
-    private fun sign(message: String, pair: KeyPair = keyPair): String {
-        val sig = Signature.getInstance("SHA256withRSA").apply {
-            initSign(pair.private)
-            update(message.toByteArray(Charsets.UTF_8))
-        }
+    private fun sign(
+        message: String,
+        pair: KeyPair = keyPair,
+    ): String {
+        val sig =
+            Signature.getInstance("SHA256withRSA").apply {
+                initSign(pair.private)
+                update(message.toByteArray(Charsets.UTF_8))
+            }
         return Base64.getEncoder().encodeToString(sig.sign())
     }
 
     private val digest = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"
     private val anchor = PluginStoreTrust.versionAnchor("test.plugin", "1.2.3", digest)
 
-    private fun verifierWithKey() =
-        PluginSignatureVerifier(mapOf("test-publisher" to publicKeyPem()))
+    private fun verifierWithKey() = PluginSignatureVerifier(mapOf("test-publisher" to publicKeyPem()))
 
     @Test
     fun `valid message signature verifies`() {

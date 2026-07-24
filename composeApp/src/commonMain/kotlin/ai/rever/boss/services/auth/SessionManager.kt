@@ -1,9 +1,9 @@
 package ai.rever.boss.services.auth
 
-import ai.rever.boss.services.supabase.SupabaseConfig
-import ai.rever.boss.services.supabase.models.UserInfo
 import ai.rever.boss.services.supabase.AuthService
 import ai.rever.boss.services.supabase.RoleService
+import ai.rever.boss.services.supabase.SupabaseConfig
+import ai.rever.boss.services.supabase.models.UserInfo
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.LogSanitizer
@@ -27,7 +27,6 @@ import kotlin.time.ExperimentalTime
  */
 @OptIn(ExperimentalTime::class)
 object SessionManager {
-
     private val logger = BossLogger.forComponent("SessionManager")
 
     /**
@@ -58,13 +57,17 @@ object SessionManager {
         refreshToken: String,
         userInfo: UserInfo,
         authMethod: AuthMethod,
-        expiresIn: Long = 3600L
+        expiresIn: Long = 3600L,
     ): Result<Unit> {
         return try {
-            logger.info(LogCategory.AUTH, "Establishing session", mapOf(
-                "email" to LogSanitizer.maskEmail(userInfo.email),
-                "method" to authMethod.name.lowercase()
-            ))
+            logger.info(
+                LogCategory.AUTH,
+                "Establishing session",
+                mapOf(
+                    "email" to LogSanitizer.maskEmail(userInfo.email),
+                    "method" to authMethod.name.lowercase(),
+                ),
+            )
 
             // Step 1: Import session into Supabase Auth for persistence and auto-refresh
             try {
@@ -74,8 +77,8 @@ object SessionManager {
                         refreshToken = refreshToken,
                         expiresIn = expiresIn,
                         tokenType = "Bearer",
-                        user = null  // Supabase-KT doesn't populate this for custom JWTs - expected behavior
-                    )
+                        user = null, // Supabase-KT doesn't populate this for custom JWTs - expected behavior
+                    ),
                 )
                 logger.debug(LogCategory.AUTH, "Session imported successfully with importSession()")
             } catch (e: Exception) {
@@ -110,9 +113,13 @@ object SessionManager {
             }
 
             AuthStateManager.setAuthState(AuthService.AuthState.Authenticated)
-            logger.info(LogCategory.AUTH, "Session established successfully", mapOf(
-                "email" to LogSanitizer.maskEmail(userInfo.email)
-            ))
+            logger.info(
+                LogCategory.AUTH,
+                "Session established successfully",
+                mapOf(
+                    "email" to LogSanitizer.maskEmail(userInfo.email),
+                ),
+            )
             Result.success(Unit)
         } catch (e: Exception) {
             logger.error(LogCategory.AUTH, "Session establishment failed", error = e)
@@ -144,12 +151,13 @@ object SessionManager {
                     // Parse role claims from JWT
                     val roleClaims = RoleService.parseRoleClaimsFromSession(currentSession)
 
-                    val userInfo = UserInfo(
-                        id = sessionUser.id,
-                        email = sessionUser.email ?: "",
-                        createdAt = sessionUser.createdAt?.toString() ?: "",
-                        roleClaims = roleClaims
-                    )
+                    val userInfo =
+                        UserInfo(
+                            id = sessionUser.id,
+                            email = sessionUser.email ?: "",
+                            createdAt = sessionUser.createdAt?.toString() ?: "",
+                            roleClaims = roleClaims,
+                        )
                     return Result.success(userInfo)
                 }
 
@@ -161,16 +169,21 @@ object SessionManager {
                     // IMPORTANT: Parse role claims from JWT even when loading from storage
                     // The JWT token contains the role claims, and they're needed for admin features
                     val roleClaims = RoleService.parseRoleClaimsFromSession(currentSession)
-                    val userWithRoles = UserInfo(
-                        id = storedUser.id,
-                        email = storedUser.email,
-                        createdAt = storedUser.createdAt,
-                        roleClaims = roleClaims
+                    val userWithRoles =
+                        UserInfo(
+                            id = storedUser.id,
+                            email = storedUser.email,
+                            createdAt = storedUser.createdAt,
+                            roleClaims = roleClaims,
+                        )
+                    logger.info(
+                        LogCategory.AUTH,
+                        "Loaded user from storage",
+                        mapOf(
+                            "email" to LogSanitizer.maskEmail(storedUser.email),
+                            "isAdmin" to (roleClaims?.isAdmin ?: false),
+                        ),
                     )
-                    logger.info(LogCategory.AUTH, "Loaded user from storage", mapOf(
-                        "email" to LogSanitizer.maskEmail(storedUser.email),
-                        "isAdmin" to (roleClaims?.isAdmin ?: false)
-                    ))
                     return Result.success(userWithRoles)
                 } else {
                     logger.debug(LogCategory.AUTH, "No stored user data found")
@@ -196,8 +209,8 @@ object SessionManager {
      *
      * @return Result indicating success or failure
      */
-    suspend fun clearSession(): Result<Unit> {
-        return try {
+    suspend fun clearSession(): Result<Unit> =
+        try {
             logger.info(LogCategory.AUTH, "Clearing session")
 
             // Get current user ID before clearing for cleanup purposes
@@ -226,7 +239,4 @@ object SessionManager {
             logger.error(LogCategory.AUTH, "Failed to clear session", error = e)
             Result.failure(e)
         }
-    }
-
 }
-

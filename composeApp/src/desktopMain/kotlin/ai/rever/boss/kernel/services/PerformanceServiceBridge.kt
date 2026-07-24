@@ -13,30 +13,33 @@ import kotlinx.coroutines.flow.map
 class PerformanceServiceBridge(
     private val provider: PerformanceDataProvider,
 ) : PerformanceServiceGrpcKt.PerformanceServiceCoroutineImplBase() {
-
-    override fun watchCurrentSnapshot(request: Empty): Flow<PerformanceSnapshotProto> = flow {
-        provider.currentSnapshot.collect { snapshot ->
-            if (snapshot != null) {
-                emit(snapshot.toProto())
+    override fun watchCurrentSnapshot(request: Empty): Flow<PerformanceSnapshotProto> =
+        flow {
+            provider.currentSnapshot.collect { snapshot ->
+                if (snapshot != null) {
+                    emit(snapshot.toProto())
+                }
             }
         }
-    }
 
-    override fun watchHistory(request: Empty): Flow<PerformanceHistoryResponse> = flow {
-        provider.history.collect { history ->
-            emit(
-                PerformanceHistoryResponse.newBuilder()
-                    .addAllSnapshots(history.map { it.toProto() })
-                    .build()
-            )
+    override fun watchHistory(request: Empty): Flow<PerformanceHistoryResponse> =
+        flow {
+            provider.history.collect { history ->
+                emit(
+                    PerformanceHistoryResponse
+                        .newBuilder()
+                        .addAllSnapshots(history.map { it.toProto() })
+                        .build(),
+                )
+            }
         }
-    }
 
-    override fun watchSettings(request: Empty): Flow<PerformanceSettingsProto> = flow {
-        provider.settings.collect { settings ->
-            emit(settings.toProto())
+    override fun watchSettings(request: Empty): Flow<PerformanceSettingsProto> =
+        flow {
+            provider.settings.collect { settings ->
+                emit(settings.toProto())
+            }
         }
-    }
 
     override suspend fun requestGC(request: Empty): Empty {
         provider.requestGC()
@@ -47,17 +50,19 @@ class PerformanceServiceBridge(
         val result = provider.exportMetrics()
         return result.fold(
             onSuccess = { path ->
-                ExportMetricsResponse.newBuilder()
+                ExportMetricsResponse
+                    .newBuilder()
                     .setSuccess(true)
                     .setFilePath(path)
                     .build()
             },
             onFailure = { error ->
-                ExportMetricsResponse.newBuilder()
+                ExportMetricsResponse
+                    .newBuilder()
                     .setSuccess(false)
                     .setErrorMessage(error.message ?: "Export failed")
                     .build()
-            }
+            },
         )
     }
 
@@ -67,7 +72,8 @@ class PerformanceServiceBridge(
     }
 
     private fun PerformanceSnapshotData.toProto(): PerformanceSnapshotProto =
-        PerformanceSnapshotProto.newBuilder()
+        PerformanceSnapshotProto
+            .newBuilder()
             .setTimestamp(timestamp)
             .setHeapUsedBytes(heapUsedBytes)
             .setHeapMaxBytes(heapMaxBytes)
@@ -90,7 +96,8 @@ class PerformanceServiceBridge(
             .build()
 
     private fun ChildProcessData.toProto(): ChildProcessProto =
-        ChildProcessProto.newBuilder()
+        ChildProcessProto
+            .newBuilder()
             .setProcessId(processId)
             .setPluginId(pluginId)
             .setDisplayName(displayName)
@@ -105,7 +112,8 @@ class PerformanceServiceBridge(
             .build()
 
     private fun PerformanceSettingsData.toProto(): PerformanceSettingsProto =
-        PerformanceSettingsProto.newBuilder()
+        PerformanceSettingsProto
+            .newBuilder()
             .setEnabled(enabled)
             .setShowIndicator(showIndicator)
             .setMemoryWarningThresholdPercent(memoryWarningThresholdPercent)

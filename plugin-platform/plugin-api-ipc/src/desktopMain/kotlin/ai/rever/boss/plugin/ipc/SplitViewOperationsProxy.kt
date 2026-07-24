@@ -19,51 +19,83 @@ class SplitViewOperationsProxy(
     channel: ManagedChannel,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
 ) : SplitViewOperations {
-
     private val stub = SplitViewServiceGrpcKt.SplitViewServiceCoroutineStub(channel)
 
-    override fun openUrlInActivePanel(url: String, title: String, forceNewTab: Boolean) {
+    override fun openUrlInActivePanel(
+        url: String,
+        title: String,
+        forceNewTab: Boolean,
+    ) {
         scope.launch {
             try {
                 stub.openUrlInActivePanel(
-                    SplitViewOpenUrlRequest.newBuilder()
-                        .setUrl(url).setTitle(title).setForceNewTab(forceNewTab)
-                        .build()
+                    SplitViewOpenUrlRequest
+                        .newBuilder()
+                        .setUrl(url)
+                        .setTitle(title)
+                        .setForceNewTab(forceNewTab)
+                        .build(),
                 )
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
         }
     }
 
-    override fun openFileInActivePanel(filePath: String, fileName: String) {
+    override fun openFileInActivePanel(
+        filePath: String,
+        fileName: String,
+    ) {
         scope.launch {
             try {
                 stub.openFileInActivePanel(
-                    SplitViewOpenFileRequest.newBuilder().setFilePath(filePath).setFileName(fileName).build()
+                    SplitViewOpenFileRequest
+                        .newBuilder()
+                        .setFilePath(filePath)
+                        .setFileName(fileName)
+                        .build(),
                 )
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
         }
     }
 
-    override fun openFileInEditor(filePath: String, fileName: String) {
+    override fun openFileInEditor(
+        filePath: String,
+        fileName: String,
+    ) {
         scope.launch {
             try {
                 stub.openFileInEditor(
-                    SplitViewOpenFileRequest.newBuilder().setFilePath(filePath).setFileName(fileName).build()
+                    SplitViewOpenFileRequest
+                        .newBuilder()
+                        .setFilePath(filePath)
+                        .setFileName(fileName)
+                        .build(),
                 )
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
         }
     }
 
-    override fun openFileAtPosition(filePath: String, fileName: String, line: Int, column: Int) {
+    override fun openFileAtPosition(
+        filePath: String,
+        fileName: String,
+        line: Int,
+        column: Int,
+    ) {
         scope.launch {
             try {
                 stub.openFileAtPosition(
-                    SplitViewOpenFileAtPositionRequest.newBuilder()
-                        .setFilePath(filePath).setFileName(fileName)
-                        .setLine(line).setColumn(column)
-                        .build()
+                    SplitViewOpenFileAtPositionRequest
+                        .newBuilder()
+                        .setFilePath(filePath)
+                        .setFileName(fileName)
+                        .setLine(line)
+                        .setColumn(column)
+                        .build(),
                 )
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
         }
     }
 
@@ -71,19 +103,26 @@ class SplitViewOperationsProxy(
         scope.launch {
             try {
                 stub.setActivePanel(SplitViewPanelIdRequest.newBuilder().setPanelId(panelId).build())
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
         }
     }
 
-    override fun preserveCurrentState(workspaceId: String, workspaceName: String) {
+    override fun preserveCurrentState(
+        workspaceId: String,
+        workspaceName: String,
+    ) {
         scope.launch {
             try {
                 stub.preserveCurrentState(
-                    SplitViewPreserveStateRequest.newBuilder()
-                        .setWorkspaceId(workspaceId).setWorkspaceName(workspaceName)
-                        .build()
+                    SplitViewPreserveStateRequest
+                        .newBuilder()
+                        .setWorkspaceId(workspaceId)
+                        .setWorkspaceName(workspaceName)
+                        .build(),
                 )
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
         }
     }
 
@@ -96,23 +135,31 @@ class SplitViewOperationsProxy(
         scope.launch {
             try {
                 stub.applyWorkspace(
-                    SplitViewApplyWorkspaceRequest.newBuilder()
+                    SplitViewApplyWorkspaceRequest
+                        .newBuilder()
                         .setWorkspaceJson(WorkspaceSerializer.serialize(workspace))
-                        .build()
+                        .build(),
                 )
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
         }
     }
 
-    override fun selectTabInPanel(tabId: String, panelId: String) {
+    override fun selectTabInPanel(
+        tabId: String,
+        panelId: String,
+    ) {
         scope.launch {
             try {
                 stub.selectTabInPanel(
-                    SplitViewSelectTabInPanelRequest.newBuilder()
-                        .setTabId(tabId).setPanelId(panelId)
-                        .build()
+                    SplitViewSelectTabInPanelRequest
+                        .newBuilder()
+                        .setTabId(tabId)
+                        .setPanelId(panelId)
+                        .build(),
                 )
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
         }
     }
 }

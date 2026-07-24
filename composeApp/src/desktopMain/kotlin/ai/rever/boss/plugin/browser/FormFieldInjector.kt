@@ -24,20 +24,28 @@ object FormFieldInjector {
      * Fill modes for credential injection
      */
     enum class FillMode {
-        USERNAME_ONLY,      // Fill only username/email field
-        PASSWORD_ONLY,      // Fill only password field
-        BOTH,              // Fill both username and password (recommended)
-        COPY_USERNAME,     // Copy username to clipboard
-        COPY_PASSWORD      // Copy password to clipboard
+        USERNAME_ONLY, // Fill only username/email field
+        PASSWORD_ONLY, // Fill only password field
+        BOTH, // Fill both username and password (recommended)
+        COPY_USERNAME, // Copy username to clipboard
+        COPY_PASSWORD, // Copy password to clipboard
     }
 
     /**
      * Result of fill operation
      */
     sealed class FillResult {
-        data class Success(val message: String) : FillResult()
-        data class PartialSuccess(val message: String) : FillResult()
-        data class Error(val message: String) : FillResult()
+        data class Success(
+            val message: String,
+        ) : FillResult()
+
+        data class PartialSuccess(
+            val message: String,
+        ) : FillResult()
+
+        data class Error(
+            val message: String,
+        ) : FillResult()
     }
 
     /**
@@ -52,40 +60,43 @@ object FormFieldInjector {
     private suspend fun logFieldDebugInfo(
         browser: LockedBrowser,
         phase: String,
-        fieldIdentifier: String = "activeElement"
-    ): String {
-        return try {
+        fieldIdentifier: String = "activeElement",
+    ): String =
+        try {
             val result = CompletableDeferred<String>()
 
             browser.mainFrame().ifPresent { frame ->
                 try {
-                    val debugInfo = frame.executeJavaScript<String>("""
-                        (function() {
-                            const field = document.activeElement;
-                            if (!field || (field.tagName !== 'INPUT' && field.tagName !== 'TEXTAREA')) {
-                                return 'NO_FIELD_FOCUSED';
-                            }
+                    val debugInfo =
+                        frame.executeJavaScript<String>(
+                            """
+                            (function() {
+                                const field = document.activeElement;
+                                if (!field || (field.tagName !== 'INPUT' && field.tagName !== 'TEXTAREA')) {
+                                    return 'NO_FIELD_FOCUSED';
+                                }
 
-                            const info = {
-                                phase: '$phase',
-                                tagName: field.tagName,
-                                type: field.type || 'N/A',
-                                name: field.name || 'N/A',
-                                id: field.id || 'N/A',
-                                value: field.value ? `'${'$'}{field.value}' (length: ${'$'}{field.value.length})` : 'EMPTY',
-                                placeholder: field.placeholder || 'N/A',
-                                readonly: field.readOnly,
-                                disabled: field.disabled,
-                                autocomplete: field.autocomplete || 'N/A',
-                                hasForm: field.form ? 'YES' : 'NO',
-                                formAction: field.form?.action || 'N/A',
-                                classList: Array.from(field.classList).join(', ') || 'NONE',
-                                bossFilled: field.getAttribute('data-boss-filled') || 'NO'
-                            };
+                                const info = {
+                                    phase: '$phase',
+                                    tagName: field.tagName,
+                                    type: field.type || 'N/A',
+                                    name: field.name || 'N/A',
+                                    id: field.id || 'N/A',
+                                    value: field.value ? `'${'$'}{field.value}' (length: ${'$'}{field.value.length})` : 'EMPTY',
+                                    placeholder: field.placeholder || 'N/A',
+                                    readonly: field.readOnly,
+                                    disabled: field.disabled,
+                                    autocomplete: field.autocomplete || 'N/A',
+                                    hasForm: field.form ? 'YES' : 'NO',
+                                    formAction: field.form?.action || 'N/A',
+                                    classList: Array.from(field.classList).join(', ') || 'NONE',
+                                    bossFilled: field.getAttribute('data-boss-filled') || 'NO'
+                                };
 
-                            return JSON.stringify(info, null, 2);
-                        })();
-                    """.trimIndent())
+                                return JSON.stringify(info, null, 2);
+                            })();
+                            """.trimIndent(),
+                        )
 
                     result.complete(debugInfo ?: "NULL_RESPONSE")
                 } catch (e: Exception) {
@@ -99,7 +110,6 @@ object FormFieldInjector {
         } catch (e: Exception) {
             "ERROR: ${e.message}"
         }
-    }
 
     /**
      * Fill a specific form field with a value.
@@ -115,20 +125,23 @@ object FormFieldInjector {
     suspend fun fillField(
         browser: LockedBrowser,
         fieldInfo: FormFieldDetector.FormFieldInfo,
-        value: String
-    ): FillResult {
-        return try {
+        value: String,
+    ): FillResult =
+        try {
             val result = CompletableDeferred<FillResult>()
 
             browser.mainFrame().ifPresent { frame ->
                 try {
                     // Escape special characters in value for JavaScript
-                    val escapedValue = value.replace("\\", "\\\\")
-                        .replace("'", "\\'")
-                        .replace("\n", "\\n")
-                        .replace("\r", "\\r")
+                    val escapedValue =
+                        value
+                            .replace("\\", "\\\\")
+                            .replace("'", "\\'")
+                            .replace("\n", "\\n")
+                            .replace("\r", "\\r")
 
-                    val script = """
+                    val script =
+                        """
                         (function() {
                             const field = window.__BOSS_FOCUSED_FIELD || document.activeElement;
 
@@ -212,7 +225,7 @@ object FormFieldInjector {
 
                             return 'SUCCESS';
                         })();
-                    """.trimIndent()
+                        """.trimIndent()
 
                     val outcome = frame.executeJavaScript<String>(script)
 
@@ -221,16 +234,18 @@ object FormFieldInjector {
                             FillResult.Success("Field filled successfully")
                         } else {
                             FillResult.Error("Failed to fill field: $outcome")
-                        }
+                        },
                     )
                 } catch (e: Exception) {
                     result.complete(FillResult.Error("Exception: ${e.message}"))
                 }
             }
 
-            val fillResult = withTimeout(5.seconds) {  // Increased timeout for async operations
-                result.await()
-            }
+            val fillResult =
+                withTimeout(5.seconds) {
+                    // Increased timeout for async operations
+                    result.await()
+                }
 
             // Wait for async operations to complete (frameworks may update state asynchronously)
             kotlinx.coroutines.delay(200)
@@ -239,7 +254,6 @@ object FormFieldInjector {
         } catch (e: Exception) {
             FillResult.Error("Timeout or exception: ${e.message}")
         }
-    }
 
     /**
      * Fill credentials (username and password) intelligently.
@@ -257,46 +271,57 @@ object FormFieldInjector {
         browser: LockedBrowser,
         username: String,
         password: String,
-        mode: FillMode = FillMode.BOTH
+        mode: FillMode = FillMode.BOTH,
     ): FillResult {
-        val result = when (mode) {
-            FillMode.USERNAME_ONLY -> findAndFillUsername(browser, username)
-            FillMode.PASSWORD_ONLY -> {
-                val passwordResult = findAndFillPassword(browser, password)
-                // Apply discrete mode if enabled and password was filled successfully
-                if (passwordResult is FillResult.Success && BrowserSettings.discretePasswordFill) {
-                    applyDiscreteMode(browser)
-                }
-                passwordResult
-            }
-            FillMode.BOTH -> {
-                val usernameResult = findAndFillUsername(browser, username)
-                val passwordResult = findAndFillPassword(browser, password)
-
-                // Apply discrete mode if enabled and password was filled successfully
-                if (passwordResult is FillResult.Success && BrowserSettings.discretePasswordFill) {
-                    applyDiscreteMode(browser)
+        val result =
+            when (mode) {
+                FillMode.USERNAME_ONLY -> {
+                    findAndFillUsername(browser, username)
                 }
 
-                when {
-                    usernameResult is FillResult.Success && passwordResult is FillResult.Success ->
-                        FillResult.Success("✅ Username and password filled successfully")
+                FillMode.PASSWORD_ONLY -> {
+                    val passwordResult = findAndFillPassword(browser, password)
+                    // Apply discrete mode if enabled and password was filled successfully
+                    if (passwordResult is FillResult.Success && BrowserSettings.discretePasswordFill) {
+                        applyDiscreteMode(browser)
+                    }
+                    passwordResult
+                }
 
-                    usernameResult is FillResult.Success || passwordResult is FillResult.Success ->
-                        FillResult.PartialSuccess("⚠️ Only one field filled successfully")
+                FillMode.BOTH -> {
+                    val usernameResult = findAndFillUsername(browser, username)
+                    val passwordResult = findAndFillPassword(browser, password)
 
-                    else -> FillResult.Error("❌ Failed to fill both fields")
+                    // Apply discrete mode if enabled and password was filled successfully
+                    if (passwordResult is FillResult.Success && BrowserSettings.discretePasswordFill) {
+                        applyDiscreteMode(browser)
+                    }
+
+                    when {
+                        usernameResult is FillResult.Success && passwordResult is FillResult.Success -> {
+                            FillResult.Success("✅ Username and password filled successfully")
+                        }
+
+                        usernameResult is FillResult.Success || passwordResult is FillResult.Success -> {
+                            FillResult.PartialSuccess("⚠️ Only one field filled successfully")
+                        }
+
+                        else -> {
+                            FillResult.Error("❌ Failed to fill both fields")
+                        }
+                    }
+                }
+
+                FillMode.COPY_USERNAME -> {
+                    copyToClipboard(username)
+                    FillResult.Success("Username copied to clipboard")
+                }
+
+                FillMode.COPY_PASSWORD -> {
+                    copyToClipboard(password)
+                    FillResult.Success("Password copied to clipboard")
                 }
             }
-            FillMode.COPY_USERNAME -> {
-                copyToClipboard(username)
-                FillResult.Success("Username copied to clipboard")
-            }
-            FillMode.COPY_PASSWORD -> {
-                copyToClipboard(password)
-                FillResult.Success("Password copied to clipboard")
-            }
-        }
         return result
     }
 
@@ -314,17 +339,23 @@ object FormFieldInjector {
      * @param username Username to fill
      * @return FillResult indicating success or failure
      */
-    suspend fun findAndFillUsername(browser: LockedBrowser, username: String): FillResult {
-        return try {
+    suspend fun findAndFillUsername(
+        browser: LockedBrowser,
+        username: String,
+    ): FillResult =
+        try {
             val result = CompletableDeferred<FillResult>()
 
             browser.mainFrame().ifPresent { frame ->
                 try {
-                    val escapedUsername = username.replace("\\", "\\\\")
-                        .replace("'", "\\'")
-                        .replace("\n", "\\n")
+                    val escapedUsername =
+                        username
+                            .replace("\\", "\\\\")
+                            .replace("'", "\\'")
+                            .replace("\n", "\\n")
 
-                    val script = """
+                    val script =
+                        """
                         (function() {
                             console.log('[BOSS] 🔍 findAndFillUsername: Starting username field detection and fill');
 
@@ -438,7 +469,7 @@ object FormFieldInjector {
                             console.log('[BOSS] ❌ ERROR: Username field not found with any strategy');
                             return 'ERROR: Username field not found';
                         })();
-                    """.trimIndent()
+                        """.trimIndent()
 
                     val outcome = frame.executeJavaScript<String>(script)
 
@@ -447,7 +478,7 @@ object FormFieldInjector {
                             FillResult.Success("Username filled")
                         } else {
                             FillResult.Error("Username field not found")
-                        }
+                        },
                     )
                 } catch (e: Exception) {
                     result.complete(FillResult.Error("Exception: ${e.message}"))
@@ -460,7 +491,6 @@ object FormFieldInjector {
         } catch (e: Exception) {
             FillResult.Error("Failed to fill username: ${e.message}")
         }
-    }
 
     /**
      * Find and fill password field.
@@ -475,17 +505,23 @@ object FormFieldInjector {
      * @param password Password to fill
      * @return FillResult indicating success or failure
      */
-    suspend fun findAndFillPassword(browser: LockedBrowser, password: String): FillResult {
-        return try {
+    suspend fun findAndFillPassword(
+        browser: LockedBrowser,
+        password: String,
+    ): FillResult =
+        try {
             val result = CompletableDeferred<FillResult>()
 
             browser.mainFrame().ifPresent { frame ->
                 try {
-                    val escapedPassword = password.replace("\\", "\\\\")
-                        .replace("'", "\\'")
-                        .replace("\n", "\\n")
+                    val escapedPassword =
+                        password
+                            .replace("\\", "\\\\")
+                            .replace("'", "\\'")
+                            .replace("\n", "\\n")
 
-                    val script = """
+                    val script =
+                        """
                         (function() {
                             console.log('[BOSS] 🔍 findAndFillPassword: Starting password field detection and fill');
 
@@ -579,7 +615,7 @@ object FormFieldInjector {
                             console.log('[BOSS] ❌ ERROR: Password field not found with any strategy');
                             return 'ERROR: Password field not found';
                         })();
-                    """.trimIndent()
+                        """.trimIndent()
 
                     val outcome = frame.executeJavaScript<String>(script)
 
@@ -588,7 +624,7 @@ object FormFieldInjector {
                             FillResult.Success("Password filled")
                         } else {
                             FillResult.Error("Password field not found")
-                        }
+                        },
                     )
                 } catch (e: Exception) {
                     result.complete(FillResult.Error("Exception: ${e.message}"))
@@ -601,7 +637,6 @@ object FormFieldInjector {
         } catch (e: Exception) {
             FillResult.Error("Failed to fill password: ${e.message}")
         }
-    }
 
     /**
      * Copy text to system clipboard.
@@ -610,7 +645,10 @@ object FormFieldInjector {
      */
     private fun copyToClipboard(text: String) {
         try {
-            val clipboard = java.awt.Toolkit.getDefaultToolkit().systemClipboard
+            val clipboard =
+                java.awt.Toolkit
+                    .getDefaultToolkit()
+                    .systemClipboard
             val stringSelection = java.awt.datatransfer.StringSelection(text)
             clipboard.setContents(stringSelection, null)
         } catch (e: Exception) {
@@ -635,7 +673,8 @@ object FormFieldInjector {
     private suspend fun applyDiscreteMode(browser: LockedBrowser) {
         try {
             browser.mainFrame().ifPresent { frame ->
-                frame.executeJavaScript<Unit>("""
+                frame.executeJavaScript<Unit>(
+                    """
                     (function() {
                         console.log('[BOSS] 🔒 Applying discrete mode to password fields');
 
@@ -688,7 +727,8 @@ object FormFieldInjector {
 
                         passwordFields.forEach(applyDiscreteToField);
                     })();
-                """.trimIndent())
+                    """.trimIndent(),
+                )
             }
         } catch (e: Exception) {
             logger.warn(LogCategory.BROWSER, "Failed to apply discrete mode", error = e)
@@ -707,7 +747,8 @@ object FormFieldInjector {
     suspend fun removeDiscreteMode(browser: LockedBrowser) {
         try {
             browser.mainFrame().ifPresent { frame ->
-                frame.executeJavaScript<Unit>("""
+                frame.executeJavaScript<Unit>(
+                    """
                     (function() {
                         console.log('[BOSS] 🔓 Removing discrete mode from password fields');
 
@@ -734,7 +775,8 @@ object FormFieldInjector {
                             console.log('[BOSS] ✅ Discrete mode removed from field:', field.name || field.id || 'unnamed');
                         });
                     })();
-                """.trimIndent())
+                    """.trimIndent(),
+                )
             }
         } catch (e: Exception) {
             logger.warn(LogCategory.BROWSER, "Failed to remove discrete mode", error = e)
@@ -756,7 +798,8 @@ object FormFieldInjector {
      */
     suspend fun installFormSubmissionMonitor(browser: LockedBrowser) {
         browser.mainFrame().ifPresent { frame ->
-            frame.executeJavaScript<Unit>("""
+            frame.executeJavaScript<Unit>(
+                """
                 (function() {
                     if (window.__BOSS_FORM_MONITOR_INSTALLED) {
                         console.log('[BOSS] Form monitor already installed, skipping');
@@ -903,7 +946,8 @@ object FormFieldInjector {
 
                     console.log('[BOSS] 📊 Form monitor ready - will log form submissions, button clicks, and Enter key events');
                 })();
-            """.trimIndent())
+                """.trimIndent(),
+            )
         }
     }
 }

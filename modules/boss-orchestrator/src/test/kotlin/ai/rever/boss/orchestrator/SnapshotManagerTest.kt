@@ -10,7 +10,6 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class SnapshotManagerTest {
-
     private lateinit var tempDir: java.io.File
     private lateinit var manager: SnapshotManager
 

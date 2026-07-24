@@ -27,9 +27,7 @@ actual object FileHandlerService {
      * Used by BossApp to prevent showing New Tab Dialog during file tab creation.
      * Returns Compose State to trigger recomposition.
      */
-    actual fun isProcessingFiles(): Boolean {
-        return _isProcessing.value
-    }
+    actual fun isProcessingFiles(): Boolean = _isProcessing.value
 
     /**
      * Increment processing counter when file event starts.

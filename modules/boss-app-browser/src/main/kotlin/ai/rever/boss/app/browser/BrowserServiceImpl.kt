@@ -18,7 +18,6 @@ import java.util.concurrent.ConcurrentHashMap
  * browser coordination over IPC.
  */
 class BrowserServiceImpl : BrowserServiceGrpcKt.BrowserServiceCoroutineImplBase() {
-
     private val logger = LoggerFactory.getLogger(BrowserServiceImpl::class.java)
 
     /** Per-window page state snapshot. */
@@ -39,42 +38,47 @@ class BrowserServiceImpl : BrowserServiceGrpcKt.BrowserServiceCoroutineImplBase(
         logger.info("navigate: windowId={}, url={}", request.windowId, url)
 
         if (url.isBlank()) {
-            return NavigateBrowserResponse.newBuilder()
+            return NavigateBrowserResponse
+                .newBuilder()
                 .setSuccess(false)
                 .setErrorMessage("URL must not be blank")
                 .build()
         }
 
         val prev = windowStates[request.windowId]
-        val newState = PageState(
-            windowId = request.windowId,
-            url = url,
-            title = url,
-            canGoBack = prev != null,
-        )
+        val newState =
+            PageState(
+                windowId = request.windowId,
+                url = url,
+                title = url,
+                canGoBack = prev != null,
+            )
         windowStates[request.windowId] = newState
 
         val ts = System.currentTimeMillis()
         navigationEvents.tryEmit(
-            BrowserNavigationEvent.newBuilder()
+            BrowserNavigationEvent
+                .newBuilder()
                 .setWindowId(request.windowId)
                 .setUrl(url)
                 .setTitle(url)
                 .setEventType(NavigationEventType.NAVIGATION_EVENT_TYPE_STARTED)
                 .setTimestamp(ts)
-                .build()
+                .build(),
         )
         navigationEvents.tryEmit(
-            BrowserNavigationEvent.newBuilder()
+            BrowserNavigationEvent
+                .newBuilder()
                 .setWindowId(request.windowId)
                 .setUrl(url)
                 .setTitle(url)
                 .setEventType(NavigationEventType.NAVIGATION_EVENT_TYPE_COMPLETED)
                 .setTimestamp(ts + 1)
-                .build()
+                .build(),
         )
 
-        return NavigateBrowserResponse.newBuilder()
+        return NavigateBrowserResponse
+            .newBuilder()
             .setSuccess(true)
             .setFinalUrl(url)
             .setTitle(url)
@@ -84,19 +88,22 @@ class BrowserServiceImpl : BrowserServiceGrpcKt.BrowserServiceCoroutineImplBase(
     override suspend fun executeJS(request: ExecuteJSRequest): ExecuteJSResponse {
         logger.debug("executeJS: windowId={}, scriptLen={}", request.windowId, request.script.length)
         // JS execution requires JxBrowser which runs in the composeApp process.
-        return ExecuteJSResponse.newBuilder()
+        return ExecuteJSResponse
+            .newBuilder()
             .setSuccess(false)
             .setErrorMessage("JS execution requires JxBrowser (composeApp process)")
             .build()
     }
 
-    override fun onNavigationEvent(request: Empty): Flow<BrowserNavigationEvent> = flow {
-        navigationEvents.collect { event -> emit(event) }
-    }
+    override fun onNavigationEvent(request: Empty): Flow<BrowserNavigationEvent> =
+        flow {
+            navigationEvents.collect { event -> emit(event) }
+        }
 
     override suspend fun getFavicon(request: GetFaviconRequest): GetFaviconResponse {
         logger.debug("getFavicon: url={}", request.url)
-        return GetFaviconResponse.newBuilder()
+        return GetFaviconResponse
+            .newBuilder()
             .setFaviconBytes(ByteString.EMPTY)
             .setContentType("")
             .build()
@@ -104,10 +111,14 @@ class BrowserServiceImpl : BrowserServiceGrpcKt.BrowserServiceCoroutineImplBase(
 
     override suspend fun getPageInfo(request: Empty): PageInfoResponse {
         if (windowStates.size > 1) {
-            logger.warn("getPageInfo called with {} windows tracked — returning first window only; use a window-specific RPC for multi-window support", windowStates.size)
+            logger.warn(
+                "getPageInfo called with {} windows tracked — returning first window only; use a window-specific RPC for multi-window support",
+                windowStates.size,
+            )
         }
         val state = windowStates.values.firstOrNull()
-        return PageInfoResponse.newBuilder()
+        return PageInfoResponse
+            .newBuilder()
             .setUrl(state?.url ?: "")
             .setTitle(state?.title ?: "")
             .setCanGoBack(state?.canGoBack ?: false)
@@ -119,10 +130,11 @@ class BrowserServiceImpl : BrowserServiceGrpcKt.BrowserServiceCoroutineImplBase(
     override suspend fun goBack(request: Empty): Empty {
         logger.debug("goBack")
         navigationEvents.tryEmit(
-            BrowserNavigationEvent.newBuilder()
+            BrowserNavigationEvent
+                .newBuilder()
                 .setEventType(NavigationEventType.NAVIGATION_EVENT_TYPE_STARTED)
                 .setTimestamp(System.currentTimeMillis())
-                .build()
+                .build(),
         )
         return Empty.getDefaultInstance()
     }
@@ -130,10 +142,11 @@ class BrowserServiceImpl : BrowserServiceGrpcKt.BrowserServiceCoroutineImplBase(
     override suspend fun goForward(request: Empty): Empty {
         logger.debug("goForward")
         navigationEvents.tryEmit(
-            BrowserNavigationEvent.newBuilder()
+            BrowserNavigationEvent
+                .newBuilder()
                 .setEventType(NavigationEventType.NAVIGATION_EVENT_TYPE_STARTED)
                 .setTimestamp(System.currentTimeMillis())
-                .build()
+                .build(),
         )
         return Empty.getDefaultInstance()
     }
@@ -144,13 +157,14 @@ class BrowserServiceImpl : BrowserServiceGrpcKt.BrowserServiceCoroutineImplBase(
         if (state != null) {
             windowStates[state.windowId] = state.copy(isLoading = true)
             navigationEvents.tryEmit(
-                BrowserNavigationEvent.newBuilder()
+                BrowserNavigationEvent
+                    .newBuilder()
                     .setWindowId(state.windowId)
                     .setUrl(state.url)
                     .setTitle(state.title)
                     .setEventType(NavigationEventType.NAVIGATION_EVENT_TYPE_STARTED)
                     .setTimestamp(System.currentTimeMillis())
-                    .build()
+                    .build(),
             )
         }
         return Empty.getDefaultInstance()

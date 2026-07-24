@@ -12,7 +12,7 @@ data class DownloadSettings(
     val alwaysAskWhereToSave: Boolean = false,
     val defaultDownloadDirectory: String = getDefaultDownloadsDirectory(),
     val lastUsedDirectory: String? = null,
-    val warnForExecutables: Boolean = true
+    val warnForExecutables: Boolean = true,
 )
 
 /**

@@ -1,14 +1,14 @@
 package ai.rever.boss.components.window_panel.components
 
-import ai.rever.boss.plugin.api.PanelId
-import ai.rever.boss.plugin.ui.BossTheme
-import ai.rever.boss.plugin.ui.BossThemeColors
 import ai.rever.boss.components.buttons.BossActionButton
 import ai.rever.boss.components.overlays.ContextMenu
 import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.contextMenu
 import ai.rever.boss.components.plugin.AvailablePluginUpdate
 import ai.rever.boss.components.plugin.registries.PanelMenuRegistryImpl
+import ai.rever.boss.plugin.api.PanelId
+import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.plugin.ui.BossThemeColors
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -56,7 +56,7 @@ fun BossPanelTopBar(
     panelId: PanelId? = null,
     windowId: String? = null,
     dragModifier: Modifier = Modifier,
-    content: (@Composable () -> Unit)? = null
+    content: (@Composable () -> Unit)? = null,
 ) {
     // Plugin-contributed menu items for this panel (PanelMenuRegistry). The
     // registry map and RBAC snapshot trigger a re-query, so items track
@@ -64,43 +64,48 @@ fun BossPanelTopBar(
     // by re-registering (items() must stay cheap — see PanelMenuContribution).
     val contributions by PanelMenuRegistryImpl.contributions.collectAsState()
     val access by PanelMenuRegistryImpl.access.collectAsState()
-    val pluginEntries = if (panelId != null) {
-        remember(panelId, contributions, access) {
-            PanelMenuRegistryImpl.itemsFor(panelId)
+    val pluginEntries =
+        if (panelId != null) {
+            remember(panelId, contributions, access) {
+                PanelMenuRegistryImpl.itemsFor(panelId)
+            }
+        } else {
+            emptyList()
         }
-    } else {
-        emptyList()
-    }
 
     // One menu definition, shared by the "…" kebab and the right-click context menu,
     // so both offer identical options. Plugin items render between the
     // built-ins and Minimize.
-    val menuItems = buildList {
-        onReset?.let { cb -> add(ContextMenuItem(text = "Restart Panel", icon = Icons.Outlined.RestartAlt, onClick = cb)) }
-        onReloadPlugin?.let { cb -> add(ContextMenuItem(text = "Reload Plugin", icon = Icons.Outlined.Refresh, onClick = cb)) }
-        onCheckForUpdates?.let { cb -> add(ContextMenuItem(text = "Check for Updates", icon = Icons.Outlined.Upgrade, onClick = cb)) }
-        onOpenEvolver?.let { cb -> add(ContextMenuItem(text = "Open Evolver", icon = Icons.Outlined.MonitorHeart, onClick = cb)) }
-        onReportIssue?.let { cb -> add(ContextMenuItem(text = "Report Issue", icon = Icons.Outlined.BugReport, onClick = cb)) }
-        onOpenAsTab?.let { cb -> add(ContextMenuItem(text = "Open as Tab", icon = Icons.Outlined.Tab, onClick = cb)) }
-        if (pluginEntries.isNotEmpty() && panelId != null) {
-            add(ContextMenuItem(isDivider = true))
-            for ((contribution, item) in pluginEntries) {
-                if (!item.enabled) continue
-                add(ContextMenuItem(text = item.label, icon = item.icon, onClick = {
-                    PanelMenuRegistryImpl.onItemClick(contribution, panelId, item.id, windowId)
-                }))
+    val menuItems =
+        buildList {
+            onReset?.let { cb -> add(ContextMenuItem(text = "Restart Panel", icon = Icons.Outlined.RestartAlt, onClick = cb)) }
+            onReloadPlugin?.let { cb -> add(ContextMenuItem(text = "Reload Plugin", icon = Icons.Outlined.Refresh, onClick = cb)) }
+            onCheckForUpdates?.let { cb -> add(ContextMenuItem(text = "Check for Updates", icon = Icons.Outlined.Upgrade, onClick = cb)) }
+            onOpenEvolver?.let { cb -> add(ContextMenuItem(text = "Open Evolver", icon = Icons.Outlined.MonitorHeart, onClick = cb)) }
+            onReportIssue?.let { cb -> add(ContextMenuItem(text = "Report Issue", icon = Icons.Outlined.BugReport, onClick = cb)) }
+            onOpenAsTab?.let { cb -> add(ContextMenuItem(text = "Open as Tab", icon = Icons.Outlined.Tab, onClick = cb)) }
+            if (pluginEntries.isNotEmpty() && panelId != null) {
+                add(ContextMenuItem(isDivider = true))
+                for ((contribution, item) in pluginEntries) {
+                    if (!item.enabled) continue
+                    add(
+                        ContextMenuItem(text = item.label, icon = item.icon, onClick = {
+                            PanelMenuRegistryImpl.onItemClick(contribution, panelId, item.id, windowId)
+                        }),
+                    )
+                }
             }
+            add(ContextMenuItem(text = "Minimize", icon = Icons.Outlined.Remove, onClick = onMinimize))
         }
-        add(ContextMenuItem(text = "Minimize", icon = Icons.Outlined.Remove, onClick = onMinimize))
-    }
 
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(28.dp)
-            .background(BossTheme.colors.raised)
-            .then(dragModifier)
-            .contextMenu(items = menuItems),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .height(28.dp)
+                .background(BossTheme.colors.raised)
+                .then(dragModifier)
+                .contextMenu(items = menuItems),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Spacer(modifier = Modifier.width(8.dp))
@@ -110,8 +115,9 @@ fun BossPanelTopBar(
             color = BossThemeColors.TextPrimary,
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
-            modifier = Modifier
-                .align(Alignment.CenterVertically)
+            modifier =
+                Modifier
+                    .align(Alignment.CenterVertically),
         )
 
         Spacer(modifier = Modifier.weight(1f))
@@ -121,24 +127,25 @@ fun BossPanelTopBar(
         if (updateAvailable != null) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .padding(end = 4.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .clickable { onUpdateClick?.invoke() }
-                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                modifier =
+                    Modifier
+                        .padding(end = 4.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .clickable { onUpdateClick?.invoke() }
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
             ) {
                 Icon(
                     imageVector = Icons.Outlined.Upgrade,
                     contentDescription = "Update available: v${updateAvailable.currentVersion} → v${updateAvailable.newVersion}",
                     tint = UpdateBadgeColor,
-                    modifier = Modifier.size(14.dp)
+                    modifier = Modifier.size(14.dp),
                 )
                 Spacer(modifier = Modifier.width(3.dp))
                 Text(
                     text = "Update",
                     color = UpdateBadgeColor,
                     fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.Medium,
                 )
             }
         }
@@ -148,32 +155,32 @@ fun BossPanelTopBar(
         val buttonHeightRef = remember { intArrayOf(0) }
 
         AnimatedVisibility(
-            visible = isHovered || showMenu,  // Keep visible while menu is open
+            visible = isHovered || showMenu, // Keep visible while menu is open
             enter = fadeIn(),
-            exit = fadeOut()
+            exit = fadeOut(),
         ) {
-
             Row(modifier = Modifier.padding(end = 2.dp)) {
                 content?.invoke()
 
                 // More button — opens the same menu as right-click
                 Box(
-                    modifier = Modifier.onGloballyPositioned { coordinates ->
-                        buttonHeightRef[0] = coordinates.size.height
-                    }
+                    modifier =
+                        Modifier.onGloballyPositioned { coordinates ->
+                            buttonHeightRef[0] = coordinates.size.height
+                        },
                 ) {
                     BossActionButton(
                         imageVector = Icons.Outlined.MoreVert,
                         text = "More",
                         color = BossThemeColors.TextPrimary,
-                        onClick = { showMenu = true }
+                        onClick = { showMenu = true },
                     )
 
                     if (showMenu) {
                         ContextMenu(
                             items = menuItems,
                             offset = IntOffset(0, buttonHeightRef[0]),
-                            onDismissRequest = { showMenu = false }
+                            onDismissRequest = { showMenu = false },
                         )
                     }
                 }
@@ -182,7 +189,7 @@ fun BossPanelTopBar(
                     imageVector = Icons.Outlined.Remove,
                     text = "Minimize",
                     color = BossThemeColors.TextPrimary,
-                    onClick = onMinimize
+                    onClick = onMinimize,
                 )
             }
         }

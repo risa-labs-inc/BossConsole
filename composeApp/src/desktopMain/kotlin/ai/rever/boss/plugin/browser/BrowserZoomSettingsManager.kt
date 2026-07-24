@@ -17,7 +17,7 @@ import java.io.File
 data class DomainZoomSettings(
     val domain: String,
     val zoomLevel: Double,
-    val lastUpdated: Long = System.currentTimeMillis()
+    val lastUpdated: Long = System.currentTimeMillis(),
 )
 
 /**
@@ -26,7 +26,7 @@ data class DomainZoomSettings(
 @Serializable
 data class BrowserZoomSettingsData(
     val domainSettings: Map<String, DomainZoomSettings> = emptyMap(),
-    val defaultZoomLevel: Double = 1.0
+    val defaultZoomLevel: Double = 1.0,
 )
 
 /**
@@ -38,10 +38,11 @@ data class BrowserZoomSettingsData(
 object BrowserZoomSettingsManager {
     private val logger = BossLogger.forComponent("BrowserZoomSettingsManager")
     private val settingsFile = BossDirectories.resolve("browser-zoom-settings.json")
-    private val json = Json {
-        prettyPrint = true
-        ignoreUnknownKeys = true
-    }
+    private val json =
+        Json {
+            prettyPrint = true
+            ignoreUnknownKeys = true
+        }
 
     private var settings = BrowserZoomSettingsData()
 
@@ -62,24 +63,32 @@ object BrowserZoomSettingsManager {
      * Set the zoom level for a domain.
      * If zoomLevel is 1.0 (100%), removes the domain entry.
      */
-    fun setZoomForDomain(domain: String, zoomLevel: Double) {
+    fun setZoomForDomain(
+        domain: String,
+        zoomLevel: Double,
+    ) {
         val normalizedDomain = normalizeDomain(domain)
 
-        settings = if (kotlin.math.abs(zoomLevel - 1.0) < 0.001) {
-            // Remove entry if zoom is reset to 100%
-            settings.copy(
-                domainSettings = settings.domainSettings - normalizedDomain
-            )
-        } else {
-            // Update or add entry
-            settings.copy(
-                domainSettings = settings.domainSettings + (normalizedDomain to DomainZoomSettings(
-                    domain = normalizedDomain,
-                    zoomLevel = zoomLevel,
-                    lastUpdated = System.currentTimeMillis()
-                ))
-            )
-        }
+        settings =
+            if (kotlin.math.abs(zoomLevel - 1.0) < 0.001) {
+                // Remove entry if zoom is reset to 100%
+                settings.copy(
+                    domainSettings = settings.domainSettings - normalizedDomain,
+                )
+            } else {
+                // Update or add entry
+                settings.copy(
+                    domainSettings =
+                        settings.domainSettings + (
+                            normalizedDomain to
+                                DomainZoomSettings(
+                                    domain = normalizedDomain,
+                                    zoomLevel = zoomLevel,
+                                    lastUpdated = System.currentTimeMillis(),
+                                )
+                        ),
+                )
+            }
     }
 
     /**
@@ -127,19 +136,21 @@ object BrowserZoomSettingsManager {
      * Normalize domain to handle variations.
      * Removes www. prefix and converts to lowercase.
      */
-    private fun normalizeDomain(domain: String): String {
-        return domain
+    private fun normalizeDomain(domain: String): String =
+        domain
             .lowercase()
             .removePrefix("www.")
             .trim()
-    }
 
     /**
      * Extract domain from a URL.
      */
-    fun extractDomain(url: String): String? {
-        return try {
-            java.net.URL(url).host.let { normalizeDomain(it) }
+    fun extractDomain(url: String): String? =
+        try {
+            java.net
+                .URL(url)
+                .host
+                .let { normalizeDomain(it) }
         } catch (e: Exception) {
             logger.debug(
                 LogCategory.BROWSER,
@@ -148,23 +159,21 @@ object BrowserZoomSettingsManager {
             )
             null
         }
-    }
 
     /**
      * Get all stored domain zoom settings.
      */
-    fun getAllDomainSettings(): Map<String, DomainZoomSettings> {
-        return settings.domainSettings.toMap()
-    }
+    fun getAllDomainSettings(): Map<String, DomainZoomSettings> = settings.domainSettings.toMap()
 
     /**
      * Clear zoom setting for a specific domain.
      */
     fun clearDomainZoom(domain: String) {
         val normalizedDomain = normalizeDomain(domain)
-        settings = settings.copy(
-            domainSettings = settings.domainSettings - normalizedDomain
-        )
+        settings =
+            settings.copy(
+                domainSettings = settings.domainSettings - normalizedDomain,
+            )
     }
 
     /**

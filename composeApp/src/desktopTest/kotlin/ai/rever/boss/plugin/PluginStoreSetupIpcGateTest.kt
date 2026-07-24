@@ -18,9 +18,9 @@ import kotlin.test.assertTrue
  * silently turn the gate into a no-op.
  */
 class PluginStoreSetupIpcGateTest {
-
-    private val host = IpcVersion.parse(IpcVersion.CURRENT)
-        ?: error("IpcVersion.CURRENT is not parseable: ${IpcVersion.CURRENT}")
+    private val host =
+        IpcVersion.parse(IpcVersion.CURRENT)
+            ?: error("IpcVersion.CURRENT is not parseable: ${IpcVersion.CURRENT}")
 
     @Test
     fun `blank minIpcVersion is not gated`() {

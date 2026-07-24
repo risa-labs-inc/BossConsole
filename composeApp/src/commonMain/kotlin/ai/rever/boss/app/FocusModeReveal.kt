@@ -191,65 +191,65 @@ internal fun BoxScope.FocusModeHoverStrips(
 
     // Top hover strip
     Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(if (state.showTopBar) 1.dp else revealOffsetDp)
-            .align(Alignment.TopStart)
-            .zIndex(10f)
-            .background(Color.Transparent)
-            .onPointerEvent(PointerEventType.Enter) {
-                state.hoveringTopStrip = true
-            }
-            .onPointerEvent(PointerEventType.Exit) {
-                state.hoveringTopStrip = false
-            }
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .height(if (state.showTopBar) 1.dp else revealOffsetDp)
+                .align(Alignment.TopStart)
+                .zIndex(10f)
+                .background(Color.Transparent)
+                .onPointerEvent(PointerEventType.Enter) {
+                    state.hoveringTopStrip = true
+                }.onPointerEvent(PointerEventType.Exit) {
+                    state.hoveringTopStrip = false
+                },
     )
 
     // Left hover strip
     Box(
-        modifier = Modifier
-            .fillMaxHeight()
-            .width(if (state.showLeftSidebar) 1.dp else revealOffsetDp)
-            .align(Alignment.CenterStart)
-            .zIndex(10f)
-            .background(Color.Transparent)
-            .onPointerEvent(PointerEventType.Enter) {
-                state.hoveringLeftStrip = true
-            }
-            .onPointerEvent(PointerEventType.Exit) {
-                state.hoveringLeftStrip = false
-            }
+        modifier =
+            Modifier
+                .fillMaxHeight()
+                .width(if (state.showLeftSidebar) 1.dp else revealOffsetDp)
+                .align(Alignment.CenterStart)
+                .zIndex(10f)
+                .background(Color.Transparent)
+                .onPointerEvent(PointerEventType.Enter) {
+                    state.hoveringLeftStrip = true
+                }.onPointerEvent(PointerEventType.Exit) {
+                    state.hoveringLeftStrip = false
+                },
     )
 
     // Right hover strip
     Box(
-        modifier = Modifier
-            .fillMaxHeight()
-            .width(if (state.showRightSidebar) 1.dp else revealOffsetDp)
-            .align(Alignment.CenterEnd)
-            .zIndex(10f)
-            .background(Color.Transparent)
-            .onPointerEvent(PointerEventType.Enter) {
-                state.hoveringRightStrip = true
-            }
-            .onPointerEvent(PointerEventType.Exit) {
-                state.hoveringRightStrip = false
-            }
+        modifier =
+            Modifier
+                .fillMaxHeight()
+                .width(if (state.showRightSidebar) 1.dp else revealOffsetDp)
+                .align(Alignment.CenterEnd)
+                .zIndex(10f)
+                .background(Color.Transparent)
+                .onPointerEvent(PointerEventType.Enter) {
+                    state.hoveringRightStrip = true
+                }.onPointerEvent(PointerEventType.Exit) {
+                    state.hoveringRightStrip = false
+                },
     )
 
     // Bottom hover strip
     Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(if (state.showBottomBar) 1.dp else revealOffsetDp)
-            .align(Alignment.BottomStart)
-            .zIndex(10f)
-            .background(Color.Transparent)
-            .onPointerEvent(PointerEventType.Enter) {
-                state.hoveringBottomStrip = true
-            }
-            .onPointerEvent(PointerEventType.Exit) {
-                state.hoveringBottomStrip = false
-            }
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .height(if (state.showBottomBar) 1.dp else revealOffsetDp)
+                .align(Alignment.BottomStart)
+                .zIndex(10f)
+                .background(Color.Transparent)
+                .onPointerEvent(PointerEventType.Enter) {
+                    state.hoveringBottomStrip = true
+                }.onPointerEvent(PointerEventType.Exit) {
+                    state.hoveringBottomStrip = false
+                },
     )
 }

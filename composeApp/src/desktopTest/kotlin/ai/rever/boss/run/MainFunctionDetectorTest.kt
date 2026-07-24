@@ -18,7 +18,6 @@ import kotlin.test.assertTrue
  *   (exercised against real temp dirs)
  */
 class MainFunctionDetectorTest {
-
     private val detector = DesktopMainFunctionDetector()
 
     private fun lines(vararg lines: String) = lines.joinToString("\n")
@@ -27,13 +26,14 @@ class MainFunctionDetectorTest {
 
     @Test
     fun `top-level kotlin main is detected with line number and package`() {
-        val content = lines(
-            "package com.example.app",
-            "",
-            "fun main() {",
-            "    println(\"hi\")",
-            "}"
-        )
+        val content =
+            lines(
+                "package com.example.app",
+                "",
+                "fun main() {",
+                "    println(\"hi\")",
+                "}",
+            )
         val detected = detector.detectInFile("/proj/src/Main.kt", content)
 
         assertEquals(1, detected.size)
@@ -59,17 +59,18 @@ class MainFunctionDetectorTest {
 
     @Test
     fun `companion object main with JvmStatic on its own line is detected`() {
-        val content = lines(
-            "package com.example",
-            "",
-            "class App {",
-            "    companion object {",
-            "        @JvmStatic",
-            "        fun main(args: Array<String>) {",
-            "        }",
-            "    }",
-            "}"
-        )
+        val content =
+            lines(
+                "package com.example",
+                "",
+                "class App {",
+                "    companion object {",
+                "        @JvmStatic",
+                "        fun main(args: Array<String>) {",
+                "        }",
+                "    }",
+                "}",
+            )
         val detected = detector.detectInFile("/proj/App.kt", content)
 
         assertEquals(1, detected.size)
@@ -79,11 +80,12 @@ class MainFunctionDetectorTest {
 
     @Test
     fun `JvmStatic and main on the same line are detected`() {
-        val content = lines(
-            "object App {",
-            "    @JvmStatic fun main(args: Array<String>) {}",
-            "}"
-        )
+        val content =
+            lines(
+                "object App {",
+                "    @JvmStatic fun main(args: Array<String>) {}",
+                "}",
+            )
         val detected = detector.detectInFile("/proj/App.kt", content)
 
         assertEquals(1, detected.size)
@@ -92,26 +94,28 @@ class MainFunctionDetectorTest {
 
     @Test
     fun `line-commented kotlin main is not detected`() {
-        val content = lines(
-            "// fun main() {",
-            "    // fun main(args: Array<String>) {}",
-            "val x = 1"
-        )
+        val content =
+            lines(
+                "// fun main() {",
+                "    // fun main(args: Array<String>) {}",
+                "val x = 1",
+            )
         assertTrue(detector.detectInFile("/proj/Main.kt", content).isEmpty())
     }
 
     @Test
     fun `main inside a triple-quoted string is skipped, real main is kept`() {
         val tripleQuote = "\"\"\""
-        val content = lines(
-            "package com.example",
-            "val snippet = $tripleQuote",
-            "fun main() {",
-            "}",
-            tripleQuote,
-            "fun main() {",
-            "}"
-        )
+        val content =
+            lines(
+                "package com.example",
+                "val snippet = $tripleQuote",
+                "fun main() {",
+                "}",
+                tripleQuote,
+                "fun main() {",
+                "}",
+            )
         val detected = detector.detectInFile("/proj/Main.kt", content)
 
         assertEquals(1, detected.size)
@@ -126,12 +130,13 @@ class MainFunctionDetectorTest {
 
     @Test
     fun `multiple main candidates are all reported in order`() {
-        val content = lines(
-            "fun main() {}",
-            "object Alt {",
-            "    fun main() {}",
-            "}"
-        )
+        val content =
+            lines(
+                "fun main() {}",
+                "object Alt {",
+                "    fun main() {}",
+                "}",
+            )
         val detected = detector.detectInFile("/proj/Main.kt", content)
 
         assertEquals(listOf(0, 2), detected.map { it.lineNumber })
@@ -147,14 +152,15 @@ class MainFunctionDetectorTest {
 
     @Test
     fun `java main is detected with class and package`() {
-        val content = lines(
-            "package com.example.demo;",
-            "",
-            "public class Main {",
-            "    public static void main(String[] args) {",
-            "    }",
-            "}"
-        )
+        val content =
+            lines(
+                "package com.example.demo;",
+                "",
+                "public class Main {",
+                "    public static void main(String[] args) {",
+                "    }",
+                "}",
+            )
         val detected = detector.detectInFile("/proj/Main.java", content)
 
         assertEquals(1, detected.size)
@@ -169,12 +175,13 @@ class MainFunctionDetectorTest {
 
     @Test
     fun `java class without main yields nothing`() {
-        val content = lines(
-            "package com.example;",
-            "public class Util {",
-            "    public static int add(int a, int b) { return a + b; }",
-            "}"
-        )
+        val content =
+            lines(
+                "package com.example;",
+                "public class Util {",
+                "    public static int add(int a, int b) { return a + b; }",
+                "}",
+            )
         assertTrue(detector.detectInFile("/proj/Util.java", content).isEmpty())
     }
 
@@ -276,13 +283,16 @@ class MainFunctionDetectorTest {
 
     // ==================== generateCommand: quoting and injection safety ====================
 
-    private fun detectedIn(path: String, language: Language) = DetectedMainFunction(
+    private fun detectedIn(
+        path: String,
+        language: Language,
+    ) = DetectedMainFunction(
         lineNumber = 0,
         functionName = "main",
         className = null,
         packageName = null,
         language = language,
-        filePath = path
+        filePath = path,
     )
 
     @Test
@@ -293,10 +303,11 @@ class MainFunctionDetectorTest {
 
     @Test
     fun `injection-shaped path stays inert inside single quotes`() {
-        val command = detector.generateCommand(
-            detectedIn("/no-such-root/\$(rm -rf ~)/app.py", Language.PYTHON),
-            "/no-such-root"
-        )
+        val command =
+            detector.generateCommand(
+                detectedIn("/no-such-root/\$(rm -rf ~)/app.py", Language.PYTHON),
+                "/no-such-root",
+            )
         assertEquals("python3 '/no-such-root/\$(rm -rf ~)/app.py'", command)
     }
 
@@ -310,11 +321,11 @@ class MainFunctionDetectorTest {
     fun `javascript and typescript commands use node and ts-node`() {
         assertEquals(
             "node '/no-such-root/tool.js'",
-            detector.generateCommand(detectedIn("/no-such-root/tool.js", Language.JAVASCRIPT), "/no-such-root")
+            detector.generateCommand(detectedIn("/no-such-root/tool.js", Language.JAVASCRIPT), "/no-such-root"),
         )
         assertEquals(
             "npx ts-node '/no-such-root/tool.ts'",
-            detector.generateCommand(detectedIn("/no-such-root/tool.ts", Language.TYPESCRIPT), "/no-such-root")
+            detector.generateCommand(detectedIn("/no-such-root/tool.ts", Language.TYPESCRIPT), "/no-such-root"),
         )
     }
 
@@ -322,7 +333,7 @@ class MainFunctionDetectorTest {
     fun `go command runs the file directly`() {
         assertEquals(
             "go run '/no-such-root/main.go'",
-            detector.generateCommand(detectedIn("/no-such-root/main.go", Language.GO), "/no-such-root")
+            detector.generateCommand(detectedIn("/no-such-root/main.go", Language.GO), "/no-such-root"),
         )
     }
 
@@ -330,64 +341,75 @@ class MainFunctionDetectorTest {
     fun `kts scripts run via kotlinc -script`() {
         assertEquals(
             "kotlinc -script '/no-such-root/build tool.kts'",
-            detector.generateCommand(detectedIn("/no-such-root/build tool.kts", Language.KOTLIN), "/no-such-root")
+            detector.generateCommand(detectedIn("/no-such-root/build tool.kts", Language.KOTLIN), "/no-such-root"),
         )
     }
 
     // ==================== generateCommand: project-aware commands ====================
 
     @Test
-    fun `kotlin file inside a gradle module runs the module's run task`(@TempDir tempDir: File) {
+    fun `kotlin file inside a gradle module runs the module's run task`(
+        @TempDir tempDir: File,
+    ) {
         File(tempDir, "gradlew").writeText("#!/bin/sh")
         val moduleDir = File(tempDir, "app")
         File(moduleDir, "src/main/kotlin").mkdirs()
         File(moduleDir, "build.gradle.kts").writeText("")
         val source = File(moduleDir, "src/main/kotlin/Main.kt").apply { writeText("fun main() {}") }
 
-        val command = detector.generateCommand(
-            detectedIn(source.absolutePath, Language.KOTLIN),
-            tempDir.absolutePath
-        )
+        val command =
+            detector.generateCommand(
+                detectedIn(source.absolutePath, Language.KOTLIN),
+                tempDir.absolutePath,
+            )
         assertEquals("./gradlew :app:run", command)
     }
 
     @Test
-    fun `kotlin file outside any module falls back to the root run task`(@TempDir tempDir: File) {
+    fun `kotlin file outside any module falls back to the root run task`(
+        @TempDir tempDir: File,
+    ) {
         File(tempDir, "gradlew").writeText("#!/bin/sh")
         File(tempDir, "src/main/kotlin").mkdirs()
         val source = File(tempDir, "src/main/kotlin/Main.kt").apply { writeText("fun main() {}") }
 
-        val command = detector.generateCommand(
-            detectedIn(source.absolutePath, Language.KOTLIN),
-            tempDir.absolutePath
-        )
+        val command =
+            detector.generateCommand(
+                detectedIn(source.absolutePath, Language.KOTLIN),
+                tempDir.absolutePath,
+            )
         assertEquals("./gradlew run", command)
     }
 
     @Test
-    fun `java file in a maven project runs the fully qualified class`(@TempDir tempDir: File) {
+    fun `java file in a maven project runs the fully qualified class`(
+        @TempDir tempDir: File,
+    ) {
         File(tempDir, "pom.xml").writeText("<project/>")
         File(tempDir, "src/main/java").mkdirs()
         val source = File(tempDir, "src/main/java/Main.java").apply { writeText("class Main {}") }
 
-        val detected = DetectedMainFunction(
-            lineNumber = 0,
-            functionName = "main",
-            className = "Main",
-            packageName = "com.example",
-            language = Language.JAVA,
-            filePath = source.absolutePath
-        )
+        val detected =
+            DetectedMainFunction(
+                lineNumber = 0,
+                functionName = "main",
+                className = "Main",
+                packageName = "com.example",
+                language = Language.JAVA,
+                filePath = source.absolutePath,
+            )
         assertEquals(
             "mvn exec:java -Dexec.mainClass='com.example.Main'",
-            detector.generateCommand(detected, tempDir.absolutePath)
+            detector.generateCommand(detected, tempDir.absolutePath),
         )
     }
 
     // ==================== findProjectRoot ====================
 
     @Test
-    fun `findProjectRoot stops at the first marker directory`(@TempDir tempDir: File) {
+    fun `findProjectRoot stops at the first marker directory`(
+        @TempDir tempDir: File,
+    ) {
         File(tempDir, ".git").mkdirs()
         val nested = File(tempDir, "a/b").apply { mkdirs() }
         val source = File(nested, "script.py").apply { writeText("pass") }
@@ -396,7 +418,9 @@ class MainFunctionDetectorTest {
     }
 
     @Test
-    fun `findProjectRoot honors package json as a marker`(@TempDir tempDir: File) {
+    fun `findProjectRoot honors package json as a marker`(
+        @TempDir tempDir: File,
+    ) {
         File(tempDir, "package.json").writeText("{}")
         val nested = File(tempDir, "src").apply { mkdirs() }
         val source = File(nested, "index.js").apply { writeText("") }

@@ -1,60 +1,59 @@
 package ai.rever.boss.components.bars.horizontal
 
 import ai.rever.boss.components.buttons.BossActionButton
+import ai.rever.boss.components.dialogs.CommitDialog
+import ai.rever.boss.components.dialogs.LogoutConfirmationDialog
+import ai.rever.boss.components.dialogs.ProjectOpenModeDialog
+import ai.rever.boss.components.dialogs.ProjectSelectionDialog
+import ai.rever.boss.components.events.PanelEventBus
+import ai.rever.boss.components.events.TerminalLinkEventBus
+import ai.rever.boss.components.model.BossDraggableComponent
 import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.contextMenu
 import ai.rever.boss.components.plugin.panels.left_top.ProjectState
+import ai.rever.boss.components.windows.SettingsWindow
+import ai.rever.boss.components.workspaces.LayoutWorkspace
+import ai.rever.boss.components.workspaces.WorkspaceButton
+import ai.rever.boss.components.workspaces.WorkspaceManager
+import ai.rever.boss.git.GitBranchInfo
+import ai.rever.boss.git.GitOperationResult
+import ai.rever.boss.git.GitService
+import ai.rever.boss.git.GitStashInfo
+import ai.rever.boss.platform.rememberDirectoryPicker
 import ai.rever.boss.plugin.ui.BossTheme
-import ai.rever.boss.window.Project
-import ai.rever.boss.plugin.git.GitOperationResult.Success as GitSuccess
-import ai.rever.boss.plugin.git.GitOperationResult.Error as GitError
+import ai.rever.boss.services.supabase.AuthService
+import ai.rever.boss.utils.extractFileName
+import ai.rever.boss.window.LocalWindowGitState
 import ai.rever.boss.window.LocalWindowId
 import ai.rever.boss.window.LocalWindowProjectState
-import ai.rever.boss.window.LocalWindowGitState
+import ai.rever.boss.window.Project
+import ai.rever.boss.window.WindowGitState
+import ai.rever.boss.window.WindowOperations
 import ai.rever.boss.window.selectProjectInWindow
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.AlertDialog
 import androidx.compose.material.Divider
 import androidx.compose.material.Surface
 import androidx.compose.material.Text
+import androidx.compose.material.TextButton
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.automirrored.outlined.MergeType
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.runtime.*
-import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.GitBranch
-import ai.rever.boss.git.GitService
-import ai.rever.boss.git.GitBranchInfo
-import ai.rever.boss.git.GitOperationResult
-import ai.rever.boss.git.GitStashInfo
-import ai.rever.boss.window.WindowGitState
-import ai.rever.boss.components.dialogs.CommitDialog
-import ai.rever.boss.platform.rememberDirectoryPicker
-import ai.rever.boss.utils.extractFileName
-import ai.rever.boss.components.dialogs.ProjectSelectionDialog
-import ai.rever.boss.components.windows.SettingsWindow
-import ai.rever.boss.components.model.BossDraggableComponent
-import ai.rever.boss.components.workspaces.WorkspaceButton
-import ai.rever.boss.components.workspaces.WorkspaceManager
-import ai.rever.boss.components.workspaces.LayoutWorkspace
-import ai.rever.boss.components.dialogs.LogoutConfirmationDialog
-import ai.rever.boss.components.dialogs.ProjectOpenModeDialog
-import ai.rever.boss.services.supabase.AuthService
-import ai.rever.boss.components.events.PanelEventBus
-import ai.rever.boss.components.events.TerminalLinkEventBus
-import ai.rever.boss.window.WindowOperations
-import androidx.compose.material.AlertDialog
-import androidx.compose.material.TextButton
+import kotlinx.coroutines.launch
 import java.io.File
-
+import ai.rever.boss.plugin.git.GitOperationResult.Error as GitError
+import ai.rever.boss.plugin.git.GitOperationResult.Success as GitSuccess
 
 @Composable
 fun BossDraggableComponent.BossTopBar(
@@ -65,23 +64,22 @@ fun BossDraggableComponent.BossTopBar(
     onShowSettings: (() -> Unit)? = null,
     onShowSearch: (() -> Unit)? = null,
     onNewProject: (() -> Unit)? = null,
-    onCloneProject: (() -> Unit)? = null
+    onCloneProject: (() -> Unit)? = null,
 ) {
-
-    val items = listOf(
-        ContextMenuItem(
-            text = "Edit",
-            icon = Icons.Outlined.Edit,
-            onClick = { /* Handle edit action */ }
-        ),
-        ContextMenuItem(isDivider = true),
-        ContextMenuItem(
-            text = "Save",
-            icon = Icons.Outlined.Save,
-            onClick = { /* Handle save action */ }
+    val items =
+        listOf(
+            ContextMenuItem(
+                text = "Edit",
+                icon = Icons.Outlined.Edit,
+                onClick = { /* Handle edit action */ },
+            ),
+            ContextMenuItem(isDivider = true),
+            ContextMenuItem(
+                text = "Save",
+                icon = Icons.Outlined.Save,
+                onClick = { /* Handle save action */ },
+            ),
         )
-    )
-
 
     HorizontalBar(modifier = Modifier.contextMenu(items = items), height = 40.dp) {
         HorizontalBarRow(modifier = Modifier.fillMaxHeight().padding(start = 36.dp)) {
@@ -99,25 +97,28 @@ fun BossDraggableComponent.BossTopBar(
 @Composable
 fun Logo(name: String) {
     Surface(
-        modifier = Modifier
-            .padding(2.dp)
-            .height(22.dp)
-            .width(22.dp)
-        ,
+        modifier =
+            Modifier
+                .padding(2.dp)
+                .height(22.dp)
+                .width(22.dp),
         shape = RoundedCornerShape(4.dp),
         color = BossTheme.colors.signal,
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             // Handle names with < 2 characters gracefully
-            val initials = when {
-                name.length >= 2 -> name.substring(0, 2)
-                name.isNotEmpty() -> name[0].toString()
-                else -> "?"  // Fallback for empty names
-            }
-            Text(text = initials.uppercase(),
+            val initials =
+                when {
+                    name.length >= 2 -> name.substring(0, 2)
+                    name.isNotEmpty() -> name[0].toString()
+                    else -> "?" // Fallback for empty names
+                }
+            Text(
+                text = initials.uppercase(),
                 fontSize = 11.sp,
-                modifier = Modifier
-                    .align(Alignment.Center)
+                modifier =
+                    Modifier
+                        .align(Alignment.Center),
             )
         }
     }
@@ -125,17 +126,17 @@ fun Logo(name: String) {
 
 @Composable
 fun BossActionButtonWithLogo(
-    text: String, 
+    text: String,
     contextMenuItems: List<ContextMenuItem>,
     hintText: String? = null,
-    onClick: () -> Unit = {}
+    onClick: () -> Unit = {},
 ) {
     BossActionButton(
         leftLogo = { Logo(text) },
         text = text,
         contextMenuItems = contextMenuItems,
         hintText = hintText,
-        onClick = onClick
+        onClick = onClick,
     )
 }
 
@@ -144,47 +145,55 @@ fun BossDraggableComponent.getProjectSelectContextMenuItems(
     showProjectDialog: () -> Unit,
     showNewProjectDialog: () -> Unit,
     showCloneProjectDialog: () -> Unit,
-    onProjectSelected: (Project) -> Unit
+    onProjectSelected: (Project) -> Unit,
 ): List<ContextMenuItem> {
     val recentProjects by ProjectState.recentProjects.collectAsState()
 
     return buildList {
         // Recent projects with remove button
-        addAll(recentProjects.map { project ->
-            ContextMenuItem(
-                text = project.name,
-                icon = Icons.Outlined.Folder,
-                trailingIcon = Icons.Outlined.Close,
-                trailingIconColor = androidx.compose.ui.graphics.Color.Gray,
-                onTrailingClick = { ProjectState.removeRecentProject(project.path) },
-                onClick = { onProjectSelected(project) }
-            )
-        })
+        addAll(
+            recentProjects.map { project ->
+                ContextMenuItem(
+                    text = project.name,
+                    icon = Icons.Outlined.Folder,
+                    trailingIcon = Icons.Outlined.Close,
+                    trailingIconColor = androidx.compose.ui.graphics.Color.Gray,
+                    onTrailingClick = { ProjectState.removeRecentProject(project.path) },
+                    onClick = { onProjectSelected(project) },
+                )
+            },
+        )
 
         if (recentProjects.isNotEmpty()) {
             add(ContextMenuItem(isDivider = true))
         }
 
         // Add option to create a new project
-        add(ContextMenuItem(
-            text = "New Project...",
-            icon = Icons.Outlined.CreateNewFolder,
-            onClick = showNewProjectDialog
-        ))
+        add(
+            ContextMenuItem(
+                text = "New Project...",
+                icon = Icons.Outlined.CreateNewFolder,
+                onClick = showNewProjectDialog,
+            ),
+        )
 
         // Add option to open an existing project
-        add(ContextMenuItem(
-            text = "Open Project...",
-            icon = Icons.Filled.Add,
-            onClick = showProjectDialog
-        ))
+        add(
+            ContextMenuItem(
+                text = "Open Project...",
+                icon = Icons.Filled.Add,
+                onClick = showProjectDialog,
+            ),
+        )
 
         // Add option to clone a project from Git
-        add(ContextMenuItem(
-            text = "Clone Project...",
-            icon = Icons.Outlined.CloudDownload,
-            onClick = showCloneProjectDialog
-        ))
+        add(
+            ContextMenuItem(
+                text = "Clone Project...",
+                icon = Icons.Outlined.CloudDownload,
+                onClick = showCloneProjectDialog,
+            ),
+        )
     }
 }
 
@@ -223,143 +232,183 @@ private fun getGitContextMenuItems(
     onCreatePR: (() -> Unit)?,
     onStash: () -> Unit,
     onStashPop: (Int) -> Unit,
-    onRefresh: () -> Unit
+    onRefresh: () -> Unit,
 ): List<ContextMenuItem> {
     // Helper to create branch action submenu
-    fun createBranchActions(branch: GitBranchInfo): List<ContextMenuItem> = listOf(
-        ContextMenuItem(
-            text = "Checkout",
-            icon = Icons.Outlined.Check,
-            onClick = { onCheckout(branch.name) }
-        ),
-        ContextMenuItem(
-            text = "Merge into current",
-            icon = Icons.AutoMirrored.Outlined.MergeType,
-            onClick = { onMerge(branch.name) }
-        ),
-        ContextMenuItem(
-            text = "Rebase onto this",
-            icon = Icons.Outlined.Replay,
-            onClick = { onRebase(branch.name) }
+    fun createBranchActions(branch: GitBranchInfo): List<ContextMenuItem> =
+        listOf(
+            ContextMenuItem(
+                text = "Checkout",
+                icon = Icons.Outlined.Check,
+                onClick = { onCheckout(branch.name) },
+            ),
+            ContextMenuItem(
+                text = "Merge into current",
+                icon = Icons.AutoMirrored.Outlined.MergeType,
+                onClick = { onMerge(branch.name) },
+            ),
+            ContextMenuItem(
+                text = "Rebase onto this",
+                icon = Icons.Outlined.Replay,
+                onClick = { onRebase(branch.name) },
+            ),
         )
-    )
 
     return buildList {
         // Current branch header (info only)
-        add(ContextMenuItem(
-            text = "On branch: ${currentBranch ?: "unknown"}",
-            icon = FeatherIcons.GitBranch,
-            onClick = {} // Info only, no action
-        ))
+        add(
+            ContextMenuItem(
+                text = "On branch: ${currentBranch ?: "unknown"}",
+                icon = FeatherIcons.GitBranch,
+                onClick = {}, // Info only, no action
+            ),
+        )
 
         add(ContextMenuItem(isDivider = true))
 
         // Commit
-        add(ContextMenuItem(
-            text = "Commit...",
-            icon = Icons.Outlined.Check,
-            onClick = onCommit
-        ))
+        add(
+            ContextMenuItem(
+                text = "Commit...",
+                icon = Icons.Outlined.Check,
+                onClick = onCommit,
+            ),
+        )
 
         add(ContextMenuItem(isDivider = true))
 
         // Pull and Push actions (run in terminal)
-        add(ContextMenuItem(
-            text = "Pull",
-            icon = Icons.Outlined.ArrowDownward,
-            onClick = onPull
-        ))
+        add(
+            ContextMenuItem(
+                text = "Pull",
+                icon = Icons.Outlined.ArrowDownward,
+                onClick = onPull,
+            ),
+        )
 
-        add(ContextMenuItem(
-            text = "Push",
-            icon = Icons.Outlined.ArrowUpward,
-            onClick = onPush
-        ))
+        add(
+            ContextMenuItem(
+                text = "Push",
+                icon = Icons.Outlined.ArrowUpward,
+                onClick = onPush,
+            ),
+        )
 
         // Create PR (only if supported remote detected)
         if (onCreatePR != null) {
-            add(ContextMenuItem(
-                text = "Create Pull Request...",
-                icon = Icons.AutoMirrored.Outlined.OpenInNew,
-                onClick = onCreatePR
-            ))
+            add(
+                ContextMenuItem(
+                    text = "Create Pull Request...",
+                    icon = Icons.AutoMirrored.Outlined.OpenInNew,
+                    onClick = onCreatePR,
+                ),
+            )
         }
 
         add(ContextMenuItem(isDivider = true))
 
         // Stash submenu
-        add(ContextMenuItem(
-            text = "Stash",
-            icon = Icons.Outlined.Archive,
-            subMenu = buildList {
-                add(ContextMenuItem(
-                    text = "Stash Changes",
-                    icon = Icons.Outlined.Archive,
-                    onClick = onStash
-                ))
-                if (stashList.isNotEmpty()) {
-                    add(ContextMenuItem(isDivider = true))
-                    stashList.forEach { stash ->
-                        add(ContextMenuItem(
-                            text = "stash@{${stash.index}}: ${stash.message.take(40)}${if (stash.message.length > 40) "..." else ""}",
-                            onClick = { onStashPop(stash.index) }
-                        ))
-                    }
-                }
-            }
-        ))
+        add(
+            ContextMenuItem(
+                text = "Stash",
+                icon = Icons.Outlined.Archive,
+                subMenu =
+                    buildList {
+                        add(
+                            ContextMenuItem(
+                                text = "Stash Changes",
+                                icon = Icons.Outlined.Archive,
+                                onClick = onStash,
+                            ),
+                        )
+                        if (stashList.isNotEmpty()) {
+                            add(ContextMenuItem(isDivider = true))
+                            stashList.forEach { stash ->
+                                add(
+                                    ContextMenuItem(
+                                        text = "stash@{${stash.index}}: ${stash.message.take(
+                                            40,
+                                        )}${if (stash.message.length > 40) "..." else ""}",
+                                        onClick = { onStashPop(stash.index) },
+                                    ),
+                                )
+                            }
+                        }
+                    },
+            ),
+        )
 
         add(ContextMenuItem(isDivider = true))
 
         if (isLoading) {
             // Show loading state
-            add(ContextMenuItem(
-                text = "Loading branches...",
-                icon = Icons.Outlined.Refresh,
-                onClick = {} // No action while loading
-            ))
+            add(
+                ContextMenuItem(
+                    text = "Loading branches...",
+                    icon = Icons.Outlined.Refresh,
+                    onClick = {}, // No action while loading
+                ),
+            )
         } else {
             // Local branches submenu - each branch has checkout/merge/rebase options
-            add(ContextMenuItem(
-                text = "Local Branches${if (localBranches.isEmpty()) " (none)" else ""}",
-                icon = Icons.Outlined.AccountTree,
-                subMenu = if (localBranches.isEmpty()) null else localBranches.map { branch ->
-                    ContextMenuItem(
-                        text = branch.name,
-                        icon = if (branch.isCurrent) Icons.Outlined.Check else null,
-                        subMenu = if (branch.isCurrent) null else createBranchActions(branch)
-                    )
-                }
-            ))
+            add(
+                ContextMenuItem(
+                    text = "Local Branches${if (localBranches.isEmpty()) " (none)" else ""}",
+                    icon = Icons.Outlined.AccountTree,
+                    subMenu =
+                        if (localBranches.isEmpty()) {
+                            null
+                        } else {
+                            localBranches.map { branch ->
+                                ContextMenuItem(
+                                    text = branch.name,
+                                    icon = if (branch.isCurrent) Icons.Outlined.Check else null,
+                                    subMenu = if (branch.isCurrent) null else createBranchActions(branch),
+                                )
+                            }
+                        },
+                ),
+            )
 
             // Remote branches submenu - each branch has checkout/merge/rebase options
-            add(ContextMenuItem(
-                text = "Remote Branches${if (remoteBranches.isEmpty()) " (none)" else ""}",
-                icon = Icons.Outlined.Cloud,
-                subMenu = if (remoteBranches.isEmpty()) null else remoteBranches.map { branch ->
-                    ContextMenuItem(
-                        text = branch.name,
-                        subMenu = createBranchActions(branch)
-                    )
-                }
-            ))
+            add(
+                ContextMenuItem(
+                    text = "Remote Branches${if (remoteBranches.isEmpty()) " (none)" else ""}",
+                    icon = Icons.Outlined.Cloud,
+                    subMenu =
+                        if (remoteBranches.isEmpty()) {
+                            null
+                        } else {
+                            remoteBranches.map { branch ->
+                                ContextMenuItem(
+                                    text = branch.name,
+                                    subMenu = createBranchActions(branch),
+                                )
+                            }
+                        },
+                ),
+            )
         }
 
         add(ContextMenuItem(isDivider = true))
 
         // Create new branch
-        add(ContextMenuItem(
-            text = "Create Branch...",
-            icon = Icons.Filled.Add,
-            onClick = onCreateBranch
-        ))
+        add(
+            ContextMenuItem(
+                text = "Create Branch...",
+                icon = Icons.Filled.Add,
+                onClick = onCreateBranch,
+            ),
+        )
 
         // Refresh
-        add(ContextMenuItem(
-            text = "Refresh",
-            icon = Icons.Outlined.Refresh,
-            onClick = onRefresh
-        ))
+        add(
+            ContextMenuItem(
+                text = "Refresh",
+                icon = Icons.Outlined.Refresh,
+                onClick = onRefresh,
+            ),
+        )
     }
 }
 
@@ -370,7 +419,7 @@ fun BossDraggableComponent.BossTopLeftBar(
     getCurrentWorkspace: (() -> LayoutWorkspace)? = null,
     onShowTopOfMind: (() -> Unit)? = null,
     onNewProject: (() -> Unit)? = null,
-    onCloneProject: (() -> Unit)? = null
+    onCloneProject: (() -> Unit)? = null,
 ) {
     // Get window ID for per-window terminal isolation (Issue #498)
     val windowId = LocalWindowId.current ?: return
@@ -461,13 +510,14 @@ fun BossDraggableComponent.BossTopLeftBar(
 
     BossActionButtonWithLogo(
         text = if (selectedProject.path.isEmpty()) "Open Project" else selectedProject.name,
-        contextMenuItems = getProjectSelectContextMenuItems(
-            showProjectDialog = { showProjectDialog = true },
-            showNewProjectDialog = { onNewProject?.invoke() },
-            showCloneProjectDialog = { onCloneProject?.invoke() },
-            onProjectSelected = { project -> handleProjectSelection(project) }
-        ),
-        hintText = if (selectedProject.path.isEmpty()) "Click to open a project" else "Current Project: ${selectedProject.path}"
+        contextMenuItems =
+            getProjectSelectContextMenuItems(
+                showProjectDialog = { showProjectDialog = true },
+                showNewProjectDialog = { onNewProject?.invoke() },
+                showCloneProjectDialog = { onCloneProject?.invoke() },
+                onProjectSelected = { project -> handleProjectSelection(project) },
+            ),
+        hintText = if (selectedProject.path.isEmpty()) "Click to open a project" else "Current Project: ${selectedProject.path}",
     )
 
     // Deleted project dialog
@@ -480,7 +530,7 @@ fun BossDraggableComponent.BossTopLeftBar(
                 TextButton(onClick = { deletedProjectName = null }) {
                     Text("OK")
                 }
-            }
+            },
         )
     }
     // Git branch button (Issue #90)
@@ -490,70 +540,72 @@ fun BossDraggableComponent.BossTopLeftBar(
             leftIcon = FeatherIcons.GitBranch,
             text = if (isGitLoading) "..." else (currentBranch ?: "detached"),
             maxTextWidth = 120.dp, // Truncate long branch names with ellipsis
-            contextMenuItems = getGitContextMenuItems(
-                currentBranch = currentBranch,
-                localBranches = localBranches,
-                remoteBranches = remoteBranches,
-                stashList = stashList,
-                isLoading = isGitLoading,
-                onCheckout = { branchName ->
-                    scope.launch {
-                        val result = GitService.checkout(branchName, windowId = windowId)
-                        when (result) {
-                            is GitSuccess -> gitSuccessMessage = "Switched to '$branchName'"
-                            is GitError -> gitErrorMessage = result.message
-                        }
-                    }
-                },
-                onMerge = { branchName ->
-                    scope.launch { GitService.mergeInTerminal(windowId, branchName) }
-                },
-                onRebase = { branchName ->
-                    scope.launch { GitService.rebaseInTerminal(windowId, branchName) }
-                },
-                onCreateBranch = { showCreateBranchDialog = true },
-                onCommit = { showCommitDialog = true },
-                onPull = {
-                    scope.launch { GitService.pullInTerminal(windowId) }
-                },
-                onPush = {
-                    scope.launch { GitService.pushInTerminal(windowId) }
-                },
-                onCreatePR = createPRUrl?.let { url ->
-                    {
-                        // Show terminal link dialog for opening PR URL (window-scoped)
+            contextMenuItems =
+                getGitContextMenuItems(
+                    currentBranch = currentBranch,
+                    localBranches = localBranches,
+                    remoteBranches = remoteBranches,
+                    stashList = stashList,
+                    isLoading = isGitLoading,
+                    onCheckout = { branchName ->
                         scope.launch {
-                            TerminalLinkEventBus.emitLinkClick(url, sourceTerminalId = null, sourceWindowId = windowId)
+                            val result = GitService.checkout(branchName, windowId = windowId)
+                            when (result) {
+                                is GitSuccess -> gitSuccessMessage = "Switched to '$branchName'"
+                                is GitError -> gitErrorMessage = result.message
+                            }
                         }
-                    }
-                },
-                onStash = {
-                    scope.launch {
-                        val result = GitService.stash()
-                        when (result) {
-                            is GitSuccess -> gitSuccessMessage = result.message
-                            is GitError -> gitErrorMessage = result.message
+                    },
+                    onMerge = { branchName ->
+                        scope.launch { GitService.mergeInTerminal(windowId, branchName) }
+                    },
+                    onRebase = { branchName ->
+                        scope.launch { GitService.rebaseInTerminal(windowId, branchName) }
+                    },
+                    onCreateBranch = { showCreateBranchDialog = true },
+                    onCommit = { showCommitDialog = true },
+                    onPull = {
+                        scope.launch { GitService.pullInTerminal(windowId) }
+                    },
+                    onPush = {
+                        scope.launch { GitService.pushInTerminal(windowId) }
+                    },
+                    onCreatePR =
+                        createPRUrl?.let { url ->
+                            {
+                                // Show terminal link dialog for opening PR URL (window-scoped)
+                                scope.launch {
+                                    TerminalLinkEventBus.emitLinkClick(url, sourceTerminalId = null, sourceWindowId = windowId)
+                                }
+                            }
+                        },
+                    onStash = {
+                        scope.launch {
+                            val result = GitService.stash()
+                            when (result) {
+                                is GitSuccess -> gitSuccessMessage = result.message
+                                is GitError -> gitErrorMessage = result.message
+                            }
                         }
-                    }
-                },
-                onStashPop = { index ->
-                    scope.launch {
-                        val result = GitService.stashPop(index)
-                        when (result) {
-                            is GitSuccess -> gitSuccessMessage = result.message
-                            is GitError -> gitErrorMessage = result.message
+                    },
+                    onStashPop = { index ->
+                        scope.launch {
+                            val result = GitService.stashPop(index)
+                            when (result) {
+                                is GitSuccess -> gitSuccessMessage = result.message
+                                is GitError -> gitErrorMessage = result.message
+                            }
                         }
-                    }
-                },
-                onRefresh = {
-                    scope.launch {
-                        GitService.refreshForWindow(selectedProject.path, windowGitState)
-                        createPRUrl = GitService.getCreatePRUrl()
-                        GitService.refreshStashListForWindow(windowGitState)
-                    }
-                }
-            ),
-            hintText = "Git Branch: ${currentBranch ?: "unknown"}"
+                    },
+                    onRefresh = {
+                        scope.launch {
+                            GitService.refreshForWindow(selectedProject.path, windowGitState)
+                            createPRUrl = GitService.getCreatePRUrl()
+                            GitService.refreshStashListForWindow(windowGitState)
+                        }
+                    },
+                ),
+            hintText = "Git Branch: ${currentBranch ?: "unknown"}",
         )
     }
 
@@ -567,7 +619,7 @@ fun BossDraggableComponent.BossTopLeftBar(
                 TextButton(onClick = { gitErrorMessage = null }) {
                     Text("OK")
                 }
-            }
+            },
         )
     }
 
@@ -581,7 +633,7 @@ fun BossDraggableComponent.BossTopLeftBar(
                 TextButton(onClick = { gitSuccessMessage = null }) {
                     Text("OK")
                 }
-            }
+            },
         )
     }
 
@@ -597,7 +649,7 @@ fun BossDraggableComponent.BossTopLeftBar(
                     }
                 }
                 showCreateBranchDialog = false
-            }
+            },
         )
     }
 
@@ -607,7 +659,7 @@ fun BossDraggableComponent.BossTopLeftBar(
             onDismiss = { showCommitDialog = false },
             onCommitSuccess = { message ->
                 gitSuccessMessage = "Committed: ${message.lines().first().take(50)}${if (message.length > 50) "..." else ""}"
-            }
+            },
         )
     }
 
@@ -617,26 +669,27 @@ fun BossDraggableComponent.BossTopLeftBar(
             onOpenWorkspace = onApplyWorkspace,
             workspaceManager = workspaceManager,
             getCurrentWorkspace = getCurrentWorkspace,
-            onShowTopOfMind = onShowTopOfMind
+            onShowTopOfMind = onShowTopOfMind,
         )
     }
 
     // Directory picker for native file selection
-    val directoryPicker = rememberDirectoryPicker { path ->
-        path?.let {
-            val projectName = it.extractFileName().ifEmpty { "Unknown" }
-            val project = Project(name = projectName, path = it)
-            // Close the selection dialog
-            showProjectDialog = false
-            // Only show dialog if a project is already selected
-            if (selectedProject.path.isNotEmpty()) {
-                projectToOpen = project
-            } else {
-                // No project selected, open directly in current window
-                openProjectInCurrentWindow(project)
+    val directoryPicker =
+        rememberDirectoryPicker { path ->
+            path?.let {
+                val projectName = it.extractFileName().ifEmpty { "Unknown" }
+                val project = Project(name = projectName, path = it)
+                // Close the selection dialog
+                showProjectDialog = false
+                // Only show dialog if a project is already selected
+                if (selectedProject.path.isNotEmpty()) {
+                    projectToOpen = project
+                } else {
+                    // No project selected, open directly in current window
+                    openProjectInCurrentWindow(project)
+                }
             }
         }
-    }
 
     // Project selection dialog
     // Note: Dialog handles empty recentProjects case internally by opening directory picker directly
@@ -646,7 +699,7 @@ fun BossDraggableComponent.BossTopLeftBar(
             onOpenDirectoryPicker = {
                 showProjectDialog = false
                 directoryPicker.pickDirectory()
-            }
+            },
         )
     }
 
@@ -663,7 +716,7 @@ fun BossDraggableComponent.BossTopLeftBar(
                 // Create new window with the project - each window has independent project state
                 WindowOperations.createNewWindowWithProject(selectedProj)
                 projectToOpen = null
-            }
+            },
         )
     }
 }
@@ -739,34 +792,34 @@ fun BossDraggableComponent.BossTopLeftBar(
 @Composable
 fun BossTopRightBar(
     onShowSettings: (() -> Unit)? = null,
-    onShowSearch: (() -> Unit)? = null
+    onShowSearch: (() -> Unit)? = null,
 ) {
     var showLogoutDialog by remember { mutableStateOf(false) }
     val currentUser by AuthService.currentUser.collectAsState()
-    
+
     // Show user email if logged in
     currentUser?.let { user ->
         Text(
             text = user.email,
             style = androidx.compose.material.MaterialTheme.typography.caption,
             modifier = Modifier.padding(end = 8.dp),
-            color = androidx.compose.ui.graphics.Color.Gray
+            color = androidx.compose.ui.graphics.Color.Gray,
         )
     }
-    
+
     BossActionButton(
         imageVector = Icons.AutoMirrored.Outlined.Logout,
         text = "Sign Out",
-        hintText = "Sign out of your account"
+        hintText = "Sign out of your account",
     ) {
         showLogoutDialog = true
     }
-    
+
     // Global search button (Issue #92)
     BossActionButton(
         imageVector = Icons.Outlined.Search,
         text = "Search",
-        hintText = "Search files, tabs, bookmarks (⇧⇧)"
+        hintText = "Search files, tabs, bookmarks (⇧⇧)",
     ) {
         onShowSearch?.invoke()
     }
@@ -774,15 +827,15 @@ fun BossTopRightBar(
     BossActionButton(
         imageVector = Icons.Outlined.Settings,
         text = "Settings",
-        hintText = "Configure application settings"
+        hintText = "Configure application settings",
     ) {
         onShowSettings?.invoke()
     }
-    
+
     // Logout confirmation dialog
     if (showLogoutDialog) {
         LogoutConfirmationDialog(
-            onDismiss = { showLogoutDialog = false }
+            onDismiss = { showLogoutDialog = false },
         )
     }
 }
@@ -797,7 +850,7 @@ fun BossTopRightBar(
 @Composable
 private fun CreateBranchDialog(
     onDismiss: () -> Unit,
-    onCreate: (String) -> Unit
+    onCreate: (String) -> Unit,
 ) {
     var branchName by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
@@ -812,23 +865,24 @@ private fun CreateBranchDialog(
                     onValueChange = {
                         branchName = it
                         // Basic validation - no spaces or special chars except - and _
-                        error = if (it.contains(Regex("[\\s~^:?*\\[\\\\]"))) {
-                            "Branch name contains invalid characters"
-                        } else {
-                            null
-                        }
+                        error =
+                            if (it.contains(Regex("[\\s~^:?*\\[\\\\]"))) {
+                                "Branch name contains invalid characters"
+                            } else {
+                                null
+                            }
                     },
                     label = { Text("Branch name") },
                     singleLine = true,
                     isError = error != null,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
                 )
                 error?.let {
                     Text(
                         text = it,
                         color = androidx.compose.material.MaterialTheme.colors.error,
                         style = androidx.compose.material.MaterialTheme.typography.caption,
-                        modifier = Modifier.padding(top = 4.dp)
+                        modifier = Modifier.padding(top = 4.dp),
                     )
                 }
             }
@@ -840,7 +894,7 @@ private fun CreateBranchDialog(
                         onCreate(branchName.trim())
                     }
                 },
-                enabled = branchName.isNotBlank() && error == null
+                enabled = branchName.isNotBlank() && error == null,
             ) {
                 Text("Create")
             }
@@ -849,6 +903,6 @@ private fun CreateBranchDialog(
             TextButton(onClick = onDismiss) {
                 Text("Cancel")
             }
-        }
+        },
     )
 }

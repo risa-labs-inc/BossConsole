@@ -1,23 +1,23 @@
 package ai.rever.boss.components.auth
 
-import ai.rever.boss.plugin.ui.BossThemeController
-import ai.rever.boss.utils.logging.BossLogger
-import ai.rever.boss.utils.logging.LogCategory
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.runtime.*
-import androidx.compose.ui.Modifier
 import BossTheme
 import ai.rever.boss.components.auth.screens.LoginFormScreen
 import ai.rever.boss.components.auth.screens.MagicLinkWaitingScreen
 import ai.rever.boss.components.auth.screens.PasskeySelectionScreen
 import ai.rever.boss.components.auth.screens.PasskeyWaitingScreen
 import ai.rever.boss.components.dialogs.CrossDeviceAuthenticationDialog
+import ai.rever.boss.plugin.ui.BossThemeController
 import ai.rever.boss.services.auth.MagicLinkErrorService
 import ai.rever.boss.services.supabase.AuthService
-import ai.rever.boss.viewmodels.LoginViewModel
 import ai.rever.boss.utils.DeepLinkHandler
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.viewmodels.LoginViewModel
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
 
 private val logger = BossLogger.forComponent("AuthScreenContainer")
 
@@ -26,7 +26,7 @@ enum class AuthScreen {
     MAGIC_LINK_WAITING,
     PASSKEY_SELECTION,
     PASSKEY_WAITING,
-    PASSKEY_BROWSER
+    PASSKEY_BROWSER,
 }
 
 /**
@@ -34,9 +34,7 @@ enum class AuthScreen {
  * Manages cross-device authentication and magic link flows.
  */
 @Composable
-fun AuthScreenContainer(
-    onLoginSuccess: () -> Unit
-) {
+fun AuthScreenContainer(onLoginSuccess: () -> Unit) {
     // Use a stable key to prevent ViewModel recreation during AuthState changes
     val viewModel = remember("login_viewmodel") { LoginViewModel() }
     var currentScreen by remember { mutableStateOf(AuthScreen.LOGIN) }
@@ -47,24 +45,32 @@ fun AuthScreenContainer(
     var passkeyBrowserSessionId by remember { mutableStateOf("") }
 
     logger.debug(LogCategory.AUTH, "Recomposed", mapOf("viewModelHash" to viewModel.hashCode()))
-    
+
     // Watch AuthService state directly to handle 2FA
     val authState by AuthService.authState.collectAsState()
-    
+
     // React to AuthState changes (only for certain transitions)
     LaunchedEffect(authState) {
-        logger.debug(LogCategory.AUTH, "AuthState changed", mapOf("state" to authState.toString(), "currentScreen" to currentScreen.toString()))
+        logger.debug(
+            LogCategory.AUTH,
+            "AuthState changed",
+            mapOf(
+                "state" to authState.toString(),
+                "currentScreen" to currentScreen.toString(),
+            ),
+        )
         when (authState) {
             is AuthService.AuthState.Authenticated -> {
                 logger.debug(LogCategory.AUTH, "User authenticated - will be handled by parent component")
                 onLoginSuccess()
             }
+
             else -> {
                 // Keep on current screen for all other states
             }
         }
     }
-    
+
     // Handle deep links while on magic link waiting screen
     val deepLink by DeepLinkHandler.deepLinkFlow.collectAsState()
     LaunchedEffect(deepLink, currentScreen) {
@@ -75,7 +81,7 @@ fun AuthScreenContainer(
             DeepLinkHandler.clearDeepLink()
         }
     }
-    
+
     // Debug current screen changes
     LaunchedEffect(currentScreen) {
         logger.debug(LogCategory.AUTH, "currentScreen changed", mapOf("screen" to currentScreen.toString()))
@@ -116,7 +122,8 @@ fun AuthScreenContainer(
     // Clear magic link errors when navigating away from magic link screens
     LaunchedEffect(currentScreen) {
         if (currentScreen != AuthScreen.MAGIC_LINK_WAITING &&
-            currentScreen != AuthScreen.LOGIN) {
+            currentScreen != AuthScreen.LOGIN
+        ) {
             viewModel.clearMagicLinkError()
             MagicLinkErrorService.clearError()
         }
@@ -124,9 +131,10 @@ fun AuthScreenContainer(
 
     BossTheme {
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(BossThemeController.current.colors.panel)
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .background(BossThemeController.current.colors.panel),
         ) {
             when (currentScreen) {
                 AuthScreen.LOGIN -> {
@@ -150,7 +158,7 @@ fun AuthScreenContainer(
                         onPasskeySelectionRequired = { email ->
                             passkeySelectionEmail = email
                             currentScreen = AuthScreen.PASSKEY_SELECTION
-                        }
+                        },
                     )
                 }
 
@@ -163,7 +171,7 @@ fun AuthScreenContainer(
                         },
                         onSuccess = onLoginSuccess,
                         isLoading = isLoading,
-                        errorMessage = errorMessage
+                        errorMessage = errorMessage,
                     )
                 }
 
@@ -177,7 +185,7 @@ fun AuthScreenContainer(
                             // Authenticate with selected passkey
                             viewModel.passkeyAuthViewModel.authenticateWithSpecificPasskey(
                                 passkeySelectionEmail,
-                                credentialId
+                                credentialId,
                             ) {
                                 onLoginSuccess()
                             }
@@ -185,7 +193,7 @@ fun AuthScreenContainer(
                         onBack = {
                             viewModel.passkeyAuthViewModel.cancelAuthentication()
                             currentScreen = AuthScreen.LOGIN
-                        }
+                        },
                     )
                 }
 
@@ -197,7 +205,7 @@ fun AuthScreenContainer(
                             viewModel.passkeyAuthViewModel.cancelAuthentication()
                             currentScreen = AuthScreen.LOGIN
                         },
-                        onSuccess = onLoginSuccess
+                        onSuccess = onLoginSuccess,
                     )
                 }
 
@@ -212,12 +220,12 @@ fun AuthScreenContainer(
                         onBack = {
                             viewModel.passkeyAuthViewModel.cancelAuthentication()
                             currentScreen = AuthScreen.LOGIN
-                        }
+                        },
                     )
                 }
             }
         }
-        
+
         // Cross-Device Authentication QR Dialog
         if (showCrossDeviceQR && crossDeviceQRUrl != null) {
             CrossDeviceAuthenticationDialog(
@@ -228,7 +236,7 @@ fun AuthScreenContainer(
                 onSuccess = {
                     // Authentication successful
                     logger.info(LogCategory.AUTH, "Cross-device authentication successful")
-                }
+                },
             )
         }
     }

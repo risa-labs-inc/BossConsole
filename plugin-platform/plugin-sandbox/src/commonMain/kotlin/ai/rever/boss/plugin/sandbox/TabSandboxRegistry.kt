@@ -13,7 +13,6 @@ import java.util.concurrent.ConcurrentHashMap
  * loading threads while lookups happen on the composition thread.
  */
 object TabSandboxRegistry {
-
     private val tabTypeToSandbox = ConcurrentHashMap<String, PluginSandbox>()
 
     /**
@@ -22,7 +21,10 @@ object TabSandboxRegistry {
      * @param typeId The tab type ID
      * @param sandbox The sandbox managing this tab type
      */
-    fun register(typeId: TabTypeId, sandbox: PluginSandbox) {
+    fun register(
+        typeId: TabTypeId,
+        sandbox: PluginSandbox,
+    ) {
         tabTypeToSandbox[typeId.typeId] = sandbox
     }
 
@@ -41,9 +43,7 @@ object TabSandboxRegistry {
      * @param typeId The tab type ID
      * @return The managing sandbox, or null if not sandboxed
      */
-    fun getSandbox(typeId: TabTypeId): PluginSandbox? {
-        return tabTypeToSandbox[typeId.typeId]
-    }
+    fun getSandbox(typeId: TabTypeId): PluginSandbox? = tabTypeToSandbox[typeId.typeId]
 
     /**
      * Get the sandbox for a tab type by its string ID.
@@ -51,9 +51,7 @@ object TabSandboxRegistry {
      * @param typeIdString The tab type ID string
      * @return The managing sandbox, or null if not sandboxed
      */
-    fun getSandbox(typeIdString: String): PluginSandbox? {
-        return tabTypeToSandbox[typeIdString]
-    }
+    fun getSandbox(typeIdString: String): PluginSandbox? = tabTypeToSandbox[typeIdString]
 
     /**
      * Clear all registrations. Used for testing or cleanup.

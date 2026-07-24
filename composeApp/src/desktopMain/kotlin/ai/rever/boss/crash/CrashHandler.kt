@@ -89,17 +89,19 @@ object CrashHandler {
             val msg = t.message ?: ""
             val benign =
                 name.endsWith("ClosedWriteChannelException") ||
-                name.endsWith("ClosedReceiveChannelException") ||
-                name.endsWith("ClosedChannelException") ||
-                name.endsWith("CancellationException") ||
-                name == "io.github.jan.supabase.auth.exception.TokenExpiredException" ||
-                (t is java.io.IOException && (
-                    msg.contains("Broken pipe", ignoreCase = true) ||
-                    msg.contains("Connection reset", ignoreCase = true) ||
-                    msg.contains("Socket closed", ignoreCase = true) ||
-                    msg.contains("Stream closed", ignoreCase = true) ||
-                    msg.contains("Connection refused", ignoreCase = true)
-                ))
+                    name.endsWith("ClosedReceiveChannelException") ||
+                    name.endsWith("ClosedChannelException") ||
+                    name.endsWith("CancellationException") ||
+                    name == "io.github.jan.supabase.auth.exception.TokenExpiredException" ||
+                    (
+                        t is java.io.IOException && (
+                            msg.contains("Broken pipe", ignoreCase = true) ||
+                                msg.contains("Connection reset", ignoreCase = true) ||
+                                msg.contains("Socket closed", ignoreCase = true) ||
+                                msg.contains("Stream closed", ignoreCase = true) ||
+                                msg.contains("Connection refused", ignoreCase = true)
+                        )
+                    )
             if (benign) return true
             t = t.cause
             depth++
@@ -110,7 +112,10 @@ object CrashHandler {
     /**
      * Handle an uncaught exception.
      */
-    private fun handleCrash(thread: Thread, throwable: Throwable) {
+    private fun handleCrash(
+        thread: Thread,
+        throwable: Throwable,
+    ) {
         // Benign, non-fatal exceptions (dropped sockets, cancellations) reach the
         // global handler routinely — e.g. hot-swapping a plugin jar drops the MCP
         // server's ktor writer with a "Broken pipe". These must NOT pop the crash
@@ -119,7 +124,7 @@ object CrashHandler {
             logger.warn(
                 LogCategory.SYSTEM,
                 "Ignoring benign uncaught exception on thread ${thread.name}: " +
-                    "${throwable.javaClass.simpleName}: ${throwable.message}"
+                    "${throwable.javaClass.simpleName}: ${throwable.message}",
             )
             return
         }
@@ -127,7 +132,7 @@ object CrashHandler {
             logger.error(
                 LogCategory.SYSTEM,
                 "Uncaught exception on thread ${thread.name}",
-                error = throwable
+                error = throwable,
             )
 
             // Create crash report
@@ -144,7 +149,6 @@ object CrashHandler {
                     showCrashDialogWindow(report)
                 }
             }
-
         } catch (e: Exception) {
             // If crash handling itself fails, log to stderr and chain
             System.err.println("CrashHandler failed: ${e.message}")
@@ -176,10 +180,14 @@ object CrashHandler {
                         terminateAfterCrash()
                     },
                     onSubmit = { userNotes, includeLogs ->
-                        logger.info(LogCategory.SYSTEM, "Crash report submitted", mapOf(
-                            "hasNotes" to (userNotes != null),
-                            "includedLogs" to includeLogs
-                        ))
+                        logger.info(
+                            LogCategory.SYSTEM,
+                            "Crash report submitted",
+                            mapOf(
+                                "hasNotes" to (userNotes != null),
+                                "includedLogs" to includeLogs,
+                            ),
+                        )
                         frame.dispose()
                         terminateAfterCrash()
                     },
@@ -187,7 +195,7 @@ object CrashHandler {
                         logger.info(LogCategory.SYSTEM, "User requested clean data and restart")
                         frame.dispose()
                         cleanDataAndRestart()
-                    }
+                    },
                 )
             }
 
@@ -199,7 +207,6 @@ object CrashHandler {
             // Bring to front
             frame.toFront()
             frame.requestFocus()
-
         } catch (e: Exception) {
             logger.error(LogCategory.SYSTEM, "Failed to show crash dialog window", error = e)
             System.err.println("Failed to show crash dialog: ${e.message}")
@@ -226,7 +233,7 @@ object CrashHandler {
             systemInfo = collectSystemInfo(),
             appInfo = collectAppInfo(),
             timestamp = System.currentTimeMillis(),
-            pluginId = attributePluginId(throwable)
+            pluginId = attributePluginId(throwable),
         )
     }
 
@@ -285,7 +292,7 @@ object CrashHandler {
             heapUsedMB = heapUsage.used / (1024 * 1024),
             heapMaxMB = if (heapUsage.max > 0) heapUsage.max / (1024 * 1024) else -1,
             nonHeapUsedMB = nonHeapUsage.used / (1024 * 1024),
-            availableProcessors = osMXBean.availableProcessors
+            availableProcessors = osMXBean.availableProcessors,
         )
     }
 
@@ -293,19 +300,21 @@ object CrashHandler {
      * Collect application information.
      */
     private fun collectAppInfo(): AppInfo {
-        val platform = when {
-            System.getProperty("os.name").contains("Mac", ignoreCase = true) -> "macOS"
-            System.getProperty("os.name").contains("Windows", ignoreCase = true) -> "Windows"
-            else -> "Linux"
-        }
+        val platform =
+            when {
+                System.getProperty("os.name").contains("Mac", ignoreCase = true) -> "macOS"
+                System.getProperty("os.name").contains("Windows", ignoreCase = true) -> "Windows"
+                else -> "Linux"
+            }
 
-        val isDebug = System.getProperty("boss.dev.mode")?.toBoolean() == true ||
+        val isDebug =
+            System.getProperty("boss.dev.mode")?.toBoolean() == true ||
                 System.getenv("BOSS_DEV_MODE")?.toBoolean() == true
 
         return AppInfo(
             version = AppVersion.CURRENT.toString(),
             platform = platform,
-            isDebug = isDebug
+            isDebug = isDebug,
         )
     }
 
@@ -323,24 +332,25 @@ object CrashHandler {
      * @param limit Maximum number of log entries to include
      * @return List of sanitized log entries
      */
-    fun getRecentLogsForReport(limit: Int = 50): List<SanitizedLogEntry> {
-        return BossLogger.getRecentLogs(limit = limit)
+    fun getRecentLogsForReport(limit: Int = 50): List<SanitizedLogEntry> =
+        BossLogger
+            .getRecentLogs(limit = limit)
             .map { SanitizedLogEntry.fromLogEntry(it) }
-    }
 
     /**
      * Update the pending crash report with user notes and optional logs.
      */
     fun updateReportWithUserInput(
         userNotes: String?,
-        includeLogs: Boolean
+        includeLogs: Boolean,
     ): CrashReport? {
         val currentReport = _pendingCrashReport.value ?: return null
 
-        val updatedReport = currentReport.copy(
-            userNotes = userNotes?.takeIf { it.isNotBlank() },
-            recentLogs = if (includeLogs) getRecentLogsForReport() else null
-        )
+        val updatedReport =
+            currentReport.copy(
+                userNotes = userNotes?.takeIf { it.isNotBlank() },
+                recentLogs = if (includeLogs) getRecentLogsForReport() else null,
+            )
 
         _pendingCrashReport.value = updatedReport
         return updatedReport
@@ -365,9 +375,13 @@ object CrashHandler {
     private fun cleanDataAndRestart() {
         try {
             val dataDir = BossDirectories.rootDir
-            logger.info(LogCategory.SYSTEM, "Cleaning BOSS data directory", mapOf(
-                "path" to dataDir.absolutePath
-            ))
+            logger.info(
+                LogCategory.SYSTEM,
+                "Cleaning BOSS data directory",
+                mapOf(
+                    "path" to dataDir.absolutePath,
+                ),
+            )
 
             // Delete everything in the data dir
             if (dataDir.exists()) {
@@ -376,7 +390,12 @@ object CrashHandler {
             }
 
             // Restart the app by launching a new process
-            val javaBin = ProcessHandle.current().info().command().orElse(null)
+            val javaBin =
+                ProcessHandle
+                    .current()
+                    .info()
+                    .command()
+                    .orElse(null)
             if (javaBin != null) {
                 logger.info(LogCategory.SYSTEM, "Restarting application")
                 ProcessBuilder(javaBin, *getRestartArgs())

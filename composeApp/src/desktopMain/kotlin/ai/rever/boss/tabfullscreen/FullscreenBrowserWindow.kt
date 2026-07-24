@@ -27,8 +27,8 @@ object FullscreenBrowserWindow {
     private var currentBrowserView: BrowserView? = null
     private var onExitCallback: (() -> Unit)? = null
     private var isInFullscreenMode = false
-    private var hasReachedFullscreen = false  // True only after fullscreen animation completes
-    private var isExiting = false  // Prevent multiple exit calls
+    private var hasReachedFullscreen = false // True only after fullscreen animation completes
+    private var isExiting = false // Prevent multiple exit calls
 
     private val isMacOS = System.getProperty("os.name").lowercase().contains("mac")
 
@@ -43,7 +43,11 @@ object FullscreenBrowserWindow {
     // Exit needs more time because we need to ensure the Swing view fully releases the surface
     private const val SWING_RELEASE_DELAY_MS = 200
 
-    fun showFullscreen(browser: Browser, tabId: String, onExit: () -> Unit) {
+    fun showFullscreen(
+        browser: Browser,
+        tabId: String,
+        onExit: () -> Unit,
+    ) {
         // Prevent duplicate calls
         if (fullscreenFrame != null || isInFullscreenMode) {
             logger.warn(LogCategory.BROWSER, "Fullscreen already active, ignoring duplicate request")
@@ -78,7 +82,10 @@ object FullscreenBrowserWindow {
      * Creates and displays the fullscreen window with a Swing BrowserView.
      * Called after Compose BrowserView has had time to detach from rendering.
      */
-    private fun createFullscreenWindow(browser: Browser, tabId: String) {
+    private fun createFullscreenWindow(
+        browser: Browser,
+        tabId: String,
+    ) {
         try {
             // Check if we've been cancelled during the delay
             if (!isInFullscreenMode) {
@@ -107,27 +114,31 @@ object FullscreenBrowserWindow {
             logger.info(LogCategory.BROWSER, "Swing BrowserView created after Compose detach delay")
 
             // Handle window close
-            frame.addWindowListener(object : WindowAdapter() {
-                override fun windowClosing(e: WindowEvent?) {
-                    performExit()
-                }
-            })
+            frame.addWindowListener(
+                object : WindowAdapter() {
+                    override fun windowClosing(e: WindowEvent?) {
+                        performExit()
+                    }
+                },
+            )
 
             // Detect when exiting native fullscreen (green button or ESC)
             // Only active after fullscreen animation completes
-            frame.addComponentListener(object : ComponentAdapter() {
-                override fun componentResized(e: ComponentEvent?) {
-                    // Only check for exit after we've confirmed fullscreen was reached
-                    if (hasReachedFullscreen && isInFullscreenMode && !isExiting && fullscreenFrame != null) {
-                        SwingUtilities.invokeLater {
-                            if (!isWindowInFullscreen(frame) && !isExiting) {
-                                logger.info(LogCategory.BROWSER, "Native fullscreen exited via resize detection")
-                                performExit()
+            frame.addComponentListener(
+                object : ComponentAdapter() {
+                    override fun componentResized(e: ComponentEvent?) {
+                        // Only check for exit after we've confirmed fullscreen was reached
+                        if (hasReachedFullscreen && isInFullscreenMode && !isExiting && fullscreenFrame != null) {
+                            SwingUtilities.invokeLater {
+                                if (!isWindowInFullscreen(frame) && !isExiting) {
+                                    logger.info(LogCategory.BROWSER, "Native fullscreen exited via resize detection")
+                                    performExit()
+                                }
                             }
                         }
                     }
-                }
-            })
+                },
+            )
 
             fullscreenFrame = frame
             currentBrowserView = browserView
@@ -232,7 +243,11 @@ object FullscreenBrowserWindow {
      * @param browserView The BrowserView to detach (nullable)
      * @param callback Optional callback to invoke after cleanup completes
      */
-    private fun cleanupAndExit(frame: JFrame, browserView: BrowserView?, callback: (() -> Unit)?) {
+    private fun cleanupAndExit(
+        frame: JFrame,
+        browserView: BrowserView?,
+        callback: (() -> Unit)?,
+    ) {
         SwingUtilities.invokeLater {
             try {
                 // Hide and detach the Swing BrowserView to release rendering surface

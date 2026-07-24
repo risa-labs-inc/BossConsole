@@ -40,34 +40,36 @@ fun WorkspaceSelectionDialog(
     workspaces: List<ai.rever.boss.components.workspaces.LayoutWorkspace>,
     preselectedWorkspaces: Map<String, String?> = emptyMap(),
     onDismiss: () -> Unit,
-    onConfirm: (workspacePanelMap: Map<String, String?>) -> Unit
+    onConfirm: (workspacePanelMap: Map<String, String?>) -> Unit,
 ) {
     // Map of workspace name -> panel ID (null = auto/active panel)
     var workspacePanelSelections by remember { mutableStateOf(preselectedWorkspaces) }
 
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            dismissOnClickOutside = true,
-            dismissOnBackPress = true
-        )
+        properties =
+            DialogProperties(
+                dismissOnClickOutside = true,
+                dismissOnBackPress = true,
+            ),
     ) {
         Surface(
-            modifier = Modifier
-                .width(600.dp)
-                .heightIn(max = 600.dp),
+            modifier =
+                Modifier
+                    .width(600.dp)
+                    .heightIn(max = 600.dp),
             shape = RoundedCornerShape(8.dp),
-            color = BossTheme.colors.panel
+            color = BossTheme.colors.panel,
         ) {
             Column(
-                modifier = Modifier.padding(20.dp)
+                modifier = Modifier.padding(20.dp),
             ) {
                 // Title
                 Text(
                     text = title,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
-                    color = BossTheme.colors.textPrimary
+                    color = BossTheme.colors.textPrimary,
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -76,30 +78,32 @@ fun WorkspaceSelectionDialog(
                 Text(
                     text = "Select workspaces and panels where this bookmark should open",
                     fontSize = 13.sp,
-                    color = BossTheme.colors.textSecondary
+                    color = BossTheme.colors.textSecondary,
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // Workspaces list
                 LazyColumn(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
+                    modifier =
+                        Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
                 ) {
                     if (workspaces.isEmpty()) {
                         item {
                             Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(32.dp),
-                                contentAlignment = Alignment.Center
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .padding(32.dp),
+                                contentAlignment = Alignment.Center,
                             ) {
                                 Text(
                                     text = "No workspaces available",
                                     fontSize = 13.sp,
                                     color = BossTheme.colors.textSecondary,
-                                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
                                 )
                             }
                         }
@@ -110,15 +114,16 @@ fun WorkspaceSelectionDialog(
                                 isSelected = workspacePanelSelections.containsKey(workspace.name),
                                 selectedPanelId = workspacePanelSelections[workspace.name],
                                 onToggle = {
-                                    workspacePanelSelections = if (workspacePanelSelections.containsKey(workspace.name)) {
-                                        workspacePanelSelections - workspace.name
-                                    } else {
-                                        workspacePanelSelections + (workspace.name to null)
-                                    }
+                                    workspacePanelSelections =
+                                        if (workspacePanelSelections.containsKey(workspace.name)) {
+                                            workspacePanelSelections - workspace.name
+                                        } else {
+                                            workspacePanelSelections + (workspace.name to null)
+                                        }
                                 },
                                 onPanelSelected = { panelId ->
                                     workspacePanelSelections = workspacePanelSelections + (workspace.name to panelId)
-                                }
+                                },
                             )
                         }
                     }
@@ -130,7 +135,7 @@ fun WorkspaceSelectionDialog(
                 Text(
                     text = "Leave empty to open bookmark in current workspace",
                     fontSize = 11.sp,
-                    color = BossTheme.colors.textSecondary
+                    color = BossTheme.colors.textSecondary,
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -138,13 +143,14 @@ fun WorkspaceSelectionDialog(
                 // Action buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
+                    horizontalArrangement = Arrangement.End,
                 ) {
                     TextButton(
                         onClick = onDismiss,
-                        colors = ButtonDefaults.textButtonColors(
-                            contentColor = BossTheme.colors.textSecondary
-                        )
+                        colors =
+                            ButtonDefaults.textButtonColors(
+                                contentColor = BossTheme.colors.textSecondary,
+                            ),
                     ) {
                         Text("Cancel")
                     }
@@ -156,11 +162,12 @@ fun WorkspaceSelectionDialog(
                             onConfirm(workspacePanelSelections)
                             onDismiss()
                         },
-                        colors = ButtonDefaults.buttonColors(
-                            backgroundColor = BossTheme.colors.signal,
-                            contentColor = Color.Black
-                        ),
-                        shape = RoundedCornerShape(6.dp)
+                        colors =
+                            ButtonDefaults.buttonColors(
+                                backgroundColor = BossTheme.colors.signal,
+                                contentColor = Color.Black,
+                            ),
+                        shape = RoundedCornerShape(6.dp),
                     ) {
                         Text("Update", fontWeight = FontWeight.Medium)
                     }
@@ -179,41 +186,44 @@ private fun WorkspaceSelectionItem(
     isSelected: Boolean,
     selectedPanelId: String?,
     onToggle: () -> Unit,
-    onPanelSelected: (String?) -> Unit
+    onPanelSelected: (String?) -> Unit,
 ) {
     var showPanelDropdown by remember { mutableStateOf(false) }
     val panels = workspace.layout.extractPanels()
 
     // Get panel display name
-    val panelDisplayName = if (selectedPanelId == null) {
-        "Auto"
-    } else {
-        panels.find { it.first == selectedPanelId }?.second ?: "Auto"
-    }
+    val panelDisplayName =
+        if (selectedPanelId == null) {
+            "Auto"
+        } else {
+            panels.find { it.first == selectedPanelId }?.second ?: "Auto"
+        }
 
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onToggle),
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onToggle),
             shape = RoundedCornerShape(8.dp),
             color = if (isSelected) BossTheme.colors.raised else Color.Transparent,
-            border = if (isSelected) {
-                androidx.compose.foundation.BorderStroke(1.dp, BossTheme.colors.signal)
-            } else {
-                androidx.compose.foundation.BorderStroke(1.dp, BossTheme.colors.line)
-            }
+            border =
+                if (isSelected) {
+                    androidx.compose.foundation.BorderStroke(1.dp, BossTheme.colors.signal)
+                } else {
+                    androidx.compose.foundation.BorderStroke(1.dp, BossTheme.colors.line)
+                },
         ) {
             Row(
                 modifier = Modifier.padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 // Selection indicator
                 Icon(
                     imageVector = if (isSelected) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
                     contentDescription = if (isSelected) "Selected" else "Not selected",
                     tint = if (isSelected) BossTheme.colors.signal else BossTheme.colors.textSecondary,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(20.dp),
                 )
 
                 Spacer(modifier = Modifier.width(12.dp))
@@ -223,22 +233,23 @@ private fun WorkspaceSelectionItem(
                     imageVector = Icons.Outlined.Folder,
                     contentDescription = null,
                     tint = BossTheme.colors.textSecondary,
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(18.dp),
                 )
 
                 Spacer(modifier = Modifier.width(8.dp))
 
                 // Workspace name and panel info
                 Text(
-                    text = if (isSelected && selectedPanelId != null) {
-                        "${workspace.name}: $panelDisplayName"
-                    } else {
-                        workspace.name
-                    },
+                    text =
+                        if (isSelected && selectedPanelId != null) {
+                            "${workspace.name}: $panelDisplayName"
+                        } else {
+                            workspace.name
+                        },
                     fontSize = 14.sp,
                     fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal,
                     color = BossTheme.colors.textPrimary,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f),
                 )
 
                 // Panel selector dropdown (only when selected)
@@ -246,12 +257,12 @@ private fun WorkspaceSelectionItem(
                     Spacer(modifier = Modifier.width(8.dp))
                     IconButton(
                         onClick = { showPanelDropdown = !showPanelDropdown },
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(24.dp),
                     ) {
                         Icon(
                             imageVector = Icons.Filled.ArrowDropDown,
                             contentDescription = "Select Panel",
-                            tint = BossTheme.colors.textSecondary
+                            tint = BossTheme.colors.textSecondary,
                         )
                     }
                 }
@@ -261,12 +272,13 @@ private fun WorkspaceSelectionItem(
         // Panel dropdown (shown when selected and dropdown is open)
         if (isSelected && showPanelDropdown) {
             Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 32.dp, top = 4.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(start = 32.dp, top = 4.dp),
                 shape = RoundedCornerShape(8.dp),
                 color = BossTheme.colors.raised,
-                border = androidx.compose.foundation.BorderStroke(1.dp, BossTheme.colors.line)
+                border = androidx.compose.foundation.BorderStroke(1.dp, BossTheme.colors.line),
             ) {
                 Column(modifier = Modifier.padding(8.dp)) {
                     // Auto option
@@ -276,7 +288,7 @@ private fun WorkspaceSelectionItem(
                         onClick = {
                             onPanelSelected(null)
                             showPanelDropdown = false
-                        }
+                        },
                     )
 
                     // Panel options
@@ -287,7 +299,7 @@ private fun WorkspaceSelectionItem(
                             onClick = {
                                 onPanelSelected(panelId)
                                 showPanelDropdown = false
-                            }
+                            },
                         )
                     }
                 }
@@ -303,24 +315,24 @@ private fun WorkspaceSelectionItem(
 private fun PanelOption(
     displayName: String,
     isSelected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
 ) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .background(
-                color = if (isSelected) BossTheme.colors.raised.copy(alpha = 0.6f) else Color.Transparent,
-                shape = RoundedCornerShape(4.dp)
-            )
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .background(
+                    color = if (isSelected) BossTheme.colors.raised.copy(alpha = 0.6f) else Color.Transparent,
+                    shape = RoundedCornerShape(4.dp),
+                ).padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = displayName,
             fontSize = 12.sp,
             fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal,
-            color = if (isSelected) BossTheme.colors.signal else BossTheme.colors.textPrimary
+            color = if (isSelected) BossTheme.colors.signal else BossTheme.colors.textPrimary,
         )
     }
 }

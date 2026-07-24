@@ -11,7 +11,7 @@ data class SecretEntry(
     val id: String,
     val website: String,
     val username: String,
-    val password: String,  // Decrypted on client
+    val password: String, // Decrypted on client
     val notes: String? = null,
     @SerialName("expiration_date")
     val expirationDate: String? = null,
@@ -20,7 +20,7 @@ data class SecretEntry(
     @SerialName("created_at")
     val createdAt: String,
     @SerialName("updated_at")
-    val updatedAt: String
+    val updatedAt: String,
 )
 
 /**
@@ -31,11 +31,11 @@ data class SecretMetadata(
     @SerialName("twofa_enabled")
     val twofaEnabled: Boolean = false,
     @SerialName("twofa_type")
-    val twofaType: String? = null,  // 'app', 'sms', 'email', 'hardware'
+    val twofaType: String? = null, // 'app', 'sms', 'email', 'hardware'
     @SerialName("twofa_secret")
-    val twofaSecret: String? = null,  // Encrypted 2FA secret (for TOTP apps)
+    val twofaSecret: String? = null, // Encrypted 2FA secret (for TOTP apps)
     @SerialName("recovery_codes")
-    val recoveryCodes: List<String> = emptyList()
+    val recoveryCodes: List<String> = emptyList(),
 )
 
 /**
@@ -50,7 +50,7 @@ data class CreateSecretRequest(
     val tags: List<String> = emptyList(),
     val twofaEnabled: Boolean = false,
     val twofaType: String? = null,
-    val recoveryCodes: List<String> = emptyList()
+    val recoveryCodes: List<String> = emptyList(),
 ) {
     /**
      * Validate the request data
@@ -88,7 +88,7 @@ data class UpdateSecretRequest(
     val tags: List<String> = emptyList(),
     val twofaEnabled: Boolean = false,
     val twofaType: String? = null,
-    val recoveryCodes: List<String> = emptyList()
+    val recoveryCodes: List<String> = emptyList(),
 ) {
     /**
      * Validate the request data
@@ -122,7 +122,7 @@ data class UpdateSecretRequest(
 data class PaginatedSecrets(
     val data: List<SecretEntry>,
     val hasMore: Boolean,
-    val total: Int? = null
+    val total: Int? = null,
 )
 
 /**
@@ -134,7 +134,7 @@ data class SecretEntryWithSharing(
     val id: String,
     val website: String,
     val username: String,
-    val password: String,  // Decrypted on client
+    val password: String, // Decrypted on client
     val notes: String? = null,
     @SerialName("expiration_date")
     val expirationDate: String? = null,
@@ -149,13 +149,13 @@ data class SecretEntryWithSharing(
     @SerialName("shared_by_email")
     val sharedByEmail: String? = null,
     @SerialName("access_level")
-    val accessLevel: String
+    val accessLevel: String,
 ) {
     /**
      * Convert to regular SecretEntry for compatibility
      */
-    fun toSecretEntry(): SecretEntry {
-        return SecretEntry(
+    fun toSecretEntry(): SecretEntry =
+        SecretEntry(
             id = id,
             website = website,
             username = username,
@@ -165,9 +165,8 @@ data class SecretEntryWithSharing(
             tags = tags,
             metadata = metadata,
             createdAt = createdAt,
-            updatedAt = updatedAt
+            updatedAt = updatedAt,
         )
-    }
 }
 
 /**
@@ -193,7 +192,7 @@ data class SecretShareEntry(
     val createdAt: String,
     @SerialName("expires_at")
     val expiresAt: String? = null,
-    val notes: String? = null
+    val notes: String? = null,
 )
 
 /**
@@ -204,7 +203,7 @@ data class ShareSecretRequest(
     val targetUserId: String? = null,
     val targetRoleId: String? = null,
     val notes: String? = null,
-    val expiresAt: String? = null
+    val expiresAt: String? = null,
 ) {
     /**
      * Validate the request data
@@ -229,7 +228,7 @@ data class ShareSecretRequest(
 data class UnshareSecretRequest(
     val secretId: String,
     val targetUserId: String? = null,
-    val targetRoleId: String? = null
+    val targetRoleId: String? = null,
 ) {
     /**
      * Validate the request data
@@ -255,5 +254,5 @@ data class UnshareSecretRequest(
 data class PaginatedSecretsWithSharing(
     val data: List<SecretEntryWithSharing>,
     val hasMore: Boolean,
-    val total: Int? = null
+    val total: Int? = null,
 )

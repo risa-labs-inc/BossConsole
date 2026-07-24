@@ -58,23 +58,33 @@ actual object RunnerTerminalService {
     /**
      * Add a config to a terminal's tracking set.
      */
-    private fun addConfigToTerminal(terminalId: String, configId: String) {
-        terminalToConfigs.computeIfAbsent(terminalId) {
-            ConcurrentHashMap.newKeySet()
-        }.add(configId)
+    private fun addConfigToTerminal(
+        terminalId: String,
+        configId: String,
+    ) {
+        terminalToConfigs
+            .computeIfAbsent(terminalId) {
+                ConcurrentHashMap.newKeySet()
+            }.add(configId)
     }
 
     /**
      * Remove a config from a terminal's tracking set.
      */
-    private fun removeConfigFromTerminal(terminalId: String, configId: String) {
+    private fun removeConfigFromTerminal(
+        terminalId: String,
+        configId: String,
+    ) {
         terminalToConfigs[terminalId]?.remove(configId)
     }
 
     /**
      * Add a window to a config's running windows set. (StateFlow update)
      */
-    private fun addWindowToConfig(configId: String, windowId: String) {
+    private fun addWindowToConfig(
+        configId: String,
+        windowId: String,
+    ) {
         _configToWindows.update { current ->
             val windows = current[configId]?.let { it + windowId } ?: setOf(windowId)
             current + (configId to windows)
@@ -84,7 +94,10 @@ actual object RunnerTerminalService {
     /**
      * Remove a window from a config's running windows set. (StateFlow update)
      */
-    private fun removeWindowFromConfig(configId: String, windowId: String) {
+    private fun removeWindowFromConfig(
+        configId: String,
+        windowId: String,
+    ) {
         _configToWindows.update { current ->
             val windows = current[configId]?.minus(windowId)
             if (windows.isNullOrEmpty()) {
@@ -105,9 +118,7 @@ actual object RunnerTerminalService {
     /**
      * Check if a specific configuration is currently running.
      */
-    actual fun isConfigRunning(configId: String): Boolean {
-        return configId in _runningConfigs.value
-    }
+    actual fun isConfigRunning(configId: String): Boolean = configId in _runningConfigs.value
 
     /**
      * Check if a specific configuration is currently running in a specific window.
@@ -117,9 +128,10 @@ actual object RunnerTerminalService {
      * @param configId The configuration ID to check
      * @return True if the config is running in the specified window
      */
-    actual fun isConfigRunningInWindow(windowId: String, configId: String): Boolean {
-        return _configToWindows.value[configId]?.contains(windowId) == true
-    }
+    actual fun isConfigRunningInWindow(
+        windowId: String,
+        configId: String,
+    ): Boolean = _configToWindows.value[configId]?.contains(windowId) == true
 
     /**
      * Open or reuse a runner terminal for the given configuration.
@@ -128,24 +140,25 @@ actual object RunnerTerminalService {
     actual suspend fun openRunnerTerminal(
         config: RunConfiguration,
         windowId: String,
-        onTerminalCreated: (String) -> Unit
+        onTerminalCreated: (String) -> Unit,
     ): String {
         // Build the command outside lock (no state access needed)
         val command = buildFullCommand(config)
 
         // Atomic state update under lock
-        val (terminalId, isRerun) = stateLock.withLock {
-            val existingTerminalId = _configToTerminal.value[config.id]
-            val newTerminalId = existingTerminalId ?: "$RUNNER_TERMINAL_PREFIX${config.id}-${System.currentTimeMillis()}"
+        val (terminalId, isRerun) =
+            stateLock.withLock {
+                val existingTerminalId = _configToTerminal.value[config.id]
+                val newTerminalId = existingTerminalId ?: "$RUNNER_TERMINAL_PREFIX${config.id}-${System.currentTimeMillis()}"
 
-            // Update all state atomically
-            _configToTerminal.update { it + (config.id to newTerminalId) }
-            addConfigToTerminal(newTerminalId, config.id)
-            _runningConfigs.update { it + config.id }
-            addWindowToConfig(config.id, windowId)
+                // Update all state atomically
+                _configToTerminal.update { it + (config.id to newTerminalId) }
+                addConfigToTerminal(newTerminalId, config.id)
+                _runningConfigs.update { it + config.id }
+                addWindowToConfig(config.id, windowId)
 
-            newTerminalId to (existingTerminalId != null)
-        }
+                newTerminalId to (existingTerminalId != null)
+            }
 
         // Emit event outside lock (avoid holding lock during I/O)
         logger.debug(LogCategory.TERMINAL, "Opening terminal for config", mapOf("configName" to config.name, "command" to command))
@@ -156,7 +169,7 @@ actual object RunnerTerminalService {
             configName = config.name,
             workingDirectory = resolveWorkingDirectory(config).ifBlank { null },
             isRerun = isRerun,
-            sourceWindowId = windowId
+            sourceWindowId = windowId,
         )
 
         onTerminalCreated(terminalId)
@@ -170,39 +183,62 @@ actual object RunnerTerminalService {
      * @param windowId The window ID that initiated the stop (Issue #498)
      * @param configId The configuration ID to stop
      */
-    actual suspend fun stopRunner(windowId: String, configId: String): Boolean {
+    actual suspend fun stopRunner(
+        windowId: String,
+        configId: String,
+    ): Boolean {
         // Get terminal ID, validate under lock
-        val terminalId = stateLock.withLock {
-            if (!isConfigRunningInWindow(windowId, configId)) {
-                logger.debug(LogCategory.TERMINAL, "Config not running in window", mapOf("configId" to configId, "windowId" to windowId))
-                return false
+        val terminalId =
+            stateLock.withLock {
+                if (!isConfigRunningInWindow(windowId, configId)) {
+                    logger.debug(
+                        LogCategory.TERMINAL,
+                        "Config not running in window",
+                        mapOf("configId" to configId, "windowId" to windowId),
+                    )
+                    return false
+                }
+
+                val id = _configToTerminal.value[configId]
+                if (id == null) {
+                    logger.debug(LogCategory.TERMINAL, "No terminal found for config", mapOf("configId" to configId))
+                    return false
+                }
+
+                // Remove this window from the config's window set
+                removeWindowFromConfig(configId, windowId)
+
+                // Only clean up global state if no more windows are running this config
+                if (_configToWindows.value[configId] == null) {
+                    _configToTerminal.update { it - configId }
+                    removeConfigFromTerminal(id, configId)
+                    _runningConfigs.update { it - configId }
+                }
+
+                id
             }
-
-            val id = _configToTerminal.value[configId]
-            if (id == null) {
-                logger.debug(LogCategory.TERMINAL, "No terminal found for config", mapOf("configId" to configId))
-                return false
-            }
-
-            // Remove this window from the config's window set
-            removeWindowFromConfig(configId, windowId)
-
-            // Only clean up global state if no more windows are running this config
-            if (_configToWindows.value[configId] == null) {
-                _configToTerminal.update { it - configId }
-                removeConfigFromTerminal(id, configId)
-                _runningConfigs.update { it - configId }
-            }
-
-            id
-        }
 
         // Perform I/O operations outside lock (window-scoped)
         val closed = TerminalAPIAccess.closeActiveTab(windowId, terminalId)
         if (closed) {
-            logger.debug(LogCategory.TERMINAL, "Closed terminal tab", mapOf("terminalId" to terminalId, "configId" to configId, "windowId" to windowId))
+            logger.debug(
+                LogCategory.TERMINAL,
+                "Closed terminal tab",
+                mapOf(
+                    "terminalId" to terminalId,
+                    "configId" to configId,
+                    "windowId" to windowId,
+                ),
+            )
         } else {
-            logger.debug(LogCategory.TERMINAL, "Failed to close tab - terminal not found", mapOf("terminalId" to terminalId, "windowId" to windowId))
+            logger.debug(
+                LogCategory.TERMINAL,
+                "Failed to close tab - terminal not found",
+                mapOf(
+                    "terminalId" to terminalId,
+                    "windowId" to windowId,
+                ),
+            )
         }
 
         // Clear sidebar tab tracking if this was a sidebar config (window-scoped)
@@ -228,7 +264,7 @@ actual object RunnerTerminalService {
     actual suspend fun rerunRunner(
         config: RunConfiguration,
         windowId: String,
-        onTerminalCreated: (String) -> Unit
+        onTerminalCreated: (String) -> Unit,
     ): String {
         logger.debug(LogCategory.TERMINAL, "Re-running config", mapOf("configName" to config.name))
 
@@ -239,26 +275,27 @@ actual object RunnerTerminalService {
         val command = buildFullCommand(config)
 
         // Atomic state update under lock
-        val (terminalId, existingTerminalId, existingWindowId) = stateLock.withLock {
-            val existingId = _configToTerminal.value[config.id]
-            val existingWinId = _configToWindows.value[config.id]?.firstOrNull()
+        val (terminalId, existingTerminalId, existingWindowId) =
+            stateLock.withLock {
+                val existingId = _configToTerminal.value[config.id]
+                val existingWinId = _configToWindows.value[config.id]?.firstOrNull()
 
-            // Stop existing process and close terminal (only for main panel mode)
-            if (existingId != null && !usesSidebar) {
-                removeConfigFromTerminal(existingId, config.id)
+                // Stop existing process and close terminal (only for main panel mode)
+                if (existingId != null && !usesSidebar) {
+                    removeConfigFromTerminal(existingId, config.id)
+                }
+
+                // Create new terminal with fresh ID
+                val newTerminalId = "$RUNNER_TERMINAL_PREFIX${config.id}-${System.currentTimeMillis()}"
+
+                // Update all state atomically
+                _configToTerminal.update { it + (config.id to newTerminalId) }
+                addConfigToTerminal(newTerminalId, config.id)
+                _runningConfigs.update { it + config.id }
+                addWindowToConfig(config.id, windowId)
+
+                Triple(newTerminalId, existingId, existingWinId)
             }
-
-            // Create new terminal with fresh ID
-            val newTerminalId = "$RUNNER_TERMINAL_PREFIX${config.id}-${System.currentTimeMillis()}"
-
-            // Update all state atomically
-            _configToTerminal.update { it + (config.id to newTerminalId) }
-            addConfigToTerminal(newTerminalId, config.id)
-            _runningConfigs.update { it + config.id }
-            addWindowToConfig(config.id, windowId)
-
-            Triple(newTerminalId, existingId, existingWinId)
-        }
 
         // Perform I/O operations outside lock with error handling
         if (existingTerminalId != null && existingWindowId != null && !usesSidebar) {
@@ -284,7 +321,7 @@ actual object RunnerTerminalService {
             configName = config.name,
             workingDirectory = resolveWorkingDirectory(config).ifBlank { null },
             isRerun = true,
-            sourceWindowId = windowId
+            sourceWindowId = windowId,
         )
 
         onTerminalCreated(terminalId)
@@ -319,20 +356,32 @@ actual object RunnerTerminalService {
      * @param windowId The window ID
      * @param terminalId The terminal tab ID
      */
-    actual fun removeTerminal(windowId: String, terminalId: String) {
-        val isSidebar = stateLock.withLock {
-            val configIds = terminalToConfigs.remove(terminalId)?.toSet() ?: emptySet()
-            if (configIds.isNotEmpty()) {
-                _configToTerminal.update { current ->
-                    current.filterKeys { it !in configIds }
+    actual fun removeTerminal(
+        windowId: String,
+        terminalId: String,
+    ) {
+        val isSidebar =
+            stateLock.withLock {
+                val configIds = terminalToConfigs.remove(terminalId)?.toSet() ?: emptySet()
+                if (configIds.isNotEmpty()) {
+                    _configToTerminal.update { current ->
+                        current.filterKeys { it !in configIds }
+                    }
+                    _runningConfigs.update { it - configIds }
+                    // Clean up window mapping
+                    configIds.forEach { removeAllWindowsFromConfig(it) }
+                    logger.debug(
+                        LogCategory.TERMINAL,
+                        "Terminal removed",
+                        mapOf(
+                            "terminalId" to terminalId,
+                            "configs" to configIds.toString(),
+                            "windowId" to windowId,
+                        ),
+                    )
                 }
-                _runningConfigs.update { it - configIds }
-                // Clean up window mapping
-                configIds.forEach { removeAllWindowsFromConfig(it) }
-                logger.debug(LogCategory.TERMINAL, "Terminal removed", mapOf("terminalId" to terminalId, "configs" to configIds.toString(), "windowId" to windowId))
+                terminalId == SIDEBAR_TERMINAL_ID
             }
-            terminalId == SIDEBAR_TERMINAL_ID
-        }
 
         // Clear sidebar tab tracking for this window outside lock (I/O operation)
         if (isSidebar) {
@@ -344,9 +393,7 @@ actual object RunnerTerminalService {
      * Get a configuration ID associated with a terminal tab.
      * For terminals with multiple configs (sidebar), returns any one of them.
      */
-    actual fun getConfigForTerminal(terminalId: String): String? {
-        return terminalToConfigs[terminalId]?.firstOrNull()
-    }
+    actual fun getConfigForTerminal(terminalId: String): String? = terminalToConfigs[terminalId]?.firstOrNull()
 
     /**
      * Remove a specific config from tracking (when its tab is closed in sidebar).
@@ -356,7 +403,10 @@ actual object RunnerTerminalService {
      * @param windowId The window ID (used for sidebar config tracking)
      * @param configId The configuration ID to remove
      */
-    actual fun removeConfig(windowId: String, configId: String) {
+    actual fun removeConfig(
+        windowId: String,
+        configId: String,
+    ) {
         stateLock.withLock {
             val terminalId = _configToTerminal.value[configId]
             if (terminalId != null) {
@@ -364,7 +414,15 @@ actual object RunnerTerminalService {
                 removeConfigFromTerminal(terminalId, configId)
                 _runningConfigs.update { it - configId }
                 removeWindowFromConfig(configId, windowId)
-                logger.debug(LogCategory.TERMINAL, "Config removed", mapOf("configId" to configId, "terminalId" to terminalId, "windowId" to windowId))
+                logger.debug(
+                    LogCategory.TERMINAL,
+                    "Config removed",
+                    mapOf(
+                        "configId" to configId,
+                        "terminalId" to terminalId,
+                        "windowId" to windowId,
+                    ),
+                )
             }
         }
     }
@@ -377,9 +435,10 @@ actual object RunnerTerminalService {
      */
     fun cleanupWindow(windowId: String) {
         stateLock.withLock {
-            val configsToRemove = _configToWindows.value.entries
-                .filter { windowId in it.value }
-                .map { it.key }
+            val configsToRemove =
+                _configToWindows.value.entries
+                    .filter { windowId in it.value }
+                    .map { it.key }
 
             configsToRemove.forEach { configId ->
                 val terminalId = _configToTerminal.value[configId]
@@ -392,7 +451,14 @@ actual object RunnerTerminalService {
             }
 
             if (configsToRemove.isNotEmpty()) {
-                logger.debug(LogCategory.TERMINAL, "Cleaned up configs for closed window", mapOf("count" to configsToRemove.size, "windowId" to windowId))
+                logger.debug(
+                    LogCategory.TERMINAL,
+                    "Cleaned up configs for closed window",
+                    mapOf(
+                        "count" to configsToRemove.size,
+                        "windowId" to windowId,
+                    ),
+                )
             }
         }
     }
@@ -418,7 +484,7 @@ actual object RunnerTerminalService {
         command: String,
         workingDirectory: String?,
         tabTitle: String,
-        isRerun: Boolean
+        isRerun: Boolean,
     ): Boolean {
         // Update state BEFORE terminal operation (with rollback on failure)
         // This ensures UI updates immediately when user clicks run
@@ -429,13 +495,14 @@ actual object RunnerTerminalService {
             addWindowToConfig(configId, windowId)
         }
 
-        val success = TerminalAPIAccess.newSidebarTab(
-            windowId = windowId,
-            command = command,
-            workingDirectory = workingDirectory,
-            configId = configId,
-            isRerun = isRerun
-        )
+        val success =
+            TerminalAPIAccess.newSidebarTab(
+                windowId = windowId,
+                command = command,
+                workingDirectory = workingDirectory,
+                configId = configId,
+                isRerun = isRerun,
+            )
 
         if (!success) {
             // Roll back state on failure
@@ -447,7 +514,16 @@ actual object RunnerTerminalService {
             }
             logger.debug(LogCategory.TERMINAL, "Failed to open in sidebar terminal - panel may not be open", mapOf("windowId" to windowId))
         } else {
-            logger.debug(LogCategory.TERMINAL, "Opened command in sidebar terminal", mapOf("tabTitle" to tabTitle, "windowId" to windowId, "mappedTo" to SIDEBAR_TERMINAL_ID, "isRerun" to isRerun))
+            logger.debug(
+                LogCategory.TERMINAL,
+                "Opened command in sidebar terminal",
+                mapOf(
+                    "tabTitle" to tabTitle,
+                    "windowId" to windowId,
+                    "mappedTo" to SIDEBAR_TERMINAL_ID,
+                    "isRerun" to isRerun,
+                ),
+            )
         }
         return success
     }
@@ -461,22 +537,23 @@ actual object RunnerTerminalService {
         configId: String,
         command: String,
         workingDirectory: String?,
-        name: String
+        name: String,
     ) {
         // Synthesize an ad-hoc run configuration. A stable filePath keyed by configId
         // makes addConfiguration() dedupe re-runs to a single history entry, and keeps
         // the dropdown selection and the running-state map keyed by the same id.
-        val config = RunConfiguration(
-            id = configId,
-            name = name,
-            type = RunConfigurationType.CUSTOM,
-            filePath = "mcp-run:$configId",
-            lineNumber = 0,
-            language = Language.UNKNOWN,
-            command = command,
-            workingDirectory = workingDirectory ?: "",
-            isAutoDetected = false
-        )
+        val config =
+            RunConfiguration(
+                id = configId,
+                name = name,
+                type = RunConfigurationType.CUSTOM,
+                filePath = "mcp-run:$configId",
+                lineNumber = 0,
+                language = Language.UNKNOWN,
+                command = command,
+                workingDirectory = workingDirectory ?: "",
+                isAutoDetected = false,
+            )
 
         // Add to run history (top-bar dropdown entries) — addConfiguration is suspend
         // and dedupes by filePath, so fire it on a scope.
@@ -504,7 +581,7 @@ actual object RunnerTerminalService {
         logger.debug(
             LogCategory.TERMINAL,
             "Registered sidebar run with runner",
-            mapOf("windowId" to windowId, "configId" to configId, "name" to name)
+            mapOf("windowId" to windowId, "configId" to configId, "name" to name),
         )
     }
 
@@ -534,7 +611,6 @@ actual object RunnerTerminalService {
      * Working directory is quoted and escaped to handle paths with spaces,
      * quotes, and other special characters safely.
      */
-    private fun buildFullCommand(config: RunConfiguration): String {
-        return ShellUtils.buildCommandWithWorkingDirectory(config.command, resolveWorkingDirectory(config))
-    }
+    private fun buildFullCommand(config: RunConfiguration): String =
+        ShellUtils.buildCommandWithWorkingDirectory(config.command, resolveWorkingDirectory(config))
 }

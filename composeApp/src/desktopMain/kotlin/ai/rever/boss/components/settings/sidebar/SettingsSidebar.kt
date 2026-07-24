@@ -1,5 +1,9 @@
 package ai.rever.boss.components.settings.sidebar
 
+import ai.rever.boss.components.settings.shared.SettingsTheme.AccentColor
+import ai.rever.boss.components.settings.shared.SettingsTheme.SurfaceColor
+import ai.rever.boss.components.settings.shared.SettingsTheme.TextPrimary
+import ai.rever.boss.components.settings.shared.SettingsTheme.TextSecondary
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -19,10 +23,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import ai.rever.boss.components.settings.shared.SettingsTheme.AccentColor
-import ai.rever.boss.components.settings.shared.SettingsTheme.SurfaceColor
-import ai.rever.boss.components.settings.shared.SettingsTheme.TextPrimary
-import ai.rever.boss.components.settings.shared.SettingsTheme.TextSecondary
 
 /**
  * Settings section enum with display metadata for BossTerm-style navigation.
@@ -30,103 +30,104 @@ import ai.rever.boss.components.settings.shared.SettingsTheme.TextSecondary
 enum class SettingsSection(
     val displayName: String,
     val description: String,
-    val icon: ImageVector
+    val icon: ImageVector,
 ) {
     FLUCK(
         displayName = "Browser",
         description = "Configure browser behavior, user agent, and link handling",
-        icon = Icons.Outlined.Language
+        icon = Icons.Outlined.Language,
     ),
     BROWSER_ENGINE(
         displayName = "Browser Engine",
         description = "Chromium engine version, downloads, and reinstall",
-        icon = Icons.Outlined.Memory
+        icon = Icons.Outlined.Memory,
     ),
     BOSS_EDITOR(
         displayName = "BossEditor",
         description = "Scroll behavior, code folding, and bracket matching",
-        icon = Icons.Outlined.Edit
+        icon = Icons.Outlined.Edit,
     ),
     LANGUAGE_SERVERS(
         displayName = "Language Servers",
         description = "LSP configuration, completions, and diagnostics",
-        icon = Icons.Outlined.Hub
+        icon = Icons.Outlined.Hub,
     ),
     TERMINAL(
         displayName = "Terminal",
         description = "Shell configuration, colors, and startup behavior",
-        icon = Icons.Outlined.Terminal
+        icon = Icons.Outlined.Terminal,
     ),
     RUNNER(
         displayName = "Runner",
         description = "Run/stop behavior and terminal target options",
-        icon = Icons.Outlined.PlayArrow
+        icon = Icons.Outlined.PlayArrow,
     ),
     WORKSPACE(
         displayName = "Workspace",
         description = "Default layout and workspace templates",
-        icon = Icons.Outlined.GridView
+        icon = Icons.Outlined.GridView,
     ),
     LLM_PROVIDERS(
         displayName = "LLM Providers",
         description = "API keys, models, and AI assistant settings",
-        icon = Icons.Outlined.AutoAwesome
+        icon = Icons.Outlined.AutoAwesome,
     ),
     UPDATES(
         displayName = "Updates",
         description = "Auto-update preferences and version information",
-        icon = Icons.Outlined.SystemUpdate
+        icon = Icons.Outlined.SystemUpdate,
     ),
     SECURITY(
         displayName = "Security",
         description = "WebAuthn, Touch ID, and authentication options",
-        icon = Icons.Outlined.Security
+        icon = Icons.Outlined.Security,
     ),
     KEYMAP(
         displayName = "Shortcuts",
         description = "Keyboard shortcuts and keymap presets",
-        icon = Icons.Outlined.Keyboard
+        icon = Icons.Outlined.Keyboard,
     ),
     FOCUS_MODE(
         displayName = "Focus Mode",
         description = "Hide UI elements and minimize distractions",
-        icon = Icons.Outlined.Visibility
+        icon = Icons.Outlined.Visibility,
     ),
     THEME(
         displayName = "Theme",
         description = "App color theme — Operator, Daylight, or Clean",
-        icon = Icons.Outlined.Palette
+        icon = Icons.Outlined.Palette,
     ),
     WINDOW_APPEARANCE(
         displayName = "Appearance",
         description = "Title bar, tab sizing, and window decorations",
-        icon = Icons.Outlined.DesktopWindows
+        icon = Icons.Outlined.DesktopWindows,
     ),
     SIDEBAR(
         displayName = "Sidebar",
         description = "Plugin icon limits and overflow behavior",
-        icon = Icons.AutoMirrored.Outlined.ViewSidebar
+        icon = Icons.AutoMirrored.Outlined.ViewSidebar,
     ),
     PERFORMANCE(
         displayName = "Performance",
         description = "Memory and CPU monitoring settings",
-        icon = Icons.Outlined.Speed
+        icon = Icons.Outlined.Speed,
     ),
     STARTUP(
         displayName = "Startup",
         description = "Launch behavior and initialization options",
-        icon = Icons.Outlined.RocketLaunch
+        icon = Icons.Outlined.RocketLaunch,
     ),
     SCROLLBAR(
         displayName = "Scrollbars",
         description = "Scrollbar appearance and behavior settings",
-        icon = Icons.Outlined.LinearScale
+        icon = Icons.Outlined.LinearScale,
     ),
     ADVANCED(
         displayName = "Advanced",
         description = "Process mode, microkernel, and self-healing settings",
-        icon = Icons.Outlined.Science
-    );
+        icon = Icons.Outlined.Science,
+    ),
+    ;
 
     companion object {
         val default = FLUCK
@@ -141,17 +142,18 @@ fun SettingsSidebar(
     onSectionChange: (SettingsSection) -> Unit,
     pluginPages: List<ai.rever.boss.plugin.api.SettingsPageProvider> = emptyList(),
     selectedPluginPageId: String? = null,
-    onPluginPageChange: (String) -> Unit = {}
+    onPluginPageChange: (String) -> Unit = {},
 ) {
     val scrollState = rememberScrollState()
 
     Column(
-        modifier = Modifier
-            .width(NavRailWidth)
-            .fillMaxHeight()
-            .background(SurfaceColor)
-            .verticalScroll(scrollState)
-            .padding(vertical = 8.dp)
+        modifier =
+            Modifier
+                .width(NavRailWidth)
+                .fillMaxHeight()
+                .background(SurfaceColor)
+                .verticalScroll(scrollState)
+                .padding(vertical = 8.dp),
     ) {
         SettingsSection.entries.forEach { section ->
             val isSelected = selectedPluginPageId == null && section == selectedSection
@@ -159,7 +161,7 @@ fun SettingsSidebar(
                 displayName = section.displayName,
                 icon = section.icon,
                 isSelected = isSelected,
-                onClick = { onSectionChange(section) }
+                onClick = { onSectionChange(section) },
             )
         }
 
@@ -168,21 +170,21 @@ fun SettingsSidebar(
         if (pluginPages.isNotEmpty()) {
             Divider(
                 color = TextSecondary.copy(alpha = 0.2f),
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
             )
             Text(
                 text = "PLUGINS",
                 color = TextSecondary,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
             )
             pluginPages.forEach { page ->
                 NavigationRailItem(
                     displayName = page.displayName,
                     icon = page.icon,
                     isSelected = page.pageId == selectedPluginPageId,
-                    onClick = { onPluginPageChange(page.pageId) }
+                    onClick = { onPluginPageChange(page.pageId) },
                 )
             }
         }
@@ -197,39 +199,41 @@ private fun NavigationRailItem(
     displayName: String,
     icon: ImageVector,
     isSelected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
 ) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(4.dp))
-            .background(if (isSelected) AccentColor.copy(alpha = 0.15f) else Color.Transparent)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(4.dp))
+                .background(if (isSelected) AccentColor.copy(alpha = 0.15f) else Color.Transparent)
+                .clickable(onClick = onClick)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         // Selection indicator bar (3dp wide, 20dp tall)
         Box(
-            modifier = Modifier
-                .width(3.dp)
-                .height(20.dp)
-                .clip(RoundedCornerShape(2.dp))
-                .background(if (isSelected) AccentColor else Color.Transparent)
+            modifier =
+                Modifier
+                    .width(3.dp)
+                    .height(20.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(if (isSelected) AccentColor else Color.Transparent),
         )
 
         Icon(
             imageVector = icon,
             contentDescription = displayName,
             tint = if (isSelected) AccentColor else TextSecondary,
-            modifier = Modifier.size(18.dp)
+            modifier = Modifier.size(18.dp),
         )
 
         Text(
             text = displayName,
             color = if (isSelected) AccentColor else TextPrimary,
             fontSize = 13.sp,
-            fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal
+            fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal,
         )
     }
 }

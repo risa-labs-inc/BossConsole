@@ -24,7 +24,6 @@ class RunConfigDataProviderProxy(
     channel: ManagedChannel,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
 ) : RunConfigurationDataProvider {
-
     private val stub = RunConfigurationServiceGrpcKt.RunConfigurationServiceCoroutineStub(channel)
 
     private val _detectedConfigurations = MutableStateFlow<List<RunConfigurationData>>(emptyList())
@@ -50,8 +49,14 @@ class RunConfigDataProviderProxy(
                     _detectedConfigurations.value = response.configurationsList.map { it.toData() }
                 }
                 delayMs = 1_000L
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (_: Exception) { delay(delayMs); delayMs = (delayMs * 2).coerceAtMost(30_000L) }
+            } catch (
+                e: kotlinx.coroutines.CancellationException,
+            ) {
+                throw e
+            } catch (_: Exception) {
+                delay(delayMs)
+                delayMs = (delayMs * 2).coerceAtMost(30_000L)
+            }
         }
     }
 
@@ -63,8 +68,14 @@ class RunConfigDataProviderProxy(
                     _isScanning.value = response.value
                 }
                 delayMs = 1_000L
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (_: Exception) { delay(delayMs); delayMs = (delayMs * 2).coerceAtMost(30_000L) }
+            } catch (
+                e: kotlinx.coroutines.CancellationException,
+            ) {
+                throw e
+            } catch (_: Exception) {
+                delay(delayMs)
+                delayMs = (delayMs * 2).coerceAtMost(30_000L)
+            }
         }
     }
 
@@ -76,80 +87,118 @@ class RunConfigDataProviderProxy(
                     _lastError.value = response.value.takeIf { it.isNotEmpty() }
                 }
                 delayMs = 1_000L
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (_: Exception) { delay(delayMs); delayMs = (delayMs * 2).coerceAtMost(30_000L) }
+            } catch (
+                e: kotlinx.coroutines.CancellationException,
+            ) {
+                throw e
+            } catch (_: Exception) {
+                delay(delayMs)
+                delayMs = (delayMs * 2).coerceAtMost(30_000L)
+            }
         }
     }
 
-    override suspend fun scanProject(projectPath: String, windowId: String) {
+    override suspend fun scanProject(
+        projectPath: String,
+        windowId: String,
+    ) {
         try {
             stub.scanProject(
-                ScanProjectRequest.newBuilder().setProjectPath(projectPath).setWindowId(windowId).build()
+                ScanProjectRequest
+                    .newBuilder()
+                    .setProjectPath(projectPath)
+                    .setWindowId(windowId)
+                    .build(),
             )
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
     }
 
-    override suspend fun execute(config: RunConfigurationData, windowId: String) {
+    override suspend fun execute(
+        config: RunConfigurationData,
+        windowId: String,
+    ) {
         try {
             stub.execute(
-                ExecuteConfigRequest.newBuilder()
+                ExecuteConfigRequest
+                    .newBuilder()
                     .setConfiguration(config.toProto())
                     .setWindowId(windowId)
-                    .build()
+                    .build(),
             )
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
     }
 
     override suspend fun clearError() {
-        try { stub.clearError(Empty.getDefaultInstance()) } catch (_: Exception) {}
+        try {
+            stub.clearError(Empty.getDefaultInstance())
+        } catch (_: Exception) {
+        }
     }
 
-    private fun RunConfigurationProto.toData() = RunConfigurationData(
-        id = id, name = name,
-        type = when (type) {
-            RunConfigType.RUN_CONFIG_TYPE_MAIN_FUNCTION -> RunConfigurationTypeData.MAIN_FUNCTION
-            RunConfigType.RUN_CONFIG_TYPE_SCRIPT -> RunConfigurationTypeData.SCRIPT
-            RunConfigType.RUN_CONFIG_TYPE_TEST -> RunConfigurationTypeData.TEST
-            else -> RunConfigurationTypeData.CUSTOM
-        },
-        filePath = filePath, lineNumber = lineNumber,
-        language = when (language) {
-            RunConfigLanguage.RUN_CONFIG_LANGUAGE_KOTLIN -> LanguageData.KOTLIN
-            RunConfigLanguage.RUN_CONFIG_LANGUAGE_JAVA -> LanguageData.JAVA
-            RunConfigLanguage.RUN_CONFIG_LANGUAGE_PYTHON -> LanguageData.PYTHON
-            RunConfigLanguage.RUN_CONFIG_LANGUAGE_JAVASCRIPT -> LanguageData.JAVASCRIPT
-            RunConfigLanguage.RUN_CONFIG_LANGUAGE_TYPESCRIPT -> LanguageData.TYPESCRIPT
-            RunConfigLanguage.RUN_CONFIG_LANGUAGE_GO -> LanguageData.GO
-            RunConfigLanguage.RUN_CONFIG_LANGUAGE_RUST -> LanguageData.RUST
-            else -> LanguageData.UNKNOWN
-        },
-        command = command, workingDirectory = workingDirectory,
-        environmentVariables = environmentVariablesMap,
-        arguments = arguments, isAutoDetected = isAutoDetected, timestamp = timestamp,
-    )
+    private fun RunConfigurationProto.toData() =
+        RunConfigurationData(
+            id = id,
+            name = name,
+            type =
+                when (type) {
+                    RunConfigType.RUN_CONFIG_TYPE_MAIN_FUNCTION -> RunConfigurationTypeData.MAIN_FUNCTION
+                    RunConfigType.RUN_CONFIG_TYPE_SCRIPT -> RunConfigurationTypeData.SCRIPT
+                    RunConfigType.RUN_CONFIG_TYPE_TEST -> RunConfigurationTypeData.TEST
+                    else -> RunConfigurationTypeData.CUSTOM
+                },
+            filePath = filePath,
+            lineNumber = lineNumber,
+            language =
+                when (language) {
+                    RunConfigLanguage.RUN_CONFIG_LANGUAGE_KOTLIN -> LanguageData.KOTLIN
+                    RunConfigLanguage.RUN_CONFIG_LANGUAGE_JAVA -> LanguageData.JAVA
+                    RunConfigLanguage.RUN_CONFIG_LANGUAGE_PYTHON -> LanguageData.PYTHON
+                    RunConfigLanguage.RUN_CONFIG_LANGUAGE_JAVASCRIPT -> LanguageData.JAVASCRIPT
+                    RunConfigLanguage.RUN_CONFIG_LANGUAGE_TYPESCRIPT -> LanguageData.TYPESCRIPT
+                    RunConfigLanguage.RUN_CONFIG_LANGUAGE_GO -> LanguageData.GO
+                    RunConfigLanguage.RUN_CONFIG_LANGUAGE_RUST -> LanguageData.RUST
+                    else -> LanguageData.UNKNOWN
+                },
+            command = command,
+            workingDirectory = workingDirectory,
+            environmentVariables = environmentVariablesMap,
+            arguments = arguments,
+            isAutoDetected = isAutoDetected,
+            timestamp = timestamp,
+        )
 
     private fun RunConfigurationData.toProto(): RunConfigurationProto =
-        RunConfigurationProto.newBuilder()
-            .setId(id).setName(name)
-            .setType(when (type) {
-                RunConfigurationTypeData.MAIN_FUNCTION -> RunConfigType.RUN_CONFIG_TYPE_MAIN_FUNCTION
-                RunConfigurationTypeData.SCRIPT -> RunConfigType.RUN_CONFIG_TYPE_SCRIPT
-                RunConfigurationTypeData.TEST -> RunConfigType.RUN_CONFIG_TYPE_TEST
-                RunConfigurationTypeData.CUSTOM -> RunConfigType.RUN_CONFIG_TYPE_CUSTOM
-            })
-            .setFilePath(filePath).setLineNumber(lineNumber)
-            .setLanguage(when (language) {
-                LanguageData.KOTLIN -> RunConfigLanguage.RUN_CONFIG_LANGUAGE_KOTLIN
-                LanguageData.JAVA -> RunConfigLanguage.RUN_CONFIG_LANGUAGE_JAVA
-                LanguageData.PYTHON -> RunConfigLanguage.RUN_CONFIG_LANGUAGE_PYTHON
-                LanguageData.JAVASCRIPT -> RunConfigLanguage.RUN_CONFIG_LANGUAGE_JAVASCRIPT
-                LanguageData.TYPESCRIPT -> RunConfigLanguage.RUN_CONFIG_LANGUAGE_TYPESCRIPT
-                LanguageData.GO -> RunConfigLanguage.RUN_CONFIG_LANGUAGE_GO
-                LanguageData.RUST -> RunConfigLanguage.RUN_CONFIG_LANGUAGE_RUST
-                LanguageData.UNKNOWN -> RunConfigLanguage.RUN_CONFIG_LANGUAGE_UNKNOWN
-            })
-            .setCommand(command).setWorkingDirectory(workingDirectory)
+        RunConfigurationProto
+            .newBuilder()
+            .setId(id)
+            .setName(name)
+            .setType(
+                when (type) {
+                    RunConfigurationTypeData.MAIN_FUNCTION -> RunConfigType.RUN_CONFIG_TYPE_MAIN_FUNCTION
+                    RunConfigurationTypeData.SCRIPT -> RunConfigType.RUN_CONFIG_TYPE_SCRIPT
+                    RunConfigurationTypeData.TEST -> RunConfigType.RUN_CONFIG_TYPE_TEST
+                    RunConfigurationTypeData.CUSTOM -> RunConfigType.RUN_CONFIG_TYPE_CUSTOM
+                },
+            ).setFilePath(filePath)
+            .setLineNumber(lineNumber)
+            .setLanguage(
+                when (language) {
+                    LanguageData.KOTLIN -> RunConfigLanguage.RUN_CONFIG_LANGUAGE_KOTLIN
+                    LanguageData.JAVA -> RunConfigLanguage.RUN_CONFIG_LANGUAGE_JAVA
+                    LanguageData.PYTHON -> RunConfigLanguage.RUN_CONFIG_LANGUAGE_PYTHON
+                    LanguageData.JAVASCRIPT -> RunConfigLanguage.RUN_CONFIG_LANGUAGE_JAVASCRIPT
+                    LanguageData.TYPESCRIPT -> RunConfigLanguage.RUN_CONFIG_LANGUAGE_TYPESCRIPT
+                    LanguageData.GO -> RunConfigLanguage.RUN_CONFIG_LANGUAGE_GO
+                    LanguageData.RUST -> RunConfigLanguage.RUN_CONFIG_LANGUAGE_RUST
+                    LanguageData.UNKNOWN -> RunConfigLanguage.RUN_CONFIG_LANGUAGE_UNKNOWN
+                },
+            ).setCommand(command)
+            .setWorkingDirectory(workingDirectory)
             .putAllEnvironmentVariables(environmentVariables)
-            .setArguments(arguments).setIsAutoDetected(isAutoDetected).setTimestamp(timestamp)
+            .setArguments(arguments)
+            .setIsAutoDetected(isAutoDetected)
+            .setTimestamp(timestamp)
             .build()
 }

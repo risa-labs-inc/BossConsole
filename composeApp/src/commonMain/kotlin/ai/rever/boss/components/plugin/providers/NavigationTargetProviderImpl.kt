@@ -18,13 +18,13 @@ import kotlinx.coroutines.launch
  * and position their editor cursors appropriately.
  */
 object NavigationTargetProviderImpl : NavigationTargetProvider {
-
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
-    private val _targets = MutableSharedFlow<NavigationTargetEvent>(
-        replay = 1,
-        extraBufferCapacity = 5
-    )
+    private val _targets =
+        MutableSharedFlow<NavigationTargetEvent>(
+            replay = 1,
+            extraBufferCapacity = 5,
+        )
     override val targets: SharedFlow<NavigationTargetEvent> = _targets.asSharedFlow()
 
     init {
@@ -33,14 +33,16 @@ object NavigationTargetProviderImpl : NavigationTargetProvider {
         scope.launch {
             println("[HOST-DEBUG] NavigationTargetProviderImpl: collector started")
             NavigationTargetBus.targets.collect { event ->
-                println("[HOST-DEBUG] NavigationTargetProviderImpl: received event from NavigationTargetBus: ${event.filePath}:${event.line}:${event.column}")
+                println(
+                    "[HOST-DEBUG] NavigationTargetProviderImpl: received event from NavigationTargetBus: ${event.filePath}:${event.line}:${event.column}",
+                )
                 _targets.emit(
                     NavigationTargetEvent(
                         filePath = event.filePath,
                         line = event.line,
                         column = event.column,
-                        sourceWindowId = event.sourceWindowId
-                    )
+                        sourceWindowId = event.sourceWindowId,
+                    ),
                 )
                 println("[HOST-DEBUG] NavigationTargetProviderImpl: emitted to plugin targets")
             }

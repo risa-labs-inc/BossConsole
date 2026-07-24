@@ -34,7 +34,7 @@ fun PluginInstallWizardWindow(
     state: PluginInstallWizardState,
     onDismiss: () -> Unit,
     onComplete: () -> Unit,
-    onInstallPlugins: suspend (List<WizardPluginInfo>, (Float, String) -> Unit) -> Result<PluginInstallResult>
+    onInstallPlugins: suspend (List<WizardPluginInfo>, (Float, String) -> Unit) -> Result<PluginInstallResult>,
 ) {
     val currentStep = state.wizardState.currentStep
 
@@ -49,9 +49,10 @@ fun PluginInstallWizardWindow(
                 state.goToNextStep()
             } else {
                 state.startInstallation()
-                val result = onInstallPlugins(selectedPlugins) { progress, status ->
-                    state.updateProgress(progress, status)
-                }
+                val result =
+                    onInstallPlugins(selectedPlugins) { progress, status ->
+                        state.updateProgress(progress, status)
+                    }
                 result.fold(
                     onSuccess = { installResult ->
                         state.completeInstallation(installResult.installedIds, installResult.failedPlugins)
@@ -59,7 +60,7 @@ fun PluginInstallWizardWindow(
                     },
                     onFailure = { error ->
                         state.failInstallation(error.message ?: "Installation failed")
-                    }
+                    },
                 )
             }
         }
@@ -72,27 +73,31 @@ fun PluginInstallWizardWindow(
         },
         title = "BOSS Plugin Setup",
         resizable = false,
-        state = rememberDialogState(size = DpSize(700.dp, 600.dp))
+        state = rememberDialogState(size = DpSize(700.dp, 600.dp)),
     ) {
         Surface(
             modifier = Modifier.fillMaxSize(),
-            color = BossTheme.colors.panel
+            color = BossTheme.colors.panel,
         ) {
             Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(32.dp)
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .padding(32.dp),
             ) {
                 Column(
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.fillMaxSize(),
                 ) {
                     // Header
                     WizardHeader(
                         currentStep = currentStep,
-                        onBack = if (!state.wizardState.isFirstStep && !state.isInstalling && currentStep !is PluginInstallStep.Complete) {
-                            { state.goToPreviousStep() }
-                        } else null,
-                        onDismiss = null  // Remove cross button - users must complete wizard or skip
+                        onBack =
+                            if (!state.wizardState.isFirstStep && !state.isInstalling && currentStep !is PluginInstallStep.Complete) {
+                                { state.goToPreviousStep() }
+                            } else {
+                                null
+                            },
+                        onDismiss = null, // Remove cross button - users must complete wizard or skip
                     )
 
                     Spacer(modifier = Modifier.height(16.dp))
@@ -102,7 +107,7 @@ fun PluginInstallWizardWindow(
                         WizardStepIndicator(
                             currentStep = state.wizardState.currentVisibleStepIndex + 1,
                             totalSteps = state.wizardState.totalVisibleSteps,
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth(),
                         )
                         Spacer(modifier = Modifier.height(24.dp))
                     }
@@ -114,16 +119,20 @@ fun PluginInstallWizardWindow(
                             transitionSpec = {
                                 fadeIn() togetherWith fadeOut()
                             },
-                            label = "wizard_step_content"
+                            label = "wizard_step_content",
                         ) { step ->
                             when (step) {
-                                is PluginInstallStep.Welcome -> WelcomeStepContent()
+                                is PluginInstallStep.Welcome -> {
+                                    WelcomeStepContent()
+                                }
+
                                 is PluginInstallStep.EssentialPlugins,
                                 is PluginInstallStep.DeveloperPlugins,
                                 is PluginInstallStep.ProductivityPlugins,
                                 is PluginInstallStep.AutomationPlugins,
                                 is PluginInstallStep.AdminPlugins,
-                                is PluginInstallStep.OtherPlugins -> {
+                                is PluginInstallStep.OtherPlugins,
+                                -> {
                                     step.category?.let { category ->
                                         CategoryStepContent(
                                             category = category,
@@ -131,22 +140,28 @@ fun PluginInstallWizardWindow(
                                             isPluginSelected = { state.isPluginSelected(it) },
                                             onTogglePlugin = { state.togglePlugin(it) },
                                             onSelectAll = { state.selectAllInCategory(category) },
-                                            onDeselectAll = { state.deselectAllInCategory(category) }
+                                            onDeselectAll = { state.deselectAllInCategory(category) },
                                         )
                                     }
                                 }
-                                is PluginInstallStep.Installing -> InstallingStepContent(
-                                    progress = state.installationProgress,
-                                    status = state.installationStatus,
-                                    error = state.installationError,
-                                    onRetry = {
-                                        state.reset()
-                                    }
-                                )
-                                is PluginInstallStep.Complete -> CompleteStepContent(
-                                    installedCount = state.installedPluginIds.size,
-                                    failedPlugins = state.failedPlugins
-                                )
+
+                                is PluginInstallStep.Installing -> {
+                                    InstallingStepContent(
+                                        progress = state.installationProgress,
+                                        status = state.installationStatus,
+                                        error = state.installationError,
+                                        onRetry = {
+                                            state.reset()
+                                        },
+                                    )
+                                }
+
+                                is PluginInstallStep.Complete -> {
+                                    CompleteStepContent(
+                                        installedCount = state.installedPluginIds.size,
+                                        failedPlugins = state.failedPlugins,
+                                    )
+                                }
                             }
                         }
                     }
@@ -164,7 +179,7 @@ fun PluginInstallWizardWindow(
                             // Skip all remaining category steps and go to Installing
                             state.skipToInstalling()
                         },
-                        onFinish = onComplete
+                        onFinish = onComplete,
                     )
                 }
             }

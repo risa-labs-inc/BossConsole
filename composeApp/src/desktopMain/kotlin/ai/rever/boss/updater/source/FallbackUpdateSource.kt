@@ -14,9 +14,8 @@ import kotlinx.coroutines.CancellationException
  */
 class FallbackUpdateSource(
     private val primary: UpdateSource,
-    private val backup: UpdateSource
+    private val backup: UpdateSource,
 ) : UpdateSource {
-
     override val name: String = "${primary.name}->${backup.name}"
     private val logger = BossLogger.forComponent("FallbackUpdateSource")
 

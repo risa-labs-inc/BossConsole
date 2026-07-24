@@ -21,7 +21,6 @@ class KernelServiceImpl(
     private val onProcessRegistered: suspend (String, ProcessManifest, String) -> Unit = { _, _, _ -> },
     private val onShutdownRequested: suspend (String, Boolean) -> Boolean = { _, _ -> true },
 ) : KernelServiceGrpcKt.KernelServiceCoroutineImplBase() {
-
     private val logger = LoggerFactory.getLogger(KernelServiceImpl::class.java)
 
     // Track registered processes and their IPC addresses
@@ -36,14 +35,18 @@ class KernelServiceImpl(
 
         logger.info(
             "Process registering: id={}, type={}, name={}, ipc={}",
-            processId, manifest.processType, manifest.displayName, request.ipcAddress
+            processId,
+            manifest.processType,
+            manifest.displayName,
+            request.ipcAddress,
         )
 
-        registeredProcesses[processId] = RegisteredProcessInfo(
-            manifest = manifest,
-            ipcAddress = request.ipcAddress,
-            registeredAt = System.currentTimeMillis(),
-        )
+        registeredProcesses[processId] =
+            RegisteredProcessInfo(
+                manifest = manifest,
+                ipcAddress = request.ipcAddress,
+                registeredAt = System.currentTimeMillis(),
+            )
         lastHeartbeats[processId] = System.currentTimeMillis()
 
         // Notify the kernel's process registry
@@ -51,98 +54,114 @@ class KernelServiceImpl(
             onProcessRegistered(processId, manifest, request.ipcAddress)
         } catch (e: Exception) {
             logger.error("Error in process registration callback for {}", processId, e)
-            return RegisterProcessResponse.newBuilder()
+            return RegisterProcessResponse
+                .newBuilder()
                 .setSuccess(false)
                 .setErrorMessage("Registration callback failed: ${e.message}")
                 .build()
         }
 
         // Build service address map for the child process
-        val serviceAddresses = registeredProcesses
-            .filter { it.key != processId }
-            .mapValues { it.value.ipcAddress }
+        val serviceAddresses =
+            registeredProcesses
+                .filter { it.key != processId }
+                .mapValues { it.value.ipcAddress }
 
         logger.info("Process registered successfully: id={}", processId)
 
-        return RegisterProcessResponse.newBuilder()
+        return RegisterProcessResponse
+            .newBuilder()
             .setSuccess(true)
             .setAssignedProcessId(processId)
             .putAllServiceAddresses(serviceAddresses)
             .build()
     }
 
-    override fun heartbeat(requests: Flow<HeartbeatPing>): Flow<HeartbeatPong> = flow {
-        requests.collect { ping ->
-            val processId = ping.processId
-            lastHeartbeats[processId] = System.currentTimeMillis()
+    override fun heartbeat(requests: Flow<HeartbeatPing>): Flow<HeartbeatPong> =
+        flow {
+            requests.collect { ping ->
+                val processId = ping.processId
+                lastHeartbeats[processId] = System.currentTimeMillis()
 
-            // Update metrics if provided
-            if (ping.hasMetrics()) {
-                registeredProcesses[processId]?.lastMetrics?.set(ping.metrics)
+                // Update metrics if provided
+                if (ping.hasMetrics()) {
+                    registeredProcesses[processId]?.lastMetrics?.set(ping.metrics)
+                }
+
+                emit(
+                    HeartbeatPong
+                        .newBuilder()
+                        .setProcessId(processId)
+                        .setTimestamp(System.currentTimeMillis())
+                        .setAcknowledged(true)
+                        .build(),
+                )
             }
-
-            emit(
-                HeartbeatPong.newBuilder()
-                    .setProcessId(processId)
-                    .setTimestamp(System.currentTimeMillis())
-                    .setAcknowledged(true)
-                    .build()
-            )
         }
-    }
 
     override suspend fun requestShutdown(request: ShutdownRequest): ShutdownResponse {
         val processId = request.processId
-        logger.info("Shutdown requested for process: id={}, force={}, reason={}",
-            processId, request.force, request.reason)
+        logger.info(
+            "Shutdown requested for process: id={}, force={}, reason={}",
+            processId,
+            request.force,
+            request.reason,
+        )
 
-        val success = try {
-            onShutdownRequested(processId, request.force)
-        } catch (e: Exception) {
-            logger.error("Error shutting down process {}", processId, e)
-            false
-        }
+        val success =
+            try {
+                onShutdownRequested(processId, request.force)
+            } catch (e: Exception) {
+                logger.error("Error shutting down process {}", processId, e)
+                false
+            }
 
         if (success) {
             registeredProcesses.remove(processId)
             lastHeartbeats.remove(processId)
         }
 
-        return ShutdownResponse.newBuilder()
+        return ShutdownResponse
+            .newBuilder()
             .setSuccess(success)
             .build()
     }
 
     override suspend fun getProcessStatus(request: ProcessStatusRequest): ProcessStatusResponse {
         val processId = request.processId
-        val info = registeredProcesses[processId]
-            ?: return ProcessStatusResponse.newBuilder()
-                .setProcessId(processId)
-                .setState(ProcessState.PROCESS_STATE_STOPPED)
-                .build()
+        val info =
+            registeredProcesses[processId]
+                ?: return ProcessStatusResponse
+                    .newBuilder()
+                    .setProcessId(processId)
+                    .setState(ProcessState.PROCESS_STATE_STOPPED)
+                    .build()
 
-        return ProcessStatusResponse.newBuilder()
+        return ProcessStatusResponse
+            .newBuilder()
             .setProcessId(processId)
             .setState(ProcessState.PROCESS_STATE_RUNNING)
             .setStartTime(info.registeredAt)
             .apply {
                 info.lastMetrics.get()?.let { setMetrics(it) }
                 lastHeartbeats[processId]?.let { /* timestamp tracked internally */ }
-            }
-            .build()
+            }.build()
     }
 
     override suspend fun listProcesses(request: Empty): ListProcessesResponse {
-        val statuses = registeredProcesses.map { (id, info) ->
-            ProcessStatusResponse.newBuilder()
-                .setProcessId(id)
-                .setState(ProcessState.PROCESS_STATE_RUNNING)
-                .setStartTime(info.registeredAt)
-                .apply { info.lastMetrics.get()?.let { setMetrics(it) } }
-                .build()
-        }
+        val statuses =
+            registeredProcesses.map { (id, info) ->
+                ProcessStatusResponse
+                    .newBuilder()
+                    .setProcessId(id)
+                    .setState(ProcessState.PROCESS_STATE_RUNNING)
+                    .setStartTime(info.registeredAt)
+                    .apply { info.lastMetrics.get()?.let { setMetrics(it) } }
+                    .build()
+            }
 
-        return ListProcessesResponse.newBuilder()
+        return ListProcessesResponse
+            .newBuilder()
             .addAllProcesses(statuses)
             .build()
     }
@@ -156,7 +175,10 @@ class KernelServiceImpl(
     /**
      * Check if a process has timed out (no heartbeat within threshold).
      */
-    fun isHeartbeatTimedOut(processId: String, thresholdMs: Long): Boolean {
+    fun isHeartbeatTimedOut(
+        processId: String,
+        thresholdMs: Long,
+    ): Boolean {
         val lastBeat = lastHeartbeats[processId] ?: return true
         return System.currentTimeMillis() - lastBeat > thresholdMs
     }
