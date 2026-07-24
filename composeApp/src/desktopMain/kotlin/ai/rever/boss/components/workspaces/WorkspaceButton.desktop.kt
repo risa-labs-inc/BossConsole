@@ -18,6 +18,11 @@ actual fun openWorkspaceDirectory(path: String) {
         }
     } catch (e: Exception) {
         // Non-fatal: the button just does nothing if the OS file manager refuses
-        logger.warn(LogCategory.WORKSPACE, "Failed to open workspace directory in file manager", mapOf("path" to path), error = e)
+        logger.warn(
+            LogCategory.WORKSPACE,
+            "Failed to open workspace directory in file manager",
+            mapOf("path" to path),
+            error = e,
+        )
     }
 }

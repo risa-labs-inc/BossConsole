@@ -263,7 +263,11 @@ object FontManager {
                         FontFamily.Monospace
                     }
                 } catch (e: Exception) {
-                    logger.debug(LogCategory.UI, "System font lookup failed - falling back to Monospace", mapOf("font" to fontName, "error" to e.toString()))
+                    logger.debug(
+                        LogCategory.UI,
+                        "System font lookup failed - falling back to Monospace",
+                        mapOf("font" to fontName, "error" to e.toString()),
+                    )
                     FontFamily.Monospace
                 }
             }
@@ -305,7 +309,11 @@ object FontManager {
                 }
             } catch (e: Exception) {
                 // Skip fonts that fail to load
-                logger.debug(LogCategory.UI, "Skipping font that failed to load during discovery", mapOf("font" to familyName, "error" to e.toString()))
+                logger.debug(
+                    LogCategory.UI,
+                    "Skipping font that failed to load during discovery",
+                    mapOf("font" to familyName, "error" to e.toString()),
+                )
             }
         }
 

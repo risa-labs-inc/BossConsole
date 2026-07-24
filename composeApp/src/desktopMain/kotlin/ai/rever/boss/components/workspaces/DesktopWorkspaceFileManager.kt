@@ -55,7 +55,12 @@ actual class WorkspaceFileManager {
             
             filePath
         } catch (e: Exception) {
-            logger.warn(LogCategory.WORKSPACE, "Failed to save workspace to disk", mapOf("workspace" to workspace.name), error = e)
+            logger.warn(
+                LogCategory.WORKSPACE,
+                "Failed to save workspace to disk",
+                mapOf("workspace" to workspace.name),
+                error = e,
+            )
             null
         }
     }
@@ -72,7 +77,12 @@ actual class WorkspaceFileManager {
             val json = file.readText()
             WorkspaceSerializer.deserialize(json)
         } catch (e: Exception) {
-            logger.warn(LogCategory.WORKSPACE, "Failed to load workspace file", mapOf("fileName" to fileName), error = e)
+            logger.warn(
+                LogCategory.WORKSPACE,
+                "Failed to load workspace file",
+                mapOf("fileName" to fileName),
+                error = e,
+            )
             null
         }
     }
@@ -111,7 +121,12 @@ actual class WorkspaceFileManager {
                 false
             }
         } catch (e: Exception) {
-            logger.warn(LogCategory.WORKSPACE, "Failed to delete workspace file", mapOf("fileName" to fileName), error = e)
+            logger.warn(
+                LogCategory.WORKSPACE,
+                "Failed to delete workspace file",
+                mapOf("fileName" to fileName),
+                error = e,
+            )
             false
         }
     }

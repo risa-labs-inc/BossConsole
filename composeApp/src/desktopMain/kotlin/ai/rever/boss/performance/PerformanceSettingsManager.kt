@@ -57,7 +57,11 @@ actual object PerformanceSettingsManager {
             settingsFile.writeText(content)
         } catch (e: Exception) {
             // Settings save failed - not critical, will use in-memory settings
-            logger.warn(LogCategory.SYSTEM, "Failed to persist performance settings - keeping in-memory only", error = e)
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Failed to persist performance settings - keeping in-memory only",
+                error = e,
+            )
         }
     }
 

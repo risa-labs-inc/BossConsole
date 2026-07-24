@@ -113,7 +113,11 @@ fun parseFileReference(fileUrl: String): ParsedFileReference {
         java.net.URLDecoder.decode(fileUrl, "UTF-8")
     } catch (e: Exception) {
         // Fall back to original if decoding fails
-        fileRefLogger.debug(LogCategory.FILE, "URL-decode of file reference failed - using raw value", mapOf("error" to e.toString()))
+        fileRefLogger.debug(
+            LogCategory.FILE,
+            "URL-decode of file reference failed - using raw value",
+            mapOf("error" to e.toString()),
+        )
         fileUrl
     }
 

@@ -84,7 +84,11 @@ object UrlHistoryManager {
             }
         } catch (e: Exception) {
             // Invalid URL - not worth recording in history
-            logger.debug(LogCategory.BROWSER, "Ignoring history entry with unparsable URL", mapOf("error" to e.toString()))
+            logger.debug(
+                LogCategory.BROWSER,
+                "Ignoring history entry with unparsable URL",
+                mapOf("error" to e.toString()),
+            )
         }
     }
     

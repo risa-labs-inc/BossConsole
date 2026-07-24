@@ -74,7 +74,11 @@ class ApiClassLoader(
                     PluginManifestReader.readFromJar(jar.absolutePath)
                 } catch (e: Exception) {
                     // not a BOSS plugin jar
-                    logger.debug(LogCategory.SYSTEM, "Skipping jar without readable plugin manifest", mapOf("jar" to jar.name, "error" to e.toString()))
+                    logger.debug(
+                        LogCategory.SYSTEM,
+                        "Skipping jar without readable plugin manifest",
+                        mapOf("jar" to jar.name, "error" to e.toString()),
+                    )
                     null
                 }
                 if (manifest?.pluginId == API_PLUGIN_ID) {
@@ -103,7 +107,11 @@ class ApiClassLoader(
             val fromManifest = try {
                 JarFile(jar).use { it.manifest?.mainAttributes?.getValue("Implementation-Version") }
             } catch (e: Exception) {
-                logger.debug(LogCategory.SYSTEM, "Could not read Implementation-Version from jar manifest", mapOf("jar" to jar.name, "error" to e.toString()))
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Could not read Implementation-Version from jar manifest",
+                    mapOf("jar" to jar.name, "error" to e.toString()),
+                )
                 null
             }
             if (!fromManifest.isNullOrBlank()) return fromManifest
@@ -111,7 +119,11 @@ class ApiClassLoader(
             return try {
                 PluginManifestReader.readFromJar(jar.absolutePath).version
             } catch (e: Exception) {
-                logger.debug(LogCategory.SYSTEM, "Could not read version from plugin manifest", mapOf("jar" to jar.name, "error" to e.toString()))
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Could not read version from plugin manifest",
+                    mapOf("jar" to jar.name, "error" to e.toString()),
+                )
                 null
             }
         }

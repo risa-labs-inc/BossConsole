@@ -813,7 +813,11 @@ actual object GitService {
             val result = runGitCommand(projectPath, "rev-parse", "--is-inside-work-tree")
             result.exitCode == 0 && result.output.trim() == "true"
         } catch (e: Exception) {
-            logger.debug(LogCategory.SYSTEM, "git rev-parse failed - treating path as non-repo", mapOf("error" to e.toString()))
+            logger.debug(
+                LogCategory.SYSTEM,
+                "git rev-parse failed - treating path as non-repo",
+                mapOf("error" to e.toString()),
+            )
             false
         }
     }

@@ -113,7 +113,11 @@ object UserDataStorage {
                     try {
                         pendingWizardCompletedFile.readText().trim().toBoolean()
                     } catch (e: Exception) {
-                        logger.debug(LogCategory.AUTH, "Could not read pending wizard-completed marker - assuming false", mapOf("error" to e.toString()))
+                        logger.debug(
+                            LogCategory.AUTH,
+                            "Could not read pending wizard-completed marker - assuming false",
+                            mapOf("error" to e.toString()),
+                        )
                         false
                     }
                 } else {
@@ -127,7 +131,11 @@ object UserDataStorage {
                         val existingData = json.decodeFromString<StoredUserData>(existingContent)
                         existingData.pluginWizardCompleted
                     } catch (e: Exception) {
-                        logger.debug(LogCategory.AUTH, "Could not read stored wizard status - assuming false", mapOf("error" to e.toString()))
+                        logger.debug(
+                            LogCategory.AUTH,
+                            "Could not read stored wizard status - assuming false",
+                            mapOf("error" to e.toString()),
+                        )
                         false
                     }
                 } else {

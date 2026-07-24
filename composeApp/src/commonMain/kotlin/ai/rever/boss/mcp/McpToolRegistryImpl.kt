@@ -326,7 +326,11 @@ internal class McpToolRegistryCore(
                 ?.mapValues { (_, el) -> scalarOf(el) }
                 ?: emptyMap()
         } catch (t: Throwable) {
-            logger.debug(LogCategory.SYSTEM, "MCP tool arguments are not a JSON object - using empty args", mapOf("error" to t.toString()))
+            logger.debug(
+                LogCategory.SYSTEM,
+                "MCP tool arguments are not a JSON object - using empty args",
+                mapOf("error" to t.toString()),
+            )
             emptyMap()
         }
         return McpToolArgs(map, arguments.ifBlank { "{}" })

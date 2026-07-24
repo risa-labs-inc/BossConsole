@@ -56,7 +56,11 @@ class LockedBrowser(
         }
     } catch (e: Exception) {
         // Disposal race between the isClosed check and url() - empty is the safe answer
-        logger.debug(LogCategory.BROWSER, "browser.url() failed during disposal race - returning empty", mapOf("error" to e.toString()))
+        logger.debug(
+            LogCategory.BROWSER,
+            "browser.url() failed during disposal race - returning empty",
+            mapOf("error" to e.toString()),
+        )
         ""
     }
 

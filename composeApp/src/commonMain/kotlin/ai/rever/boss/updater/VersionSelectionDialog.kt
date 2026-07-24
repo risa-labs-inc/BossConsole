@@ -327,7 +327,11 @@ private fun formatReleaseDate(dateString: String): String {
         // Extract just the date part
         dateString.substringBefore("T")
     } catch (e: Exception) {
-        logger.debug(LogCategory.SYSTEM, "Failed to format release date - showing raw value", mapOf("error" to e.toString()))
+        logger.debug(
+            LogCategory.SYSTEM,
+            "Failed to format release date - showing raw value",
+            mapOf("error" to e.toString()),
+        )
         dateString
     }
 }

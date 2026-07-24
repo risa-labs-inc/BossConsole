@@ -531,7 +531,11 @@ object FluckEngine {
                         isJxBrowserChromium && !isOurChild && !isTooRecent
                     } catch (e: Exception) {
                         // Process may have exited mid-inspection - skip it
-                        logger.debug(LogCategory.BROWSER, "Could not inspect process during stale Chromium scan - skipping", mapOf("error" to e.toString()))
+                        logger.debug(
+                            LogCategory.BROWSER,
+                            "Could not inspect process during stale Chromium scan - skipping",
+                            mapOf("error" to e.toString()),
+                        )
                         false
                     }
                 }
@@ -555,15 +559,27 @@ object FluckEngine {
                         process.onExit().get(100, java.util.concurrent.TimeUnit.MILLISECONDS)
                     } catch (e: java.util.concurrent.TimeoutException) {
                         // Process didn't exit in time - force kill
-                        logger.debug(LogCategory.BROWSER, "Stale Chromium process did not exit in 100ms - force killing", mapOf("error" to e.toString()))
+                        logger.debug(
+                            LogCategory.BROWSER,
+                            "Stale Chromium process did not exit in 100ms - force killing",
+                            mapOf("error" to e.toString()),
+                        )
                         process.destroyForcibly()
                     } catch (e: Exception) {
                         // Process already exited or other error
-                        logger.debug(LogCategory.BROWSER, "Wait for stale Chromium exit failed - likely already gone", mapOf("error" to e.toString()))
+                        logger.debug(
+                            LogCategory.BROWSER,
+                            "Wait for stale Chromium exit failed - likely already gone",
+                            mapOf("error" to e.toString()),
+                        )
                     }
                 } catch (e: Exception) {
                     // Kill of one stale process failed - continue with the rest
-                    logger.debug(LogCategory.BROWSER, "Failed to terminate stale Chromium process - skipping", mapOf("error" to e.toString()))
+                    logger.debug(
+                        LogCategory.BROWSER,
+                        "Failed to terminate stale Chromium process - skipping",
+                        mapOf("error" to e.toString()),
+                    )
                 }
             }
 
@@ -612,7 +628,11 @@ object FluckEngine {
             lockFiles.forEach { fileName ->
                 val file = defaultDir.resolve(fileName).toFile()
                 if (file.exists() && !file.delete()) {
-                    logger.debug(LogCategory.BROWSER, "Could not delete stale browser lock file", mapOf("file" to "Default/" + fileName))
+                    logger.debug(
+                        LogCategory.BROWSER,
+                        "Could not delete stale browser lock file",
+                        mapOf("file" to "Default/" + fileName),
+                    )
                 }
             }
         }
@@ -698,7 +718,11 @@ object FluckEngine {
                 download.pause()
             } catch (e: Exception) {
                 // Download may already be finished or cancelled
-                logger.debug(LogCategory.BROWSER, "Failed to pause download", mapOf("downloadId" to downloadId, "error" to e.toString()))
+                logger.debug(
+                    LogCategory.BROWSER,
+                    "Failed to pause download",
+                    mapOf("downloadId" to downloadId, "error" to e.toString()),
+                )
             }
         }
     }
@@ -713,7 +737,11 @@ object FluckEngine {
                 download.resume()
             } catch (e: Exception) {
                 // Download may already be finished or cancelled
-                logger.debug(LogCategory.BROWSER, "Failed to resume download", mapOf("downloadId" to downloadId, "error" to e.toString()))
+                logger.debug(
+                    LogCategory.BROWSER,
+                    "Failed to resume download",
+                    mapOf("downloadId" to downloadId, "error" to e.toString()),
+                )
             }
         }
     }
@@ -728,7 +756,11 @@ object FluckEngine {
                 download.cancel()
             } catch (e: Exception) {
                 // Download may already be finished or cancelled
-                logger.debug(LogCategory.BROWSER, "Failed to cancel download", mapOf("downloadId" to downloadId, "error" to e.toString()))
+                logger.debug(
+                    LogCategory.BROWSER,
+                    "Failed to cancel download",
+                    mapOf("downloadId" to downloadId, "error" to e.toString()),
+                )
             }
         }
     }
@@ -776,7 +808,11 @@ object FluckEngine {
         try {
             synchronized(engineLock) { engine.profiles().list().firstOrNull { it.name() == name } }
         } catch (e: Exception) {
-            logger.debug(LogCategory.BROWSER, "Profile lookup failed - treating as not found", mapOf("profile" to name, "error" to e.toString()))
+            logger.debug(
+                LogCategory.BROWSER,
+                "Profile lookup failed - treating as not found",
+                mapOf("profile" to name, "error" to e.toString()),
+            )
             null
         }
 
@@ -1116,7 +1152,11 @@ object FluckEngine {
                 }
             }
         } catch (e: Exception) {
-            logger.warn(LogCategory.BROWSER, "Could not inspect profile lock files - attempting cleanup anyway", error = e)
+            logger.warn(
+                LogCategory.BROWSER,
+                "Could not inspect profile lock files - attempting cleanup anyway",
+                error = e,
+            )
 
             // If we can't check, try to clean up anyway
             try {
@@ -1139,7 +1179,11 @@ object FluckEngine {
                 Files.deleteIfExists(file.toPath())
             } catch (e: Exception) {
                 // Fallback to File.delete()
-                logger.debug(LogCategory.BROWSER, "Files.deleteIfExists failed for lock file - falling back to File.delete", mapOf("file" to file.name, "error" to e.toString()))
+                logger.debug(
+                    LogCategory.BROWSER,
+                    "Files.deleteIfExists failed for lock file - falling back to File.delete",
+                    mapOf("file" to file.name, "error" to e.toString()),
+                )
                 file.delete()
             }
         }
@@ -1209,14 +1253,22 @@ object FluckEngine {
         return try {
             createEngineInstance(chromiumDir, profileDirPath)
         } catch (e: UserDataDirectoryAlreadyInUseException) {
-            logger.warn(LogCategory.BROWSER, "Profile directory already in use - trying lock cleanup, then temp profile", error = e)
+            logger.warn(
+                LogCategory.BROWSER,
+                "Profile directory already in use - trying lock cleanup, then temp profile",
+                error = e,
+            )
             // Try to clean up stale lock files first
             if (cleanupStaleLockFiles(profileDirPath)) {
                 try {
                     return createEngineInstance(chromiumDir, profileDirPath)
                 } catch (e2: Exception) {
                     // Retry after cleanup still failed - fall through to temporary profile
-                    logger.warn(LogCategory.BROWSER, "Engine creation still failing after lock cleanup - using temporary profile", error = e2)
+                    logger.warn(
+                        LogCategory.BROWSER,
+                        "Engine creation still failing after lock cleanup - using temporary profile",
+                        error = e2,
+                    )
                 }
             }
 
@@ -1314,7 +1366,11 @@ object FluckEngine {
             val cgroup = java.io.File("/proc/1/cgroup")
             cgroup.exists() && cgroupIndicatesContainer(cgroup.readText())
         } catch (e: Exception) {
-            logger.debug(LogCategory.SYSTEM, "Could not read /proc/1/cgroup - assuming not in container", mapOf("error" to e.toString()))
+            logger.debug(
+                LogCategory.SYSTEM,
+                "Could not read /proc/1/cgroup - assuming not in container",
+                mapOf("error" to e.toString()),
+            )
             false
         }
     }
@@ -2056,7 +2112,11 @@ object FluckEngine {
                 killStaleChromiumProcesses()
             } catch (e: Exception) {
                 // Continue - not critical
-                logger.debug(LogCategory.BROWSER, "Stale Chromium process kill failed during reset", mapOf("error" to e.toString()))
+                logger.debug(
+                    LogCategory.BROWSER,
+                    "Stale Chromium process kill failed during reset",
+                    mapOf("error" to e.toString()),
+                )
             }
 
             // Step 4: Delete browser profile directory
@@ -2087,7 +2147,11 @@ object FluckEngine {
                 tempProfilesCleaned = true
             } catch (e: Exception) {
                 // Not critical - continue
-                logger.debug(LogCategory.BROWSER, "Temporary profile cleanup failed during reset", mapOf("error" to e.toString()))
+                logger.debug(
+                    LogCategory.BROWSER,
+                    "Temporary profile cleanup failed during reset",
+                    mapOf("error" to e.toString()),
+                )
                 tempProfilesCleaned = false
             }
 

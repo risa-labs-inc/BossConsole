@@ -325,7 +325,11 @@ object SingleInstanceManager {
                 .map { it.isAlive }
                 .orElse(false)
         } catch (e: Exception) {
-            logger.debug(LogCategory.SYSTEM, "Process liveness check failed - assuming dead", mapOf("pid" to pid, "error" to e.toString()))
+            logger.debug(
+                LogCategory.SYSTEM,
+                "Process liveness check failed - assuming dead",
+                mapOf("pid" to pid, "error" to e.toString()),
+            )
             false
         }
     }

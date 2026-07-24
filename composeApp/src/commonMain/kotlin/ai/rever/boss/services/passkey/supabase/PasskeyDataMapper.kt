@@ -159,9 +159,11 @@ internal object PasskeyDataMapper {
             // Exception type only: kotlinx decode errors embed a snippet of the
             // response near the failure offset, and server responses can carry
             // credential/session material that must not reach the logs.
-            logger.warn(LogCategory.PASSKEY, "Registration response did not parse as credential - extracting error message", mapOf(
-                "exception" to (parseException::class.simpleName ?: "Exception")
-            ))
+            logger.warn(
+                LogCategory.PASSKEY,
+                "Registration response did not parse as credential - extracting error message",
+                mapOf("exception" to (parseException::class.simpleName ?: "Exception")),
+            )
             // Try to extract error message from raw response
             val errorMessage = try {
                 val errorResponse = json.decodeFromString<JsonObject>(responseText)
@@ -230,9 +232,11 @@ internal object PasskeyDataMapper {
         } catch (e: Exception) {
             // Fall back to parsing as authentication result (for completion endpoints).
             // Exception type only - decode errors can embed response snippets.
-            logger.debug(LogCategory.PASSKEY, "Response is not a status envelope - parsing as authentication result", mapOf(
-                "exception" to (e::class.simpleName ?: "Exception")
-            ))
+            logger.debug(
+                LogCategory.PASSKEY,
+                "Response is not a status envelope - parsing as authentication result",
+                mapOf("exception" to (e::class.simpleName ?: "Exception")),
+            )
             json.decodeFromString<PasskeyAuthenticationResult>(responseText)
         }
     }

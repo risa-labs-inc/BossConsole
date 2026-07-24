@@ -32,7 +32,11 @@ class DesktopDirectoryPicker(
                 UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
             } catch (e: Exception) {
                 // If setting system L&F fails, continue with default
-                logger.debug(LogCategory.UI, "Could not set system look and feel - using default", mapOf("error" to e.toString()))
+                logger.debug(
+                    LogCategory.UI,
+                    "Could not set system look and feel - using default",
+                    mapOf("error" to e.toString()),
+                )
             }
             
             // Use native file dialog for better macOS integration

@@ -118,7 +118,11 @@ object FormFieldDetector {
             }
         } catch (e: Exception) {
             // Detection script injection failed - auto-fill just won't offer for this page
-            logger.debug(LogCategory.BROWSER, "Form field detection script injection failed", mapOf("error" to e.toString()))
+            logger.debug(
+                LogCategory.BROWSER,
+                "Form field detection script injection failed",
+                mapOf("error" to e.toString()),
+            )
         }
     }
 
@@ -149,7 +153,11 @@ object FormFieldDetector {
                         }
                     } ?: result.complete(null)
                 } catch (e: Exception) {
-                    logger.debug(LogCategory.BROWSER, "Focused-field JS query failed - reporting no field", mapOf("error" to e.toString()))
+                    logger.debug(
+                        LogCategory.BROWSER,
+                        "Focused-field JS query failed - reporting no field",
+                        mapOf("error" to e.toString()),
+                    )
                     result.complete(null)
                 }
             }
@@ -159,7 +167,11 @@ object FormFieldDetector {
                 result.await()
             }
         } catch (e: Exception) {
-            logger.debug(LogCategory.BROWSER, "Focused-field detection timed out or failed", mapOf("error" to e.toString()))
+            logger.debug(
+                LogCategory.BROWSER,
+                "Focused-field detection timed out or failed",
+                mapOf("error" to e.toString()),
+            )
             null
         }
     }
@@ -214,7 +226,11 @@ object FormFieldDetector {
             // Never log the JSON payload itself - it can contain a typed field value.
             // (e.toString() is safe here: this parser is regex/string-based, so its
             // exceptions never embed the input, unlike kotlinx.serialization's.)
-            logger.debug(LogCategory.BROWSER, "Failed to parse field info JSON - no field detected", mapOf("error" to e.toString()))
+            logger.debug(
+                LogCategory.BROWSER,
+                "Failed to parse field info JSON - no field detected",
+                mapOf("error" to e.toString()),
+            )
             null
         }
     }
@@ -276,7 +292,11 @@ object FormFieldDetector {
         } catch (e: Exception) {
             // Never log the object string itself - it can contain a typed field value.
             // (e.toString() is safe here: string-based parsing, exceptions never embed input.)
-            logger.debug(LogCategory.BROWSER, "Failed to parse legacy field info - no field detected", mapOf("error" to e.toString()))
+            logger.debug(
+                LogCategory.BROWSER,
+                "Failed to parse legacy field info - no field detected",
+                mapOf("error" to e.toString()),
+            )
             null
         }
     }
@@ -379,7 +399,11 @@ object FormFieldDetector {
                     // Parse result array (simplified)
                     result.complete(fields)
                 } catch (e: Exception) {
-                    logger.debug(LogCategory.BROWSER, "Form fields JS enumeration failed - reporting none", mapOf("error" to e.toString()))
+                    logger.debug(
+                        LogCategory.BROWSER,
+                        "Form fields JS enumeration failed - reporting none",
+                        mapOf("error" to e.toString()),
+                    )
                     result.complete(emptyList())
                 }
             }
@@ -388,7 +412,11 @@ object FormFieldDetector {
                 result.await()
             }
         } catch (e: Exception) {
-            logger.debug(LogCategory.BROWSER, "Form field enumeration timed out or failed", mapOf("error" to e.toString()))
+            logger.debug(
+                LogCategory.BROWSER,
+                "Form field enumeration timed out or failed",
+                mapOf("error" to e.toString()),
+            )
             emptyList()
         }
     }

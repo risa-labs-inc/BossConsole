@@ -1036,7 +1036,11 @@ fun ApplicationScope.BossWindow(
                                             }
                                             resetTerminalResult = true
                                         } catch (e: Exception) {
-                                            bossWindowLogger.warn(LogCategory.TERMINAL, "Terminal reset failed - dialog shows failure state", error = e)
+                                            bossWindowLogger.warn(
+                                                LogCategory.TERMINAL,
+                                                "Terminal reset failed - dialog shows failure state",
+                                                error = e,
+                                            )
                                             resetTerminalResult = false
                                         }
                                         isResetting = false

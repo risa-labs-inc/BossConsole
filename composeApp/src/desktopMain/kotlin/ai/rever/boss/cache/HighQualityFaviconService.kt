@@ -102,7 +102,11 @@ object HighQualityFaviconService {
                 // Fall back to standard favicon
                 loadStandardFavicon(standardCacheKey)
             } catch (e: Exception) {
-                logger.debug(LogCategory.BROWSER, "HQ favicon fetch failed - falling back to standard favicon", mapOf("error" to e.toString()))
+                logger.debug(
+                    LogCategory.BROWSER,
+                    "HQ favicon fetch failed - falling back to standard favicon",
+                    mapOf("error" to e.toString()),
+                )
                 loadStandardFavicon(standardCacheKey)
             }
         }
@@ -116,7 +120,11 @@ object HighQualityFaviconService {
             val withoutProtocol = url.removePrefix("https://").removePrefix("http://")
             withoutProtocol.substringBefore('/').substringBefore('?').removePrefix("www.")
         } catch (e: Exception) {
-            logger.debug(LogCategory.BROWSER, "Could not extract domain from URL for favicon", mapOf("error" to e.toString()))
+            logger.debug(
+                LogCategory.BROWSER,
+                "Could not extract domain from URL for favicon",
+                mapOf("error" to e.toString()),
+            )
             null
         }
     }
@@ -146,7 +154,11 @@ object HighQualityFaviconService {
             val imageBitmap = bufferedImage.toComposeImageBitmap()
             ai.rever.boss.plugin.api.TabIcon.Image(BitmapPainter(imageBitmap))
         } catch (e: Exception) {
-            logger.debug(LogCategory.BROWSER, "Failed to read cached HQ favicon - treating as cache miss", mapOf("error" to e.toString()))
+            logger.debug(
+                LogCategory.BROWSER,
+                "Failed to read cached HQ favicon - treating as cache miss",
+                mapOf("error" to e.toString()),
+            )
             null
         }
     }
@@ -187,7 +199,11 @@ object HighQualityFaviconService {
                 null
             }
         } catch (e: Exception) {
-            logger.debug(LogCategory.NETWORK, "HQ favicon fetch from Google failed - falling back", mapOf("domain" to domain, "error" to e.toString()))
+            logger.debug(
+                LogCategory.NETWORK,
+                "HQ favicon fetch from Google failed - falling back",
+                mapOf("domain" to domain, "error" to e.toString()),
+            )
             null
         }
     }
@@ -211,7 +227,11 @@ object HighQualityFaviconService {
                         file.delete()
                     } catch (e: Exception) {
                         // Deletion errors are non-fatal - entry will be retried on next eviction
-                        logger.debug(LogCategory.FILE, "Failed to evict HQ favicon cache entry", mapOf("file" to file.name, "error" to e.toString()))
+                        logger.debug(
+                            LogCategory.FILE,
+                            "Failed to evict HQ favicon cache entry",
+                            mapOf("file" to file.name, "error" to e.toString()),
+                        )
                     }
                 }
             }

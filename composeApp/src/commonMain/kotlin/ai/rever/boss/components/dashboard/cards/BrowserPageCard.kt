@@ -78,7 +78,11 @@ fun BrowserPageCard(
         favicon = try {
             loadHighQualityFavicon(page.url, page.faviconCacheKey)
         } catch (e: Exception) {
-            logger.debug(LogCategory.BROWSER, "Failed to load high-quality favicon - card shows fallback icon", mapOf("error" to e.toString()))
+            logger.debug(
+                LogCategory.BROWSER,
+                "Failed to load high-quality favicon - card shows fallback icon",
+                mapOf("error" to e.toString()),
+            )
             null
         }
     }

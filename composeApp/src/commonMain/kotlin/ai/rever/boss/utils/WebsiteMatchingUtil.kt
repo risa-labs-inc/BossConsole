@@ -263,7 +263,11 @@ object WebsiteMatchingUtil {
                 null
             }
         } catch (e: Exception) {
-            logger.debug(LogCategory.BROWSER, "Failed to extract subdomain - treating as none", mapOf("url" to url, "error" to e.toString()))
+            logger.debug(
+                LogCategory.BROWSER,
+                "Failed to extract subdomain - treating as none",
+                mapOf("url" to url, "error" to e.toString()),
+            )
             null
         }
     }

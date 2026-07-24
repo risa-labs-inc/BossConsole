@@ -40,7 +40,11 @@ object MacOSGestureHandler {
                 true
             }
         } catch (e: Exception) {
-            logger.debug(LogCategory.UI, "GestureUtilities unavailable - trackpad pinch gestures disabled", mapOf("error" to e.toString()))
+            logger.debug(
+                LogCategory.UI,
+                "GestureUtilities unavailable - trackpad pinch gestures disabled",
+                mapOf("error" to e.toString()),
+            )
             false
         }
 
@@ -134,7 +138,9 @@ object MacOSGestureHandler {
                 null
             }
         } catch (e: Exception) {
-            logger.debug(LogCategory.UI, "Failed to register magnification listener via reflection - pinch zoom disabled for component", mapOf("error" to e.toString()))
+            logger.debug(LogCategory.UI,
+                "Failed to register magnification listener via reflection - pinch zoom disabled for component",
+                mapOf("error" to e.toString()))
             null
         }
     }

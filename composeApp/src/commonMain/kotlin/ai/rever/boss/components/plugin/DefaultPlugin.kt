@@ -1324,7 +1324,12 @@ private class DefaultCacheProvider : CacheProvider {
             }
             true
         } catch (e: Exception) {
-            cacheLogger.warn(LogCategory.SYSTEM, "Failed to clear plugin cache", mapOf("pluginId" to pluginId), error = e)
+            cacheLogger.warn(
+                LogCategory.SYSTEM,
+                "Failed to clear plugin cache",
+                mapOf("pluginId" to pluginId),
+                error = e,
+            )
             false
         }
     }
@@ -1338,7 +1343,12 @@ private class DefaultCacheProvider : CacheProvider {
                 0L
             }
         } catch (e: Exception) {
-            cacheLogger.warn(LogCategory.SYSTEM, "Failed to compute plugin cache size", mapOf("pluginId" to pluginId), error = e)
+            cacheLogger.warn(
+                LogCategory.SYSTEM,
+                "Failed to compute plugin cache size",
+                mapOf("pluginId" to pluginId),
+                error = e,
+            )
             -1L
         }
     }

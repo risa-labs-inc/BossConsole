@@ -50,7 +50,11 @@ actual fun directoryHasChildren(path: String, showHidden: Boolean): Boolean {
     } catch (e: Exception) {
         // Covers InvalidPathException (malformed input, e.g. a NUL byte) as well as
         // I/O errors -- File(path) never threw here, so callers rely on false-on-error.
-        logger.debug(LogCategory.FILE, "Directory children probe failed - reporting none", mapOf("path" to path, "error" to e.toString()))
+        logger.debug(
+            LogCategory.FILE,
+            "Directory children probe failed - reporting none",
+            mapOf("path" to path, "error" to e.toString()),
+        )
         false
     }
 }

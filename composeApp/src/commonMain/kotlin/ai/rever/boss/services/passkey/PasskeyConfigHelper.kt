@@ -44,7 +44,11 @@ object PasskeyConfigHelper {
             // WebAuthn requires "localhost" instead of "127.0.0.1" for local development
             if (rpId == "127.0.0.1") "localhost" else rpId
         } catch (e: Exception) {
-            logger.warn(LogCategory.PASSKEY, "Failed to derive RP ID from function URL - falling back to production", error = e)
+            logger.warn(
+                LogCategory.PASSKEY,
+                "Failed to derive RP ID from function URL - falling back to production",
+                error = e,
+            )
             "api.risaboss.com" // Fallback to production
         }
     }

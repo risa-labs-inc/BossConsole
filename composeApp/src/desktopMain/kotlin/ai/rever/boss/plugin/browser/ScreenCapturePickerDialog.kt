@@ -349,7 +349,11 @@ private fun rememberHighQualityFavicon(
             hqFavicon = try {
                 loadHighQualityFavicon(url, standardCacheKey)
             } catch (e: Exception) {
-                logger.debug(LogCategory.BROWSER, "HQ favicon load failed - using fallback icon", mapOf("error" to e.toString()))
+                logger.debug(
+                    LogCategory.BROWSER,
+                    "HQ favicon load failed - using fallback icon",
+                    mapOf("error" to e.toString()),
+                )
                 null
             }
         }
