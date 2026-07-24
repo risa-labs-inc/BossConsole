@@ -438,7 +438,9 @@ fun BossTabsComponent.BossMainTabBar(
                                 }
 
                                 // Bookmark current tab
-                                // Reference collections to ensure recomposition on bookmark changes
+                                // Deliberate bare snapshot read: subscribes this scope to
+                                // recomposition on bookmark-collection changes.
+                                @Suppress("UNUSED_EXPRESSION")
                                 collections
 
                                 val tabConfig = convertTabInfoToTabConfig(config)
