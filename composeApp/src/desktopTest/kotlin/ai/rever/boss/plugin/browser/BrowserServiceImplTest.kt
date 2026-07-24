@@ -1,7 +1,11 @@
 package ai.rever.boss.plugin.browser
 
+import ai.rever.boss.components.plugin.getBrowserServiceInstance
+import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -13,6 +17,54 @@ import kotlin.test.assertTrue
  * named-profile metadata persistence.
  */
 class BrowserServiceImplTest {
+
+    @Test
+    fun `closing one window drains only its browser handles`() {
+        val registry = BrowserWindowOwnershipRegistry()
+        assertTrue(registry.tryBeginCreate("first-window"))
+        assertTrue(registry.register("first-1", "first-window"))
+        registry.finishCreate("first-window")
+        assertTrue(registry.tryBeginCreate("first-window"))
+        assertTrue(registry.register("first-2", "first-window"))
+        registry.finishCreate("first-window")
+        assertTrue(registry.tryBeginCreate("second-window"))
+        assertTrue(registry.register("second-1", "second-window"))
+        registry.finishCreate("second-window")
+
+        assertEquals(setOf("second-1"), registry.closeWindow("second-window"))
+        assertEquals(2, registry.count("first-window"))
+        assertEquals(0, registry.count("second-window"))
+        assertEquals(setOf("first-1", "first-2"), registry.closeWindow("first-window"))
+    }
+
+    @Test
+    fun `browser finishing creation after window close is rejected`() {
+        val registry = BrowserWindowOwnershipRegistry()
+
+        assertTrue(registry.tryBeginCreate("closing-window"))
+        assertTrue(registry.closeWindow("closing-window").isEmpty())
+        assertFalse(registry.register("late-browser", "closing-window"))
+        assertFalse(registry.tryBeginCreate("closing-window"))
+        assertEquals(1, registry.trackedWindowCount())
+        registry.finishCreate("closing-window")
+
+        assertEquals(0, registry.count("closing-window"))
+        assertEquals(0, registry.trackedWindowCount())
+    }
+
+    @Test
+    fun `unbalanced browser creation finish is ignored`() {
+        val registry = BrowserWindowOwnershipRegistry()
+
+        assertFalse(registry.finishCreate("unknown-window"))
+        assertEquals(0, registry.trackedWindowCount())
+    }
+
+    @Test
+    fun `browser creation requires a window cleanup owner`() = runBlocking {
+        assertNull(getBrowserServiceInstance(null))
+        assertNull(BrowserServiceImpl.createBrowser(BrowserConfig()))
+    }
 
     @Test
     fun `cookieDomain strips scheme, path, query, fragment and port`() {

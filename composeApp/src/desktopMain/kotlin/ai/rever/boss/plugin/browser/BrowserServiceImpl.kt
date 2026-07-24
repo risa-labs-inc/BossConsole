@@ -28,6 +28,90 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedDeque
 
 /**
+ * Tracks which application window owns each plugin-created browser handle.
+ *
+ * Closing a window atomically marks it closed before draining its handles. A
+ * browser creation that finishes during teardown is therefore rejected instead
+ * of escaping cleanup and retaining the destroyed AWT window.
+ */
+internal class BrowserWindowOwnershipRegistry {
+    private data class WindowCreationState(
+        var inFlightCreates: Int = 0,
+        var closing: Boolean = false
+    )
+
+    private val lock = Any()
+    private val ownerByBrowserId = mutableMapOf<String, String>()
+    private val creationStateByWindowId = mutableMapOf<String, WindowCreationState>()
+
+    fun tryBeginCreate(windowId: String): Boolean = synchronized(lock) {
+        val state = creationStateByWindowId.getOrPut(windowId, ::WindowCreationState)
+        if (state.closing) {
+            false
+        } else {
+            state.inFlightCreates++
+            true
+        }
+    }
+
+    fun register(browserId: String, windowId: String): Boolean = synchronized(lock) {
+        val state = creationStateByWindowId[windowId]
+        if (state == null || state.closing) {
+            false
+        } else {
+            ownerByBrowserId[browserId] = windowId
+            true
+        }
+    }
+
+    fun finishCreate(windowId: String): Boolean = synchronized(lock) {
+        val state = creationStateByWindowId[windowId] ?: return@synchronized false
+        if (state.inFlightCreates <= 0) return@synchronized false
+
+        state.inFlightCreates--
+        if (state.inFlightCreates == 0) {
+            // The closed WindowScopedBrowserService instance rejects further work.
+            // A later service created with the same ID represents a new lifecycle,
+            // so this transient state can be discarded once admitted calls drain.
+            creationStateByWindowId.remove(windowId, state)
+        }
+        true
+    }
+
+    fun unregister(browserId: String) = synchronized(lock) {
+        ownerByBrowserId.remove(browserId)
+    }
+
+    fun closeWindow(windowId: String): Set<String> = synchronized(lock) {
+        val state = creationStateByWindowId.getOrPut(windowId, ::WindowCreationState)
+        state.closing = true
+
+        val ownedBrowserIds = mutableSetOf<String>()
+        val owners = ownerByBrowserId.iterator()
+        while (owners.hasNext()) {
+            val (browserId, ownerWindowId) = owners.next()
+            if (ownerWindowId == windowId) {
+                ownedBrowserIds += browserId
+                owners.remove()
+            }
+        }
+
+        if (state.inFlightCreates == 0) {
+            creationStateByWindowId.remove(windowId, state)
+        }
+        ownedBrowserIds
+    }
+
+    fun count(windowId: String): Int = synchronized(lock) {
+        ownerByBrowserId.values.count { it == windowId }
+    }
+
+    internal fun trackedWindowCount(): Int = synchronized(lock) {
+        creationStateByWindowId.size
+    }
+}
+
+/**
  * Desktop implementation of [BrowserService] that wraps [FluckEngine].
  *
  * Provides plugins with JxBrowser functionality without exposing JxBrowser types.
@@ -46,6 +130,10 @@ object BrowserServiceImpl : BrowserService {
 
     // Track active browser handles for resource management
     private val activeBrowsers = ConcurrentHashMap<String, BrowserHandleImpl>()
+
+    // BrowserService is shared process-wide, but plugin handles belong to the
+    // window whose PluginContext created them.
+    private val browserOwners = BrowserWindowOwnershipRegistry()
 
     // Managed-profile bookkeeping for handles created on an isolated profile.
     private val managedByHandle = ConcurrentHashMap<String, ManagedRef>()
@@ -140,6 +228,33 @@ object BrowserServiceImpl : BrowserService {
     }
 
     override suspend fun createBrowser(config: BrowserConfig): BrowserHandle? {
+        logger.error(
+            LogCategory.BROWSER,
+            "Unscoped browser creation rejected; use a window-scoped BrowserService"
+        )
+        return null
+    }
+
+    internal fun tryBeginBrowserCreation(windowId: String): Boolean =
+        browserOwners.tryBeginCreate(windowId)
+
+    internal suspend fun createBrowserForWindow(
+        windowId: String,
+        config: BrowserConfig
+    ): BrowserHandle? = createBrowser(config, ownerWindowId = windowId)
+
+    internal fun finishBrowserCreation(windowId: String) {
+        if (!browserOwners.finishCreate(windowId)) {
+            logger.error(LogCategory.BROWSER, "Unbalanced browser creation finish ignored", mapOf(
+                "windowId" to windowId
+            ))
+        }
+    }
+
+    private suspend fun createBrowser(
+        config: BrowserConfig,
+        ownerWindowId: String
+    ): BrowserHandle? {
         // Declared outside the try so the outer catch can release the managed profile
         // if anything after newBrowser() throws (see the catch below).
         var managed: ManagedRef? = null
@@ -199,6 +314,17 @@ object BrowserServiceImpl : BrowserService {
             }
             tracked = true // profile lifecycle now owned by disposeBrowser (via managedByHandle)
 
+            if (!browserOwners.register(handle.id, ownerWindowId)) {
+                // The window closed while browser creation was suspended. Dispose
+                // synchronously so the handle cannot retain its destroyed AWT window.
+                disposeTrackedBrowserBlocking(handle)
+                logger.debug(LogCategory.BROWSER, "Discarded browser created for closed window", mapOf(
+                    "handleId" to handle.id,
+                    "windowId" to ownerWindowId
+                ))
+                return null
+            }
+
             logger.info(LogCategory.BROWSER, "Browser created via BrowserService", mapOf(
                 "handleId" to handle.id,
                 "url" to config.url,
@@ -214,7 +340,11 @@ object BrowserServiceImpl : BrowserService {
             // stays locked for the process lifetime (deadlock) and an EPHEMERAL profile
             // leaks. Only release if we never reached the tracked point.
             if (!tracked) {
-                handleId?.let { activeBrowsers.remove(it); managedByHandle.remove(it) }
+                handleId?.let {
+                    activeBrowsers.remove(it)
+                    managedByHandle.remove(it)
+                    browserOwners.unregister(it)
+                }
                 managed?.let { releaseManaged(it) }
             }
             null
@@ -223,6 +353,7 @@ object BrowserServiceImpl : BrowserService {
 
     override suspend fun disposeBrowser(handle: BrowserHandle) {
         activeBrowsers.remove(handle.id)
+        browserOwners.unregister(handle.id)
         try {
             handle.dispose()
         } finally {
@@ -258,26 +389,53 @@ object BrowserServiceImpl : BrowserService {
         return activeBrowsers.size
     }
 
+    internal fun getActiveBrowserCountForWindow(windowId: String): Int =
+        browserOwners.count(windowId)
+
     /** Return all active browser handles for internal lookup (e.g. RPA recorder). */
     internal fun getActiveHandles(): List<BrowserHandleImpl> = activeBrowsers.values.toList()
 
     /**
-     * Dispose all active browsers.
+     * Dispose plugin browsers owned by one application window.
      *
-     * Called during application shutdown to ensure clean cleanup.
+     * Called before that window's AWT peer is destroyed. Handles owned by other
+     * windows remain active.
      */
-    fun disposeAll() {
-        val count = activeBrowsers.size
-        activeBrowsers.values.toList().forEach { handle ->
+    internal fun disposeAllForWindow(windowId: String) {
+        val ownedBrowserIds = browserOwners.closeWindow(windowId)
+        var disposedCount = 0
+        ownedBrowserIds.forEach { browserId ->
+            val handle = activeBrowsers[browserId] ?: return@forEach
             try {
-                handle.dispose()
+                if (disposeTrackedBrowserBlocking(handle)) {
+                    disposedCount++
+                }
             } catch (e: Exception) {
-                logger.warn(LogCategory.BROWSER, "Error disposing browser", error = e)
+                logger.warn(LogCategory.BROWSER, "Error disposing browser for window", mapOf(
+                    "handleId" to browserId,
+                    "windowId" to windowId
+                ), e)
             }
         }
-        activeBrowsers.clear()
 
-        logger.info(LogCategory.BROWSER, "All browsers disposed", mapOf("count" to count))
+        logger.info(LogCategory.BROWSER, "Window browsers disposed", mapOf(
+            "windowId" to windowId,
+            "count" to disposedCount
+        ))
+    }
+
+    private fun disposeTrackedBrowserBlocking(handle: BrowserHandleImpl): Boolean {
+        if (!activeBrowsers.remove(handle.id, handle)) return false
+
+        browserOwners.unregister(handle.id)
+        try {
+            handle.dispose()
+        } finally {
+            // Window/application teardown cannot suspend for profile accounting,
+            // but it must release profile locks and delete ephemeral profiles.
+            managedByHandle.remove(handle.id)?.let(::releaseManaged)
+        }
+        return true
     }
 
     // =======================================================================

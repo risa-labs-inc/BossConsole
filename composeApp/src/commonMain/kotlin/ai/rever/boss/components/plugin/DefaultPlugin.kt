@@ -132,6 +132,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.io.File
 
+/**
+ * Per-window plugin context.
+ *
+ * @param _windowId stable ID of the owning application window. Production window
+ * contexts must provide it so plugin-created browsers participate in window-scoped
+ * cleanup. The null default is reserved for non-window/test contexts.
+ */
 class DefaultPlugin(
     override val panelRegistry: PanelRegistry,
     override val tabRegistry: TabRegistry,
@@ -392,7 +399,7 @@ class DefaultPlugin(
     // Browser service for plugins needing embedded browser capabilities.
     // Automation (isolated/headless sessions, auth seeding, named profiles) is
     // folded into this same service — see BrowserConfig.profileName/ephemeralProfile/auth.
-    override val browserService: BrowserService? = getBrowserServiceInstance()
+    override val browserService: BrowserService? = getBrowserServiceInstance(_windowId)
 
     // Git data provider for plugins that display git information
     override val gitDataProvider: GitDataProvider? by lazy {
@@ -926,7 +933,7 @@ class DefaultPlugin(
     fun dispose() {
         // Dispose dynamic plugin manager and sandbox manager
         runBlocking {
-            dynamicPluginManager.dispose()
+            dynamicPluginManager.disposeWindow()
             sandboxManager.dispose()
         }
         pluginScope.cancel()
@@ -1558,4 +1565,3 @@ private class DefaultContextMenuProvider : ContextMenuProvider {
             onClick = onClick
         )
 }
-

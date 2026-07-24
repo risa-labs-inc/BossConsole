@@ -1832,11 +1832,10 @@ class BossTabsComponent(
         tabComponents.clear()
         // Destroy the per-tab lifecycles so plugin components that clean up in
         // lifecycle.onDestroy release their resources on window close too — same
-        // contract as removeTab, without relying on the disposeAll() hammer below.
+        // contract as removeTab. SplitViewState performs the window-scoped
+        // BrowserService fallback after every panel lifecycle has been destroyed.
         tabLifecycles.values.toList().forEach { it.destroy() }
         tabLifecycles.clear()
-        // Also dispose any browsers created by dynamic plugins via BrowserService
-        ai.rever.boss.components.plugin.disposePluginBrowsers()
     }
 }
 
@@ -1871,4 +1870,3 @@ private fun convertTabInfoToTabConfig(tabInfo: TabInfo): TabConfig {
         )
     }
 }
-

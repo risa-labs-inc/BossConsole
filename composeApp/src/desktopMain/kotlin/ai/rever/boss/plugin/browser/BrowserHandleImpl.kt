@@ -103,7 +103,7 @@ internal class BrowserHandleImpl(
 
     override val id: String = UUID.randomUUID().toString()
 
-    private var _disposed = false
+    private val disposed = AtomicBoolean(false)
     private val subscriptions = mutableListOf<Subscription>()
 
     private val navigationListeners = CopyOnWriteArrayList<(String) -> Unit>()
@@ -323,7 +323,7 @@ internal class BrowserHandleImpl(
         // Browser closed
         subscriptions += browser.on(BrowserClosed::class.java) {
             logger.debug(LogCategory.BROWSER, "Browser closed", mapOf("handleId" to id))
-            _disposed = true
+            disposed.set(true)
             // Stop streaming: the underlying page is gone.
             coBrowseCapturing = false
             coBrowseSink = null
@@ -758,7 +758,7 @@ internal class BrowserHandleImpl(
     }
 
     override val isValid: Boolean
-        get() = !_disposed && !browser.isClosed &&
+        get() = !disposed.get() && !browser.isClosed &&
                 FluckEngine.currentEngineGeneration == engineGeneration
 
     override suspend fun loadUrl(url: String) {
@@ -1432,9 +1432,7 @@ internal class BrowserHandleImpl(
     }
 
     override fun dispose() {
-        if (_disposed) return
-
-        _disposed = true
+        if (!disposed.compareAndSet(false, true)) return
 
         // Stop co-browse capture so a disposed tab can never keep streaming.
         coBrowseCapturing = false
