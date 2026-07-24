@@ -1749,7 +1749,6 @@ tasks.register("createExecutableJarWithIncrement") {
 
 // Task to download Chromium binaries for branding
 // Uses desktop runtime classpath since this is a Kotlin Multiplatform project
-
 // Detached configuration for the JxBrowser platform binary needed by downloadChromium.
 // This is NOT included in the app runtime (branded Chromium is used instead).
 val jxBrowserPlatformBinary: Configuration = configurations.create("jxBrowserPlatformBinary")

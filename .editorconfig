@@ -11,8 +11,9 @@ trim_trailing_whitespace = true
 indent_style = space
 indent_size = 4
 max_line_length = 140
-# Matches kotlin.code.style=official in gradle.properties.
-ktlint_code_style = intellij_idea
+# Matches kotlin.code.style=official in gradle.properties (ktlint's name
+# for the official Kotlin style guide is ktlint_official).
+ktlint_code_style = ktlint_official
 
 [*.{yml,yaml,json}]
 indent_style = space
