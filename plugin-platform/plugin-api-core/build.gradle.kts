@@ -26,62 +26,68 @@ version = "1.0.0"
 // the EXACT pinned version (local dev) → previously fetched copy → GitHub
 // release asset download (public repo, no token needed).
 // ============================================================================
-val bossPluginApiVersion: String = libs.versions.boss.plugin.api.get()
+val bossPluginApiVersion: String =
+    libs.versions.boss.plugin.api
+        .get()
 val apiContractDir = layout.buildDirectory.dir("api-contract")
 val apiPluginJar = apiContractDir.map { it.file("boss-plugin-api-$bossPluginApiVersion.jar") }
 
-val fetchApiPluginJar = tasks.register("fetchApiPluginJar") {
-    description = "Fetches the pinned boss-plugin-api release jar (store distribution channel)"
-    val version = bossPluginApiVersion
-    val targetPath = apiPluginJar.get().asFile.absolutePath
-    val siblingPaths = listOf(
-        // Main checkout layout: Boss/BossConsole + Boss/boss_plugins
-        rootDir.resolve("../boss_plugins/boss-plugin-api/build/libs/boss-plugin-api-$version.jar").absolutePath,
-        // Worktree layout: Boss/.worktrees/<name> + Boss/boss_plugins
-        rootDir.resolve("../../boss_plugins/boss-plugin-api/build/libs/boss-plugin-api-$version.jar").absolutePath,
-    )
-    outputs.file(targetPath)
-    doLast {
-        val target = File(targetPath)
-        // Fetched once per pinned version. NOTE for SDK devs: rebuilding the
-        // sibling checkout at the SAME pin does not refresh this copy —
-        // delete build/api-contract/ (or bump the pin) to pick it up.
-        if (target.isFile && target.length() > 0) return@doLast
-        target.parentFile.mkdirs()
+val fetchApiPluginJar =
+    tasks.register("fetchApiPluginJar") {
+        description = "Fetches the pinned boss-plugin-api release jar (store distribution channel)"
+        val version = bossPluginApiVersion
+        val targetPath = apiPluginJar.get().asFile.absolutePath
+        val siblingPaths =
+            listOf(
+                // Main checkout layout: Boss/BossConsole + Boss/boss_plugins
+                rootDir.resolve("../boss_plugins/boss-plugin-api/build/libs/boss-plugin-api-$version.jar").absolutePath,
+                // Worktree layout: Boss/.worktrees/<name> + Boss/boss_plugins
+                rootDir.resolve("../../boss_plugins/boss-plugin-api/build/libs/boss-plugin-api-$version.jar").absolutePath,
+            )
+        outputs.file(targetPath)
+        doLast {
+            val target = File(targetPath)
+            // Fetched once per pinned version. NOTE for SDK devs: rebuilding the
+            // sibling checkout at the SAME pin does not refresh this copy —
+            // delete build/api-contract/ (or bump the pin) to pick it up.
+            if (target.isFile && target.length() > 0) return@doLast
+            target.parentFile.mkdirs()
 
-        val sibling = siblingPaths.map(::File).firstOrNull { it.isFile }
-        if (sibling != null) {
-            sibling.copyTo(target, overwrite = true)
-            logger.lifecycle("boss-plugin-api $version copied from sibling checkout: ${sibling.path}")
-            return@doLast
-        }
+            val sibling = siblingPaths.map(::File).firstOrNull { it.isFile }
+            if (sibling != null) {
+                sibling.copyTo(target, overwrite = true)
+                logger.lifecycle("boss-plugin-api $version copied from sibling checkout: ${sibling.path}")
+                return@doLast
+            }
 
-        val url = "https://github.com/risa-labs-inc/boss-plugin-api/releases/download/v$version/boss-plugin-api-$version.jar"
-        logger.lifecycle("Downloading boss-plugin-api $version from GitHub release…")
-        val process = ProcessBuilder("curl", "-fsSL", "-o", targetPath, url)
-            .redirectErrorStream(true)
-            .start()
-        val output = process.inputStream.bufferedReader().readText()
-        val exit = process.waitFor()
-        check(exit == 0 && target.isFile && target.length() > 0) {
-            "Failed to download $url (curl exit $exit): $output\n" +
-                "Is v$version released? Distribution is store/GitHub-releases only — no Maven fallback. " +
-                "For local dev, build the jar in a sibling boss_plugins/boss-plugin-api checkout."
+            val url = "https://github.com/risa-labs-inc/boss-plugin-api/releases/download/v$version/boss-plugin-api-$version.jar"
+            logger.lifecycle("Downloading boss-plugin-api $version from GitHub release…")
+            val process =
+                ProcessBuilder("curl", "-fsSL", "-o", targetPath, url)
+                    .redirectErrorStream(true)
+                    .start()
+            val output = process.inputStream.bufferedReader().readText()
+            val exit = process.waitFor()
+            check(exit == 0 && target.isFile && target.length() > 0) {
+                "Failed to download $url (curl exit $exit): $output\n" +
+                    "Is v$version released? Distribution is store/GitHub-releases only — no Maven fallback. " +
+                    "For local dev, build the jar in a sibling boss_plugins/boss-plugin-api checkout."
+            }
         }
     }
-}
 
-val apiContractCoreJar = tasks.register<org.gradle.jvm.tasks.Jar>("apiContractCoreJar") {
-    description = "Filters the api package out of the pinned boss-plugin-api jar for host compilation"
-    dependsOn(fetchApiPluginJar)
-    archiveBaseName.set("boss-plugin-api-core")
-    archiveVersion.set(bossPluginApiVersion)
-    destinationDirectory.set(apiContractDir.map { it.dir("filtered") })
-    from(zipTree(apiPluginJar)) {
-        include("ai/rever/boss/plugin/api/**")
-        include("META-INF/*.kotlin_module")
+val apiContractCoreJar =
+    tasks.register<org.gradle.jvm.tasks.Jar>("apiContractCoreJar") {
+        description = "Filters the api package out of the pinned boss-plugin-api jar for host compilation"
+        dependsOn(fetchApiPluginJar)
+        archiveBaseName.set("boss-plugin-api-core")
+        archiveVersion.set(bossPluginApiVersion)
+        destinationDirectory.set(apiContractDir.map { it.dir("filtered") })
+        from(zipTree(apiPluginJar)) {
+            include("ai/rever/boss/plugin/api/**")
+            include("META-INF/*.kotlin_module")
+        }
     }
-}
 
 kotlin {
     compilerOptions {
