@@ -142,27 +142,12 @@ class FluckEngineSwitchesTest {
 
     @Test
     fun `window-owned browser accepts keys only while its owner is focused`() {
-        assertTrue(
-            FluckEngine.shouldAcceptBrowserKeyEvent(
-                ownerWindowId = "window-a",
-                ownerWindowIsFocused = true
-            )
-        )
-        assertFalse(
-            FluckEngine.shouldAcceptBrowserKeyEvent(
-                ownerWindowId = "window-a",
-                ownerWindowIsFocused = false
-            )
-        )
+        assertTrue(FluckEngine.shouldAcceptBrowserKeyEvent(ownerWindowIsFocused = true))
+        assertFalse(FluckEngine.shouldAcceptBrowserKeyEvent(ownerWindowIsFocused = false))
     }
 
     @Test
     fun `legacy unowned browser keeps accepting keys`() {
-        assertTrue(
-            FluckEngine.shouldAcceptBrowserKeyEvent(
-                ownerWindowId = null,
-                ownerWindowIsFocused = false
-            )
-        )
+        assertTrue(FluckEngine.shouldAcceptBrowserKeyEvent(ownerWindowIsFocused = null))
     }
 }

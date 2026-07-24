@@ -3,6 +3,7 @@ package ai.rever.boss.utils
 import java.awt.Window
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
+import java.util.concurrent.ConcurrentHashMap
 import javax.swing.SwingUtilities
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -15,7 +16,7 @@ import kotlinx.coroutines.flow.asStateFlow
  * external events (deep links, file opens) are handled by the focused window only.
  */
 actual object WindowFocusManager {
-    private val windows = mutableMapOf<String, Window>()
+    private val windows = ConcurrentHashMap<String, Window>()
     private val windowListeners = mutableMapOf<String, WindowAdapter>()
     private var focusedWindowId: String? = null
     private var mainWindow: Window? = null  // Kept for backward compatibility

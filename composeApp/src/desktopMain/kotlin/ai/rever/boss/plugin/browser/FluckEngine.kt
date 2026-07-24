@@ -1565,13 +1565,11 @@ object FluckEngine {
     }
 
     /**
-     * Browser handles created outside the window-scoped service retain their legacy behavior.
-     * Window-owned handles accept input only while their owning AWT window is focused.
+     * Null focus represents the legacy unowned browser path; only an explicitly
+     * inactive owner is rejected.
      */
-    internal fun shouldAcceptBrowserKeyEvent(
-        ownerWindowId: String?,
-        ownerWindowIsFocused: Boolean
-    ): Boolean = ownerWindowId == null || ownerWindowIsFocused
+    internal fun shouldAcceptBrowserKeyEvent(ownerWindowIsFocused: Boolean?): Boolean =
+        ownerWindowIsFocused != false
 
     /**
      * Sets up keyboard interceptor for a browser to forward menu shortcuts to the native menu bar.
@@ -1592,10 +1590,8 @@ object FluckEngine {
                 val modifiers = event.keyModifiers()
                 val keyCode = event.keyCode()
 
-                val ownerWindowIsFocused = ownerWindowId
-                    ?.let(WindowFocusManager::isWindowFocused)
-                    ?: false
-                if (!shouldAcceptBrowserKeyEvent(ownerWindowId, ownerWindowIsFocused)) {
+                val ownerWindowIsFocused = ownerWindowId?.let(WindowFocusManager::isWindowFocused)
+                if (!shouldAcceptBrowserKeyEvent(ownerWindowIsFocused)) {
                     return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response.suppress()
                 }
                 val shortcutWindowId = ownerWindowId ?: WindowFocusManager.focusedWindowFlow.value
