@@ -293,7 +293,8 @@ fun EditableKeymapSettings() {
                             ) {
                                 Text(
                                     text = if (category == "All") "All Categories" else category,
-                                    color = if (category == selectedCategory) BossTheme.colors.signal else BossTheme.colors.textPrimary,
+                                    color = if (category == selectedCategory) BossTheme.colors.signal
+                                    else BossTheme.colors.textPrimary,
                                     fontSize = 13.sp
                                 )
                             }

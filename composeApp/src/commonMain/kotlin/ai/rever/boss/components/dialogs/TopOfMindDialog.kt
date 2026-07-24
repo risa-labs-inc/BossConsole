@@ -332,7 +332,8 @@ private fun ActiveTabDialogItem(
                     Text(
                         text = secondaryText,
                         fontSize = 12.sp,
-                        color = if (isSelected) BossTheme.colors.textSecondary.copy(alpha = 0.9f) else BossTheme.colors.textSecondary,
+                        color = if (isSelected) BossTheme.colors.textSecondary.copy(alpha = 0.9f)
+                        else BossTheme.colors.textSecondary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )

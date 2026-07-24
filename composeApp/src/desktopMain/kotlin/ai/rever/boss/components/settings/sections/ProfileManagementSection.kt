@@ -215,7 +215,8 @@ fun ProfileManagementSection(
                 ) {
                     Text(
                         "Create",
-                        color = if (newProfileName.isNotBlank()) BossTheme.colors.signal else BossTheme.colors.textSecondary,
+                        color = if (newProfileName.isNotBlank()) BossTheme.colors.signal
+                        else BossTheme.colors.textSecondary,
                         fontSize = 13.sp
                     )
                 }

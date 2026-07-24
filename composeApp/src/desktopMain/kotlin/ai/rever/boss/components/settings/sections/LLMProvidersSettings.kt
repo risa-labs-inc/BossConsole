@@ -312,7 +312,12 @@ fun LLMProvidersSettings() {
                                 value = customEndpoint,
                                 onValueChange = { customEndpoint = it },
                                 label = { Text("API Endpoint") },
-                                placeholder = { Text("https://api.example.com/v1/chat", color = BossTheme.colors.textSecondary.copy(alpha = 0.5f)) },
+                                placeholder = {
+                                    Text(
+                                        "https://api.example.com/v1/chat",
+                                        color = BossTheme.colors.textSecondary.copy(alpha = 0.5f)
+                                    )
+                                },
                                 modifier = Modifier.fillMaxWidth(),
                                 singleLine = true,
                                 colors = TextFieldDefaults.outlinedTextFieldColors(

@@ -219,7 +219,11 @@ private fun ExportDialog(
                         },
                         colors = ButtonDefaults.buttonColors(backgroundColor = BossTheme.colors.signal)
                     ) {
-                        Text(if (copied) "Copied!" else "Copy to Clipboard", color = BossTheme.colors.textPrimary, fontSize = 13.sp)
+                        Text(
+                            if (copied) "Copied!" else "Copy to Clipboard",
+                            color = BossTheme.colors.textPrimary,
+                            fontSize = 13.sp
+                        )
                     }
                 }
 
@@ -295,7 +299,9 @@ private fun ImportDialog(
                             fontSize = 11.sp,
                             color = BossTheme.colors.textPrimary
                         ),
-                        placeholder = { Text("Paste JSON here...", color = BossTheme.colors.textSecondary, fontSize = 11.sp) },
+                        placeholder = {
+                            Text("Paste JSON here...", color = BossTheme.colors.textSecondary, fontSize = 11.sp)
+                        },
                         colors = TextFieldDefaults.textFieldColors(
                             textColor = BossTheme.colors.textPrimary,
                             backgroundColor = Color.Transparent,

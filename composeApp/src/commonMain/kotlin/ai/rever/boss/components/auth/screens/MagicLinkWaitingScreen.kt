@@ -211,7 +211,8 @@ fun MagicLinkWaitingScreen(
                 enabled = !isLoading && resendCooldown == 0,
                 shape = RoundedCornerShape(4.dp),
                 colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = if (resendCooldown == 0) BossTheme.colors.textPrimary else BossTheme.colors.textSecondary
+                    contentColor = if (resendCooldown == 0) BossTheme.colors.textPrimary
+                    else BossTheme.colors.textSecondary
                 ),
                 border = BorderStroke(1.dp, BossTheme.colors.line)
             ) {
