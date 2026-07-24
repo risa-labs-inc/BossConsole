@@ -25,6 +25,7 @@ kotlin {
     sourceSets {
         commonMain {
             dependencies {
+                implementation(projects.pluginPlatform.pluginUiCore)
                 implementation(libs.compose.mp.runtime)
                 implementation(libs.compose.mp.ui)
                 implementation(libs.compose.mp.foundation)

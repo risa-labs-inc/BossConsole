@@ -15,7 +15,7 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
@@ -59,20 +59,20 @@ fun BossSearchBar(
             .height(28.dp),
         singleLine = true,
         textStyle = MaterialTheme.typography.body2.copy(
-            color = Color.White
+            color = BossTheme.colors.textPrimary
         ),
-        cursorBrush = SolidColor(Color(0xFFFBBF24)), // Gold cursor
+        cursorBrush = SolidColor(BossTheme.colors.signal), // Amber cursor
         decorationBox = { innerTextField ->
             Row(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(
-                        Color(0xFF1E1F22), // Dark surface
+                        BossTheme.colors.raised,
                         RoundedCornerShape(4.dp)
                     )
                     .border(
                         1.dp,
-                        Color(0xFF555555), // Gray border
+                        BossTheme.colors.lineStrong, // Input edge
                         RoundedCornerShape(4.dp)
                     )
                     .padding(horizontal = 8.dp, vertical = 2.dp),
@@ -83,7 +83,7 @@ fun BossSearchBar(
                     imageVector = leadingIcon,
                     contentDescription = "Search",
                     modifier = Modifier.size(16.dp),
-                    tint = Color(0xFF888888)
+                    tint = BossTheme.colors.textSecondary
                 )
 
                 Spacer(modifier = Modifier.width(6.dp))
@@ -93,7 +93,7 @@ fun BossSearchBar(
                         Text(
                             placeholder,
                             style = MaterialTheme.typography.body2,
-                            color = Color(0xFF888888),
+                            color = BossTheme.colors.textMuted,
                             fontSize = 12.sp
                         )
                     }
@@ -111,7 +111,7 @@ fun BossSearchBar(
                             imageVector = Icons.Filled.Clear,
                             contentDescription = "Clear search",
                             modifier = Modifier.size(14.dp),
-                            tint = Color(0xFF888888)
+                            tint = BossTheme.colors.textSecondary
                         )
                     }
                 }
