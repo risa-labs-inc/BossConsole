@@ -35,41 +35,92 @@ import java.util.concurrent.ConcurrentLinkedDeque
  * of escaping cleanup and retaining the destroyed AWT window.
  */
 internal class BrowserWindowOwnershipRegistry {
-    private val ownerByBrowserId = ConcurrentHashMap<String, String>()
-    private val closedWindowIds = ConcurrentHashMap.newKeySet<String>()
+    private data class WindowCreationState(
+        var inFlightCreates: Int = 0,
+        var closing: Boolean = false
+    )
 
-    fun register(browserId: String, windowId: String): Boolean {
-        if (windowId in closedWindowIds) return false
+    private val lock = Any()
+    private val ownerByBrowserId = mutableMapOf<String, String>()
+    private val creationStateByWindowId = mutableMapOf<String, WindowCreationState>()
+    private var closingAll = false
 
-        ownerByBrowserId[browserId] = windowId
-        if (windowId in closedWindowIds) {
-            ownerByBrowserId.remove(browserId, windowId)
-            return false
+    fun tryBeginCreate(windowId: String): Boolean = synchronized(lock) {
+        if (closingAll) return@synchronized false
+
+        val state = creationStateByWindowId.getOrPut(windowId, ::WindowCreationState)
+        if (state.closing) {
+            false
+        } else {
+            state.inFlightCreates++
+            true
         }
-        return true
     }
 
-    fun unregister(browserId: String) {
+    fun register(browserId: String, windowId: String): Boolean = synchronized(lock) {
+        val state = creationStateByWindowId[windowId]
+        if (closingAll || state == null || state.closing) {
+            false
+        } else {
+            ownerByBrowserId[browserId] = windowId
+            true
+        }
+    }
+
+    fun finishCreate(windowId: String) = synchronized(lock) {
+        val state = creationStateByWindowId[windowId] ?: return@synchronized
+        check(state.inFlightCreates > 0) {
+            "Browser creation finished without a matching start for window $windowId"
+        }
+        state.inFlightCreates--
+        if (state.inFlightCreates == 0) {
+            // The window-scoped BrowserService permanently rejects new work after
+            // close, so no closed UUID needs to remain once admitted calls drain.
+            creationStateByWindowId.remove(windowId, state)
+        }
+    }
+
+    fun unregister(browserId: String) = synchronized(lock) {
         ownerByBrowserId.remove(browserId)
     }
 
-    fun closeWindow(windowId: String): Set<String> {
-        closedWindowIds += windowId
-        return ownerByBrowserId.entries.mapNotNullTo(mutableSetOf()) { (browserId, ownerWindowId) ->
-            browserId.takeIf {
-                ownerWindowId == windowId && ownerByBrowserId.remove(browserId, windowId)
+    fun closeWindow(windowId: String): Set<String> = synchronized(lock) {
+        val state = creationStateByWindowId.getOrPut(windowId, ::WindowCreationState)
+        state.closing = true
+
+        val ownedBrowserIds = mutableSetOf<String>()
+        val owners = ownerByBrowserId.iterator()
+        while (owners.hasNext()) {
+            val (browserId, ownerWindowId) = owners.next()
+            if (ownerWindowId == windowId) {
+                ownedBrowserIds += browserId
+                owners.remove()
+            }
+        }
+
+        if (state.inFlightCreates == 0) {
+            creationStateByWindowId.remove(windowId, state)
+        }
+        ownedBrowserIds
+    }
+
+    fun count(windowId: String): Int = synchronized(lock) {
+        ownerByBrowserId.values.count { it == windowId }
+    }
+
+    fun closeAll() {
+        synchronized(lock) {
+            closingAll = true
+            ownerByBrowserId.clear()
+            creationStateByWindowId.values.forEach { it.closing = true }
+            creationStateByWindowId.entries.removeAll { (_, state) ->
+                state.inFlightCreates == 0
             }
         }
     }
 
-    fun count(windowId: String): Int =
-        ownerByBrowserId.values.count { it == windowId }
-
-    fun closeAll(): Set<String> {
-        closedWindowIds += ownerByBrowserId.values
-        return ownerByBrowserId.keys.toSet().also {
-            ownerByBrowserId.clear()
-        }
+    internal fun trackedWindowCount(): Int = synchronized(lock) {
+        creationStateByWindowId.size
     }
 }
 
@@ -192,10 +243,17 @@ object BrowserServiceImpl : BrowserService {
     override suspend fun createBrowser(config: BrowserConfig): BrowserHandle? =
         createBrowser(config, ownerWindowId = null)
 
+    internal fun tryBeginBrowserCreation(windowId: String): Boolean =
+        browserOwners.tryBeginCreate(windowId)
+
     internal suspend fun createBrowserForWindow(
         windowId: String,
         config: BrowserConfig
     ): BrowserHandle? = createBrowser(config, ownerWindowId = windowId)
+
+    internal fun finishBrowserCreation(windowId: String) {
+        browserOwners.finishCreate(windowId)
+    }
 
     private suspend fun createBrowser(
         config: BrowserConfig,
@@ -353,8 +411,9 @@ object BrowserServiceImpl : BrowserService {
         ownedBrowserIds.forEach { browserId ->
             val handle = activeBrowsers[browserId] ?: return@forEach
             try {
-                disposeTrackedBrowserBlocking(handle)
-                disposedCount++
+                if (disposeTrackedBrowserBlocking(handle)) {
+                    disposedCount++
+                }
             } catch (e: Exception) {
                 logger.warn(LogCategory.BROWSER, "Error disposing browser for window", mapOf(
                     "handleId" to browserId,
@@ -389,8 +448,9 @@ object BrowserServiceImpl : BrowserService {
         logger.info(LogCategory.BROWSER, "All browsers disposed", mapOf("count" to count))
     }
 
-    private fun disposeTrackedBrowserBlocking(handle: BrowserHandleImpl) {
-        activeBrowsers.remove(handle.id, handle)
+    private fun disposeTrackedBrowserBlocking(handle: BrowserHandleImpl): Boolean {
+        if (!activeBrowsers.remove(handle.id, handle)) return false
+
         browserOwners.unregister(handle.id)
         try {
             handle.dispose()
@@ -399,6 +459,7 @@ object BrowserServiceImpl : BrowserService {
             // but it must release profile locks and delete ephemeral profiles.
             managedByHandle.remove(handle.id)?.let(::releaseManaged)
         }
+        return true
     }
 
     // =======================================================================

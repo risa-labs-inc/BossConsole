@@ -132,6 +132,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.io.File
 
+/**
+ * Per-window plugin context.
+ *
+ * @param _windowId stable ID of the owning application window. Production window
+ * contexts must provide it so plugin-created browsers participate in window-scoped
+ * cleanup. The null default is reserved for non-window/test contexts.
+ */
 class DefaultPlugin(
     override val panelRegistry: PanelRegistry,
     override val tabRegistry: TabRegistry,

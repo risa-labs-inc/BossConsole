@@ -18,9 +18,15 @@ class BrowserServiceImplTest {
     @Test
     fun `closing one window drains only its browser handles`() {
         val registry = BrowserWindowOwnershipRegistry()
+        assertTrue(registry.tryBeginCreate("first-window"))
         assertTrue(registry.register("first-1", "first-window"))
+        registry.finishCreate("first-window")
+        assertTrue(registry.tryBeginCreate("first-window"))
         assertTrue(registry.register("first-2", "first-window"))
+        registry.finishCreate("first-window")
+        assertTrue(registry.tryBeginCreate("second-window"))
         assertTrue(registry.register("second-1", "second-window"))
+        registry.finishCreate("second-window")
 
         assertEquals(setOf("second-1"), registry.closeWindow("second-window"))
         assertEquals(2, registry.count("first-window"))
@@ -32,9 +38,15 @@ class BrowserServiceImplTest {
     fun `browser finishing creation after window close is rejected`() {
         val registry = BrowserWindowOwnershipRegistry()
 
+        assertTrue(registry.tryBeginCreate("closing-window"))
         assertTrue(registry.closeWindow("closing-window").isEmpty())
         assertFalse(registry.register("late-browser", "closing-window"))
+        assertFalse(registry.tryBeginCreate("closing-window"))
+        assertEquals(1, registry.trackedWindowCount())
+        registry.finishCreate("closing-window")
+
         assertEquals(0, registry.count("closing-window"))
+        assertEquals(0, registry.trackedWindowCount())
     }
 
     @Test
