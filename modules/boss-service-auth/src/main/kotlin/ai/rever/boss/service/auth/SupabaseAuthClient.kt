@@ -21,16 +21,20 @@ class SupabaseAuthClient(
 ) {
     private val logger = LoggerFactory.getLogger(SupabaseAuthClient::class.java)
 
-    private val client = createSupabaseClient(
-        supabaseUrl = supabaseUrl,
-        supabaseKey = supabaseAnonKey,
-    ) {
-        install(Auth)
-    }
+    private val client =
+        createSupabaseClient(
+            supabaseUrl = supabaseUrl,
+            supabaseKey = supabaseAnonKey,
+        ) {
+            install(Auth)
+        }
 
     /** Signs in with email + password. Returns [AuthResult.Success] on success. */
-    suspend fun signInWithEmailPassword(email: String, password: String): AuthResult {
-        return try {
+    suspend fun signInWithEmailPassword(
+        email: String,
+        password: String,
+    ): AuthResult =
+        try {
             client.auth.signInWith(Email) {
                 this.email = email
                 this.password = password
@@ -40,15 +44,14 @@ class SupabaseAuthClient(
             logger.error("Email/password sign-in failed for {}", maskEmail(email), e)
             AuthResult.Failure(e.message ?: "Sign-in failed")
         }
-    }
 
     /**
      * Sends a magic link to the given email.
      * Returns [AuthResult.MagicLinkSent] immediately — the actual session arrives
      * when the user clicks the link and the deep-link callback updates state.
      */
-    suspend fun sendMagicLink(email: String): AuthResult {
-        return try {
+    suspend fun sendMagicLink(email: String): AuthResult =
+        try {
             client.auth.signInWith(OTP) {
                 this.email = email
             }
@@ -57,7 +60,6 @@ class SupabaseAuthClient(
             logger.error("Magic link send failed for {}", maskEmail(email), e)
             AuthResult.Failure(e.message ?: "Magic link failed")
         }
-    }
 
     /** Signs out and clears the local session. Errors are logged but not re-thrown. */
     suspend fun signOut() {
@@ -72,32 +74,41 @@ class SupabaseAuthClient(
      * Attempts to restore a previously stored session (e.g. from disk or env).
      * Call this at service startup before accepting requests.
      */
-    suspend fun restoreSession(): AuthResult {
-        return try {
+    suspend fun restoreSession(): AuthResult =
+        try {
             client.auth.awaitInitialization()
             buildSuccessResult(fallbackEmail = null)
         } catch (e: Exception) {
             logger.debug("No session to restore: {}", e.message)
             AuthResult.Failure("No session")
         }
-    }
 
     private fun buildSuccessResult(fallbackEmail: String?): AuthResult {
-        val session = client.auth.currentSessionOrNull()
-            ?: return AuthResult.Failure("No session available after auth operation")
+        val session =
+            client.auth.currentSessionOrNull()
+                ?: return AuthResult.Failure("No session available after auth operation")
         val user = session.user
         return AuthResult.Success(
             userId = user?.id ?: "",
             email = user?.email ?: fallbackEmail ?: "",
-            displayName = user?.userMetadata?.get("full_name")?.jsonPrimitive?.contentOrNull ?: "",
-            isAdmin = user?.userMetadata?.get("is_admin")?.jsonPrimitive?.contentOrNull == "true",
+            displayName =
+                user
+                    ?.userMetadata
+                    ?.get("full_name")
+                    ?.jsonPrimitive
+                    ?.contentOrNull ?: "",
+            isAdmin =
+                user
+                    ?.userMetadata
+                    ?.get("is_admin")
+                    ?.jsonPrimitive
+                    ?.contentOrNull == "true",
             sessionToken = session.accessToken,
             sessionCreatedAt = System.currentTimeMillis() / 1000,
         )
     }
 
-    private fun maskEmail(email: String): String =
-        if (email.length > 3) "${email.take(3)}***" else "***"
+    private fun maskEmail(email: String): String = if (email.length > 3) "${email.take(3)}***" else "***"
 }
 
 sealed class AuthResult {
@@ -110,7 +121,11 @@ sealed class AuthResult {
         val sessionCreatedAt: Long,
     ) : AuthResult()
 
-    data class MagicLinkSent(val email: String) : AuthResult()
+    data class MagicLinkSent(
+        val email: String,
+    ) : AuthResult()
 
-    data class Failure(val message: String) : AuthResult()
+    data class Failure(
+        val message: String,
+    ) : AuthResult()
 }

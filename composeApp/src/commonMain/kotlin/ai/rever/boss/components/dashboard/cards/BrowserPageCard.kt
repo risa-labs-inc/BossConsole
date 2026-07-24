@@ -1,10 +1,12 @@
 package ai.rever.boss.components.dashboard.cards
 
 import ai.rever.boss.cache.loadHighQualityFavicon
-import ai.rever.boss.plugin.api.TabIcon
-import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.dashboard.RecentBrowserPage
 import ai.rever.boss.dashboard.RecentBrowserPagesManager
+import ai.rever.boss.plugin.api.TabIcon
+import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Image
@@ -44,8 +46,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import ai.rever.boss.utils.logging.BossLogger
-import ai.rever.boss.utils.logging.LogCategory
 
 private val logger = BossLogger.forComponent("BrowserPageCard")
 
@@ -57,14 +57,14 @@ fun BrowserPageCard(
     page: RecentBrowserPage,
     onClick: () -> Unit,
     onRemove: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
 
     val scale by animateFloatAsState(
         targetValue = if (isHovered) 1.02f else 1f,
-        animationSpec = spring(dampingRatio = 0.6f)
+        animationSpec = spring(dampingRatio = 0.6f),
     )
 
     val backgroundColor = if (isHovered) BossTheme.colors.signalWash else BossTheme.colors.raised
@@ -75,62 +75,66 @@ fun BrowserPageCard(
     // Load high-quality favicon (Google's service provides up to 128px icons)
     var favicon by remember(page.url) { mutableStateOf<ai.rever.boss.plugin.api.TabIcon.Image?>(null) }
     LaunchedEffect(page.url, page.faviconCacheKey) {
-        favicon = try {
-            loadHighQualityFavicon(page.url, page.faviconCacheKey)
-        } catch (e: Exception) {
-            logger.debug(
-                LogCategory.BROWSER,
-                "Failed to load high-quality favicon - card shows fallback icon",
-                mapOf("error" to e.toString()),
-            )
-            null
-        }
+        favicon =
+            try {
+                loadHighQualityFavicon(page.url, page.faviconCacheKey)
+            } catch (e: Exception) {
+                logger.debug(
+                    LogCategory.BROWSER,
+                    "Failed to load high-quality favicon - card shows fallback icon",
+                    mapOf("error" to e.toString()),
+                )
+                null
+            }
     }
 
     Box(
-        modifier = modifier.width(120.dp)
+        modifier = modifier.width(120.dp),
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .scale(scale)
-                .clip(cardShape)
-                .background(color = backgroundColor)
-                .clickable { onClick() }
-                .hoverable(interactionSource)
-                .padding(12.dp),
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .scale(scale)
+                    .clip(cardShape)
+                    .background(color = backgroundColor)
+                    .clickable { onClick() }
+                    .hoverable(interactionSource)
+                    .padding(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             // High-quality favicon or fallback icon
             Box(
                 modifier = Modifier.size(36.dp),
-                contentAlignment = Alignment.Center
+                contentAlignment = Alignment.Center,
             ) {
                 if (favicon != null) {
                     Image(
                         painter = favicon!!.painter,
                         contentDescription = page.title,
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(RoundedCornerShape(6.dp))
+                        modifier =
+                            Modifier
+                                .size(32.dp)
+                                .clip(RoundedCornerShape(6.dp)),
                     )
                 } else {
                     Icon(
                         imageVector = Icons.Outlined.Language,
                         contentDescription = page.title,
                         tint = iconColor,
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(32.dp),
                     )
                 }
             }
 
             // Title with fixed height for consistency
             Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(32.dp),
-                contentAlignment = Alignment.Center
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(32.dp),
+                contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text = page.title.ifBlank { domain },
@@ -139,7 +143,7 @@ fun BrowserPageCard(
                     fontWeight = FontWeight.Medium,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center
+                    textAlign = TextAlign.Center,
                 )
             }
 
@@ -148,29 +152,29 @@ fun BrowserPageCard(
                 color = BossTheme.colors.textSecondary,
                 fontSize = 10.sp,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
             )
         }
 
         // Remove button (visible on hover)
         if (isHovered) {
             Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(4.dp)
-                    .size(16.dp)
-                    .background(
-                        color = BossTheme.colors.lineStrong,
-                        shape = CircleShape
-                    )
-                    .clickable { onRemove() },
-                contentAlignment = Alignment.Center
+                modifier =
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(4.dp)
+                        .size(16.dp)
+                        .background(
+                            color = BossTheme.colors.lineStrong,
+                            shape = CircleShape,
+                        ).clickable { onRemove() },
+                contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = Icons.Filled.Close,
                     contentDescription = "Remove",
                     tint = BossTheme.colors.textSecondary,
-                    modifier = Modifier.size(10.dp)
+                    modifier = Modifier.size(10.dp),
                 )
             }
         }
@@ -183,8 +187,8 @@ fun BrowserPageCard(
  * These are deliberate external brand-identity colors (GitHub green, Google
  * blue, YouTube red, ...) and are intentionally exempt from BOSS theme tokens.
  */
-private fun getDomainColor(domain: String): Color {
-    return when {
+private fun getDomainColor(domain: String): Color =
+    when {
         domain.contains("github.com") -> Color(0xFF2EA44F)
         domain.contains("gitlab.com") -> Color(0xFFFC6D26)
         domain.contains("stackoverflow.com") -> Color(0xFFF48024)
@@ -197,4 +201,3 @@ private fun getDomainColor(domain: String): Color {
         domain.contains("developer.") -> Color(0xFF4CAF50)
         else -> Color(0xFF78909C)
     }
-}

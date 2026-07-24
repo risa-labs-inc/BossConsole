@@ -5,11 +5,11 @@ import ai.rever.boss.plugin.scrollbar.HorizontalBarScrollbarConfig
 import ai.rever.boss.plugin.scrollbar.PanelScrollbarConfig
 import ai.rever.boss.plugin.ui.BossThemeController
 import ai.rever.boss.plugin.ui.BossThemes
-import kotlin.test.assertEquals
-import kotlin.test.assertNotEquals
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 
 /**
  * Regression guard for the stored-val → getter fixes in the token migration.
@@ -24,7 +24,6 @@ import org.junit.jupiter.api.Test
  * pair rather than deleting the guard.
  */
 class ThemeTokenReactivityTest {
-
     private lateinit var originalThemeId: String
 
     @BeforeEach

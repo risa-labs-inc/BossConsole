@@ -19,7 +19,6 @@ import kotlin.time.Duration.Companion.seconds
  * Used by Issue #56 - Secret Access Integration with Fluck Browser
  */
 object FormFieldDetector {
-
     private val logger = BossLogger.forComponent("FormFieldDetector")
 
     /**
@@ -33,9 +32,10 @@ object FormFieldDetector {
         val fieldValue: String,
         val parentFormAction: String?,
         val inputType: String,
-        val autocomplete: String
+        val autocomplete: String,
     ) {
         fun isPasswordField(): Boolean = fieldType == FieldType.PASSWORD
+
         fun isUsernameField(): Boolean = fieldType == FieldType.USERNAME || fieldType == FieldType.EMAIL
     }
 
@@ -43,11 +43,11 @@ object FormFieldDetector {
      * Types of form fields we can detect
      */
     enum class FieldType {
-        USERNAME,   // Username or login field
-        PASSWORD,   // Password field
-        EMAIL,      // Email field
-        TEXT,       // Generic text field
-        UNKNOWN     // Cannot determine
+        USERNAME, // Username or login field
+        PASSWORD, // Password field
+        EMAIL, // Email field
+        TEXT, // Generic text field
+        UNKNOWN, // Cannot determine
     }
 
     /**
@@ -60,7 +60,8 @@ object FormFieldDetector {
      */
     fun injectFormDetectionScript(browser: LockedBrowser) {
         try {
-            val script = """
+            val script =
+                """
                 (function() {
                     // Store currently focused element
                     window.__BOSS_FOCUSED_FIELD = null;
@@ -111,7 +112,7 @@ object FormFieldDetector {
 
                     console.log('[BOSS] Form field detection script injected');
                 })();
-            """.trimIndent()
+                """.trimIndent()
 
             browser.mainFrame().ifPresent { frame ->
                 frame.executeJavaScript<Any>(script)
@@ -132,16 +133,17 @@ object FormFieldDetector {
      * @param browser The LockedBrowser instance (thread-safe wrapper)
      * @return FormFieldInfo if a field is focused, null otherwise
      */
-    suspend fun getCurrentFocusedField(browser: LockedBrowser): FormFieldInfo? {
-        return try {
+    suspend fun getCurrentFocusedField(browser: LockedBrowser): FormFieldInfo? =
+        try {
             val result = CompletableDeferred<FormFieldInfo?>()
 
             browser.mainFrame().ifPresent { frame ->
                 try {
                     // Call JavaScript function to get field info - return as JSON string
-                    val value = frame.executeJavaScript<String>(
-                        "JSON.stringify(window.__BOSS_GET_FOCUSED_FIELD ? window.__BOSS_GET_FOCUSED_FIELD() : null)"
-                    )
+                    val value =
+                        frame.executeJavaScript<String>(
+                            "JSON.stringify(window.__BOSS_GET_FOCUSED_FIELD ? window.__BOSS_GET_FOCUSED_FIELD() : null)",
+                        )
 
                     value?.let { jsonString ->
                         if (jsonString != "null" && jsonString.isNotEmpty()) {
@@ -174,7 +176,6 @@ object FormFieldDetector {
             )
             null
         }
-    }
 
     /**
      * Parse field information from JSON string.
@@ -182,8 +183,8 @@ object FormFieldDetector {
      * JavaScript returns JSON like:
      * {"type":"password","name":"pwd","id":"password-field",...}
      */
-    private fun parseFieldInfoJson(jsonString: String): FormFieldInfo? {
-        return try {
+    private fun parseFieldInfoJson(jsonString: String): FormFieldInfo? =
+        try {
             // Simple JSON parsing - extract values between quotes
             val extractValue = { key: String ->
                 val pattern = "\"$key\":\"([^\"]*)\""
@@ -202,15 +203,16 @@ object FormFieldDetector {
             val ariaLabel = extractValue("ariaLabel")
 
             // Determine field type using heuristics
-            val fieldType = determineFieldType(
-                inputType = inputType,
-                fieldName = fieldName,
-                fieldId = fieldId,
-                placeholder = placeholder,
-                autocomplete = autocomplete,
-                className = className,
-                ariaLabel = ariaLabel
-            )
+            val fieldType =
+                determineFieldType(
+                    inputType = inputType,
+                    fieldName = fieldName,
+                    fieldId = fieldId,
+                    placeholder = placeholder,
+                    autocomplete = autocomplete,
+                    className = className,
+                    ariaLabel = ariaLabel,
+                )
 
             FormFieldInfo(
                 fieldType = fieldType,
@@ -220,7 +222,7 @@ object FormFieldDetector {
                 fieldValue = value,
                 parentFormAction = formAction,
                 inputType = inputType,
-                autocomplete = autocomplete
+                autocomplete = autocomplete,
             )
         } catch (e: Exception) {
             // Never log the JSON payload itself - it can contain a typed field value.
@@ -233,7 +235,6 @@ object FormFieldDetector {
             )
             null
         }
-    }
 
     /**
      * Parse field information from JavaScript object string (legacy).
@@ -241,8 +242,8 @@ object FormFieldDetector {
      * JavaScript returns an object like:
      * {type: "password", name: "pwd", id: "password-field", ...}
      */
-    private fun parseFieldInfo(jsObjectString: String): FormFieldInfo? {
-        return try {
+    private fun parseFieldInfo(jsObjectString: String): FormFieldInfo? =
+        try {
             // Simple parsing of JavaScript object string
             // Format: {key: value, key: value, ...}
             val cleanStr = jsObjectString.trim().removeSurrounding("{", "}")
@@ -269,15 +270,16 @@ object FormFieldDetector {
             val ariaLabel = map["ariaLabel"] ?: ""
 
             // Determine field type using heuristics
-            val fieldType = determineFieldType(
-                inputType = inputType,
-                fieldName = fieldName,
-                fieldId = fieldId,
-                placeholder = placeholder,
-                autocomplete = autocomplete,
-                className = className,
-                ariaLabel = ariaLabel
-            )
+            val fieldType =
+                determineFieldType(
+                    inputType = inputType,
+                    fieldName = fieldName,
+                    fieldId = fieldId,
+                    placeholder = placeholder,
+                    autocomplete = autocomplete,
+                    className = className,
+                    ariaLabel = ariaLabel,
+                )
 
             FormFieldInfo(
                 fieldType = fieldType,
@@ -287,7 +289,7 @@ object FormFieldDetector {
                 fieldValue = value,
                 parentFormAction = formAction,
                 inputType = inputType,
-                autocomplete = autocomplete
+                autocomplete = autocomplete,
             )
         } catch (e: Exception) {
             // Never log the object string itself - it can contain a typed field value.
@@ -299,7 +301,6 @@ object FormFieldDetector {
             )
             null
         }
-    }
 
     /**
      * Determine field type using multiple heuristics.
@@ -319,7 +320,7 @@ object FormFieldDetector {
         placeholder: String,
         autocomplete: String,
         className: String,
-        ariaLabel: String
+        ariaLabel: String,
     ): FieldType {
         val lowerType = inputType.lowercase()
         val lowerName = fieldName.lowercase()
@@ -338,10 +339,12 @@ object FormFieldDetector {
         // 2. Check autocomplete attribute (HTML5 standard)
         when {
             lowerAutocomplete.contains("username") -> return FieldType.USERNAME
+
             lowerAutocomplete.contains("email") -> return FieldType.EMAIL
+
             lowerAutocomplete.contains("password") ||
-            lowerAutocomplete.contains("current-password") ||
-            lowerAutocomplete.contains("new-password") -> return FieldType.PASSWORD
+                lowerAutocomplete.contains("current-password") ||
+                lowerAutocomplete.contains("new-password") -> return FieldType.PASSWORD
         }
 
         // 3. Check field name/id patterns
@@ -349,14 +352,14 @@ object FormFieldDetector {
 
         when {
             combinedText.contains("password") || combinedText.contains("passwd") ||
-            combinedText.contains("pwd") -> return FieldType.PASSWORD
+                combinedText.contains("pwd") -> return FieldType.PASSWORD
 
             combinedText.contains("email") || combinedText.contains("e-mail") ||
-            combinedText.contains("@") -> return FieldType.EMAIL
+                combinedText.contains("@") -> return FieldType.EMAIL
 
             combinedText.contains("username") || combinedText.contains("user") ||
-            combinedText.contains("login") || combinedText.contains("account") ||
-            combinedText.contains("userid") -> return FieldType.USERNAME
+                combinedText.contains("login") || combinedText.contains("account") ||
+                combinedText.contains("userid") -> return FieldType.USERNAME
         }
 
         // 4. Default to TEXT for regular input fields
@@ -375,14 +378,15 @@ object FormFieldDetector {
      * @param browser The LockedBrowser instance (thread-safe wrapper)
      * @return List of all form fields found
      */
-    suspend fun findAllFormFields(browser: LockedBrowser): List<FormFieldInfo> {
-        return try {
+    suspend fun findAllFormFields(browser: LockedBrowser): List<FormFieldInfo> =
+        try {
             val fields = mutableListOf<FormFieldInfo>()
             val result = CompletableDeferred<List<FormFieldInfo>>()
 
             browser.mainFrame().ifPresent { frame ->
                 try {
-                    val script = """
+                    val script =
+                        """
                         (function() {
                             const inputs = document.querySelectorAll('input, textarea');
                             return Array.from(inputs).map(field => ({
@@ -393,7 +397,7 @@ object FormFieldDetector {
                                 autocomplete: field.getAttribute('autocomplete') || ''
                             }));
                         })();
-                    """.trimIndent()
+                        """.trimIndent()
 
                     frame.executeJavaScript<Any>(script)
                     // Parse result array (simplified)
@@ -419,5 +423,4 @@ object FormFieldDetector {
             )
             emptyList()
         }
-    }
 }

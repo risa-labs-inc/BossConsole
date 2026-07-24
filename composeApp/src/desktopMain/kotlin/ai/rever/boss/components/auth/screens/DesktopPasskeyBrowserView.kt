@@ -1,5 +1,8 @@
 package ai.rever.boss.components.auth.screens
 
+import ai.rever.boss.plugin.browser.FluckEngine
+import ai.rever.boss.plugin.browser.LocalAwtWindow
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.foundation.background
@@ -9,9 +12,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import ai.rever.boss.plugin.browser.FluckEngine
-import ai.rever.boss.plugin.browser.LocalAwtWindow
-import ai.rever.boss.plugin.ui.BossTheme
 import com.teamdev.jxbrowser.browser.Browser
 import com.teamdev.jxbrowser.navigation.event.LoadFinished
 import com.teamdev.jxbrowser.navigation.event.LoadStarted
@@ -33,7 +33,7 @@ private val logger = BossLogger.forComponent("DesktopPasskeyBrowserView")
 actual fun PasskeyBrowserView(
     url: String,
     onLoadComplete: () -> Unit,
-    onError: (String) -> Unit
+    onError: (String) -> Unit,
 ) {
     var browser by remember { mutableStateOf<Browser?>(null) }
     var initError by remember { mutableStateOf<String?>(null) }
@@ -68,7 +68,6 @@ actual fun PasskeyBrowserView(
             // Load the WebAuthn URL
             logger.debug(LogCategory.BROWSER, "Loading WebAuthn URL")
             newBrowser.navigation().loadUrl(url)
-
         } catch (e: Exception) {
             val errorMessage = "Failed to initialize browser: ${e.message}"
             logger.warn(LogCategory.BROWSER, errorMessage, error = e)
@@ -91,14 +90,15 @@ actual fun PasskeyBrowserView(
     if (initError != null) {
         // Show error message if initialization failed
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(BossTheme.colors.ink),
-            contentAlignment = Alignment.Center
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .background(BossTheme.colors.ink),
+            contentAlignment = Alignment.Center,
         ) {
             Text(
                 text = initError ?: "Failed to initialize browser",
-                color = BossTheme.colors.textPrimary
+                color = BossTheme.colors.textPrimary,
             )
         }
     } else if (browser != null) {
@@ -106,28 +106,31 @@ actual fun PasskeyBrowserView(
         // Create BrowserViewState for this specific browser instance
         // Use LocalAwtWindow for multi-window support, fallback to first available window
         val localWindow = LocalAwtWindow.current
-        val window = remember(localWindow) {
-            localWindow ?: Window.getWindows().firstOrNull() ?: Frame()
-        }
-        val browserViewState = remember(browser, window) {
-            BrowserViewState(browser!!, MainScope(), window)
-        }
+        val window =
+            remember(localWindow) {
+                localWindow ?: Window.getWindows().firstOrNull() ?: Frame()
+            }
+        val browserViewState =
+            remember(browser, window) {
+                BrowserViewState(browser!!, MainScope(), window)
+            }
 
         BrowserView(
             state = browserViewState,
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.fillMaxSize(),
         )
     } else {
         // Show placeholder while initializing
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(BossTheme.colors.ink),
-            contentAlignment = Alignment.Center
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .background(BossTheme.colors.ink),
+            contentAlignment = Alignment.Center,
         ) {
             Text(
                 text = "Initializing browser...",
-                color = BossTheme.colors.textPrimary
+                color = BossTheme.colors.textPrimary,
             )
         }
     }

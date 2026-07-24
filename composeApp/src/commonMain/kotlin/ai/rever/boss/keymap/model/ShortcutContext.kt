@@ -37,31 +37,35 @@ enum class ShortcutContext {
      * Shortcuts that only work when focus is in workspace/project management panels.
      * Examples: Save Workspace, Switch Project, Manage Workspace
      */
-    WORKSPACE;
+    WORKSPACE,
+
+    ;
 
     /**
      * Human-readable display name for this context.
      */
     val displayName: String
-        get() = when (this) {
-            GLOBAL -> "Global"
-            BROWSER -> "Browser"
-            TERMINAL -> "Terminal"
-            EDITOR -> "Editor"
-            WORKSPACE -> "Workspace"
-        }
+        get() =
+            when (this) {
+                GLOBAL -> "Global"
+                BROWSER -> "Browser"
+                TERMINAL -> "Terminal"
+                EDITOR -> "Editor"
+                WORKSPACE -> "Workspace"
+            }
 
     /**
      * Description of what this context represents.
      */
     val description: String
-        get() = when (this) {
-            GLOBAL -> "Works everywhere in the application"
-            BROWSER -> "Active only in browser tabs"
-            TERMINAL -> "Active only in terminal panels"
-            EDITOR -> "Active only in code editor (future)"
-            WORKSPACE -> "Active in workspace/project panels"
-        }
+        get() =
+            when (this) {
+                GLOBAL -> "Works everywhere in the application"
+                BROWSER -> "Active only in browser tabs"
+                TERMINAL -> "Active only in terminal panels"
+                EDITOR -> "Active only in code editor (future)"
+                WORKSPACE -> "Active in workspace/project panels"
+            }
 
     companion object {
         /**

@@ -34,25 +34,30 @@ import kotlin.test.assertTrue
  * snapshot-state mutation.
  */
 class PanelComponentStoreResetTest {
+    private val testIcon =
+        ImageVector
+            .Builder(
+                defaultWidth = 1.dp,
+                defaultHeight = 1.dp,
+                viewportWidth = 1f,
+                viewportHeight = 1f,
+            ).build()
 
-    private val testIcon = ImageVector.Builder(
-        defaultWidth = 1.dp, defaultHeight = 1.dp,
-        viewportWidth = 1f, viewportHeight = 1f
-    ).build()
-
-    private fun panelInfo(id: PanelId) = object : PanelInfo {
-        override val id = id
-        override val displayName = "Test Panel"
-        override val icon = testIcon
-        override val defaultSlotPosition = left
-    }
+    private fun panelInfo(id: PanelId) =
+        object : PanelInfo {
+            override val id = id
+            override val displayName = "Test Panel"
+            override val icon = testIcon
+            override val defaultSlotPosition = left
+        }
 
     private class FakePanelComponent(
         override val panelInfo: PanelInfo,
         ctx: ComponentContext,
         val generation: Int,
         private val onBeforeResetAction: () -> Unit = {},
-    ) : PanelComponentWithUI, ComponentContext by ctx {
+    ) : PanelComponentWithUI,
+        ComponentContext by ctx {
         @Composable
         override fun Content() {
         }

@@ -1,4 +1,5 @@
 @file:Suppress("UNUSED")
+
 package ai.rever.boss.scrollbar
 
 import kotlinx.coroutines.flow.StateFlow
@@ -11,7 +12,10 @@ import kotlinx.coroutines.flow.StateFlow
 // Note: We can't typealias an object, so we delegate to it
 expect object ScrollbarSettingsManager {
     val currentSettings: StateFlow<ScrollbarSettings>
+
     suspend fun updateSettings(settings: ScrollbarSettings)
+
     suspend fun resetToDefault()
+
     fun getDefaultSettings(): ScrollbarSettings
 }

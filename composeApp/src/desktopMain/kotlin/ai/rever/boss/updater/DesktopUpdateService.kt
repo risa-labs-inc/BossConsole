@@ -5,12 +5,12 @@ import ai.rever.boss.updater.source.FallbackUpdateSource
 import ai.rever.boss.updater.source.GitHubUpdateSource
 import ai.rever.boss.updater.source.SupabaseUpdateSource
 import ai.rever.boss.updater.source.UpdateSource
-import ai.rever.boss.utils.ApplicationRestarter
 import ai.rever.boss.utils.AppVersion
+import ai.rever.boss.utils.ApplicationRestarter
 import ai.rever.boss.utils.Version
-import ai.rever.boss.utils.sha256Of
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.sha256Of
 import io.ktor.client.*
 import io.ktor.client.engine.cio.*
 import io.ktor.client.network.sockets.*
@@ -26,7 +26,6 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 actual class UpdateService {
-
     private val logger = BossLogger.forComponent("UpdateService")
 
     /**
@@ -39,37 +38,40 @@ actual class UpdateService {
     /** Dedicated GitHub source used only to recover a download if the primary URL fails. */
     private val gitHubSource = GitHubUpdateSource()
 
-    private fun buildSource(): UpdateSource = when (UpdateSourceConfig.primarySource) {
-        "github" -> GitHubUpdateSource()
-        "supabase-only" -> SupabaseUpdateSource()
-        else -> FallbackUpdateSource(primary = SupabaseUpdateSource(), backup = GitHubUpdateSource())
-    }.also {
-        logger.info(LogCategory.SYSTEM, "Update source configured", mapOf("source" to it.name))
-    }
+    private fun buildSource(): UpdateSource =
+        when (UpdateSourceConfig.primarySource) {
+            "github" -> GitHubUpdateSource()
+            "supabase-only" -> SupabaseUpdateSource()
+            else -> FallbackUpdateSource(primary = SupabaseUpdateSource(), backup = GitHubUpdateSource())
+        }.also {
+            logger.info(LogCategory.SYSTEM, "Update source configured", mapOf("source" to it.name))
+        }
 
     // HTTP client for file downloads - long timeouts for large files
-    private val downloadClient = HttpClient(CIO) {
-        install(HttpTimeout) {
-            // Allow up to 15 minutes for entire download (for slow connections)
-            // 275MB at 500KB/s = ~9 minutes, so 15 min provides buffer
-            requestTimeoutMillis = 900_000  // 15 minutes
+    private val downloadClient =
+        HttpClient(CIO) {
+            install(HttpTimeout) {
+                // Allow up to 15 minutes for entire download (for slow connections)
+                // 275MB at 500KB/s = ~9 minutes, so 15 min provides buffer
+                requestTimeoutMillis = 900_000 // 15 minutes
 
-            // Connection establishment should be quick
-            connectTimeoutMillis = 30_000   // 30 seconds
+                // Connection establishment should be quick
+                connectTimeoutMillis = 30_000 // 30 seconds
 
-            // Socket timeout: max time between data packets
-            // Ensures connection stays alive during continuous download
-            socketTimeoutMillis = 60_000    // 60 seconds
+                // Socket timeout: max time between data packets
+                // Ensures connection stays alive during continuous download
+                socketTimeoutMillis = 60_000 // 60 seconds
+            }
         }
-    }
 
     /** Safe "no update" result used when the catalog is empty or a check fails. */
-    private fun upToDate(): UpdateInfo = UpdateInfo(
-        available = false,
-        currentVersion = AppVersion.CURRENT,
-        latestVersion = AppVersion.CURRENT,
-        releaseNotes = ""
-    )
+    private fun upToDate(): UpdateInfo =
+        UpdateInfo(
+            available = false,
+            currentVersion = AppVersion.CURRENT,
+            latestVersion = AppVersion.CURRENT,
+            releaseNotes = "",
+        )
 
     actual suspend fun checkForUpdates(): UpdateInfo {
         return try {
@@ -78,20 +80,20 @@ actual class UpdateService {
             // Determine whether to include pre-releases:
             // 1. If user explicitly enabled prerelease updates, include them
             // 2. If current version is a prerelease, always include prereleases (so beta users get beta updates)
-            val includePreReleases = UpdateSettings.includePreReleases ||
-                AppVersion.CURRENT.preRelease != null
+            val includePreReleases =
+                UpdateSettings.includePreReleases ||
+                    AppVersion.CURRENT.preRelease != null
 
             // Get the latest version based on prerelease preference
-            val latestRelease = releases
-                .filter { release ->
-                    !release.draft && (includePreReleases || !release.prerelease)
-                }
-                .mapNotNull { release ->
-                    Version.parse(release.tag_name)?.let { version -> release to version }
-                }
-                .maxByOrNull { it.second }
-                ?.first
-                ?: return upToDate()
+            val latestRelease =
+                releases
+                    .filter { release ->
+                        !release.draft && (includePreReleases || !release.prerelease)
+                    }.mapNotNull { release ->
+                        Version.parse(release.tag_name)?.let { version -> release to version }
+                    }.maxByOrNull { it.second }
+                    ?.first
+                    ?: return upToDate()
 
             val latestVersion = Version.parse(latestRelease.tag_name) ?: return upToDate()
             val isUpdateAvailable = latestVersion.isNewerThan(AppVersion.CURRENT)
@@ -99,23 +101,29 @@ actual class UpdateService {
             // Find the appropriate asset for the current platform
             val platform = getCurrentPlatform()
             val expectedAssetName = getExpectedAssetName(latestVersion)
-            logger.debug(LogCategory.SYSTEM, "Looking for update asset", mapOf(
-                "expected" to expectedAssetName,
-                "platform" to platform,
-                "available" to latestRelease.assets.map { it.name }.joinToString()
-            ))
+            logger.debug(
+                LogCategory.SYSTEM,
+                "Looking for update asset",
+                mapOf(
+                    "expected" to expectedAssetName,
+                    "platform" to platform,
+                    "available" to latestRelease.assets.map { it.name }.joinToString(),
+                ),
+            )
 
-            var asset = latestRelease.assets.find {
-                it.name.equals(expectedAssetName, ignoreCase = true)
-            }
+            var asset =
+                latestRelease.assets.find {
+                    it.name.equals(expectedAssetName, ignoreCase = true)
+                }
 
             // Fallback: If platform-specific package (.deb/.rpm) not found, try JAR
             if (asset == null && (platform == "Linux-deb" || platform == "Linux-rpm")) {
-                val jarAssetName = "BOSS-${latestVersion}-${getLinuxArchSuffix()}.jar"
+                val jarAssetName = "BOSS-$latestVersion-${getLinuxArchSuffix()}.jar"
                 logger.debug(LogCategory.SYSTEM, "Platform package not found, trying JAR fallback", mapOf("jarAsset" to jarAssetName))
-                asset = latestRelease.assets.find {
-                    it.name.equals(jarAssetName, ignoreCase = true)
-                }
+                asset =
+                    latestRelease.assets.find {
+                        it.name.equals(jarAssetName, ignoreCase = true)
+                    }
             }
 
             if (asset == null) {
@@ -132,17 +140,23 @@ actual class UpdateService {
                 downloadUrl = asset?.browser_download_url,
                 assetSize = asset?.size ?: 0,
                 assetName = asset?.name ?: "",
-                sha256 = asset?.sha256
+                sha256 = asset?.sha256,
             )
-
         } catch (e: Exception) {
-            val errorMessage = when {
-                e.message?.contains("rate limit", ignoreCase = true) == true ->
-                    "Update API rate limit exceeded. Please try again later."
-                e.message?.contains("JSON", ignoreCase = true) == true ->
-                    "Error parsing update information. Please try again later."
-                else -> "Unable to check for updates: ${e.message?.take(100) ?: "Unknown error"}"
-            }
+            val errorMessage =
+                when {
+                    e.message?.contains("rate limit", ignoreCase = true) == true -> {
+                        "Update API rate limit exceeded. Please try again later."
+                    }
+
+                    e.message?.contains("JSON", ignoreCase = true) == true -> {
+                        "Error parsing update information. Please try again later."
+                    }
+
+                    else -> {
+                        "Unable to check for updates: ${e.message?.take(100) ?: "Unknown error"}"
+                    }
+                }
             logger.error(LogCategory.NETWORK, "Error checking for updates", mapOf("error" to errorMessage))
             upToDate()
         }
@@ -150,7 +164,7 @@ actual class UpdateService {
 
     actual suspend fun downloadUpdate(
         updateInfo: UpdateInfo,
-        onProgress: (progress: Float) -> Unit
+        onProgress: (progress: Float) -> Unit,
     ): String? {
         val primaryUrl = updateInfo.downloadUrl
         if (primaryUrl == null) {
@@ -168,9 +182,13 @@ actual class UpdateService {
         // for the same version — unless that's already the URL we just tried.
         val gitHubUrl = gitHubAssetUrlFor(updateInfo.latestVersion)
         if (gitHubUrl != null && gitHubUrl != primaryUrl) {
-            logger.warn(LogCategory.NETWORK, "Primary download failed; falling back to GitHub asset", mapOf(
-                "asset" to updateInfo.assetName
-            ))
+            logger.warn(
+                LogCategory.NETWORK,
+                "Primary download failed; falling back to GitHub asset",
+                mapOf(
+                    "asset" to updateInfo.assetName,
+                ),
+            )
             return downloadFrom(gitHubUrl, updateInfo.assetName, updateInfo.assetSize, sha256 = null, onProgress)
         }
         return null
@@ -182,9 +200,9 @@ actual class UpdateService {
         assetName: String,
         assetSize: Long,
         sha256: String?,
-        onProgress: (progress: Float) -> Unit
-    ): String? {
-        return try {
+        onProgress: (progress: Float) -> Unit,
+    ): String? =
+        try {
             logger.info(LogCategory.SYSTEM, "Starting update download", mapOf("asset" to assetName, "size" to assetSize))
 
             val tempDir = File(System.getProperty("java.io.tmpdir"), "boss-updates")
@@ -203,11 +221,15 @@ actual class UpdateService {
                 // compromised catalog. Update authenticity still rests on OS code-signing.
                 val actualSha = if (sha256 != null) sha256Of(downloadFile) else null
                 if (sha256 != null && !sha256.equals(actualSha, ignoreCase = true)) {
-                    logger.error(LogCategory.SYSTEM, "Update checksum mismatch; discarding download", mapOf(
-                        "asset" to assetName,
-                        "expected" to sha256,
-                        "actual" to (actualSha ?: "")
-                    ))
+                    logger.error(
+                        LogCategory.SYSTEM,
+                        "Update checksum mismatch; discarding download",
+                        mapOf(
+                            "asset" to assetName,
+                            "expected" to sha256,
+                            "actual" to (actualSha ?: ""),
+                        ),
+                    )
                     downloadFile.delete()
                     null
                 } else {
@@ -222,28 +244,30 @@ actual class UpdateService {
                 null
             }
         } catch (e: Exception) {
-            val errorMessage = when (e) {
-                is HttpRequestTimeoutException -> "Download timeout: File too large or connection too slow"
-                is ConnectTimeoutException -> "Connection timeout: Unable to reach download server"
-                is SocketTimeoutException -> "Network timeout: Download interrupted"
-                else -> e.message ?: "Unknown error"
-            }
+            val errorMessage =
+                when (e) {
+                    is HttpRequestTimeoutException -> "Download timeout: File too large or connection too slow"
+                    is ConnectTimeoutException -> "Connection timeout: Unable to reach download server"
+                    is SocketTimeoutException -> "Network timeout: Download interrupted"
+                    else -> e.message ?: "Unknown error"
+                }
             logger.error(LogCategory.NETWORK, "Error downloading update", mapOf("error" to errorMessage))
             null
         }
-    }
 
     /** Resolve the GitHub Releases asset URL for [version] — the download-time backup. */
-    private suspend fun gitHubAssetUrlFor(version: Version): String? = try {
-        val release = gitHubSource.getReleaseByTag("v$version")
-        val expected = getExpectedAssetName(version)
-        release?.assets?.find { it.name.equals(expected, ignoreCase = true) }?.browser_download_url
-    } catch (e: Exception) {
-        logger.warn(LogCategory.NETWORK, "Could not resolve GitHub fallback asset", error = e)
-        null
-    }
+    private suspend fun gitHubAssetUrlFor(version: Version): String? =
+        try {
+            val release = gitHubSource.getReleaseByTag("v$version")
+            val expected = getExpectedAssetName(version)
+            release?.assets?.find { it.name.equals(expected, ignoreCase = true) }?.browser_download_url
+        } catch (e: Exception) {
+            logger.warn(LogCategory.NETWORK, "Could not resolve GitHub fallback asset", error = e)
+            null
+        }
 
     /** Compute the lowercase hex SHA-256 of [file]. */
+
     /**
      * Stream a download to [destFile], reporting throttled progress.
      *
@@ -257,7 +281,7 @@ actual class UpdateService {
         url: String,
         expectedSize: Long,
         destFile: File,
-        onProgress: (progress: Float) -> Unit
+        onProgress: (progress: Float) -> Unit,
     ) = withContext(Dispatchers.IO) {
         downloadClient.prepareGet(url).execute { response ->
             check(response.status.value in 200..299) {
@@ -281,33 +305,41 @@ actual class UpdateService {
                         downloadedBytes += bytesRead
 
                         // Throttle UI updates: every 256KB or every 5% progress, whichever comes first.
-                        val shouldUpdateProgress = if (totalSize > 0) {
-                            downloadedBytes - lastProgressUpdate >= 262144 ||
-                                (downloadedBytes.toFloat() / totalSize -
-                                    lastProgressUpdate.toFloat() / totalSize) >= 0.05f
-                        } else {
-                            downloadedBytes - lastProgressUpdate >= 131072
-                        }
+                        val shouldUpdateProgress =
+                            if (totalSize > 0) {
+                                downloadedBytes - lastProgressUpdate >= 262144 ||
+                                    (
+                                        downloadedBytes.toFloat() / totalSize -
+                                            lastProgressUpdate.toFloat() / totalSize
+                                    ) >= 0.05f
+                            } else {
+                                downloadedBytes - lastProgressUpdate >= 131072
+                            }
 
                         if (shouldUpdateProgress) {
-                            val progress = if (totalSize > 0) {
-                                val currentProgress = (downloadedBytes.toFloat() / totalSize.toFloat()).coerceIn(0f, 1f)
-                                // Log only major progress milestones (every 25%).
-                                val progressPct = (currentProgress * 100).toInt()
-                                if (progressPct % 25 == 0 && progressPct > 0) {
-                                    logger.trace(LogCategory.SYSTEM, "Download progress", mapOf(
-                                        "percent" to progressPct,
-                                        "downloadedKB" to (downloadedBytes / 1024),
-                                        "totalKB" to (totalSize / 1024)
-                                    ))
+                            val progress =
+                                if (totalSize > 0) {
+                                    val currentProgress = (downloadedBytes.toFloat() / totalSize.toFloat()).coerceIn(0f, 1f)
+                                    // Log only major progress milestones (every 25%).
+                                    val progressPct = (currentProgress * 100).toInt()
+                                    if (progressPct % 25 == 0 && progressPct > 0) {
+                                        logger.trace(
+                                            LogCategory.SYSTEM,
+                                            "Download progress",
+                                            mapOf(
+                                                "percent" to progressPct,
+                                                "downloadedKB" to (downloadedBytes / 1024),
+                                                "totalKB" to (totalSize / 1024),
+                                            ),
+                                        )
+                                    }
+                                    currentProgress
+                                } else {
+                                    // Unknown total size: monotonic curve, asymptotic toward <1
+                                    // (never decreases; the explicit onProgress(1f) below finishes it).
+                                    val mb = downloadedBytes / 1_048_576f
+                                    (1f - 1f / (1f + mb / 8f)).coerceIn(0f, 0.95f)
                                 }
-                                currentProgress
-                            } else {
-                                // Unknown total size: monotonic curve, asymptotic toward <1
-                                // (never decreases; the explicit onProgress(1f) below finishes it).
-                                val mb = downloadedBytes / 1_048_576f
-                                (1f - 1f / (1f + mb / 8f)).coerceIn(0f, 0.95f)
-                            }
 
                             // Progress updates must happen on the main thread for UI updates.
                             withContext(Dispatchers.Main) {
@@ -335,6 +367,7 @@ actual class UpdateService {
                 logger.info(LogCategory.SYSTEM, "Update installed successfully", mapOf("message" to result.message))
                 true
             }
+
             is InstallResult.RequiresRestart -> {
                 logger.info(LogCategory.SYSTEM, "Update requires restart", mapOf("message" to result.message))
 
@@ -351,6 +384,7 @@ actual class UpdateService {
 
                 true
             }
+
             is InstallResult.Error -> {
                 logger.error(LogCategory.SYSTEM, "Update installation failed", mapOf("error" to result.message))
                 false
@@ -358,9 +392,7 @@ actual class UpdateService {
         }
     }
 
-    actual fun getCurrentPlatform(): String {
-        return UpdateInstaller.getCurrentPlatform()
-    }
+    actual fun getCurrentPlatform(): String = UpdateInstaller.getCurrentPlatform()
 
     /**
      * Get the Linux architecture suffix based on the current system.
@@ -374,79 +406,84 @@ actual class UpdateService {
         }
     }
 
-    actual fun getExpectedAssetName(version: Version): String {
-        return when (getCurrentPlatform()) {
-            "macOS" -> "BOSS-${version}-Universal.dmg"
-            "Windows" -> "BOSS-${version}.msi"
-            "Linux", "Linux-deb" -> "BOSS-${version}-${getLinuxArchSuffix()}.deb"
-            "Linux-rpm" -> "BOSS-${version}-${getLinuxArchSuffix()}.rpm"
-            else -> "BOSS-${version}-${getLinuxArchSuffix()}.jar"  // JAR with arch for native deps
+    actual fun getExpectedAssetName(version: Version): String =
+        when (getCurrentPlatform()) {
+            "macOS" -> "BOSS-$version-Universal.dmg"
+            "Windows" -> "BOSS-$version.msi"
+            "Linux", "Linux-deb" -> "BOSS-$version-${getLinuxArchSuffix()}.deb"
+            "Linux-rpm" -> "BOSS-$version-${getLinuxArchSuffix()}.rpm"
+            else -> "BOSS-$version-${getLinuxArchSuffix()}.jar" // JAR with arch for native deps
         }
-    }
 
     /**
      * Fetch all releases from the configured source (Supabase primary, GitHub backup).
      */
-    actual suspend fun fetchAllReleases(): List<VersionInfo> = withContext(Dispatchers.IO) {
-        try {
-            val allReleases = source.listReleases()
+    actual suspend fun fetchAllReleases(): List<VersionInfo> =
+        withContext(Dispatchers.IO) {
+            try {
+                val allReleases = source.listReleases()
 
-            // Convert to VersionInfo
-            allReleases.mapNotNull { release ->
-                try {
-                    val version = Version.parse(release.tag_name) ?: return@mapNotNull null
-                    val expectedAssetName = getExpectedAssetName(version)
-                    val asset = release.assets.find {
-                        it.name.equals(expectedAssetName, ignoreCase = true)
+                // Convert to VersionInfo
+                allReleases.mapNotNull { release ->
+                    try {
+                        val version = Version.parse(release.tag_name) ?: return@mapNotNull null
+                        val expectedAssetName = getExpectedAssetName(version)
+                        val asset =
+                            release.assets.find {
+                                it.name.equals(expectedAssetName, ignoreCase = true)
+                            }
+
+                        if (asset != null) {
+                            VersionInfo(
+                                version = version,
+                                releaseDate = release.published_at,
+                                downloadSize = asset.size,
+                                releaseNotes = release.body,
+                                downloadUrl = asset.browser_download_url ?: "",
+                                isDraft = release.draft,
+                                isPrerelease = release.prerelease,
+                                sha256 = asset.sha256,
+                            )
+                        } else {
+                            null
+                        }
+                    } catch (e: Exception) {
+                        logger.warn(LogCategory.NETWORK, "Failed to parse release", mapOf("tag" to release.tag_name), error = e)
+                        null
                     }
-
-                    if (asset != null) {
-                        VersionInfo(
-                            version = version,
-                            releaseDate = release.published_at,
-                            downloadSize = asset.size,
-                            releaseNotes = release.body,
-                            downloadUrl = asset.browser_download_url ?: "",
-                            isDraft = release.draft,
-                            isPrerelease = release.prerelease,
-                            sha256 = asset.sha256
-                        )
-                    } else null
-                } catch (e: Exception) {
-                    logger.warn(LogCategory.NETWORK, "Failed to parse release", mapOf("tag" to release.tag_name), error = e)
-                    null
                 }
+            } catch (e: Exception) {
+                logger.error(LogCategory.NETWORK, "Error fetching all releases", error = e)
+                emptyList()
             }
-        } catch (e: Exception) {
-            logger.error(LogCategory.NETWORK, "Error fetching all releases", error = e)
-            emptyList()
         }
-    }
 
     /**
      * Fetch details for a specific version
      */
-    actual suspend fun fetchVersionDetails(version: Version): UpdateInfo? = withContext(Dispatchers.IO) {
-        try {
-            val release = source.getReleaseByTag("v$version") ?: return@withContext null
-            val expectedAssetName = getExpectedAssetName(version)
-            val asset = release.assets.find {
-                it.name.equals(expectedAssetName, ignoreCase = true)
-            }
+    actual suspend fun fetchVersionDetails(version: Version): UpdateInfo? =
+        withContext(Dispatchers.IO) {
+            try {
+                val release = source.getReleaseByTag("v$version") ?: return@withContext null
+                val expectedAssetName = getExpectedAssetName(version)
+                val asset =
+                    release.assets.find {
+                        it.name.equals(expectedAssetName, ignoreCase = true)
+                    }
 
-            UpdateInfo(
-                available = true,
-                currentVersion = AppVersion.CURRENT,
-                latestVersion = version,
-                releaseNotes = release.body,
-                downloadUrl = asset?.browser_download_url,
-                assetSize = asset?.size ?: 0,
-                assetName = asset?.name ?: "",
-                sha256 = asset?.sha256
-            )
-        } catch (e: Exception) {
-            logger.error(LogCategory.NETWORK, "Error fetching version details", mapOf("version" to version.toString()), error = e)
-            null
+                UpdateInfo(
+                    available = true,
+                    currentVersion = AppVersion.CURRENT,
+                    latestVersion = version,
+                    releaseNotes = release.body,
+                    downloadUrl = asset?.browser_download_url,
+                    assetSize = asset?.size ?: 0,
+                    assetName = asset?.name ?: "",
+                    sha256 = asset?.sha256,
+                )
+            } catch (e: Exception) {
+                logger.error(LogCategory.NETWORK, "Error fetching version details", mapOf("version" to version.toString()), error = e)
+                null
+            }
         }
-    }
 }

@@ -9,16 +9,21 @@ import kotlinx.serialization.Serializable
 enum class TerminalLinkOpenMode {
     /** Always ask the user (show dialog) */
     ALWAYS_ASK,
+
     /** Open in existing split panel (if splits exist) */
     EXISTING_SPLIT,
+
     /** Open in vertical split alongside the panel */
     VERTICAL_SPLIT,
+
     /** Open in horizontal split */
     HORIZONTAL_SPLIT,
+
     /** Open in new tab (default behavior) */
     NEW_TAB,
+
     /** Open with the operating system default handler (browser/app) */
-    SYSTEM_DEFAULT
+    SYSTEM_DEFAULT,
 }
 
 /**
@@ -28,8 +33,9 @@ enum class TerminalLinkOpenMode {
 enum class ExistingSplitTargetMode {
     /** Use the most recently active panel (excluding current) */
     MOST_RECENT_ACTIVE,
+
     /** Use the first available panel that isn't the current one */
-    FIRST_AVAILABLE
+    FIRST_AVAILABLE,
 }
 
 /**
@@ -39,5 +45,5 @@ enum class ExistingSplitTargetMode {
 @Serializable
 data class TerminalLinkSettings(
     val openMode: TerminalLinkOpenMode = TerminalLinkOpenMode.ALWAYS_ASK,
-    val existingSplitTarget: ExistingSplitTargetMode = ExistingSplitTargetMode.MOST_RECENT_ACTIVE
+    val existingSplitTarget: ExistingSplitTargetMode = ExistingSplitTargetMode.MOST_RECENT_ACTIVE,
 )

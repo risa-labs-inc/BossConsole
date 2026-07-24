@@ -17,5 +17,9 @@ interface IpcEventBridge {
      * @param payload The event data object
      * @param sourceWindowId The window that originated the event
      */
-    suspend fun forward(eventType: String, payload: Any, sourceWindowId: String)
+    suspend fun forward(
+        eventType: String,
+        payload: Any,
+        sourceWindowId: String,
+    )
 }

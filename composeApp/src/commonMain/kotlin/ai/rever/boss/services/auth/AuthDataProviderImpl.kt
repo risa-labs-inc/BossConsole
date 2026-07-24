@@ -18,7 +18,6 @@ import kotlinx.coroutines.launch
  * plugin modules while keeping the actual auth management in composeApp.
  */
 class AuthDataProviderImpl : AuthDataProvider {
-
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     private val _currentUser = MutableStateFlow<UserData?>(null)
@@ -53,18 +52,15 @@ class AuthDataProviderImpl : AuthDataProvider {
         return user.hasPermission(permission)
     }
 
-    override fun hasAnyPermission(vararg permissions: String): Boolean {
-        return permissions.any { hasPermission(it) }
-    }
+    override fun hasAnyPermission(vararg permissions: String): Boolean = permissions.any { hasPermission(it) }
 
-    private fun UserInfo.toPluginData(): UserData {
-        return UserData(
+    private fun UserInfo.toPluginData(): UserData =
+        UserData(
             id = id,
             email = email,
             displayName = null, // UserInfo doesn't have displayName
             avatarUrl = null, // UserInfo doesn't have avatarUrl
             roles = roles,
-            createdAt = 0L // UserInfo has string date, we'll skip parsing for now
+            createdAt = 0L, // UserInfo has string date, we'll skip parsing for now
         )
-    }
 }

@@ -1,0 +1,10 @@
+# Mechanical reformats that should not pollute git blame.
+# Point blame at this file once per clone:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# (GitHub's blame view picks this file up automatically.)
+
+# style: format the world with ktlint (mechanical, no logic changes)
+aecdcfc79b41d16312f12d3f59a19e92c3b17dad
+
+# style: format Gradle build scripts with ktlint (mechanical, no logic changes)
+1ff63706f2cfee15612ad2a8ca2a3ebfded98b4c

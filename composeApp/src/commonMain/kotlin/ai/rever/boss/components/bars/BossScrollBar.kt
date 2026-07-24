@@ -1,4 +1,5 @@
 @file:Suppress("UNUSED")
+
 package ai.rever.boss.components.bars
 
 /**
@@ -6,22 +7,22 @@ package ai.rever.boss.components.bars
  * New code should import directly from ai.rever.boss.plugin.scrollbar
  */
 
-import ai.rever.boss.plugin.scrollbar.ScrollbarConfig as PluginScrollbarConfig
-import ai.rever.boss.plugin.scrollbar.PanelScrollbarConfig as PluginPanelScrollbarConfig
-import ai.rever.boss.plugin.scrollbar.HorizontalBarScrollbarConfig as PluginHorizontalBarScrollbarConfig
-import ai.rever.boss.plugin.scrollbar.scrollbar as pluginScrollbar
-import ai.rever.boss.plugin.scrollbar.lazyListScrollbar as pluginLazyListScrollbar
-import ai.rever.boss.plugin.scrollbar.horizontalLazyListScrollbar as pluginHorizontalLazyListScrollbar
-import ai.rever.boss.plugin.scrollbar.verticalScrollWithScrollbar as pluginVerticalScrollWithScrollbar
-import ai.rever.boss.plugin.scrollbar.horizontalScrollWithScrollbar as pluginHorizontalScrollWithScrollbar
-import ai.rever.boss.plugin.scrollbar.getPanelScrollbarConfig as pluginGetPanelScrollbarConfig
-import ai.rever.boss.plugin.scrollbar.getBarScrollbarConfig as pluginGetBarScrollbarConfig
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.gestures.FlingBehavior
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import ai.rever.boss.plugin.scrollbar.HorizontalBarScrollbarConfig as PluginHorizontalBarScrollbarConfig
+import ai.rever.boss.plugin.scrollbar.PanelScrollbarConfig as PluginPanelScrollbarConfig
+import ai.rever.boss.plugin.scrollbar.ScrollbarConfig as PluginScrollbarConfig
+import ai.rever.boss.plugin.scrollbar.getBarScrollbarConfig as pluginGetBarScrollbarConfig
+import ai.rever.boss.plugin.scrollbar.getPanelScrollbarConfig as pluginGetPanelScrollbarConfig
+import ai.rever.boss.plugin.scrollbar.horizontalLazyListScrollbar as pluginHorizontalLazyListScrollbar
+import ai.rever.boss.plugin.scrollbar.horizontalScrollWithScrollbar as pluginHorizontalScrollWithScrollbar
+import ai.rever.boss.plugin.scrollbar.lazyListScrollbar as pluginLazyListScrollbar
+import ai.rever.boss.plugin.scrollbar.scrollbar as pluginScrollbar
+import ai.rever.boss.plugin.scrollbar.verticalScrollWithScrollbar as pluginVerticalScrollWithScrollbar
 
 // Re-export type alias
 typealias ScrollbarConfig = PluginScrollbarConfig
@@ -52,7 +53,7 @@ fun Modifier.lazyListScrollbar(
 
 fun Modifier.horizontalLazyListScrollbar(
     listState: LazyListState,
-    scrollbarConfig: ScrollbarConfig = ScrollbarConfig()
+    scrollbarConfig: ScrollbarConfig = ScrollbarConfig(),
 ): Modifier = pluginHorizontalLazyListScrollbar(listState, scrollbarConfig)
 
 fun Modifier.verticalScrollWithScrollbar(
@@ -60,7 +61,7 @@ fun Modifier.verticalScrollWithScrollbar(
     enabled: Boolean = true,
     flingBehavior: FlingBehavior? = null,
     reverseScrolling: Boolean = false,
-    scrollbarConfig: ScrollbarConfig = ScrollbarConfig()
+    scrollbarConfig: ScrollbarConfig = ScrollbarConfig(),
 ): Modifier = pluginVerticalScrollWithScrollbar(scrollState, enabled, flingBehavior, reverseScrolling, scrollbarConfig)
 
 fun Modifier.horizontalScrollWithScrollbar(
@@ -68,5 +69,5 @@ fun Modifier.horizontalScrollWithScrollbar(
     enabled: Boolean = true,
     flingBehavior: FlingBehavior? = null,
     reverseScrolling: Boolean = false,
-    scrollbarConfig: ScrollbarConfig = ScrollbarConfig()
+    scrollbarConfig: ScrollbarConfig = ScrollbarConfig(),
 ): Modifier = pluginHorizontalScrollWithScrollbar(scrollState, enabled, flingBehavior, reverseScrolling, scrollbarConfig)

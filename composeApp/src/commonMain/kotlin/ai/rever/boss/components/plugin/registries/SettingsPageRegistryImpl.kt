@@ -28,9 +28,13 @@ object SettingsPageRegistryImpl : AccessGatedRegistry {
     fun register(provider: SettingsPageProvider) {
         _pages.update { existing ->
             if (existing.containsKey(provider.pageId)) {
-                logger.warn(LogCategory.SYSTEM, "Settings page re-registered (replacing previous)", mapOf(
-                    "pageId" to provider.pageId
-                ))
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Settings page re-registered (replacing previous)",
+                    mapOf(
+                        "pageId" to provider.pageId,
+                    ),
+                )
             }
             existing + (provider.pageId to provider)
         }
@@ -41,7 +45,10 @@ object SettingsPageRegistryImpl : AccessGatedRegistry {
         _pages.update { it - pageId }
     }
 
-    override fun updateAccess(isAdmin: Boolean, permissions: Set<String>) {
+    override fun updateAccess(
+        isAdmin: Boolean,
+        permissions: Set<String>,
+    ) {
         _access.value = RegistryAccess(isAdmin, permissions)
     }
 

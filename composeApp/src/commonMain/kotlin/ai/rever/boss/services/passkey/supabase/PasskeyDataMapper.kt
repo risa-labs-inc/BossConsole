@@ -12,17 +12,17 @@ import java.util.Base64
  * Handles data transformation and CBOR parsing for passkey operations
  */
 internal object PasskeyDataMapper {
-
     private val logger = BossLogger.forComponent("PasskeyDataMapper")
 
-    private val json = Json { 
-        ignoreUnknownKeys = true
-        encodeDefaults = true
-    }
-    
+    private val json =
+        Json {
+            ignoreUnknownKeys = true
+            encodeDefaults = true
+        }
+
     // Public json instance for other components to use
     val publicJson = json
-    
+
     /**
      * Generate a cryptographically secure challenge
      */
@@ -32,7 +32,7 @@ internal object PasskeyDataMapper {
         random.nextBytes(challengeBytes)
         return Base64.getUrlEncoder().withoutPadding().encodeToString(challengeBytes)
     }
-    
+
     /**
      * Creates registration request data
      */
@@ -40,82 +40,77 @@ internal object PasskeyDataMapper {
         userId: String,
         displayName: String,
         challenge: String,
-        authenticatorSelection: AuthenticatorSelectionCriteria?
-    ): PasskeyRegistrationRequest {
-        return PasskeyRegistrationRequest(
+        authenticatorSelection: AuthenticatorSelectionCriteria?,
+    ): PasskeyRegistrationRequest =
+        PasskeyRegistrationRequest(
             userId = userId,
             displayName = displayName,
             challenge = challenge,
-            authenticatorSelection = authenticatorSelection
+            authenticatorSelection = authenticatorSelection,
         )
-    }
-    
+
     /**
      * Creates registration completion data
      */
     fun createRegistrationData(
         userId: String,
         registration: PasskeyRegistration,
-        challenge: String
-    ): PasskeyRegistrationData {
-        return PasskeyRegistrationData(
+        challenge: String,
+    ): PasskeyRegistrationData =
+        PasskeyRegistrationData(
             userId = userId,
             challenge = challenge,
             credentialId = registration.credentialId,
             attestationObject = registration.attestationObject,
             clientDataJSON = registration.clientDataJSON,
-            transports = registration.transports
+            transports = registration.transports,
         )
-    }
-    
+
     /**
      * Creates authentication request data
      */
     fun createAuthenticationRequest(
         email: String?,
         challenge: String,
-        sessionId: String?
-    ): PasskeyAuthenticationRequest {
-        return PasskeyAuthenticationRequest(
+        sessionId: String?,
+    ): PasskeyAuthenticationRequest =
+        PasskeyAuthenticationRequest(
             email = email,
             challenge = challenge,
             sessionId = sessionId,
-            op = "auth-challenge"
+            op = "auth-challenge",
         )
-    }
-    
+
     /**
      * Creates authentication completion data
      */
     fun createAuthenticationData(
         assertion: PasskeyAssertion,
-        challenge: String
-    ): PasskeyAuthenticationData {
-        return PasskeyAuthenticationData(
+        challenge: String,
+    ): PasskeyAuthenticationData =
+        PasskeyAuthenticationData(
             challenge = challenge,
             credentialId = assertion.credentialId,
             authenticatorData = assertion.authenticatorData,
             signature = assertion.signature,
             clientDataJSON = assertion.clientDataJSON,
-            userHandle = assertion.userHandle
+            userHandle = assertion.userHandle,
         )
-    }
-    
+
     /**
      * Creates passkey management request
      */
     fun createManagementRequest(
         action: String,
         userId: String,
-        passkeyId: String? = null
-    ): PasskeyManagementRequest {
-        return PasskeyManagementRequest(
+        passkeyId: String? = null,
+    ): PasskeyManagementRequest =
+        PasskeyManagementRequest(
             action = action,
             userId = userId,
-            passkeyId = passkeyId
+            passkeyId = passkeyId,
         )
-    }
-    
+
     /**
      * Parses challenge response from API
      */
@@ -123,7 +118,7 @@ internal object PasskeyDataMapper {
         responseText: String,
         userId: String,
         displayName: String,
-        authenticatorSelection: AuthenticatorSelectionCriteria?
+        authenticatorSelection: AuthenticatorSelectionCriteria?,
     ): PasskeyChallenge {
         val challengeResponse = json.decodeFromString<PasskeyChallengeResponse>(responseText)
 
@@ -139,15 +134,15 @@ internal object PasskeyDataMapper {
             userDisplayName = displayName,
             attestation = challengeResponse.attestation,
             authenticatorSelection = authenticatorSelection ?: challengeResponse.authenticatorSelection,
-            excludeCredentials = challengeResponse.excludeCredentials
+            excludeCredentials = challengeResponse.excludeCredentials,
         )
     }
-    
+
     /**
      * Parses registration response from API
      */
-    fun parseRegistrationResponse(responseText: String): Result<PasskeyCredential> {
-        return try {
+    fun parseRegistrationResponse(responseText: String): Result<PasskeyCredential> =
+        try {
             val credentialResponse = json.decodeFromString<PasskeyCredentialResponse>(responseText)
 
             if (credentialResponse.success && credentialResponse.credential != null) {
@@ -165,20 +160,24 @@ internal object PasskeyDataMapper {
                 mapOf("exception" to (parseException::class.simpleName ?: "Exception")),
             )
             // Try to extract error message from raw response
-            val errorMessage = try {
-                val errorResponse = json.decodeFromString<JsonObject>(responseText)
-                errorResponse["error"]?.toString()?.removeSurrounding("\"") ?: "Unknown error"
-            } catch (e: Exception) {
-                logger.debug(LogCategory.PASSKEY, "Raw error extraction from response also failed", mapOf(
-                    "exception" to (e::class.simpleName ?: "Exception")
-                ))
-                "Failed to parse response: $responseText"
-            }
-            
+            val errorMessage =
+                try {
+                    val errorResponse = json.decodeFromString<JsonObject>(responseText)
+                    errorResponse["error"]?.toString()?.removeSurrounding("\"") ?: "Unknown error"
+                } catch (e: Exception) {
+                    logger.debug(
+                        LogCategory.PASSKEY,
+                        "Raw error extraction from response also failed",
+                        mapOf(
+                            "exception" to (e::class.simpleName ?: "Exception"),
+                        ),
+                    )
+                    "Failed to parse response: $responseText"
+                }
+
             Result.failure(Exception("Registration completion failed: $errorMessage"))
         }
-    }
-    
+
     /**
      * Parses authentication challenge response from API
      */
@@ -194,10 +193,10 @@ internal object PasskeyDataMapper {
             timeout = challengeResponse.timeout,
             rpId = rpId,
             allowCredentials = challengeResponse.allowCredentials,
-            userVerification = challengeResponse.userVerification
+            userVerification = challengeResponse.userVerification,
         )
     }
-    
+
     /**
      * Parses authentication result from API
      */
@@ -207,27 +206,38 @@ internal object PasskeyDataMapper {
             val statusResponse = json.decodeFromString<PasskeyAuthStatusResponse>(responseText)
             // Convert status response to authentication result
             when (statusResponse.status) {
-                "completed" -> PasskeyAuthenticationResult(
-                    success = true,
-                    userId = statusResponse.userId,
-                    email = statusResponse.email,
-                    accessToken = statusResponse.accessToken,
-                    refreshToken = statusResponse.refreshToken,
-                    expiresAt = statusResponse.expiresAt,
-                    error = null
-                )
-                "pending" -> PasskeyAuthenticationResult(
-                    success = false,
-                    error = "Authentication pending"
-                )
-                "expired" -> PasskeyAuthenticationResult(
-                    success = false,
-                    error = statusResponse.message ?: "Authentication expired"
-                )
-                else -> PasskeyAuthenticationResult(
-                    success = false,
-                    error = "Unknown status: ${statusResponse.status}"
-                )
+                "completed" -> {
+                    PasskeyAuthenticationResult(
+                        success = true,
+                        userId = statusResponse.userId,
+                        email = statusResponse.email,
+                        accessToken = statusResponse.accessToken,
+                        refreshToken = statusResponse.refreshToken,
+                        expiresAt = statusResponse.expiresAt,
+                        error = null,
+                    )
+                }
+
+                "pending" -> {
+                    PasskeyAuthenticationResult(
+                        success = false,
+                        error = "Authentication pending",
+                    )
+                }
+
+                "expired" -> {
+                    PasskeyAuthenticationResult(
+                        success = false,
+                        error = statusResponse.message ?: "Authentication expired",
+                    )
+                }
+
+                else -> {
+                    PasskeyAuthenticationResult(
+                        success = false,
+                        error = "Unknown status: ${statusResponse.status}",
+                    )
+                }
             }
         } catch (e: Exception) {
             // Fall back to parsing as authentication result (for completion endpoints).
@@ -240,12 +250,10 @@ internal object PasskeyDataMapper {
             json.decodeFromString<PasskeyAuthenticationResult>(responseText)
         }
     }
-    
+
     /**
      * Parses passkey management response from API
      */
-    fun parseManagementResponse(responseText: String): PasskeyManagementResponse {
-        return json.decodeFromString<PasskeyManagementResponse>(responseText)
-    }
-
+    fun parseManagementResponse(responseText: String): PasskeyManagementResponse =
+        json.decodeFromString<PasskeyManagementResponse>(responseText)
 }

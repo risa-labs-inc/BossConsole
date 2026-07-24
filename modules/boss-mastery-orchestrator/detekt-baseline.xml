@@ -2,10 +2,10 @@
 <SmellBaseline>
   <ManuallySuppressedIssues/>
   <CurrentIssues>
+    <ID>LongMethod:MasteryServiceImpl.kt$private fun KProgress.toProto(executionId: String): PProgress</ID>
+    <ID>MaxLineLength:MasteryOrchestratorMain.kt$"boss-mastery-orchestrator/src/main/kotlin/ai/rever/boss/mastery/orchestrator/MasteryOrchestratorMain.kt"</ID>
+    <ID>MaxLineLength:MasteryOrchestratorMain.kt$"boss-mastery-orchestrator/src/main/kotlin/ai/rever/boss/mastery/orchestrator/MasteryServiceImpl.kt"</ID>
     <ID>MaxLineLength:MasteryOrchestratorMain.kt$"boss-mastery-orchestrator/src/main/kotlin/ai/rever/boss/mastery/orchestrator/ProcessRegistryCapabilityResolver.kt"</ID>
-    <ID>MaxLineLength:MasteryServiceImpl.kt$b.setCompleted(MasteryCompleted.newBuilder().putAllOutput(output).setTotalDurationMs(totalDurationMs).build())</ID>
-    <ID>MaxLineLength:MasteryServiceImpl.kt$b.setNodeCompleted(NodeCompleted.newBuilder().setNodeId(nodeId).putAllOutput(output).setDurationMs(durationMs).build())</ID>
-    <ID>MaxLineLength:MasteryServiceImpl.kt$b.setNodeFailed(NodeFailed.newBuilder().setNodeId(nodeId).setErrorMessage(error).setWillRetry(willRetry).build())</ID>
     <ID>TooGenericExceptionThrown:ProcessRegistryCapabilityResolver.kt$ProcessRegistryCapabilityResolver$throw RuntimeException("Capability invocation failed: ${response.errorMessage}")</ID>
     <ID>UseCheckOrError:ProcessRegistryCapabilityResolver.kt$ProcessRegistryCapabilityResolver$throw IllegalStateException("No IPC client for process: $pluginId")</ID>
     <ID>UseCheckOrError:ProcessRegistryCapabilityResolver.kt$ProcessRegistryCapabilityResolver$throw IllegalStateException("Process not found: $pluginId")</ID>

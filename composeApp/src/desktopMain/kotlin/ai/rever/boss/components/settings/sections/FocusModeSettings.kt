@@ -1,12 +1,12 @@
 package ai.rever.boss.components.settings.sections
 
+import ai.rever.boss.components.settings.shared.SettingsInfoRow
 import ai.rever.boss.components.settings.shared.SettingsSection
 import ai.rever.boss.components.settings.shared.SettingsSlider
-import ai.rever.boss.components.settings.shared.SettingsToggle
-import ai.rever.boss.components.settings.shared.SettingsInfoRow
+import ai.rever.boss.components.settings.shared.SettingsTheme.AccentColor
 import ai.rever.boss.components.settings.shared.SettingsTheme.TextMuted
 import ai.rever.boss.components.settings.shared.SettingsTheme.TextSecondary
-import ai.rever.boss.components.settings.shared.SettingsTheme.AccentColor
+import ai.rever.boss.components.settings.shared.SettingsToggle
 import ai.rever.boss.focusmode.FocusModeSettingsManager
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.Text
@@ -28,7 +28,7 @@ fun FocusModeSettings() {
 
     Column(
         modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         // Main Toggle
         SettingsSection(title = "Focus Mode") {
@@ -38,11 +38,11 @@ fun FocusModeSettings() {
                 onCheckedChange = { enabled ->
                     coroutineScope.launch {
                         FocusModeSettingsManager.updateSettings(
-                            settings.copy(enabled = enabled)
+                            settings.copy(enabled = enabled),
                         )
                     }
                 },
-                description = "Hide top bar, sidebars, and bottom bar to maximize content area"
+                description = "Hide top bar, sidebars, and bottom bar to maximize content area",
             )
         }
 
@@ -73,12 +73,12 @@ fun FocusModeSettings() {
                 onCheckedChange = { enabled ->
                     coroutineScope.launch {
                         FocusModeSettingsManager.updateSettings(
-                            settings.copy(autoRevealEnabled = enabled)
+                            settings.copy(autoRevealEnabled = enabled),
                         )
                     }
                 },
                 description = "Show hidden UI elements when mouse approaches window edges",
-                enabled = settings.enabled
+                enabled = settings.enabled,
             )
 
             if (settings.enabled && settings.autoRevealEnabled) {
@@ -89,14 +89,14 @@ fun FocusModeSettings() {
                     onValueChangeFinished = {
                         coroutineScope.launch {
                             FocusModeSettingsManager.updateSettings(
-                                settings.copy(revealOffsetPx = revealOffset)
+                                settings.copy(revealOffsetPx = revealOffset),
                             )
                         }
                     },
                     valueRange = 5f..50f,
                     steps = 8,
                     valueDisplay = { "${it.toInt()} px" },
-                    description = "Distance from window edge to trigger reveal"
+                    description = "Distance from window edge to trigger reveal",
                 )
 
                 SettingsSlider(
@@ -106,14 +106,14 @@ fun FocusModeSettings() {
                     onValueChangeFinished = {
                         coroutineScope.launch {
                             FocusModeSettingsManager.updateSettings(
-                                settings.copy(revealDelayMs = revealDelay.toLong())
+                                settings.copy(revealDelayMs = revealDelay.toLong()),
                             )
                         }
                     },
                     valueRange = 0f..1000f,
                     steps = 9,
                     valueDisplay = { if (it == 0f) "Instant" else "${it.toInt()} ms" },
-                    description = "Time to hover at edge before UI reveals"
+                    description = "Time to hover at edge before UI reveals",
                 )
             }
         }
@@ -123,7 +123,7 @@ fun FocusModeSettings() {
             SettingsInfoRow(
                 label = "Toggle Focus Mode",
                 value = "Cmd+Shift+F / Ctrl+Shift+F",
-                description = "Customize in Settings > Keyboard Shortcuts"
+                description = "Customize in Settings > Keyboard Shortcuts",
             )
         }
     }
@@ -135,6 +135,6 @@ private fun InfoItem(text: String) {
         text = text,
         fontSize = 13.sp,
         color = TextSecondary,
-        lineHeight = 20.sp
+        lineHeight = 20.sp,
     )
 }

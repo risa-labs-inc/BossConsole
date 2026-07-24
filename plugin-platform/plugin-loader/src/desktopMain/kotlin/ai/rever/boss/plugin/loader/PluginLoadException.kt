@@ -6,7 +6,7 @@ package ai.rever.boss.plugin.loader
 open class PluginLoadException(
     message: String,
     val pluginId: String? = null,
-    cause: Throwable? = null
+    cause: Throwable? = null,
 ) : Exception(message, cause) {
     companion object {
         /**
@@ -25,7 +25,7 @@ open class PluginLoadException(
 class PluginManifestException(
     message: String,
     pluginId: String? = null,
-    cause: Throwable? = null
+    cause: Throwable? = null,
 ) : PluginLoadException(message, pluginId, cause)
 
 /**
@@ -35,7 +35,7 @@ class PluginClassException(
     message: String,
     pluginId: String? = null,
     val className: String? = null,
-    cause: Throwable? = null
+    cause: Throwable? = null,
 ) : PluginLoadException(message, pluginId, cause)
 
 /**
@@ -45,7 +45,7 @@ class PluginUnloadException(
     message: String,
     pluginId: String? = null,
     val reasons: List<String> = emptyList(),
-    cause: Throwable? = null
+    cause: Throwable? = null,
 ) : PluginLoadException(message, pluginId, cause)
 
 /**
@@ -56,7 +56,7 @@ class PluginApiVersionException(
     pluginId: String? = null,
     val requiredVersion: String? = null,
     val currentVersion: String? = null,
-    cause: Throwable? = null
+    cause: Throwable? = null,
 ) : PluginLoadException(message, pluginId, cause)
 
 /**
@@ -65,7 +65,7 @@ class PluginApiVersionException(
 class PluginSignatureException(
     message: String,
     pluginId: String? = null,
-    cause: Throwable? = null
+    cause: Throwable? = null,
 ) : PluginLoadException(message, pluginId, cause)
 
 /**
@@ -76,7 +76,7 @@ class PluginBossVersionException(
     pluginId: String? = null,
     val requiredVersion: String? = null,
     val currentVersion: String? = null,
-    cause: Throwable? = null
+    cause: Throwable? = null,
 ) : PluginLoadException(message, pluginId, cause)
 
 /**
@@ -92,7 +92,7 @@ class PluginApiLevelException(
     pluginId: String? = null,
     val requiredVersion: String? = null,
     val installedVersion: String? = null,
-    cause: Throwable? = null
+    cause: Throwable? = null,
 ) : PluginLoadException(message, pluginId, cause)
 
 /**
@@ -102,5 +102,5 @@ class PluginBinaryIncompatibilityException(
     message: String,
     pluginId: String? = null,
     val manifest: ai.rever.boss.plugin.api.PluginManifest? = null,
-    cause: Throwable? = null
+    cause: Throwable? = null,
 ) : PluginLoadException(message, pluginId, cause)

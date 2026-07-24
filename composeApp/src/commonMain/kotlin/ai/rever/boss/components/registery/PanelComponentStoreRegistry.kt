@@ -17,7 +17,10 @@ object PanelComponentStoreRegistry {
     private val stores = MutableStateFlow<Map<String, PanelComponentStore>>(emptyMap())
 
     /** Register a window's store. Should be called when the window is created. */
-    fun register(windowId: String, store: PanelComponentStore) {
+    fun register(
+        windowId: String,
+        store: PanelComponentStore,
+    ) {
         stores.update { it + (windowId to store) }
     }
 
@@ -27,9 +30,7 @@ object PanelComponentStoreRegistry {
     }
 
     /** All currently registered stores, one per open window. */
-    fun getAllStores(): Collection<PanelComponentStore> {
-        return stores.value.values
-    }
+    fun getAllStores(): Collection<PanelComponentStore> = stores.value.values
 
     /**
      * Reset every OPEN slot showing one of [panelIds], across all windows;

@@ -10,35 +10,41 @@ import io.ktor.http.*
 /**
  * Exception thrown when no passkeys are found for a user
  */
-class NoPasskeysFoundException(message: String) : Exception(message)
+class NoPasskeysFoundException(
+    message: String,
+) : Exception(message)
 
 /**
  * Handles passkey authentication flow operations
  */
 internal object PasskeyAuthenticationHandler {
-
     private val logger = BossLogger.forComponent("PasskeyAuthenticationHandler")
-    
+
     /**
      * Request passkey authentication challenge
      */
     suspend fun requestChallenge(
         email: String? = null,
-        sessionId: String? = null
+        sessionId: String? = null,
     ): Result<PasskeyAuthenticationChallenge> {
         return try {
-            logger.debug(LogCategory.PASSKEY, "Requesting authentication challenge", mapOf(
-                "email" to (email?.let { LogSanitizer.maskEmail(it) } ?: "usernameless"),
-                "hasSessionId" to (sessionId != null)
-            ))
+            logger.debug(
+                LogCategory.PASSKEY,
+                "Requesting authentication challenge",
+                mapOf(
+                    "email" to (email?.let { LogSanitizer.maskEmail(it) } ?: "usernameless"),
+                    "hasSessionId" to (sessionId != null),
+                ),
+            )
 
             val challenge = PasskeyDataMapper.generateChallenge()
 
-            val requestData = PasskeyDataMapper.createAuthenticationRequest(
-                email = email,
-                challenge = challenge,
-                sessionId = sessionId
-            )
+            val requestData =
+                PasskeyDataMapper.createAuthenticationRequest(
+                    email = email,
+                    challenge = challenge,
+                    sessionId = sessionId,
+                )
 
             // Call Edge Function for authentication challenge - operation is in body
             val response = SupabaseApiClient.invokeAuthenticationChallenge(requestData)
@@ -67,21 +73,26 @@ internal object PasskeyAuthenticationHandler {
             Result.failure(e)
         }
     }
-    
+
     /**
      * Complete passkey authentication
      */
     suspend fun completeAuthentication(
         assertion: PasskeyAssertion,
-        challenge: String
-    ): Result<PasskeyAuthenticationResult> {
-        return try {
-            logger.debug(LogCategory.PASSKEY, "Completing authentication", mapOf("credentialId" to LogSanitizer.maskCredentialId(assertion.credentialId)))
-
-            val authenticationData = PasskeyDataMapper.createAuthenticationData(
-                assertion = assertion,
-                challenge = challenge
+        challenge: String,
+    ): Result<PasskeyAuthenticationResult> =
+        try {
+            logger.debug(
+                LogCategory.PASSKEY,
+                "Completing authentication",
+                mapOf("credentialId" to LogSanitizer.maskCredentialId(assertion.credentialId)),
             )
+
+            val authenticationData =
+                PasskeyDataMapper.createAuthenticationData(
+                    assertion = assertion,
+                    challenge = challenge,
+                )
 
             // Call Edge Function for authentication completion
             val response = SupabaseApiClient.completeAuthentication(authenticationData)
@@ -100,12 +111,14 @@ internal object PasskeyAuthenticationHandler {
             logger.error(LogCategory.PASSKEY, "Failed to complete authentication", error = e)
             Result.failure(e)
         }
-    }
 
     /**
      * Check authentication status for cross-device flows
      */
-    suspend fun checkStatus(challenge: String, sessionId: String? = null): Result<PasskeyAuthenticationResult> {
+    suspend fun checkStatus(
+        challenge: String,
+        sessionId: String? = null,
+    ): Result<PasskeyAuthenticationResult> {
         return try {
             logger.debug(LogCategory.PASSKEY, "Checking authentication status")
 
@@ -123,81 +136,116 @@ internal object PasskeyAuthenticationHandler {
 
             val authResult = PasskeyDataMapper.parseAuthenticationResult(responseText)
             Result.success(authResult)
-
         } catch (e: Exception) {
             logger.error(LogCategory.PASSKEY, "Error checking authentication status", error = e)
             Result.failure(e)
         }
     }
-    
+
     /**
      * Validate authentication request parameters
      */
     fun validateAuthenticationRequest(
         email: String?,
-        sessionId: String?
-    ): Result<Unit> {
-        return when {
-            email != null && email.isBlank() -> Result.failure(
-                IllegalArgumentException("Email cannot be blank if provided")
-            )
-            email != null && !isValidEmail(email) -> Result.failure(
-                IllegalArgumentException("Invalid email format")
-            )
-            sessionId != null && sessionId.isBlank() -> Result.failure(
-                IllegalArgumentException("Session ID cannot be blank if provided")
-            )
-            sessionId != null && sessionId.length > 128 -> Result.failure(
-                IllegalArgumentException("Session ID cannot exceed 128 characters")
-            )
-            else -> Result.success(Unit)
+        sessionId: String?,
+    ): Result<Unit> =
+        when {
+            email != null && email.isBlank() -> {
+                Result.failure(
+                    IllegalArgumentException("Email cannot be blank if provided"),
+                )
+            }
+
+            email != null && !isValidEmail(email) -> {
+                Result.failure(
+                    IllegalArgumentException("Invalid email format"),
+                )
+            }
+
+            sessionId != null && sessionId.isBlank() -> {
+                Result.failure(
+                    IllegalArgumentException("Session ID cannot be blank if provided"),
+                )
+            }
+
+            sessionId != null && sessionId.length > 128 -> {
+                Result.failure(
+                    IllegalArgumentException("Session ID cannot exceed 128 characters"),
+                )
+            }
+
+            else -> {
+                Result.success(Unit)
+            }
         }
-    }
-    
+
     /**
      * Validate authentication completion data
      */
     fun validateAuthenticationCompletion(
         assertion: PasskeyAssertion,
-        challenge: String
-    ): Result<Unit> {
-        return when {
-            challenge.isBlank() -> Result.failure(
-                IllegalArgumentException("Challenge cannot be blank")
-            )
-            assertion.credentialId.isBlank() -> Result.failure(
-                IllegalArgumentException("Credential ID cannot be blank")
-            )
-            assertion.authenticatorData.isBlank() -> Result.failure(
-                IllegalArgumentException("Authenticator data cannot be blank")
-            )
-            assertion.signature.isBlank() -> Result.failure(
-                IllegalArgumentException("Signature cannot be blank")
-            )
-            assertion.clientDataJSON.isBlank() -> Result.failure(
-                IllegalArgumentException("Client data JSON cannot be blank")
-            )
-            else -> Result.success(Unit)
+        challenge: String,
+    ): Result<Unit> =
+        when {
+            challenge.isBlank() -> {
+                Result.failure(
+                    IllegalArgumentException("Challenge cannot be blank"),
+                )
+            }
+
+            assertion.credentialId.isBlank() -> {
+                Result.failure(
+                    IllegalArgumentException("Credential ID cannot be blank"),
+                )
+            }
+
+            assertion.authenticatorData.isBlank() -> {
+                Result.failure(
+                    IllegalArgumentException("Authenticator data cannot be blank"),
+                )
+            }
+
+            assertion.signature.isBlank() -> {
+                Result.failure(
+                    IllegalArgumentException("Signature cannot be blank"),
+                )
+            }
+
+            assertion.clientDataJSON.isBlank() -> {
+                Result.failure(
+                    IllegalArgumentException("Client data JSON cannot be blank"),
+                )
+            }
+
+            else -> {
+                Result.success(Unit)
+            }
         }
-    }
-    
+
     /**
      * Validate authentication status check parameters
      */
     fun validateStatusCheck(
         challenge: String,
-        sessionId: String?
-    ): Result<Unit> {
-        return when {
-            challenge.isBlank() -> Result.failure(
-                IllegalArgumentException("Challenge cannot be blank")
-            )
-            sessionId != null && sessionId.isBlank() -> Result.failure(
-                IllegalArgumentException("Session ID cannot be blank if provided")
-            )
-            else -> Result.success(Unit)
+        sessionId: String?,
+    ): Result<Unit> =
+        when {
+            challenge.isBlank() -> {
+                Result.failure(
+                    IllegalArgumentException("Challenge cannot be blank"),
+                )
+            }
+
+            sessionId != null && sessionId.isBlank() -> {
+                Result.failure(
+                    IllegalArgumentException("Session ID cannot be blank if provided"),
+                )
+            }
+
+            else -> {
+                Result.success(Unit)
+            }
         }
-    }
 
     /**
      * Simple email validation

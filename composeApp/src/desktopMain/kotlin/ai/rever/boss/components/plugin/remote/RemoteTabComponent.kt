@@ -56,12 +56,15 @@ class RemoteTabComponent(
                 onEvent = { nodeId, eventType, eventData ->
                     logger.debug(
                         "Tab UI event: tab={}, node={}, type={}, data={}",
-                        tabId, nodeId, eventType, eventData
+                        tabId,
+                        nodeId,
+                        eventType,
+                        eventData,
                     )
                     scope.launch {
                         sendUIEvent(nodeId, eventType, eventData)
                     }
-                }
+                },
             )
         }
     }
@@ -111,7 +114,9 @@ class RemoteTabComponent(
 
     private suspend fun connectToPluginProcess() {
         try {
-            val client = ai.rever.boss.ipc.BossIpcClient(uiAddress)
+            val client =
+                ai.rever.boss.ipc
+                    .BossIpcClient(uiAddress)
             connectWithChannel(client.channel)
         } catch (e: Exception) {
             logger.error("Failed to connect to plugin process: tabId={}", tabId, e)
@@ -125,14 +130,17 @@ class RemoteTabComponent(
         try {
             _connected.value = true
 
-            val widgetUpdateStream = channelFlow {
-                outgoingEvents.collect { event ->
-                    val update = ai.rever.boss.ipc.proto.WidgetUpdate.newBuilder()
-                        .setSurfaceId(event.surfaceId)
-                        .build()
-                    send(update)
+            val widgetUpdateStream =
+                channelFlow {
+                    outgoingEvents.collect { event ->
+                        val update =
+                            ai.rever.boss.ipc.proto.WidgetUpdate
+                                .newBuilder()
+                                .setSurfaceId(event.surfaceId)
+                                .build()
+                        send(update)
+                    }
                 }
-            }
 
             stub.streamUI(widgetUpdateStream).collect { uiEvent ->
                 logger.debug("Received UI event from plugin tab: surface={}", uiEvent.surfaceId)
@@ -145,22 +153,36 @@ class RemoteTabComponent(
         }
     }
 
-    private suspend fun sendUIEvent(nodeId: String, eventType: String, eventData: String) {
-        val eventBuilder = UIEvent.newBuilder()
-            .setSurfaceId(tabId)
-            .setTargetNodeId(nodeId)
-            .setTimestamp(System.currentTimeMillis())
+    private suspend fun sendUIEvent(
+        nodeId: String,
+        eventType: String,
+        eventData: String,
+    ) {
+        val eventBuilder =
+            UIEvent
+                .newBuilder()
+                .setSurfaceId(tabId)
+                .setTargetNodeId(nodeId)
+                .setTimestamp(System.currentTimeMillis())
 
         when (eventType) {
-            "click" -> eventBuilder.setClick(
-                ClickEvent.newBuilder().setEventId(eventData).build()
-            )
-            "textChange" -> eventBuilder.setTextChange(
-                TextChangeEvent.newBuilder().setNewValue(eventData).build()
-            )
-            "toggle" -> eventBuilder.setToggle(
-                ToggleEvent.newBuilder().setChecked(eventData.toBoolean()).build()
-            )
+            "click" -> {
+                eventBuilder.setClick(
+                    ClickEvent.newBuilder().setEventId(eventData).build(),
+                )
+            }
+
+            "textChange" -> {
+                eventBuilder.setTextChange(
+                    TextChangeEvent.newBuilder().setNewValue(eventData).build(),
+                )
+            }
+
+            "toggle" -> {
+                eventBuilder.setToggle(
+                    ToggleEvent.newBuilder().setChecked(eventData.toBoolean()).build(),
+                )
+            }
         }
 
         outgoingEvents.emit(eventBuilder.build())

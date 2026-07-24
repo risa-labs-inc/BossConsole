@@ -15,12 +15,13 @@ object AppVersion {
     /**
      * Current application version - automatically loaded from version.properties at build time.
      */
-    val CURRENT = Version(
-        major = VersionConstants.MAJOR,
-        minor = VersionConstants.MINOR,
-        patch = VersionConstants.PATCH,
-        preRelease = VersionConstants.PRERELEASE
-    )
+    val CURRENT =
+        Version(
+            major = VersionConstants.MAJOR,
+            minor = VersionConstants.MINOR,
+            patch = VersionConstants.PATCH,
+            preRelease = VersionConstants.PRERELEASE,
+        )
 
     /**
      * Get current version as string (e.g., "8.16.28" or "8.16.28-alpha.1").

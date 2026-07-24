@@ -8,17 +8,23 @@ import kotlinx.serialization.json.Json
 /**
  * LLM Provider types
  */
-enum class LLMProvider(val displayName: String, val baseUrl: String) {
+enum class LLMProvider(
+    val displayName: String,
+    val baseUrl: String,
+) {
     ANTHROPIC("Anthropic Claude", "https://api.anthropic.com/v1/messages"),
     OPENAI("OpenAI", "https://api.openai.com/v1/chat/completions"),
     TOGETHER("Together AI", "https://api.together.xyz/v1/chat/completions"),
-    CUSTOM("Custom Provider", "")
+    CUSTOM("Custom Provider", ""),
 }
 
 /**
  * LLM Model configurations
  */
-enum class LLMModel(val modelId: String, val displayName: String) {
+enum class LLMModel(
+    val modelId: String,
+    val displayName: String,
+) {
     // Anthropic Models (January 2025)
     CLAUDE_3_5_SONNET_V2("claude-3-5-sonnet-v2", "Claude 3.5 Sonnet v2", LLMProvider.ANTHROPIC),
     CLAUDE_3_5_SONNET_LATEST("claude-3-5-sonnet-20241022", "Claude 3.5 Sonnet", LLMProvider.ANTHROPIC),
@@ -27,7 +33,7 @@ enum class LLMModel(val modelId: String, val displayName: String) {
     CLAUDE_3_OPUS("claude-3-opus-20240229", "Claude 3 Opus", LLMProvider.ANTHROPIC),
     CLAUDE_3_SONNET("claude-3-sonnet-20240229", "Claude 3 Sonnet", LLMProvider.ANTHROPIC),
     CLAUDE_3_HAIKU("claude-3-haiku-20240307", "Claude 3 Haiku", LLMProvider.ANTHROPIC),
-    
+
     // OpenAI Models (January 2025)
     GPT_4O_2024_11_20("gpt-4o-2024-11-20", "GPT-4o (Nov 2024)", LLMProvider.OPENAI),
     GPT_4O_2024_08_06("gpt-4o-2024-08-06", "GPT-4o (Aug 2024)", LLMProvider.OPENAI),
@@ -44,7 +50,7 @@ enum class LLMModel(val modelId: String, val displayName: String) {
     O1_PREVIEW("o1-preview", "o1 Preview", LLMProvider.OPENAI),
     O1_MINI_2024_09_12("o1-mini-2024-09-12", "o1 Mini (Sept 2024)", LLMProvider.OPENAI),
     O1_MINI("o1-mini", "o1 Mini", LLMProvider.OPENAI),
-    
+
     // Together AI Models (January 2025)
     LLAMA_3_3_70B("meta-llama/Llama-3.3-70B-Instruct-Turbo", "Llama 3.3 70B (Latest)", LLMProvider.TOGETHER),
     LLAMA_3_2_90B_VISION("meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo", "Llama 3.2 90B Vision", LLMProvider.TOGETHER),
@@ -61,8 +67,9 @@ enum class LLMModel(val modelId: String, val displayName: String) {
     MIXTRAL_8X22B("mistralai/Mixtral-8x22B-Instruct-v0.1", "Mixtral 8x22B", LLMProvider.TOGETHER),
     MIXTRAL_8X7B("mistralai/Mixtral-8x7B-Instruct-v0.1", "Mixtral 8x7B", LLMProvider.TOGETHER),
     GEMMA_2_27B("google/gemma-2-27b-it", "Gemma 2 27B", LLMProvider.TOGETHER),
-    GEMMA_2_9B("google/gemma-2-9b-it", "Gemma 2 9B", LLMProvider.TOGETHER);
-    
+    GEMMA_2_9B("google/gemma-2-9b-it", "Gemma 2 9B", LLMProvider.TOGETHER),
+    ;
+
     constructor(modelId: String, displayName: String, provider: LLMProvider) : this(modelId, displayName)
 }
 
@@ -80,7 +87,7 @@ data class LLMSettingsData(
     val maxTokens: Int = 2000,
     val enableStreaming: Boolean = true,
     val enableCaching: Boolean = true,
-    val cacheExpirationMinutes: Int = 60
+    val cacheExpirationMinutes: Int = 60,
 )
 
 /**
@@ -89,44 +96,46 @@ data class LLMSettingsData(
 object LLMSettings {
     private val logger = BossLogger.forComponent("LLMSettings")
     private var settings = LLMSettingsData()
-    
+
     var selectedProvider: LLMProvider
-        get() = try {
-            LLMProvider.valueOf(settings.selectedProvider)
-        } catch (e: Exception) {
-            logger.debug(
-                LogCategory.GENERAL,
-                "Unknown LLM provider in settings - defaulting to ANTHROPIC",
-                mapOf("error" to e.toString()),
-            )
-            LLMProvider.ANTHROPIC
-        }
+        get() =
+            try {
+                LLMProvider.valueOf(settings.selectedProvider)
+            } catch (e: Exception) {
+                logger.debug(
+                    LogCategory.GENERAL,
+                    "Unknown LLM provider in settings - defaulting to ANTHROPIC",
+                    mapOf("error" to e.toString()),
+                )
+                LLMProvider.ANTHROPIC
+            }
         set(value) {
             settings = settings.copy(selectedProvider = value.name)
         }
-    
+
     var selectedModel: LLMModel
-        get() = try {
-            LLMModel.valueOf(settings.selectedModel)
-        } catch (e: Exception) {
-            logger.debug(
-                LogCategory.GENERAL,
-                "Unknown LLM model in settings - using default",
-                mapOf("error" to e.toString()),
-            )
-            LLMModel.CLAUDE_3_5_SONNET_V2
-        }
+        get() =
+            try {
+                LLMModel.valueOf(settings.selectedModel)
+            } catch (e: Exception) {
+                logger.debug(
+                    LogCategory.GENERAL,
+                    "Unknown LLM model in settings - using default",
+                    mapOf("error" to e.toString()),
+                )
+                LLMModel.CLAUDE_3_5_SONNET_V2
+            }
         set(value) {
             settings = settings.copy(selectedModel = value.name)
         }
-    
+
     // New method for dynamic model selection
     var selectedModelId: String
         get() = settings.selectedModelId ?: selectedModel.modelId
         set(value) {
             settings = settings.copy(selectedModelId = value)
         }
-    
+
     fun getApiKey(provider: LLMProvider): String? {
         // First check environment variables
         val envKey = getApiKeyFromEnvironment(provider)
@@ -143,8 +152,11 @@ object LLMSettings {
         logger.debug(LogCategory.GENERAL, "No API key found", mapOf("provider" to provider.name))
         return null
     }
-    
-    fun setApiKey(provider: LLMProvider, key: String?) {
+
+    fun setApiKey(
+        provider: LLMProvider,
+        key: String?,
+    ) {
         val newKeys = settings.apiKeys.toMutableMap()
         if (key.isNullOrBlank()) {
             newKeys.remove(provider.name)
@@ -153,31 +165,31 @@ object LLMSettings {
         }
         settings = settings.copy(apiKeys = newKeys)
     }
-    
+
     var customEndpoint: String?
         get() = settings.customEndpoint
         set(value) {
             settings = settings.copy(customEndpoint = value)
         }
-    
+
     var temperature: Float
         get() = settings.temperature
         set(value) {
             settings = settings.copy(temperature = value.coerceIn(0f, 2f))
         }
-    
+
     var maxTokens: Int
         get() = settings.maxTokens
         set(value) {
             settings = settings.copy(maxTokens = value.coerceIn(100, 100000))
         }
-    
+
     var enableStreaming: Boolean
         get() = settings.enableStreaming
         set(value) {
             settings = settings.copy(enableStreaming = value)
         }
-    
+
     var enableCaching: Boolean
         get() = settings.enableCaching
         set(value) {
@@ -193,44 +205,42 @@ object LLMSettings {
             // errors embed a snippet of the offending JSON near the failure offset,
             // and this file holds provider API keys — the raw message could leak a
             // key fragment into WARN logs. The exception type is enough to diagnose.
-            logger.warn(LogCategory.GENERAL, "Failed to parse LLM settings JSON - keeping defaults", mapOf(
-                "exception" to (e::class.simpleName ?: "Exception")
-            ))
+            logger.warn(
+                LogCategory.GENERAL,
+                "Failed to parse LLM settings JSON - keeping defaults",
+                mapOf(
+                    "exception" to (e::class.simpleName ?: "Exception"),
+                ),
+            )
         }
     }
-    
-    fun toJson(): String {
-        return Json.encodeToString(settings)
-    }
-    
+
+    fun toJson(): String = Json.encodeToString(settings)
+
     /**
      * Get API key from environment variable
      */
-    private fun getApiKeyFromEnvironment(provider: LLMProvider): String? {
-        return when (provider) {
+    private fun getApiKeyFromEnvironment(provider: LLMProvider): String? =
+        when (provider) {
             LLMProvider.ANTHROPIC -> getEnvironmentVariable("ANTHROPIC_API_KEY")
             LLMProvider.OPENAI -> getEnvironmentVariable("OPENAI_API_KEY")
             LLMProvider.TOGETHER -> getEnvironmentVariable("TOGETHER_API_KEY")
             LLMProvider.CUSTOM -> getEnvironmentVariable("CUSTOM_LLM_API_KEY")
         }
-    }
 
     /**
      * Check if current provider has a valid API key
      */
-    fun hasValidApiKey(): Boolean {
-        return getApiKey(selectedProvider)?.isNotBlank() == true
-    }
-    
+    fun hasValidApiKey(): Boolean = getApiKey(selectedProvider)?.isNotBlank() == true
+
     /**
      * Get the effective API endpoint
      */
-    fun getApiEndpoint(): String {
-        return when (selectedProvider) {
+    fun getApiEndpoint(): String =
+        when (selectedProvider) {
             LLMProvider.CUSTOM -> customEndpoint ?: ""
             else -> selectedProvider.baseUrl
         }
-    }
 }
 
 /**
@@ -243,5 +253,6 @@ expect fun getEnvironmentVariable(name: String): String?
  */
 expect object LLMSettingsManager {
     suspend fun loadSettings()
+
     suspend fun saveSettings()
 }

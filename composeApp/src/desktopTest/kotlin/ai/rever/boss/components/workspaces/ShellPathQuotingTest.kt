@@ -14,7 +14,6 @@ import kotlin.test.assertTrue
  * round-trip is asserted too: re-parsing the quoted string yields the original.
  */
 class ShellPathQuotingTest {
-
     // ---- POSIX (macOS/Linux) ----
 
     @Test

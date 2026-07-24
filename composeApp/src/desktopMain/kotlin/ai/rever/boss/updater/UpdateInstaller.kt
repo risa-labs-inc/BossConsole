@@ -22,21 +22,21 @@ private const val SPOTLIGHT_LOOKUP_TIMEOUT_SECONDS = 5L
 /** Return the outermost complete `.app` path segment in [path]. */
 internal fun macOSAppBundlePathIn(path: String): String? {
     val pathSegments = path.split('/')
-    val bundleIndex = pathSegments.indexOfFirst {
-        it.length > MACOS_APP_BUNDLE_SUFFIX.length &&
-            it.endsWith(MACOS_APP_BUNDLE_SUFFIX)
-    }
+    val bundleIndex =
+        pathSegments.indexOfFirst {
+            it.length > MACOS_APP_BUNDLE_SUFFIX.length &&
+                it.endsWith(MACOS_APP_BUNDLE_SUFFIX)
+        }
     if (bundleIndex < 0) return null
 
     return pathSegments.take(bundleIndex + 1).joinToString("/")
 }
 
 /** Extract the first app bundle represented in `java.library.path`. */
-internal fun macOSAppBundlePathFromLibraryPath(libraryPath: String): String? {
-    return libraryPath
+internal fun macOSAppBundlePathFromLibraryPath(libraryPath: String): String? =
+    libraryPath
         .split(File.pathSeparatorChar)
         .firstNotNullOfOrNull(::macOSAppBundlePathIn)
-}
 
 /**
  * Resolve a macOS app bundle path without coupling the decision logic to the
@@ -46,15 +46,15 @@ internal fun macOSAppBundlePathFromLibraryPath(libraryPath: String): String? {
 internal fun realAppPathFor(
     path: String,
     appExists: (String) -> Boolean,
-    installedAppLookup: () -> String?
+    installedAppLookup: () -> String?,
 ): String {
     if (!path.contains(APP_TRANSLOCATION_PATH_SEGMENT)) return path
 
-    val bundleName = macOSAppBundlePathIn(
-        path.substringAfter(APP_TRANSLOCATION_PATH_SEGMENT)
-    )
-        ?.substringAfterLast('/')
-        ?: return path
+    val bundleName =
+        macOSAppBundlePathIn(
+            path.substringAfter(APP_TRANSLOCATION_PATH_SEGMENT),
+        )?.substringAfterLast('/')
+            ?: return path
 
     val applicationsPath = "$MACOS_APPLICATIONS_DIRECTORY/$bundleName"
     if (appExists(applicationsPath)) return applicationsPath
@@ -69,13 +69,20 @@ internal fun realAppPathFor(
  * For macOS, it uses a helper script pattern to safely install updates after the app quits.
  */
 sealed class InstallResult {
-    data class Success(val message: String) : InstallResult()
-    data class RequiresRestart(val message: String) : InstallResult()
-    data class Error(val message: String) : InstallResult()
+    data class Success(
+        val message: String,
+    ) : InstallResult()
+
+    data class RequiresRestart(
+        val message: String,
+    ) : InstallResult()
+
+    data class Error(
+        val message: String,
+    ) : InstallResult()
 }
 
 object UpdateInstaller {
-
     private val logger = BossLogger.forComponent("UpdateInstaller")
 
     /**
@@ -91,7 +98,10 @@ object UpdateInstaller {
      * @param expectedExtension Expected file extension (e.g., ".dmg")
      * @throws SecurityException if file is invalid or suspicious
      */
-    private fun validateDownloadFile(downloadFile: File, expectedExtension: String) {
+    private fun validateDownloadFile(
+        downloadFile: File,
+        expectedExtension: String,
+    ) {
         // Check file exists
         if (!downloadFile.exists()) {
             throw SecurityException("Download file does not exist: ${downloadFile.absolutePath}")
@@ -100,29 +110,34 @@ object UpdateInstaller {
         // Validate file extension
         if (!downloadFile.name.endsWith(expectedExtension, ignoreCase = true)) {
             throw SecurityException(
-                "Invalid file extension. Expected $expectedExtension but got: ${downloadFile.name}"
+                "Invalid file extension. Expected $expectedExtension but got: ${downloadFile.name}",
             )
         }
 
         // Canonicalize path to detect directory traversal attempts
-        val canonicalPath = try {
-            downloadFile.canonicalPath
-        } catch (e: Exception) {
-            logger.warn(
-                LogCategory.SYSTEM,
-                "Failed to canonicalize downloaded file path - rejecting update file",
-                error = e,
-            )
-            throw SecurityException("Failed to canonicalize path: ${downloadFile.absolutePath}")
-        }
+        val canonicalPath =
+            try {
+                downloadFile.canonicalPath
+            } catch (e: Exception) {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Failed to canonicalize downloaded file path - rejecting update file",
+                    error = e,
+                )
+                throw SecurityException("Failed to canonicalize path: ${downloadFile.absolutePath}")
+            }
 
         // Ensure canonicalized path is in expected temp directory
         val expectedTempDir = File(System.getProperty("java.io.tmpdir"), "boss-updates").canonicalPath
         if (!canonicalPath.startsWith(expectedTempDir)) {
-            logger.warn(LogCategory.SYSTEM, "Download file outside expected directory", mapOf(
-                "expected" to expectedTempDir,
-                "actual" to canonicalPath
-            ))
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Download file outside expected directory",
+                mapOf(
+                    "expected" to expectedTempDir,
+                    "actual" to canonicalPath,
+                ),
+            )
         }
 
         // Check for suspicious characters in filename
@@ -152,26 +167,27 @@ object UpdateInstaller {
      * @param file The update file
      * @return Parsed version, or null if version cannot be extracted
      */
-    private fun extractVersionFromFilename(file: File): Version? {
-        return try {
+    private fun extractVersionFromFilename(file: File): Version? =
+        try {
             val filename = file.name
             logger.debug(LogCategory.SYSTEM, "Extracting version from filename", mapOf("filename" to filename))
 
             // Remove BOSS- prefix and file extension (with architecture suffixes)
-            val versionStr = filename
-                .removePrefix("BOSS-")
-                .removeSuffix("-Universal.dmg")
-                .removeSuffix("-amd64.deb")
-                .removeSuffix("-arm64.deb")
-                .removeSuffix("-amd64.rpm")
-                .removeSuffix("-arm64.rpm")
-                .removeSuffix("-amd64.jar")
-                .removeSuffix("-arm64.jar")
-                .removeSuffix(".dmg")
-                .removeSuffix(".msi")
-                .removeSuffix(".jar")
-                .removeSuffix(".deb")
-                .removeSuffix(".rpm")
+            val versionStr =
+                filename
+                    .removePrefix("BOSS-")
+                    .removeSuffix("-Universal.dmg")
+                    .removeSuffix("-amd64.deb")
+                    .removeSuffix("-arm64.deb")
+                    .removeSuffix("-amd64.rpm")
+                    .removeSuffix("-arm64.rpm")
+                    .removeSuffix("-amd64.jar")
+                    .removeSuffix("-arm64.jar")
+                    .removeSuffix(".dmg")
+                    .removeSuffix(".msi")
+                    .removeSuffix(".jar")
+                    .removeSuffix(".deb")
+                    .removeSuffix(".rpm")
 
             logger.debug(LogCategory.SYSTEM, "Extracted version string", mapOf("version" to versionStr))
 
@@ -180,7 +196,6 @@ object UpdateInstaller {
             logger.warn(LogCategory.SYSTEM, "Failed to extract version from filename", error = e)
             null
         }
-    }
 
     /**
      * Verify update is not a downgrade (Issue #111 fix).
@@ -194,37 +209,57 @@ object UpdateInstaller {
         val downloadedVersion = extractVersionFromFilename(downloadFile)
 
         if (downloadedVersion == null) {
-            logger.warn(LogCategory.SYSTEM, "Cannot verify update version - extraction failed", mapOf(
-                "filename" to downloadFile.name
-            ))
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Cannot verify update version - extraction failed",
+                mapOf(
+                    "filename" to downloadFile.name,
+                ),
+            )
             // Allow installation if version cannot be extracted (for manual updates)
             return true
         }
 
         val currentVersion = AppVersion.CURRENT
 
-        logger.info(LogCategory.SYSTEM, "Version check", mapOf(
-            "current" to currentVersion.toString(),
-            "download" to downloadedVersion.toString()
-        ))
+        logger.info(
+            LogCategory.SYSTEM,
+            "Version check",
+            mapOf(
+                "current" to currentVersion.toString(),
+                "download" to downloadedVersion.toString(),
+            ),
+        )
 
         if (downloadedVersion < currentVersion) {
-            logger.error(LogCategory.SYSTEM, "Downgrade detected - cannot install older version", mapOf(
-                "downloadVersion" to downloadedVersion.toString(),
-                "currentVersion" to currentVersion.toString()
-            ))
+            logger.error(
+                LogCategory.SYSTEM,
+                "Downgrade detected - cannot install older version",
+                mapOf(
+                    "downloadVersion" to downloadedVersion.toString(),
+                    "currentVersion" to currentVersion.toString(),
+                ),
+            )
             return false
         }
 
         if (downloadedVersion == currentVersion) {
-            logger.info(LogCategory.SYSTEM, "Same version detected - allowing reinstall", mapOf(
-                "version" to downloadedVersion.toString()
-            ))
+            logger.info(
+                LogCategory.SYSTEM,
+                "Same version detected - allowing reinstall",
+                mapOf(
+                    "version" to downloadedVersion.toString(),
+                ),
+            )
         } else {
-            logger.info(LogCategory.SYSTEM, "Update verified", mapOf(
-                "from" to currentVersion.toString(),
-                "to" to downloadedVersion.toString()
-            ))
+            logger.info(
+                LogCategory.SYSTEM,
+                "Update verified",
+                mapOf(
+                    "from" to currentVersion.toString(),
+                    "to" to downloadedVersion.toString(),
+                ),
+            )
         }
 
         return true
@@ -247,43 +282,73 @@ object UpdateInstaller {
             // Verify this is not a downgrade (Issue #111 fix)
             if (!verifyNoDowngrade(downloadFile)) {
                 return InstallResult.Error(
-                    "Cannot install older version. This update appears to be a downgrade from your current version."
+                    "Cannot install older version. This update appears to be a downgrade from your current version.",
                 )
             }
 
             // Validate downloaded file type matches expected types for current platform
             // This prevents installing wrong package type (e.g., .msi on Linux)
             val fileName = downloadFile.name.lowercase()
-            val validExtensions = when (getCurrentPlatform()) {
-                "macOS" -> listOf(".dmg")
-                "Windows" -> listOf(".msi")
-                "Linux-deb" -> listOf(".deb", ".jar")  // JAR fallback allowed
-                "Linux-rpm" -> listOf(".rpm", ".jar")  // JAR fallback allowed
-                else -> listOf(".jar")
-            }
+            val validExtensions =
+                when (getCurrentPlatform()) {
+                    "macOS" -> listOf(".dmg")
+
+                    "Windows" -> listOf(".msi")
+
+                    "Linux-deb" -> listOf(".deb", ".jar")
+
+                    // JAR fallback allowed
+                    "Linux-rpm" -> listOf(".rpm", ".jar")
+
+                    // JAR fallback allowed
+                    else -> listOf(".jar")
+                }
             if (!validExtensions.any { fileName.endsWith(it) }) {
-                logger.error(LogCategory.SYSTEM, "File type mismatch", mapOf(
-                    "filename" to fileName,
-                    "platform" to getCurrentPlatform(),
-                    "expected" to validExtensions.joinToString()
-                ))
+                logger.error(
+                    LogCategory.SYSTEM,
+                    "File type mismatch",
+                    mapOf(
+                        "filename" to fileName,
+                        "platform" to getCurrentPlatform(),
+                        "expected" to validExtensions.joinToString(),
+                    ),
+                )
                 return InstallResult.Error(
-                    "Downloaded file type '$fileName' is not valid for this platform. Expected: ${validExtensions.joinToString()}"
+                    "Downloaded file type '$fileName' is not valid for this platform. Expected: ${validExtensions.joinToString()}",
                 )
             }
-            logger.debug(LogCategory.SYSTEM, "File type validated", mapOf(
-                "filename" to fileName,
-                "platform" to getCurrentPlatform()
-            ))
+            logger.debug(
+                LogCategory.SYSTEM,
+                "File type validated",
+                mapOf(
+                    "filename" to fileName,
+                    "platform" to getCurrentPlatform(),
+                ),
+            )
 
             // Route based on actual file extension (not platform) to handle fallback cases
             // e.g., when .deb isn't available but .jar is for Linux ARM64
             when {
-                fileName.endsWith(".dmg") -> installMacOSUpdate(downloadFile)
-                fileName.endsWith(".msi") -> installWindowsUpdate(downloadFile)
-                fileName.endsWith(".deb") -> installLinuxDebUpdate(downloadFile)
-                fileName.endsWith(".rpm") -> installLinuxRpmUpdate(downloadFile)
-                fileName.endsWith(".jar") -> installJarUpdate(downloadFile)
+                fileName.endsWith(".dmg") -> {
+                    installMacOSUpdate(downloadFile)
+                }
+
+                fileName.endsWith(".msi") -> {
+                    installWindowsUpdate(downloadFile)
+                }
+
+                fileName.endsWith(".deb") -> {
+                    installLinuxDebUpdate(downloadFile)
+                }
+
+                fileName.endsWith(".rpm") -> {
+                    installLinuxRpmUpdate(downloadFile)
+                }
+
+                fileName.endsWith(".jar") -> {
+                    installJarUpdate(downloadFile)
+                }
+
                 else -> {
                     logger.error(LogCategory.SYSTEM, "Unknown update file type", mapOf("filename" to downloadFile.name))
                     InstallResult.Error("Unknown update file type: ${downloadFile.extension}")
@@ -323,10 +388,15 @@ object UpdateInstaller {
 
                 // Verify DMG is valid by attempting to mount it
                 logger.debug(LogCategory.SYSTEM, "Mounting DMG for verification")
-                val mountTest = ProcessBuilder(
-                    "hdiutil", "attach", downloadFile.absolutePath,
-                    "-nobrowse", "-quiet", "-verify"
-                ).start()
+                val mountTest =
+                    ProcessBuilder(
+                        "hdiutil",
+                        "attach",
+                        downloadFile.absolutePath,
+                        "-nobrowse",
+                        "-quiet",
+                        "-verify",
+                    ).start()
                 mountTest.waitFor()
 
                 if (mountTest.exitValue() != 0) {
@@ -347,14 +417,14 @@ object UpdateInstaller {
                     logger.debug(LogCategory.SYSTEM, "Verifying DMG contents", mapOf("volume" to mountedVolume.name))
 
                     // Verify app bundle exists in DMG
-                    val appBundle = findAppBundleInVolume(mountedVolume)
-                        ?: throw IllegalStateException("Could not find BOSS.app in mounted DMG")
+                    val appBundle =
+                        findAppBundleInVolume(mountedVolume)
+                            ?: throw IllegalStateException("Could not find BOSS.app in mounted DMG")
 
                     logger.info(LogCategory.SYSTEM, "DMG verified successfully", mapOf("appBundle" to appBundle.name))
 
                     // DMG is valid - now we can safely unmount it (script will remount it)
                     // Unmounting happens in the finally block below
-
                 } finally {
                     // CRITICAL: Always unmount the DMG, even if verification failed
                     logger.debug(LogCategory.SYSTEM, "Cleaning up verification mount")
@@ -366,11 +436,12 @@ object UpdateInstaller {
                 val currentPid = ProcessHandle.current().pid()
                 logger.debug(LogCategory.SYSTEM, "Generating update script", mapOf("pid" to currentPid))
 
-                val scriptFile = UpdateScriptGenerator.generateMacOSUpdateScript(
-                    dmgPath = downloadFile.absolutePath,
-                    targetAppPath = currentAppPath,
-                    appPid = currentPid
-                )
+                val scriptFile =
+                    UpdateScriptGenerator.generateMacOSUpdateScript(
+                        dmgPath = downloadFile.absolutePath,
+                        targetAppPath = currentAppPath,
+                        appPid = currentPid,
+                    )
 
                 // Launch the script in the background
                 logger.info(LogCategory.SYSTEM, "Launching update script")
@@ -378,9 +449,8 @@ object UpdateInstaller {
 
                 // Return RequiresRestart - the UpdateManager will handle quitting
                 InstallResult.RequiresRestart(
-                    "Update is ready to install. The app will quit and install the update."
+                    "Update is ready to install. The app will quit and install the update.",
                 )
-
             } catch (e: Exception) {
                 logger.error(LogCategory.SYSTEM, "Error during update preparation", error = e)
                 InstallResult.Error(e.message ?: "Unknown error")
@@ -392,8 +462,8 @@ object UpdateInstaller {
      * Install Windows update using helper script pattern
      * Similar to macOS, but uses MSI installer
      */
-    private suspend fun installWindowsUpdate(downloadFile: File): InstallResult {
-        return withContext(Dispatchers.IO) {
+    private suspend fun installWindowsUpdate(downloadFile: File): InstallResult =
+        withContext(Dispatchers.IO) {
             try {
                 logger.info(LogCategory.SYSTEM, "Starting Windows update installation")
 
@@ -404,10 +474,11 @@ object UpdateInstaller {
                 val currentPid = ProcessHandle.current().pid()
                 logger.debug(LogCategory.SYSTEM, "Generating update script", mapOf("pid" to currentPid))
 
-                val scriptFile = UpdateScriptGenerator.generateWindowsUpdateScript(
-                    msiPath = downloadFile.absolutePath,
-                    appPid = currentPid
-                )
+                val scriptFile =
+                    UpdateScriptGenerator.generateWindowsUpdateScript(
+                        msiPath = downloadFile.absolutePath,
+                        appPid = currentPid,
+                    )
 
                 // Launch the script in the background
                 logger.info(LogCategory.SYSTEM, "Launching update script")
@@ -415,15 +486,13 @@ object UpdateInstaller {
 
                 // Return RequiresRestart
                 InstallResult.RequiresRestart(
-                    "Update is ready to install. The app will quit and install the update."
+                    "Update is ready to install. The app will quit and install the update.",
                 )
-
             } catch (e: Exception) {
                 logger.error(LogCategory.SYSTEM, "Error during update preparation", error = e)
                 InstallResult.Error(e.message ?: "Unknown error")
             }
         }
-    }
 
     /**
      * Install JAR update (Linux/other platforms)
@@ -454,7 +523,6 @@ object UpdateInstaller {
 
                 logger.info(LogCategory.SYSTEM, "JAR updated successfully")
                 InstallResult.Success("Update installed. Restart the app to use the new version.")
-
             } catch (e: Exception) {
                 logger.error(LogCategory.SYSTEM, "Failed to update JAR", error = e)
                 InstallResult.Error(e.message ?: "Unknown error")
@@ -466,8 +534,8 @@ object UpdateInstaller {
      * Install Linux DEB update using helper script pattern
      * Uses pkexec (graphical sudo) or sudo for privilege escalation
      */
-    private suspend fun installLinuxDebUpdate(downloadFile: File): InstallResult {
-        return withContext(Dispatchers.IO) {
+    private suspend fun installLinuxDebUpdate(downloadFile: File): InstallResult =
+        withContext(Dispatchers.IO) {
             try {
                 logger.info(LogCategory.SYSTEM, "Starting Linux DEB update installation")
 
@@ -478,10 +546,11 @@ object UpdateInstaller {
                 val currentPid = ProcessHandle.current().pid()
                 logger.debug(LogCategory.SYSTEM, "Generating DEB update script", mapOf("pid" to currentPid))
 
-                val scriptFile = UpdateScriptGenerator.generateLinuxDebUpdateScript(
-                    debPath = downloadFile.absolutePath,
-                    appPid = currentPid
-                )
+                val scriptFile =
+                    UpdateScriptGenerator.generateLinuxDebUpdateScript(
+                        debPath = downloadFile.absolutePath,
+                        appPid = currentPid,
+                    )
 
                 // Launch the script in the background
                 logger.info(LogCategory.SYSTEM, "Launching DEB update script")
@@ -489,22 +558,20 @@ object UpdateInstaller {
 
                 // Return RequiresRestart
                 InstallResult.RequiresRestart(
-                    "Update is ready to install. The app will quit and install the update."
+                    "Update is ready to install. The app will quit and install the update.",
                 )
-
             } catch (e: Exception) {
                 logger.error(LogCategory.SYSTEM, "Error during DEB update preparation", error = e)
                 InstallResult.Error(e.message ?: "Unknown error")
             }
         }
-    }
 
     /**
      * Install Linux RPM update using helper script pattern
      * Uses pkexec (graphical sudo) or sudo for privilege escalation
      */
-    private suspend fun installLinuxRpmUpdate(downloadFile: File): InstallResult {
-        return withContext(Dispatchers.IO) {
+    private suspend fun installLinuxRpmUpdate(downloadFile: File): InstallResult =
+        withContext(Dispatchers.IO) {
             try {
                 logger.info(LogCategory.SYSTEM, "Starting Linux RPM update installation")
 
@@ -515,10 +582,11 @@ object UpdateInstaller {
                 val currentPid = ProcessHandle.current().pid()
                 logger.debug(LogCategory.SYSTEM, "Generating RPM update script", mapOf("pid" to currentPid))
 
-                val scriptFile = UpdateScriptGenerator.generateLinuxRpmUpdateScript(
-                    rpmPath = downloadFile.absolutePath,
-                    appPid = currentPid
-                )
+                val scriptFile =
+                    UpdateScriptGenerator.generateLinuxRpmUpdateScript(
+                        rpmPath = downloadFile.absolutePath,
+                        appPid = currentPid,
+                    )
 
                 // Launch the script in the background
                 logger.info(LogCategory.SYSTEM, "Launching RPM update script")
@@ -526,15 +594,13 @@ object UpdateInstaller {
 
                 // Return RequiresRestart
                 InstallResult.RequiresRestart(
-                    "Update is ready to install. The app will quit and install the update."
+                    "Update is ready to install. The app will quit and install the update.",
                 )
-
             } catch (e: Exception) {
                 logger.error(LogCategory.SYSTEM, "Error during RPM update preparation", error = e)
                 InstallResult.Error(e.message ?: "Unknown error")
             }
         }
-    }
 
     /**
      * Get current application path for macOS .app bundle
@@ -579,7 +645,6 @@ object UpdateInstaller {
 
             logger.debug(LogCategory.SYSTEM, "Could not determine application path - likely dev mode")
             null
-
         } catch (e: Exception) {
             logger.error(LogCategory.SYSTEM, "Error getting application path", error = e)
             null
@@ -608,14 +673,15 @@ object UpdateInstaller {
         logger.warn(
             LogCategory.SYSTEM,
             "App is running translocated by Gatekeeper - resolving real install path",
-            mapOf("translocatedPath" to path)
+            mapOf("translocatedPath" to path),
         )
 
-        val resolvedPath = realAppPathFor(
-            path = path,
-            appExists = { File(it).exists() },
-            installedAppLookup = ::findInstalledAppViaSpotlight
-        )
+        val resolvedPath =
+            realAppPathFor(
+                path = path,
+                appExists = { File(it).exists() },
+                installedAppLookup = ::findInstalledAppViaSpotlight,
+            )
 
         if (resolvedPath != path) {
             logger.info(LogCategory.SYSTEM, "Resolved real app path", mapOf("path" to resolvedPath))
@@ -634,17 +700,19 @@ object UpdateInstaller {
      */
     private fun findInstalledAppViaSpotlight(): String? {
         return try {
-            val process = ProcessBuilder(
-                "mdfind", "kMDItemCFBundleIdentifier == '$BOSS_MACOS_BUNDLE_ID'"
-            )
-                .redirectErrorStream(true)
-                .start()
+            val process =
+                ProcessBuilder(
+                    "mdfind",
+                    "kMDItemCFBundleIdentifier == '$BOSS_MACOS_BUNDLE_ID'",
+                ).redirectErrorStream(true)
+                    .start()
 
             // Drain output while mdfind runs so a full OS pipe buffer cannot
             // block the child and turn a successful lookup into a timeout.
-            val outputFuture = CompletableFuture.supplyAsync {
-                process.inputStream.bufferedReader().use { it.readText() }
-            }
+            val outputFuture =
+                CompletableFuture.supplyAsync {
+                    process.inputStream.bufferedReader().use { it.readText() }
+                }
 
             if (!process.waitFor(SPOTLIGHT_LOOKUP_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 process.destroyForcibly()
@@ -652,7 +720,7 @@ object UpdateInstaller {
                 logger.warn(
                     LogCategory.SYSTEM,
                     "mdfind lookup for installed app timed out",
-                    mapOf("timeoutSeconds" to SPOTLIGHT_LOOKUP_TIMEOUT_SECONDS)
+                    mapOf("timeoutSeconds" to SPOTLIGHT_LOOKUP_TIMEOUT_SECONDS),
                 )
                 return null
             }
@@ -663,12 +731,13 @@ object UpdateInstaller {
                 logger.warn(
                     LogCategory.SYSTEM,
                     "mdfind lookup for installed app failed",
-                    mapOf("exitCode" to process.exitValue())
+                    mapOf("exitCode" to process.exitValue()),
                 )
                 return null
             }
 
-            output.lineSequence()
+            output
+                .lineSequence()
                 .map { it.trim() }
                 .filter { it.endsWith(MACOS_APP_BUNDLE_SUFFIX) }
                 .filterNot { it.contains(APP_TRANSLOCATION_PATH_SEGMENT) }
@@ -693,17 +762,16 @@ object UpdateInstaller {
     /**
      * Find the .app bundle in the mounted volume
      */
-    fun findAppBundleInVolume(mountedVolume: File): File? {
-        return mountedVolume.listFiles()?.find {
+    fun findAppBundleInVolume(mountedVolume: File): File? =
+        mountedVolume.listFiles()?.find {
             it.name.endsWith(".app") && it.name.contains("BOSS", ignoreCase = true)
         }
-    }
 
     /**
      * Open DMG for manual installation (fallback for development mode)
      */
-    private fun openDMGForManualInstallation(downloadFile: File): InstallResult {
-        return try {
+    private fun openDMGForManualInstallation(downloadFile: File): InstallResult =
+        try {
             val process = ProcessBuilder("open", downloadFile.absolutePath).start()
             process.waitFor()
             logger.info(LogCategory.SYSTEM, "DMG opened for manual installation", mapOf("path" to downloadFile.absolutePath))
@@ -712,7 +780,6 @@ object UpdateInstaller {
             logger.error(LogCategory.SYSTEM, "Failed to open DMG", error = e)
             InstallResult.Error(e.message ?: "Failed to open DMG")
         }
-    }
 
     /**
      * Unmount a DMG volume
@@ -742,13 +809,18 @@ object UpdateInstaller {
     /**
      * Get the current JAR path (for JAR updates)
      */
-    private fun getCurrentJarPath(): File? {
-        return try {
-            val jarPath = UpdateInstaller::class.java.protectionDomain.codeSource.location.toURI().path
+    private fun getCurrentJarPath(): File? =
+        try {
+            val jarPath =
+                UpdateInstaller::class.java.protectionDomain.codeSource.location
+                    .toURI()
+                    .path
             val jarFile = File(jarPath)
             if (jarFile.exists() && jarFile.name.endsWith(".jar")) {
                 jarFile
-            } else null
+            } else {
+                null
+            }
         } catch (e: Exception) {
             logger.debug(
                 LogCategory.SYSTEM,
@@ -757,7 +829,6 @@ object UpdateInstaller {
             )
             null
         }
-    }
 
     /**
      * Detect Linux distribution type (deb-based or rpm-based)
@@ -784,10 +855,12 @@ object UpdateInstaller {
                 val content = osRelease.readText().lowercase()
                 return when {
                     content.contains("debian") || content.contains("ubuntu") ||
-                    content.contains("mint") || content.contains("pop") -> "Linux-deb"
+                        content.contains("mint") || content.contains("pop") -> "Linux-deb"
+
                     content.contains("fedora") || content.contains("rhel") ||
-                    content.contains("centos") || content.contains("rocky") ||
-                    content.contains("alma") -> "Linux-rpm"
+                        content.contains("centos") || content.contains("rocky") ||
+                        content.contains("alma") -> "Linux-rpm"
+
                     else -> "Linux"
                 }
             }

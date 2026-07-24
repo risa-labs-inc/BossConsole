@@ -41,8 +41,8 @@ class PanelHostTabComponent(
     componentContext: ComponentContext,
     private val store: PanelComponentStore,
     private val draggable: BossDraggableComponent,
-) : TabComponentWithUI, ComponentContext by componentContext {
-
+) : TabComponentWithUI,
+    ComponentContext by componentContext {
     override val tabTypeInfo: TabTypeInfo = PanelHostTabType
 
     private val panelId: PanelId = (config as PanelHostTabInfo).panelId

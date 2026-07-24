@@ -9,9 +9,9 @@ import ai.rever.boss.topofmind.ActiveTab
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Tab
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.arkivanov.decompose.extensions.compose.subscribeAsState
-import androidx.compose.runtime.getValue
 
 /**
  * Singleton provider for TopOfMind panel data.
@@ -29,7 +29,7 @@ object TopOfMindDataProvider {
     fun initialize(
         splitViewState: SplitViewState,
         workspaceManager: WorkspaceManager,
-        windowId: String
+        windowId: String,
     ) {
         this.splitViewState = splitViewState
         this.workspaceManager = workspaceManager
@@ -49,9 +49,7 @@ object TopOfMindDataProvider {
     /**
      * Collect all active tabs from the current split view state.
      */
-    fun collectAllActiveTabs(): List<ActiveTab> {
-        return splitViewState?.collectAllActiveTabs(workspaceManager, windowId) ?: emptyList()
-    }
+    fun collectAllActiveTabs(): List<ActiveTab> = splitViewState?.collectAllActiveTabs(workspaceManager, windowId) ?: emptyList()
 
     /**
      * Get all panel states for reactivity tracking.
@@ -66,7 +64,7 @@ object TopOfMindDataProvider {
             Triple(
                 panel.id,
                 tabsState.tabs.size,
-                tabsState.tabs.map { tab -> tab.id + tab.title }
+                tabsState.tabs.map { tab -> tab.id + tab.title },
             )
         }
     }
@@ -75,28 +73,20 @@ object TopOfMindDataProvider {
      * Load favicon from cache.
      */
     @Composable
-    fun loadFavicon(cacheKey: String?): TabIcon.Image? {
-        return loadFaviconFromCache(cacheKey)
-    }
+    fun loadFavicon(cacheKey: String?): TabIcon.Image? = loadFaviconFromCache(cacheKey)
 
     /**
      * Get URL from an ActiveTab if it's a FluckTabInfo.
      */
-    fun getTabUrl(activeTab: ActiveTab): String? {
-        return (activeTab.tabInfo as? FluckTabInfo)?.currentUrl
-    }
+    fun getTabUrl(activeTab: ActiveTab): String? = (activeTab.tabInfo as? FluckTabInfo)?.currentUrl
 
     /**
      * Get favicon cache key from an ActiveTab if it's a FluckTabInfo.
      */
-    fun getFaviconCacheKey(activeTab: ActiveTab): String? {
-        return (activeTab.tabInfo as? FluckTabInfo)?.faviconCacheKey
-    }
+    fun getFaviconCacheKey(activeTab: ActiveTab): String? = (activeTab.tabInfo as? FluckTabInfo)?.faviconCacheKey
 
     /**
      * Get fallback icon for an ActiveTab.
      */
-    fun getFallbackIcon(activeTab: ActiveTab): ImageVector {
-        return activeTab.tabInfo.icon
-    }
+    fun getFallbackIcon(activeTab: ActiveTab): ImageVector = activeTab.tabInfo.icon
 }

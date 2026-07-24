@@ -32,42 +32,44 @@ fun ProjectOpenModeDialog(
     project: Project,
     onDismiss: () -> Unit,
     onOpenInCurrentWindow: (Project) -> Unit,
-    onOpenInNewWindow: (Project) -> Unit
+    onOpenInNewWindow: (Project) -> Unit,
 ) {
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            dismissOnClickOutside = true,
-            dismissOnBackPress = true
-        )
+        properties =
+            DialogProperties(
+                dismissOnClickOutside = true,
+                dismissOnBackPress = true,
+            ),
     ) {
         Surface(
-            modifier = Modifier
-                .width(460.dp)
-                .wrapContentHeight(),
+            modifier =
+                Modifier
+                    .width(460.dp)
+                    .wrapContentHeight(),
             shape = RoundedCornerShape(8.dp),
-            color = BossTheme.colors.panel
+            color = BossTheme.colors.panel,
         ) {
             Column(
-                modifier = Modifier.padding(24.dp)
+                modifier = Modifier.padding(24.dp),
             ) {
                 // Icon and title
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
                     Icon(
                         imageVector = Icons.Outlined.FolderOpen,
                         contentDescription = "Open Project",
                         tint = BossTheme.colors.signal,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(24.dp),
                     )
                     Spacer(modifier = Modifier.width(12.dp))
                     Text(
                         text = "Open Project",
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold,
-                        color = BossTheme.colors.textPrimary
+                        color = BossTheme.colors.textPrimary,
                     )
                 }
 
@@ -78,13 +80,13 @@ fun ProjectOpenModeDialog(
                     text = project.name,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Medium,
-                    color = BossTheme.colors.textPrimary
+                    color = BossTheme.colors.textPrimary,
                 )
                 Text(
                     text = project.path,
                     fontSize = 12.sp,
                     color = BossTheme.colors.textSecondary,
-                    modifier = Modifier.padding(top = 4.dp)
+                    modifier = Modifier.padding(top = 4.dp),
                 )
 
                 Spacer(modifier = Modifier.height(24.dp))
@@ -93,7 +95,7 @@ fun ProjectOpenModeDialog(
                 Text(
                     text = "Where would you like to open this project?",
                     fontSize = 14.sp,
-                    color = BossTheme.colors.textSecondary
+                    color = BossTheme.colors.textSecondary,
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -101,7 +103,7 @@ fun ProjectOpenModeDialog(
                 // Action buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     // Current Window button
                     OutlinedButton(
@@ -109,19 +111,21 @@ fun ProjectOpenModeDialog(
                             onOpenInCurrentWindow(project)
                             onDismiss()
                         },
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(40.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = BossTheme.colors.textPrimary
-                        ),
+                        modifier =
+                            Modifier
+                                .weight(1f)
+                                .height(40.dp),
+                        colors =
+                            ButtonDefaults.outlinedButtonColors(
+                                contentColor = BossTheme.colors.textPrimary,
+                            ),
                         shape = RoundedCornerShape(6.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.Tab,
                             contentDescription = null,
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(16.dp),
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("Current Window", fontWeight = FontWeight.Medium, maxLines = 1)
@@ -133,20 +137,22 @@ fun ProjectOpenModeDialog(
                             onOpenInNewWindow(project)
                             onDismiss()
                         },
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(40.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            backgroundColor = BossTheme.colors.signal,
-                            contentColor = Color.White
-                        ),
+                        modifier =
+                            Modifier
+                                .weight(1f)
+                                .height(40.dp),
+                        colors =
+                            ButtonDefaults.buttonColors(
+                                backgroundColor = BossTheme.colors.signal,
+                                contentColor = Color.White,
+                            ),
                         shape = RoundedCornerShape(6.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Outlined.OpenInNew,
                             contentDescription = null,
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(16.dp),
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("New Window", fontWeight = FontWeight.Medium, maxLines = 1)

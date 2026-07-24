@@ -5,6 +5,8 @@
     <ID>CyclomaticComplexMethod:TerminalServiceImpl.kt$TerminalServiceImpl$override suspend fun createSession(request: CreateSessionRequest): CreateSessionResponse</ID>
     <ID>LongMethod:TerminalServiceImpl.kt$TerminalServiceImpl$override suspend fun createSession(request: CreateSessionRequest): CreateSessionResponse</ID>
     <ID>LongMethod:TerminalServiceMain.kt$fun main()</ID>
+    <ID>MaxLineLength:TerminalServiceMain.kt$"""{"type":"object","properties":{"command":{"type":"string"},"workingDirectory":{"type":"string"}}}"""</ID>
+    <ID>MaxLineLength:TerminalServiceMain.kt$"""{"type":"object","properties":{"exitCode":{"type":"integer"},"sessionId":{"type":"string"}}}"""</ID>
     <ID>MaxLineLength:TerminalServiceMain.kt$.</ID>
     <ID>TooGenericExceptionCaught:TerminalServiceImpl.kt$TerminalServiceImpl$e: Exception</ID>
     <ID>WildcardImport:TerminalServiceImpl.kt$import ai.rever.boss.ipc.proto.services.*</ID>

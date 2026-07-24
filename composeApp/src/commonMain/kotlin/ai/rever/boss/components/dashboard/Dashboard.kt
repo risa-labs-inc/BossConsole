@@ -11,15 +11,15 @@ import ai.rever.boss.components.events.PanelEventBus
 import ai.rever.boss.components.events.TerminalEventBus
 import ai.rever.boss.components.events.URLEventBus
 import ai.rever.boss.components.plugin.PanelIds
-import ai.rever.boss.plugin.ui.BossTheme
-import ai.rever.boss.window.Project
 import ai.rever.boss.components.plugin.panels.left_top.ProjectState
 import ai.rever.boss.dashboard.DashboardStatsManager
 import ai.rever.boss.dashboard.RecentBrowserPagesManager
 import ai.rever.boss.dashboard.RecentFilesManager
 import ai.rever.boss.dashboard.SplitTemplate
 import ai.rever.boss.dashboard.SplitTemplatesManager
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.window.LocalWindowId
+import ai.rever.boss.window.Project
 import ai.rever.boss.window.WindowOperations
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
@@ -46,18 +46,18 @@ import androidx.compose.material.Icon
 import androidx.compose.material.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.Folder
-import androidx.compose.material.icons.outlined.FolderOpen
-import androidx.compose.material.icons.outlined.OpenInBrowser
-import androidx.compose.material.icons.outlined.Terminal
-import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.Code
-import androidx.compose.material.icons.outlined.Star
-import androidx.compose.material.icons.outlined.Download
-import androidx.compose.material.icons.outlined.PlayArrow
-import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.CreateNewFolder
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Language
+import androidx.compose.material.icons.outlined.OpenInBrowser
+import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Star
+import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -106,7 +106,7 @@ fun Dashboard(
     onApplySplitTemplate: (SplitTemplate) -> Unit,
     onActivatePlugin: (String) -> Unit,
     onShowSettings: (() -> Unit)? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     val scrollState = rememberScrollState()
     val windowId = LocalWindowId.current
@@ -139,43 +139,48 @@ fun Dashboard(
     }
 
     Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(BossTheme.colors.panel)
+        modifier =
+            modifier
+                .fillMaxSize()
+                .background(BossTheme.colors.panel),
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(scrollState)
-                .padding(32.dp),
-            verticalArrangement = Arrangement.spacedBy(24.dp)
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(scrollState)
+                    .padding(32.dp),
+            verticalArrangement = Arrangement.spacedBy(24.dp),
         ) {
             // Header with welcome message and stats
             DashboardHeader(
                 sessionDuration = sessionDuration,
                 todayFiles = stats.todayActivity.filesOpened,
                 todayPages = stats.todayActivity.pagesVisited,
-                showSections = showSections
+                showSections = showSections,
             )
 
             // Recent Projects Section (or Open Project button for new users)
             AnimatedVisibility(
                 visible = showSections,
-                enter = fadeIn(tween(300, delayMillis = 100)) + slideInVertically(
-                    tween(300, delayMillis = 100)
-                ) { it / 2 }
+                enter =
+                    fadeIn(tween(300, delayMillis = 100)) +
+                        slideInVertically(
+                            tween(300, delayMillis = 100),
+                        ) { it / 2 },
             ) {
                 if (recentProjects.isNotEmpty()) {
                     DashboardSection(
                         title = "Recent Projects",
                         actionText = "Open Project",
-                        onAction = onOpenProjectDialog
+                        onAction = onOpenProjectDialog,
                     ) {
                         Row(
-                            modifier = Modifier
-                                .horizontalScroll(rememberScrollState())
-                                .padding(vertical = 4.dp, horizontal = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            modifier =
+                                Modifier
+                                    .horizontalScroll(rememberScrollState())
+                                    .padding(vertical = 4.dp, horizontal = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             recentProjects.take(20).forEach { project ->
                                 ProjectCard(
@@ -190,7 +195,7 @@ fun Dashboard(
                                             onOpenProject(project)
                                         }
                                     },
-                                    onRemove = { ProjectState.removeRecentProject(project.path) }
+                                    onRemove = { ProjectState.removeRecentProject(project.path) },
                                 )
                             }
                         }
@@ -198,29 +203,31 @@ fun Dashboard(
                 } else {
                     // New user: Show centered "Open Project" button
                     Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(120.dp),
-                        contentAlignment = Alignment.Center
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .height(120.dp),
+                        contentAlignment = Alignment.Center,
                     ) {
                         androidx.compose.material.Button(
                             onClick = onOpenProjectDialog,
-                            colors = androidx.compose.material.ButtonDefaults.buttonColors(
-                                backgroundColor = BossTheme.colors.signal,
-                                contentColor = BossTheme.colors.onSignal
-                            ),
+                            colors =
+                                androidx.compose.material.ButtonDefaults.buttonColors(
+                                    backgroundColor = BossTheme.colors.signal,
+                                    contentColor = BossTheme.colors.onSignal,
+                                ),
                             shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.padding(16.dp)
+                            modifier = Modifier.padding(16.dp),
                         ) {
                             Icon(
                                 imageVector = Icons.Outlined.FolderOpen,
                                 contentDescription = "Open Project Folder",
-                                modifier = Modifier.padding(end = 8.dp)
+                                modifier = Modifier.padding(end = 8.dp),
                             )
                             Text(
                                 text = "Open Project",
                                 fontSize = 16.sp,
-                                fontWeight = FontWeight.Medium
+                                fontWeight = FontWeight.Medium,
                             )
                         }
                     }
@@ -230,24 +237,27 @@ fun Dashboard(
             // Workspace Suggestions Section
             AnimatedVisibility(
                 visible = showSections,
-                enter = fadeIn(tween(300, delayMillis = 200)) + slideInVertically(
-                    tween(300, delayMillis = 200)
-                ) { it / 2 }
+                enter =
+                    fadeIn(tween(300, delayMillis = 200)) +
+                        slideInVertically(
+                            tween(300, delayMillis = 200),
+                        ) { it / 2 },
             ) {
                 DashboardSection(
                     title = "Workspace Suggestions",
-                    subtitle = "Quick workspace layouts"
+                    subtitle = "Quick workspace layouts",
                 ) {
                     Row(
-                        modifier = Modifier
-                            .horizontalScroll(rememberScrollState())
-                            .padding(vertical = 4.dp, horizontal = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        modifier =
+                            Modifier
+                                .horizontalScroll(rememberScrollState())
+                                .padding(vertical = 4.dp, horizontal = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         splitTemplates.forEach { template ->
                             SplitTemplateCard(
                                 template = template,
-                                onClick = { onApplySplitTemplate(template) }
+                                onClick = { onApplySplitTemplate(template) },
                             )
                         }
                     }
@@ -257,26 +267,29 @@ fun Dashboard(
             // Recent Files Section
             AnimatedVisibility(
                 visible = showSections && recentFiles.isNotEmpty(),
-                enter = fadeIn(tween(300, delayMillis = 300)) + slideInVertically(
-                    tween(300, delayMillis = 300)
-                ) { it / 2 }
+                enter =
+                    fadeIn(tween(300, delayMillis = 300)) +
+                        slideInVertically(
+                            tween(300, delayMillis = 300),
+                        ) { it / 2 },
             ) {
                 DashboardSection(
                     title = "Recent Files",
                     actionText = "Clear",
-                    onAction = { RecentFilesManager.clearAll() }
+                    onAction = { RecentFilesManager.clearAll() },
                 ) {
                     Row(
-                        modifier = Modifier
-                            .horizontalScroll(rememberScrollState())
-                            .padding(vertical = 4.dp, horizontal = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        modifier =
+                            Modifier
+                                .horizontalScroll(rememberScrollState())
+                                .padding(vertical = 4.dp, horizontal = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         recentFiles.take(8).forEach { file ->
                             FileCard(
                                 file = file,
                                 onClick = { onOpenFile(file.path) },
-                                onRemove = { RecentFilesManager.removeFile(file.path) }
+                                onRemove = { RecentFilesManager.removeFile(file.path) },
                             )
                         }
                     }
@@ -286,26 +299,29 @@ fun Dashboard(
             // Browse Suggestions Section (Recent Browser Pages + Popular Dev Sites)
             AnimatedVisibility(
                 visible = showSections && suggestions.isNotEmpty(),
-                enter = fadeIn(tween(300, delayMillis = 400)) + slideInVertically(
-                    tween(300, delayMillis = 400)
-                ) { it / 2 }
+                enter =
+                    fadeIn(tween(300, delayMillis = 400)) +
+                        slideInVertically(
+                            tween(300, delayMillis = 400),
+                        ) { it / 2 },
             ) {
                 DashboardSection(
                     title = "Browse Suggestions",
                     actionText = if (recentPages.isNotEmpty()) "Clear" else null,
-                    onAction = { RecentBrowserPagesManager.clearAll() }
+                    onAction = { RecentBrowserPagesManager.clearAll() },
                 ) {
                     Row(
-                        modifier = Modifier
-                            .horizontalScroll(rememberScrollState())
-                            .padding(vertical = 4.dp, horizontal = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        modifier =
+                            Modifier
+                                .horizontalScroll(rememberScrollState())
+                                .padding(vertical = 4.dp, horizontal = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         suggestions.forEach { page ->
                             BrowserPageCard(
                                 page = page,
                                 onClick = { onOpenUrl(page.url) },
-                                onRemove = { RecentBrowserPagesManager.removePage(page.url) }
+                                onRemove = { RecentBrowserPagesManager.removePage(page.url) },
                             )
                         }
                     }
@@ -315,37 +331,40 @@ fun Dashboard(
             // Quick Actions Section
             AnimatedVisibility(
                 visible = showSections,
-                enter = fadeIn(tween(300, delayMillis = 500)) + slideInVertically(
-                    tween(300, delayMillis = 500)
-                ) { it / 2 }
+                enter =
+                    fadeIn(tween(300, delayMillis = 500)) +
+                        slideInVertically(
+                            tween(300, delayMillis = 500),
+                        ) { it / 2 },
             ) {
                 val scope = rememberCoroutineScope()
 
                 DashboardSection(
-                    title = "Quick Actions"
+                    title = "Quick Actions",
                 ) {
                     Row(
-                        modifier = Modifier
-                            .horizontalScroll(rememberScrollState())
-                            .padding(vertical = 4.dp, horizontal = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        modifier =
+                            Modifier
+                                .horizontalScroll(rememberScrollState())
+                                .padding(vertical = 4.dp, horizontal = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         ActionCard(
                             icon = Icons.Outlined.FolderOpen,
                             title = "Open File",
                             shortcut = "Cmd+O",
-                            onClick = onOpenFileDialog
+                            onClick = onOpenFileDialog,
                         )
                         ActionCard(
                             icon = Icons.Outlined.CreateNewFolder,
                             title = "New Project",
-                            onClick = onNewProject
+                            onClick = onNewProject,
                         )
                         ActionCard(
                             icon = Icons.Outlined.Add,
                             title = "New Tab",
                             shortcut = "Cmd+T",
-                            onClick = onNewTab
+                            onClick = onNewTab,
                         )
                         ActionCard(
                             icon = Icons.Outlined.Terminal,
@@ -357,25 +376,25 @@ fun Dashboard(
                                         TerminalEventBus.openTerminal(sourceWindowId = wid)
                                     }
                                 }
-                            }
+                            },
                         )
                         ActionCard(
                             icon = Icons.Outlined.OpenInBrowser,
                             title = "New Window",
                             shortcut = "Cmd+N",
-                            onClick = onNewWindow
+                            onClick = onNewWindow,
                         )
                         ActionCard(
                             icon = Icons.Outlined.Folder,
                             title = "Open Project",
                             shortcut = "Cmd+P",
-                            onClick = onOpenProjectDialog
+                            onClick = onOpenProjectDialog,
                         )
                         ActionCard(
                             icon = Icons.Outlined.Settings,
                             title = "Settings",
                             shortcut = "Cmd+,",
-                            onClick = { onShowSettings?.invoke() }
+                            onClick = { onShowSettings?.invoke() },
                         )
                         ActionCard(
                             icon = Icons.Outlined.Code,
@@ -386,7 +405,7 @@ fun Dashboard(
                                         PanelEventBus.togglePanel(PanelIds.CODEBASE, sourceWindowId = wid)
                                     }
                                 }
-                            }
+                            },
                         )
                         ActionCard(
                             icon = Icons.Outlined.PlayArrow,
@@ -397,7 +416,7 @@ fun Dashboard(
                                         PanelEventBus.togglePanel(PanelIds.RUN_CONFIGURATIONS, sourceWindowId = wid)
                                     }
                                 }
-                            }
+                            },
                         )
                         ActionCard(
                             icon = Icons.Outlined.Star,
@@ -408,7 +427,7 @@ fun Dashboard(
                                         PanelEventBus.togglePanel(PanelIds.BOOKMARKS, sourceWindowId = wid)
                                     }
                                 }
-                            }
+                            },
                         )
                         ActionCard(
                             icon = Icons.Outlined.Download,
@@ -419,7 +438,7 @@ fun Dashboard(
                                         PanelEventBus.togglePanel(PanelIds.DOWNLOADS, sourceWindowId = wid)
                                     }
                                 }
-                            }
+                            },
                         )
                         ActionCard(
                             icon = Icons.Outlined.Language,
@@ -430,7 +449,7 @@ fun Dashboard(
                                         URLEventBus.openURL("https://google.com", "Google", sourceWindowId = wid)
                                     }
                                 }
-                            }
+                            },
                         )
                     }
                 }
@@ -439,20 +458,23 @@ fun Dashboard(
             // Developer Tools Section
             AnimatedVisibility(
                 visible = showSections,
-                enter = fadeIn(tween(300, delayMillis = 550)) + slideInVertically(
-                    tween(300, delayMillis = 550)
-                ) { it / 2 }
+                enter =
+                    fadeIn(tween(300, delayMillis = 550)) +
+                        slideInVertically(
+                            tween(300, delayMillis = 550),
+                        ) { it / 2 },
             ) {
                 val scope = rememberCoroutineScope()
 
                 DashboardSection(
-                    title = "Developer Tools"
+                    title = "Developer Tools",
                 ) {
                     Row(
-                        modifier = Modifier
-                            .horizontalScroll(rememberScrollState())
-                            .padding(vertical = 4.dp, horizontal = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        modifier =
+                            Modifier
+                                .horizontalScroll(rememberScrollState())
+                                .padding(vertical = 4.dp, horizontal = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         ActionCard(
                             icon = Icons.Outlined.Terminal,
@@ -463,7 +485,7 @@ fun Dashboard(
                                         PanelEventBus.togglePanel(PanelIds.TERMINAL, sourceWindowId = wid)
                                     }
                                 }
-                            }
+                            },
                         )
                         ActionCard(
                             icon = Icons.Outlined.Language,
@@ -474,7 +496,7 @@ fun Dashboard(
                                         URLEventBus.openURL("https://github.com", "GitHub", sourceWindowId = wid)
                                     }
                                 }
-                            }
+                            },
                         )
                         ActionCard(
                             icon = Icons.Outlined.Code,
@@ -485,7 +507,7 @@ fun Dashboard(
                                         PanelEventBus.togglePanel(PanelIds.CODEBASE, sourceWindowId = wid)
                                     }
                                 }
-                            }
+                            },
                         )
                         ActionCard(
                             icon = Icons.Outlined.PlayArrow,
@@ -496,7 +518,7 @@ fun Dashboard(
                                         PanelEventBus.togglePanel(PanelIds.RUN_CONFIGURATIONS, sourceWindowId = wid)
                                     }
                                 }
-                            }
+                            },
                         )
                         ActionCard(
                             icon = Icons.Outlined.Star,
@@ -507,7 +529,7 @@ fun Dashboard(
                                         PanelEventBus.togglePanel(PanelIds.BOOKMARKS, sourceWindowId = wid)
                                     }
                                 }
-                            }
+                            },
                         )
                     }
                 }
@@ -533,7 +555,7 @@ fun Dashboard(
                 WindowOperations.createNewWindow()
                 onOpenProject(selectedProject)
                 projectToOpen = null
-            }
+            },
         )
     }
 }
@@ -550,17 +572,18 @@ private fun DashboardHeader(
     sessionDuration: String,
     todayFiles: Int,
     todayPages: Int,
-    showSections: Boolean
+    showSections: Boolean,
 ) {
     val alpha by animateFloatAsState(
         targetValue = if (showSections) 1f else 0f,
-        animationSpec = tween(500)
+        animationSpec = tween(500),
     )
 
     BoxWithConstraints(
-        modifier = Modifier
-            .fillMaxWidth()
-            .alpha(alpha)
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .alpha(alpha),
     ) {
         if (maxWidth < HeaderCompactWidth) {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -568,19 +591,19 @@ private fun DashboardHeader(
                 StatsSummary(
                     sessionDuration = sessionDuration,
                     todayFiles = todayFiles,
-                    todayPages = todayPages
+                    todayPages = todayPages,
                 )
             }
         } else {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 WelcomeMessage(modifier = Modifier.weight(1f).padding(end = 24.dp))
                 StatsSummary(
                     sessionDuration = sessionDuration,
                     todayFiles = todayFiles,
-                    todayPages = todayPages
+                    todayPages = todayPages,
                 )
             }
         }
@@ -594,12 +617,12 @@ private fun WelcomeMessage(modifier: Modifier = Modifier) {
             text = "Welcome To Boss Console",
             color = BossTheme.colors.textPrimary,
             fontSize = 28.sp,
-            fontWeight = FontWeight.Bold
+            fontWeight = FontWeight.Bold,
         )
         Text(
             text = "What would you like to work on today?",
             color = BossTheme.colors.textSecondary,
-            fontSize = 14.sp
+            fontSize = 14.sp,
         )
     }
 }
@@ -608,18 +631,18 @@ private fun WelcomeMessage(modifier: Modifier = Modifier) {
 private fun StatsSummary(
     sessionDuration: String,
     todayFiles: Int,
-    todayPages: Int
+    todayPages: Int,
 ) {
     Row(
-        modifier = Modifier
-            .horizontalScroll(rememberScrollState())
-            .background(
-                color = BossTheme.colors.raised,
-                shape = RoundedCornerShape(8.dp)
-            )
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+        modifier =
+            Modifier
+                .horizontalScroll(rememberScrollState())
+                .background(
+                    color = BossTheme.colors.raised,
+                    shape = RoundedCornerShape(8.dp),
+                ).padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         StatItem(label = "Session", value = sessionDuration)
         StatDivider()
@@ -630,7 +653,10 @@ private fun StatsSummary(
 }
 
 @Composable
-private fun StatItem(label: String, value: String) {
+private fun StatItem(
+    label: String,
+    value: String,
+) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
             text = value,
@@ -638,14 +664,14 @@ private fun StatItem(label: String, value: String) {
             fontSize = 16.sp,
             fontWeight = FontWeight.Bold,
             maxLines = 1,
-            softWrap = false
+            softWrap = false,
         )
         Text(
             text = label,
             color = BossTheme.colors.textSecondary,
             fontSize = 11.sp,
             maxLines = 1,
-            softWrap = false
+            softWrap = false,
         )
     }
 }
@@ -653,9 +679,10 @@ private fun StatItem(label: String, value: String) {
 @Composable
 private fun StatDivider() {
     Box(
-        modifier = Modifier
-            .width(1.dp)
-            .height(24.dp)
-            .background(BossTheme.colors.textSecondary.copy(alpha = 0.3f))
+        modifier =
+            Modifier
+                .width(1.dp)
+                .height(24.dp)
+                .background(BossTheme.colors.textSecondary.copy(alpha = 0.3f)),
     )
 }

@@ -16,7 +16,10 @@ expect object SidebarVisibilitySettingsManager {
      * Hide or show a single panel id. Persists asynchronously; the
      * StateFlow updates synchronously so the UI reacts immediately.
      */
-    suspend fun setHidden(panelId: String, hidden: Boolean)
+    suspend fun setHidden(
+        panelId: String,
+        hidden: Boolean,
+    )
 
     /** Replace the entire hidden set. */
     suspend fun updateSettings(settings: SidebarVisibilitySettings)

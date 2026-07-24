@@ -1,0 +1,7 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>MaxLineLength:RunTypes.kt$Language.Companion$fun fromExtension(extension: String): Language</ID>
+  </CurrentIssues>
+</SmellBaseline>

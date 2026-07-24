@@ -20,6 +20,5 @@ expect fun FluckView(
     onNavigationUpdate: ((String, String) -> Unit)? = null,
     onNavigationStateChange: ((isBack: Boolean) -> Unit)? = null,
     onFaviconCached: ((String?) -> Unit)? = null,
-    onCloseTab: (() -> Unit)? = null
+    onCloseTab: (() -> Unit)? = null,
 )
-

@@ -28,12 +28,10 @@ data class TerminalTabInfo(
     override val icon: ImageVector = Icons.Outlined.Terminal,
     override val tabIcon: TabIcon? = null,
     override val initialCommand: String? = null,
-    override val workingDirectory: String? = null
+    override val workingDirectory: String? = null,
 ) : ai.rever.boss.plugin.api.TerminalTabInfoInterface {
     /**
      * Returns a copy of this tab info with an updated title.
      */
-    fun updateTitle(newTitle: String): TerminalTabInfo {
-        return copy(title = newTitle)
-    }
+    fun updateTitle(newTitle: String): TerminalTabInfo = copy(title = newTitle)
 }

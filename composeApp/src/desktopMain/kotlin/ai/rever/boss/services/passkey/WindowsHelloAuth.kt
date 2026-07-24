@@ -33,5 +33,4 @@ object WindowsHelloAuth {
             false
         }
     }
-
 }

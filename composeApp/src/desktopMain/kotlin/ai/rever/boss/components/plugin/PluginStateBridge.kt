@@ -1,8 +1,8 @@
 package ai.rever.boss.components.plugin
 
 import ai.rever.boss.ipc.proto.PluginIntentEnvelope
-import ai.rever.boss.ipc.proto.PluginStateServiceGrpcKt
 import ai.rever.boss.ipc.proto.PluginStateRequest
+import ai.rever.boss.ipc.proto.PluginStateServiceGrpcKt
 import ai.rever.boss.ipc.proto.PluginStateUpdate
 import io.grpc.ManagedChannel
 import kotlinx.coroutines.CoroutineScope
@@ -74,14 +74,21 @@ class PluginStateBridge(
      * @param intentType Intent discriminator (e.g., "SetFilter", "Refresh")
      * @param payload Serialized intent payload bytes
      */
-    suspend fun sendIntent(intentType: String, payload: ByteArray = ByteArray(0)) {
-        val envelope = PluginIntentEnvelope.newBuilder()
-            .setPluginId(pluginId)
-            .setInstanceId(instanceId)
-            .setIntentType(intentType)
-            .setPayloadBytes(com.google.protobuf.ByteString.copyFrom(payload))
-            .setTimestamp(System.currentTimeMillis())
-            .build()
+    suspend fun sendIntent(
+        intentType: String,
+        payload: ByteArray = ByteArray(0),
+    ) {
+        val envelope =
+            PluginIntentEnvelope
+                .newBuilder()
+                .setPluginId(pluginId)
+                .setInstanceId(instanceId)
+                .setIntentType(intentType)
+                .setPayloadBytes(
+                    com.google.protobuf.ByteString
+                        .copyFrom(payload),
+                ).setTimestamp(System.currentTimeMillis())
+                .build()
         intentFlow.emit(envelope)
     }
 
@@ -91,15 +98,18 @@ class PluginStateBridge(
      */
     private suspend fun fetchCurrentState() {
         try {
-            val request = PluginStateRequest.newBuilder()
-                .setPluginId(pluginId)
-                .setInstanceId(instanceId)
-                .build()
+            val request =
+                PluginStateRequest
+                    .newBuilder()
+                    .setPluginId(pluginId)
+                    .setInstanceId(instanceId)
+                    .build()
             val snapshot = stub.getCurrentState(request)
             applyState(snapshot.stateBytes.toByteArray(), snapshot.version)
             logger.info(
                 "Fetched current state: plugin={}, version={}",
-                pluginId, snapshot.version
+                pluginId,
+                snapshot.version,
             )
         } catch (e: Exception) {
             logger.warn("Failed to fetch current state for plugin={}: {}", pluginId, e.message)
@@ -119,11 +129,12 @@ class PluginStateBridge(
                 _connected.value = true
 
                 // Start bidirectional stream
-                val intentSource = kotlinx.coroutines.flow.channelFlow {
-                    intentFlow.collect { intent ->
-                        send(intent)
+                val intentSource =
+                    kotlinx.coroutines.flow.channelFlow {
+                        intentFlow.collect { intent ->
+                            send(intent)
+                        }
                     }
-                }
 
                 stub.syncState(intentSource).collect { update ->
                     handleStateUpdate(update)
@@ -138,7 +149,9 @@ class PluginStateBridge(
                 _connected.value = false
                 logger.warn(
                     "State sync disconnected for plugin={}: {}. Reconnecting in {}ms",
-                    pluginId, e.message, backoffMs
+                    pluginId,
+                    e.message,
+                    backoffMs,
                 )
                 // Jittered exponential backoff to prevent thundering herd
                 val jitter = (Math.random() * backoffMs * 0.3).toLong()
@@ -154,16 +167,18 @@ class PluginStateBridge(
                 val fullState = update.fullState
                 applyState(fullState.stateBytes.toByteArray(), fullState.version)
             }
+
             update.hasDeltaState() -> {
                 // TODO: Implement actual JSON Merge Patch for delta state.
                 // For now, request full state since applying raw patch bytes
                 // as a replacement would corrupt state.
                 logger.debug(
                     "Delta state received for plugin={}, requesting full state instead",
-                    pluginId
+                    pluginId,
                 )
                 fetchCurrentState()
             }
+
             update.hasEffect() -> {
                 val effect = update.effect
                 _effects.emit(effect.effectType to effect.payloadBytes.toByteArray())
@@ -171,7 +186,10 @@ class PluginStateBridge(
         }
     }
 
-    private fun applyState(stateBytes: ByteArray, version: Long) {
+    private fun applyState(
+        stateBytes: ByteArray,
+        version: Long,
+    ) {
         if (version > _version.value) {
             _state.value = stateBytes
             _version.value = version

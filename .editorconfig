@@ -14,6 +14,40 @@ max_line_length = 140
 # Matches kotlin.code.style=official in gradle.properties (ktlint's name
 # for the official Kotlin style guide is ktlint_official).
 ktlint_code_style = ktlint_official
+# --- Rules ktlint cannot auto-correct, disabled at the format-the-world
+# --- reformat so they don't gate CI forever. Site counts are from that
+# --- reformat; burning them down is follow-up refactoring work, not a
+# --- formatting concern.
+# Wildcard imports (~400 sites). Stay visible via detekt's baselined
+# WildcardImport rule.
+ktlint_standard_no-wildcard-imports = disabled
+# Package renames (46 sites, e.g. panels/left_top). A rename refactor, not
+# formatting; detekt's PackageNaming keeps visibility.
+ktlint_standard_package-name = disabled
+# `_backing` properties without a matching public property (59 sites) —
+# renames touch call sites, not formatting.
+ktlint_standard_backing-property-naming = disabled
+# Constant/val naming (18 sites, screaming-snake-case) — renames, some on
+# public API; detekt naming rules keep visibility.
+ktlint_standard_property-naming = disabled
+# File renames (20 sites) — churns git history for zero formatting value;
+# detekt's MatchingDeclarationName covers it.
+ktlint_standard_filename = disabled
+# Comment-placement opinions (48 + 36 + 16 sites): consecutive comment
+# blocks, comments on value parameters, and file-level dangling KDoc are all
+# established documentation styles in this codebase.
+ktlint_standard_no-consecutive-comments = disabled
+ktlint_standard_value-parameter-comment = disabled
+ktlint_standard_kdoc = disabled
+# Composables are conventionally PascalCase; exempt them from function-naming
+# instead of disabling the rule (violations are not auto-correctable).
+ktlint_function_naming_ignore_when_annotated_with = Composable
+
+# Generated sources (Compose resource accessors, protobuf, …) are not ours to
+# format; the ktlint-gradle source sets include them, so switch ktlint off for
+# anything a generator emits under build/.
+[**/build/generated/**.kt]
+ktlint = disabled
 
 [*.{yml,yaml,json}]
 indent_style = space

@@ -46,7 +46,10 @@ expect object RunnerTerminalService {
      * @param configId The configuration ID to check
      * @return True if the config is running in the specified window
      */
-    fun isConfigRunningInWindow(windowId: String, configId: String): Boolean
+    fun isConfigRunningInWindow(
+        windowId: String,
+        configId: String,
+    ): Boolean
 
     /**
      * Open or reuse a runner terminal for the given configuration.
@@ -60,7 +63,7 @@ expect object RunnerTerminalService {
     suspend fun openRunnerTerminal(
         config: RunConfiguration,
         windowId: String,
-        onTerminalCreated: (String) -> Unit = {}
+        onTerminalCreated: (String) -> Unit = {},
     ): String
 
     /**
@@ -70,7 +73,10 @@ expect object RunnerTerminalService {
      * @param configId The configuration ID to stop
      * @return True if stop signal was sent, false if config not running
      */
-    suspend fun stopRunner(windowId: String, configId: String): Boolean
+    suspend fun stopRunner(
+        windowId: String,
+        configId: String,
+    ): Boolean
 
     /**
      * Re-run a configuration: stop current process (if running) and run again.
@@ -83,7 +89,7 @@ expect object RunnerTerminalService {
     suspend fun rerunRunner(
         config: RunConfiguration,
         windowId: String,
-        onTerminalCreated: (String) -> Unit = {}
+        onTerminalCreated: (String) -> Unit = {},
     ): String
 
     /**
@@ -100,7 +106,10 @@ expect object RunnerTerminalService {
      * @param windowId The window ID
      * @param terminalId The terminal tab ID
      */
-    fun removeTerminal(windowId: String, terminalId: String)
+    fun removeTerminal(
+        windowId: String,
+        terminalId: String,
+    )
 
     /**
      * Get the configuration ID associated with a terminal tab.
@@ -118,7 +127,10 @@ expect object RunnerTerminalService {
      * @param windowId The window ID
      * @param configId The configuration ID to remove
      */
-    fun removeConfig(windowId: String, configId: String)
+    fun removeConfig(
+        windowId: String,
+        configId: String,
+    )
 
     /**
      * Open a runner command in the sidebar terminal panel.
@@ -139,7 +151,7 @@ expect object RunnerTerminalService {
         command: String,
         workingDirectory: String?,
         tabTitle: String,
-        isRerun: Boolean = false
+        isRerun: Boolean = false,
     ): Boolean
 
     /**
@@ -163,6 +175,6 @@ expect object RunnerTerminalService {
         configId: String,
         command: String,
         workingDirectory: String?,
-        name: String
+        name: String,
     )
 }

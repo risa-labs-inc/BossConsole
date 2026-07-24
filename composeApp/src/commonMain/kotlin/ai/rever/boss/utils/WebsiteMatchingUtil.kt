@@ -23,11 +23,11 @@ object WebsiteMatchingUtil {
      */
     data class MatchedSecret(
         val secret: SecretEntry,
-        val matchScore: Float,  // 0.0 - 1.0
-        val matchReason: String  // "exact", "subdomain", "partial", "domain"
+        val matchScore: Float, // 0.0 - 1.0
+        val matchReason: String, // "exact", "subdomain", "partial", "domain"
     ) : Comparable<MatchedSecret> {
         override fun compareTo(other: MatchedSecret): Int {
-            return other.matchScore.compareTo(this.matchScore)  // Descending
+            return other.matchScore.compareTo(this.matchScore) // Descending
         }
     }
 
@@ -54,11 +54,12 @@ object WebsiteMatchingUtil {
             }
 
             // Add protocol if missing for parsing
-            val urlWithProtocol = if (!cleanUrl.startsWith("http://") && !cleanUrl.startsWith("https://")) {
-                "https://$cleanUrl"
-            } else {
-                cleanUrl
-            }
+            val urlWithProtocol =
+                if (!cleanUrl.startsWith("http://") && !cleanUrl.startsWith("https://")) {
+                    "https://$cleanUrl"
+                } else {
+                    cleanUrl
+                }
 
             // Parse URL
             val javaUrl = java.net.URL(urlWithProtocol)
@@ -81,20 +82,28 @@ object WebsiteMatchingUtil {
             // Special handling for .co.uk, .com.au, etc.
             val twoPartTlds = listOf("co.uk", "com.au", "co.in", "co.jp", "com.br", "co.za")
 
-            host = when {
-                // Handle two-part TLDs (example.co.uk)
-                parts.size >= 3 && twoPartTlds.any { host.endsWith(it) } -> {
-                    parts.takeLast(3).joinToString(".")
+            host =
+                when {
+                    // Handle two-part TLDs (example.co.uk)
+                    parts.size >= 3 && twoPartTlds.any { host.endsWith(it) } -> {
+                        parts.takeLast(3).joinToString(".")
+                    }
+
+                    // Remove common subdomain (login.google.com → google.com)
+                    parts.size >= 3 && parts[0] in commonSubdomains -> {
+                        parts.drop(1).joinToString(".")
+                    }
+
+                    // Keep as is if short enough
+                    parts.size <= 2 -> {
+                        host
+                    }
+
+                    // For longer domains, keep last 2 parts (subdomain.example.com → example.com)
+                    else -> {
+                        parts.takeLast(2).joinToString(".")
+                    }
                 }
-                // Remove common subdomain (login.google.com → google.com)
-                parts.size >= 3 && parts[0] in commonSubdomains -> {
-                    parts.drop(1).joinToString(".")
-                }
-                // Keep as is if short enough
-                parts.size <= 2 -> host
-                // For longer domains, keep last 2 parts (subdomain.example.com → example.com)
-                else -> parts.takeLast(2).joinToString(".")
-            }
 
             host
         } catch (e: Exception) {
@@ -121,27 +130,28 @@ object WebsiteMatchingUtil {
     fun matchSecretsForDomain(
         domain: String,
         secrets: List<SecretEntry>,
-        maxResults: Int = 5
+        maxResults: Int = 5,
     ): List<MatchedSecret> {
         val normalizedDomain = domain.lowercase().removePrefix("www.")
 
-        val matchedSecrets = secrets.mapNotNull { secret ->
-            val secretDomain = extractMainDomain(secret.website) ?: secret.website.lowercase()
-            val score = calculateMatchScore(secretDomain, normalizedDomain)
+        val matchedSecrets =
+            secrets.mapNotNull { secret ->
+                val secretDomain = extractMainDomain(secret.website) ?: secret.website.lowercase()
+                val score = calculateMatchScore(secretDomain, normalizedDomain)
 
-            if (score.score > 0.3f) {  // Threshold for relevance
-                MatchedSecret(
-                    secret = secret,
-                    matchScore = score.score,
-                    matchReason = score.reason
-                )
-            } else {
-                null
+                if (score.score > 0.3f) { // Threshold for relevance
+                    MatchedSecret(
+                        secret = secret,
+                        matchScore = score.score,
+                        matchReason = score.reason,
+                    )
+                } else {
+                    null
+                }
             }
-        }
 
         return matchedSecrets
-            .sorted()  // Sort by score descending
+            .sorted() // Sort by score descending
             .take(maxResults)
     }
 
@@ -150,21 +160,28 @@ object WebsiteMatchingUtil {
      *
      * @return MatchScore with score (0.0-1.0) and reason
      */
-    fun calculateMatchScore(secretWebsite: String, currentDomain: String): MatchScore {
+    fun calculateMatchScore(
+        secretWebsite: String,
+        currentDomain: String,
+    ): MatchScore {
         val secretNorm = secretWebsite.lowercase().trim()
         val domainNorm = currentDomain.lowercase().trim()
 
         return when {
             // Exact match
-            secretNorm == domainNorm -> MatchScore(1.0f, "exact")
+            secretNorm == domainNorm -> {
+                MatchScore(1.0f, "exact")
+            }
 
             // Subdomain match (login.google.com vs google.com)
-            secretNorm.endsWith(".$domainNorm") || domainNorm.endsWith(".$secretNorm") ->
+            secretNorm.endsWith(".$domainNorm") || domainNorm.endsWith(".$secretNorm") -> {
                 MatchScore(0.9f, "subdomain")
+            }
 
             // Domain contains other (google.com contains google)
-            secretNorm.contains(domainNorm) || domainNorm.contains(secretNorm) ->
+            secretNorm.contains(domainNorm) || domainNorm.contains(secretNorm) -> {
                 MatchScore(0.7f, "domain")
+            }
 
             // Partial match (same keywords)
             else -> {
@@ -184,7 +201,10 @@ object WebsiteMatchingUtil {
     /**
      * Match score with reasoning
      */
-    data class MatchScore(val score: Float, val reason: String)
+    data class MatchScore(
+        val score: Float,
+        val reason: String,
+    )
 
     /**
      * Get a user-friendly display name for a website.
@@ -205,15 +225,42 @@ object WebsiteMatchingUtil {
 
         // Handle special cases
         return when (nameWithoutTld.lowercase()) {
-            "google" -> "Google"
-            "github" -> "GitHub"
-            "facebook" -> "Facebook"
-            "linkedin" -> "LinkedIn"
-            "twitter" -> "Twitter (X)"
-            "microsoft" -> "Microsoft"
-            "apple" -> "Apple"
-            "amazon" -> "Amazon"
-            "netflix" -> "Netflix"
+            "google" -> {
+                "Google"
+            }
+
+            "github" -> {
+                "GitHub"
+            }
+
+            "facebook" -> {
+                "Facebook"
+            }
+
+            "linkedin" -> {
+                "LinkedIn"
+            }
+
+            "twitter" -> {
+                "Twitter (X)"
+            }
+
+            "microsoft" -> {
+                "Microsoft"
+            }
+
+            "apple" -> {
+                "Apple"
+            }
+
+            "amazon" -> {
+                "Amazon"
+            }
+
+            "netflix" -> {
+                "Netflix"
+            }
+
             else -> {
                 // Generic formatting: example-site → Example Site
                 nameWithoutTld
@@ -233,10 +280,21 @@ object WebsiteMatchingUtil {
      */
     fun isLikelyLoginPage(url: String): Boolean {
         val lowerUrl = url.lowercase()
-        val loginKeywords = listOf(
-            "login", "signin", "sign-in", "auth", "authenticate",
-            "password", "sso", "oauth", "accounts", "signup", "sign-up", "register"
-        )
+        val loginKeywords =
+            listOf(
+                "login",
+                "signin",
+                "sign-in",
+                "auth",
+                "authenticate",
+                "password",
+                "sso",
+                "oauth",
+                "accounts",
+                "signup",
+                "sign-up",
+                "register",
+            )
 
         return loginKeywords.any { lowerUrl.contains(it) }
     }

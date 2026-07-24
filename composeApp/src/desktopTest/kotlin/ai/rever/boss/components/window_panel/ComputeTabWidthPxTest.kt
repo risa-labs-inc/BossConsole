@@ -11,13 +11,14 @@ import kotlin.test.assertTrue
  * the Dp constants in BossTabBar.kt (min 36, max 240, divider 9).
  */
 class ComputeTabWidthPxTest {
-
     private val divider = 9
     private val min = 36
     private val max = 240
 
-    private fun compute(rowWidthPx: Int, tabCount: Int) =
-        computeTabWidthPx(rowWidthPx, tabCount, divider, min, max)
+    private fun compute(
+        rowWidthPx: Int,
+        tabCount: Int,
+    ) = computeTabWidthPx(rowWidthPx, tabCount, divider, min, max)
 
     @Test
     fun `single tab gets max width`() {
@@ -73,7 +74,7 @@ class ComputeTabWidthPxTest {
                 val total = width * tabCount + divider * (tabCount - 1)
                 assertTrue(
                     total <= row,
-                    "tabCount=$tabCount: total ${total}px exceeds row ${row}px"
+                    "tabCount=$tabCount: total ${total}px exceeds row ${row}px",
                 )
             }
         }

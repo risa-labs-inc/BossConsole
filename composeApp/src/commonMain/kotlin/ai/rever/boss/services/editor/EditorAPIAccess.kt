@@ -34,7 +34,7 @@ object EditorAPIAccess {
         logger.debug(
             LogCategory.SYSTEM,
             "EditorAPIAccess initialized",
-            mapOf("apiAvailable" to (getProvider() != null))
+            mapOf("apiAvailable" to (getProvider() != null)),
         )
     }
 

@@ -12,7 +12,7 @@ data class ActiveTab(
     val workspaceName: String,
     val panelId: String,
     val windowId: String,
-    val splitPosition: String? = null // "Left", "Right", "Top", "Bottom", or null for single panel
+    val splitPosition: String? = null, // "Left", "Right", "Top", "Bottom", or null for single panel
 )
 
 /**
@@ -20,13 +20,13 @@ data class ActiveTab(
  */
 sealed class WorkspaceTabStructure {
     data class TabItem(
-        val activeTab: ActiveTab
+        val activeTab: ActiveTab,
     ) : WorkspaceTabStructure()
 
     data class SplitSection(
-        val sectionName: String,  // "Left", "Right", "Top", "Bottom"
+        val sectionName: String, // "Left", "Right", "Top", "Bottom"
         val children: List<WorkspaceTabStructure>,
-        val level: Int = 0
+        val level: Int = 0,
     ) : WorkspaceTabStructure()
 }
 
@@ -44,14 +44,14 @@ sealed class TabTreeNode {
         override val level: Int = 0,
         val workspaceId: String,
         var isExpanded: Boolean = true,
-        val tabStructure: List<WorkspaceTabStructure> = emptyList()
+        val tabStructure: List<WorkspaceTabStructure> = emptyList(),
     ) : TabTreeNode()
 
     data class TabNode(
         override val id: String,
         override val name: String,
         override val level: Int,
-        val activeTab: ActiveTab
+        val activeTab: ActiveTab,
     ) : TabTreeNode()
 }
 
@@ -62,7 +62,7 @@ enum class BreadcrumbType {
     WORKSPACE,
     PANEL,
     TAB,
-    SEPARATOR
+    SEPARATOR,
 }
 
 /**
@@ -72,5 +72,5 @@ data class BreadcrumbItem(
     val text: String,
     val type: BreadcrumbType,
     val clickable: Boolean = true,
-    val onClick: (() -> Unit)? = null
+    val onClick: (() -> Unit)? = null,
 )

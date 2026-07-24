@@ -52,10 +52,12 @@ private fun getLinuxDownloadsDirectory(userHome: String): String {
             // Look for XDG_DOWNLOAD_DIR="$HOME/Downloads" or similar
             for (line in lines) {
                 if (line.startsWith("XDG_DOWNLOAD_DIR=")) {
-                    val path = line.substringAfter("=")
-                        .trim()
-                        .removeSurrounding("\"")
-                        .replace("\$HOME", userHome)
+                    val path =
+                        line
+                            .substringAfter("=")
+                            .trim()
+                            .removeSurrounding("\"")
+                            .replace("\$HOME", userHome)
 
                     if (Files.exists(Paths.get(path))) {
                         return path

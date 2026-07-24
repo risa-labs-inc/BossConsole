@@ -16,251 +16,267 @@ import kotlin.test.assertTrue
  * Unit tests for [InProcessPluginSandbox].
  */
 class InProcessPluginSandboxTest {
-
     private lateinit var sandbox: InProcessPluginSandbox
 
     @BeforeEach
     fun setUp() {
-        sandbox = InProcessPluginSandbox(
-            pluginId = "test-plugin",
-            config = SandboxConfig(
-                maxThreads = 2,
-                heartbeatIntervalMs = 1000,
-                maxConsecutiveErrors = 3
+        sandbox =
+            InProcessPluginSandbox(
+                pluginId = "test-plugin",
+                config =
+                    SandboxConfig(
+                        maxThreads = 2,
+                        heartbeatIntervalMs = 1000,
+                        maxConsecutiveErrors = 3,
+                    ),
             )
-        )
     }
 
     @AfterEach
-    fun tearDown() = runTest {
-        sandbox.stop()
-    }
+    fun tearDown() =
+        runTest {
+            sandbox.stop()
+        }
 
     @Nested
     inner class LifecycleTests {
-
         @Test
         fun `sandbox starts in STOPPED state`() {
             assertEquals(SandboxState.STOPPED, sandbox.state.value)
         }
 
         @Test
-        fun `start transitions to RUNNING state`() = runTest {
-            val result = sandbox.start()
+        fun `start transitions to RUNNING state`() =
+            runTest {
+                val result = sandbox.start()
 
-            assertTrue(result.isSuccess)
-            assertEquals(SandboxState.RUNNING, sandbox.state.value)
-        }
-
-        @Test
-        fun `stop transitions to STOPPED state`() = runTest {
-            sandbox.start()
-
-            val result = sandbox.stop()
-
-            assertTrue(result.isSuccess)
-            assertEquals(SandboxState.STOPPED, sandbox.state.value)
-        }
+                assertTrue(result.isSuccess)
+                assertEquals(SandboxState.RUNNING, sandbox.state.value)
+            }
 
         @Test
-        fun `restart transitions through RESTARTING to RUNNING`() = runTest {
-            sandbox.start()
+        fun `stop transitions to STOPPED state`() =
+            runTest {
+                sandbox.start()
 
-            val result = sandbox.restart()
+                val result = sandbox.stop()
 
-            assertTrue(result.isSuccess)
-            assertEquals(SandboxState.RUNNING, sandbox.state.value)
-        }
-
-        @Test
-        fun `double start is idempotent`() = runTest {
-            sandbox.start()
-            val result = sandbox.start()
-
-            assertTrue(result.isSuccess)
-            assertEquals(SandboxState.RUNNING, sandbox.state.value)
-        }
+                assertTrue(result.isSuccess)
+                assertEquals(SandboxState.STOPPED, sandbox.state.value)
+            }
 
         @Test
-        fun `double stop is idempotent`() = runTest {
-            sandbox.start()
-            sandbox.stop()
-            val result = sandbox.stop()
+        fun `restart transitions through RESTARTING to RUNNING`() =
+            runTest {
+                sandbox.start()
 
-            assertTrue(result.isSuccess)
-            assertEquals(SandboxState.STOPPED, sandbox.state.value)
-        }
+                val result = sandbox.restart()
+
+                assertTrue(result.isSuccess)
+                assertEquals(SandboxState.RUNNING, sandbox.state.value)
+            }
+
+        @Test
+        fun `double start is idempotent`() =
+            runTest {
+                sandbox.start()
+                val result = sandbox.start()
+
+                assertTrue(result.isSuccess)
+                assertEquals(SandboxState.RUNNING, sandbox.state.value)
+            }
+
+        @Test
+        fun `double stop is idempotent`() =
+            runTest {
+                sandbox.start()
+                sandbox.stop()
+                val result = sandbox.stop()
+
+                assertTrue(result.isSuccess)
+                assertEquals(SandboxState.STOPPED, sandbox.state.value)
+            }
     }
 
     @Nested
     inner class HealthMetricsTests {
+        @Test
+        fun `initial health metrics are correct`() =
+            runTest {
+                sandbox.start()
+
+                val metrics = sandbox.healthMetrics.value
+                assertEquals(0, metrics.consecutiveErrors)
+                assertEquals(0, metrics.errorCount)
+                assertEquals(0, metrics.crashCount)
+            }
 
         @Test
-        fun `initial health metrics are correct`() = runTest {
-            sandbox.start()
+        fun `recordHeartbeat updates lastHeartbeat`() =
+            runTest {
+                sandbox.start()
+                val initialMetrics = sandbox.healthMetrics.value
 
-            val metrics = sandbox.healthMetrics.value
-            assertEquals(0, metrics.consecutiveErrors)
-            assertEquals(0, metrics.errorCount)
-            assertEquals(0, metrics.crashCount)
-        }
+                delay(10) // Small delay to ensure time difference
+                sandbox.recordHeartbeat()
 
-        @Test
-        fun `recordHeartbeat updates lastHeartbeat`() = runTest {
-            sandbox.start()
-            val initialMetrics = sandbox.healthMetrics.value
-
-            delay(10) // Small delay to ensure time difference
-            sandbox.recordHeartbeat()
-
-            val updatedMetrics = sandbox.healthMetrics.value
-            assertTrue(updatedMetrics.lastHeartbeat >= initialMetrics.lastHeartbeat)
-        }
+                val updatedMetrics = sandbox.healthMetrics.value
+                assertTrue(updatedMetrics.lastHeartbeat >= initialMetrics.lastHeartbeat)
+            }
 
         @Test
-        fun `recordSuccess resets consecutive errors`() = runTest {
-            sandbox.start()
+        fun `recordSuccess resets consecutive errors`() =
+            runTest {
+                sandbox.start()
 
-            // Record some errors
-            sandbox.recordError(RuntimeException("Test error 1"))
-            sandbox.recordError(RuntimeException("Test error 2"))
-            assertEquals(2, sandbox.healthMetrics.value.consecutiveErrors)
+                // Record some errors
+                sandbox.recordError(RuntimeException("Test error 1"))
+                sandbox.recordError(RuntimeException("Test error 2"))
+                assertEquals(2, sandbox.healthMetrics.value.consecutiveErrors)
 
-            // Record success
-            sandbox.recordSuccess()
+                // Record success
+                sandbox.recordSuccess()
 
-            assertEquals(0, sandbox.healthMetrics.value.consecutiveErrors)
-        }
-
-        @Test
-        fun `recordError increments error counters`() = runTest {
-            sandbox.start()
-
-            sandbox.recordError(RuntimeException("Test error"))
-
-            val metrics = sandbox.healthMetrics.value
-            assertEquals(1, metrics.consecutiveErrors)
-            assertEquals(1, metrics.errorCount)
-        }
+                assertEquals(0, sandbox.healthMetrics.value.consecutiveErrors)
+            }
 
         @Test
-        fun `multiple errors increment consecutiveErrors`() = runTest {
-            sandbox.start()
+        fun `recordError increments error counters`() =
+            runTest {
+                sandbox.start()
 
-            sandbox.recordError(RuntimeException("Error 1"))
-            sandbox.recordError(RuntimeException("Error 2"))
-            sandbox.recordError(RuntimeException("Error 3"))
+                sandbox.recordError(RuntimeException("Test error"))
 
-            val metrics = sandbox.healthMetrics.value
-            assertEquals(3, metrics.consecutiveErrors)
-            assertEquals(3, metrics.errorCount)
-        }
+                val metrics = sandbox.healthMetrics.value
+                assertEquals(1, metrics.consecutiveErrors)
+                assertEquals(1, metrics.errorCount)
+            }
+
+        @Test
+        fun `multiple errors increment consecutiveErrors`() =
+            runTest {
+                sandbox.start()
+
+                sandbox.recordError(RuntimeException("Error 1"))
+                sandbox.recordError(RuntimeException("Error 2"))
+                sandbox.recordError(RuntimeException("Error 3"))
+
+                val metrics = sandbox.healthMetrics.value
+                assertEquals(3, metrics.consecutiveErrors)
+                assertEquals(3, metrics.errorCount)
+            }
     }
 
     @Nested
     inner class UnhealthyStateTests {
-
         @Test
-        fun `exceeding maxConsecutiveErrors marks sandbox as UNHEALTHY`() = runTest {
-            sandbox.start()
+        fun `exceeding maxConsecutiveErrors marks sandbox as UNHEALTHY`() =
+            runTest {
+                sandbox.start()
 
-            // Record errors up to the threshold
-            repeat(3) {
-                sandbox.recordError(RuntimeException("Error $it"))
+                // Record errors up to the threshold
+                repeat(3) {
+                    sandbox.recordError(RuntimeException("Error $it"))
+                }
+
+                assertEquals(SandboxState.UNHEALTHY, sandbox.state.value)
             }
 
-            assertEquals(SandboxState.UNHEALTHY, sandbox.state.value)
-        }
+        @Test
+        fun `markUnhealthy changes state from RUNNING to UNHEALTHY`() =
+            runTest {
+                sandbox.start()
+
+                sandbox.markUnhealthy()
+
+                assertEquals(SandboxState.UNHEALTHY, sandbox.state.value)
+            }
 
         @Test
-        fun `markUnhealthy changes state from RUNNING to UNHEALTHY`() = runTest {
-            sandbox.start()
+        fun `markUnhealthy does nothing when not RUNNING`() =
+            runTest {
+                // Don't start the sandbox
+                sandbox.markUnhealthy()
 
-            sandbox.markUnhealthy()
-
-            assertEquals(SandboxState.UNHEALTHY, sandbox.state.value)
-        }
-
-        @Test
-        fun `markUnhealthy does nothing when not RUNNING`() = runTest {
-            // Don't start the sandbox
-            sandbox.markUnhealthy()
-
-            assertEquals(SandboxState.STOPPED, sandbox.state.value)
-        }
+                assertEquals(SandboxState.STOPPED, sandbox.state.value)
+            }
     }
 
     @Nested
     inner class DisabledStateTests {
+        @Test
+        fun `setDisabled changes state to DISABLED`() =
+            runTest {
+                sandbox.start()
+
+                sandbox.setDisabled()
+
+                assertEquals(SandboxState.DISABLED, sandbox.state.value)
+            }
 
         @Test
-        fun `setDisabled changes state to DISABLED`() = runTest {
-            sandbox.start()
+        fun `setState allows direct state changes`() =
+            runTest {
+                sandbox.start()
 
-            sandbox.setDisabled()
+                sandbox.setState(SandboxState.CRASHED)
 
-            assertEquals(SandboxState.DISABLED, sandbox.state.value)
-        }
-
-        @Test
-        fun `setState allows direct state changes`() = runTest {
-            sandbox.start()
-
-            sandbox.setState(SandboxState.CRASHED)
-
-            assertEquals(SandboxState.CRASHED, sandbox.state.value)
-        }
+                assertEquals(SandboxState.CRASHED, sandbox.state.value)
+            }
     }
 
     @Nested
     inner class SandboxScopeTests {
-
         @Test
-        fun `sandboxScope is available after start`() = runTest {
-            sandbox.start()
+        fun `sandboxScope is available after start`() =
+            runTest {
+                sandbox.start()
 
-            assertNotNull(sandbox.sandboxScope)
-        }
-
-        @Test
-        fun `coroutines can be launched in sandboxScope`() = runTest {
-            sandbox.start()
-            var executed = false
-
-            val job = sandbox.sandboxScope.launch {
-                executed = true
+                assertNotNull(sandbox.sandboxScope)
             }
-            job.join()
-
-            assertTrue(executed)
-        }
 
         @Test
-        fun `restart creates new sandboxScope`() = runTest {
-            sandbox.start()
-            val originalScope = sandbox.sandboxScope
+        fun `coroutines can be launched in sandboxScope`() =
+            runTest {
+                sandbox.start()
+                var executed = false
 
-            sandbox.restart()
+                val job =
+                    sandbox.sandboxScope.launch {
+                        executed = true
+                    }
+                job.join()
 
-            // After restart, scope should be different (new instance)
-            // We can verify this by checking the scope is still active
-            assertTrue(sandbox.sandboxScope.isActive)
-        }
+                assertTrue(executed)
+            }
+
+        @Test
+        fun `restart creates new sandboxScope`() =
+            runTest {
+                sandbox.start()
+                val originalScope = sandbox.sandboxScope
+
+                sandbox.restart()
+
+                // After restart, scope should be different (new instance)
+                // We can verify this by checking the scope is still active
+                assertTrue(sandbox.sandboxScope.isActive)
+            }
     }
 
     @Nested
     inner class PluginExceptionTests {
-
         @Test
-        fun `recordError wraps non-PluginException errors`() = runTest {
-            sandbox.start()
-            val originalError = RuntimeException("Original error")
+        fun `recordError wraps non-PluginException errors`() =
+            runTest {
+                sandbox.start()
+                val originalError = RuntimeException("Original error")
 
-            sandbox.recordError(originalError)
+                sandbox.recordError(originalError)
 
-            // The error is wrapped internally - we verify by checking metrics increased
-            assertEquals(1, sandbox.healthMetrics.value.errorCount)
-        }
+                // The error is wrapped internally - we verify by checking metrics increased
+                assertEquals(1, sandbox.healthMetrics.value.errorCount)
+            }
 
         @Test
         fun `PluginException preserves pluginId`() {

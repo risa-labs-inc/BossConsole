@@ -70,8 +70,7 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                 if (event.line > 0) {
                     NavigationTargetBus.navigateTo(event.filePath, event.line, event.column, sourceWindowId = windowId)
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     // Listen for terminal open events - now handled by split state
@@ -82,8 +81,7 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
             .onEach { event ->
                 splitViewState.openTerminalInActivePanel(event.command, event.workingDirectory)
                 DashboardStatsManager.recordTerminalSession()
-            }
-            .launchIn(this)
+            }.launchIn(this)
 
         // Note: We DON'T call markReady() here - that happens AFTER Last Session loads
         // just like URL handler, to prevent terminals from being destroyed by clearAllPanels()
@@ -106,14 +104,15 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                     PanelEventBus.openPanel(PanelIds.TERMINAL, sourceWindowId = windowId)
 
                     // Create a new tab in the sidebar terminal with the command (window-scoped)
-                    val success = RunnerTerminalService.openInSidebarTerminal(
-                        windowId = windowId,
-                        configId = event.configId,
-                        command = event.command,
-                        workingDirectory = event.workingDirectory,
-                        tabTitle = "Run: ${event.configName}",
-                        isRerun = event.isRerun
-                    )
+                    val success =
+                        RunnerTerminalService.openInSidebarTerminal(
+                            windowId = windowId,
+                            configId = event.configId,
+                            command = event.command,
+                            workingDirectory = event.workingDirectory,
+                            tabTitle = "Run: ${event.configName}",
+                            isRerun = event.isRerun,
+                        )
 
                     if (!success) {
                         // Fallback to main panel if sidebar terminal not available
@@ -123,8 +122,7 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                     // Open in main panel (original behavior)
                     openRunnerInMainPanel(event, splitViewState)
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
 
         // Close runner terminal events
         // Issue #506: Filter by window to prevent closing in all windows
@@ -137,8 +135,7 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
 
                 // Notify service that terminal was removed (window-scoped)
                 RunnerTerminalService.removeTerminal(windowId, event.terminalId)
-            }
-            .launchIn(this)
+            }.launchIn(this)
 
         // Stop runner terminal events
         // Note: Ctrl+C is sent by RunnerTerminalService.stopRunner() via TerminalAPIAccess
@@ -147,8 +144,7 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
             .filter { event -> event.sourceWindowId == windowId }
             .onEach {
                 // Ctrl+C is already sent by the service - this event is for any additional UI handling
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     // Listen for Git terminal events (opens git commands in sidebar terminal)
@@ -165,10 +161,9 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                     windowId = windowId,
                     command = event.command,
                     workingDirectory = event.workingDirectory,
-                    operationName = event.operationName
+                    operationName = event.operationName,
                 )
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     // Listen for terminal link click events (Issue #346)
@@ -188,12 +183,12 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                         state.pendingTerminalSourceId = event.sourceTerminalId
                         state.showTerminalLinkDialog = true
                     }
+
                     else -> {
                         openTerminalLink(event.url, settings.openMode, splitViewState, event.sourceTerminalId, this, windowId = windowId)
                     }
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     // Listen for run execute events (Issue #321 - Run functionality)
@@ -218,8 +213,7 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                 }
 
                 RunExecutionService.execute(event.configuration, event.debug, windowId)
-            }
-            .launchIn(this)
+            }.launchIn(this)
 
         RunEventBus.stopEvents
             .filter { event -> event.sourceWindowId == windowId }
@@ -230,8 +224,7 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                 } else {
                     RunExecutionService.stopAll()
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
 
         // Scan events are still handled for explicit scan requests (e.g., from Run Configurations plugin)
         // Issue #506: Filter by sourceWindowId for multi-window support
@@ -239,8 +232,7 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
             .filter { event -> event.sourceWindowId == windowId }
             .onEach { event ->
                 RunConfigurationManager.scanProject(event.projectPath)
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     // Listen for workspace load events from CLI
@@ -260,12 +252,16 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                         applyWorkspace(workspace, splitViewState, windowProjectState)
                     }
                 } catch (e: Exception) {
-                    logger.warn(LogCategory.WORKSPACE, "Workspace load from CLI failed", mapOf(
-                        "path" to event.workspacePath
-                    ), error = e)
+                    logger.warn(
+                        LogCategory.WORKSPACE,
+                        "Workspace load from CLI failed",
+                        mapOf(
+                            "path" to event.workspacePath,
+                        ),
+                        error = e,
+                    )
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     // Listen for panel open events (e.g., from CLI folder command)
@@ -277,10 +273,11 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                 try {
                     // Find the panel info from registry
                     // Compare only panelId and pluginId, ignore defaultOrder (UI metadata)
-                    fun findPanelInfo() = state.panelRegistry.getAllPanels().find {
-                        it.id.panelId == event.panelId.panelId &&
-                        it.id.pluginId == event.panelId.pluginId
-                    }
+                    fun findPanelInfo() =
+                        state.panelRegistry.getAllPanels().find {
+                            it.id.panelId == event.panelId.panelId &&
+                                it.id.pluginId == event.panelId.pluginId
+                        }
 
                     var panelInfo = findPanelInfo()
                     if (panelInfo == null) {
@@ -290,14 +287,18 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                         // Wait bounded for it instead of silently dropping the event.
                         awaitRegistryCondition(
                             state.panelRegistry::addChangeListener,
-                            state.panelRegistry::removeChangeListener
+                            state.panelRegistry::removeChangeListener,
                         ) { findPanelInfo() != null }
                         panelInfo = findPanelInfo()
                         if (panelInfo == null) {
-                            logger.warn(LogCategory.UI, "Dropping panel open event - panel never registered", mapOf(
-                                "panelId" to event.panelId.panelId,
-                                "pluginId" to event.panelId.pluginId
-                            ))
+                            logger.warn(
+                                LogCategory.UI,
+                                "Dropping panel open event - panel never registered",
+                                mapOf(
+                                    "panelId" to event.panelId.panelId,
+                                    "pluginId" to event.panelId.pluginId,
+                                ),
+                            )
                         }
                     }
 
@@ -312,14 +313,15 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                         if (targetItem != null) {
                             // Check if panel is already open before toggling
                             // If already visible and showing this panel, don't toggle (keep it open)
-                            val targetPanel = when (panelSlot) {
-                                left.bottom -> bottom
-                                left.top.top -> left.top
-                                right.top.top -> right.top
-                                left.top.bottom -> left.bottom
-                                right.top.bottom -> right.bottom
-                                else -> null
-                            }
+                            val targetPanel =
+                                when (panelSlot) {
+                                    left.bottom -> bottom
+                                    left.top.top -> left.top
+                                    right.top.top -> right.top
+                                    left.top.bottom -> left.bottom
+                                    right.top.bottom -> right.bottom
+                                    else -> null
+                                }
 
                             if (targetPanel != null) {
                                 val isAlreadyVisible = state.draggablePanelComponent.isVisible(targetPanel)
@@ -334,12 +336,16 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                         }
                     }
                 } catch (e: Exception) {
-                    logger.warn(LogCategory.UI, "Panel open event handling failed", mapOf(
-                        "panelId" to event.panelId.panelId
-                    ), error = e)
+                    logger.warn(
+                        LogCategory.UI,
+                        "Panel open event handling failed",
+                        mapOf(
+                            "panelId" to event.panelId.panelId,
+                        ),
+                        error = e,
+                    )
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     // Listen for panel close events
@@ -349,13 +355,14 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
             .filter { event -> event.sourceWindowId == windowId }
             .onEach { event ->
                 // Find which panel contains this component
-                val panels = listOf(
-                    bottom,
-                    left.top,
-                    left.bottom,
-                    right.top,
-                    right.bottom
-                )
+                val panels =
+                    listOf(
+                        bottom,
+                        left.top,
+                        left.bottom,
+                        right.top,
+                        right.bottom,
+                    )
 
                 for (panel in panels) {
                     val panelContentId = state.draggablePanelComponent.getPanelContentId(panel)
@@ -366,8 +373,7 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                         break
                     }
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     // Listen for panel toggle events (open if closed, close if open)
@@ -377,20 +383,22 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
             .filter { event -> event.sourceWindowId == windowId }
             .onEach { event ->
                 try {
-                    val panels = listOf(
-                        bottom,
-                        left.top,
-                        left.bottom,
-                        right.top,
-                        right.bottom
-                    )
+                    val panels =
+                        listOf(
+                            bottom,
+                            left.top,
+                            left.bottom,
+                            right.top,
+                            right.bottom,
+                        )
 
                     // Check if the panel is currently visible with this content
                     var foundVisible = false
                     for (panel in panels) {
                         val panelContentId = state.draggablePanelComponent.getPanelContentId(panel)
                         if (panelContentId?.panelId == event.panelId.panelId &&
-                            state.draggablePanelComponent.isVisible(panel)) {
+                            state.draggablePanelComponent.isVisible(panel)
+                        ) {
                             // Panel is visible - close it
                             state.draggablePanelComponent.setPanelVisible(panel, false)
                             state.panelComponentStore.removeComponent(event.panelId)
@@ -401,10 +409,11 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
 
                     if (!foundVisible) {
                         // Panel is not visible - open it using the same logic as panelOpenEvents
-                        val panelInfo = state.panelRegistry.getAllPanels().find {
-                            it.id.panelId == event.panelId.panelId &&
-                            it.id.pluginId == event.panelId.pluginId
-                        }
+                        val panelInfo =
+                            state.panelRegistry.getAllPanels().find {
+                                it.id.panelId == event.panelId.panelId &&
+                                    it.id.pluginId == event.panelId.pluginId
+                            }
 
                         if (panelInfo != null) {
                             val panelSlot = panelInfo.defaultSlotPosition
@@ -420,12 +429,16 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                         }
                     }
                 } catch (e: Exception) {
-                    logger.warn(LogCategory.UI, "Panel toggle event handling failed", mapOf(
-                        "panelId" to event.panelId.panelId
-                    ), error = e)
+                    logger.warn(
+                        LogCategory.UI,
+                        "Panel toggle event handling failed",
+                        mapOf(
+                            "panelId" to event.panelId.panelId,
+                        ),
+                        error = e,
+                    )
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     // Listen for Dashboard events from Fluck tabs (when Dashboard is shown in empty browser tabs)
@@ -437,26 +450,23 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
             .onEach { event ->
                 splitViewState.openFileInActivePanel(
                     event.path,
-                    event.path.extractFileName().ifEmpty { "untitled" }
+                    event.path.extractFileName().ifEmpty { "untitled" },
                 )
-            }
-            .launchIn(this)
+            }.launchIn(this)
 
         // Handle URL open in new tab events
         DashboardEventBus.openUrlInNewTabEvents
             .filter { event -> event.sourceWindowId == windowId }
             .onEach { event ->
                 splitViewState.openUrlInActivePanel(event.url, "Loading...")
-            }
-            .launchIn(this)
+            }.launchIn(this)
 
         // Handle new tab events
         DashboardEventBus.newTabEvents
             .filter { event -> event.sourceWindowId == windowId }
             .onEach {
                 state.showNewTabDialog = true
-            }
-            .launchIn(this)
+            }.launchIn(this)
 
         // Handle new terminal events
         DashboardEventBus.newTerminalEvents
@@ -464,24 +474,23 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
             .onEach {
                 val timestamp = System.currentTimeMillis()
                 val projectPath = windowProjectState.selectedProject.value.path
-                val terminalTab = TerminalTabInfo(
-                    id = "terminal-$timestamp",
-                    typeId = TerminalTabType.typeId,
-                    title = "Terminal",
-                    icon = TerminalTabType.icon,
-                    workingDirectory = projectPath.ifEmpty { null }
-                )
+                val terminalTab =
+                    TerminalTabInfo(
+                        id = "terminal-$timestamp",
+                        typeId = TerminalTabType.typeId,
+                        title = "Terminal",
+                        icon = TerminalTabType.icon,
+                        workingDirectory = projectPath.ifEmpty { null },
+                    )
                 splitViewState.getActiveTabsComponent()?.addTab(terminalTab)
-            }
-            .launchIn(this)
+            }.launchIn(this)
 
         // Handle project dialog events
         DashboardEventBus.showProjectDialogEvents
             .filter { event -> event.sourceWindowId == windowId }
             .onEach {
                 state.showProjectDialog = true
-            }
-            .launchIn(this)
+            }.launchIn(this)
 
         // Handle file dialog events
         DashboardEventBus.showFileDialogEvents
@@ -490,16 +499,14 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                 // File dialog is typically handled by a system file chooser
                 // For now, show new tab dialog with file option
                 state.showNewTabDialog = true
-            }
-            .launchIn(this)
+            }.launchIn(this)
 
         // Handle new project events
         DashboardEventBus.showNewProjectEvents
             .filter { event -> event.sourceWindowId == windowId }
             .onEach {
                 state.showNewProjectDialog = true
-            }
-            .launchIn(this)
+            }.launchIn(this)
 
         // Handle split template events
         DashboardEventBus.applySplitTemplateEvents
@@ -509,9 +516,10 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                 val activeComponent = splitViewState.getActiveTabsComponent()
                 if (activeComponent != null) {
                     val activePanelId = splitViewState.activePanelId
-                    val projectPath = windowProjectState.selectedProject.value.path.ifEmpty {
-                        System.getProperty("user.home")
-                    }
+                    val projectPath =
+                        windowProjectState.selectedProject.value.path.ifEmpty {
+                            System.getProperty("user.home")
+                        }
                     // Create tabs from template panels
                     val leftPanelConfig = event.template.panels.find { it.position == "left" }
                     val rightPanelConfig = event.template.panels.find { it.position == "right" }
@@ -524,7 +532,7 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                                     splitViewState.splitPanel(
                                         panelId = activePanelId,
                                         orientation = SplitOrientation.VERTICAL,
-                                        tabToMove = rightTab
+                                        tabToMove = rightTab,
                                     )
                                 }
                             }
@@ -535,16 +543,14 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                         }
                     }
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
 
         // Handle plugin activation events
         DashboardEventBus.activatePluginEvents
             .filter { event -> event.sourceWindowId == windowId }
             .onEach { event ->
                 state.draggablePanelComponent.activatePlugin(event.pluginId)
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     // Combined LaunchedEffect for URL handling and auto-show dialog (Issue #168)
@@ -559,16 +565,16 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
             .onEach { event ->
                 // sourceWindowId is required, so we already filtered to the correct window
                 splitViewState.openUrlInActivePanel(event.url, event.title)
-            }
-            .launchIn(this)
+            }.launchIn(this)
 
         // Observe tab count AND processing state (URLs + Terminals + Files + Workspace Restoration) reactively
         // This eliminates all timing assumptions by waiting for actual completion
         snapshotFlow {
             val allPanels = splitViewState.getAllPanels()
-            val totalTabs = allPanels.sumOf { panel ->
-                panel.tabsComponent.tabsState.value.tabs.size
-            }
+            val totalTabs =
+                allPanels.sumOf { panel ->
+                    panel.tabsComponent.tabsState.value.tabs.size
+                }
             val isProcessingURLs = URLHandlerService.isProcessingURLs()
             val isProcessingTerminals = TerminalHandlerService.isProcessingTerminals()
             val isProcessingFiles = FileHandlerService.isProcessingFiles()
@@ -578,12 +584,11 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                 val isProcessingURLs: Boolean,
                 val isProcessingTerminals: Boolean,
                 val isProcessingFiles: Boolean,
-                val isRestorationComplete: Boolean
+                val isRestorationComplete: Boolean,
             )
             ProcessingState(totalTabs, isProcessingURLs, isProcessingTerminals, isProcessingFiles, state.workspaceRestorationComplete)
-        }
-            .debounce(200) // Wait for 200ms of stability
-            .take(1)       // Only take first stabilized value
+        }.debounce(200) // Wait for 200ms of stability
+            .take(1) // Only take first stabilized value
             .collect { processingState ->
                 // Only show dialog if no tabs AND nothing being processed AND workspace restoration is complete
                 if (processingState.totalTabs == 0 &&

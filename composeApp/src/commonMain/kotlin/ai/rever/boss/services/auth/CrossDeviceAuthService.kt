@@ -12,14 +12,16 @@ import kotlinx.coroutines.delay
  * Handles cross-device authentication coordination and QR code flows
  */
 internal object CrossDeviceAuthService {
-
     private val logger = BossLogger.forComponent("CrossDeviceAuthService")
 
     /**
      * Check authentication status for cross-device flow
      */
-    suspend fun checkAuthenticationStatus(challenge: String, sessionId: String? = null): Result<Boolean> {
-        return try {
+    suspend fun checkAuthenticationStatus(
+        challenge: String,
+        sessionId: String? = null,
+    ): Result<Boolean> =
+        try {
             val result = SupabasePasskeyService.checkAuthenticationStatus(challenge, sessionId)
             result.fold(
                 onSuccess = { authData ->
@@ -38,17 +40,19 @@ internal object CrossDeviceAuthService {
                     } else {
                         Result.failure(error)
                     }
-                }
+                },
             )
         } catch (e: Exception) {
             Result.failure(e)
         }
-    }
-    
+
     /**
      * Poll for cross-device authentication completion
      */
-    suspend fun pollForAuthenticationCompletion(challenge: String, sessionId: String? = null): Result<PasskeyAuthenticationResult> {
+    suspend fun pollForAuthenticationCompletion(
+        challenge: String,
+        sessionId: String? = null,
+    ): Result<PasskeyAuthenticationResult> {
         return try {
             logger.debug(LogCategory.PASSKEY, "Polling for cross-device authentication completion")
 
@@ -87,13 +91,13 @@ internal object CrossDeviceAuthService {
             Result.failure(e)
         }
     }
-    
+
     /**
      * Handle cross-device authentication exception and coordinate QR flow
      */
     suspend fun handleCrossDeviceAuthentication(
         exception: CrossDeviceAuthenticationRequired,
-        onAuthenticationComplete: suspend (PasskeyAuthenticationResult) -> Result<Unit>
+        onAuthenticationComplete: suspend (PasskeyAuthenticationResult) -> Result<Unit>,
     ): Result<Unit> {
         return try {
             logger.info(LogCategory.PASSKEY, "Cross-device authentication required - starting flow")
@@ -128,4 +132,3 @@ internal object CrossDeviceAuthService {
         }
     }
 }
-

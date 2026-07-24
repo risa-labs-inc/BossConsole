@@ -40,7 +40,11 @@ abstract class VersionPropertyReadTask : DefaultTask() {
 
     protected fun loadProperties(): Properties {
         val props = Properties()
-        versionFile.get().asFile.inputStream().use { props.load(it) }
+        versionFile
+            .get()
+            .asFile
+            .inputStream()
+            .use { props.load(it) }
         return props
     }
 }
@@ -62,11 +66,18 @@ abstract class VersionPropertyWriteTask : DefaultTask() {
 
     protected fun loadProperties(): Properties {
         val props = Properties()
-        inputFile.get().asFile.inputStream().use { props.load(it) }
+        inputFile
+            .get()
+            .asFile
+            .inputStream()
+            .use { props.load(it) }
         return props
     }
 
-    protected fun saveProperties(props: Properties, comment: String) {
+    protected fun saveProperties(
+        props: Properties,
+        comment: String,
+    ) {
         outputFile.get().asFile.outputStream().use {
             props.store(it, comment)
         }
@@ -84,31 +95,37 @@ abstract class VersionPropertyWriteTask : DefaultTask() {
         }
 
         try {
-            val process = ProcessBuilder("git", "diff", "--quiet", "version.properties")
-                .directory(project.rootDir)
-                .start()
+            val process =
+                ProcessBuilder("git", "diff", "--quiet", "version.properties")
+                    .directory(project.rootDir)
+                    .start()
             val exitCode = process.waitFor()
 
             if (exitCode != 0) {
                 // Check if there are staged changes too
-                val stagedProcess = ProcessBuilder("git", "diff", "--cached", "--quiet", "version.properties")
-                    .directory(project.rootDir)
-                    .start()
+                val stagedProcess =
+                    ProcessBuilder("git", "diff", "--cached", "--quiet", "version.properties")
+                        .directory(project.rootDir)
+                        .start()
                 stagedProcess.waitFor()
 
-                val message = buildString {
-                    append("⚠️ version.properties has uncommitted changes.\n")
-                    append("   This could indicate a concurrent modification or unsaved work.\n")
-                    append("   Options:\n")
-                    append("   1. Commit or stash your changes first\n")
-                    append("   2. Run with -PskipGitCheck=true to bypass this check (CI only)\n")
-                    append("   3. Discard changes with: git checkout version.properties")
-                }
+                val message =
+                    buildString {
+                        append("⚠️ version.properties has uncommitted changes.\n")
+                        append("   This could indicate a concurrent modification or unsaved work.\n")
+                        append("   Options:\n")
+                        append("   1. Commit or stash your changes first\n")
+                        append("   2. Run with -PskipGitCheck=true to bypass this check (CI only)\n")
+                        append("   3. Discard changes with: git checkout version.properties")
+                    }
                 throw GradleException(message)
             }
         } catch (e: Exception) {
             when (e) {
-                is GradleException -> throw e
+                is GradleException -> {
+                    throw e
+                }
+
                 else -> {
                     // Git not available or not a git repo - skip check
                     logger.warn("⚠️ Could not verify git state: ${e.message}")
@@ -140,11 +157,17 @@ abstract class ShowVersionTask : VersionPropertyReadTask() {
         val mn = "BOSS-$av.msi"
 
         val nextBuildNumber = bn.toString().toInt() + 1
-        val prereleaseInfo = if (prerelease != null) """
+        val prereleaseInfo =
+            if (prerelease != null) {
+                """
 ║ Prerelease Suffix:   $prerelease
-║ Release Channel:     $channel""" else ""
+║ Release Channel:     $channel"""
+            } else {
+                ""
+            }
 
-        println("""
+        println(
+            """
 ╔════════════════════════════════════════╗
 ║           BOSS Version Info            ║
 ╠════════════════════════════════════════╣
@@ -166,7 +189,8 @@ abstract class ShowVersionTask : VersionPropertyReadTask() {
    ./gradlew setPrereleaseSuffix -Psuffix=beta.1  - Set prerelease suffix
    ./gradlew incrementPrerelease                   - Increment prerelease number
    ./gradlew clearPrereleaseSuffix                 - Clear suffix (promote to stable)
-        """.trimIndent())
+            """.trimIndent(),
+        )
     }
 }
 
@@ -308,15 +332,16 @@ abstract class SetPrereleaseSuffixTask : VersionPropertyWriteTask() {
     fun setSuffix() {
         validateGitState()
 
-        val suffixValue = suffix.orNull
-            ?: throw GradleException("Please provide a suffix using -Psuffix=<value> (e.g., -Psuffix=beta.1)")
+        val suffixValue =
+            suffix.orNull
+                ?: throw GradleException("Please provide a suffix using -Psuffix=<value> (e.g., -Psuffix=beta.1)")
 
         // Validate suffix format: alpha.N, beta.N, or rc.N where N is a positive integer
         if (!PRERELEASE_SUFFIX_VALIDATION_PATTERN.matches(suffixValue)) {
             throw GradleException(
                 "Invalid prerelease suffix format: '$suffixValue'\n" +
-                "Expected format: alpha.N, beta.N, or rc.N where N is a positive integer\n" +
-                "Examples: alpha.1, beta.2, rc.1"
+                    "Expected format: alpha.N, beta.N, or rc.N where N is a positive integer\n" +
+                    "Examples: alpha.1, beta.2, rc.1",
             )
         }
 
@@ -391,15 +416,17 @@ abstract class IncrementPrereleaseTask : VersionPropertyWriteTask() {
         validateGitState()
         val props = loadProperties()
 
-        val currentSuffix = props["app.prerelease.suffix"]?.toString()?.takeIf { it.isNotBlank() }
-            ?: throw GradleException(
-                "No prerelease suffix to increment.\n" +
-                "First set a prerelease suffix using: ./gradlew setPrereleaseSuffix -Psuffix=beta.1"
-            )
+        val currentSuffix =
+            props["app.prerelease.suffix"]?.toString()?.takeIf { it.isNotBlank() }
+                ?: throw GradleException(
+                    "No prerelease suffix to increment.\n" +
+                        "First set a prerelease suffix using: ./gradlew setPrereleaseSuffix -Psuffix=beta.1",
+                )
 
         // Parse current suffix using shared pattern
-        val match = PRERELEASE_SUFFIX_PARSE_PATTERN.matchEntire(currentSuffix)
-            ?: throw GradleException("Invalid existing prerelease suffix format: '$currentSuffix'")
+        val match =
+            PRERELEASE_SUFFIX_PARSE_PATTERN.matchEntire(currentSuffix)
+                ?: throw GradleException("Invalid existing prerelease suffix format: '$currentSuffix'")
 
         val type = match.groupValues[1]
         val currentNumber = match.groupValues[2].toInt()

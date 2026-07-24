@@ -42,9 +42,10 @@ class ProcessMonitor(
         val existing = monitorJobs[processId]
         if (existing?.isActive == true) return
 
-        monitorJobs[processId] = scope.launch {
-            monitorProcess(processId)
-        }
+        monitorJobs[processId] =
+            scope.launch {
+                monitorProcess(processId)
+            }
         logger.info("Started monitoring process: {}", processId)
     }
 
@@ -60,19 +61,20 @@ class ProcessMonitor(
      * Start the global monitor that watches for new/removed processes.
      */
     fun startGlobalMonitor(checkIntervalMs: Long = 2_000) {
-        globalMonitorJob = scope.launch {
-            while (isActive) {
-                // Check all registered processes
-                registry.getAllProcesses().forEach { process ->
-                    if (!monitorJobs.containsKey(process.config.processId) ||
-                        monitorJobs[process.config.processId]?.isActive != true
-                    ) {
-                        startMonitoring(process.config.processId)
+        globalMonitorJob =
+            scope.launch {
+                while (isActive) {
+                    // Check all registered processes
+                    registry.getAllProcesses().forEach { process ->
+                        if (!monitorJobs.containsKey(process.config.processId) ||
+                            monitorJobs[process.config.processId]?.isActive != true
+                        ) {
+                            startMonitoring(process.config.processId)
+                        }
                     }
+                    delay(checkIntervalMs)
                 }
-                delay(checkIntervalMs)
             }
-        }
     }
 
     /**
@@ -86,23 +88,29 @@ class ProcessMonitor(
     }
 
     private suspend fun monitorProcess(processId: String) {
-        val checkIntervalMs = registry.getProcess(processId)
-            ?.config?.heartbeatIntervalMs ?: 5_000
+        val checkIntervalMs =
+            registry
+                .getProcess(processId)
+                ?.config
+                ?.heartbeatIntervalMs ?: 5_000
 
         while (currentCoroutineContext().isActive) {
             val process = registry.getProcess(processId) ?: break
 
             // Check if process is still alive
             if (!process.isAlive) {
-                val exitCode = try {
-                    process.process.exitValue()
-                } catch (_: IllegalThreadStateException) {
-                    -1
-                }
+                val exitCode =
+                    try {
+                        process.process.exitValue()
+                    } catch (_: IllegalThreadStateException) {
+                        -1
+                    }
 
                 logger.warn(
                     "Process {} (pid={}) exited with code {}",
-                    processId, process.pid, exitCode
+                    processId,
+                    process.pid,
+                    exitCode,
                 )
 
                 process.updateState(ProcessState.PROCESS_STATE_CRASHED)
@@ -114,7 +122,7 @@ class ProcessMonitor(
                         exitCode = exitCode,
                         errorMessage = "Process exited with code $exitCode",
                         timestamp = System.currentTimeMillis(),
-                    )
+                    ),
                 )
                 break
             }

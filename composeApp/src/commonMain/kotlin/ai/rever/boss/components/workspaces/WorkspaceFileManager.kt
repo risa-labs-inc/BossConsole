@@ -8,32 +8,35 @@ expect class WorkspaceFileManager() {
      * Get the default workspace directory path
      */
     fun getDefaultWorkspaceDirectory(): String
-    
+
     /**
      * Ensure the workspace directory exists
      */
     suspend fun ensureWorkspaceDirectory(): Boolean
-    
+
     /**
      * Save a workspace to a file
      */
-    suspend fun saveWorkspace(workspace: LayoutWorkspace, fileName: String? = null): String?
-    
+    suspend fun saveWorkspace(
+        workspace: LayoutWorkspace,
+        fileName: String? = null,
+    ): String?
+
     /**
      * Load a workspace from a file
      */
     suspend fun loadWorkspace(fileName: String): LayoutWorkspace?
-    
+
     /**
      * List all saved workspace files
      */
     suspend fun listWorkspaces(): List<WorkspaceFileInfo>
-    
+
     /**
      * Delete a workspace file
      */
     suspend fun deleteWorkspace(fileName: String): Boolean
-    
+
     /**
      * Get full path for a workspace file
      */
@@ -47,7 +50,7 @@ data class WorkspaceFileInfo(
     val fileName: String,
     val filePath: String,
     val lastModified: Long,
-    val size: Long
+    val size: Long,
 )
 
 /**
@@ -58,7 +61,7 @@ object WorkspaceFileManagerCommon {
      * Get the default workspace directory name
      */
     fun getDefaultWorkspaceDirectoryName(): String = "BOSS/workspaces"
-    
+
     /**
      * Generate a filename from workspace name
      */
@@ -67,11 +70,9 @@ object WorkspaceFileManagerCommon {
         val sanitized = workspaceName.replace(Regex("[^a-zA-Z0-9.-]"), "_")
         return "$sanitized.json"
     }
-    
+
     /**
      * Extract workspace name from filename
      */
-    fun extractWorkspaceName(fileName: String): String {
-        return fileName.removeSuffix(".json").replace("_", " ")
-    }
+    fun extractWorkspaceName(fileName: String): String = fileName.removeSuffix(".json").replace("_", " ")
 }

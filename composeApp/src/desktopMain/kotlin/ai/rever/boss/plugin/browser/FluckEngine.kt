@@ -5,15 +5,20 @@ import ai.rever.boss.components.plugin.tab_types.fluck.DownloadManager
 import ai.rever.boss.components.plugin.tab_types.fluck.DownloadSettings
 import ai.rever.boss.components.plugin.tab_types.fluck.DownloadStatus
 import ai.rever.boss.config.JxBrowserConfig
-import ai.rever.boss.plugin.pathutils.BossDirectories
-import ai.rever.boss.utils.logging.BossLogger
-import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.platform.FileNameSanitizer
-import ai.rever.boss.platform.MacOSScreenCapture
 import ai.rever.boss.platform.FileSystemUtils
+import ai.rever.boss.platform.MacOSScreenCapture
 import ai.rever.boss.platform.pickSaveFile
+import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.plugin.ui.BossThemeController
+import ai.rever.boss.plugin.ui.BossThemes
 import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.utils.WindowFocusManager
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.graphics.toArgb
+import com.teamdev.jxbrowser.browser.callback.StartCaptureSessionCallback
 import com.teamdev.jxbrowser.browser.callback.StartDownloadCallback
 import com.teamdev.jxbrowser.download.Download
 import com.teamdev.jxbrowser.download.event.*
@@ -24,19 +29,14 @@ import com.teamdev.jxbrowser.engine.Theme
 import com.teamdev.jxbrowser.engine.UserDataDirectoryAlreadyInUseException
 import com.teamdev.jxbrowser.permission.PermissionType
 import com.teamdev.jxbrowser.permission.callback.RequestPermissionCallback
-import com.teamdev.jxbrowser.browser.callback.StartCaptureSessionCallback
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.SupervisorJob
-import androidx.compose.runtime.snapshotFlow
-import androidx.compose.ui.graphics.toArgb
-import ai.rever.boss.plugin.ui.BossThemeController
-import ai.rever.boss.plugin.ui.BossThemes
 import java.awt.Toolkit
 import java.nio.file.Files
 import java.nio.file.Paths
@@ -47,9 +47,18 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Classification of engine initialization errors for better user feedback.
  */
 sealed class EngineInitError {
-    data class LicenseValidation(val message: String) : EngineInitError()
-    data class NetworkError(val message: String) : EngineInitError()
-    data class Other(val message: String, val cause: Throwable?) : EngineInitError()
+    data class LicenseValidation(
+        val message: String,
+    ) : EngineInitError()
+
+    data class NetworkError(
+        val message: String,
+    ) : EngineInitError()
+
+    data class Other(
+        val message: String,
+        val cause: Throwable?,
+    ) : EngineInitError()
 }
 
 // Singleton engine for all browser tabs
@@ -106,7 +115,7 @@ object FluckEngine {
     private val activeFindBars = java.util.concurrent.ConcurrentHashMap<com.teamdev.jxbrowser.browser.Browser, BrowserFindBar>()
 
     private class BrowserFindBar(
-        private val browser: com.teamdev.jxbrowser.browser.Browser
+        private val browser: com.teamdev.jxbrowser.browser.Browser,
     ) {
         private var dialog: javax.swing.JDialog? = null
         private var textField: javax.swing.JTextField? = null
@@ -124,8 +133,11 @@ object FluckEngine {
 
         fun show() {
             visible = true
-            val window = java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager().focusedWindow
-                ?: return
+            val window =
+                java.awt.KeyboardFocusManager
+                    .getCurrentKeyboardFocusManager()
+                    .focusedWindow
+                    ?: return
             ownerWindow = window
             javax.swing.SwingUtilities.invokeLater {
                 if (dialog == null) {
@@ -172,20 +184,32 @@ object FluckEngine {
             }
             if (browser.isClosed) return
             try {
-                val options = com.teamdev.jxbrowser.search.FindOptions.newBuilder()
-                    .matchCase(caseSensitive)
-                    .searchBackward(backward)
-                    .build()
+                val options =
+                    com.teamdev.jxbrowser.search.FindOptions
+                        .newBuilder()
+                        .matchCase(caseSensitive)
+                        .searchBackward(backward)
+                        .build()
                 browser.textFinder().find(query, options) { result ->
                     javax.swing.SwingUtilities.invokeLater {
                         val total = result.numberOfMatches()
                         val current = result.selectedMatch()
                         if (total > 0) {
                             infoLabel?.text = "$current/$total"
-                            infoLabel?.foreground = java.awt.Color(BossThemeController.current.colors.textPrimary.toArgb(), true)
+                            infoLabel?.foreground =
+                                java.awt.Color(
+                                    BossThemeController.current.colors.textPrimary
+                                        .toArgb(),
+                                    true,
+                                )
                         } else {
                             infoLabel?.text = "0/0"
-                            infoLabel?.foreground = java.awt.Color(BossThemeController.current.colors.alert.toArgb(), true)
+                            infoLabel?.foreground =
+                                java.awt.Color(
+                                    BossThemeController.current.colors.alert
+                                        .toArgb(),
+                                    true,
+                                )
                         }
                     }
                 }
@@ -212,6 +236,7 @@ object FluckEngine {
             val inputBg = java.awt.Color(colors.raised.toArgb(), true)
             val fg = java.awt.Color(colors.textPrimary.toArgb(), true)
             val mutedFg = java.awt.Color(colors.textSecondary.toArgb(), true)
+
             fun cssHex(c: java.awt.Color) = "#%06x".format(c.rgb and 0xFFFFFF)
             val font = java.awt.Font("SansSerif", java.awt.Font.PLAIN, 13)
             val smallFont = java.awt.Font("SansSerif", java.awt.Font.PLAIN, 11)
@@ -226,20 +251,22 @@ object FluckEngine {
             val content = javax.swing.JPanel()
             content.background = bg
             content.layout = java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 2, 4)
-            content.border = javax.swing.BorderFactory.createCompoundBorder(
-                javax.swing.BorderFactory.createLineBorder(java.awt.Color(colors.line.toArgb(), true)),
-                javax.swing.BorderFactory.createEmptyBorder(2, 6, 2, 6)
-            )
+            content.border =
+                javax.swing.BorderFactory.createCompoundBorder(
+                    javax.swing.BorderFactory.createLineBorder(java.awt.Color(colors.line.toArgb(), true)),
+                    javax.swing.BorderFactory.createEmptyBorder(2, 6, 2, 6),
+                )
 
             val tf = javax.swing.JTextField(14)
             tf.font = font
             tf.foreground = fg
             tf.background = inputBg
             tf.caretColor = fg
-            tf.border = javax.swing.BorderFactory.createCompoundBorder(
-                javax.swing.BorderFactory.createLineBorder(java.awt.Color(colors.lineStrong.toArgb(), true)),
-                javax.swing.BorderFactory.createEmptyBorder(2, 6, 2, 6)
-            )
+            tf.border =
+                javax.swing.BorderFactory.createCompoundBorder(
+                    javax.swing.BorderFactory.createLineBorder(java.awt.Color(colors.lineStrong.toArgb(), true)),
+                    javax.swing.BorderFactory.createEmptyBorder(2, 6, 2, 6),
+                )
             tf.preferredSize = java.awt.Dimension(160, 28)
             textField = tf
 
@@ -250,7 +277,10 @@ object FluckEngine {
             info.horizontalAlignment = javax.swing.SwingConstants.CENTER
             infoLabel = info
 
-            fun makeBtn(html: String, tooltip: String): javax.swing.JButton {
+            fun makeBtn(
+                html: String,
+                tooltip: String,
+            ): javax.swing.JButton {
                 val b = javax.swing.JButton(html)
                 b.font = font
                 b.foreground = fg
@@ -277,7 +307,18 @@ object FluckEngine {
             nextBtn.addActionListener { performFind(false) }
             caseBtn.addActionListener {
                 caseSensitive = !caseSensitive
-                val color = if (caseSensitive) cssHex(java.awt.Color(BossThemeController.current.colors.signal.toArgb(), true)) else cssHex(mutedFg)
+                val color =
+                    if (caseSensitive) {
+                        cssHex(
+                            java.awt.Color(
+                                BossThemeController.current.colors.signal
+                                    .toArgb(),
+                                true,
+                            ),
+                        )
+                    } else {
+                        cssHex(mutedFg)
+                    }
                 val weight = if (caseSensitive) "bold" else "normal"
                 caseBtn.text = "<html><span style='font-size:12px;color:$color;font-weight:$weight;'>Aa</span></html>"
                 performFind(false)
@@ -285,24 +326,45 @@ object FluckEngine {
             closeBtn.addActionListener { hide() }
 
             val isMac = SystemUtils.isMacOS
-            tf.addKeyListener(object : java.awt.event.KeyAdapter() {
-                override fun keyPressed(e: java.awt.event.KeyEvent) {
-                    val isMainMod = if (isMac) e.isMetaDown else e.isControlDown
-                    when {
-                        e.keyCode == java.awt.event.KeyEvent.VK_ESCAPE -> { hide(); e.consume() }
-                        e.keyCode == java.awt.event.KeyEvent.VK_F && isMainMod && !e.isShiftDown -> { hide(); e.consume() }
-                        e.keyCode == java.awt.event.KeyEvent.VK_ENTER && e.isShiftDown -> { performFind(true); e.consume() }
-                        e.keyCode == java.awt.event.KeyEvent.VK_ENTER -> { performFind(false); e.consume() }
+            tf.addKeyListener(
+                object : java.awt.event.KeyAdapter() {
+                    override fun keyPressed(e: java.awt.event.KeyEvent) {
+                        val isMainMod = if (isMac) e.isMetaDown else e.isControlDown
+                        when {
+                            e.keyCode == java.awt.event.KeyEvent.VK_ESCAPE -> {
+                                hide()
+                                e.consume()
+                            }
+
+                            e.keyCode == java.awt.event.KeyEvent.VK_F && isMainMod && !e.isShiftDown -> {
+                                hide()
+                                e.consume()
+                            }
+
+                            e.keyCode == java.awt.event.KeyEvent.VK_ENTER && e.isShiftDown -> {
+                                performFind(true)
+                                e.consume()
+                            }
+
+                            e.keyCode == java.awt.event.KeyEvent.VK_ENTER -> {
+                                performFind(false)
+                                e.consume()
+                            }
+                        }
                     }
-                }
-            })
+                },
+            )
 
             // #8: Debounced live search on typing
-            tf.document.addDocumentListener(object : javax.swing.event.DocumentListener {
-                override fun insertUpdate(e: javax.swing.event.DocumentEvent?) = debouncedFind()
-                override fun removeUpdate(e: javax.swing.event.DocumentEvent?) = debouncedFind()
-                override fun changedUpdate(e: javax.swing.event.DocumentEvent?) = debouncedFind()
-            })
+            tf.document.addDocumentListener(
+                object : javax.swing.event.DocumentListener {
+                    override fun insertUpdate(e: javax.swing.event.DocumentEvent?) = debouncedFind()
+
+                    override fun removeUpdate(e: javax.swing.event.DocumentEvent?) = debouncedFind()
+
+                    override fun changedUpdate(e: javax.swing.event.DocumentEvent?) = debouncedFind()
+                },
+            )
 
             content.add(tf)
             content.add(info)
@@ -312,10 +374,12 @@ object FluckEngine {
             content.add(closeBtn)
             d.contentPane = content
 
-            val listener = object : java.awt.event.ComponentAdapter() {
-                override fun componentMoved(e: java.awt.event.ComponentEvent?) = positionDialog(owner)
-                override fun componentResized(e: java.awt.event.ComponentEvent?) = positionDialog(owner)
-            }
+            val listener =
+                object : java.awt.event.ComponentAdapter() {
+                    override fun componentMoved(e: java.awt.event.ComponentEvent?) = positionDialog(owner)
+
+                    override fun componentResized(e: java.awt.event.ComponentEvent?) = positionDialog(owner)
+                }
             owner.addComponentListener(listener)
             componentListener = listener
 
@@ -351,7 +415,9 @@ object FluckEngine {
     // background thread on every normal launch, so the unlocked reads need a
     // happens-before edge (safe publication for _engine included).
     @Volatile private var _engine: Engine? = null
+
     @Volatile private var initializationError: Throwable? = null
+
     @Volatile private var attemptCount = 0
     private var proactiveCleanupDone = false
 
@@ -401,33 +467,41 @@ object FluckEngine {
             // below, since Linux engine boots traverse sandbox/zygote frames on
             // unrelated failures too.
             msg.contains("sandbox") || msg.contains("zygote") ||
-            msg.contains("user namespace") || msg.contains("clone()") ->
+                msg.contains("user namespace") || msg.contains("clone()") -> {
                 EngineInitError.Other(
                     "The browser sandbox failed to start. On hardened Linux (e.g. Ubuntu 24.04), " +
-                    "enable unprivileged user namespaces, or set BOSS_CHROMIUM_DISABLE_SANDBOX=true " +
-                    "and restart BOSS.",
-                    e
+                        "enable unprivileged user namespaces, or set BOSS_CHROMIUM_DISABLE_SANDBOX=true " +
+                        "and restart BOSS.",
+                    e,
                 )
+            }
+
             // License validation errors (usually network-related)
             msg.contains("license") || msg.contains("validation") ||
-            fullStackTrace.contains("licensecheck") || fullStackTrace.contains("license") ->
+                fullStackTrace.contains("licensecheck") || fullStackTrace.contains("license") -> {
                 EngineInitError.LicenseValidation(
-                    "License validation failed. Please check your internet connection."
+                    "License validation failed. Please check your internet connection.",
                 )
+            }
+
             // Network/connection errors
             msg.contains("network") || msg.contains("connect") ||
-            msg.contains("timeout") || msg.contains("unreachable") ||
-            msg.contains("socket") || msg.contains("host") ||
-            e is java.net.UnknownHostException || e is java.net.ConnectException ||
-            e is java.net.SocketTimeoutException ->
+                msg.contains("timeout") || msg.contains("unreachable") ||
+                msg.contains("socket") || msg.contains("host") ||
+                e is java.net.UnknownHostException || e is java.net.ConnectException ||
+                e is java.net.SocketTimeoutException -> {
                 EngineInitError.NetworkError(
-                    "Network error. Please check your internet connection and try again."
+                    "Network error. Please check your internet connection and try again.",
                 )
+            }
+
             // Other errors
-            else -> EngineInitError.Other(
-                e.message ?: "Unknown error occurred",
-                e
-            )
+            else -> {
+                EngineInitError.Other(
+                    e.message ?: "Unknown error occurred",
+                    e,
+                )
+            }
         }
     }
 
@@ -487,59 +561,67 @@ object FluckEngine {
 
             // Find all processes that match JxBrowser's Chromium
             // Also catch chrome_crashpad orphans whose parent is dead
-            val staleProcesses = ProcessHandle.allProcesses()
-                .filter { process ->
-                    try {
-                        val command = process.info().command().orElse("")
-                        val commandLine = process.info().commandLine().orElse("")
+            val staleProcesses =
+                ProcessHandle
+                    .allProcesses()
+                    .filter { process ->
+                        try {
+                            val command = process.info().command().orElse("")
+                            val commandLine = process.info().commandLine().orElse("")
 
-                        // Security: First verify it's actually a Chromium/Chrome executable
-                        val isChromiumExecutable = command.contains("chrome", ignoreCase = true) ||
-                                command.contains("chromium", ignoreCase = true) ||
-                                command.contains("jxbrowser", ignoreCase = true)
+                            // Security: First verify it's actually a Chromium/Chrome executable
+                            val isChromiumExecutable =
+                                command.contains("chrome", ignoreCase = true) ||
+                                    command.contains("chromium", ignoreCase = true) ||
+                                    command.contains("jxbrowser", ignoreCase = true)
 
-                        if (!isChromiumExecutable) return@filter false
+                            if (!isChromiumExecutable) return@filter false
 
-                        // Security: Check if it's from our JxBrowser installation
-                        // Use explicit full paths to avoid false positives
-                        val isFromBossDir = command.contains(bossChromiumDir) ||
-                                command.contains(bossBrandedChromiumDir) ||
-                                commandLine.contains(bossChromiumDir) ||
-                                commandLine.contains(bossBrandedChromiumDir) ||
-                                commandLine.contains(bossProfileDir)
+                            // Security: Check if it's from our JxBrowser installation
+                            // Use explicit full paths to avoid false positives
+                            val isFromBossDir =
+                                command.contains(bossChromiumDir) ||
+                                    command.contains(bossBrandedChromiumDir) ||
+                                    commandLine.contains(bossChromiumDir) ||
+                                    commandLine.contains(bossBrandedChromiumDir) ||
+                                    commandLine.contains(bossProfileDir)
 
-                        // Also detect orphaned chrome_crashpad processes:
-                        // These are helper processes whose parent (the main Chromium) has died.
-                        // They have "chrome_crashpad" in the command but may not reference BOSS dirs.
-                        // Safe to kill if their parent process is dead (orphaned to PID 1/launchd).
-                        val isCrashpadOrphan = command.contains("chrome_crashpad") &&
-                                !process.parent().isPresent
+                            // Also detect orphaned chrome_crashpad processes:
+                            // These are helper processes whose parent (the main Chromium) has died.
+                            // They have "chrome_crashpad" in the command but may not reference BOSS dirs.
+                            // Safe to kill if their parent process is dead (orphaned to PID 1/launchd).
+                            val isCrashpadOrphan =
+                                command.contains("chrome_crashpad") &&
+                                    !process.parent().isPresent
 
-                        val isJxBrowserChromium = isFromBossDir || isCrashpadOrphan
+                            val isJxBrowserChromium = isFromBossDir || isCrashpadOrphan
 
-                        // Don't kill processes that belong to current BOSS instance
-                        val parentPid = process.parent().map { it.pid() }.orElse(-1L)
-                        val isOurChild = parentPid == currentPid
+                            // Don't kill processes that belong to current BOSS instance
+                            val parentPid = process.parent().map { it.pid() }.orElse(-1L)
+                            val isOurChild = parentPid == currentPid
 
-                        // Security: Don't kill processes started less than 5 seconds ago
-                        // This prevents killing newly spawned legitimate processes
-                        val startTimeMs = process.info().startInstant()
-                            .map { it.toEpochMilli() }.orElse(currentTimeMs)
-                        val processAgeMs = currentTimeMs - startTimeMs
-                        val isTooRecent = processAgeMs < 5000
+                            // Security: Don't kill processes started less than 5 seconds ago
+                            // This prevents killing newly spawned legitimate processes
+                            val startTimeMs =
+                                process
+                                    .info()
+                                    .startInstant()
+                                    .map { it.toEpochMilli() }
+                                    .orElse(currentTimeMs)
+                            val processAgeMs = currentTimeMs - startTimeMs
+                            val isTooRecent = processAgeMs < 5000
 
-                        isJxBrowserChromium && !isOurChild && !isTooRecent
-                    } catch (e: Exception) {
-                        // Process may have exited mid-inspection - skip it
-                        logger.debug(
-                            LogCategory.BROWSER,
-                            "Could not inspect process during stale Chromium scan - skipping",
-                            mapOf("error" to e.toString()),
-                        )
-                        false
-                    }
-                }
-                .toList()
+                            isJxBrowserChromium && !isOurChild && !isTooRecent
+                        } catch (e: Exception) {
+                            // Process may have exited mid-inspection - skip it
+                            logger.debug(
+                                LogCategory.BROWSER,
+                                "Could not inspect process during stale Chromium scan - skipping",
+                                mapOf("error" to e.toString()),
+                            )
+                            false
+                        }
+                    }.toList()
 
             staleProcesses.forEach { process ->
                 try {
@@ -603,15 +685,15 @@ object FluckEngine {
      * JxBrowser/Chromium uses multiple files for locking.
      */
     private fun cleanupAllLockRelatedFiles(profileDir: java.nio.file.Path) {
-
-        val lockFiles = listOf(
-            "SingletonLock",
-            "SingletonSocket",
-            "SingletonCookie",
-            "lockfile",
-            ".org.chromium.Chromium.lock",  // legacy Chromium bundle id (pre-9.3.0 engines)
-            ".com.teamdev.Platinum.lock"    // JxBrowser 9.3.0+ renamed the Chromium bundle id
-        )
+        val lockFiles =
+            listOf(
+                "SingletonLock",
+                "SingletonSocket",
+                "SingletonCookie",
+                "lockfile",
+                ".org.chromium.Chromium.lock", // legacy Chromium bundle id (pre-9.3.0 engines)
+                ".com.teamdev.Platinum.lock", // JxBrowser 9.3.0+ renamed the Chromium bundle id
+            )
 
         lockFiles.forEach { fileName ->
             val file = profileDir.resolve(fileName).toFile()
@@ -665,9 +747,7 @@ object FluckEngine {
      * Check if a URL is currently being downloaded.
      * Used by popup handler to prevent opening new tabs for download links.
      */
-    fun isActiveDownload(url: String): Boolean {
-        return activeDownloadUrls.contains(url)
-    }
+    fun isActiveDownload(url: String): Boolean = activeDownloadUrls.contains(url)
 
     /**
      * Notify that a tab was just opened via popup handler.
@@ -769,30 +849,31 @@ object FluckEngine {
     private val engineLock = Any()
 
     val engine: Engine
-        get() = synchronized(engineLock) {
-            // Return cached engine if available AND not closed
-            _engine?.let { cachedEngine ->
-                if (!cachedEngine.isClosed) {
-                    return@synchronized cachedEngine
+        get() =
+            synchronized(engineLock) {
+                // Return cached engine if available AND not closed
+                _engine?.let { cachedEngine ->
+                    if (!cachedEngine.isClosed) {
+                        return@synchronized cachedEngine
+                    }
+                    // Engine was closed (e.g., during app restart/update flow)
+                    // Clear cache and reinitialize
+                    _engine = null
+                    initializationError = null
+                    attemptCount = 0
+                    // Increment generation to notify browser tabs that they need to reload
+                    _engineGeneration++
+                    _engineGenerationFlow.value = _engineGeneration
                 }
-                // Engine was closed (e.g., during app restart/update flow)
-                // Clear cache and reinitialize
-                _engine = null
-                initializationError = null
-                attemptCount = 0
-                // Increment generation to notify browser tabs that they need to reload
-                _engineGeneration++
-                _engineGenerationFlow.value = _engineGeneration
-            }
 
-            // Throw cached error if initialization failed before and we've tried too many times
-            if (attemptCount > 3) {
-                initializationError?.let { throw it }
-            }
+                // Throw cached error if initialization failed before and we've tried too many times
+                if (attemptCount > 3) {
+                    initializationError?.let { throw it }
+                }
 
-            // Try to initialize
-            initializeEngine()
-        }
+                // Try to initialize
+                initializeEngine()
+            }
 
     // ---- RPA profile helpers (used by BrowserServiceImpl's managed profiles) ----
     // JxBrowser profiles are isolated cookie/storage/network contexts inside
@@ -800,8 +881,7 @@ object FluckEngine {
     // multiple RPAs with different credentials concurrently.
 
     /** Create a fresh isolated profile for an RPA run. Caller must delete it when done. */
-    fun newRpaProfile(name: String): com.teamdev.jxbrowser.profile.Profile =
-        synchronized(engineLock) { engine.profiles().newProfile(name) }
+    fun newRpaProfile(name: String): com.teamdev.jxbrowser.profile.Profile = synchronized(engineLock) { engine.profiles().newProfile(name) }
 
     /** Look up an existing profile by name, or null. */
     fun findProfile(name: String): com.teamdev.jxbrowser.profile.Profile? =
@@ -830,8 +910,8 @@ object FluckEngine {
      * "rpa-eph-" profiles orphaned by a previous/crashed session). Returns the
      * number removed. Never touches the default profile.
      */
-    fun cleanupOrphanedRpaProfiles(prefix: String): Int {
-        return try {
+    fun cleanupOrphanedRpaProfiles(prefix: String): Int =
+        try {
             synchronized(engineLock) {
                 val profiles = engine.profiles()
                 val orphans = profiles.list().filter { !it.isDefault && it.name().startsWith(prefix) }
@@ -845,14 +925,17 @@ object FluckEngine {
             logger.debug(LogCategory.BROWSER, "Error cleaning orphaned RPA profiles", mapOf("error" to (e.message ?: "unknown")))
             0
         }
-    }
 
     // --- Env flag helpers. Pure variants are internal so tests can cover them. ---
     private val ENV_TRUE = setOf("1", "true", "yes", "on")
     private val ENV_FALSE = setOf("0", "false", "no", "off")
+
     internal fun isTruthyFlag(value: String?): Boolean = value?.trim()?.lowercase() in ENV_TRUE
+
     internal fun isFalsyFlag(value: String?): Boolean = value?.trim()?.lowercase() in ENV_FALSE
+
     private fun envIsTrue(name: String) = isTruthyFlag(System.getenv(name))
+
     private fun envIsFalse(name: String) = isFalsyFlag(System.getenv(name))
 
     /**
@@ -868,6 +951,7 @@ object FluckEngine {
         val tokens = raw?.trim()?.split(WHITESPACE)?.filter { it.isNotEmpty() } ?: emptyList()
         return tokens.partition { it.startsWith("--") }
     }
+
     private val WHITESPACE = Regex("\\s+")
 
     /** Accepted switches only — see [partitionExtraSwitches]. */
@@ -912,19 +996,31 @@ object FluckEngine {
             try {
                 val startNs = System.nanoTime()
                 engine
-                logger.info(LogCategory.BROWSER, "Browser engine pre-warmed", mapOf(
-                    "durationMs" to (System.nanoTime() - startNs) / 1_000_000
-                ))
+                logger.info(
+                    LogCategory.BROWSER,
+                    "Browser engine pre-warmed",
+                    mapOf(
+                        "durationMs" to (System.nanoTime() - startNs) / 1_000_000,
+                    ),
+                )
             } catch (e: Throwable) {
                 // Errors (UnsatisfiedLinkError from a broken Chromium bundle, OOM)
                 // deserve visibility; plain Exceptions (transient network/license)
                 // are routine and stay at debug.
                 if (e is Error) {
-                    logger.warn(LogCategory.BROWSER, "Engine pre-warm failed with a serious error (lazy init will retry on first use)", error = e)
+                    logger.warn(
+                        LogCategory.BROWSER,
+                        "Engine pre-warm failed with a serious error (lazy init will retry on first use)",
+                        error = e,
+                    )
                 } else {
-                    logger.debug(LogCategory.BROWSER, "Engine pre-warm failed (lazy init will retry on first use)", mapOf(
-                        "error" to (e.message ?: "unknown")
-                    ))
+                    logger.debug(
+                        LogCategory.BROWSER,
+                        "Engine pre-warm failed (lazy init will retry on first use)",
+                        mapOf(
+                            "error" to (e.message ?: "unknown"),
+                        ),
+                    )
                 }
                 clearInitStateIfErrorIs(e)
             }
@@ -998,7 +1094,7 @@ object FluckEngine {
         // No fallback - BOSS-branded Chromium is required
         throw IllegalStateException(
             "BOSS-branded Chromium not found. Please restart the app to trigger auto-download, " +
-            "or manually install to ~/.boss/boss-chromium/"
+                "or manually install to ~/.boss/boss-chromium/",
         )
     }
 
@@ -1064,12 +1160,13 @@ object FluckEngine {
      */
     private fun getLinuxBundledChromiumPath(): java.nio.file.Path? {
         // Check common Linux installation paths
-        val paths = listOf(
-            "/opt/boss/lib/chromium",  // Bundled in lib directory (new packaging)
-            "/opt/boss/chromium",
-            "/usr/share/boss/chromium",
-            "/usr/local/share/boss/chromium"
-        )
+        val paths =
+            listOf(
+                "/opt/boss/lib/chromium", // Bundled in lib directory (new packaging)
+                "/opt/boss/chromium",
+                "/usr/share/boss/chromium",
+                "/usr/local/share/boss/chromium",
+            )
 
         for (pathStr in paths) {
             val path = Paths.get(pathStr)
@@ -1081,7 +1178,7 @@ object FluckEngine {
         val chromiumPath = Paths.get(userDir, "chromium")
         return if (chromiumPath.toFile().exists()) chromiumPath else null
     }
-    
+
     /**
      * Clean up stale lock files from a previous BOSS session that didn't close properly.
      * On Linux, Chromium creates SingletonLock as a symlink to "spark-<hostname>-<pid>".
@@ -1091,7 +1188,6 @@ object FluckEngine {
         val lockFile = profileDir.resolve("SingletonLock").toFile()
         val socketFile = profileDir.resolve("SingletonSocket").toFile()
         val cookieFile = profileDir.resolve("SingletonCookie").toFile()
-
 
         if (!lockFile.exists()) {
             return false // No lock to clean
@@ -1171,7 +1267,11 @@ object FluckEngine {
         return false
     }
 
-    private fun deleteLockFiles(lockFile: java.io.File, socketFile: java.io.File, cookieFile: java.io.File) {
+    private fun deleteLockFiles(
+        lockFile: java.io.File,
+        socketFile: java.io.File,
+        cookieFile: java.io.File,
+    ) {
         // Use Files.deleteIfExists which handles symlinks properly on macOS
         // File.delete() can silently fail on dangling symlinks
         listOf(lockFile, socketFile, cookieFile).forEach { file ->
@@ -1199,14 +1299,16 @@ object FluckEngine {
             val bossDir = BossDirectories.rootDir
             val oneDayAgo = System.currentTimeMillis() - (24 * 60 * 60 * 1000)
 
-            bossDir.listFiles()?.filter {
-                it.isDirectory &&
-                it.name.startsWith("browser-profile-") &&
-                it.name != "browser-profile" &&
-                it.lastModified() < oneDayAgo
-            }?.forEach { dir ->
-                dir.deleteRecursively()
-            }
+            bossDir
+                .listFiles()
+                ?.filter {
+                    it.isDirectory &&
+                        it.name.startsWith("browser-profile-") &&
+                        it.name != "browser-profile" &&
+                        it.lastModified() < oneDayAgo
+                }?.forEach { dir ->
+                    dir.deleteRecursively()
+                }
         } catch (e: Exception) {
             // Housekeeping only - old temp profiles are retried next startup
             logger.debug(LogCategory.BROWSER, "Old temporary profile cleanup failed", mapOf("error" to e.toString()))
@@ -1223,25 +1325,35 @@ object FluckEngine {
             val bossDir = BossDirectories.rootDir
             var cleanedCount = 0
 
-            bossDir.listFiles()?.filter {
-                it.isDirectory &&
-                it.name.startsWith("browser-profile-") &&
-                it.name != "browser-profile"
-            }?.forEach { dir ->
-                if (dir.deleteRecursively()) {
-                    cleanedCount++
+            bossDir
+                .listFiles()
+                ?.filter {
+                    it.isDirectory &&
+                        it.name.startsWith("browser-profile-") &&
+                        it.name != "browser-profile"
+                }?.forEach { dir ->
+                    if (dir.deleteRecursively()) {
+                        cleanedCount++
+                    }
                 }
-            }
 
             if (cleanedCount > 0) {
-                logger.info(LogCategory.BROWSER, "Cleaned up temporary browser profiles", mapOf(
-                    "count" to cleanedCount
-                ))
+                logger.info(
+                    LogCategory.BROWSER,
+                    "Cleaned up temporary browser profiles",
+                    mapOf(
+                        "count" to cleanedCount,
+                    ),
+                )
             }
         } catch (e: Exception) {
-            logger.debug(LogCategory.BROWSER, "Error cleaning temporary profiles", mapOf(
-                "error" to (e.message ?: "unknown")
-            ))
+            logger.debug(
+                LogCategory.BROWSER,
+                "Error cleaning temporary profiles",
+                mapOf(
+                    "error" to (e.message ?: "unknown"),
+                ),
+            )
         }
     }
 
@@ -1287,7 +1399,7 @@ object FluckEngine {
             throw e
         }
     }
-    
+
     /**
      * Chromium performance configuration, scoped per platform.
      *
@@ -1317,7 +1429,10 @@ object FluckEngine {
      * (e.g. SkiaGraphite, VA-API); include those features in your value if you want
      * to keep them.
      */
-    private fun applyPerformanceSwitches(builder: EngineOptions.Builder, inContainer: Boolean) {
+    private fun applyPerformanceSwitches(
+        builder: EngineOptions.Builder,
+        inContainer: Boolean,
+    ) {
         // Bigger fixed on-disk HTTP cache for faster repeat page loads. Chromium's
         // auto-sizing historically caps around ~320 MB; 512 MB comfortably exceeds
         // it without meaningfully eating the disk. Tune via this API, not a
@@ -1329,16 +1444,24 @@ object FluckEngine {
         if (extras.isNotEmpty()) {
             // Audit trail: extras are unrestricted and can re-weaken hardening,
             // so record exactly what this session runs with.
-            logger.info(LogCategory.BROWSER, "Injecting extra Chromium switches from BOSS_CHROMIUM_EXTRA_SWITCHES", mapOf(
-                "switches" to extras.joinToString(" ")
-            ))
+            logger.info(
+                LogCategory.BROWSER,
+                "Injecting extra Chromium switches from BOSS_CHROMIUM_EXTRA_SWITCHES",
+                mapOf(
+                    "switches" to extras.joinToString(" "),
+                ),
+            )
         }
         if (dropped.isNotEmpty()) {
             // Surface fat-fingered entries (bare values, single-dash flags) instead
             // of silently dropping them — misconfiguration should be debuggable.
-            logger.warn(LogCategory.BROWSER, "Ignoring non-switch tokens in BOSS_CHROMIUM_EXTRA_SWITCHES (switches must start with --)", mapOf(
-                "dropped" to dropped.joinToString(" ")
-            ))
+            logger.warn(
+                LogCategory.BROWSER,
+                "Ignoring non-switch tokens in BOSS_CHROMIUM_EXTRA_SWITCHES (switches must start with --)",
+                mapOf(
+                    "dropped" to dropped.joinToString(" "),
+                ),
+            )
         }
 
         performanceSwitchesFor(
@@ -1400,6 +1523,7 @@ object FluckEngine {
                 // window. CEF/JCEF embedders disable it for the same reason.
                 switches += "--disable-features=CalculateNativeWinOcclusion"
             }
+
             os.contains("mac") -> {
                 // Skia Graphite (Metal-native raster backend) is default in
                 // stable Chrome on Apple Silicon — but in the EMBEDDED engine it
@@ -1415,6 +1539,7 @@ object FluckEngine {
                     switches += "--enable-features=SkiaGraphite"
                 }
             }
+
             os.contains("linux") -> {
                 // Linux hardware video decode is still gated in upstream defaults
                 // (feature names differ across Chromium generations; unknown ones
@@ -1438,51 +1563,61 @@ object FluckEngine {
         return switches
     }
 
-    private fun createEngineInstance(chromiumDir: java.nio.file.Path, profileDirPath: java.nio.file.Path): Engine {
+    private fun createEngineInstance(
+        chromiumDir: java.nio.file.Path,
+        profileDirPath: java.nio.file.Path,
+    ): Engine {
         // Evaluated once per boot: feeds both the container-only switches and the
         // sandbox decision below, so the two can never disagree.
         val inContainer = runningInContainer()
-        val optionsBuilder = EngineOptions.newBuilder(JxBrowserConfig.renderingMode)
-            .licenseKey(JxBrowserConfig.licenseKey)
-            .chromiumDir(chromiumDir)
-            .userDataDir(profileDirPath)
-            // Enable all proprietary codecs for full media support
-            .enableProprietaryFeature(ProprietaryFeature.H_264)
-            .enableProprietaryFeature(ProprietaryFeature.AAC)
-            .enableProprietaryFeature(ProprietaryFeature.HEVC)
-            .apply { applyPerformanceSwitches(this, inContainer) }
-            // Chromium sandbox stays ON (the JxBrowser default): --no-sandbox had
-            // no performance benefit and stripped process isolation from an engine
-            // that renders arbitrary web content. Disabled ONLY via the supported
-            // JxBrowser API (a raw --no-sandbox switch is not guaranteed to be
-            // honored), for: an explicit operator opt-out, or containers, where
-            // the sandbox usually can't start (no user namespaces) and the
-            // container boundary provides the isolation instead.
-            .apply {
-                if (envIsTrue("BOSS_CHROMIUM_DISABLE_SANDBOX") || inContainer) disableSandbox()
-            }
-        
+        val optionsBuilder =
+            EngineOptions
+                .newBuilder(JxBrowserConfig.renderingMode)
+                .licenseKey(JxBrowserConfig.licenseKey)
+                .chromiumDir(chromiumDir)
+                .userDataDir(profileDirPath)
+                // Enable all proprietary codecs for full media support
+                .enableProprietaryFeature(ProprietaryFeature.H_264)
+                .enableProprietaryFeature(ProprietaryFeature.AAC)
+                .enableProprietaryFeature(ProprietaryFeature.HEVC)
+                .apply { applyPerformanceSwitches(this, inContainer) }
+                // Chromium sandbox stays ON (the JxBrowser default): --no-sandbox had
+                // no performance benefit and stripped process isolation from an engine
+                // that renders arbitrary web content. Disabled ONLY via the supported
+                // JxBrowser API (a raw --no-sandbox switch is not guaranteed to be
+                // honored), for: an explicit operator opt-out, or containers, where
+                // the sandbox usually can't start (no user namespaces) and the
+                // container boundary provides the isolation instead.
+                .apply {
+                    if (envIsTrue("BOSS_CHROMIUM_DISABLE_SANDBOX") || inContainer) disableSandbox()
+                }
+
         // Add user agent if configured
         BrowserSettings.userAgent?.let { ua ->
-            val userAgentMapping = mapOf(
-                "Chrome" to "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Firefox" to "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0",
-                "Safari" to "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
-                "Edge" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0"
-            )
-            
-            val userAgentString = when (ua) {
-                "Default" -> null
-                "Chrome", "Firefox", "Safari", "Edge" -> userAgentMapping[ua]
-                "Custom" -> BrowserSettings.customUserAgent
-                else -> ua
-            }
-            
+            val userAgentMapping =
+                mapOf(
+                    "Chrome" to
+                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Firefox" to "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0",
+                    "Safari" to
+                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
+                    "Edge" to
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+                )
+
+            val userAgentString =
+                when (ua) {
+                    "Default" -> null
+                    "Chrome", "Firefox", "Safari", "Edge" -> userAgentMapping[ua]
+                    "Custom" -> BrowserSettings.customUserAgent
+                    else -> ua
+                }
+
             userAgentString?.let {
                 optionsBuilder.userAgent(it)
             }
         }
-        
+
         val newEngine = Engine.newInstance(optionsBuilder.build())
 
         // A successful boot invalidates any earlier failure — clear it so the
@@ -1527,35 +1662,48 @@ object FluckEngine {
         val profile = engine.profiles().defaultProfile()
         val permissions = profile.permissions()
 
-        permissions.set(RequestPermissionCallback::class.java, object : RequestPermissionCallback {
-            override fun on(params: RequestPermissionCallback.Params, action: RequestPermissionCallback.Action) {
-                val permissionType = params.permissionType()
+        permissions.set(
+            RequestPermissionCallback::class.java,
+            object : RequestPermissionCallback {
+                override fun on(
+                    params: RequestPermissionCallback.Params,
+                    action: RequestPermissionCallback.Action,
+                ) {
+                    val permissionType = params.permissionType()
 
-                logger.debug(LogCategory.BROWSER, "Permission requested", mapOf(
-                    "type" to permissionType.name
-                ))
+                    logger.debug(
+                        LogCategory.BROWSER,
+                        "Permission requested",
+                        mapOf(
+                            "type" to permissionType.name,
+                        ),
+                    )
 
-                // Auto-grant camera and microphone permissions for video conferencing
-                when (permissionType) {
-                    PermissionType.VIDEO_CAPTURE -> {
-                        logger.info(LogCategory.BROWSER, "Granting VIDEO_CAPTURE permission")
-                        action.grant()
-                    }
-                    PermissionType.AUDIO_CAPTURE -> {
-                        logger.info(LogCategory.BROWSER, "Granting AUDIO_CAPTURE permission")
-                        action.grant()
-                    }
-                    PermissionType.NOTIFICATIONS -> {
-                        action.grant()
-                    }
-                    else -> {
-                        // For other permissions, auto-grant as well
-                        logger.debug(LogCategory.BROWSER, "Granting permission", mapOf("type" to permissionType.name))
-                        action.grant()
+                    // Auto-grant camera and microphone permissions for video conferencing
+                    when (permissionType) {
+                        PermissionType.VIDEO_CAPTURE -> {
+                            logger.info(LogCategory.BROWSER, "Granting VIDEO_CAPTURE permission")
+                            action.grant()
+                        }
+
+                        PermissionType.AUDIO_CAPTURE -> {
+                            logger.info(LogCategory.BROWSER, "Granting AUDIO_CAPTURE permission")
+                            action.grant()
+                        }
+
+                        PermissionType.NOTIFICATIONS -> {
+                            action.grant()
+                        }
+
+                        else -> {
+                            // For other permissions, auto-grant as well
+                            logger.debug(LogCategory.BROWSER, "Granting permission", mapOf("type" to permissionType.name))
+                            action.grant()
+                        }
                     }
                 }
-            }
-        })
+            },
+        )
     }
 
     /**
@@ -1564,44 +1712,50 @@ object FluckEngine {
      * User can choose to use native picker for windows/screens.
      */
     fun setupCaptureSessionHandler(browser: com.teamdev.jxbrowser.browser.Browser) {
-        browser.set(StartCaptureSessionCallback::class.java, StartCaptureSessionCallback { params, tell ->
-            // On macOS, explain BEFORE triggering the OS prompt: show an in-app
-            // rationale dialog and only request permission if the user agrees. This
-            // callback runs off the Compose UI thread, so blocking on it is safe.
-            if (!MacOSScreenCapture.hasPermission()) {
-                if (!ScreenCaptureNotifier.awaitPermissionRationale()) {
-                    tell.cancel()
-                    return@StartCaptureSessionCallback
+        browser.set(
+            StartCaptureSessionCallback::class.java,
+            StartCaptureSessionCallback { params, tell ->
+                // On macOS, explain BEFORE triggering the OS prompt: show an in-app
+                // rationale dialog and only request permission if the user agrees. This
+                // callback runs off the Compose UI thread, so blocking on it is safe.
+                if (!MacOSScreenCapture.hasPermission()) {
+                    if (!ScreenCaptureNotifier.awaitPermissionRationale()) {
+                        tell.cancel()
+                        return@StartCaptureSessionCallback
+                    }
+                    val granted = MacOSScreenCapture.requestPermission()
+                    if (!granted) {
+                        tell.cancel()
+                        return@StartCaptureSessionCallback
+                    }
                 }
-                val granted = MacOSScreenCapture.requestPermission()
-                if (!granted) {
-                    tell.cancel()
-                    return@StartCaptureSessionCallback
+
+                val sources = params.sources()
+
+                // Log available sources for debugging
+
+                // Generate unique request ID
+                val requestId =
+                    java.util.UUID
+                        .randomUUID()
+                        .toString()
+
+                // Emit to UI for user selection
+                ScreenCaptureNotifier.requestCapture(
+                    requestId = requestId,
+                    sources = sources,
+                    tell = tell,
+                )
+
+                // Set 60-second timeout - if user doesn't respond, cancel
+                CoroutineScope(Dispatchers.Default).launch {
+                    delay(60_000)
+                    if (ScreenCaptureNotifier.hasPendingRequest(requestId)) {
+                        ScreenCaptureNotifier.cancel(requestId)
+                    }
                 }
-            }
-
-            val sources = params.sources()
-
-            // Log available sources for debugging
-
-            // Generate unique request ID
-            val requestId = java.util.UUID.randomUUID().toString()
-
-            // Emit to UI for user selection
-            ScreenCaptureNotifier.requestCapture(
-                requestId = requestId,
-                sources = sources,
-                tell = tell
-            )
-
-            // Set 60-second timeout - if user doesn't respond, cancel
-            CoroutineScope(Dispatchers.Default).launch {
-                delay(60_000)
-                if (ScreenCaptureNotifier.hasPendingRequest(requestId)) {
-                    ScreenCaptureNotifier.cancel(requestId)
-                }
-            }
-        })
+            },
+        )
     }
 
     /**
@@ -1618,7 +1772,7 @@ object FluckEngine {
         browser: com.teamdev.jxbrowser.browser.Browser,
         tabId: String,
         onFullscreenEnter: () -> Unit,
-        onFullscreenExit: () -> Unit
+        onFullscreenExit: () -> Unit,
     ) {
         // Handle fullscreen enter request
         browser.fullScreen().on(com.teamdev.jxbrowser.fullscreen.event.FullScreenEntered::class.java) {
@@ -1638,7 +1792,8 @@ object FluckEngine {
             logger.info(LogCategory.BROWSER, "Fullscreen exited", mapOf("tabId" to tabId))
 
             // Close fullscreen window
-            ai.rever.boss.tabfullscreen.FullscreenBrowserWindow.exitFullscreen()
+            ai.rever.boss.tabfullscreen.FullscreenBrowserWindow
+                .exitFullscreen()
 
             onFullscreenExit()
         }
@@ -1646,7 +1801,7 @@ object FluckEngine {
 
     internal data class BrowserKeyEventRoute(
         val acceptsInput: Boolean,
-        val shortcutWindowId: String?
+        val shortcutWindowId: String?,
     )
 
     /**
@@ -1657,21 +1812,30 @@ object FluckEngine {
     internal fun resolveBrowserKeyEventRoute(
         ownerWindowId: String?,
         ownerWindowIsFocused: Boolean,
-        fallbackFocusedWindowId: String?
-    ): BrowserKeyEventRoute = when {
-        ownerWindowId == null -> BrowserKeyEventRoute(
-            acceptsInput = true,
-            shortcutWindowId = fallbackFocusedWindowId
-        )
-        ownerWindowIsFocused -> BrowserKeyEventRoute(
-            acceptsInput = true,
-            shortcutWindowId = ownerWindowId
-        )
-        else -> BrowserKeyEventRoute(
-            acceptsInput = false,
-            shortcutWindowId = null
-        )
-    }
+        fallbackFocusedWindowId: String?,
+    ): BrowserKeyEventRoute =
+        when {
+            ownerWindowId == null -> {
+                BrowserKeyEventRoute(
+                    acceptsInput = true,
+                    shortcutWindowId = fallbackFocusedWindowId,
+                )
+            }
+
+            ownerWindowIsFocused -> {
+                BrowserKeyEventRoute(
+                    acceptsInput = true,
+                    shortcutWindowId = ownerWindowId,
+                )
+            }
+
+            else -> {
+                BrowserKeyEventRoute(
+                    acceptsInput = false,
+                    shortcutWindowId = null,
+                )
+            }
+        }
 
     /**
      * Sets up keyboard interceptor for a browser to forward menu shortcuts to the native menu bar.
@@ -1684,24 +1848,27 @@ object FluckEngine {
      */
     fun setupKeyboardInterceptor(
         browser: com.teamdev.jxbrowser.browser.Browser,
-        ownerWindowId: String? = null
+        ownerWindowId: String? = null,
     ) {
         val suppressionLogged = AtomicBoolean(false)
-        browser.set(com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback::class.java,
+        browser.set(
+            com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback::class.java,
             com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback { params ->
                 val event = params.event()
                 val modifiers = event.keyModifiers()
                 val keyCode = event.keyCode()
 
-                val route = resolveBrowserKeyEventRoute(
-                    ownerWindowId = ownerWindowId,
-                    ownerWindowIsFocused = ownerWindowId?.let(WindowFocusManager::isWindowFocused) == true,
-                    fallbackFocusedWindowId = if (ownerWindowId == null) {
-                        WindowFocusManager.focusedWindowFlow.value
-                    } else {
-                        null
-                    }
-                )
+                val route =
+                    resolveBrowserKeyEventRoute(
+                        ownerWindowId = ownerWindowId,
+                        ownerWindowIsFocused = ownerWindowId?.let(WindowFocusManager::isWindowFocused) == true,
+                        fallbackFocusedWindowId =
+                            if (ownerWindowId == null) {
+                                WindowFocusManager.focusedWindowFlow.value
+                            } else {
+                                null
+                            },
+                    )
                 if (!route.acceptsInput) {
                     ownerWindowId?.let { windowId ->
                         if (suppressionLogged.compareAndSet(false, true)) {
@@ -1710,22 +1877,24 @@ object FluckEngine {
                                 "Browser key input suppressed because owner window is not focused",
                                 mapOf(
                                     "ownerWindowId" to windowId,
-                                    "ownerRegistered" to (WindowFocusManager.getWindow(windowId) != null)
-                                )
+                                    "ownerRegistered" to (WindowFocusManager.getWindow(windowId) != null),
+                                ),
                             )
                         }
                     }
-                    return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response.suppress()
+                    return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response
+                        .suppress()
                 }
                 suppressionLogged.set(false)
                 val shortcutWindowId = route.shortcutWindowId
 
                 // Platform-aware main modifier: Cmd on macOS, Ctrl on Windows/Linux
-                val isMainModifierDown = if (SystemUtils.isMacOS) {
-                    modifiers.isMetaDown && !modifiers.isControlDown
-                } else {
-                    modifiers.isControlDown && !modifiers.isMetaDown
-                }
+                val isMainModifierDown =
+                    if (SystemUtils.isMacOS) {
+                        modifiers.isMetaDown && !modifiers.isControlDown
+                    } else {
+                        modifiers.isControlDown && !modifiers.isMetaDown
+                    }
                 val modifierName = if (SystemUtils.isMacOS) "Cmd" else "Ctrl"
 
                 // Intercept main modifier + key shortcuts
@@ -1733,27 +1902,41 @@ object FluckEngine {
                     if (shortcutWindowId != null) {
                         when (keyCode) {
                             com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_R -> {
-                                ai.rever.boss.window.MenuActionsHandler.triggerReloadBrowser(shortcutWindowId)
-                                return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response.suppress()
+                                ai.rever.boss.window.MenuActionsHandler
+                                    .triggerReloadBrowser(shortcutWindowId)
+                                return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response
+                                    .suppress()
                             }
+
                             com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_N -> {
-                                ai.rever.boss.window.MenuActionsHandler.triggerNewTab(shortcutWindowId)
-                                return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response.suppress()
+                                ai.rever.boss.window.MenuActionsHandler
+                                    .triggerNewTab(shortcutWindowId)
+                                return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response
+                                    .suppress()
                             }
+
                             com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_T -> {
-                                ai.rever.boss.window.MenuActionsHandler.triggerNewTab(shortcutWindowId)
-                                return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response.suppress()
+                                ai.rever.boss.window.MenuActionsHandler
+                                    .triggerNewTab(shortcutWindowId)
+                                return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response
+                                    .suppress()
                             }
+
                             com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_W -> {
-                                ai.rever.boss.window.MenuActionsHandler.triggerCloseTab(shortcutWindowId)
-                                return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response.suppress()
+                                ai.rever.boss.window.MenuActionsHandler
+                                    .triggerCloseTab(shortcutWindowId)
+                                return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response
+                                    .suppress()
                             }
+
                             com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_F -> {
                                 // Toggle Swing-based find bar (uses TextFinder API, no focus issues)
                                 val findBar = activeFindBars.getOrPut(browser) { BrowserFindBar(browser) }
                                 findBar.toggle()
-                                return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response.suppress()
+                                return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response
+                                    .suppress()
                             }
+
                             else -> {
                                 // Let other main modifier + key combos pass through to the native menu bar
                             }
@@ -1765,9 +1948,15 @@ object FluckEngine {
                             com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_N,
                             com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_T,
                             com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_W,
-                            com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_F -> {
-                                logger.debug(LogCategory.BROWSER, "No window focused, cannot dispatch shortcut", mapOf("shortcut" to "$modifierName+${keyCode.name}"))
+                            com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_F,
+                            -> {
+                                logger.debug(
+                                    LogCategory.BROWSER,
+                                    "No window focused, cannot dispatch shortcut",
+                                    mapOf("shortcut" to "$modifierName+${keyCode.name}"),
+                                )
                             }
+
                             else -> { /* Not a handled shortcut, no logging needed */ }
                         }
                     }
@@ -1778,13 +1967,19 @@ object FluckEngine {
                     if (shortcutWindowId != null) {
                         when (keyCode) {
                             com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_F -> {
-                                ai.rever.boss.window.MenuActionsHandler.triggerToggleFocusMode(shortcutWindowId)
-                                return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response.suppress()
+                                ai.rever.boss.window.MenuActionsHandler
+                                    .triggerToggleFocusMode(shortcutWindowId)
+                                return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response
+                                    .suppress()
                             }
+
                             com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_S -> {
-                                ai.rever.boss.window.MenuActionsHandler.triggerSaveWorkspace(shortcutWindowId)
-                                return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response.suppress()
+                                ai.rever.boss.window.MenuActionsHandler
+                                    .triggerSaveWorkspace(shortcutWindowId)
+                                return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response
+                                    .suppress()
                             }
+
                             com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_V -> {
                                 // Paste without formatting:
                                 // 1. Save original clipboard
@@ -1798,32 +1993,48 @@ object FluckEngine {
                                     if (plainText != null) {
                                         clipboard.setContents(java.awt.datatransfer.StringSelection(plainText), null)
                                         // Dispatch Cmd+V (or Ctrl+V) as a native key event to trigger paste
-                                        val pasteModifiers = com.teamdev.jxbrowser.ui.KeyModifiers.newBuilder()
-                                            .apply {
-                                                if (SystemUtils.isMacOS) metaDown(true) else controlDown(true)
-                                            }
-                                            .build()
-                                        browser.dispatch(com.teamdev.jxbrowser.ui.event.KeyPressed.newBuilder(
-                                            com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_V
-                                        ).keyModifiers(pasteModifiers).build())
-                                        browser.dispatch(com.teamdev.jxbrowser.ui.event.KeyReleased.newBuilder(
-                                            com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_V
-                                        ).keyModifiers(pasteModifiers).build())
+                                        val pasteModifiers =
+                                            com.teamdev.jxbrowser.ui.KeyModifiers
+                                                .newBuilder()
+                                                .apply {
+                                                    if (SystemUtils.isMacOS) metaDown(true) else controlDown(true)
+                                                }.build()
+                                        browser.dispatch(
+                                            com.teamdev.jxbrowser.ui.event.KeyPressed
+                                                .newBuilder(
+                                                    com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_V,
+                                                ).keyModifiers(pasteModifiers)
+                                                .build(),
+                                        )
+                                        browser.dispatch(
+                                            com.teamdev.jxbrowser.ui.event.KeyReleased
+                                                .newBuilder(
+                                                    com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_V,
+                                                ).keyModifiers(pasteModifiers)
+                                                .build(),
+                                        )
                                         // Restore original clipboard after paste completes
                                         if (originalContents != null) {
                                             CoroutineScope(Dispatchers.IO).launch {
                                                 delay(200)
                                                 try {
                                                     clipboard.setContents(originalContents, null)
-                                                } catch (_: Exception) {}
+                                                } catch (_: Exception) {
+                                                }
                                             }
                                         }
                                     }
                                 } catch (e: Exception) {
-                                    logger.debug(LogCategory.BROWSER, "Paste without formatting failed", mapOf("error" to (e.message ?: "unknown")))
+                                    logger.debug(
+                                        LogCategory.BROWSER,
+                                        "Paste without formatting failed",
+                                        mapOf("error" to (e.message ?: "unknown")),
+                                    )
                                 }
-                                return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response.suppress()
+                                return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response
+                                    .suppress()
                             }
+
                             else -> {
                                 // Let other main modifier + Shift + key combos pass through
                             }
@@ -1833,17 +2044,24 @@ object FluckEngine {
                         when (keyCode) {
                             com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_F,
                             com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_S,
-                            com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_V -> {
-                                logger.debug(LogCategory.BROWSER, "No window focused, cannot dispatch shortcut", mapOf("shortcut" to "$modifierName+Shift+${keyCode.name}"))
+                            com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_V,
+                            -> {
+                                logger.debug(
+                                    LogCategory.BROWSER,
+                                    "No window focused, cannot dispatch shortcut",
+                                    mapOf("shortcut" to "$modifierName+Shift+${keyCode.name}"),
+                                )
                             }
+
                             else -> { /* Not a handled shortcut, no logging needed */ }
                         }
                     }
                 }
 
                 // Let all other key events proceed normally
-                com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response.proceed()
-            }
+                com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response
+                    .proceed()
+            },
         )
     }
 
@@ -1870,22 +2088,26 @@ object FluckEngine {
                 val forceDialog = isShiftPressed()
 
                 // Determine save location based on settings
-                val savePath = when {
-                    downloadSettings.alwaysAskWhereToSave || forceDialog -> {
-                        // Show save dialog
-                        pickSaveFile(
-                            suggestedFileName = sanitizedFileName,
-                            initialDirectory = downloadSettings.lastUsedDirectory
-                                ?: downloadSettings.defaultDownloadDirectory
-                        )
+                val savePath =
+                    when {
+                        downloadSettings.alwaysAskWhereToSave || forceDialog -> {
+                            // Show save dialog
+                            pickSaveFile(
+                                suggestedFileName = sanitizedFileName,
+                                initialDirectory =
+                                    downloadSettings.lastUsedDirectory
+                                        ?: downloadSettings.defaultDownloadDirectory,
+                            )
+                        }
+
+                        else -> {
+                            // Auto-save to default/last directory
+                            val directory =
+                                downloadSettings.lastUsedDirectory
+                                    ?: downloadSettings.defaultDownloadDirectory
+                            FileSystemUtils.generateUniqueFilePath(directory, sanitizedFileName)
+                        }
                     }
-                    else -> {
-                        // Auto-save to default/last directory
-                        val directory = downloadSettings.lastUsedDirectory
-                            ?: downloadSettings.defaultDownloadDirectory
-                        FileSystemUtils.generateUniqueFilePath(directory, sanitizedFileName)
-                    }
-                }
 
                 if (savePath != null) {
                     // Ensure parent directory exists
@@ -1896,7 +2118,8 @@ object FluckEngine {
 
                     // Warn for executable files
                     if (downloadSettings.warnForExecutables &&
-                        FileNameSanitizer.isExecutableFile(sanitizedFileName)) {
+                        FileNameSanitizer.isExecutableFile(sanitizedFileName)
+                    ) {
                         // TODO: Show user warning dialog (for now, just proceed)
                     }
 
@@ -1908,7 +2131,6 @@ object FluckEngine {
                     if (parentDir != null) {
                         downloadSettings = downloadSettings.copy(lastUsedDirectory = parentDir)
                     }
-
 
                     // Generate unique download ID
                     val downloadId = UUID.randomUUID().toString()
@@ -1930,8 +2152,8 @@ object FluckEngine {
                                 finishedAt = null,
                                 canPause = false,
                                 canResume = false,
-                                errorReason = null
-                            )
+                                errorReason = null,
+                            ),
                         )
 
                         // Open the Downloads sidebar panel
@@ -1939,7 +2161,7 @@ object FluckEngine {
                         if (focusedWindowId != null) {
                             ai.rever.boss.components.events.PanelEventBus.openPanel(
                                 ai.rever.boss.components.plugin.PanelIds.DOWNLOADS,
-                                sourceWindowId = focusedWindowId
+                                sourceWindowId = focusedWindowId,
                             )
                         } else {
                         }
@@ -1955,7 +2177,7 @@ object FluckEngine {
                     // User cancelled save dialog
                     action.cancel()
                 }
-            }
+            },
         )
     }
 
@@ -1963,7 +2185,7 @@ object FluckEngine {
         download: Download,
         downloadId: String,
         destinationPath: String,
-        url: String
+        url: String,
     ) {
         val scope = CoroutineScope(Dispatchers.Default)
 
@@ -2017,7 +2239,7 @@ object FluckEngine {
                 downloadManager.updateStatus(
                     downloadId,
                     DownloadStatus.FAILED,
-                    errorReason = "Download failed: $reason"
+                    errorReason = "Download failed: $reason",
                 )
                 FileSystemUtils.cleanupPartialFile(destinationPath)
                 // Remove from tracking maps
@@ -2059,7 +2281,7 @@ object FluckEngine {
         val profileDeleted: Boolean = false,
         val tempProfilesCleaned: Boolean = false,
         val errorMessage: String? = null,
-        val failedStep: String? = null
+        val failedStep: String? = null,
     )
 
     /**
@@ -2074,105 +2296,104 @@ object FluckEngine {
      *
      * @return ResetResult with detailed status of each step
      */
-    suspend fun resetBrowserProfile(): ResetResult = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+    suspend fun resetBrowserProfile(): ResetResult =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            var engineClosed = false
+            var profileDeleted = false
+            var tempProfilesCleaned = false
 
-        var engineClosed = false
-        var profileDeleted = false
-        var tempProfilesCleaned = false
-
-        try {
-            // Step 1: Close current engine if it exists
-            _engine?.let { engine ->
-                if (!engine.isClosed) {
-                    try {
-                        engine.close()
-                        engineClosed = true
-                    } catch (e: Exception) {
-                        // Continue anyway - engine may be in bad state
-                        logger.warn(LogCategory.BROWSER, "Engine close failed during reset - continuing", error = e)
-                        engineClosed = true // Mark as closed since we tried
-                    }
-                } else {
-                    engineClosed = true // Already closed
-                }
-            } ?: run {
-                engineClosed = true // No engine to close
-            }
-
-            // Step 2: Clear cached state (must happen even if engine close had issues)
-            _engine = null
-            initializationError = null
-            attemptCount = 0
-            // Increment generation to notify browser tabs that they need to reload
-            _engineGeneration++
-            _engineGenerationFlow.value = _engineGeneration
-
-            // Step 3: Kill any stale Chromium processes
             try {
-                killStaleChromiumProcesses()
-            } catch (e: Exception) {
-                // Continue - not critical
-                logger.debug(
-                    LogCategory.BROWSER,
-                    "Stale Chromium process kill failed during reset",
-                    mapOf("error" to e.toString()),
-                )
-            }
+                // Step 1: Close current engine if it exists
+                _engine?.let { engine ->
+                    if (!engine.isClosed) {
+                        try {
+                            engine.close()
+                            engineClosed = true
+                        } catch (e: Exception) {
+                            // Continue anyway - engine may be in bad state
+                            logger.warn(LogCategory.BROWSER, "Engine close failed during reset - continuing", error = e)
+                            engineClosed = true // Mark as closed since we tried
+                        }
+                    } else {
+                        engineClosed = true // Already closed
+                    }
+                } ?: run {
+                    engineClosed = true // No engine to close
+                }
 
-            // Step 4: Delete browser profile directory
-            val selectedProfile = BrowserSettings.currentProfile
-            val profileDir = BossDirectories.resolve(selectedProfile)
+                // Step 2: Clear cached state (must happen even if engine close had issues)
+                _engine = null
+                initializationError = null
+                attemptCount = 0
+                // Increment generation to notify browser tabs that they need to reload
+                _engineGeneration++
+                _engineGenerationFlow.value = _engineGeneration
 
-            if (profileDir.exists()) {
-                profileDeleted = profileDir.deleteRecursively()
-                if (profileDeleted) {
-                } else {
-                    // This is a partial failure - return with details
-                    return@withContext ResetResult(
-                        success = false,
-                        engineClosed = engineClosed,
-                        profileDeleted = false,
-                        tempProfilesCleaned = false,
-                        errorMessage = "Could not delete all files in profile directory. Some files may be locked.",
-                        failedStep = "Delete profile directory"
+                // Step 3: Kill any stale Chromium processes
+                try {
+                    killStaleChromiumProcesses()
+                } catch (e: Exception) {
+                    // Continue - not critical
+                    logger.debug(
+                        LogCategory.BROWSER,
+                        "Stale Chromium process kill failed during reset",
+                        mapOf("error" to e.toString()),
                     )
                 }
-            } else {
-                profileDeleted = true // Nothing to delete is success
-            }
 
-            // Step 5: Also clean up temporary profiles
-            try {
-                cleanupOldTemporaryProfiles()
-                tempProfilesCleaned = true
-            } catch (e: Exception) {
-                // Not critical - continue
-                logger.debug(
-                    LogCategory.BROWSER,
-                    "Temporary profile cleanup failed during reset",
-                    mapOf("error" to e.toString()),
+                // Step 4: Delete browser profile directory
+                val selectedProfile = BrowserSettings.currentProfile
+                val profileDir = BossDirectories.resolve(selectedProfile)
+
+                if (profileDir.exists()) {
+                    profileDeleted = profileDir.deleteRecursively()
+                    if (profileDeleted) {
+                    } else {
+                        // This is a partial failure - return with details
+                        return@withContext ResetResult(
+                            success = false,
+                            engineClosed = engineClosed,
+                            profileDeleted = false,
+                            tempProfilesCleaned = false,
+                            errorMessage = "Could not delete all files in profile directory. Some files may be locked.",
+                            failedStep = "Delete profile directory",
+                        )
+                    }
+                } else {
+                    profileDeleted = true // Nothing to delete is success
+                }
+
+                // Step 5: Also clean up temporary profiles
+                try {
+                    cleanupOldTemporaryProfiles()
+                    tempProfilesCleaned = true
+                } catch (e: Exception) {
+                    // Not critical - continue
+                    logger.debug(
+                        LogCategory.BROWSER,
+                        "Temporary profile cleanup failed during reset",
+                        mapOf("error" to e.toString()),
+                    )
+                    tempProfilesCleaned = false
+                }
+
+                ResetResult(
+                    success = true,
+                    engineClosed = engineClosed,
+                    profileDeleted = profileDeleted,
+                    tempProfilesCleaned = tempProfilesCleaned,
                 )
-                tempProfilesCleaned = false
+            } catch (e: Exception) {
+                ResetResult(
+                    success = false,
+                    engineClosed = engineClosed,
+                    profileDeleted = profileDeleted,
+                    tempProfilesCleaned = tempProfilesCleaned,
+                    errorMessage = e.message,
+                    failedStep = "Unknown",
+                )
             }
-
-            ResetResult(
-                success = true,
-                engineClosed = engineClosed,
-                profileDeleted = profileDeleted,
-                tempProfilesCleaned = tempProfilesCleaned
-            )
-
-        } catch (e: Exception) {
-            ResetResult(
-                success = false,
-                engineClosed = engineClosed,
-                profileDeleted = profileDeleted,
-                tempProfilesCleaned = tempProfilesCleaned,
-                errorMessage = e.message,
-                failedStep = "Unknown"
-            )
         }
-    }
 
     /**
      * Synchronous wrapper for resetBrowserProfile for simple use cases.
@@ -2180,11 +2401,10 @@ object FluckEngine {
      *
      * @return true if reset was successful, false otherwise
      */
-    fun resetBrowserProfileBlocking(): Boolean {
-        return kotlinx.coroutines.runBlocking {
+    fun resetBrowserProfileBlocking(): Boolean =
+        kotlinx.coroutines.runBlocking {
             resetBrowserProfile().success
         }
-    }
 
     /**
      * Check if browser engine is in a healthy state.
@@ -2194,5 +2414,3 @@ object FluckEngine {
         return _engine?.let { !it.isClosed } ?: true // null engine is "healthy" (will initialize on demand)
     }
 }
-
-

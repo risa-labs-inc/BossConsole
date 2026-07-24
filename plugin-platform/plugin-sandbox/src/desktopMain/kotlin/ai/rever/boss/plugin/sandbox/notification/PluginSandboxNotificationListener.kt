@@ -1,11 +1,11 @@
 package ai.rever.boss.plugin.sandbox.notification
 
+import ai.rever.boss.plugin.logging.BossLogger
+import ai.rever.boss.plugin.logging.LogCategory
 import ai.rever.boss.plugin.sandbox.PluginSandboxListener
 import ai.rever.boss.plugin.sandbox.PluginSandboxManager
 import ai.rever.boss.plugin.sandbox.PluginSandboxManagerImpl
 import ai.rever.boss.plugin.sandbox.notification.PluginNotificationService
-import ai.rever.boss.plugin.logging.BossLogger
-import ai.rever.boss.plugin.logging.LogCategory
 
 /**
  * Connects sandbox lifecycle events to the notification system.
@@ -28,9 +28,8 @@ import ai.rever.boss.plugin.logging.LogCategory
  * @param notificationService The notification service to use for displaying notifications
  */
 class PluginSandboxNotificationListener(
-    private val notificationService: PluginNotificationService
+    private val notificationService: PluginNotificationService,
 ) : PluginSandboxListener {
-
     private val logger = BossLogger.forComponent("PluginSandboxNotificationListener")
 
     // Track restart attempts for showing attempt number in notifications
@@ -40,10 +39,14 @@ class PluginSandboxNotificationListener(
         val attempt = restartAttempts.getOrDefault(pluginId, 0) + 1
         restartAttempts[pluginId] = attempt
 
-        logger.debug(LogCategory.SYSTEM, "Plugin restarting notification", mapOf(
-            "pluginId" to pluginId,
-            "attempt" to attempt
-        ))
+        logger.debug(
+            LogCategory.SYSTEM,
+            "Plugin restarting notification",
+            mapOf(
+                "pluginId" to pluginId,
+                "attempt" to attempt,
+            ),
+        )
 
         notificationService.notifyPluginRestarting(pluginId, attempt)
     }
@@ -52,9 +55,13 @@ class PluginSandboxNotificationListener(
         // Reset attempt counter on successful restart
         restartAttempts.remove(pluginId)
 
-        logger.debug(LogCategory.SYSTEM, "Plugin restarted notification", mapOf(
-            "pluginId" to pluginId
-        ))
+        logger.debug(
+            LogCategory.SYSTEM,
+            "Plugin restarted notification",
+            mapOf(
+                "pluginId" to pluginId,
+            ),
+        )
 
         notificationService.notifyPluginRestartSuccess(pluginId)
     }
@@ -63,18 +70,29 @@ class PluginSandboxNotificationListener(
         // Clear attempt counter
         restartAttempts.remove(pluginId)
 
-        logger.debug(LogCategory.SYSTEM, "Plugin disabled notification", mapOf(
-            "pluginId" to pluginId
-        ))
+        logger.debug(
+            LogCategory.SYSTEM,
+            "Plugin disabled notification",
+            mapOf(
+                "pluginId" to pluginId,
+            ),
+        )
 
         notificationService.notifyPluginDisabled(pluginId)
     }
 
-    override fun onPluginError(pluginId: String, error: Throwable) {
-        logger.debug(LogCategory.SYSTEM, "Plugin error notification", mapOf(
-            "pluginId" to pluginId,
-            "error" to (error.message ?: "Unknown error")
-        ))
+    override fun onPluginError(
+        pluginId: String,
+        error: Throwable,
+    ) {
+        logger.debug(
+            LogCategory.SYSTEM,
+            "Plugin error notification",
+            mapOf(
+                "pluginId" to pluginId,
+                "error" to (error.message ?: "Unknown error"),
+            ),
+        )
 
         notificationService.notifyPluginError(pluginId, error)
     }

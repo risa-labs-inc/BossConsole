@@ -4,10 +4,10 @@ import ai.rever.boss.plugin.api.TabComponentWithUI
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.api.TabRegistry
 import ai.rever.boss.plugin.api.TabTypeInfo
-import ai.rever.boss.plugin.sandbox.PluginSandbox
-import ai.rever.boss.plugin.sandbox.TabSandboxRegistry
 import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
+import ai.rever.boss.plugin.sandbox.PluginSandbox
+import ai.rever.boss.plugin.sandbox.TabSandboxRegistry
 import com.arkivanov.decompose.ComponentContext
 
 /**
@@ -18,19 +18,22 @@ import com.arkivanov.decompose.ComponentContext
  */
 class SandboxedTabRegistry(
     private val sandbox: PluginSandbox,
-    private val delegate: TabRegistry
+    private val delegate: TabRegistry,
 ) : TabRegistry() {
-
     private val logger = BossLogger.forComponent("SandboxedTabRegistry")
 
     override fun registerTabType(
         content: TabTypeInfo,
-        factory: (TabInfo, ComponentContext) -> TabComponentWithUI
+        factory: (TabInfo, ComponentContext) -> TabComponentWithUI,
     ) {
-        logger.debug(LogCategory.SYSTEM, "Registering sandboxed tab type", mapOf(
-            "tabTypeId" to content.typeId.typeId,
-            "pluginId" to sandbox.pluginId
-        ))
+        logger.debug(
+            LogCategory.SYSTEM,
+            "Registering sandboxed tab type",
+            mapOf(
+                "tabTypeId" to content.typeId.typeId,
+                "pluginId" to sandbox.pluginId,
+            ),
+        )
 
         // Register tab type-to-sandbox mapping for error boundary integration
         TabSandboxRegistry.register(content.typeId, sandbox)
@@ -43,10 +46,15 @@ class SandboxedTabRegistry(
                 sandbox.recordSuccess()
                 component
             } catch (e: Throwable) {
-                logger.error(LogCategory.SYSTEM, "Error creating tab component", mapOf(
-                    "tabTypeId" to content.typeId.typeId,
-                    "pluginId" to sandbox.pluginId
-                ), e)
+                logger.error(
+                    LogCategory.SYSTEM,
+                    "Error creating tab component",
+                    mapOf(
+                        "tabTypeId" to content.typeId.typeId,
+                        "pluginId" to sandbox.pluginId,
+                    ),
+                    e,
+                )
                 sandbox.recordError(e)
                 throw e
             }
@@ -70,7 +78,8 @@ class SandboxedTabRegistry(
         delegate.removeUnregisterListener(listener)
     }
 
-    override fun createTabComponent(config: TabInfo, componentContext: ComponentContext): TabComponentWithUI? {
-        return delegate.createTabComponent(config, componentContext)
-    }
+    override fun createTabComponent(
+        config: TabInfo,
+        componentContext: ComponentContext,
+    ): TabComponentWithUI? = delegate.createTabComponent(config, componentContext)
 }

@@ -1,5 +1,18 @@
 package ai.rever.boss.services.auth
 
+import ai.rever.boss.services.auth.AuthStateManager
+import ai.rever.boss.services.network.NetworkMonitorService
+import ai.rever.boss.services.supabase.AuthService
+import ai.rever.boss.services.supabase.RoleService
+import ai.rever.boss.services.supabase.SupabaseConfig
+import ai.rever.boss.services.supabase.models.UserInfo
+import ai.rever.boss.utils.VersionVerifier
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.LogSanitizer
+import io.github.jan.supabase.auth.auth
+import io.github.jan.supabase.auth.status.RefreshFailureCause
+import io.github.jan.supabase.auth.status.SessionStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -7,25 +20,12 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlin.concurrent.Volatile
-import ai.rever.boss.services.supabase.SupabaseConfig
-import io.github.jan.supabase.auth.auth
-import ai.rever.boss.services.auth.AuthStateManager
-import ai.rever.boss.services.supabase.models.UserInfo
-import ai.rever.boss.services.supabase.AuthService
-import ai.rever.boss.services.supabase.RoleService
-import ai.rever.boss.services.network.NetworkMonitorService
-import ai.rever.boss.utils.VersionVerifier
-import ai.rever.boss.utils.logging.BossLogger
-import ai.rever.boss.utils.logging.LogCategory
-import ai.rever.boss.utils.logging.LogSanitizer
-import io.github.jan.supabase.auth.status.RefreshFailureCause
-import io.github.jan.supabase.auth.status.SessionStatus
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlin.concurrent.Volatile
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
@@ -122,32 +122,45 @@ internal object CoreAuthService {
                                     // Parse role claims from JWT
                                     val roleClaims = RoleService.parseRoleClaimsFromSession(sessionStatus.session)
 
-                                    AuthStateManager.setCurrentUser(UserInfo(
-                                        id = userId,
-                                        email = user?.email ?: "",
-                                        createdAt = user?.createdAt?.toString() ?: "",
-                                        roleClaims = roleClaims
-                                    ))
-                                    logger.debug(LogCategory.AUTH, "Updated user info from session.user", mapOf(
-                                        "hasRoleClaims" to (roleClaims != null),
-                                        "isAdmin" to (roleClaims?.isAdmin ?: false)
-                                    ))
+                                    AuthStateManager.setCurrentUser(
+                                        UserInfo(
+                                            id = userId,
+                                            email = user?.email ?: "",
+                                            createdAt = user?.createdAt?.toString() ?: "",
+                                            roleClaims = roleClaims,
+                                        ),
+                                    )
+                                    logger.debug(
+                                        LogCategory.AUTH,
+                                        "Updated user info from session.user",
+                                        mapOf(
+                                            "hasRoleClaims" to (roleClaims != null),
+                                            "isAdmin" to (roleClaims?.isAdmin ?: false),
+                                        ),
+                                    )
                                 } else {
                                     // Session user is null (custom JWT) - load from SessionManager
                                     SessionManager.loadSession().fold(
                                         onSuccess = { storedUser ->
                                             if (storedUser != null) {
                                                 AuthStateManager.setCurrentUser(storedUser)
-                                                logger.debug(LogCategory.AUTH, "Loaded user info via SessionManager", mapOf(
-                                                    "email" to LogSanitizer.maskEmail(storedUser.email)
-                                                ))
+                                                logger.debug(
+                                                    LogCategory.AUTH,
+                                                    "Loaded user info via SessionManager",
+                                                    mapOf(
+                                                        "email" to LogSanitizer.maskEmail(storedUser.email),
+                                                    ),
+                                                )
                                             } else {
-                                                logger.debug(LogCategory.AUTH, "No user data available (session.user is null and no stored data)")
+                                                logger.debug(
+                                                    LogCategory.AUTH,
+                                                    "No user data available (session.user is null and no stored data)",
+                                                )
                                             }
                                         },
                                         onFailure = { error ->
                                             logger.warn(LogCategory.AUTH, "Failed to load session", error = error)
-                                        }
+                                        },
                                     )
                                 }
                             } else if (userId.isEmpty()) {
@@ -160,6 +173,7 @@ internal object CoreAuthService {
                             AuthStateManager.setAuthState(AuthService.AuthState.Authenticated)
                             logger.info(LogCategory.AUTH, "Auth state set to Authenticated")
                         }
+
                         is SessionStatus.NotAuthenticated -> {
                             // Mark session as resolved (user is not authenticated)
                             _isSessionResolved.value = true
@@ -170,14 +184,22 @@ internal object CoreAuthService {
                             AuthStateManager.setAuthenticatedViaMagicLink(false)
                             logger.info(LogCategory.AUTH, "Auth state set to NotAuthenticated")
                         }
+
                         is SessionStatus.RefreshFailure -> {
-                            val detail = when (val cause = sessionStatus.cause) {
-                                is RefreshFailureCause.NetworkError ->
-                                    "network: ${cause.exception.message ?: cause.exception::class.simpleName}"
-                                is RefreshFailureCause.InternalServerError ->
-                                    "server: HTTP ${cause.exception.statusCode} ${cause.exception.error}"
-                                else -> cause::class.simpleName ?: "unknown"
-                            }
+                            val detail =
+                                when (val cause = sessionStatus.cause) {
+                                    is RefreshFailureCause.NetworkError -> {
+                                        "network: ${cause.exception.message ?: cause.exception::class.simpleName}"
+                                    }
+
+                                    is RefreshFailureCause.InternalServerError -> {
+                                        "server: HTTP ${cause.exception.statusCode} ${cause.exception.error}"
+                                    }
+
+                                    else -> {
+                                        cause::class.simpleName ?: "unknown"
+                                    }
+                                }
                             logger.warn(LogCategory.AUTH, "Session refresh failed", mapOf("cause" to detail))
 
                             // Startup path: a stored session that expired while the
@@ -194,10 +216,15 @@ internal object CoreAuthService {
                             }
                             startSessionRecovery()
                         }
+
                         else -> {
                             // Keep loading state for any other status while we wait
                             if (AuthStateManager.authState.value is AuthService.AuthState.Loading) {
-                                logger.debug(LogCategory.AUTH, "Still waiting for session status", mapOf("status" to sessionStatus.toString()))
+                                logger.debug(
+                                    LogCategory.AUTH,
+                                    "Still waiting for session status",
+                                    mapOf("status" to sessionStatus.toString()),
+                                )
                             } else {
                                 logger.debug(LogCategory.AUTH, "Other session status", mapOf("status" to sessionStatus.toString()))
                             }
@@ -205,7 +232,6 @@ internal object CoreAuthService {
                     }
                 }
             }
-            
         } catch (e: Exception) {
             AuthStateManager.setAuthState(AuthService.AuthState.Error(e.message ?: "Failed to initialize authentication"))
         }
@@ -227,52 +253,62 @@ internal object CoreAuthService {
      */
     private fun startSessionRecovery() {
         if (recoveryJob?.isActive == true) return
-        recoveryJob = authScope.launch {
-            var backoff = SessionRecoveryPolicy.initialBackoff
-            while (isActive) {
-                // Also debounces the first attempt: RefreshFailure fires right
-                // after the library's own failed refresh, so retrying instantly
-                // would almost certainly fail the same way.
-                delay(backoff)
-                try {
-                    val auth = SupabaseConfig.client.auth
-                    val session = auth.currentSessionOrNull()
-                    if (session == null) {
-                        logger.info(LogCategory.AUTH, "Session gone; stopping session recovery")
-                        return@launch
-                    }
-                    // supabase-kt only sets SessionStatus.RefreshFailure for an
-                    // already-expired session (updateStatusIfExpired guards on
-                    // expiresAt <= now), so a future expiry here proves a fresh
-                    // session was imported since — by the library's own retry
-                    // or a re-login — and recovery is done.
-                    if (session.expiresAt > Clock.System.now()) {
-                        logger.info(LogCategory.AUTH, "Session was refreshed elsewhere; stopping session recovery")
-                        return@launch
-                    }
-                    auth.refreshCurrentSession()
-                    logger.info(LogCategory.AUTH, "Session recovered by manual refresh")
-                    return@launch
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    when (SessionRecoveryPolicy.actionFor(e)) {
-                        is SessionRecoveryPolicy.Action.ClearSession -> {
-                            logger.error(LogCategory.AUTH, "Refresh token rejected by auth server; clearing session for re-login", error = e)
-                            clearUnrecoverableSession()
+        recoveryJob =
+            authScope.launch {
+                var backoff = SessionRecoveryPolicy.initialBackoff
+                while (isActive) {
+                    // Also debounces the first attempt: RefreshFailure fires right
+                    // after the library's own failed refresh, so retrying instantly
+                    // would almost certainly fail the same way.
+                    delay(backoff)
+                    try {
+                        val auth = SupabaseConfig.client.auth
+                        val session = auth.currentSessionOrNull()
+                        if (session == null) {
+                            logger.info(LogCategory.AUTH, "Session gone; stopping session recovery")
                             return@launch
                         }
-                        is SessionRecoveryPolicy.Action.Retry -> {
-                            backoff = SessionRecoveryPolicy.nextBackoff(backoff)
-                            logger.warn(LogCategory.AUTH, "Session refresh attempt failed; retrying", mapOf(
-                                "nextAttemptIn" to backoff.toString(),
-                                "error" to (e.message ?: e::class.simpleName)
-                            ))
+                        // supabase-kt only sets SessionStatus.RefreshFailure for an
+                        // already-expired session (updateStatusIfExpired guards on
+                        // expiresAt <= now), so a future expiry here proves a fresh
+                        // session was imported since — by the library's own retry
+                        // or a re-login — and recovery is done.
+                        if (session.expiresAt > Clock.System.now()) {
+                            logger.info(LogCategory.AUTH, "Session was refreshed elsewhere; stopping session recovery")
+                            return@launch
+                        }
+                        auth.refreshCurrentSession()
+                        logger.info(LogCategory.AUTH, "Session recovered by manual refresh")
+                        return@launch
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        when (SessionRecoveryPolicy.actionFor(e)) {
+                            is SessionRecoveryPolicy.Action.ClearSession -> {
+                                logger.error(
+                                    LogCategory.AUTH,
+                                    "Refresh token rejected by auth server; clearing session for re-login",
+                                    error = e,
+                                )
+                                clearUnrecoverableSession()
+                                return@launch
+                            }
+
+                            is SessionRecoveryPolicy.Action.Retry -> {
+                                backoff = SessionRecoveryPolicy.nextBackoff(backoff)
+                                logger.warn(
+                                    LogCategory.AUTH,
+                                    "Session refresh attempt failed; retrying",
+                                    mapOf(
+                                        "nextAttemptIn" to backoff.toString(),
+                                        "error" to (e.message ?: e::class.simpleName),
+                                    ),
+                                )
+                            }
                         }
                     }
                 }
             }
-        }
     }
 
     /**
@@ -330,8 +366,8 @@ internal object CoreAuthService {
     /**
      * Sign out the current user
      */
-    suspend fun signOut(): Result<Unit> {
-        return try {
+    suspend fun signOut(): Result<Unit> =
+        try {
             // A running session recovery loop would race the sign-out with a
             // stray refreshCurrentSession() that could re-import the session
             // being cleared; stop it and wait until it is actually gone.
@@ -346,7 +382,7 @@ internal object CoreAuthService {
                 onFailure = { error ->
                     logger.warn(LogCategory.AUTH, "SessionManager.clearSession failed", error = error)
                     // Continue even if SessionManager fails
-                }
+                },
             )
 
             // Reset passkey state on logout
@@ -357,6 +393,4 @@ internal object CoreAuthService {
             logger.error(LogCategory.AUTH, "Logout failed", error = e)
             Result.failure(e)
         }
-    }
 }
-

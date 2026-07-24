@@ -11,6 +11,6 @@ import androidx.compose.ui.unit.dp
 fun SDivider() {
     Divider(
         modifier = Modifier.padding(8.dp),
-        color = BossTheme.colors.line
+        color = BossTheme.colors.line,
     )
 }

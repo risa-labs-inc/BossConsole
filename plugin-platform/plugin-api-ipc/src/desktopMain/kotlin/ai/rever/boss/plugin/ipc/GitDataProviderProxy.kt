@@ -25,7 +25,6 @@ class GitDataProviderProxy(
     channel: ManagedChannel,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
 ) : GitDataProvider {
-
     private val stub = GitServiceGrpcKt.GitServiceCoroutineStub(channel)
 
     private val _fileStatus = MutableStateFlow<List<GitFileStatusData>>(emptyList())
@@ -55,8 +54,14 @@ class GitDataProviderProxy(
                     _fileStatus.value = response.filesList.map { it.toData() }
                 }
                 delayMs = 1_000L
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (_: Exception) { delay(delayMs); delayMs = (delayMs * 2).coerceAtMost(30_000L) }
+            } catch (
+                e: kotlinx.coroutines.CancellationException,
+            ) {
+                throw e
+            } catch (_: Exception) {
+                delay(delayMs)
+                delayMs = (delayMs * 2).coerceAtMost(30_000L)
+            }
         }
     }
 
@@ -68,8 +73,14 @@ class GitDataProviderProxy(
                     _commitLog.value = response.commitsList.map { it.toData() }
                 }
                 delayMs = 1_000L
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (_: Exception) { delay(delayMs); delayMs = (delayMs * 2).coerceAtMost(30_000L) }
+            } catch (
+                e: kotlinx.coroutines.CancellationException,
+            ) {
+                throw e
+            } catch (_: Exception) {
+                delay(delayMs)
+                delayMs = (delayMs * 2).coerceAtMost(30_000L)
+            }
         }
     }
 
@@ -81,8 +92,14 @@ class GitDataProviderProxy(
                     _isGitRepository.value = response.value
                 }
                 delayMs = 1_000L
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (_: Exception) { delay(delayMs); delayMs = (delayMs * 2).coerceAtMost(30_000L) }
+            } catch (
+                e: kotlinx.coroutines.CancellationException,
+            ) {
+                throw e
+            } catch (_: Exception) {
+                delay(delayMs)
+                delayMs = (delayMs * 2).coerceAtMost(30_000L)
+            }
         }
     }
 
@@ -94,72 +111,114 @@ class GitDataProviderProxy(
                     _isLoading.value = response.value
                 }
                 delayMs = 1_000L
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (_: Exception) { delay(delayMs); delayMs = (delayMs * 2).coerceAtMost(30_000L) }
+            } catch (
+                e: kotlinx.coroutines.CancellationException,
+            ) {
+                throw e
+            } catch (_: Exception) {
+                delay(delayMs)
+                delayMs = (delayMs * 2).coerceAtMost(30_000L)
+            }
         }
     }
 
     override suspend fun refreshStatus() {
-        try { stub.refreshStatus(Empty.getDefaultInstance()) } catch (_: Exception) {}
+        try {
+            stub.refreshStatus(Empty.getDefaultInstance())
+        } catch (_: Exception) {
+        }
     }
 
     override suspend fun refreshLog(limit: Int) {
         try {
             stub.refreshLog(RefreshLogRequest.newBuilder().setLimit(limit).build())
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
     }
 
     override suspend fun stage(filePath: String) = gitOp { stub.stage(GitFilePathRequest.newBuilder().setPath(filePath).build()) }
+
     override suspend fun unstage(filePath: String) = gitOp { stub.unstage(GitFilePathRequest.newBuilder().setPath(filePath).build()) }
+
     override suspend fun stageAll() = gitOp { stub.stageAll(Empty.getDefaultInstance()) }
+
     override suspend fun unstageAll() = gitOp { stub.unstageAll(Empty.getDefaultInstance()) }
-    override suspend fun discardChanges(filePath: String) = gitOp { stub.discardChanges(GitFilePathRequest.newBuilder().setPath(filePath).build()) }
+
+    override suspend fun discardChanges(filePath: String) =
+        gitOp {
+            stub.discardChanges(GitFilePathRequest.newBuilder().setPath(filePath).build())
+        }
+
     override suspend fun cherryPick(commitHash: String) = gitOp { stub.cherryPick(GitHashRequest.newBuilder().setHash(commitHash).build()) }
+
     override suspend fun revert(commitHash: String) = gitOp { stub.revert(GitHashRequest.newBuilder().setHash(commitHash).build()) }
+
     override suspend fun checkout(ref: String) = gitOp { stub.checkout(GitRefRequest.newBuilder().setRef(ref).build()) }
 
-    override fun getCurrentProjectPath(): String? = try {
-        kotlinx.coroutines.runBlocking {
-            val resp = stub.getCurrentProjectPath(Empty.getDefaultInstance())
-            resp.value.takeIf { it.isNotEmpty() }
+    override fun getCurrentProjectPath(): String? =
+        try {
+            kotlinx.coroutines.runBlocking {
+                val resp = stub.getCurrentProjectPath(Empty.getDefaultInstance())
+                resp.value.takeIf { it.isNotEmpty() }
+            }
+        } catch (_: Exception) {
+            null
         }
-    } catch (_: Exception) { null }
 
-    override fun openFile(filePath: String, windowId: String) {
+    override fun openFile(
+        filePath: String,
+        windowId: String,
+    ) {
         scope.launch {
             try {
-                stub.openFile(GitOpenFileRequest.newBuilder().setFilePath(filePath).setWindowId(windowId).build())
-            } catch (_: Exception) {}
+                stub.openFile(
+                    GitOpenFileRequest
+                        .newBuilder()
+                        .setFilePath(filePath)
+                        .setWindowId(windowId)
+                        .build(),
+                )
+            } catch (_: Exception) {
+            }
         }
     }
 
-    private suspend fun gitOp(block: suspend () -> GitOperationResultProto): GitOperationResultData {
-        return try {
+    private suspend fun gitOp(block: suspend () -> GitOperationResultProto): GitOperationResultData =
+        try {
             val result = block()
-            if (result.success) GitOperationResultData.Success(result.message.takeIf { it.isNotEmpty() })
-            else GitOperationResultData.Error(result.message)
-        } catch (e: Exception) { GitOperationResultData.Error(e.message ?: "Unknown error") }
-    }
+            if (result.success) {
+                GitOperationResultData.Success(result.message.takeIf { it.isNotEmpty() })
+            } else {
+                GitOperationResultData.Error(result.message)
+            }
+        } catch (e: Exception) {
+            GitOperationResultData.Error(e.message ?: "Unknown error")
+        }
 
-    private fun GitFileStatusProto.toData() = GitFileStatusData(
-        path = path,
-        indexStatus = indexStatus.takeIf { it.isNotEmpty() }?.let { parseStatusType(it) },
-        workTreeStatus = workTreeStatus.takeIf { it.isNotEmpty() }?.let { parseStatusType(it) },
-        isStaged = isStaged,
-        isUnstaged = isUnstaged,
-    )
+    private fun GitFileStatusProto.toData() =
+        GitFileStatusData(
+            path = path,
+            indexStatus = indexStatus.takeIf { it.isNotEmpty() }?.let { parseStatusType(it) },
+            workTreeStatus = workTreeStatus.takeIf { it.isNotEmpty() }?.let { parseStatusType(it) },
+            isStaged = isStaged,
+            isUnstaged = isUnstaged,
+        )
 
-    private fun parseStatusType(value: String): GitFileStatusTypeData? = try {
-        GitFileStatusTypeData.valueOf(value)
-    } catch (_: Exception) { null }
+    private fun parseStatusType(value: String): GitFileStatusTypeData? =
+        try {
+            GitFileStatusTypeData.valueOf(value)
+        } catch (_: Exception) {
+            null
+        }
 
-    private fun GitCommitInfoProto.toData() = GitCommitInfoData(
-        hash = hash,
-        shortHash = shortHash,
-        subject = subject,
-        author = author,
-        authorEmail = authorEmail,
-        date = date,
-        refs = refsList,
-    )
+    private fun GitCommitInfoProto.toData() =
+        GitCommitInfoData(
+            hash = hash,
+            shortHash = shortHash,
+            subject = subject,
+            author = author,
+            authorEmail = authorEmail,
+            date = date,
+            refs = refsList,
+        )
 }

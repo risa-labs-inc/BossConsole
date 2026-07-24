@@ -23,19 +23,28 @@ object SearchRegistryImpl : SearchRegistry {
     override fun registerProvider(provider: SearchProvider) {
         val current = _providers.value
         if (current.any { it.providerId == provider.providerId }) {
-            logger.warn(LogCategory.SYSTEM, "Search provider already registered", mapOf(
-                "providerId" to provider.providerId
-            ))
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Search provider already registered",
+                mapOf(
+                    "providerId" to provider.providerId,
+                ),
+            )
             // Update existing provider
-            _providers.value = current.map {
-                if (it.providerId == provider.providerId) provider else it
-            }
+            _providers.value =
+                current.map {
+                    if (it.providerId == provider.providerId) provider else it
+                }
         } else {
             _providers.value = current + provider
-            logger.info(LogCategory.SYSTEM, "Search provider registered", mapOf(
-                "providerId" to provider.providerId,
-                "displayName" to provider.displayName
-            ))
+            logger.info(
+                LogCategory.SYSTEM,
+                "Search provider registered",
+                mapOf(
+                    "providerId" to provider.providerId,
+                    "displayName" to provider.displayName,
+                ),
+            )
         }
     }
 
@@ -44,13 +53,15 @@ object SearchRegistryImpl : SearchRegistry {
         val provider = current.find { it.providerId == providerId }
         if (provider != null) {
             _providers.value = current.filter { it.providerId != providerId }
-            logger.info(LogCategory.SYSTEM, "Search provider unregistered", mapOf(
-                "providerId" to providerId
-            ))
+            logger.info(
+                LogCategory.SYSTEM,
+                "Search provider unregistered",
+                mapOf(
+                    "providerId" to providerId,
+                ),
+            )
         }
     }
 
-    override fun getProvider(providerId: String): SearchProvider? {
-        return _providers.value.find { it.providerId == providerId }
-    }
+    override fun getProvider(providerId: String): SearchProvider? = _providers.value.find { it.providerId == providerId }
 }

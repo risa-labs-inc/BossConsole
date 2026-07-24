@@ -20,7 +20,7 @@ class PluginClassLoaderManager(
      * Parent classloader for all plugin classloaders.
      * Usually the application classloader.
      */
-    private val parentClassLoader: ClassLoader = PluginClassLoaderManager::class.java.classLoader
+    private val parentClassLoader: ClassLoader = PluginClassLoaderManager::class.java.classLoader,
 ) {
     private val logger = BossLogger.forComponent("PluginClassLoaderManager")
 
@@ -55,21 +55,33 @@ class PluginClassLoaderManager(
     fun installApiClassLoader(loader: ApiClassLoader) {
         synchronized(apiLayerLock) {
             if (sharedApiClassLoader != null) {
-                logger.warn(LogCategory.SYSTEM, "ApiClassLoader already installed; ignoring re-install", mapOf(
-                    "existing" to sharedApiClassLoader.toString()
-                ))
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "ApiClassLoader already installed; ignoring re-install",
+                    mapOf(
+                        "existing" to sharedApiClassLoader.toString(),
+                    ),
+                )
                 return
             }
             if (activeClassLoaders.isNotEmpty()) {
-                logger.warn(LogCategory.SYSTEM, "Installing ApiClassLoader after plugins already loaded", mapOf(
-                    "loadedCount" to activeClassLoaders.size
-                ))
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Installing ApiClassLoader after plugins already loaded",
+                    mapOf(
+                        "loadedCount" to activeClassLoaders.size,
+                    ),
+                )
             }
             sharedApiClassLoader = loader
         }
-        logger.debug(LogCategory.SYSTEM, "ApiClassLoader installed", mapOf(
-            "apiVersion" to (loader.apiVersion ?: "unknown")
-        ))
+        logger.debug(
+            LogCategory.SYSTEM,
+            "ApiClassLoader installed",
+            mapOf(
+                "apiVersion" to (loader.apiVersion ?: "unknown"),
+            ),
+        )
     }
 
     /**
@@ -89,9 +101,13 @@ class PluginClassLoaderManager(
             sharedApiClassLoader?.let { return it }
             val loader = ApiClassLoader.fromPluginDir(pluginDir, parentClassLoader)
             sharedApiClassLoader = loader
-            logger.debug(LogCategory.SYSTEM, "ApiClassLoader installed", mapOf(
-                "apiVersion" to (loader.apiVersion ?: "unknown")
-            ))
+            logger.debug(
+                LogCategory.SYSTEM,
+                "ApiClassLoader installed",
+                mapOf(
+                    "apiVersion" to (loader.apiVersion ?: "unknown"),
+                ),
+            )
             return loader
         }
     }
@@ -115,14 +131,22 @@ class PluginClassLoaderManager(
             try {
                 old?.close()
             } catch (e: Exception) {
-                logger.warn(LogCategory.SYSTEM, "Failed to close superseded ApiClassLoader", mapOf(
-                    "error" to (e.message ?: "unknown")
-                ))
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Failed to close superseded ApiClassLoader",
+                    mapOf(
+                        "error" to (e.message ?: "unknown"),
+                    ),
+                )
             }
-            logger.info(LogCategory.SYSTEM, "API layer hot-swapped", mapOf(
-                "from" to (old?.apiVersion ?: "none"),
-                "to" to (fresh.apiVersion ?: "unknown")
-            ))
+            logger.info(
+                LogCategory.SYSTEM,
+                "API layer hot-swapped",
+                mapOf(
+                    "from" to (old?.apiVersion ?: "none"),
+                    "to" to (fresh.apiVersion ?: "unknown"),
+                ),
+            )
             return fresh
         }
     }
@@ -159,22 +183,26 @@ class PluginClassLoaderManager(
     fun createClassLoader(
         manifest: PluginManifest,
         jarPath: String,
-        dependencyJars: List<String> = emptyList()
+        dependencyJars: List<String> = emptyList(),
     ): PluginClassLoader {
         val pluginId = manifest.pluginId
 
         if (activeClassLoaders.containsKey(pluginId)) {
             throw PluginLoadException(
                 "Classloader already exists for plugin: $pluginId",
-                pluginId
+                pluginId,
             )
         }
 
-        logger.info(LogCategory.SYSTEM, "Creating classloader for plugin", mapOf(
-            "pluginId" to pluginId,
-            "jarPath" to jarPath,
-            "dependencies" to dependencyJars.size
-        ))
+        logger.info(
+            LogCategory.SYSTEM,
+            "Creating classloader for plugin",
+            mapOf(
+                "pluginId" to pluginId,
+                "jarPath" to jarPath,
+                "dependencies" to dependencyJars.size,
+            ),
+        )
 
         // Build URLs for the classloader
         val urls = mutableListOf<URL>()
@@ -184,7 +212,7 @@ class PluginClassLoaderManager(
         if (!mainJar.exists()) {
             throw PluginLoadException(
                 "Plugin JAR not found: $jarPath",
-                pluginId
+                pluginId,
             )
         }
         urls.add(mainJar.toURI().toURL())
@@ -195,26 +223,32 @@ class PluginClassLoaderManager(
             if (depJar.exists()) {
                 urls.add(depJar.toURI().toURL())
             } else {
-                logger.warn(LogCategory.SYSTEM, "Dependency JAR not found", mapOf(
-                    "pluginId" to pluginId,
-                    "path" to depPath
-                ))
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Dependency JAR not found",
+                    mapOf(
+                        "pluginId" to pluginId,
+                        "path" to depPath,
+                    ),
+                )
             }
         }
 
         // Combine default shared packages with manifest-specified packages
-        val sharedPackages = PluginClassLoader.defaultSharedPackages +
-            manifest.sharedPackages.map { if (it.endsWith(".")) it else "$it." }.toSet()
+        val sharedPackages =
+            PluginClassLoader.defaultSharedPackages +
+                manifest.sharedPackages.map { if (it.endsWith(".")) it else "$it." }.toSet()
 
         // Create the classloader. The shared ApiClassLoader (when installed)
         // sits between the plugin and the host so API types absent from the
         // host resolve from the newest api jar with one shared identity.
-        val classLoader = PluginClassLoader(
-            pluginId = pluginId,
-            urls = urls.toTypedArray(),
-            parent = sharedApiClassLoader ?: parentClassLoader,
-            sharedPackages = sharedPackages
-        )
+        val classLoader =
+            PluginClassLoader(
+                pluginId = pluginId,
+                urls = urls.toTypedArray(),
+                parent = sharedApiClassLoader ?: parentClassLoader,
+                sharedPackages = sharedPackages,
+            )
 
         activeClassLoaders[pluginId] = classLoader
         return classLoader
@@ -226,9 +260,7 @@ class PluginClassLoaderManager(
      * @param pluginId The plugin ID
      * @return The classloader, or null if not found
      */
-    fun getClassLoader(pluginId: String): PluginClassLoader? {
-        return activeClassLoaders[pluginId]
-    }
+    fun getClassLoader(pluginId: String): PluginClassLoader? = activeClassLoaders[pluginId]
 
     /**
      * Check if a classloader exists for a plugin.
@@ -236,9 +268,7 @@ class PluginClassLoaderManager(
      * @param pluginId The plugin ID
      * @return True if a classloader exists
      */
-    fun hasClassLoader(pluginId: String): Boolean {
-        return activeClassLoaders.containsKey(pluginId)
-    }
+    fun hasClassLoader(pluginId: String): Boolean = activeClassLoaders.containsKey(pluginId)
 
     /**
      * Prepare a classloader for unloading.
@@ -252,9 +282,13 @@ class PluginClassLoaderManager(
     fun prepareUnload(pluginId: String): PluginClassLoader? {
         val classLoader = activeClassLoaders.remove(pluginId) ?: return null
 
-        logger.info(LogCategory.SYSTEM, "Preparing classloader for unload", mapOf(
-            "pluginId" to pluginId
-        ))
+        logger.info(
+            LogCategory.SYSTEM,
+            "Preparing classloader for unload",
+            mapOf(
+                "pluginId" to pluginId,
+            ),
+        )
 
         // Mark as unloading
         classLoader.markUnloading()
@@ -273,10 +307,17 @@ class PluginClassLoaderManager(
      * @param pluginId The plugin ID
      * @param classLoader The classloader to close
      */
-    fun closeClassLoader(pluginId: String, classLoader: PluginClassLoader) {
-        logger.info(LogCategory.SYSTEM, "Closing classloader", mapOf(
-            "pluginId" to pluginId
-        ))
+    fun closeClassLoader(
+        pluginId: String,
+        classLoader: PluginClassLoader,
+    ) {
+        logger.info(
+            LogCategory.SYSTEM,
+            "Closing classloader",
+            mapOf(
+                "pluginId" to pluginId,
+            ),
+        )
 
         // Un-register before closing: leaving the entry in activeClassLoaders
         // permanently blocked the pluginId ("Classloader already exists") after
@@ -288,9 +329,14 @@ class PluginClassLoaderManager(
         try {
             classLoader.close()
         } catch (e: Exception) {
-            logger.error(LogCategory.SYSTEM, "Error closing classloader", mapOf(
-                "pluginId" to pluginId
-            ), e)
+            logger.error(
+                LogCategory.SYSTEM,
+                "Error closing classloader",
+                mapOf(
+                    "pluginId" to pluginId,
+                ),
+                e,
+            )
         }
     }
 
@@ -300,9 +346,7 @@ class PluginClassLoaderManager(
      * @param pluginId The plugin ID
      * @return Weak reference to the classloader, or null if not being tracked
      */
-    fun getUnloadingReference(pluginId: String): WeakReference<PluginClassLoader>? {
-        return unloadingClassLoaders[pluginId]
-    }
+    fun getUnloadingReference(pluginId: String): WeakReference<PluginClassLoader>? = unloadingClassLoaders[pluginId]
 
     /**
      * Check if a classloader has been garbage collected.
@@ -355,17 +399,26 @@ class PluginClassLoaderManager(
      * This should be called when shutting down the plugin system.
      */
     fun disposeAll() {
-        logger.info(LogCategory.SYSTEM, "Disposing all classloaders", mapOf(
-            "count" to activeClassLoaders.size
-        ))
+        logger.info(
+            LogCategory.SYSTEM,
+            "Disposing all classloaders",
+            mapOf(
+                "count" to activeClassLoaders.size,
+            ),
+        )
 
         for ((pluginId, classLoader) in activeClassLoaders) {
             try {
                 classLoader.close()
             } catch (e: Exception) {
-                logger.error(LogCategory.SYSTEM, "Error disposing classloader", mapOf(
-                    "pluginId" to pluginId
-                ), e)
+                logger.error(
+                    LogCategory.SYSTEM,
+                    "Error disposing classloader",
+                    mapOf(
+                        "pluginId" to pluginId,
+                    ),
+                    e,
+                )
             }
         }
 

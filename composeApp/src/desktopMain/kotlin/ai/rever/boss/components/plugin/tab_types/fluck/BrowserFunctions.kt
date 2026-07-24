@@ -10,6 +10,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import com.teamdev.jxbrowser.browser.Browser
+import com.teamdev.jxbrowser.browser.callback.AlertCallback
+import com.teamdev.jxbrowser.browser.callback.ConfirmCallback
+import com.teamdev.jxbrowser.browser.callback.PromptCallback
 import com.teamdev.jxbrowser.browser.event.BrowserClosed
 import com.teamdev.jxbrowser.event.Subscription
 import com.teamdev.jxbrowser.navigation.event.LoadStarted
@@ -27,9 +30,6 @@ import java.awt.Window
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.JFrame
 import javax.swing.SwingUtilities
-import com.teamdev.jxbrowser.browser.callback.AlertCallback
-import com.teamdev.jxbrowser.browser.callback.ConfirmCallback
-import com.teamdev.jxbrowser.browser.callback.PromptCallback
 
 private val logger = BossLogger.forComponent("BrowserFunctions")
 
@@ -41,8 +41,9 @@ private val logger = BossLogger.forComponent("BrowserFunctions")
  * - Displayable (has native peer created)
  * - Showing (visible on screen)
  */
-private fun getValidComposeWindow(): Window? {
-    return Window.getWindows()
+private fun getValidComposeWindow(): Window? =
+    Window
+        .getWindows()
         .firstOrNull { window ->
             try {
                 // Check if window is properly initialized
@@ -57,7 +58,6 @@ private fun getValidComposeWindow(): Window? {
                 false
             }
         }
-}
 
 /**
  * Configures JavaScript dialog handlers to prevent UI freeze (Issue #369).
@@ -72,70 +72,80 @@ private fun getValidComposeWindow(): Window? {
  * @param browser The browser instance to configure
  */
 private fun setupBrowserDialogHandlers(browser: Browser) {
-    val browserId = System.identityHashCode(browser)  // Unique ID for this browser instance
+    val browserId = System.identityHashCode(browser) // Unique ID for this browser instance
 
     // Alert callback - unblock immediately, then notify for BOSS-styled dialog
-    browser.set(AlertCallback::class.java, AlertCallback { params, tell ->
-        val message = params.message()
-        val title = params.title()
+    browser.set(
+        AlertCallback::class.java,
+        AlertCallback { params, tell ->
+            val message = params.message()
+            val title = params.title()
 
-        // CRITICAL: Call tell.ok() FIRST to unblock JxBrowser
-        tell.ok()
+            // CRITICAL: Call tell.ok() FIRST to unblock JxBrowser
+            tell.ok()
 
-        // Emit event for Compose UI to show BOSS-styled dialog
-        JsDialogNotifier.notifyAlert(
-            browserId = browserId,
-            title = title.ifEmpty { "Alert" },
-            message = message
-        )
-    })
+            // Emit event for Compose UI to show BOSS-styled dialog
+            JsDialogNotifier.notifyAlert(
+                browserId = browserId,
+                title = title.ifEmpty { "Alert" },
+                message = message,
+            )
+        },
+    )
 
     // Confirm callback - behavior based on settings
-    browser.set(ConfirmCallback::class.java, ConfirmCallback { params, tell ->
-        val message = params.message()
-        val title = params.title()
-        val confirmed = BrowserSettings.jsConfirmBehavior == BrowserSettings.JsConfirmBehavior.AUTO_CONFIRM
+    browser.set(
+        ConfirmCallback::class.java,
+        ConfirmCallback { params, tell ->
+            val message = params.message()
+            val title = params.title()
+            val confirmed = BrowserSettings.jsConfirmBehavior == BrowserSettings.JsConfirmBehavior.AUTO_CONFIRM
 
-        // CRITICAL: Call tell FIRST to unblock JxBrowser
-        if (confirmed) {
-            tell.ok()
-        } else {
-            tell.cancel()
-        }
+            // CRITICAL: Call tell FIRST to unblock JxBrowser
+            if (confirmed) {
+                tell.ok()
+            } else {
+                tell.cancel()
+            }
 
-        // Emit event for Compose UI to show BOSS-styled dialog
-        JsDialogNotifier.notifyConfirm(
-            browserId = browserId,
-            title = title.ifEmpty { "Confirm" },
-            message = message,
-            confirmed = confirmed
-        )
-    })
+            // Emit event for Compose UI to show BOSS-styled dialog
+            JsDialogNotifier.notifyConfirm(
+                browserId = browserId,
+                title = title.ifEmpty { "Confirm" },
+                message = message,
+                confirmed = confirmed,
+            )
+        },
+    )
 
     // Prompt callback - value based on settings
-    browser.set(PromptCallback::class.java, PromptCallback { params, tell ->
-        val message = params.message()
-        val pageDefault = params.text()  // text() returns the page's default prompt value
-        val title = params.title()
+    browser.set(
+        PromptCallback::class.java,
+        PromptCallback { params, tell ->
+            val message = params.message()
+            val pageDefault = params.text() // text() returns the page's default prompt value
+            val title = params.title()
 
-        // Determine value to use based on settings
-        val valueToUse = if (BrowserSettings.jsPromptUsePageDefault) {
-            pageDefault
-        } else {
-            BrowserSettings.jsPromptDefaultValue
-        }
+            // Determine value to use based on settings
+            val valueToUse =
+                if (BrowserSettings.jsPromptUsePageDefault) {
+                    pageDefault
+                } else {
+                    BrowserSettings.jsPromptDefaultValue
+                }
 
-        // CRITICAL: Call tell.ok() FIRST to unblock JxBrowser
-        tell.ok(valueToUse)
+            // CRITICAL: Call tell.ok() FIRST to unblock JxBrowser
+            tell.ok(valueToUse)
 
-        // Emit event for Compose UI to show BOSS-styled dialog
-        JsDialogNotifier.notifyPrompt(
-            browserId = browserId,
-            title = title.ifEmpty { "Prompt" },
-            message = message,
-            value = valueToUse
-        )
-    })
+            // Emit event for Compose UI to show BOSS-styled dialog
+            JsDialogNotifier.notifyPrompt(
+                browserId = browserId,
+                title = title.ifEmpty { "Prompt" },
+                message = message,
+                value = valueToUse,
+            )
+        },
+    )
 }
 
 /**
@@ -152,14 +162,15 @@ private fun setupBrowserDialogHandlers(browser: Browser) {
  */
 private fun configureBrowserPopupHandler(
     browser: Browser,
-    onOpenInNewTab: (String) -> Unit
+    onOpenInNewTab: (String) -> Unit,
 ) {
     // Phase 1: Allow all popup creation
     browser.set(
         com.teamdev.jxbrowser.browser.callback.CreatePopupCallback::class.java,
         com.teamdev.jxbrowser.browser.callback.CreatePopupCallback {
-            com.teamdev.jxbrowser.browser.callback.CreatePopupCallback.Response.create()
-        }
+            com.teamdev.jxbrowser.browser.callback.CreatePopupCallback.Response
+                .create()
+        },
     )
 
     // Phase 2: Handle popup display based on bounds
@@ -179,40 +190,48 @@ private fun configureBrowserPopupHandler(
                     val scope = CoroutineScope(Dispatchers.Default + Job())
 
                     // Use LoadStarted instead of NavigationFinished for immediate response
-                    subscription = popupBrowser.navigation().on(LoadStarted::class.java) {
-                        try {
-                            // Issue #255: Protect popup browser URL access from "closed object" exception
-                            val loadedUrl = popupBrowser.url()
-                            if (loadedUrl.isNotEmpty() && loadedUrl != "about:blank") {
-                                if (cleanedUp.compareAndSet(false, true)) {
-                                    val isDownload = FluckEngine.isActiveDownload(loadedUrl)
-                                    logger.debug(LogCategory.BROWSER, "Popup LoadStarted", mapOf("url" to loadedUrl, "isDownload" to isDownload))
-                                    if (!isDownload) {
-                                        FluckEngine.notifyTabOpened()
-                                        onOpenInNewTab(loadedUrl)
-                                    } else {
-                                        logger.debug(LogCategory.BROWSER, "Skipping new tab for download URL")
-                                    }
-                                    subscription?.unsubscribe()
-                                    scope.cancel()
-                                    if (!popupBrowser.isClosed) {
-                                        popupBrowser.close()
+                    subscription =
+                        popupBrowser.navigation().on(LoadStarted::class.java) {
+                            try {
+                                // Issue #255: Protect popup browser URL access from "closed object" exception
+                                val loadedUrl = popupBrowser.url()
+                                if (loadedUrl.isNotEmpty() && loadedUrl != "about:blank") {
+                                    if (cleanedUp.compareAndSet(false, true)) {
+                                        val isDownload = FluckEngine.isActiveDownload(loadedUrl)
+                                        logger.debug(
+                                            LogCategory.BROWSER,
+                                            "Popup LoadStarted",
+                                            mapOf(
+                                                "url" to loadedUrl,
+                                                "isDownload" to isDownload,
+                                            ),
+                                        )
+                                        if (!isDownload) {
+                                            FluckEngine.notifyTabOpened()
+                                            onOpenInNewTab(loadedUrl)
+                                        } else {
+                                            logger.debug(LogCategory.BROWSER, "Skipping new tab for download URL")
+                                        }
+                                        subscription?.unsubscribe()
+                                        scope.cancel()
+                                        if (!popupBrowser.isClosed) {
+                                            popupBrowser.close()
+                                        }
                                     }
                                 }
-                            }
-                        } catch (e: Exception) {
-                            // Issue #255: Gracefully handle "closed object" exceptions
-                            logger.debug(
-                                LogCategory.BROWSER,
-                                "Popup browser hit closed-object exception - cleaning up",
-                                mapOf("error" to e.toString()),
-                            )
-                            if (cleanedUp.compareAndSet(false, true)) {
-                                subscription?.unsubscribe()
-                                scope.cancel()
+                            } catch (e: Exception) {
+                                // Issue #255: Gracefully handle "closed object" exceptions
+                                logger.debug(
+                                    LogCategory.BROWSER,
+                                    "Popup browser hit closed-object exception - cleaning up",
+                                    mapOf("error" to e.toString()),
+                                )
+                                if (cleanedUp.compareAndSet(false, true)) {
+                                    subscription?.unsubscribe()
+                                    scope.cancel()
+                                }
                             }
                         }
-                    }
 
                     scope.launch {
                         delay(3_000)
@@ -249,33 +268,37 @@ private fun configureBrowserPopupHandler(
                         val browserView = BrowserView.newInstance(popupBrowser)
                         frame.contentPane.add(browserView)
 
-                        subscriptions += popupBrowser.on(com.teamdev.jxbrowser.browser.event.TitleChanged::class.java) { event ->
-                            SwingUtilities.invokeLater {
-                                frame.title = event.title()
+                        subscriptions +=
+                            popupBrowser.on(com.teamdev.jxbrowser.browser.event.TitleChanged::class.java) { event ->
+                                SwingUtilities.invokeLater {
+                                    frame.title = event.title()
+                                }
                             }
-                        }
 
-                        subscriptions += popupBrowser.on(BrowserClosed::class.java) {
-                            SwingUtilities.invokeLater {
-                                subscriptions.forEach { it.unsubscribe() }
-                                frame.dispose()
+                        subscriptions +=
+                            popupBrowser.on(BrowserClosed::class.java) {
+                                SwingUtilities.invokeLater {
+                                    subscriptions.forEach { it.unsubscribe() }
+                                    frame.dispose()
+                                }
                             }
-                        }
 
-                        frame.addWindowListener(object : java.awt.event.WindowAdapter() {
-                            override fun windowClosing(e: java.awt.event.WindowEvent?) {
-                                subscriptions.forEach {
-                                    try {
-                                        it.unsubscribe()
-                                    } catch (_: Exception) {
-                                        // Intentional: ignore errors during cleanup
+                        frame.addWindowListener(
+                            object : java.awt.event.WindowAdapter() {
+                                override fun windowClosing(e: java.awt.event.WindowEvent?) {
+                                    subscriptions.forEach {
+                                        try {
+                                            it.unsubscribe()
+                                        } catch (_: Exception) {
+                                            // Intentional: ignore errors during cleanup
+                                        }
+                                    }
+                                    if (!popupBrowser.isClosed) {
+                                        popupBrowser.close()
                                     }
                                 }
-                                if (!popupBrowser.isClosed) {
-                                    popupBrowser.close()
-                                }
-                            }
-                        })
+                            },
+                        )
 
                         frame.isVisible = true
                     } catch (e: Exception) {
@@ -287,8 +310,9 @@ private fun configureBrowserPopupHandler(
                 }
             }
 
-            com.teamdev.jxbrowser.browser.callback.OpenPopupCallback.Response.proceed()
-        }
+            com.teamdev.jxbrowser.browser.callback.OpenPopupCallback.Response
+                .proceed()
+        },
     )
 }
 
@@ -301,9 +325,7 @@ actual fun createBrowser(): Any {
     return browser
 }
 
-actual suspend fun resetBrowserProfile(): Boolean {
-    return FluckEngine.resetBrowserProfile().success
-}
+actual suspend fun resetBrowserProfile(): Boolean = FluckEngine.resetBrowserProfile().success
 
 actual fun disposeBrowser(browser: Any) {
     try {
@@ -319,22 +341,26 @@ actual fun disposeBrowser(browser: Any) {
     }
 }
 
-actual fun createBrowserViewState(browser: Any, window: Any?): Any? {
+actual fun createBrowserViewState(
+    browser: Any,
+    window: Any?,
+): Any? {
     val jxBrowser = browser as Browser
 
-    val awtWindow = (window as? Window)?.takeIf {
-        try {
-            it.isDisplayable && it.isShowing
-        } catch (e: Exception) {
-            // Window can be mid-disposal - fall back to scanning open windows
-            logger.debug(
-                LogCategory.BROWSER,
-                "Provided window probe failed - falling back to window scan",
-                mapOf("error" to e.toString()),
-            )
-            false
-        }
-    } ?: getValidComposeWindow()
+    val awtWindow =
+        (window as? Window)?.takeIf {
+            try {
+                it.isDisplayable && it.isShowing
+            } catch (e: Exception) {
+                // Window can be mid-disposal - fall back to scanning open windows
+                logger.debug(
+                    LogCategory.BROWSER,
+                    "Provided window probe failed - falling back to window scan",
+                    mapOf("error" to e.toString()),
+                )
+                false
+            }
+        } ?: getValidComposeWindow()
 
     if (awtWindow == null) {
         logger.warn(LogCategory.BROWSER, "No valid window available for BrowserViewState - window may not be ready yet")
@@ -344,26 +370,30 @@ actual fun createBrowserViewState(browser: Any, window: Any?): Any? {
     return BrowserViewState(jxBrowser, MainScope(), awtWindow)
 }
 
-actual fun recreateBrowserViewState(browser: Any, window: Any?): Any? {
+actual fun recreateBrowserViewState(
+    browser: Any,
+    window: Any?,
+): Any? {
     val jxBrowser = browser as? Browser
     if (jxBrowser == null || jxBrowser.isClosed) {
         logger.warn(LogCategory.BROWSER, "Cannot recreate BrowserViewState - browser is null or closed")
         return null
     }
 
-    val awtWindow = (window as? Window)?.takeIf {
-        try {
-            it.isDisplayable && it.isShowing
-        } catch (e: Exception) {
-            // Window can be mid-disposal - fall back to scanning open windows
-            logger.debug(
-                LogCategory.BROWSER,
-                "Provided window probe failed - falling back to window scan",
-                mapOf("error" to e.toString()),
-            )
-            false
-        }
-    } ?: getValidComposeWindow()
+    val awtWindow =
+        (window as? Window)?.takeIf {
+            try {
+                it.isDisplayable && it.isShowing
+            } catch (e: Exception) {
+                // Window can be mid-disposal - fall back to scanning open windows
+                logger.debug(
+                    LogCategory.BROWSER,
+                    "Provided window probe failed - falling back to window scan",
+                    mapOf("error" to e.toString()),
+                )
+                false
+            }
+        } ?: getValidComposeWindow()
 
     if (awtWindow == null) {
         logger.warn(LogCategory.BROWSER, "No valid window for BrowserViewState recreation")
@@ -394,7 +424,7 @@ actual fun getBrowserState(
     url: String,
     onOpenInNewTab: ((String) -> Unit)?,
     onBrowserClosed: (() -> Unit)?,
-    window: Any?
+    window: Any?,
 ): Pair<Any, Any>? {
     return try {
         val engine = FluckEngine.engine
@@ -443,13 +473,20 @@ actual fun getBrowserState(
 
         Pair(browser, browserViewState)
     } catch (e: Exception) {
-        val errorType = when {
-            e.message?.contains("closed object", ignoreCase = true) == true ->
-                "JxBrowser closed object error (engine or browser was disposed)"
-            e.message?.contains("SharedMemory", ignoreCase = true) == true ->
-                "JxBrowser IPC error (Chromium process may have crashed)"
-            else -> "Unknown error"
-        }
+        val errorType =
+            when {
+                e.message?.contains("closed object", ignoreCase = true) == true -> {
+                    "JxBrowser closed object error (engine or browser was disposed)"
+                }
+
+                e.message?.contains("SharedMemory", ignoreCase = true) == true -> {
+                    "JxBrowser IPC error (Chromium process may have crashed)"
+                }
+
+                else -> {
+                    "Unknown error"
+                }
+            }
         logger.error(LogCategory.BROWSER, "getBrowserState failed: $errorType", mapOf("details" to (e.message ?: "none")))
         null
     }
@@ -468,15 +505,14 @@ actual fun isBrowserValid(browser: Any?): Boolean {
     }
 }
 
-actual fun getEngineInitError(): String? {
-    return FluckEngine.initError?.let { error ->
+actual fun getEngineInitError(): String? =
+    FluckEngine.initError?.let { error ->
         when (error) {
             is EngineInitError.LicenseValidation -> error.message
             is EngineInitError.NetworkError -> error.message
             is EngineInitError.Other -> error.message
         }
     }
-}
 
 actual fun resetEngineInitialization() {
     FluckEngine.resetInitializationState()

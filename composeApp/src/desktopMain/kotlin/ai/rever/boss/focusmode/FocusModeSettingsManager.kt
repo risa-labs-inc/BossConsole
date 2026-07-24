@@ -23,10 +23,11 @@ import java.io.File
 actual object FocusModeSettingsManager {
     private val logger = BossLogger.forComponent("FocusModeSettingsManager")
     private val settingsFile = BossDirectories.resolve("focus-mode-settings.json")
-    private val json = Json {
-        prettyPrint = true
-        ignoreUnknownKeys = true
-    }
+    private val json =
+        Json {
+            prettyPrint = true
+            ignoreUnknownKeys = true
+        }
 
     private val _currentSettings = MutableStateFlow(FocusModeSettings())
     actual val currentSettings: StateFlow<FocusModeSettings> = _currentSettings.asStateFlow()
@@ -74,15 +75,16 @@ actual object FocusModeSettingsManager {
     /**
      * Save current settings to disk asynchronously.
      */
-    actual suspend fun saveSettings() = withContext(Dispatchers.IO) {
-        try {
-            val content = json.encodeToString(FocusModeSettings.serializer(), _currentSettings.value)
-            settingsFile.writeText(content)
-            logger.debug(LogCategory.SYSTEM, "Settings saved", mapOf("path" to settingsFile.absolutePath))
-        } catch (e: Exception) {
-            logger.warn(LogCategory.SYSTEM, "Failed to save settings", error = e)
+    actual suspend fun saveSettings() =
+        withContext(Dispatchers.IO) {
+            try {
+                val content = json.encodeToString(FocusModeSettings.serializer(), _currentSettings.value)
+                settingsFile.writeText(content)
+                logger.debug(LogCategory.SYSTEM, "Settings saved", mapOf("path" to settingsFile.absolutePath))
+            } catch (e: Exception) {
+                logger.warn(LogCategory.SYSTEM, "Failed to save settings", error = e)
+            }
         }
-    }
 
     /**
      * Update the current settings and save to disk.

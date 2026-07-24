@@ -16,7 +16,6 @@ import kotlin.test.assertTrue
  * output, missing everything buildPluginJar bundles).
  */
 class PluginStoreSetupMinVersionGateTest {
-
     // ---- isTooOldForHost: the load/update decision ----
 
     @Test
@@ -89,13 +88,14 @@ class PluginStoreSetupMinVersionGateTest {
 
     @Test
     fun `thin jar listed first is skipped in favor of the real jar`() {
-        val json = releaseJson(
-            "https://github.example/boss-plugin-editor-tab-1.4.3-thin.jar",
-            "https://github.example/boss-plugin-editor-tab-1.4.3.jar"
-        )
+        val json =
+            releaseJson(
+                "https://github.example/boss-plugin-editor-tab-1.4.3-thin.jar",
+                "https://github.example/boss-plugin-editor-tab-1.4.3.jar",
+            )
         assertEquals(
             "https://github.example/boss-plugin-editor-tab-1.4.3.jar",
-            PluginStoreSetup.pickPluginJarUrl(json, "boss-plugin-editor-tab")
+            PluginStoreSetup.pickPluginJarUrl(json, "boss-plugin-editor-tab"),
         )
     }
 
@@ -118,8 +118,9 @@ class PluginStoreSetupMinVersionGateTest {
         assertEquals(
             "1.4.0",
             PluginStoreSetup.extractVersionFromJarFileName(
-                "boss-plugin-editor-tab-1.4.0.jar", "boss-plugin-editor-tab"
-            )
+                "boss-plugin-editor-tab-1.4.0.jar",
+                "boss-plugin-editor-tab",
+            ),
         )
     }
 
@@ -127,8 +128,9 @@ class PluginStoreSetupMinVersionGateTest {
     fun `non-matching filename yields null`() {
         assertNull(
             PluginStoreSetup.extractVersionFromJarFileName(
-                "other-plugin-1.4.0.jar", "boss-plugin-editor-tab"
-            )
+                "other-plugin-1.4.0.jar",
+                "boss-plugin-editor-tab",
+            ),
         )
     }
 }

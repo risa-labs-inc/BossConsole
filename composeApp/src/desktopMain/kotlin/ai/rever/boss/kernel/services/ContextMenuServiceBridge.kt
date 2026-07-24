@@ -12,7 +12,6 @@ import ai.rever.boss.ipc.proto.services.*
  * to the plugin process.
  */
 class ContextMenuServiceBridge : ContextMenuServiceGrpcKt.ContextMenuServiceCoroutineImplBase() {
-
     private val registeredMenus = java.util.concurrent.ConcurrentHashMap<String, RegisterContextMenuRequest>()
     private val actionCallbacks = java.util.concurrent.ConcurrentHashMap<String, (String) -> Unit>()
 
@@ -34,7 +33,10 @@ class ContextMenuServiceBridge : ContextMenuServiceGrpcKt.ContextMenuServiceCoro
 
     fun getRegisteredMenu(menuId: String): RegisterContextMenuRequest? = registeredMenus[menuId]
 
-    fun setActionCallback(menuId: String, callback: (String) -> Unit) {
+    fun setActionCallback(
+        menuId: String,
+        callback: (String) -> Unit,
+    ) {
         actionCallbacks[menuId] = callback
     }
 }

@@ -12,7 +12,6 @@ import kotlin.test.*
  * Each test should reset relevant state after completion.
  */
 class BossLoggerTest {
-
     private val testLogDir = File(System.getProperty("java.io.tmpdir"), "boss-logger-test-${System.currentTimeMillis()}")
     private val testLogFile = File(testLogDir, "test.log")
 
@@ -216,70 +215,74 @@ class BossLoggerTest {
     // =========================================================================
 
     @Test
-    fun `enableFileLogging creates log file`() = runBlocking {
-        BossLogger.enableFileLogging(testLogFile)
+    fun `enableFileLogging creates log file`() =
+        runBlocking {
+            BossLogger.enableFileLogging(testLogFile)
 
-        val logger = BossLogger.forComponent("FileTest")
-        logger.info(LogCategory.GENERAL, "Test file message")
+            val logger = BossLogger.forComponent("FileTest")
+            logger.info(LogCategory.GENERAL, "Test file message")
 
-        // Give async writer time to process
-        delay(500)
+            // Give async writer time to process
+            delay(500)
 
-        assertTrue(testLogFile.exists(), "Log file should be created")
-        val content = testLogFile.readText()
-        assertTrue(content.contains("Test file message"), "Log file should contain message")
-    }
-
-    @Test
-    fun `file rotation triggers at maxFileSize`() = runBlocking {
-        // Configure small file size for testing
-        val config = BossLoggerConfig(
-            globalLevel = LogLevel.DEBUG,
-            fileLoggingEnabled = true,
-            logFilePath = testLogFile.absolutePath,
-            maxFileSize = 1024, // 1KB for quick rotation
-            maxBackupFiles = 3
-        )
-        BossLogger.configure(config)
-
-        val logger = BossLogger.forComponent("RotationTest")
-
-        // Write enough to trigger rotation
-        repeat(50) { i ->
-            logger.info(LogCategory.GENERAL, "Long message number $i with padding: ${"x".repeat(50)}")
+            assertTrue(testLogFile.exists(), "Log file should be created")
+            val content = testLogFile.readText()
+            assertTrue(content.contains("Test file message"), "Log file should contain message")
         }
 
-        // Give async writer time to process
-        delay(1000)
+    @Test
+    fun `file rotation triggers at maxFileSize`() =
+        runBlocking {
+            // Configure small file size for testing
+            val config =
+                BossLoggerConfig(
+                    globalLevel = LogLevel.DEBUG,
+                    fileLoggingEnabled = true,
+                    logFilePath = testLogFile.absolutePath,
+                    maxFileSize = 1024, // 1KB for quick rotation
+                    maxBackupFiles = 3,
+                )
+            BossLogger.configure(config)
 
-        // Check that backup file was created
-        val backupFile = File("${testLogFile.absolutePath}.1")
-        assertTrue(
-            backupFile.exists() || testLogFile.length() > 0,
-            "Either rotation should occur or log file should have content"
-        )
-    }
+            val logger = BossLogger.forComponent("RotationTest")
+
+            // Write enough to trigger rotation
+            repeat(50) { i ->
+                logger.info(LogCategory.GENERAL, "Long message number $i with padding: ${"x".repeat(50)}")
+            }
+
+            // Give async writer time to process
+            delay(1000)
+
+            // Check that backup file was created
+            val backupFile = File("${testLogFile.absolutePath}.1")
+            assertTrue(
+                backupFile.exists() || testLogFile.length() > 0,
+                "Either rotation should occur or log file should have content",
+            )
+        }
 
     @Test
-    fun `disableFileLogging stops writing to file`() = runBlocking {
-        BossLogger.enableFileLogging(testLogFile)
+    fun `disableFileLogging stops writing to file`() =
+        runBlocking {
+            BossLogger.enableFileLogging(testLogFile)
 
-        val logger = BossLogger.forComponent("DisableTest")
-        logger.info(LogCategory.GENERAL, "Before disable")
+            val logger = BossLogger.forComponent("DisableTest")
+            logger.info(LogCategory.GENERAL, "Before disable")
 
-        delay(500)
-        val sizeBeforeDisable = if (testLogFile.exists()) testLogFile.length() else 0
+            delay(500)
+            val sizeBeforeDisable = if (testLogFile.exists()) testLogFile.length() else 0
 
-        BossLogger.disableFileLogging()
+            BossLogger.disableFileLogging()
 
-        logger.info(LogCategory.GENERAL, "After disable")
-        delay(500)
+            logger.info(LogCategory.GENERAL, "After disable")
+            delay(500)
 
-        val sizeAfterDisable = if (testLogFile.exists()) testLogFile.length() else 0
+            val sizeAfterDisable = if (testLogFile.exists()) testLogFile.length() else 0
 
-        // File size shouldn't increase after disable
-        assertEquals(sizeBeforeDisable, sizeAfterDisable, "File should not grow after disabling")
-    }
+            // File size shouldn't increase after disable
+            assertEquals(sizeBeforeDisable, sizeAfterDisable, "File should not grow after disabling")
+        }
 
     // =========================================================================
     // Log Listener Tests
@@ -328,11 +331,12 @@ class BossLoggerTest {
 
     @Test
     fun `configure applies all settings`() {
-        val config = BossLoggerConfig(
-            globalLevel = LogLevel.TRACE,
-            categoryLevels = mapOf(LogCategory.AUTH to LogLevel.ERROR),
-            fileLoggingEnabled = false
-        )
+        val config =
+            BossLoggerConfig(
+                globalLevel = LogLevel.TRACE,
+                categoryLevels = mapOf(LogCategory.AUTH to LogLevel.ERROR),
+                fileLoggingEnabled = false,
+            )
 
         BossLogger.configure(config)
 

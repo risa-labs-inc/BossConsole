@@ -1,5 +1,7 @@
 package ai.rever.boss.components.plugin.providers
 
+import ai.rever.boss.plugin.api.DialogButton
+import ai.rever.boss.plugin.api.DialogChoiceItem
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -36,8 +38,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.unit.dp
-import ai.rever.boss.plugin.api.DialogButton
-import ai.rever.boss.plugin.api.DialogChoiceItem
 
 /**
  * Host composable for generic dialogs.
@@ -51,13 +51,34 @@ fun GenericDialogHost() {
     val dialogRequest by provider.currentDialog.collectAsState()
 
     when (val request = dialogRequest) {
-        is DialogRequest.TextInput -> TextInputDialog(request)
-        is DialogRequest.Confirmation -> ConfirmationDialog(request)
-        is DialogRequest.SingleChoice -> SingleChoiceDialog(request)
-        is DialogRequest.MultiChoice -> MultiChoiceDialog(request)
-        is DialogRequest.Alert -> AlertDialogWrapper(request)
-        is DialogRequest.ThreeButton -> ThreeButtonDialog(request)
-        is DialogRequest.Progress -> ProgressDialog(request)
+        is DialogRequest.TextInput -> {
+            TextInputDialog(request)
+        }
+
+        is DialogRequest.Confirmation -> {
+            ConfirmationDialog(request)
+        }
+
+        is DialogRequest.SingleChoice -> {
+            SingleChoiceDialog(request)
+        }
+
+        is DialogRequest.MultiChoice -> {
+            MultiChoiceDialog(request)
+        }
+
+        is DialogRequest.Alert -> {
+            AlertDialogWrapper(request)
+        }
+
+        is DialogRequest.ThreeButton -> {
+            ThreeButtonDialog(request)
+        }
+
+        is DialogRequest.Progress -> {
+            ProgressDialog(request)
+        }
+
         null -> { /* No dialog to show */ }
     }
 }
@@ -87,19 +108,20 @@ private fun TextInputDialog(request: DialogRequest.TextInput) {
                         text = newValue
                         error = request.validation?.invoke(newValue)
                     },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .focusRequester(focusRequester),
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .focusRequester(focusRequester),
                     label = { Text(request.placeholder) },
                     isError = error != null,
-                    singleLine = true
+                    singleLine = true,
                 )
                 error?.let { errorText ->
                     Text(
                         text = errorText,
                         color = MaterialTheme.colors.error,
                         style = MaterialTheme.typography.caption,
-                        modifier = Modifier.padding(top = 4.dp)
+                        modifier = Modifier.padding(top = 4.dp),
                     )
                 }
             }
@@ -114,7 +136,7 @@ private fun TextInputDialog(request: DialogRequest.TextInput) {
                         error = validationError
                     }
                 },
-                enabled = error == null
+                enabled = error == null,
             ) {
                 Text("OK")
             }
@@ -123,7 +145,7 @@ private fun TextInputDialog(request: DialogRequest.TextInput) {
             TextButton(onClick = { request.result.complete(null) }) {
                 Text("Cancel")
             }
-        }
+        },
     )
 }
 
@@ -136,13 +158,14 @@ private fun ConfirmationDialog(request: DialogRequest.Confirmation) {
         confirmButton = {
             Button(
                 onClick = { request.result.complete(true) },
-                colors = if (request.isDestructive) {
-                    ButtonDefaults.buttonColors(
-                        backgroundColor = MaterialTheme.colors.error
-                    )
-                } else {
-                    ButtonDefaults.buttonColors()
-                }
+                colors =
+                    if (request.isDestructive) {
+                        ButtonDefaults.buttonColors(
+                            backgroundColor = MaterialTheme.colors.error,
+                        )
+                    } else {
+                        ButtonDefaults.buttonColors()
+                    },
             ) {
                 Text(request.confirmText)
             }
@@ -151,7 +174,7 @@ private fun ConfirmationDialog(request: DialogRequest.Confirmation) {
             TextButton(onClick = { request.result.complete(false) }) {
                 Text(request.cancelText)
             }
-        }
+        },
     )
 }
 
@@ -169,19 +192,20 @@ private fun SingleChoiceDialog(request: DialogRequest.SingleChoice) {
                     Spacer(Modifier.height(12.dp))
                 }
                 LazyColumn(
-                    modifier = Modifier.heightIn(max = 300.dp)
+                    modifier = Modifier.heightIn(max = 300.dp),
                 ) {
                     itemsIndexed(request.choices) { index, choice ->
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { selectedIndex = index }
-                                .padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable { selectedIndex = index }
+                                    .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
                             RadioButton(
                                 selected = index == selectedIndex,
-                                onClick = { selectedIndex = index }
+                                onClick = { selectedIndex = index },
                             )
                             Spacer(Modifier.width(8.dp))
                             Column {
@@ -190,7 +214,7 @@ private fun SingleChoiceDialog(request: DialogRequest.SingleChoice) {
                                     Text(
                                         desc,
                                         style = MaterialTheme.typography.caption,
-                                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f)
+                                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
                                     )
                                 }
                             }
@@ -208,7 +232,7 @@ private fun SingleChoiceDialog(request: DialogRequest.SingleChoice) {
                         request.result.complete(null)
                     }
                 },
-                enabled = selectedIndex >= 0
+                enabled = selectedIndex >= 0,
             ) {
                 Text("OK")
             }
@@ -217,7 +241,7 @@ private fun SingleChoiceDialog(request: DialogRequest.SingleChoice) {
             TextButton(onClick = { request.result.complete(null) }) {
                 Text("Cancel")
             }
-        }
+        },
     )
 }
 
@@ -239,21 +263,21 @@ private fun MultiChoiceDialog(request: DialogRequest.MultiChoice) {
                     Spacer(Modifier.height(12.dp))
                 }
                 LazyColumn(
-                    modifier = Modifier.heightIn(max = 300.dp)
+                    modifier = Modifier.heightIn(max = 300.dp),
                 ) {
                     itemsIndexed(request.choices) { _, choice ->
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    if (selectedItems.contains(choice.id)) {
-                                        selectedItems.remove(choice.id)
-                                    } else {
-                                        selectedItems.add(choice.id)
-                                    }
-                                }
-                                .padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        if (selectedItems.contains(choice.id)) {
+                                            selectedItems.remove(choice.id)
+                                        } else {
+                                            selectedItems.add(choice.id)
+                                        }
+                                    }.padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Checkbox(
                                 checked = selectedItems.contains(choice.id),
@@ -263,7 +287,7 @@ private fun MultiChoiceDialog(request: DialogRequest.MultiChoice) {
                                     } else {
                                         selectedItems.remove(choice.id)
                                     }
-                                }
+                                },
                             )
                             Spacer(Modifier.width(8.dp))
                             Column {
@@ -272,7 +296,7 @@ private fun MultiChoiceDialog(request: DialogRequest.MultiChoice) {
                                     Text(
                                         desc,
                                         style = MaterialTheme.typography.caption,
-                                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f)
+                                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
                                     )
                                 }
                             }
@@ -284,16 +308,17 @@ private fun MultiChoiceDialog(request: DialogRequest.MultiChoice) {
         confirmButton = {
             Button(
                 onClick = {
-                    val result = request.choices.map { choice ->
-                        DialogChoiceItem(
-                            id = choice.id,
-                            label = choice.label,
-                            description = choice.description,
-                            isSelected = selectedItems.contains(choice.id)
-                        )
-                    }
+                    val result =
+                        request.choices.map { choice ->
+                            DialogChoiceItem(
+                                id = choice.id,
+                                label = choice.label,
+                                description = choice.description,
+                                isSelected = selectedItems.contains(choice.id),
+                            )
+                        }
                     request.result.complete(result)
-                }
+                },
             ) {
                 Text("OK")
             }
@@ -302,7 +327,7 @@ private fun MultiChoiceDialog(request: DialogRequest.MultiChoice) {
             TextButton(onClick = { request.result.complete(null) }) {
                 Text("Cancel")
             }
-        }
+        },
     )
 }
 
@@ -316,7 +341,7 @@ private fun AlertDialogWrapper(request: DialogRequest.Alert) {
             Button(onClick = { request.result.complete(Unit) }) {
                 Text(request.buttonText)
             }
-        }
+        },
     )
 }
 
@@ -328,10 +353,11 @@ private fun ThreeButtonDialog(request: DialogRequest.ThreeButton) {
         text = { Text(request.message) },
         buttons = {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
             ) {
                 OutlinedButton(onClick = { request.result.complete(DialogButton.NEUTRAL) }) {
                     Text(request.neutralText)
@@ -343,7 +369,7 @@ private fun ThreeButtonDialog(request: DialogRequest.ThreeButton) {
                     Text(request.positiveText)
                 }
             }
-        }
+        },
     )
 }
 
@@ -369,7 +395,7 @@ private fun ProgressDialog(request: DialogRequest.Progress) {
                 } else {
                     LinearProgressIndicator(
                         progress = progress,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
             }
@@ -383,6 +409,6 @@ private fun ProgressDialog(request: DialogRequest.Progress) {
                     Text("Cancel")
                 }
             }
-        }
+        },
     )
 }

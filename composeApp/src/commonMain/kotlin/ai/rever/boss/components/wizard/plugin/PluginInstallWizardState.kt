@@ -34,7 +34,7 @@ data class WizardPluginInfo(
     val isMandatory: Boolean = false,
     val category: PluginCategory = PluginCategory.OTHER,
     val downloadUrl: String = "",
-    val githubUrl: String = ""
+    val githubUrl: String = "",
 )
 
 /**
@@ -46,15 +46,16 @@ data class WizardPluginInfo(
  * - Installation progress tracking
  */
 class PluginInstallWizardState(
-    availablePlugins: List<WizardPluginInfo>
+    availablePlugins: List<WizardPluginInfo>,
 ) {
     /**
      * Wizard step navigation state.
      */
-    val wizardState: WizardState<PluginInstallStep> = wizardStateOf(
-        steps = PluginInstallStep.allSteps,
-        initialStepIndex = 0
-    )
+    val wizardState: WizardState<PluginInstallStep> =
+        wizardStateOf(
+            steps = PluginInstallStep.allSteps,
+            initialStepIndex = 0,
+        )
 
     /**
      * Map of plugin ID to selection state.
@@ -112,10 +113,11 @@ class PluginInstallWizardState(
     /**
      * Set of mandatory plugin IDs that cannot be deselected.
      */
-    private val mandatoryPluginIds: Set<String> = availablePlugins
-        .filter { it.isMandatory }
-        .map { it.id }
-        .toSet()
+    private val mandatoryPluginIds: Set<String> =
+        availablePlugins
+            .filter { it.isMandatory }
+            .map { it.id }
+            .toSet()
 
     init {
         // Initialize with default selections (mandatory plugins are always selected)
@@ -127,23 +129,17 @@ class PluginInstallWizardState(
     /**
      * Get plugins for a specific category.
      */
-    fun getPluginsForCategory(category: PluginCategory): List<WizardPluginInfo> {
-        return pluginsByCategory[category] ?: emptyList()
-    }
+    fun getPluginsForCategory(category: PluginCategory): List<WizardPluginInfo> = pluginsByCategory[category] ?: emptyList()
 
     /**
      * Check if a plugin is selected.
      */
-    fun isPluginSelected(pluginId: String): Boolean {
-        return _selectedPlugins[pluginId] == true
-    }
+    fun isPluginSelected(pluginId: String): Boolean = _selectedPlugins[pluginId] == true
 
     /**
      * Check if a plugin is mandatory.
      */
-    fun isPluginMandatory(pluginId: String): Boolean {
-        return pluginId in mandatoryPluginIds
-    }
+    fun isPluginMandatory(pluginId: String): Boolean = pluginId in mandatoryPluginIds
 
     /**
      * Toggle a plugin's selection state.
@@ -161,7 +157,10 @@ class PluginInstallWizardState(
      * Set a plugin's selection state.
      * Mandatory plugins cannot be deselected.
      */
-    fun setPluginSelected(pluginId: String, selected: Boolean) {
+    fun setPluginSelected(
+        pluginId: String,
+        selected: Boolean,
+    ) {
         // Don't allow deselecting mandatory plugins
         if (isPluginMandatory(pluginId) && !selected) {
             return
@@ -192,16 +191,12 @@ class PluginInstallWizardState(
     /**
      * Get the count of selected plugins in a category.
      */
-    fun getSelectedCountInCategory(category: PluginCategory): Int {
-        return getPluginsForCategory(category).count { isPluginSelected(it.id) }
-    }
+    fun getSelectedCountInCategory(category: PluginCategory): Int = getPluginsForCategory(category).count { isPluginSelected(it.id) }
 
     /**
      * Get all selected plugin IDs.
      */
-    fun getSelectedPluginIds(): List<String> {
-        return _selectedPlugins.filter { it.value }.keys.toList()
-    }
+    fun getSelectedPluginIds(): List<String> = _selectedPlugins.filter { it.value }.keys.toList()
 
     /**
      * Get all selected plugins.
@@ -214,14 +209,15 @@ class PluginInstallWizardState(
     /**
      * Check if any plugins are selected.
      */
-    fun hasSelectedPlugins(): Boolean {
-        return _selectedPlugins.any { it.value }
-    }
+    fun hasSelectedPlugins(): Boolean = _selectedPlugins.any { it.value }
 
     /**
      * Update installation progress.
      */
-    fun updateProgress(progress: Float, status: String) {
+    fun updateProgress(
+        progress: Float,
+        status: String,
+    ) {
         installationProgress = progress.coerceIn(0f, 1f)
         installationStatus = status
     }
@@ -245,7 +241,10 @@ class PluginInstallWizardState(
      * @param installedIds List of successfully installed plugin IDs
      * @param failed List of plugins that failed to install (pluginId to error message)
      */
-    fun completeInstallation(installedIds: List<String>, failed: List<Pair<String, String>> = emptyList()) {
+    fun completeInstallation(
+        installedIds: List<String>,
+        failed: List<Pair<String, String>> = emptyList(),
+    ) {
         isInstalling = false
         installationProgress = 1f
         installationStatus = "Installation complete"
@@ -302,10 +301,7 @@ class PluginInstallWizardState(
  * Remember a plugin installation wizard state.
  */
 @Composable
-fun rememberPluginInstallWizardState(
-    availablePlugins: List<WizardPluginInfo>
-): PluginInstallWizardState {
-    return remember(availablePlugins) {
+fun rememberPluginInstallWizardState(availablePlugins: List<WizardPluginInfo>): PluginInstallWizardState =
+    remember(availablePlugins) {
         PluginInstallWizardState(availablePlugins)
     }
-}

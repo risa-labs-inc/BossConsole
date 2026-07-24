@@ -11,10 +11,10 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun VDivider(modifier: Modifier = Modifier) {
     Divider(
-        modifier = modifier
-            .fillMaxHeight()
-            .width(1.dp),
-        color = BossTheme.colors.line
+        modifier =
+            modifier
+                .fillMaxHeight()
+                .width(1.dp),
+        color = BossTheme.colors.line,
     )
 }
-

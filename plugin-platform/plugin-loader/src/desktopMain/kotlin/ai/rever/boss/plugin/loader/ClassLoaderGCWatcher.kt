@@ -38,15 +38,19 @@ object ClassLoaderGCWatcher {
     suspend fun waitForGC(
         pluginId: String,
         classLoaderRef: WeakReference<PluginClassLoader>,
-        timeoutMs: Long = DEFAULT_GC_TIMEOUT_MS
+        timeoutMs: Long = DEFAULT_GC_TIMEOUT_MS,
     ): GCWaitResult {
         val startTime = System.currentTimeMillis()
         var attemptCount = 0
 
-        logger.debug(LogCategory.SYSTEM, "Starting GC watch for plugin classloader", mapOf(
-            "pluginId" to pluginId,
-            "timeoutMs" to timeoutMs
-        ))
+        logger.debug(
+            LogCategory.SYSTEM,
+            "Starting GC watch for plugin classloader",
+            mapOf(
+                "pluginId" to pluginId,
+                "timeoutMs" to timeoutMs,
+            ),
+        )
 
         while (System.currentTimeMillis() - startTime < timeoutMs) {
             attemptCount++
@@ -61,28 +65,36 @@ object ClassLoaderGCWatcher {
             // Check if classloader was collected
             if (classLoaderRef.get() == null) {
                 val elapsedMs = System.currentTimeMillis() - startTime
-                logger.info(LogCategory.SYSTEM, "Plugin classloader was garbage collected", mapOf(
-                    "pluginId" to pluginId,
-                    "elapsedMs" to elapsedMs,
-                    "attempts" to attemptCount
-                ))
+                logger.info(
+                    LogCategory.SYSTEM,
+                    "Plugin classloader was garbage collected",
+                    mapOf(
+                        "pluginId" to pluginId,
+                        "elapsedMs" to elapsedMs,
+                        "attempts" to attemptCount,
+                    ),
+                )
                 return GCWaitResult.Collected(elapsedMs, attemptCount)
             }
         }
 
         // Timeout - classloader was not collected
         val elapsedMs = System.currentTimeMillis() - startTime
-        logger.warn(LogCategory.SYSTEM, "Plugin classloader was NOT garbage collected (possible leak)", mapOf(
-            "pluginId" to pluginId,
-            "elapsedMs" to elapsedMs,
-            "attempts" to attemptCount
-        ))
+        logger.warn(
+            LogCategory.SYSTEM,
+            "Plugin classloader was NOT garbage collected (possible leak)",
+            mapOf(
+                "pluginId" to pluginId,
+                "elapsedMs" to elapsedMs,
+                "attempts" to attemptCount,
+            ),
+        )
 
         return GCWaitResult.NotCollected(
             pluginId = pluginId,
             elapsedMs = elapsedMs,
             attempts = attemptCount,
-            possibleLeakSources = identifyPossibleLeakSources(classLoaderRef.get())
+            possibleLeakSources = identifyPossibleLeakSources(classLoaderRef.get()),
         )
     }
 
@@ -92,9 +104,7 @@ object ClassLoaderGCWatcher {
      * @param classLoaderRef Weak reference to the classloader
      * @return True if the classloader has been garbage collected
      */
-    fun isCollected(classLoaderRef: WeakReference<PluginClassLoader>): Boolean {
-        return classLoaderRef.get() == null
-    }
+    fun isCollected(classLoaderRef: WeakReference<PluginClassLoader>): Boolean = classLoaderRef.get() == null
 
     /**
      * Try to identify possible sources of memory leaks.
@@ -113,9 +123,10 @@ object ClassLoaderGCWatcher {
             val threads = arrayOfNulls<Thread>(threadGroup.activeCount() * 2)
             threadGroup.enumerate(threads)
 
-            val pluginThreads = threads.filterNotNull().filter {
-                it.contextClassLoader === classLoader
-            }
+            val pluginThreads =
+                threads.filterNotNull().filter {
+                    it.contextClassLoader === classLoader
+                }
 
             if (pluginThreads.isNotEmpty()) {
                 sources.add("Active threads using plugin classloader: ${pluginThreads.size}")
@@ -124,9 +135,13 @@ object ClassLoaderGCWatcher {
                 }
             }
         } catch (e: Exception) {
-            logger.debug(LogCategory.SYSTEM, "Error checking for leak sources", mapOf(
-                "error" to (e.message ?: "unknown")
-            ))
+            logger.debug(
+                LogCategory.SYSTEM,
+                "Error checking for leak sources",
+                mapOf(
+                    "error" to (e.message ?: "unknown"),
+                ),
+            )
         }
 
         if (sources.isEmpty()) {
@@ -149,11 +164,10 @@ sealed class GCWaitResult {
          * Time taken for collection in milliseconds.
          */
         val elapsedMs: Long,
-
         /**
          * Number of GC attempts made.
          */
-        val attempts: Int
+        val attempts: Int,
     ) : GCWaitResult() {
         override val isSuccess: Boolean = true
     }
@@ -167,21 +181,18 @@ sealed class GCWaitResult {
          * The plugin ID.
          */
         val pluginId: String,
-
         /**
          * Time waited in milliseconds.
          */
         val elapsedMs: Long,
-
         /**
          * Number of GC attempts made.
          */
         val attempts: Int,
-
         /**
          * Possible sources of the memory leak.
          */
-        val possibleLeakSources: List<String>
+        val possibleLeakSources: List<String>,
     ) : GCWaitResult() {
         override val isSuccess: Boolean = false
     }

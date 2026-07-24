@@ -3,6 +3,7 @@ package ai.rever.boss.app
 import ai.rever.boss.components.events.PanelEventBus
 import ai.rever.boss.components.plugin.DefaultPlugin
 import ai.rever.boss.components.plugin.PanelIds
+import ai.rever.boss.components.plugin.panels.right_top.LLMSettingsManager
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
 import ai.rever.boss.components.plugin.tab_types.registerPanelHostTab
 import ai.rever.boss.components.registery.PanelComponentStoreRegistry
@@ -33,7 +34,6 @@ import ai.rever.boss.services.bookmarks.BookmarkAPIAccess
 import ai.rever.boss.services.terminal.TerminalAPIAccess
 import ai.rever.boss.setupDownloadTabCloseCallback
 import ai.rever.boss.startup.StartupSettingsManager
-import ai.rever.boss.components.plugin.panels.right_top.LLMSettingsManager
 import ai.rever.boss.topofmind.TabTreeState
 import ai.rever.boss.updater.UpdateManager
 import ai.rever.boss.updater.UpdateSettings
@@ -50,7 +50,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.snapshotFlow
-import kotlin.time.Clock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -59,6 +58,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.time.Clock
 
 /**
  * Startup and lifecycle effects for one BossApp window: registry registration,
@@ -76,10 +76,14 @@ internal fun BossAppStartupEffects(state: BossAppState) {
 
     // Log once when BossApp first composes
     LaunchedEffect(Unit) {
-        logger.info(LogCategory.SYSTEM, "BossApp initialized", mapOf(
-            "windowId" to windowId,
-            "isFirstWindow" to isFirstWindow.toString()
-        ))
+        logger.info(
+            LogCategory.SYSTEM,
+            "BossApp initialized",
+            mapOf(
+                "windowId" to windowId,
+                "isFirstWindow" to isFirstWindow.toString(),
+            ),
+        )
     }
 
     // Register the host-internal "panel host" tab type so a sidebar plugin can be
@@ -190,17 +194,20 @@ internal fun BossAppStartupEffects(state: BossAppState) {
         PerformanceState.registerResourceProviders(
             browserTabs = {
                 getCachedPanels().sumOf { panel ->
-                    panel.tabsComponent.tabsState.value.tabs.count { it is FluckTabInfo }
+                    panel.tabsComponent.tabsState.value.tabs
+                        .count { it is FluckTabInfo }
                 }
             },
             terminals = {
                 getCachedPanels().sumOf { panel ->
-                    panel.tabsComponent.tabsState.value.tabs.count { it is TerminalTabInfo }
+                    panel.tabsComponent.tabsState.value.tabs
+                        .count { it is TerminalTabInfo }
                 }
             },
             editorTabs = {
                 getCachedPanels().sumOf { panel ->
-                    panel.tabsComponent.tabsState.value.tabs.count { it is EditorTabInfo }
+                    panel.tabsComponent.tabsState.value.tabs
+                        .count { it is EditorTabInfo }
                 }
             },
             panels = {
@@ -210,12 +217,12 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                     left.top,
                     left.bottom,
                     right.top,
-                    right.bottom
+                    right.bottom,
                 ).count { panel -> state.draggablePanelComponent.isVisible(panel) }
             },
             windows = {
                 SplitViewStateRegistry.states.value.size
-            }
+            },
         )
 
         // Register detailed resource providers for the Resources tab
@@ -229,7 +236,7 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                             id = tab.id,
                             title = tab.title,
                             url = tab.currentUrl,
-                            isActive = tab.id == activeTabId
+                            isActive = tab.id == activeTabId,
                         )
                     }
                 }
@@ -242,7 +249,7 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                         TerminalInfo(
                             id = tab.id,
                             title = tab.title,
-                            isActive = tab.id == activeTabId
+                            isActive = tab.id == activeTabId,
                         )
                     }
                 }
@@ -256,11 +263,11 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                             id = tab.id,
                             fileName = tab.title,
                             filePath = tab.filePath,
-                            isActive = tab.id == activeTabId
+                            isActive = tab.id == activeTabId,
                         )
                     }
                 }
-            }
+            },
         )
 
         onDispose {
@@ -307,16 +314,25 @@ internal fun BossAppStartupEffects(state: BossAppState) {
 
     // DefaultPlugin lifecycle: created per window, exposes the plugin system to the
     // host (bookmarks/terminal/editor API access), disposed with the composition.
-    DisposableEffect(state.panelRegistry, state.tabRegistry, windowProjectState, state.windowGitState, windowId, workspaceManager, splitViewState) {
-        val plugin = DefaultPlugin(
-            panelRegistry = state.panelRegistry,
-            tabRegistry = state.tabRegistry,
-            windowProjectState = windowProjectState,
-            windowGitState = state.windowGitState,
-            _windowId = windowId,
-            workspaceManager = workspaceManager,
-            splitViewState = splitViewState
-        )
+    DisposableEffect(
+        state.panelRegistry,
+        state.tabRegistry,
+        windowProjectState,
+        state.windowGitState,
+        windowId,
+        workspaceManager,
+        splitViewState,
+    ) {
+        val plugin =
+            DefaultPlugin(
+                panelRegistry = state.panelRegistry,
+                tabRegistry = state.tabRegistry,
+                windowProjectState = windowProjectState,
+                windowGitState = state.windowGitState,
+                _windowId = windowId,
+                workspaceManager = workspaceManager,
+                splitViewState = splitViewState,
+            )
         state.currentDefaultPlugin = plugin
         state.draggablePanelComponent.update()
 
@@ -327,7 +343,8 @@ internal fun BossAppStartupEffects(state: BossAppState) {
         TerminalAPIAccess.initialize(plugin)
 
         // Initialize EditorAPIAccess so host code can access editor settings via the plugin system
-        ai.rever.boss.services.editor.EditorAPIAccess.initialize(plugin)
+        ai.rever.boss.services.editor.EditorAPIAccess
+            .initialize(plugin)
 
         onDispose {
             // NOTE: Browser disposal moved to main.kt onCloseRequest handler
@@ -339,11 +356,12 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                 // Use runBlocking to ensure save completes before app closes
                 kotlinx.coroutines.runBlocking {
                     val currentLayout = extractCurrentWorkspace(splitViewState, selectedProject.path)
-                    val lastSessionConfig = currentLayout.copy(
-                        id = "last-session",
-                        name = "Last Session",
-                        description = "Automatically saved session"
-                    )
+                    val lastSessionConfig =
+                        currentLayout.copy(
+                            id = "last-session",
+                            name = "Last Session",
+                            description = "Automatically saved session",
+                        )
                     workspaceManager.updateCurrentWorkspace(lastSessionConfig)
                     workspaceManager.saveCurrentWorkspace("Last Session")
                 }
@@ -400,9 +418,10 @@ internal fun BossAppStartupEffects(state: BossAppState) {
             val pluginManager = defaultPlugin.dynamicPluginManager
 
             // Check if wizard was already completed
-            val wizardCompleted = withContext(Dispatchers.IO) {
-                UserDataStorage.isPluginWizardCompleted()
-            }
+            val wizardCompleted =
+                withContext(Dispatchers.IO) {
+                    UserDataStorage.isPluginWizardCompleted()
+                }
 
             // Startup plugin loading (persisted pass + external directory scan) is
             // asynchronous, so "no plugins installed" is only meaningful once it
@@ -410,9 +429,10 @@ internal fun BossAppStartupEffects(state: BossAppState) {
             // wizard on every restart. First run (!wizardCompleted) shows the wizard
             // regardless, so only the completed case needs to wait.
             if (wizardCompleted) {
-                val loadFinished = withTimeoutOrNull(30_000) {
-                    defaultPlugin.awaitInitialPluginLoad()
-                }
+                val loadFinished =
+                    withTimeoutOrNull(30_000) {
+                        defaultPlugin.awaitInitialPluginLoad()
+                    }
                 if (loadFinished == null) {
                     logger.warn(LogCategory.SYSTEM, "Startup plugin load still running after 30s; skipping wizard check")
                     state.pluginWizardChecked = true
@@ -431,31 +451,40 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                 // Exponential backoff: 0ms, 500ms, 1000ms, 1500ms (on retries)
                 if (state.pluginWizardRetryCount > 0) {
                     val delayMs = state.pluginWizardRetryCount * 500L
-                    logger.info(LogCategory.SYSTEM, "Retrying plugin fetch after ${delayMs}ms delay", mapOf(
-                        "attempt" to (state.pluginWizardRetryCount + 1).toString()
-                    ))
+                    logger.info(
+                        LogCategory.SYSTEM,
+                        "Retrying plugin fetch after ${delayMs}ms delay",
+                        mapOf(
+                            "attempt" to (state.pluginWizardRetryCount + 1).toString(),
+                        ),
+                    )
                     delay(delayMs)
                 }
 
                 try {
-                    val plugins = withContext(Dispatchers.IO) {
-                        PluginWizardIntegration.getAvailablePlugins()
-                    }
+                    val plugins =
+                        withContext(Dispatchers.IO) {
+                            PluginWizardIntegration.getAvailablePlugins()
+                        }
 
                     if (plugins.isNotEmpty()) {
                         state.availablePluginsForWizard = plugins
                         state.showPluginInstallWizard = true
-                        state.pluginWizardChecked = true  // Set AFTER successfully showing wizard
+                        state.pluginWizardChecked = true // Set AFTER successfully showing wizard
 
                         val reason = if (!wizardCompleted) "first_time" else "no_plugins_installed"
-                        logger.info(LogCategory.SYSTEM, "Plugin wizard shown", mapOf(
-                            "reason" to reason,
-                            "availablePlugins" to plugins.size.toString()
-                        ))
+                        logger.info(
+                            LogCategory.SYSTEM,
+                            "Plugin wizard shown",
+                            mapOf(
+                                "reason" to reason,
+                                "availablePlugins" to plugins.size.toString(),
+                            ),
+                        )
                     } else {
                         // No plugins available to install
                         logger.info(LogCategory.SYSTEM, "No plugins available to install")
-                        state.pluginWizardChecked = true  // Set to prevent further attempts
+                        state.pluginWizardChecked = true // Set to prevent further attempts
                         if (!wizardCompleted) {
                             withContext(Dispatchers.IO) {
                                 UserDataStorage.setPluginWizardCompleted(true)
@@ -465,19 +494,28 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                 } catch (e: kotlin.coroutines.cancellation.CancellationException) {
                     throw e // Don't retry on scope cancellation
                 } catch (e: Exception) {
-                    logger.error(LogCategory.SYSTEM, "Failed to fetch plugins", mapOf(
-                        "attempt" to (state.pluginWizardRetryCount + 1).toString(),
-                        "maxAttempts" to "3"
-                    ), error = e)
+                    logger.error(
+                        LogCategory.SYSTEM,
+                        "Failed to fetch plugins",
+                        mapOf(
+                            "attempt" to (state.pluginWizardRetryCount + 1).toString(),
+                            "maxAttempts" to "3",
+                        ),
+                        error = e,
+                    )
                     // Increment counter to trigger retry via LaunchedEffect dependency
                     state.pluginWizardRetryCount++
                 }
             } else {
-                logger.info(LogCategory.SYSTEM, "Plugin wizard not needed", mapOf(
-                    "wizardCompleted" to wizardCompleted.toString(),
-                    "pluginsInstalled" to installedPlugins.size.toString()
-                ))
-                state.pluginWizardChecked = true  // Set to prevent further checks
+                logger.info(
+                    LogCategory.SYSTEM,
+                    "Plugin wizard not needed",
+                    mapOf(
+                        "wizardCompleted" to wizardCompleted.toString(),
+                        "pluginsInstalled" to installedPlugins.size.toString(),
+                    ),
+                )
+                state.pluginWizardChecked = true // Set to prevent further checks
             }
         }
     }
@@ -534,11 +572,12 @@ internal fun BossAppStartupEffects(state: BossAppState) {
 
                         if (lastSessionConfig != null) {
                             // Ensure it has the correct ID
-                            val configWithId = if (lastSessionConfig.id != "last-session") {
-                                lastSessionConfig.copy(id = "last-session")
-                            } else {
-                                lastSessionConfig
-                            }
+                            val configWithId =
+                                if (lastSessionConfig.id != "last-session") {
+                                    lastSessionConfig.copy(id = "last-session")
+                                } else {
+                                    lastSessionConfig
+                                }
                             // Apply the last session workspace FIRST
                             workspaceManager.loadWorkspace(configWithId)
                             // A failed restore must not abort this collector: the
@@ -561,14 +600,12 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                         // This ensures URLs/terminals/files/workspaces create tabs AFTER workspace is loaded,
                         // not before (which would cause tabs to be destroyed by clearAllPanels)
                         state.markHandlersReady(isSessionResolved)
-                    }
-                    // Else: New window - don't load Last Session, start with empty workspace, but still mark ready
-                    else {
+                    } else {
+                        // New window - don't load Last Session, start with empty workspace, but still mark ready
                         state.markHandlersReady(isSessionResolved)
                     }
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 
     // Fallback timeout for fresh install (no workspaces on disk at all)
@@ -604,11 +641,14 @@ internal fun BossAppStartupEffects(state: BossAppState) {
     LaunchedEffect(isFirstWindow, state.currentDefaultPlugin) {
         if (!isFirstWindow) return@LaunchedEffect
         val manager = state.currentDefaultPlugin?.dynamicPluginManager ?: return@LaunchedEffect
-        val refs = manager.getInstalledPlugins().map {
-            ai.rever.boss.components.plugin.InstalledPluginRef(it.manifest.pluginId, it.manifest.displayName, it.manifest.version)
-        }
+        val refs =
+            manager.getInstalledPlugins().map {
+                ai.rever.boss.components.plugin
+                    .InstalledPluginRef(it.manifest.pluginId, it.manifest.displayName, it.manifest.version)
+            }
         if (refs.isNotEmpty()) {
-            ai.rever.boss.components.plugin.PluginUpdateBridge.refreshAll(refs)
+            ai.rever.boss.components.plugin.PluginUpdateBridge
+                .refreshAll(refs)
         }
     }
 
@@ -621,8 +661,7 @@ internal fun BossAppStartupEffects(state: BossAppState) {
         snapshotFlow {
             // Extract current layout workspace
             extractCurrentWorkspace(splitViewState, selectedProject.path)
-        }
-        .onEach { currentLayout ->
+        }.onEach { currentLayout ->
             // Check if we have a loaded workspace
             val loadedConfig = workspaceManager.currentWorkspace.value
 
@@ -644,31 +683,34 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                     saveJob?.cancel()
 
                     // Auto-save to current workspace or "Last Session" after a short delay
-                    saveJob = launch {
-                        delay(2000) // Wait 2 seconds before saving
+                    saveJob =
+                        launch {
+                            delay(2000) // Wait 2 seconds before saving
 
-                        if (loadedConfig.name == "Last Session") {
-                            // If we're already in "Last Session", update it
-                            val lastSessionConfig = currentLayout.copy(
-                                id = "last-session",
-                                name = "Last Session",
-                                description = "Automatically saved session"
-                            )
-                            workspaceManager.updateCurrentWorkspace(lastSessionConfig)
-                            workspaceManager.saveCurrentWorkspace("Last Session")
-                        } else {
-                            // Update the current loaded workspace with changes
-                            val updatedConfig = loadedConfig.copy(
-                                layout = currentLayout.layout,
-                                timestamp = Clock.System.now().toEpochMilliseconds()
-                            )
-                            workspaceManager.updateCurrentWorkspace(updatedConfig)
-                            workspaceManager.saveCurrentWorkspace()
+                            if (loadedConfig.name == "Last Session") {
+                                // If we're already in "Last Session", update it
+                                val lastSessionConfig =
+                                    currentLayout.copy(
+                                        id = "last-session",
+                                        name = "Last Session",
+                                        description = "Automatically saved session",
+                                    )
+                                workspaceManager.updateCurrentWorkspace(lastSessionConfig)
+                                workspaceManager.saveCurrentWorkspace("Last Session")
+                            } else {
+                                // Update the current loaded workspace with changes
+                                val updatedConfig =
+                                    loadedConfig.copy(
+                                        layout = currentLayout.layout,
+                                        timestamp = Clock.System.now().toEpochMilliseconds(),
+                                    )
+                                workspaceManager.updateCurrentWorkspace(updatedConfig)
+                                workspaceManager.saveCurrentWorkspace()
 
-                            // Clear the modified state since we just auto-saved
-                            TabTreeState.markWorkspaceAsSaved(loadedConfig.id)
+                                // Clear the modified state since we just auto-saved
+                                TabTreeState.markWorkspaceAsSaved(loadedConfig.id)
+                            }
                         }
-                    }
                 }
             } else {
                 // No workspace loaded, but still save as "Last Session"
@@ -679,20 +721,21 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                     saveJob?.cancel()
 
                     // Auto-save as "Last Session" after a short delay
-                    saveJob = launch {
-                        delay(2000) // Wait 2 seconds before saving
-                        val lastSessionConfig = currentLayout.copy(
-                            id = "last-session",
-                            name = "Last Session",
-                            description = "Automatically saved session"
-                        )
-                        workspaceManager.updateCurrentWorkspace(lastSessionConfig)
-                        workspaceManager.saveCurrentWorkspace("Last Session")
-                    }
+                    saveJob =
+                        launch {
+                            delay(2000) // Wait 2 seconds before saving
+                            val lastSessionConfig =
+                                currentLayout.copy(
+                                    id = "last-session",
+                                    name = "Last Session",
+                                    description = "Automatically saved session",
+                                )
+                            workspaceManager.updateCurrentWorkspace(lastSessionConfig)
+                            workspaceManager.saveCurrentWorkspace("Last Session")
+                        }
                 }
             }
-        }
-        .launchIn(this)
+        }.launchIn(this)
 
         // Reset snapshot when workspace changes
         workspaceManager.currentWorkspace
@@ -703,7 +746,6 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                     // Clear modified status when loading a workspace
                     TabTreeState.markWorkspaceAsSaved(config.id)
                 }
-            }
-            .launchIn(this)
+            }.launchIn(this)
     }
 }

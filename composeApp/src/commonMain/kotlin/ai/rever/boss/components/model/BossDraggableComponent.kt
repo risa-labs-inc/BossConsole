@@ -1,5 +1,6 @@
 package ai.rever.boss.components.model
 
+import ai.rever.boss.components.window_panel.SplitOrientation
 import ai.rever.boss.plugin.api.Panel
 import ai.rever.boss.plugin.api.Panel.Companion.bottom
 import ai.rever.boss.plugin.api.Panel.Companion.left
@@ -8,7 +9,6 @@ import ai.rever.boss.plugin.api.Panel.Companion.top
 import ai.rever.boss.plugin.api.PanelId
 import ai.rever.boss.plugin.api.PanelRegistry
 import ai.rever.boss.plugin.api.SidebarItem
-import ai.rever.boss.components.window_panel.SplitOrientation
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.runtime.*
@@ -22,10 +22,11 @@ data class PanelData(
     val visibility: Boolean,
 )
 
-
 // Holds the state and logic for the draggable sidebar system
 @Stable
-class BossDraggableComponent(val panelRegistry: PanelRegistry) {
+class BossDraggableComponent(
+    val panelRegistry: PanelRegistry,
+) {
     private val logger = BossLogger.forComponent("BossDraggableComponent")
 
     companion object {
@@ -73,14 +74,13 @@ class BossDraggableComponent(val panelRegistry: PanelRegistry) {
             .toMutableStateMap()
     }
 
-
     private val panelsData by lazy {
         mutableStateMapOf(
-            bottom to PanelData(visibility =  false),
-            left.top to PanelData(visibility =  false),
-            right.top to PanelData(visibility =  false),
-            left.bottom to PanelData(visibility =  false),
-            right.bottom to PanelData(visibility =  false),
+            bottom to PanelData(visibility = false),
+            left.top to PanelData(visibility = false),
+            right.top to PanelData(visibility = false),
+            left.bottom to PanelData(visibility = false),
+            right.bottom to PanelData(visibility = false),
         )
     }
 
@@ -104,8 +104,13 @@ class BossDraggableComponent(val panelRegistry: PanelRegistry) {
     // inside one synchronous handler — recomposition never observes it. When the last
     // hosting tab closes, the sidebar icon reopens the plugin in its sidebar location.
     private val panelsHostedAsTab = mutableStateMapOf<PanelId, Int>()
+
     fun isHostedAsTab(panelId: PanelId?): Boolean = panelId != null && (panelsHostedAsTab[panelId] ?: 0) > 0
-    fun markHostedAsTab(panelId: PanelId) { panelsHostedAsTab[panelId] = (panelsHostedAsTab[panelId] ?: 0) + 1 }
+
+    fun markHostedAsTab(panelId: PanelId) {
+        panelsHostedAsTab[panelId] = (panelsHostedAsTab[panelId] ?: 0) + 1
+    }
+
     fun unmarkHostedAsTab(panelId: PanelId) {
         val next = (panelsHostedAsTab[panelId] ?: 0) - 1
         if (next <= 0) panelsHostedAsTab.remove(panelId) else panelsHostedAsTab[panelId] = next
@@ -129,32 +134,51 @@ class BossDraggableComponent(val panelRegistry: PanelRegistry) {
     // Deferred "promote this panel to a main tab" request (mirrors pendingPanelOpen);
     // performed by ProcessPendingPromoteToTab(), which has SplitView access. [target]
     // selects the destination panel/split (null = the active panel, used by the menu).
-    data class PromoteRequest(val panelId: PanelId, val target: TabDropTarget?)
+    data class PromoteRequest(
+        val panelId: PanelId,
+        val target: TabDropTarget?,
+    )
+
     var pendingPromoteToTab by mutableStateOf<PromoteRequest?>(null)
         private set
-    fun requestPromoteToTab(panelId: PanelId, target: TabDropTarget? = null) {
+
+    fun requestPromoteToTab(
+        panelId: PanelId,
+        target: TabDropTarget? = null,
+    ) {
         pendingPromoteToTab = PromoteRequest(panelId, target)
     }
-    fun clearPendingPromoteToTab() { pendingPromoteToTab = null }
+
+    fun clearPendingPromoteToTab() {
+        pendingPromoteToTab = null
+    }
 
     private fun leftHalf(r: Rect) = Rect(r.left, r.top, r.left + r.width / 2f, r.bottom)
+
     private fun rightHalf(r: Rect) = Rect(r.left + r.width / 2f, r.top, r.right, r.bottom)
+
     private fun topHalf(r: Rect) = Rect(r.left, r.top, r.right, r.top + r.height / 2f)
+
     private fun bottomHalf(r: Rect) = Rect(r.left, r.top + r.height / 2f, r.right, r.bottom)
 
     // Deferred "focus the existing main tab hosting this panel" request — set when the
     // sidebar icon is clicked while the plugin is already open as a tab.
     var pendingFocusHostedTab by mutableStateOf<PanelId?>(null)
         private set
-    fun requestFocusHostedTab(panelId: PanelId) { pendingFocusHostedTab = panelId }
-    fun clearPendingFocusHostedTab() { pendingFocusHostedTab = null }
+
+    fun requestFocusHostedTab(panelId: PanelId) {
+        pendingFocusHostedTab = panelId
+    }
+
+    fun clearPendingFocusHostedTab() {
+        pendingFocusHostedTab = null
+    }
 
     /** The sidebar item currently shown in [panel]'s display area, if any. */
     fun getSidebarItemForPanel(panel: Panel): SidebarItem? = panelsData[panel]?.sidebarItem
 
     /** The icon-rail slot that owns [item], or null if not found. */
-    fun slotForItem(item: SidebarItem): Panel? =
-        itemsBySlot.entries.firstOrNull { (_, items) -> items.any { it.id == item.id } }?.key
+    fun slotForItem(item: SidebarItem): Panel? = itemsBySlot.entries.firstOrNull { (_, items) -> items.any { it.id == item.id } }?.key
 
     fun update() {
         // Only update itemsBySlot - do NOT update panelsData here
@@ -173,7 +197,7 @@ class BossDraggableComponent(val panelRegistry: PanelRegistry) {
         if (isHostedAsTab(pid)) {
             requestFocusHostedTab(pid)
         } else {
-            when(slot) {
+            when (slot) {
                 left.bottom -> toggleVisibility(bottom)
                 left.top.top -> toggleVisibility(left.top)
                 right.top.top -> toggleVisibility(right.top)
@@ -199,8 +223,8 @@ class BossDraggableComponent(val panelRegistry: PanelRegistry) {
     }
 
     // Maps sidebar slots to their corresponding panel display areas
-    private fun slotToPanel(slot: Panel): Panel? {
-        return when(slot) {
+    private fun slotToPanel(slot: Panel): Panel? =
+        when (slot) {
             left.bottom -> bottom
             left.top.top -> left.top
             right.top.top -> right.top
@@ -208,17 +232,15 @@ class BossDraggableComponent(val panelRegistry: PanelRegistry) {
             right.top.bottom -> right.bottom
             else -> null
         }
-    }
 
-    fun getPanelContentId(panel: Panel): PanelId? {
-        return panelsData[panel]?.sidebarItem?.pluginContentId
-    }
+    fun getPanelContentId(panel: Panel): PanelId? = panelsData[panel]?.sidebarItem?.pluginContentId
 
     val SidebarItem.slot: Panel
-        get() = itemsBySlot
-            .filter { it.value.find { sideItem -> id == sideItem.id } != null }
-            .keys.first()
-
+        get() =
+            itemsBySlot
+                .filter { it.value.find { sideItem -> id == sideItem.id } != null }
+                .keys
+                .first()
 
     /**
      * Items in [slot], with any panel id in [hidden] filtered out.
@@ -237,7 +259,10 @@ class BossDraggableComponent(val panelRegistry: PanelRegistry) {
      * stopped taking effect. If you genuinely want the unfiltered list,
      * call [getItemsForSlotUnfiltered] explicitly.
      */
-    fun getItemsForSlot(slot: Panel, hidden: Set<String>): List<SidebarItem> {
+    fun getItemsForSlot(
+        slot: Panel,
+        hidden: Set<String>,
+    ): List<SidebarItem> {
         val items = itemsBySlot[slot] ?: return emptyList()
         if (hidden.isEmpty()) return items
         return items.filter { it.id !in hidden }
@@ -248,11 +273,14 @@ class BossDraggableComponent(val panelRegistry: PanelRegistry) {
      * the user's hidden-set so the customize menu can list panels the
      * user has hidden (and let them un-hide).
      */
-    fun getItemsForSlotUnfiltered(slot: Panel): List<SidebarItem> =
-        itemsBySlot[slot].orEmpty()
+    fun getItemsForSlotUnfiltered(slot: Panel): List<SidebarItem> = itemsBySlot[slot].orEmpty()
 
     // Called when dragging starts
-    fun startDragging(item: SidebarItem, sourceSlot: Panel, startPosition: Offset) {
+    fun startDragging(
+        item: SidebarItem,
+        sourceSlot: Panel,
+        startPosition: Offset,
+    ) {
         if (draggingItem != null) return
         draggingItem = item to sourceSlot
         dragStartPosition = startPosition
@@ -294,19 +322,28 @@ class BossDraggableComponent(val panelRegistry: PanelRegistry) {
                 for ((panelId, z) in zones) {
                     when {
                         z.leftZone.contains(currentPosition) -> {
-                            dropTgt = TabDropTarget.SplitPanel(panelId, SplitOrientation.VERTICAL); highlight = leftHalf(z.panelBounds)
+                            dropTgt = TabDropTarget.SplitPanel(panelId, SplitOrientation.VERTICAL)
+                            highlight = leftHalf(z.panelBounds)
                         }
+
                         z.rightZone.contains(currentPosition) -> {
-                            dropTgt = TabDropTarget.SplitPanel(panelId, SplitOrientation.VERTICAL); highlight = rightHalf(z.panelBounds)
+                            dropTgt = TabDropTarget.SplitPanel(panelId, SplitOrientation.VERTICAL)
+                            highlight = rightHalf(z.panelBounds)
                         }
+
                         z.topZone.contains(currentPosition) -> {
-                            dropTgt = TabDropTarget.SplitPanel(panelId, SplitOrientation.HORIZONTAL); highlight = topHalf(z.panelBounds)
+                            dropTgt = TabDropTarget.SplitPanel(panelId, SplitOrientation.HORIZONTAL)
+                            highlight = topHalf(z.panelBounds)
                         }
+
                         z.bottomZone.contains(currentPosition) -> {
-                            dropTgt = TabDropTarget.SplitPanel(panelId, SplitOrientation.HORIZONTAL); highlight = bottomHalf(z.panelBounds)
+                            dropTgt = TabDropTarget.SplitPanel(panelId, SplitOrientation.HORIZONTAL)
+                            highlight = bottomHalf(z.panelBounds)
                         }
+
                         z.panelBounds.contains(currentPosition) -> {
-                            dropTgt = TabDropTarget.ExistingPanel(panelId); highlight = z.panelBounds
+                            dropTgt = TabDropTarget.ExistingPanel(panelId)
+                            highlight = z.panelBounds
                         }
                     }
                     if (dropTgt != null) break
@@ -417,17 +454,19 @@ class BossDraggableComponent(val panelRegistry: PanelRegistry) {
 
                     if (oldPanel != null && newPanel != null) {
                         // Check if this item was open in its previous panel
-                        val wasOpen = panelsData[oldPanel]?.let { data ->
-                            data.sidebarItem?.id == item.id && data.visibility
-                        } ?: false
+                        val wasOpen =
+                            panelsData[oldPanel]?.let { data ->
+                                data.sidebarItem?.id == item.id && data.visibility
+                            } ?: false
 
                         if (wasOpen) {
                             // Close the old panel first
                             panelsData[oldPanel]?.let {
-                                panelsData[oldPanel] = it.copy(
-                                    visibility = false,
-                                    sidebarItem = null
-                                )
+                                panelsData[oldPanel] =
+                                    it.copy(
+                                        visibility = false,
+                                        sidebarItem = null,
+                                    )
                             }
 
                             // Use two-phase transition for panel moves
@@ -443,9 +482,9 @@ class BossDraggableComponent(val panelRegistry: PanelRegistry) {
                 // No valid target OR dropped back onto the source slot, return item to its original slot
                 val updatedSourceList = itemsBySlot[sourceSlot]?.toMutableList() ?: mutableListOf()
                 // Add the item back (simple add to end for now)
-                 if (!updatedSourceList.any { it.id == item.id }) { // Avoid duplicates
-                     updatedSourceList.add(item)
-                 }
+                if (!updatedSourceList.any { it.id == item.id }) { // Avoid duplicates
+                    updatedSourceList.add(item)
+                }
                 itemsBySlot[sourceSlot] = updatedSourceList
             }
         }
@@ -471,7 +510,10 @@ class BossDraggableComponent(val panelRegistry: PanelRegistry) {
         }
     }
 
-    fun setPanelVisible(panel: Panel, isVisible: Boolean) {
+    fun setPanelVisible(
+        panel: Panel,
+        isVisible: Boolean,
+    ) {
         panelsData[panel]?.let {
             panelsData[panel] = it.copy(visibility = isVisible)
         }
@@ -494,29 +536,31 @@ class BossDraggableComponent(val panelRegistry: PanelRegistry) {
     /**
      * Programmatically activate a plugin by its ID.
      * Replicates the behavior of clicking a plugin icon in the sidebar.
-     * 
+     *
      * @param pluginId The panel ID of the plugin to activate (e.g., "codebase", "terminal")
      */
     fun activatePlugin(pluginId: String) {
         // Find the SidebarItem with matching pluginContentId
-        val slotEntry = itemsBySlot.entries.find { (_, items) ->
-            items.any { it.pluginContentId.panelId == pluginId }
-        }
-        
+        val slotEntry =
+            itemsBySlot.entries.find { (_, items) ->
+                items.any { it.pluginContentId.panelId == pluginId }
+            }
+
         slotEntry?.let { (slot, items) ->
             val sidebarItem = items.find { it.pluginContentId.panelId == pluginId }
-            
+
             sidebarItem?.let { item ->
                 // Determine target panel based on the slot (same logic as onClick)
-                val targetPanel = when(slot) {
-                    left.bottom -> bottom
-                    left.top.top -> left.top
-                    right.top.top -> right.top
-                    left.top.bottom -> left.bottom
-                    right.top.bottom -> right.bottom
-                    else -> null
-                }
-                
+                val targetPanel =
+                    when (slot) {
+                        left.bottom -> bottom
+                        left.top.top -> left.top
+                        right.top.top -> right.top
+                        left.top.bottom -> left.bottom
+                        right.top.bottom -> right.bottom
+                        else -> null
+                    }
+
                 targetPanel?.let { panel ->
                     // Apply the same logic as toggleVisibility
                     if (panelsData[panel]?.sidebarItem?.id == item.id) {
@@ -535,9 +579,7 @@ class BossDraggableComponent(val panelRegistry: PanelRegistry) {
         }
     }
 
-    fun isSelected(item: SidebarItem): Boolean {
-        return panelsData.values.any { (it.sidebarItem?.id == item.id) && it.visibility }
-    }
+    fun isSelected(item: SidebarItem): Boolean = panelsData.values.any { (it.sidebarItem?.id == item.id) && it.visibility }
 
     /**
      * Composable effect that processes pending panel opens with a delay.
@@ -561,10 +603,11 @@ class BossDraggableComponent(val panelRegistry: PanelRegistry) {
 
                 // Open the new panel
                 panelsData[panel]?.let {
-                    panelsData[panel] = it.copy(
-                        visibility = true,
-                        sidebarItem = item
-                    )
+                    panelsData[panel] =
+                        it.copy(
+                            visibility = true,
+                            sidebarItem = item,
+                        )
                 }
 
                 // Clear the pending state

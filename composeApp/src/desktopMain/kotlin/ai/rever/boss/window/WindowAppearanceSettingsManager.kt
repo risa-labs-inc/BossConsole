@@ -23,10 +23,11 @@ import java.io.File
 actual object WindowAppearanceSettingsManager {
     private val logger = BossLogger.forComponent("WindowAppearanceSettingsManager")
     private val settingsFile = BossDirectories.resolve("window-appearance-settings.json")
-    private val json = Json {
-        prettyPrint = true
-        ignoreUnknownKeys = true
-    }
+    private val json =
+        Json {
+            prettyPrint = true
+            ignoreUnknownKeys = true
+        }
 
     private val _currentSettings = MutableStateFlow(WindowAppearanceSettings())
     actual val currentSettings: StateFlow<WindowAppearanceSettings> = _currentSettings.asStateFlow()
@@ -73,15 +74,16 @@ actual object WindowAppearanceSettingsManager {
     /**
      * Save current settings to disk asynchronously.
      */
-    private suspend fun saveSettings() = withContext(Dispatchers.IO) {
-        try {
-            val content = json.encodeToString(WindowAppearanceSettings.serializer(), _currentSettings.value)
-            settingsFile.writeText(content)
-            logger.debug(LogCategory.SYSTEM, "Settings saved", mapOf("path" to settingsFile.absolutePath))
-        } catch (e: Exception) {
-            logger.warn(LogCategory.SYSTEM, "Failed to save settings", error = e)
+    private suspend fun saveSettings() =
+        withContext(Dispatchers.IO) {
+            try {
+                val content = json.encodeToString(WindowAppearanceSettings.serializer(), _currentSettings.value)
+                settingsFile.writeText(content)
+                logger.debug(LogCategory.SYSTEM, "Settings saved", mapOf("path" to settingsFile.absolutePath))
+            } catch (e: Exception) {
+                logger.warn(LogCategory.SYSTEM, "Failed to save settings", error = e)
+            }
         }
-    }
 
     /**
      * Update the current settings and save to disk asynchronously.

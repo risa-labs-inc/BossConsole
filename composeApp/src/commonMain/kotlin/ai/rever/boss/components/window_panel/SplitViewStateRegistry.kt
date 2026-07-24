@@ -30,7 +30,10 @@ object SplitViewStateRegistry {
      * @param windowId Unique identifier for the window
      * @param state The SplitViewState instance for this window
      */
-    fun register(windowId: String, state: SplitViewState) {
+    fun register(
+        windowId: String,
+        state: SplitViewState,
+    ) {
         splitViewStateRegistryLogger.debug(LogCategory.UI, "Registering state for window", mapOf("windowId" to windowId))
         _states.value = _states.value + (windowId to state)
         splitViewStateRegistryLogger.debug(LogCategory.UI, "Total registered windows", mapOf("count" to _states.value.size))
@@ -53,9 +56,7 @@ object SplitViewStateRegistry {
      *
      * @return Map of windowId to SplitViewState
      */
-    fun getAllStates(): Map<String, SplitViewState> {
-        return _states.value
-    }
+    fun getAllStates(): Map<String, SplitViewState> = _states.value
 
     /**
      * Get the SplitViewState for a specific window.
@@ -63,9 +64,7 @@ object SplitViewStateRegistry {
      * @param windowId Unique identifier for the window
      * @return The SplitViewState for the window, or null if not found
      */
-    fun getState(windowId: String): SplitViewState? {
-        return _states.value[windowId]
-    }
+    fun getState(windowId: String): SplitViewState? = _states.value[windowId]
 
     /**
      * Check if a window is registered.
@@ -73,7 +72,5 @@ object SplitViewStateRegistry {
      * @param windowId Unique identifier for the window
      * @return true if the window is registered, false otherwise
      */
-    fun isRegistered(windowId: String): Boolean {
-        return _states.value.containsKey(windowId)
-    }
+    fun isRegistered(windowId: String): Boolean = _states.value.containsKey(windowId)
 }

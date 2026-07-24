@@ -3,8 +3,8 @@ package ai.rever.boss.components.settings.sections
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.runtime.Composable
 import androidx.compose.material.Text
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -19,8 +19,9 @@ internal fun PluginSettingsUnavailableNotice(message: String) {
         text = message,
         color = BossTheme.colors.textMuted,
         fontSize = 13.sp,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 16.dp)
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 16.dp),
     )
 }

@@ -2,21 +2,8 @@
 <SmellBaseline>
   <ManuallySuppressedIssues/>
   <CurrentIssues>
-    <ID>FunctionNaming:SemanticVersionTest.kt$SemanticVersionTest$@Test fun `core precedence`()</ID>
-    <ID>FunctionNaming:SemanticVersionTest.kt$SemanticVersionTest$@Test fun `equal versions compare zero and are equal`()</ID>
-    <ID>FunctionNaming:SemanticVersionTest.kt$SemanticVersionTest$@Test fun `fewer prerelease identifiers rank lower`()</ID>
-    <ID>FunctionNaming:SemanticVersionTest.kt$SemanticVersionTest$@Test fun `full semver precedence chain`()</ID>
-    <ID>FunctionNaming:SemanticVersionTest.kt$SemanticVersionTest$@Test fun `missing minor and patch default to zero`()</ID>
-    <ID>FunctionNaming:SemanticVersionTest.kt$SemanticVersionTest$@Test fun `numeric identifier ranks below alphanumeric`()</ID>
-    <ID>FunctionNaming:SemanticVersionTest.kt$SemanticVersionTest$@Test fun `numeric prerelease identifiers order numerically not lexically`()</ID>
-    <ID>FunctionNaming:SemanticVersionTest.kt$SemanticVersionTest$@Test fun `parses full version`()</ID>
-    <ID>FunctionNaming:SemanticVersionTest.kt$SemanticVersionTest$@Test fun `parses prerelease and discards build metadata`()</ID>
-    <ID>FunctionNaming:SemanticVersionTest.kt$SemanticVersionTest$@Test fun `rejects malformed input`()</ID>
-    <ID>FunctionNaming:SemanticVersionTest.kt$SemanticVersionTest$@Test fun `release outranks its prerelease`()</ID>
-    <ID>FunctionNaming:SemanticVersionTest.kt$SemanticVersionTest$@Test fun `toString round-trips core and prerelease`()</ID>
     <ID>ReturnCount:SemanticVersion.kt$SemanticVersion$override fun compareTo(other: SemanticVersion): Int</ID>
     <ID>ReturnCount:SemanticVersion.kt$SemanticVersion.Companion$fun parse(version: String): SemanticVersion?</ID>
-    <ID>ReturnCount:SemanticVersion.kt$SemanticVersion.Companion$private fun comparePrerelease(a: String?, b: String?): Int</ID>
-    <ID>TooManyFunctions:SemanticVersionTest.kt$SemanticVersionTest</ID>
+    <ID>ReturnCount:SemanticVersion.kt$SemanticVersion.Companion$private fun comparePrerelease( a: String?, b: String?, ): Int</ID>
   </CurrentIssues>
 </SmellBaseline>

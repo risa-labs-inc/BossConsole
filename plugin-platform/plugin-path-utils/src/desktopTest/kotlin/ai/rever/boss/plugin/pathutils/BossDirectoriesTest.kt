@@ -7,10 +7,8 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class BossDirectoriesTest {
-
     @Nested
     inner class IsDevModeTests {
-
         @Test
         fun `isDevMode reflects current runtime state`() {
             // In test runner context, boss.dev.mode is not set,
@@ -24,7 +22,6 @@ class BossDirectoriesTest {
 
     @Nested
     inner class IsTruthyTests {
-
         @Test
         fun `true string variants are truthy`() {
             assertTrue(callIsTruthy("true"))
@@ -79,7 +76,6 @@ class BossDirectoriesTest {
 
     @Nested
     inner class RootDirTests {
-
         @Test
         fun `rootDir is under user home`() {
             val userHome = System.getProperty("user.home")
@@ -95,7 +91,6 @@ class BossDirectoriesTest {
 
     @Nested
     inner class ResolveTests {
-
         @Test
         fun `resolve produces path under rootDir`() {
             val resolved = BossDirectories.resolve("settings.json")

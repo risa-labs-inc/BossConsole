@@ -1,13 +1,13 @@
 package ai.rever.boss.project
 
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
-import kotlin.test.assertEquals
-import kotlin.test.assertTrue
-import kotlin.test.assertIs
 import java.io.File
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 /**
  * Comprehensive tests for ProjectCreationService
@@ -18,7 +18,6 @@ import java.io.File
  * - Security validation (path traversal prevention)
  */
 class ProjectCreationServiceTest {
-
     @TempDir
     lateinit var tempDir: File
 

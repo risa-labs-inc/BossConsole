@@ -10,7 +10,6 @@ import kotlin.test.assertEquals
  * that the arithmetic keeps every plugin reachable and no slot starved.
  */
 class SidebarIconLimitsTest {
-
     @Test
     fun `everything fits when budget covers all items`() {
         assertEquals(listOf(3, 2, 4), allocateIconRows(listOf(3, 2, 4), 20))

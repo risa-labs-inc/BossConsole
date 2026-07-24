@@ -8,12 +8,11 @@ import kotlinx.serialization.Serializable
  * Supports WebAuthn/FIDO2 passkeys on desktop platforms
  */
 interface PasskeyService {
-    
     /**
      * Current state of passkey authentication
      */
     val passkeyState: StateFlow<PasskeyState>
-    
+
     /**
      * Check if passkeys are supported on the current platform
      */
@@ -31,7 +30,7 @@ interface PasskeyService {
         userId: String,
         displayName: String,
         challenge: ByteArray,
-        rpId: String = "api.risaboss.com"
+        rpId: String = "api.risaboss.com",
     ): Result<PasskeyRegistration>
 
     /**
@@ -47,9 +46,9 @@ interface PasskeyService {
         rpId: String = "api.risaboss.com",
         userEmail: String,
         sessionId: String? = null,
-        allowedCredentialTransports: Map<String, List<String>>? = null
+        allowedCredentialTransports: Map<String, List<String>>? = null,
     ): Result<PasskeyAssertion>
-    
+
     /**
      * Check if user gesture is available (user presence)
      */
@@ -67,11 +66,24 @@ interface PasskeyService {
  */
 sealed class PasskeyState {
     object Idle : PasskeyState()
+
     object Loading : PasskeyState()
+
     object UserGestureRequired : PasskeyState()
-    data class ShowEmbeddedBrowser(val url: String, val sessionId: String) : PasskeyState()
-    data class Success(val credentialId: String) : PasskeyState()
-    data class Error(val message: String, val code: PasskeyErrorCode) : PasskeyState()
+
+    data class ShowEmbeddedBrowser(
+        val url: String,
+        val sessionId: String,
+    ) : PasskeyState()
+
+    data class Success(
+        val credentialId: String,
+    ) : PasskeyState()
+
+    data class Error(
+        val message: String,
+        val code: PasskeyErrorCode,
+    ) : PasskeyState()
 }
 
 /**
@@ -82,7 +94,7 @@ enum class PasskeyErrorCode {
     USER_CANCELLED,
     INVALID_STATE,
     TIMEOUT_ERROR,
-    UNKNOWN_ERROR
+    UNKNOWN_ERROR,
 }
 
 /**
@@ -94,7 +106,7 @@ data class PasskeyRegistration(
     val publicKey: String,
     val attestationObject: String,
     val clientDataJSON: String,
-    val transports: List<String> = listOf("internal", "hybrid")
+    val transports: List<String> = listOf("internal", "hybrid"),
 )
 
 /**
@@ -106,7 +118,7 @@ data class PasskeyAssertion(
     val authenticatorData: String,
     val signature: String,
     val clientDataJSON: String,
-    val userHandle: String?
+    val userHandle: String?,
 )
 
 /**
@@ -120,7 +132,7 @@ data class PasskeyInfo(
     val createdAt: Long,
     val lastUsed: Long?,
     val rpId: String,
-    val transports: List<String>
+    val transports: List<String>,
 )
 
 /**
@@ -136,7 +148,7 @@ data class PasskeyChallenge(
     val userDisplayName: String,
     val attestation: String = "none",
     val authenticatorSelection: AuthenticatorSelectionCriteria? = null,
-    val excludeCredentials: List<String>? = null
+    val excludeCredentials: List<String>? = null,
 )
 
 /**
@@ -144,8 +156,8 @@ data class PasskeyChallenge(
  */
 @Serializable
 data class AuthenticatorSelectionCriteria(
-    val authenticatorAttachment: String = "platform",  // "platform" for built-in, "cross-platform" for external
-    val residentKey: String = "preferred",  // "required", "preferred", "discouraged"
+    val authenticatorAttachment: String = "platform", // "platform" for built-in, "cross-platform" for external
+    val residentKey: String = "preferred", // "required", "preferred", "discouraged"
     val requireResidentKey: Boolean = false,
-    val userVerification: String = "preferred"  // "required", "preferred", "discouraged"
+    val userVerification: String = "preferred", // "required", "preferred", "discouraged"
 )

@@ -12,28 +12,31 @@ import kotlinx.coroutines.flow.flow
 class RunConfigServiceBridge(
     private val provider: RunConfigurationDataProvider,
 ) : RunConfigurationServiceGrpcKt.RunConfigurationServiceCoroutineImplBase() {
-
-    override fun watchDetectedConfigurations(request: Empty): Flow<RunConfigListResponse> = flow {
-        provider.detectedConfigurations.collect { configs ->
-            emit(
-                RunConfigListResponse.newBuilder()
-                    .addAllConfigurations(configs.map { it.toProto() })
-                    .build()
-            )
+    override fun watchDetectedConfigurations(request: Empty): Flow<RunConfigListResponse> =
+        flow {
+            provider.detectedConfigurations.collect { configs ->
+                emit(
+                    RunConfigListResponse
+                        .newBuilder()
+                        .addAllConfigurations(configs.map { it.toProto() })
+                        .build(),
+                )
+            }
         }
-    }
 
-    override fun watchIsScanning(request: Empty): Flow<RunConfigBoolResponse> = flow {
-        provider.isScanning.collect { scanning ->
-            emit(RunConfigBoolResponse.newBuilder().setValue(scanning).build())
+    override fun watchIsScanning(request: Empty): Flow<RunConfigBoolResponse> =
+        flow {
+            provider.isScanning.collect { scanning ->
+                emit(RunConfigBoolResponse.newBuilder().setValue(scanning).build())
+            }
         }
-    }
 
-    override fun watchLastError(request: Empty): Flow<RunConfigStringResponse> = flow {
-        provider.lastError.collect { error ->
-            emit(RunConfigStringResponse.newBuilder().setValue(error ?: "").build())
+    override fun watchLastError(request: Empty): Flow<RunConfigStringResponse> =
+        flow {
+            provider.lastError.collect { error ->
+                emit(RunConfigStringResponse.newBuilder().setValue(error ?: "").build())
+            }
         }
-    }
 
     override suspend fun scanProject(request: ScanProjectRequest): Empty {
         provider.scanProject(request.projectPath, request.windowId)
@@ -52,7 +55,8 @@ class RunConfigServiceBridge(
     }
 
     private fun RunConfigurationData.toProto(): RunConfigurationProto =
-        RunConfigurationProto.newBuilder()
+        RunConfigurationProto
+            .newBuilder()
             .setId(id)
             .setName(name)
             .setType(
@@ -61,9 +65,8 @@ class RunConfigServiceBridge(
                     RunConfigurationTypeData.SCRIPT -> RunConfigType.RUN_CONFIG_TYPE_SCRIPT
                     RunConfigurationTypeData.TEST -> RunConfigType.RUN_CONFIG_TYPE_TEST
                     RunConfigurationTypeData.CUSTOM -> RunConfigType.RUN_CONFIG_TYPE_CUSTOM
-                }
-            )
-            .setFilePath(filePath)
+                },
+            ).setFilePath(filePath)
             .setLineNumber(lineNumber)
             .setLanguage(
                 when (language) {
@@ -75,9 +78,8 @@ class RunConfigServiceBridge(
                     LanguageData.GO -> RunConfigLanguage.RUN_CONFIG_LANGUAGE_GO
                     LanguageData.RUST -> RunConfigLanguage.RUN_CONFIG_LANGUAGE_RUST
                     LanguageData.UNKNOWN -> RunConfigLanguage.RUN_CONFIG_LANGUAGE_UNKNOWN
-                }
-            )
-            .setCommand(command)
+                },
+            ).setCommand(command)
             .setWorkingDirectory(workingDirectory)
             .putAllEnvironmentVariables(environmentVariables)
             .setArguments(arguments)
@@ -89,24 +91,26 @@ class RunConfigServiceBridge(
         RunConfigurationData(
             id = id,
             name = name,
-            type = when (type) {
-                RunConfigType.RUN_CONFIG_TYPE_MAIN_FUNCTION -> RunConfigurationTypeData.MAIN_FUNCTION
-                RunConfigType.RUN_CONFIG_TYPE_SCRIPT -> RunConfigurationTypeData.SCRIPT
-                RunConfigType.RUN_CONFIG_TYPE_TEST -> RunConfigurationTypeData.TEST
-                else -> RunConfigurationTypeData.CUSTOM
-            },
+            type =
+                when (type) {
+                    RunConfigType.RUN_CONFIG_TYPE_MAIN_FUNCTION -> RunConfigurationTypeData.MAIN_FUNCTION
+                    RunConfigType.RUN_CONFIG_TYPE_SCRIPT -> RunConfigurationTypeData.SCRIPT
+                    RunConfigType.RUN_CONFIG_TYPE_TEST -> RunConfigurationTypeData.TEST
+                    else -> RunConfigurationTypeData.CUSTOM
+                },
             filePath = filePath,
             lineNumber = lineNumber,
-            language = when (language) {
-                RunConfigLanguage.RUN_CONFIG_LANGUAGE_KOTLIN -> LanguageData.KOTLIN
-                RunConfigLanguage.RUN_CONFIG_LANGUAGE_JAVA -> LanguageData.JAVA
-                RunConfigLanguage.RUN_CONFIG_LANGUAGE_PYTHON -> LanguageData.PYTHON
-                RunConfigLanguage.RUN_CONFIG_LANGUAGE_JAVASCRIPT -> LanguageData.JAVASCRIPT
-                RunConfigLanguage.RUN_CONFIG_LANGUAGE_TYPESCRIPT -> LanguageData.TYPESCRIPT
-                RunConfigLanguage.RUN_CONFIG_LANGUAGE_GO -> LanguageData.GO
-                RunConfigLanguage.RUN_CONFIG_LANGUAGE_RUST -> LanguageData.RUST
-                else -> LanguageData.UNKNOWN
-            },
+            language =
+                when (language) {
+                    RunConfigLanguage.RUN_CONFIG_LANGUAGE_KOTLIN -> LanguageData.KOTLIN
+                    RunConfigLanguage.RUN_CONFIG_LANGUAGE_JAVA -> LanguageData.JAVA
+                    RunConfigLanguage.RUN_CONFIG_LANGUAGE_PYTHON -> LanguageData.PYTHON
+                    RunConfigLanguage.RUN_CONFIG_LANGUAGE_JAVASCRIPT -> LanguageData.JAVASCRIPT
+                    RunConfigLanguage.RUN_CONFIG_LANGUAGE_TYPESCRIPT -> LanguageData.TYPESCRIPT
+                    RunConfigLanguage.RUN_CONFIG_LANGUAGE_GO -> LanguageData.GO
+                    RunConfigLanguage.RUN_CONFIG_LANGUAGE_RUST -> LanguageData.RUST
+                    else -> LanguageData.UNKNOWN
+                },
             command = command,
             workingDirectory = workingDirectory,
             environmentVariables = environmentVariablesMap,

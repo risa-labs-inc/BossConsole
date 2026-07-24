@@ -28,12 +28,14 @@ import kotlin.test.assertTrue
  * contract.
  */
 class McpToolRegistryCoreTest {
-
     private val tempFiles = mutableListOf<File>()
 
     /** A throwaway disabled-tools file under the OS temp dir, cleaned up after each test. */
     private fun tempDisabledFile(): File {
-        val dir = kotlin.io.path.createTempDirectory("mcp-registry-test").toFile()
+        val dir =
+            kotlin.io.path
+                .createTempDirectory("mcp-registry-test")
+                .toFile()
         return File(dir, "mcp-disabled-tools.json").also { tempFiles.add(it) }
     }
 
@@ -43,8 +45,12 @@ class McpToolRegistryCoreTest {
         tempFiles.clear()
     }
 
-    private fun provider(id: String, vararg defs: McpToolDefinition) = object : McpToolProvider {
+    private fun provider(
+        id: String,
+        vararg defs: McpToolDefinition,
+    ) = object : McpToolProvider {
         override val providerId = id
+
         override fun tools() = defs.toList()
     }
 
@@ -87,7 +93,7 @@ class McpToolRegistryCoreTest {
     fun `tool requiring ALL permissions is hidden when only some are held`() {
         val core = McpToolRegistryCore(disabledFile = null)
         core.registerProvider(
-            provider("p1", echoTool("multi_gate", requiredPermissions = listOf("role.read", "role.assign")))
+            provider("p1", echoTool("multi_gate", requiredPermissions = listOf("role.read", "role.assign"))),
         )
 
         core.updateAccess(isAdmin = false, permissions = setOf("role.read"))
@@ -119,7 +125,7 @@ class McpToolRegistryCoreTest {
     fun `non-admin with requiresAdmin is hidden even holding the listed permissions`() {
         val core = McpToolRegistryCore(disabledFile = null)
         core.registerProvider(
-            provider("p1", echoTool("admin_only", requiredPermissions = listOf("role.read"), requiresAdmin = true))
+            provider("p1", echoTool("admin_only", requiredPermissions = listOf("role.read"), requiresAdmin = true)),
         )
 
         core.updateAccess(isAdmin = false, permissions = setOf("role.read"))
@@ -184,10 +190,13 @@ class McpToolRegistryCoreTest {
     fun `a provider whose tools() throws registers with no tools and does not affect siblings`() {
         val core = McpToolRegistryCore(disabledFile = null)
         core.registerProvider(provider("healthy", echoTool("healthy_tool")))
-        core.registerProvider(object : McpToolProvider {
-            override val providerId = "broken"
-            override fun tools(): List<McpToolDefinition> = error("plugin bug in tools()")
-        })
+        core.registerProvider(
+            object : McpToolProvider {
+                override val providerId = "broken"
+
+                override fun tools(): List<McpToolDefinition> = error("plugin bug in tools()")
+            },
+        )
         core.registerProvider(provider("healthy2", echoTool("healthy_tool_2")))
 
         // The broken provider contributes nothing but doesn't take anyone down.
@@ -287,161 +296,222 @@ class McpToolRegistryCoreTest {
     // ---------------------------------------------------------------------
 
     @Test
-    fun `invoke rejects unknown tool name`() = runBlocking {
-        val core = McpToolRegistryCore(disabledFile = null)
-        val result = core.invoke("does_not_exist", "{}")
-        assertTrue(result.isError)
-    }
-
-    @Test
-    fun `invoke rejects a disabled tool by name (unreachable even though still registered)`() = runBlocking {
-        val core = McpToolRegistryCore(disabledFile = null)
-        core.registerProvider(provider("p1", echoTool("disabled_tool")))
-        core.setToolEnabled("disabled_tool", enabled = false)
-
-        val result = core.invoke("disabled_tool", "{}")
-        assertTrue(result.isError)
-    }
-
-    @Test
-    fun `invoke rejects a permission-denied tool by name`() = runBlocking {
-        val core = McpToolRegistryCore(disabledFile = null)
-        core.registerProvider(provider("p1", echoTool("gated_tool", requiredPermissions = listOf("secret.read"))))
-        // Never granted -> stays out of `tools`, so invoke can't reach it.
-
-        val result = core.invoke("gated_tool", "{}")
-        assertTrue(result.isError)
-    }
-
-    @Test
-    fun `invoke parses string, boolean, integer, and double arguments`() = runBlocking {
-        var captured: McpToolArgs? = null
-        val core = McpToolRegistryCore(disabledFile = null)
-        core.registerProvider(
-            provider(
-                "p1",
-                echoTool("args_tool", handler = McpToolHandler { args -> captured = args; McpToolResult("ok") }),
-            )
-        )
-
-        core.invoke(
-            "args_tool",
-            """{"name":"hello","enabled":true,"count":42,"ratio":3.5,"missing_key_untouched":null}""",
-        )
-
-        val args = requireNotNull(captured)
-        assertEquals("hello", args.string("name"))
-        assertEquals(true, args.boolean("enabled"))
-        assertEquals(42, args.int("count"))
-        assertEquals(3.5, args.double("ratio"))
-        assertTrue(args.has("missing_key_untouched"))
-        assertNull(args.string("missing_key_untouched"))
-        assertFalse(args.has("truly_absent_key"))
-    }
-
-    @Test
-    fun `invoke coerces a JSON integer through int() and double()`() = runBlocking {
-        // scalarOf() stores whole numbers as Long; McpToolArgs getters must still
-        // hand back a usable Int/Double rather than silently going null.
-        var captured: McpToolArgs? = null
-        val core = McpToolRegistryCore(disabledFile = null)
-        core.registerProvider(
-            provider("p1", echoTool("num_tool", handler = McpToolHandler { args -> captured = args; McpToolResult("ok") }))
-        )
-
-        core.invoke("num_tool", """{"n": 7}""")
-
-        val args = requireNotNull(captured)
-        assertEquals(7, args.int("n"))
-        assertEquals(7.0, args.double("n"))
-    }
-
-    @Test
-    fun `int() returns null for values outside Int range instead of silently wrapping`() = runBlocking {
-        var captured: McpToolArgs? = null
-        val core = McpToolRegistryCore(disabledFile = null)
-        core.registerProvider(
-            provider("p1", echoTool("big_tool", handler = McpToolHandler { args -> captured = args; McpToolResult("ok") }))
-        )
-
-        core.invoke(
-            "big_tool",
-            """{"too_big": 9999999999, "too_small": -9999999999, "big_double": 1.0E12, "fits": 2147483647}""",
-        )
-
-        val args = requireNotNull(captured)
-        assertNull(args.int("too_big"), "Long above Int.MAX_VALUE must not wrap")
-        assertNull(args.int("too_small"), "Long below Int.MIN_VALUE must not wrap")
-        assertNull(args.int("big_double"), "Double outside Int range must not saturate")
-        assertEquals(Int.MAX_VALUE, args.int("fits"))
-        // The full value stays reachable through the wider getters.
-        assertEquals(9_999_999_999.0, args.double("too_big"))
-    }
-
-    @Test
-    fun `invoke with malformed JSON args runs the handler with an empty arg set instead of erroring`() = runBlocking {
-        var captured: McpToolArgs? = null
-        val core = McpToolRegistryCore(disabledFile = null)
-        core.registerProvider(
-            provider("p1", echoTool("bad_args_tool", handler = McpToolHandler { args -> captured = args; McpToolResult("ok") }))
-        )
-
-        val result = core.invoke("bad_args_tool", "{not valid json")
-
-        assertFalse(result.isError)
-        assertFalse(requireNotNull(captured).has("anything"))
-    }
-
-    @Test
-    fun `invoke times out a handler that never completes`() = runBlocking {
-        val core = McpToolRegistryCore(disabledFile = null, invokeTimeoutMs = 50L)
-        core.registerProvider(
-            provider("p1", echoTool("hangs", handler = McpToolHandler {
-                delay(5_000)
-                McpToolResult("should never get here")
-            }))
-        )
-
-        val result = core.invoke("hangs", "{}")
-        assertTrue(result.isError)
-        assertTrue(result.text.contains("timed out", ignoreCase = true))
-    }
-
-    @Test
-    fun `invoke wraps a handler exception into an error result`() = runBlocking {
-        val core = McpToolRegistryCore(disabledFile = null)
-        core.registerProvider(
-            provider("p1", echoTool("throws", handler = McpToolHandler { error("boom") }))
-        )
-
-        val result = core.invoke("throws", "{}")
-        assertTrue(result.isError)
-        assertTrue(result.text.contains("boom"))
-    }
-
-    @Test
-    fun `invoke propagates caller cancellation rather than swallowing it into an error result`() = runBlocking {
-        val core = McpToolRegistryCore(disabledFile = null)
-        core.registerProvider(
-            provider("p1", echoTool("slow", handler = McpToolHandler {
-                delay(5_000)
-                McpToolResult("unreachable")
-            }))
-        )
-
-        var threw: Throwable? = null
-        try {
-            coroutineScope {
-                val deferred = async { core.invoke("slow", "{}") }
-                delay(20)
-                deferred.cancel()
-                deferred.await()
-            }
-        } catch (t: Throwable) {
-            threw = t
+    fun `invoke rejects unknown tool name`() =
+        runBlocking {
+            val core = McpToolRegistryCore(disabledFile = null)
+            val result = core.invoke("does_not_exist", "{}")
+            assertTrue(result.isError)
         }
-        assertTrue(threw is CancellationException, "expected CancellationException, got $threw")
-    }
+
+    @Test
+    fun `invoke rejects a disabled tool by name (unreachable even though still registered)`() =
+        runBlocking {
+            val core = McpToolRegistryCore(disabledFile = null)
+            core.registerProvider(provider("p1", echoTool("disabled_tool")))
+            core.setToolEnabled("disabled_tool", enabled = false)
+
+            val result = core.invoke("disabled_tool", "{}")
+            assertTrue(result.isError)
+        }
+
+    @Test
+    fun `invoke rejects a permission-denied tool by name`() =
+        runBlocking {
+            val core = McpToolRegistryCore(disabledFile = null)
+            core.registerProvider(provider("p1", echoTool("gated_tool", requiredPermissions = listOf("secret.read"))))
+            // Never granted -> stays out of `tools`, so invoke can't reach it.
+
+            val result = core.invoke("gated_tool", "{}")
+            assertTrue(result.isError)
+        }
+
+    @Test
+    fun `invoke parses string, boolean, integer, and double arguments`() =
+        runBlocking {
+            var captured: McpToolArgs? = null
+            val core = McpToolRegistryCore(disabledFile = null)
+            core.registerProvider(
+                provider(
+                    "p1",
+                    echoTool(
+                        "args_tool",
+                        handler =
+                            McpToolHandler { args ->
+                                captured = args
+                                McpToolResult("ok")
+                            },
+                    ),
+                ),
+            )
+
+            core.invoke(
+                "args_tool",
+                """{"name":"hello","enabled":true,"count":42,"ratio":3.5,"missing_key_untouched":null}""",
+            )
+
+            val args = requireNotNull(captured)
+            assertEquals("hello", args.string("name"))
+            assertEquals(true, args.boolean("enabled"))
+            assertEquals(42, args.int("count"))
+            assertEquals(3.5, args.double("ratio"))
+            assertTrue(args.has("missing_key_untouched"))
+            assertNull(args.string("missing_key_untouched"))
+            assertFalse(args.has("truly_absent_key"))
+        }
+
+    @Test
+    fun `invoke coerces a JSON integer through int() and double()`() =
+        runBlocking {
+            // scalarOf() stores whole numbers as Long; McpToolArgs getters must still
+            // hand back a usable Int/Double rather than silently going null.
+            var captured: McpToolArgs? = null
+            val core = McpToolRegistryCore(disabledFile = null)
+            core.registerProvider(
+                provider(
+                    "p1",
+                    echoTool(
+                        "num_tool",
+                        handler =
+                            McpToolHandler { args ->
+                                captured = args
+                                McpToolResult("ok")
+                            },
+                    ),
+                ),
+            )
+
+            core.invoke("num_tool", """{"n": 7}""")
+
+            val args = requireNotNull(captured)
+            assertEquals(7, args.int("n"))
+            assertEquals(7.0, args.double("n"))
+        }
+
+    @Test
+    fun `int() returns null for values outside Int range instead of silently wrapping`() =
+        runBlocking {
+            var captured: McpToolArgs? = null
+            val core = McpToolRegistryCore(disabledFile = null)
+            core.registerProvider(
+                provider(
+                    "p1",
+                    echoTool(
+                        "big_tool",
+                        handler =
+                            McpToolHandler { args ->
+                                captured = args
+                                McpToolResult("ok")
+                            },
+                    ),
+                ),
+            )
+
+            core.invoke(
+                "big_tool",
+                """{"too_big": 9999999999, "too_small": -9999999999, "big_double": 1.0E12, "fits": 2147483647}""",
+            )
+
+            val args = requireNotNull(captured)
+            assertNull(args.int("too_big"), "Long above Int.MAX_VALUE must not wrap")
+            assertNull(args.int("too_small"), "Long below Int.MIN_VALUE must not wrap")
+            assertNull(args.int("big_double"), "Double outside Int range must not saturate")
+            assertEquals(Int.MAX_VALUE, args.int("fits"))
+            // The full value stays reachable through the wider getters.
+            assertEquals(9_999_999_999.0, args.double("too_big"))
+        }
+
+    @Test
+    fun `invoke with malformed JSON args runs the handler with an empty arg set instead of erroring`() =
+        runBlocking {
+            var captured: McpToolArgs? = null
+            val core = McpToolRegistryCore(disabledFile = null)
+            core.registerProvider(
+                provider(
+                    "p1",
+                    echoTool(
+                        "bad_args_tool",
+                        handler =
+                            McpToolHandler { args ->
+                                captured = args
+                                McpToolResult("ok")
+                            },
+                    ),
+                ),
+            )
+
+            val result = core.invoke("bad_args_tool", "{not valid json")
+
+            assertFalse(result.isError)
+            assertFalse(requireNotNull(captured).has("anything"))
+        }
+
+    @Test
+    fun `invoke times out a handler that never completes`() =
+        runBlocking {
+            val core = McpToolRegistryCore(disabledFile = null, invokeTimeoutMs = 50L)
+            core.registerProvider(
+                provider(
+                    "p1",
+                    echoTool(
+                        "hangs",
+                        handler =
+                            McpToolHandler {
+                                delay(5_000)
+                                McpToolResult("should never get here")
+                            },
+                    ),
+                ),
+            )
+
+            val result = core.invoke("hangs", "{}")
+            assertTrue(result.isError)
+            assertTrue(result.text.contains("timed out", ignoreCase = true))
+        }
+
+    @Test
+    fun `invoke wraps a handler exception into an error result`() =
+        runBlocking {
+            val core = McpToolRegistryCore(disabledFile = null)
+            core.registerProvider(
+                provider("p1", echoTool("throws", handler = McpToolHandler { error("boom") })),
+            )
+
+            val result = core.invoke("throws", "{}")
+            assertTrue(result.isError)
+            assertTrue(result.text.contains("boom"))
+        }
+
+    @Test
+    fun `invoke propagates caller cancellation rather than swallowing it into an error result`() =
+        runBlocking {
+            val core = McpToolRegistryCore(disabledFile = null)
+            core.registerProvider(
+                provider(
+                    "p1",
+                    echoTool(
+                        "slow",
+                        handler =
+                            McpToolHandler {
+                                delay(5_000)
+                                McpToolResult("unreachable")
+                            },
+                    ),
+                ),
+            )
+
+            var threw: Throwable? = null
+            try {
+                coroutineScope {
+                    val deferred = async { core.invoke("slow", "{}") }
+                    delay(20)
+                    deferred.cancel()
+                    deferred.await()
+                }
+            } catch (t: Throwable) {
+                threw = t
+            }
+            assertTrue(threw is CancellationException, "expected CancellationException, got $threw")
+        }
 
     // ---------------------------------------------------------------------
     // Concurrency: the mutation lock must keep allTools/tools consistent
@@ -456,14 +526,15 @@ class McpToolRegistryCoreTest {
         val iterations = 200
 
         repeat(8) { workerIndex ->
-            threads += Thread {
-                repeat(iterations) { i ->
-                    val id = "worker$workerIndex"
-                    core.registerProvider(provider(id, echoTool("tool_${workerIndex}_$i")))
-                    core.updateAccess(isAdmin = i % 2 == 0, permissions = setOf("p$i"))
-                    core.unregisterProvider(id)
+            threads +=
+                Thread {
+                    repeat(iterations) { i ->
+                        val id = "worker$workerIndex"
+                        core.registerProvider(provider(id, echoTool("tool_${workerIndex}_$i")))
+                        core.updateAccess(isAdmin = i % 2 == 0, permissions = setOf("p$i"))
+                        core.unregisterProvider(id)
+                    }
                 }
-            }
         }
         threads.forEach { it.start() }
         threads.forEach { it.join() }

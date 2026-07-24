@@ -1,6 +1,9 @@
 package ai.rever.boss.components.settings.keymap
 
+import ai.rever.boss.keymap.model.KeyBinding
+import ai.rever.boss.keymap.model.ShortcutContext
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.utils.SystemUtils
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
@@ -21,9 +24,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import ai.rever.boss.keymap.model.KeyBinding
-import ai.rever.boss.keymap.model.ShortcutContext
-import ai.rever.boss.utils.SystemUtils
 
 /**
  * Dialog for capturing keyboard shortcuts.
@@ -37,7 +37,7 @@ fun KeyCaptureDialog(
     category: String,
     currentBinding: KeyBinding?,
     onKeyCaptured: (KeyBinding) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
 ) {
     var capturedKey by remember { mutableStateOf<Key?>(null) }
     var capturedModifiers by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -50,33 +50,34 @@ fun KeyCaptureDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
-            modifier = Modifier
-                .width(500.dp)
-                .wrapContentHeight(),
+            modifier =
+                Modifier
+                    .width(500.dp)
+                    .wrapContentHeight(),
             shape = RoundedCornerShape(12.dp),
             color = BossTheme.colors.panel,
-            elevation = 8.dp
+            elevation = 8.dp,
         ) {
             Column(
-                modifier = Modifier.padding(24.dp)
+                modifier = Modifier.padding(24.dp),
             ) {
                 // Header
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
                         text = "Capture Keyboard Shortcut",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = BossTheme.colors.textPrimary
+                        color = BossTheme.colors.textPrimary,
                     )
                     IconButton(onClick = onDismiss) {
                         Icon(
                             Icons.Default.Close,
                             contentDescription = "Close",
-                            tint = BossTheme.colors.textSecondary
+                            tint = BossTheme.colors.textSecondary,
                         )
                     }
                 }
@@ -85,24 +86,25 @@ fun KeyCaptureDialog(
 
                 // Action info card
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(BossTheme.colors.ink)
-                        .border(1.dp, BossTheme.colors.line, RoundedCornerShape(6.dp))
-                        .padding(12.dp)
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(BossTheme.colors.ink)
+                            .border(1.dp, BossTheme.colors.line, RoundedCornerShape(6.dp))
+                            .padding(12.dp),
                 ) {
                     Text(
                         text = actionDescription,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
-                        color = BossTheme.colors.textPrimary
+                        color = BossTheme.colors.textPrimary,
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = "Context: ${context.displayName}",
                         fontSize = 12.sp,
-                        color = BossTheme.colors.textSecondary
+                        color = BossTheme.colors.textSecondary,
                     )
                 }
 
@@ -111,19 +113,20 @@ fun KeyCaptureDialog(
                 // Current binding display
                 if (currentBinding != null) {
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(BossTheme.colors.ink)
-                            .border(1.dp, BossTheme.colors.line, RoundedCornerShape(6.dp))
-                            .padding(12.dp),
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(BossTheme.colors.ink)
+                                .border(1.dp, BossTheme.colors.line, RoundedCornerShape(6.dp))
+                                .padding(12.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
                             text = "Current shortcut",
                             fontSize = 13.sp,
-                            color = BossTheme.colors.textSecondary
+                            color = BossTheme.colors.textSecondary,
                         )
                         KeyDisplay(currentBinding.displayString())
                     }
@@ -132,59 +135,58 @@ fun KeyCaptureDialog(
 
                 // Capture area
                 Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(120.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(BossTheme.colors.ink)
-                        .border(
-                            width = 2.dp,
-                            color = if (hasCapture) BossTheme.colors.signal else BossTheme.colors.line,
-                            shape = RoundedCornerShape(8.dp)
-                        )
-                        .focusRequester(focusRequester)
-                        .onPreviewKeyEvent { event ->
-                            if (event.type == KeyEventType.KeyDown) {
-                                capturedKey = event.key
-                                val mods = mutableListOf<String>()
-                                val isMacOS = SystemUtils.isMacOS
-                                if (isMacOS) {
-                                    if (event.isMetaPressed) mods.add("Cmd")
-                                    if (event.isCtrlPressed) mods.add("Ctrl")
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .height(120.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(BossTheme.colors.ink)
+                            .border(
+                                width = 2.dp,
+                                color = if (hasCapture) BossTheme.colors.signal else BossTheme.colors.line,
+                                shape = RoundedCornerShape(8.dp),
+                            ).focusRequester(focusRequester)
+                            .onPreviewKeyEvent { event ->
+                                if (event.type == KeyEventType.KeyDown) {
+                                    capturedKey = event.key
+                                    val mods = mutableListOf<String>()
+                                    val isMacOS = SystemUtils.isMacOS
+                                    if (isMacOS) {
+                                        if (event.isMetaPressed) mods.add("Cmd")
+                                        if (event.isCtrlPressed) mods.add("Ctrl")
+                                    } else {
+                                        if (event.isCtrlPressed) mods.add("Cmd")
+                                        if (event.isMetaPressed) mods.add("Ctrl")
+                                    }
+                                    if (event.isShiftPressed) mods.add("Shift")
+                                    if (event.isAltPressed) mods.add("Alt")
+                                    capturedModifiers = mods
+                                    hasCapture = true
+                                    true
                                 } else {
-                                    if (event.isCtrlPressed) mods.add("Cmd")
-                                    if (event.isMetaPressed) mods.add("Ctrl")
+                                    false
                                 }
-                                if (event.isShiftPressed) mods.add("Shift")
-                                if (event.isAltPressed) mods.add("Alt")
-                                capturedModifiers = mods
-                                hasCapture = true
-                                true
-                            } else {
-                                false
-                            }
-                        }
-                        .focusable(),
-                    contentAlignment = Alignment.Center
+                            }.focusable(),
+                    contentAlignment = Alignment.Center,
                 ) {
                     if (hasCapture && capturedKey != null) {
                         val displayStr = buildDisplayString(capturedKey!!, capturedModifiers)
                         KeyDisplay(displayStr, large = true)
                     } else {
                         Column(
-                            horizontalAlignment = Alignment.CenterHorizontally
+                            horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
                             Text(
                                 text = "Press any key combination...",
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.Medium,
-                                color = BossTheme.colors.textSecondary
+                                color = BossTheme.colors.textSecondary,
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
                                 text = "The dialog is focused and ready to capture",
                                 fontSize = 12.sp,
-                                color = BossTheme.colors.textSecondary.copy(alpha = 0.7f)
+                                color = BossTheme.colors.textSecondary.copy(alpha = 0.7f),
                             )
                         }
                     }
@@ -195,7 +197,7 @@ fun KeyCaptureDialog(
                 // Action buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
+                    horizontalArrangement = Arrangement.End,
                 ) {
                     TextButton(onClick = onDismiss) {
                         Text("Cancel", color = BossTheme.colors.textSecondary)
@@ -204,23 +206,25 @@ fun KeyCaptureDialog(
                     Button(
                         onClick = {
                             if (hasCapture && capturedKey != null) {
-                                val binding = KeyBinding(
-                                    actionId = actionId,
-                                    key = capturedKey!!.keyCode.toString(),
-                                    modifiers = capturedModifiers,
-                                    context = context,
-                                    category = category,
-                                    description = actionDescription,
-                                    enabled = true
-                                )
+                                val binding =
+                                    KeyBinding(
+                                        actionId = actionId,
+                                        key = capturedKey!!.keyCode.toString(),
+                                        modifiers = capturedModifiers,
+                                        context = context,
+                                        category = category,
+                                        description = actionDescription,
+                                        enabled = true,
+                                    )
                                 onKeyCaptured(binding)
                             }
                         },
                         enabled = hasCapture && capturedKey != null,
-                        colors = ButtonDefaults.buttonColors(
-                            backgroundColor = BossTheme.colors.signal,
-                            disabledBackgroundColor = BossTheme.colors.line
-                        )
+                        colors =
+                            ButtonDefaults.buttonColors(
+                                backgroundColor = BossTheme.colors.signal,
+                                disabledBackgroundColor = BossTheme.colors.line,
+                            ),
                     ) {
                         Text("Apply", color = BossTheme.colors.textPrimary)
                     }
@@ -234,18 +238,22 @@ fun KeyCaptureDialog(
  * Displays a keyboard shortcut with styled keycap badges.
  */
 @Composable
-private fun KeyDisplay(shortcutText: String, large: Boolean = false) {
+private fun KeyDisplay(
+    shortcutText: String,
+    large: Boolean = false,
+) {
     Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(4.dp))
-            .background(BossTheme.colors.signal.copy(alpha = 0.2f))
-            .padding(horizontal = if (large) 16.dp else 8.dp, vertical = if (large) 8.dp else 4.dp)
+        modifier =
+            Modifier
+                .clip(RoundedCornerShape(4.dp))
+                .background(BossTheme.colors.signal.copy(alpha = 0.2f))
+                .padding(horizontal = if (large) 16.dp else 8.dp, vertical = if (large) 8.dp else 4.dp),
     ) {
         Text(
             text = shortcutText,
             fontSize = if (large) 24.sp else 13.sp,
             fontWeight = FontWeight.Bold,
-            color = BossTheme.colors.signal
+            color = BossTheme.colors.signal,
         )
     }
 }
@@ -253,18 +261,22 @@ private fun KeyDisplay(shortcutText: String, large: Boolean = false) {
 /**
  * Builds a display string for captured keys.
  */
-private fun buildDisplayString(key: Key, modifiers: List<String>): String {
+private fun buildDisplayString(
+    key: Key,
+    modifiers: List<String>,
+): String {
     val isMac = System.getProperty("os.name").contains("Mac", ignoreCase = true)
 
-    val modifierStrings = modifiers.map { modifier ->
-        when (modifier.lowercase()) {
-            "cmd", "meta" -> if (isMac) "⌘" else "Ctrl"
-            "ctrl", "control" -> if (isMac) "⌃" else "Ctrl"
-            "shift" -> if (isMac) "⇧" else "Shift"
-            "alt", "option" -> if (isMac) "⌥" else "Alt"
-            else -> modifier
+    val modifierStrings =
+        modifiers.map { modifier ->
+            when (modifier.lowercase()) {
+                "cmd", "meta" -> if (isMac) "⌘" else "Ctrl"
+                "ctrl", "control" -> if (isMac) "⌃" else "Ctrl"
+                "shift" -> if (isMac) "⇧" else "Shift"
+                "alt", "option" -> if (isMac) "⌥" else "Alt"
+                else -> modifier
+            }
         }
-    }
 
     val keyString = formatKeyDisplay(key.keyCode.toString())
 
@@ -274,8 +286,8 @@ private fun buildDisplayString(key: Key, modifiers: List<String>): String {
 /**
  * Formats the key name for display.
  */
-private fun formatKeyDisplay(keyName: String): String {
-    return when (keyName.lowercase()) {
+private fun formatKeyDisplay(keyName: String): String =
+    when (keyName.lowercase()) {
         "space", "spacebar" -> "Space"
         "arrowleft", "directionleft" -> "←"
         "arrowright", "directionright" -> "→"
@@ -288,4 +300,3 @@ private fun formatKeyDisplay(keyName: String): String {
         "tab" -> "Tab"
         else -> keyName.uppercase()
     }
-}

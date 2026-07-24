@@ -6,7 +6,6 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class SemanticVersionTest {
-
     private fun v(s: String) = SemanticVersion.parse(s) ?: error("expected '$s' to parse")
 
     // ---- parse: valid ----
@@ -73,10 +72,17 @@ class SemanticVersionTest {
     @Test
     fun `full semver precedence chain`() {
         // From the spec's example ordering.
-        val ordered = listOf(
-            "1.0.0-alpha", "1.0.0-alpha.1", "1.0.0-alpha.beta",
-            "1.0.0-beta", "1.0.0-beta.2", "1.0.0-beta.11", "1.0.0-rc.1", "1.0.0"
-        ).map { v(it) }
+        val ordered =
+            listOf(
+                "1.0.0-alpha",
+                "1.0.0-alpha.1",
+                "1.0.0-alpha.beta",
+                "1.0.0-beta",
+                "1.0.0-beta.2",
+                "1.0.0-beta.11",
+                "1.0.0-rc.1",
+                "1.0.0",
+            ).map { v(it) }
         for (i in 0 until ordered.size - 1) {
             assertTrue(ordered[i] < ordered[i + 1], "${ordered[i]} should sort below ${ordered[i + 1]}")
         }

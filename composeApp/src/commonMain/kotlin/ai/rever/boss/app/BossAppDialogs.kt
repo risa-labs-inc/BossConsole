@@ -47,10 +47,10 @@ import ai.rever.boss.window.selectProjectInWindow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import kotlin.random.Random
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.random.Random
 
 /**
  * Every dialog and auxiliary window BossApp can show, driven by the visibility
@@ -90,7 +90,7 @@ internal fun BossAppDialogs(state: BossAppState) {
                         }
                     }
                 }
-            }
+            },
         )
     }
 
@@ -105,44 +105,53 @@ internal fun BossAppDialogs(state: BossAppState) {
             tabRegistry = state.tabRegistry,
             onCreateTab = { type, path ->
                 // Get the active panel component first, fallback to last interacted, then original
-                val targetComponent = splitViewState.getActiveTabsComponent()
-                    ?: splitViewState.getLastInteractedTabComponent()
-                    ?: state.tabsComponent
+                val targetComponent =
+                    splitViewState.getActiveTabsComponent()
+                        ?: splitViewState.getLastInteractedTabComponent()
+                        ?: state.tabsComponent
 
                 when (type) {
                     TabType.URL -> {
-                        val tab = FluckTabInfo(
-                            id = "browser-${Random.nextLong()}",
-                            typeId = TabTypeId("fluck"),
-                            _title = "Loading...",
-                            url = path
-                        )
+                        val tab =
+                            FluckTabInfo(
+                                id = "browser-${Random.nextLong()}",
+                                typeId = TabTypeId("fluck"),
+                                _title = "Loading...",
+                                url = path,
+                            )
                         targetComponent.addTab(tab)
                     }
+
                     TabType.FILE -> {
                         val fileName = path.extractFileName()
                         val fileIconInfo = FileIcons.forFile(fileName)
-                        val tab = EditorTabInfo(
-                            id = "editor-${Random.nextLong()}",
-                            typeId = TabTypeId("editor"),
-                            title = fileName,
-                            icon = fileIconInfo.icon,
-                            tabIcon = ai.rever.boss.plugin.api.TabIcon.Vector(fileIconInfo.icon, fileIconInfo.color),
-                            filePath = path
-                        )
+                        val tab =
+                            EditorTabInfo(
+                                id = "editor-${Random.nextLong()}",
+                                typeId = TabTypeId("editor"),
+                                title = fileName,
+                                icon = fileIconInfo.icon,
+                                tabIcon =
+                                    ai.rever.boss.plugin.api.TabIcon
+                                        .Vector(fileIconInfo.icon, fileIconInfo.color),
+                                filePath = path,
+                            )
                         targetComponent.addTab(tab)
                     }
+
                     TabType.TERMINAL -> {
                         // Get current project path for terminal working directory (per-window)
                         val projectPath = windowProjectState.selectedProject.value.path
-                        val tab = TerminalTabInfo(
-                            id = "terminal-${Random.nextLong()}",
-                            typeId = TerminalTabType.typeId,
-                            title = "Terminal",
-                            workingDirectory = projectPath.ifEmpty { null }
-                        )
+                        val tab =
+                            TerminalTabInfo(
+                                id = "terminal-${Random.nextLong()}",
+                                typeId = TerminalTabType.typeId,
+                                title = "Terminal",
+                                workingDirectory = projectPath.ifEmpty { null },
+                            )
                         targetComponent.addTab(tab)
                     }
+
                     TabType.JUPYTER -> {
                         val tab = JupyterTabInfo.createUntitled(path)
                         targetComponent.addTab(tab)
@@ -155,13 +164,16 @@ internal fun BossAppDialogs(state: BossAppState) {
             // Plugin tab types build their own TabInfo; open it in the
             // same target component as the built-in types.
             onCreateTabInfo = { tabInfo ->
-                val targetComponent = splitViewState.getActiveTabsComponent()
-                    ?: splitViewState.getLastInteractedTabComponent()
-                    ?: state.tabsComponent
+                val targetComponent =
+                    splitViewState.getActiveTabsComponent()
+                        ?: splitViewState.getLastInteractedTabComponent()
+                        ?: state.tabsComponent
                 targetComponent.addTab(tabInfo)
                 state.newTabDialogInitialType = null
             },
-            projectPath = windowProjectState.selectedProject.value.path.ifEmpty { null }
+            projectPath =
+                windowProjectState.selectedProject.value.path
+                    .ifEmpty { null },
         )
     }
 
@@ -184,9 +196,10 @@ internal fun BossAppDialogs(state: BossAppState) {
                     }
 
                     // Find the workspace containing this tab
-                    val targetWorkspace = workspaceManager.workspaces.value.find {
-                        it.id == activeTab.workspaceId
-                    }
+                    val targetWorkspace =
+                        workspaceManager.workspaces.value.find {
+                            it.id == activeTab.workspaceId
+                        }
 
                     if (targetWorkspace != null) {
                         // Load and apply the target workspace
@@ -200,7 +213,7 @@ internal fun BossAppDialogs(state: BossAppState) {
                 }
 
                 state.focusRequester.requestFocus()
-            }
+            },
         )
     }
 
@@ -240,17 +253,26 @@ internal fun BossAppDialogs(state: BossAppState) {
                     coroutineScope.launch {
                         // Open the bookmark as a new tab using the tab config
                         when (bookmark.tabConfig.type) {
-                            "browser" -> bookmark.tabConfig.url?.let { url ->
-                                splitViewState.openUrlInActivePanel(url, bookmark.tabConfig.title)
+                            "browser" -> {
+                                bookmark.tabConfig.url?.let { url ->
+                                    splitViewState.openUrlInActivePanel(url, bookmark.tabConfig.title)
+                                }
                             }
-                            "editor" -> bookmark.tabConfig.filePath?.let { filePath ->
-                                FileEventBus.openFile(filePath, sourceWindowId = windowId, projectPath = selectedProject.path)
+
+                            "editor" -> {
+                                bookmark.tabConfig.filePath?.let { filePath ->
+                                    FileEventBus.openFile(filePath, sourceWindowId = windowId, projectPath = selectedProject.path)
+                                }
                             }
+
                             // Route .ipynb through the same file bus as editor; the router opens
                             // it in the notebook tab when the plugin is present, else the editor.
-                            "jupyter" -> bookmark.tabConfig.filePath?.takeIf { it.isNotBlank() }?.let { filePath ->
-                                FileEventBus.openFile(filePath, sourceWindowId = windowId, projectPath = selectedProject.path)
+                            "jupyter" -> {
+                                bookmark.tabConfig.filePath?.takeIf { it.isNotBlank() }?.let { filePath ->
+                                    FileEventBus.openFile(filePath, sourceWindowId = windowId, projectPath = selectedProject.path)
+                                }
                             }
+
                             else -> {} // Other tab types can be added later
                         }
                     }
@@ -261,10 +283,11 @@ internal fun BossAppDialogs(state: BossAppState) {
                 state.showGlobalSearchDialog = false
                 // Find and run the configuration
                 coroutineScope.launch {
-                    val config = RunConfigurationManager.currentSettings.value.configurations
-                        .find { it.id == configId }
-                        ?: RunConfigurationManager.detectedConfigurations.value
+                    val config =
+                        RunConfigurationManager.currentSettings.value.configurations
                             .find { it.id == configId }
+                            ?: RunConfigurationManager.detectedConfigurations.value
+                                .find { it.id == configId }
                     if (config != null) {
                         // Execute the configuration
                         RunExecutionService.execute(config, debug = false, windowId)
@@ -276,31 +299,94 @@ internal fun BossAppDialogs(state: BossAppState) {
                 state.showGlobalSearchDialog = false
                 // Execute the command via MenuActionsHandler
                 when (actionId) {
-                    KeymapActions.WINDOW_NEW -> WindowOperations.createNewWindow()
-                    KeymapActions.WINDOW_CLOSE -> WindowOperations.closeWindow(windowId)
-                    KeymapActions.TAB_NEW -> MenuActionsHandler.triggerNewTab(windowId)
-                    KeymapActions.TAB_CLOSE -> MenuActionsHandler.triggerCloseTab(windowId)
-                    KeymapActions.BROWSER_RELOAD -> MenuActionsHandler.triggerReloadBrowser(windowId)
-                    KeymapActions.BROWSER_ZOOM_RESET -> MenuActionsHandler.triggerActualSize(windowId)
-                    KeymapActions.BROWSER_ZOOM_IN -> MenuActionsHandler.triggerZoomIn(windowId)
-                    KeymapActions.BROWSER_ZOOM_OUT -> MenuActionsHandler.triggerZoomOut(windowId)
-                    KeymapActions.PANEL_NAVIGATE_LEFT -> MenuActionsHandler.triggerNavigatePanelLeft(windowId)
-                    KeymapActions.PANEL_NAVIGATE_RIGHT -> MenuActionsHandler.triggerNavigatePanelRight(windowId)
-                    KeymapActions.PANEL_NAVIGATE_UP -> MenuActionsHandler.triggerNavigatePanelUp(windowId)
-                    KeymapActions.PANEL_NAVIGATE_DOWN -> MenuActionsHandler.triggerNavigatePanelDown(windowId)
-                    KeymapActions.PANEL_SPLIT_VERTICAL -> MenuActionsHandler.triggerSplitVertically(windowId)
-                    KeymapActions.PANEL_SPLIT_HORIZONTAL -> MenuActionsHandler.triggerSplitHorizontally(windowId)
-                    KeymapActions.QUICK_SWITCHER_OPEN -> { state.showTopOfMindDialog = true }
-                    KeymapActions.WORKSPACE_SAVE -> MenuActionsHandler.triggerSaveWorkspace(windowId)
-                    KeymapActions.CODEBASE_OPEN -> MenuActionsHandler.triggerOpenCodebase(windowId)
-                    KeymapActions.GLOBAL_SEARCH_OPEN -> { state.showGlobalSearchDialog = true }
-                    KeymapActions.FOCUS_MODE_TOGGLE -> MenuActionsHandler.triggerToggleFocusMode(windowId)
-                    KeymapActions.SETTINGS_OPEN -> MenuActionsHandler.triggerOpenSettings(windowId)
-                    KeymapActions.HELP_SHORTCUTS -> MenuActionsHandler.triggerShowShortcutHelp(windowId)
+                    KeymapActions.WINDOW_NEW -> {
+                        WindowOperations.createNewWindow()
+                    }
+
+                    KeymapActions.WINDOW_CLOSE -> {
+                        WindowOperations.closeWindow(windowId)
+                    }
+
+                    KeymapActions.TAB_NEW -> {
+                        MenuActionsHandler.triggerNewTab(windowId)
+                    }
+
+                    KeymapActions.TAB_CLOSE -> {
+                        MenuActionsHandler.triggerCloseTab(windowId)
+                    }
+
+                    KeymapActions.BROWSER_RELOAD -> {
+                        MenuActionsHandler.triggerReloadBrowser(windowId)
+                    }
+
+                    KeymapActions.BROWSER_ZOOM_RESET -> {
+                        MenuActionsHandler.triggerActualSize(windowId)
+                    }
+
+                    KeymapActions.BROWSER_ZOOM_IN -> {
+                        MenuActionsHandler.triggerZoomIn(windowId)
+                    }
+
+                    KeymapActions.BROWSER_ZOOM_OUT -> {
+                        MenuActionsHandler.triggerZoomOut(windowId)
+                    }
+
+                    KeymapActions.PANEL_NAVIGATE_LEFT -> {
+                        MenuActionsHandler.triggerNavigatePanelLeft(windowId)
+                    }
+
+                    KeymapActions.PANEL_NAVIGATE_RIGHT -> {
+                        MenuActionsHandler.triggerNavigatePanelRight(windowId)
+                    }
+
+                    KeymapActions.PANEL_NAVIGATE_UP -> {
+                        MenuActionsHandler.triggerNavigatePanelUp(windowId)
+                    }
+
+                    KeymapActions.PANEL_NAVIGATE_DOWN -> {
+                        MenuActionsHandler.triggerNavigatePanelDown(windowId)
+                    }
+
+                    KeymapActions.PANEL_SPLIT_VERTICAL -> {
+                        MenuActionsHandler.triggerSplitVertically(windowId)
+                    }
+
+                    KeymapActions.PANEL_SPLIT_HORIZONTAL -> {
+                        MenuActionsHandler.triggerSplitHorizontally(windowId)
+                    }
+
+                    KeymapActions.QUICK_SWITCHER_OPEN -> {
+                        state.showTopOfMindDialog = true
+                    }
+
+                    KeymapActions.WORKSPACE_SAVE -> {
+                        MenuActionsHandler.triggerSaveWorkspace(windowId)
+                    }
+
+                    KeymapActions.CODEBASE_OPEN -> {
+                        MenuActionsHandler.triggerOpenCodebase(windowId)
+                    }
+
+                    KeymapActions.GLOBAL_SEARCH_OPEN -> {
+                        state.showGlobalSearchDialog = true
+                    }
+
+                    KeymapActions.FOCUS_MODE_TOGGLE -> {
+                        MenuActionsHandler.triggerToggleFocusMode(windowId)
+                    }
+
+                    KeymapActions.SETTINGS_OPEN -> {
+                        MenuActionsHandler.triggerOpenSettings(windowId)
+                    }
+
+                    KeymapActions.HELP_SHORTCUTS -> {
+                        MenuActionsHandler.triggerShowShortcutHelp(windowId)
+                    }
+
                     else -> {} // Unknown command
                 }
                 state.focusRequester.requestFocus()
-            }
+            },
         )
     }
 
@@ -311,7 +397,7 @@ internal fun BossAppDialogs(state: BossAppState) {
                 state.showSettingsDialog = false
                 state.settingsInitialSection = null
             },
-            initialSection = state.settingsInitialSection
+            initialSection = state.settingsInitialSection,
         )
     }
 
@@ -326,7 +412,7 @@ internal fun BossAppDialogs(state: BossAppState) {
             onOpenSettings = {
                 state.settingsInitialSection = "KEYMAP"
                 state.showSettingsDialog = true
-            }
+            },
         )
     }
 
@@ -353,33 +439,41 @@ internal fun BossAppDialogs(state: BossAppState) {
 
                 // Open the link using helper function
                 // Issue #506: Pass windowId for multi-window navigation filtering
-                openTerminalLink(state.pendingTerminalLinkUrl, mode, splitViewState, state.pendingTerminalSourceId, coroutineScope, windowId = windowId)
+                openTerminalLink(
+                    state.pendingTerminalLinkUrl,
+                    mode,
+                    splitViewState,
+                    state.pendingTerminalSourceId,
+                    coroutineScope,
+                    windowId = windowId,
+                )
                 state.pendingTerminalLinkUrl = ""
                 state.pendingTerminalSourceId = null
-            }
+            },
         )
     }
 
     // Directory picker for project selection (must be outside conditional for Compose)
-    val directoryPicker = rememberDirectoryPicker { path ->
-        path?.let {
-            val projectName = it.extractFileName().ifEmpty { "Unknown" }
-            selectProjectInWindow(
-                windowProjectState,
-                Project(
-                    name = projectName,
-                    path = it
+    val directoryPicker =
+        rememberDirectoryPicker { path ->
+            path?.let {
+                val projectName = it.extractFileName().ifEmpty { "Unknown" }
+                selectProjectInWindow(
+                    windowProjectState,
+                    Project(
+                        name = projectName,
+                        path = it,
+                    ),
                 )
-            )
-            // Show CodeBase panel when project is selected
-            state.draggablePanelComponent.setPanelVisible(
-                left.top,
-                true
-            )
-            // Close the dialog after selection
-            state.showProjectDialog = false
+                // Show CodeBase panel when project is selected
+                state.draggablePanelComponent.setPanelVisible(
+                    left.top,
+                    true,
+                )
+                // Close the dialog after selection
+                state.showProjectDialog = false
+            }
         }
-    }
 
     // Project selection dialog (triggered from File > Open Project menu)
     // Note: Dialog handles empty recentProjects case internally by opening directory picker directly
@@ -389,7 +483,7 @@ internal fun BossAppDialogs(state: BossAppState) {
             onOpenDirectoryPicker = {
                 state.showProjectDialog = false
                 directoryPicker.pickDirectory()
-            }
+            },
         )
     }
 
@@ -404,7 +498,7 @@ internal fun BossAppDialogs(state: BossAppState) {
                 selectProjectInWindow(windowProjectState, project)
                 state.showNewProjectDialog = false
                 state.focusRequester.requestFocus()
-            }
+            },
         )
     }
 
@@ -417,10 +511,11 @@ internal fun BossAppDialogs(state: BossAppState) {
             },
             onProjectCloned = { projectPath ->
                 val projectName = projectPath.substringAfterLast(java.io.File.separator)
-                val project = Project(
-                    name = projectName,
-                    path = projectPath
-                )
+                val project =
+                    Project(
+                        name = projectName,
+                        path = projectPath,
+                    )
                 state.showCloneProjectDialog = false
                 // Check if a project is already open
                 if (selectedProject.path.isNotEmpty()) {
@@ -431,7 +526,7 @@ internal fun BossAppDialogs(state: BossAppState) {
                     selectProjectInWindow(windowProjectState, project)
                     state.focusRequester.requestFocus()
                 }
-            }
+            },
         )
     }
 
@@ -453,7 +548,7 @@ internal fun BossAppDialogs(state: BossAppState) {
                 WindowOperations.createNewWindowWithProject(selectedProj)
                 state.projectToOpen = null
                 state.focusRequester.requestFocus()
-            }
+            },
         )
     }
 
@@ -486,21 +581,26 @@ internal fun BossAppDialogs(state: BossAppState) {
                 when {
                     dynamicPluginManager != null -> {
                         try {
-                            logger.info(LogCategory.SYSTEM, "Installing plugins from wizard", mapOf(
-                                "pluginCount" to plugins.size.toString()
-                            ))
+                            logger.info(
+                                LogCategory.SYSTEM,
+                                "Installing plugins from wizard",
+                                mapOf(
+                                    "pluginCount" to plugins.size.toString(),
+                                ),
+                            )
                             PluginWizardIntegration.installPlugins(dynamicPluginManager, plugins, onProgress)
                         } catch (e: Exception) {
                             logger.error(LogCategory.SYSTEM, "Plugin installation failed", error = e)
                             Result.failure(e)
                         }
                     }
+
                     else -> {
                         logger.error(LogCategory.SYSTEM, "Plugin manager not available during installation")
                         Result.failure(Exception("Toolbox not available"))
                     }
                 }
-            }
+            },
         )
     }
 

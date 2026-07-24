@@ -75,6 +75,7 @@ interface PluginSandbox : PluginSandboxRef {
 enum class SandboxMode {
     /** Plugin runs in the host JVM (current default behavior). */
     IN_PROCESS,
+
     /** Plugin runs in a separate child process with IPC bridge. */
     OUT_OF_PROCESS,
 }
@@ -87,34 +88,28 @@ data class SandboxConfig(
      * Maximum number of threads for the sandbox's thread pool.
      */
     val maxThreads: Int = 2,
-
     /**
      * Interval in milliseconds between heartbeat checks.
      */
     val heartbeatIntervalMs: Long = 5000,
-
     /**
      * Threshold in milliseconds for considering a plugin unresponsive.
      */
     val unhealthyThresholdMs: Long = 15000,
-
     /**
      * Maximum number of consecutive errors before marking unhealthy.
      */
     val maxConsecutiveErrors: Int = 5,
-
     /**
      * Maximum number of restart attempts before disabling the plugin.
      */
     val maxRestartAttempts: Int = 3,
-
     /**
      * Base delay in milliseconds for restart backoff.
      */
     val restartBackoffBaseMs: Long = 1000,
-
     /**
      * Maximum delay in milliseconds for restart backoff.
      */
-    val restartBackoffMaxMs: Long = 30000
+    val restartBackoffMaxMs: Long = 30000,
 )

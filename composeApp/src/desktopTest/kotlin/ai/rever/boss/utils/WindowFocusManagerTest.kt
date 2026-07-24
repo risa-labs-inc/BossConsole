@@ -5,7 +5,6 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class WindowFocusManagerTest {
-
     @Test
     fun `registration snapshots an already focused window`() {
         val tracker = AwtWindowFocusTracker()

@@ -2,22 +2,12 @@
 <SmellBaseline>
   <ManuallySuppressedIssues/>
   <CurrentIssues>
-    <ID>CyclomaticComplexMethod:PluginUpdateManager.kt$PluginUpdateManager$suspend fun checkForUpdates( installedPlugins: Map&lt;String, String&gt; ): UpdateCheckResult</ID>
-    <ID>FunctionNaming:PluginUpdateManagerBossVersionGateTest.kt$PluginUpdateManagerBossVersionGateTest$@Test fun `blank host version disables the gate`()</ID>
-    <ID>FunctionNaming:PluginUpdateManagerBossVersionGateTest.kt$PluginUpdateManagerBossVersionGateTest$@Test fun `blank minBossVersion fails open`()</ID>
-    <ID>FunctionNaming:PluginUpdateManagerBossVersionGateTest.kt$PluginUpdateManagerBossVersionGateTest$@Test fun `newer host than required is offered`()</ID>
-    <ID>FunctionNaming:PluginUpdateManagerBossVersionGateTest.kt$PluginUpdateManagerBossVersionGateTest$@Test fun `prerelease of the required host version is offered, not gated`()</ID>
-    <ID>FunctionNaming:PluginUpdateManagerBossVersionGateTest.kt$PluginUpdateManagerBossVersionGateTest$@Test fun `unparseable minBossVersion fails open`()</ID>
-    <ID>FunctionNaming:PluginUpdateManagerBossVersionGateTest.kt$PluginUpdateManagerBossVersionGateTest$@Test fun `update requiring newer host is reported, not offered`()</ID>
-    <ID>FunctionNaming:PluginUpdateManagerBossVersionGateTest.kt$PluginUpdateManagerBossVersionGateTest$@Test fun `update whose minBossVersion the host satisfies is offered`()</ID>
-    <ID>FunctionNaming:PluginUpdateManagerCheckCompatTest.kt$PluginUpdateManagerCheckCompatTest$@Test fun `compatible newer version is offered`()</ID>
-    <ID>FunctionNaming:PluginUpdateManagerCheckCompatTest.kt$PluginUpdateManagerCheckCompatTest$@Test fun `incompatible newer version is reported, not offered`()</ID>
-    <ID>FunctionNaming:PluginUpdateManagerCheckCompatTest.kt$PluginUpdateManagerCheckCompatTest$@Test fun `no update when installed version is already current`()</ID>
-    <ID>LongMethod:PluginUpdateManager.kt$PluginUpdateManager$suspend fun checkForUpdates( installedPlugins: Map&lt;String, String&gt; ): UpdateCheckResult</ID>
-    <ID>NestedBlockDepth:PluginUpdateManager.kt$PluginUpdateManager$suspend fun checkForUpdates( installedPlugins: Map&lt;String, String&gt; ): UpdateCheckResult</ID>
-    <ID>ReturnCount:PluginUpdateManager.kt$PluginUpdateManager$private fun isNewerVersion(version1: String, version2: String): Boolean</ID>
-    <ID>ReturnCount:PluginUpdateManager.kt$PluginUpdateManager$private fun satisfiesFloor(required: String, installed: String): Boolean</ID>
-    <ID>ReturnCount:PluginUpdateManager.kt$PluginUpdateManager$suspend fun updatePlugin( pluginId: String, downloadPath: String, unloadPlugin: suspend (String) -&gt; Result&lt;Unit&gt;, loadPlugin: suspend (String) -&gt; Result&lt;Unit&gt; ): Result&lt;Unit&gt;</ID>
+    <ID>CyclomaticComplexMethod:PluginUpdateManager.kt$PluginUpdateManager$suspend fun checkForUpdates(installedPlugins: Map&lt;String, String&gt;): UpdateCheckResult</ID>
+    <ID>LongMethod:PluginUpdateManager.kt$PluginUpdateManager$suspend fun checkForUpdates(installedPlugins: Map&lt;String, String&gt;): UpdateCheckResult</ID>
+    <ID>NestedBlockDepth:PluginUpdateManager.kt$PluginUpdateManager$suspend fun checkForUpdates(installedPlugins: Map&lt;String, String&gt;): UpdateCheckResult</ID>
+    <ID>ReturnCount:PluginUpdateManager.kt$PluginUpdateManager$private fun isNewerVersion( version1: String, version2: String, ): Boolean</ID>
+    <ID>ReturnCount:PluginUpdateManager.kt$PluginUpdateManager$private fun satisfiesFloor( required: String, installed: String, ): Boolean</ID>
+    <ID>ReturnCount:PluginUpdateManager.kt$PluginUpdateManager$suspend fun updatePlugin( pluginId: String, downloadPath: String, unloadPlugin: suspend (String) -&gt; Result&lt;Unit&gt;, loadPlugin: suspend (String) -&gt; Result&lt;Unit&gt;, ): Result&lt;Unit&gt;</ID>
     <ID>TooGenericExceptionCaught:PluginUpdateManager.kt$PluginUpdateManager$e: Exception</ID>
     <ID>TooManyFunctions:PluginUpdateManager.kt$PluginUpdateManager</ID>
   </CurrentIssues>

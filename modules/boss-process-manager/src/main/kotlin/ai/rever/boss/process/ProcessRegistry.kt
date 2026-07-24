@@ -1,7 +1,7 @@
 package ai.rever.boss.process
 
-import ai.rever.boss.ipc.proto.ProcessManifest
 import ai.rever.boss.ipc.proto.PluginCapability
+import ai.rever.boss.ipc.proto.ProcessManifest
 import ai.rever.boss.ipc.proto.ProcessState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -14,7 +14,6 @@ import java.util.concurrent.ConcurrentHashMap
  * Thread-safe: registrations happen from IPC handler threads, lookups from UI thread.
  */
 class ProcessRegistry {
-
     private val logger = LoggerFactory.getLogger(ProcessRegistry::class.java)
     private val processes = ConcurrentHashMap<String, ManagedProcess>()
     private val manifests = ConcurrentHashMap<String, ProcessManifest>()
@@ -23,7 +22,11 @@ class ProcessRegistry {
     private val _processCount = MutableStateFlow(0)
     val processCount: StateFlow<Int> = _processCount.asStateFlow()
 
-    fun register(id: String, process: ManagedProcess, manifest: ProcessManifest? = null) {
+    fun register(
+        id: String,
+        process: ManagedProcess,
+        manifest: ProcessManifest? = null,
+    ) {
         processes[id] = process
         manifest?.let { manifests[id] = it }
         _processCount.value = processes.size
@@ -42,30 +45,32 @@ class ProcessRegistry {
 
     fun getManifest(id: String): ProcessManifest? = manifests[id]
 
-    fun updateManifest(id: String, manifest: ProcessManifest) {
+    fun updateManifest(
+        id: String,
+        manifest: ProcessManifest,
+    ) {
         manifests[id] = manifest
     }
 
     fun getAllProcesses(): List<ManagedProcess> = processes.values.toList()
 
-    fun getProcessesByType(type: ProcessType): List<ManagedProcess> =
-        processes.values.filter { it.config.processType == type }
+    fun getProcessesByType(type: ProcessType): List<ManagedProcess> = processes.values.filter { it.config.processType == type }
 
-    fun getProcessesByState(state: ProcessState): List<ManagedProcess> =
-        processes.values.filter { it.state.value == state }
+    fun getProcessesByState(state: ProcessState): List<ManagedProcess> = processes.values.filter { it.state.value == state }
 
     /**
      * Get all capabilities aggregated from all registered process manifests.
      * Used by the Mastery orchestrator to discover available actions.
      */
-    fun getCapabilities(): List<PluginCapability> =
-        manifests.values.flatMap { it.capabilitiesList }
+    fun getCapabilities(): List<PluginCapability> = manifests.values.flatMap { it.capabilitiesList }
 
     /**
      * Find a specific capability by plugin ID and action name.
      */
-    fun findCapability(pluginId: String, action: String): PluginCapability? =
-        manifests[pluginId]?.capabilitiesList?.find { it.action == action }
+    fun findCapability(
+        pluginId: String,
+        action: String,
+    ): PluginCapability? = manifests[pluginId]?.capabilitiesList?.find { it.action == action }
 
     fun getRestartCount(id: String): Int = restartCounts[id] ?: 0
 

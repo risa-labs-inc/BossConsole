@@ -15,7 +15,7 @@ import androidx.compose.runtime.mutableStateOf
  */
 class WizardState<S : WizardStep>(
     private val steps: List<S>,
-    private val initialStepIndex: Int = 0
+    private val initialStepIndex: Int = 0,
 ) {
     private val _currentStepIndex = mutableStateOf(initialStepIndex)
 
@@ -140,5 +140,5 @@ class WizardState<S : WizardStep>(
  */
 fun <S : WizardStep> wizardStateOf(
     steps: List<S>,
-    initialStepIndex: Int = 0
+    initialStepIndex: Int = 0,
 ): WizardState<S> = WizardState(steps, initialStepIndex)

@@ -1,4 +1,5 @@
 @file:Suppress("UNUSED")
+
 package ai.rever.boss.components.events
 
 import ai.rever.boss.ipc.IpcEventBridge
@@ -25,10 +26,11 @@ object GitTerminalEventBus {
     /** Optional IPC bridge for forwarding events cross-process in kernel mode. */
     @Volatile var ipcBridge: IpcEventBridge? = null
 
-    private val _openEvents = MutableSharedFlow<GitTerminalOpenEvent>(
-        replay = 0,
-        extraBufferCapacity = 10
-    )
+    private val _openEvents =
+        MutableSharedFlow<GitTerminalOpenEvent>(
+            replay = 0,
+            extraBufferCapacity = 10,
+        )
     val openEvents: SharedFlow<GitTerminalOpenEvent> = _openEvents.asSharedFlow()
 
     /**
@@ -43,14 +45,15 @@ object GitTerminalEventBus {
         command: String,
         workingDirectory: String,
         operationName: String,
-        sourceWindowId: String
+        sourceWindowId: String,
     ) {
-        val event = GitTerminalOpenEvent(
-            command = command,
-            workingDirectory = workingDirectory,
-            operationName = operationName,
-            sourceWindowId = sourceWindowId
-        )
+        val event =
+            GitTerminalOpenEvent(
+                command = command,
+                workingDirectory = workingDirectory,
+                operationName = operationName,
+                sourceWindowId = sourceWindowId,
+            )
         _openEvents.emit(event)
         ipcBridge?.forward("GitTerminalOpenEvent", event, sourceWindowId)
     }

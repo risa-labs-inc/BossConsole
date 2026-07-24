@@ -4,9 +4,7 @@ import androidx.compose.runtime.Composable
 
 // Platform-specific file picker for selecting directories
 @Composable
-expect fun rememberDirectoryPicker(
-    onDirectorySelected: (path: String?) -> Unit
-): DirectoryPicker
+expect fun rememberDirectoryPicker(onDirectorySelected: (path: String?) -> Unit): DirectoryPicker
 
 interface DirectoryPicker {
     fun pickDirectory()
@@ -16,7 +14,7 @@ interface DirectoryPicker {
 @Composable
 expect fun rememberFilePicker(
     onFileSelected: (path: String?, content: String?) -> Unit,
-    fileExtensions: List<String> = listOf("json")
+    fileExtensions: List<String> = listOf("json"),
 ): FilePicker
 
 interface FilePicker {
@@ -35,6 +33,5 @@ interface FilePicker {
 expect fun pickSaveFile(
     suggestedFileName: String,
     initialDirectory: String? = null,
-    allowedExtensions: List<String> = emptyList()
+    allowedExtensions: List<String> = emptyList(),
 ): String?
-

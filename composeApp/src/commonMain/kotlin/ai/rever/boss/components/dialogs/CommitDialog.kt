@@ -3,12 +3,10 @@ package ai.rever.boss.components.dialogs
 import ai.rever.boss.git.GitFileStatus
 import ai.rever.boss.git.GitFileStatusType
 import ai.rever.boss.git.GitOperationResult
-import ai.rever.boss.plugin.git.GitOperationResult.Success as GitSuccess
-import ai.rever.boss.plugin.git.GitOperationResult.Error as GitError
 import ai.rever.boss.git.GitService
 import ai.rever.boss.plugin.ui.BossTheme
-import ai.rever.boss.window.LocalWindowId
 import ai.rever.boss.window.LocalWindowGitState
+import ai.rever.boss.window.LocalWindowId
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -31,6 +29,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.launch
+import ai.rever.boss.plugin.git.GitOperationResult.Error as GitError
+import ai.rever.boss.plugin.git.GitOperationResult.Success as GitSuccess
 
 /**
  * Commit Dialog for staging files and creating commits.
@@ -47,7 +47,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun CommitDialog(
     onDismiss: () -> Unit,
-    onCommitSuccess: (String) -> Unit = {}
+    onCommitSuccess: (String) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     val windowId = LocalWindowId.current
@@ -90,36 +90,37 @@ fun CommitDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
-            modifier = Modifier
-                .width(600.dp)
-                .heightIn(max = 700.dp),
+            modifier =
+                Modifier
+                    .width(600.dp)
+                    .heightIn(max = 700.dp),
             shape = RoundedCornerShape(8.dp),
             color = BossTheme.colors.panel,
-            elevation = 8.dp
+            elevation = 8.dp,
         ) {
             Column(
-                modifier = Modifier.padding(16.dp)
+                modifier = Modifier.padding(16.dp),
             ) {
                 // Header
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
                         text = if (amendCommit) "Amend Commit" else "Commit Changes",
                         color = BossTheme.colors.textPrimary,
                         fontSize = 16.sp,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
                     )
                     IconButton(
                         onClick = onDismiss,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(24.dp),
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.Close,
                             contentDescription = "Close",
-                            tint = BossTheme.colors.textSecondary
+                            tint = BossTheme.colors.textSecondary,
                         )
                     }
                 }
@@ -132,18 +133,20 @@ fun CommitDialog(
                     onValueChange = { commitMessage = it },
                     label = { Text("Commit message", color = BossTheme.colors.textSecondary, fontSize = 12.sp) },
                     placeholder = { Text("Enter commit message...", color = BossTheme.colors.textSecondary.copy(alpha = 0.5f)) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(120.dp)
-                        .focusRequester(focusRequester),
-                    colors = TextFieldDefaults.outlinedTextFieldColors(
-                        textColor = BossTheme.colors.textPrimary,
-                        cursorColor = BossTheme.colors.signal,
-                        focusedBorderColor = BossTheme.colors.signal,
-                        unfocusedBorderColor = BossTheme.colors.line,
-                        backgroundColor = BossTheme.colors.panel
-                    ),
-                    maxLines = 5
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .height(120.dp)
+                            .focusRequester(focusRequester),
+                    colors =
+                        TextFieldDefaults.outlinedTextFieldColors(
+                            textColor = BossTheme.colors.textPrimary,
+                            cursorColor = BossTheme.colors.signal,
+                            focusedBorderColor = BossTheme.colors.signal,
+                            unfocusedBorderColor = BossTheme.colors.line,
+                            backgroundColor = BossTheme.colors.panel,
+                        ),
+                    maxLines = 5,
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -151,45 +154,47 @@ fun CommitDialog(
                 // Options row
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
                     // Amend checkbox
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.clickable { amendCommit = !amendCommit }
+                        modifier = Modifier.clickable { amendCommit = !amendCommit },
                     ) {
                         Checkbox(
                             checked = amendCommit,
                             onCheckedChange = { amendCommit = it },
-                            colors = CheckboxDefaults.colors(
-                                checkedColor = BossTheme.colors.signal,
-                                uncheckedColor = BossTheme.colors.line
-                            )
+                            colors =
+                                CheckboxDefaults.colors(
+                                    checkedColor = BossTheme.colors.signal,
+                                    uncheckedColor = BossTheme.colors.line,
+                                ),
                         )
                         Text(
                             text = "Amend previous commit",
                             color = BossTheme.colors.textPrimary,
-                            fontSize = 12.sp
+                            fontSize = 12.sp,
                         )
                     }
 
                     // Sign-off checkbox
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.clickable { signOff = !signOff }
+                        modifier = Modifier.clickable { signOff = !signOff },
                     ) {
                         Checkbox(
                             checked = signOff,
                             onCheckedChange = { signOff = it },
-                            colors = CheckboxDefaults.colors(
-                                checkedColor = BossTheme.colors.signal,
-                                uncheckedColor = BossTheme.colors.line
-                            )
+                            colors =
+                                CheckboxDefaults.colors(
+                                    checkedColor = BossTheme.colors.signal,
+                                    uncheckedColor = BossTheme.colors.line,
+                                ),
                         )
                         Text(
                             text = "Add sign-off",
                             color = BossTheme.colors.textPrimary,
-                            fontSize = 12.sp
+                            fontSize = 12.sp,
                         )
                     }
                 }
@@ -198,13 +203,14 @@ fun CommitDialog(
 
                 // File sections
                 Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .border(1.dp, BossTheme.colors.line, RoundedCornerShape(4.dp))
+                    modifier =
+                        Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .border(1.dp, BossTheme.colors.line, RoundedCornerShape(4.dp)),
                 ) {
                     LazyColumn(
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier.fillMaxSize(),
                     ) {
                         // Staged files section
                         if (stagedFiles.isNotEmpty()) {
@@ -215,7 +221,7 @@ fun CommitDialog(
                                     actionText = "Unstage All",
                                     onAction = {
                                         scope.launch { GitService.unstageAll(windowId = windowId) }
-                                    }
+                                    },
                                 )
                             }
                             items(stagedFiles, key = { "staged-${it.path}" }) { file ->
@@ -224,7 +230,7 @@ fun CommitDialog(
                                     isStaged = true,
                                     onToggle = {
                                         scope.launch { GitService.unstage(file.path, windowId = windowId) }
-                                    }
+                                    },
                                 )
                             }
                         }
@@ -238,7 +244,7 @@ fun CommitDialog(
                                     actionText = "Stage All",
                                     onAction = {
                                         scope.launch { GitService.stageAll(windowId = windowId) }
-                                    }
+                                    },
                                 )
                             }
                             items(unstagedFiles, key = { "unstaged-${it.path}" }) { file ->
@@ -247,7 +253,7 @@ fun CommitDialog(
                                     isStaged = false,
                                     onToggle = {
                                         scope.launch { GitService.stage(file.path, windowId = windowId) }
-                                    }
+                                    },
                                 )
                             }
                         }
@@ -256,15 +262,16 @@ fun CommitDialog(
                         if (stagedFiles.isEmpty() && unstagedFiles.isEmpty()) {
                             item {
                                 Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(32.dp),
-                                    contentAlignment = Alignment.Center
+                                    modifier =
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .padding(32.dp),
+                                    contentAlignment = Alignment.Center,
                                 ) {
                                     Text(
                                         text = "No changes to commit",
                                         color = BossTheme.colors.textSecondary,
-                                        fontSize = 13.sp
+                                        fontSize = 13.sp,
                                     )
                                 }
                             }
@@ -278,7 +285,7 @@ fun CommitDialog(
                     Text(
                         text = error,
                         color = BossTheme.colors.alert,
-                        fontSize = 12.sp
+                        fontSize = 12.sp,
                     )
                 }
 
@@ -288,14 +295,14 @@ fun CommitDialog(
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     // Staged count indicator
                     if (stagedFiles.isNotEmpty()) {
                         Text(
                             text = "${stagedFiles.size} file${if (stagedFiles.size > 1) "s" else ""} staged",
                             color = BossTheme.colors.textSecondary,
-                            fontSize = 11.sp
+                            fontSize = 11.sp,
                         )
                         Spacer(modifier = Modifier.width(16.dp))
                     }
@@ -309,11 +316,12 @@ fun CommitDialog(
                     Button(
                         onClick = {
                             scope.launch {
-                                val finalMessage = if (signOff) {
-                                    "$commitMessage\n\nSigned-off-by: ${System.getProperty("user.name")}"
-                                } else {
-                                    commitMessage
-                                }
+                                val finalMessage =
+                                    if (signOff) {
+                                        "$commitMessage\n\nSigned-off-by: ${System.getProperty("user.name")}"
+                                    } else {
+                                        commitMessage
+                                    }
 
                                 val result = GitService.commit(finalMessage, amend = amendCommit, windowId = windowId)
                                 when (result) {
@@ -321,6 +329,7 @@ fun CommitDialog(
                                         onCommitSuccess(commitMessage)
                                         onDismiss()
                                     }
+
                                     is GitError -> {
                                         errorMessage = result.message
                                     }
@@ -328,19 +337,20 @@ fun CommitDialog(
                             }
                         },
                         enabled = commitMessage.isNotBlank() && (hasChangesToCommit || amendCommit) && !isLoading,
-                        colors = ButtonDefaults.buttonColors(
-                            backgroundColor = BossTheme.colors.signal,
-                            contentColor = BossTheme.colors.onSignal,
-                            disabledBackgroundColor = BossTheme.colors.line,
-                            disabledContentColor = BossTheme.colors.textMuted
-                        )
+                        colors =
+                            ButtonDefaults.buttonColors(
+                                backgroundColor = BossTheme.colors.signal,
+                                contentColor = BossTheme.colors.onSignal,
+                                disabledBackgroundColor = BossTheme.colors.line,
+                                disabledContentColor = BossTheme.colors.textMuted,
+                            ),
                     ) {
                         if (isLoading) {
                             // Renders on the disabled `line` background, not amber
                             CircularProgressIndicator(
                                 modifier = Modifier.size(16.dp),
                                 color = BossTheme.colors.textPrimary,
-                                strokeWidth = 2.dp
+                                strokeWidth = 2.dp,
                             )
                         } else {
                             Text(text = if (amendCommit) "Amend" else "Commit")
@@ -357,39 +367,40 @@ private fun CommitFileSectionHeader(
     title: String,
     count: Int,
     actionText: String,
-    onAction: () -> Unit
+    onAction: () -> Unit,
 ) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(BossTheme.colors.panel.copy(alpha = 0.7f))
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .background(BossTheme.colors.panel.copy(alpha = 0.7f))
+                .padding(horizontal = 12.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = title,
                 color = BossTheme.colors.textSecondary,
                 fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold
+                fontWeight = FontWeight.SemiBold,
             )
             Spacer(modifier = Modifier.width(6.dp))
             Text(
                 text = "($count)",
                 color = BossTheme.colors.textSecondary.copy(alpha = 0.7f),
-                fontSize = 11.sp
+                fontSize = 11.sp,
             )
         }
         TextButton(
             onClick = onAction,
             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-            modifier = Modifier.height(24.dp)
+            modifier = Modifier.height(24.dp),
         ) {
             Text(
                 text = actionText,
                 color = BossTheme.colors.signal,
-                fontSize = 10.sp
+                fontSize = 10.sp,
             )
         }
     }
@@ -399,42 +410,46 @@ private fun CommitFileSectionHeader(
 private fun CommitFileRow(
     file: GitFileStatus,
     isStaged: Boolean,
-    onToggle: () -> Unit
+    onToggle: () -> Unit,
 ) {
     val statusType = if (isStaged) file.indexStatus else file.workTreeStatus
-    val statusChar = when (statusType) {
-        GitFileStatusType.MODIFIED -> "M"
-        GitFileStatusType.ADDED -> "A"
-        GitFileStatusType.DELETED -> "D"
-        GitFileStatusType.RENAMED -> "R"
-        GitFileStatusType.COPIED -> "C"
-        GitFileStatusType.UNTRACKED -> "?"
-        else -> " "
-    }
-    val statusColor = when (statusType) {
-        GitFileStatusType.MODIFIED -> BossTheme.colors.data
-        GitFileStatusType.ADDED -> BossTheme.colors.ok
-        GitFileStatusType.DELETED -> BossTheme.colors.alert
-        GitFileStatusType.RENAMED, GitFileStatusType.COPIED -> BossTheme.colors.warn
-        GitFileStatusType.UNTRACKED -> BossTheme.colors.textSecondary
-        else -> BossTheme.colors.textSecondary
-    }
+    val statusChar =
+        when (statusType) {
+            GitFileStatusType.MODIFIED -> "M"
+            GitFileStatusType.ADDED -> "A"
+            GitFileStatusType.DELETED -> "D"
+            GitFileStatusType.RENAMED -> "R"
+            GitFileStatusType.COPIED -> "C"
+            GitFileStatusType.UNTRACKED -> "?"
+            else -> " "
+        }
+    val statusColor =
+        when (statusType) {
+            GitFileStatusType.MODIFIED -> BossTheme.colors.data
+            GitFileStatusType.ADDED -> BossTheme.colors.ok
+            GitFileStatusType.DELETED -> BossTheme.colors.alert
+            GitFileStatusType.RENAMED, GitFileStatusType.COPIED -> BossTheme.colors.warn
+            GitFileStatusType.UNTRACKED -> BossTheme.colors.textSecondary
+            else -> BossTheme.colors.textSecondary
+        }
 
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onToggle)
-            .padding(horizontal = 12.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onToggle)
+                .padding(horizontal = 12.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Checkbox(
             checked = isStaged,
             onCheckedChange = { onToggle() },
-            colors = CheckboxDefaults.colors(
-                checkedColor = BossTheme.colors.signal,
-                uncheckedColor = BossTheme.colors.line
-            ),
-            modifier = Modifier.size(20.dp)
+            colors =
+                CheckboxDefaults.colors(
+                    checkedColor = BossTheme.colors.signal,
+                    uncheckedColor = BossTheme.colors.line,
+                ),
+            modifier = Modifier.size(20.dp),
         )
 
         Spacer(modifier = Modifier.width(8.dp))
@@ -445,7 +460,7 @@ private fun CommitFileRow(
             fontSize = 12.sp,
             fontWeight = FontWeight.Bold,
             fontFamily = FontFamily.Monospace,
-            modifier = Modifier.width(16.dp)
+            modifier = Modifier.width(16.dp),
         )
 
         Spacer(modifier = Modifier.width(8.dp))
@@ -456,7 +471,7 @@ private fun CommitFileRow(
             fontSize = 12.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f)
+            modifier = Modifier.weight(1f),
         )
     }
 }

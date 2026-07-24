@@ -13,15 +13,19 @@ import kotlinx.coroutines.flow.MutableStateFlow
  * - Triggering appropriate UI updates and authentication completion
  */
 object PasskeySessionEventHandler {
-
     private val logger = BossLogger.forComponent("PasskeySessionEventHandler")
 
     /**
      * Passkey session event types
      */
     sealed class PasskeySessionEvent {
-        data class RegistrationCompleted(val sessionId: String) : PasskeySessionEvent()
-        data class AuthenticationCompleted(val sessionId: String) : PasskeySessionEvent()
+        data class RegistrationCompleted(
+            val sessionId: String,
+        ) : PasskeySessionEvent()
+
+        data class AuthenticationCompleted(
+            val sessionId: String,
+        ) : PasskeySessionEvent()
     }
 
     /**
@@ -39,11 +43,10 @@ object PasskeySessionEventHandler {
         val sessionId: String,
         val email: String,
         val type: SessionType,
-        val timestamp: Long = System.currentTimeMillis()
+        val timestamp: Long = System.currentTimeMillis(),
     )
 
-    enum class SessionType {
-    }
+    enum class SessionType
 
     /**
      * Handle passkey registration completion from deep link
@@ -78,8 +81,5 @@ object PasskeySessionEventHandler {
     /**
      * Get metadata for an active session
      */
-    fun getSessionMetadata(sessionId: String): SessionMetadata? {
-        return activeSessions[sessionId]
-    }
-
+    fun getSessionMetadata(sessionId: String): SessionMetadata? = activeSessions[sessionId]
 }

@@ -1,13 +1,13 @@
 package ai.rever.boss.components.buttons
 
-import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.components.overlays.ContextMenu
+import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.plugin.api.Panel
 import ai.rever.boss.plugin.api.Panel.Companion.bottom
 import ai.rever.boss.plugin.api.Panel.Companion.left
 import ai.rever.boss.plugin.api.Panel.Companion.right
 import ai.rever.boss.plugin.api.Panel.Companion.top
-import ai.rever.boss.components.overlays.ContextMenu
-import ai.rever.boss.components.overlays.ContextMenuItem
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -48,7 +48,7 @@ fun BossActionButton(
     isSelected: Boolean,
     modifier: Modifier,
     hintDirection: Panel = bottom,
-    onClick: () -> Unit
+    onClick: () -> Unit,
 ) = BossActionButton(
     imageVector = imageVector,
     text = text,
@@ -57,7 +57,7 @@ fun BossActionButton(
     hintText = text,
     showHintWithDelay = false,
     hintDirection = hintDirection,
-    onClick = onClick
+    onClick = onClick,
 )
 
 @Composable
@@ -78,8 +78,8 @@ fun BossActionButton(
     contextDirection: Panel = bottom,
     hintText: String? = null,
     showHintWithDelay: Boolean = true,
-    hintDirection:  Panel = bottom,
-    onClick: () -> Unit = {}
+    hintDirection: Panel = bottom,
+    onClick: () -> Unit = {},
 ) {
     // Resolved icon color - use iconColor if provided, otherwise fall back to color
     val resolvedIconColor = iconColor ?: color
@@ -97,13 +97,15 @@ fun BossActionButton(
 
     // Popup positions are computed lazily when Popups become visible
     fun computeMenuPosition(): IntOffset {
-        val x = buttonPositionRef[0].toInt() +
+        val x =
+            buttonPositionRef[0].toInt() +
                 when (contextDirection) {
                     right -> buttonSizeRef[0]
                     left -> -contextMenuSizeRef[0]
                     else -> (buttonSizeRef[0] - contextMenuSizeRef[0]) / 2
                 }
-        val y = buttonPositionRef[1].toInt() +
+        val y =
+            buttonPositionRef[1].toInt() +
                 when (contextDirection) {
                     top -> -contextMenuSizeRef[1]
                     bottom -> buttonSizeRef[1]
@@ -114,8 +116,9 @@ fun BossActionButton(
 
     // State for hover popup - use class-level state holder to survive recomposition
     val hoverState = remember { HoverPopupState() }
-    fun computeHoverPopupPosition(): IntOffset {
-        return IntOffset(
+
+    fun computeHoverPopupPosition(): IntOffset =
+        IntOffset(
             buttonPositionRef[0].toInt() +
                 when (hintDirection) {
                     right -> buttonSizeRef[0]
@@ -127,9 +130,8 @@ fun BossActionButton(
                     top -> -hintPopupSizeRef[1]
                     bottom -> buttonSizeRef[1]
                     else -> 0
-                }
+                },
         )
-    }
 
     // Use interaction source to track states
     val interactionSource = remember { MutableInteractionSource() }
@@ -171,13 +173,14 @@ fun BossActionButton(
             items = contextMenuItems,
             offset = computeMenuPosition(),
             onDismissRequest = { showContextMenu = false },
-            modifier = Modifier.onGloballyPositioned { coordinates ->
-                contextMenuSizeRef[0] = coordinates.size.width
-                contextMenuSizeRef[1] = coordinates.size.height
-            }
+            modifier =
+                Modifier.onGloballyPositioned { coordinates ->
+                    contextMenuSizeRef[0] = coordinates.size.width
+                    contextMenuSizeRef[1] = coordinates.size.height
+                },
         )
     }
-    
+
     // Show hover popup if hovering and hint text is provided
     // Use hoverState.capturedText to prevent flickering when content updates during hover
     val displayHintText = hoverState.capturedText ?: hintText
@@ -185,26 +188,31 @@ fun BossActionButton(
         Popup(
             alignment = Alignment.TopStart,
             offset = computeHoverPopupPosition(),
-            properties = PopupProperties(focusable = false)
+            properties = PopupProperties(focusable = false),
         ) {
             Surface(
-                modifier = Modifier
-                    .onGloballyPositioned { coordinates ->
-                        hintPopupSizeRef[0] = coordinates.size.width
-                        hintPopupSizeRef[1] = coordinates.size.height
-                    },
+                modifier =
+                    Modifier
+                        .onGloballyPositioned { coordinates ->
+                            hintPopupSizeRef[0] = coordinates.size.width
+                            hintPopupSizeRef[1] = coordinates.size.height
+                        },
                 color = colors.raised,
-                shape = RoundedCornerShape(radii.input)
+                shape = RoundedCornerShape(radii.input),
             ) {
-                Row(modifier = Modifier.defaultMinSize(2.dp)
-                    .padding(vertical = 0.dp, horizontal = 12.dp),
+                Row(
+                    modifier =
+                        Modifier
+                            .defaultMinSize(2.dp)
+                            .padding(vertical = 0.dp, horizontal = 12.dp),
                     horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically) {
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Text(
                         text = displayHintText,
                         color = colors.textPrimary,
                         fontSize = 12.sp,
-                        modifier = Modifier.padding(bottom = 4.dp)
+                        modifier = Modifier.padding(bottom = 4.dp),
                     )
                 }
             }
@@ -221,27 +229,29 @@ fun BossActionButton(
             textAlign = TextAlign.Center,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = if (maxTextWidth != null) Modifier.widthIn(max = maxTextWidth) else Modifier
+            modifier = if (maxTextWidth != null) Modifier.widthIn(max = maxTextWidth) else Modifier,
         )
     }
 
     @Composable
-    fun MainIcon(icon: ImageVector = Icons.Outlined.KeyboardArrowDown, size: Dp = 16.dp) {
+    fun MainIcon(
+        icon: ImageVector = Icons.Outlined.KeyboardArrowDown,
+        size: Dp = 16.dp,
+    ) {
         Icon(
             imageVector = icon,
             contentDescription = text,
             modifier = Modifier.size(size),
-            tint = if (isActive) resolvedIconColor else resolvedIconColor.copy(alpha = 0.8f)
+            tint = if (isActive) resolvedIconColor else resolvedIconColor.copy(alpha = 0.8f),
         )
     }
 
     var _leftLogo = leftLogo
     var _contentPadding = contentPadding
 
-
     leftLogo?.let {
         _contentPadding = PaddingValues(vertical = 2.dp, horizontal = 10.dp)
-    }?: leftIcon?.let {
+    } ?: leftIcon?.let {
         _contentPadding = PaddingValues(vertical = 6.dp, horizontal = 10.dp)
         _leftLogo = { MainIcon(it) }
     }
@@ -260,35 +270,37 @@ fun BossActionButton(
     TextButton(
         onClick = handleClick,
         interactionSource = interactionSource,
-        colors = ButtonDefaults.buttonColors(
-            backgroundColor = if (isSelected) {
-                if (isFocused) {
-                    colors.signal
-                } else {
-                    color.copy(alpha = 0.1f)
-                }
-            } else {
-                Color.Transparent
-            },
-            contentColor = color
-        ),
+        colors =
+            ButtonDefaults.buttonColors(
+                backgroundColor =
+                    if (isSelected) {
+                        if (isFocused) {
+                            colors.signal
+                        } else {
+                            color.copy(alpha = 0.1f)
+                        }
+                    } else {
+                        Color.Transparent
+                    },
+                contentColor = color,
+            ),
         contentPadding = _contentPadding,
-        modifier = modifier
-            .defaultMinSize(minHeight = 2.dp, minWidth = 2.dp)
-            .run {
-                if (imageVector != null) {
-                    size(28.dp).hoverable(interactionSource)
-                } else {
-                    hoverable(interactionSource)
-                }
-            }
-            .onGloballyPositioned { coordinates ->
-                val pos = coordinates.positionInParent()
-                buttonPositionRef[0] = pos.x
-                buttonPositionRef[1] = pos.y
-                buttonSizeRef[0] = coordinates.size.width
-                buttonSizeRef[1] = coordinates.size.height
-            }
+        modifier =
+            modifier
+                .defaultMinSize(minHeight = 2.dp, minWidth = 2.dp)
+                .run {
+                    if (imageVector != null) {
+                        size(28.dp).hoverable(interactionSource)
+                    } else {
+                        hoverable(interactionSource)
+                    }
+                }.onGloballyPositioned { coordinates ->
+                    val pos = coordinates.positionInParent()
+                    buttonPositionRef[0] = pos.x
+                    buttonPositionRef[1] = pos.y
+                    buttonSizeRef[0] = coordinates.size.width
+                    buttonSizeRef[1] = coordinates.size.height
+                },
     ) {
         if (_leftLogo != null) {
             _leftLogo()

@@ -2,128 +2,45 @@
 <SmellBaseline>
   <ManuallySuppressedIssues/>
   <CurrentIssues>
-    <ID>CyclomaticComplexMethod:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$fun validate(classLoader: ClassLoader, jarPath: String): ValidationResult</ID>
-    <ID>CyclomaticComplexMethod:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$private fun verifyReference( ref: ConstantPoolParser.MemberRef, classLoader: ClassLoader, sourceClass: String, errors: MutableList&lt;String&gt; )</ID>
+    <ID>CyclomaticComplexMethod:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$fun validate( classLoader: ClassLoader, jarPath: String, ): ValidationResult</ID>
+    <ID>CyclomaticComplexMethod:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$private fun verifyReference( ref: ConstantPoolParser.MemberRef, classLoader: ClassLoader, sourceClass: String, errors: MutableList&lt;String&gt;, )</ID>
     <ID>CyclomaticComplexMethod:BinaryCompatibilityValidator.kt$ConstantPoolParser$fun extractReferences(classBytes: ByteArray): List&lt;MemberRef&gt;</ID>
-    <ID>CyclomaticComplexMethod:BinaryCompatibilityValidator.kt$ConstantPoolParser$fun parseDescriptorParams(descriptor: String, classLoader: ClassLoader): Array&lt;Class&lt;*&gt;&gt;</ID>
+    <ID>CyclomaticComplexMethod:BinaryCompatibilityValidator.kt$ConstantPoolParser$fun parseDescriptorParams( descriptor: String, classLoader: ClassLoader, ): Array&lt;Class&lt;*&gt;&gt;</ID>
     <ID>CyclomaticComplexMethod:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$override suspend fun loadPlugin(jarPath: String): Result&lt;LoadedPlugin&gt;</ID>
     <ID>EmptyFunctionBlock:ForceUnloadTest.kt$LockedFixturePlugin${}</ID>
     <ID>ExplicitGarbageCollectionCall:ClassLoaderGCWatcher.kt$ClassLoaderGCWatcher$gc()</ID>
     <ID>ExplicitGarbageCollectionCall:ClassLoaderGCWatcher.kt$ClassLoaderGCWatcher$runFinalization()</ID>
-    <ID>FunctionNaming:ApiClassLoaderTest.kt$ApiClassLoaderTest$@Test fun `api layer is shared across manager instances (second-window gap)`()</ID>
-    <ID>FunctionNaming:ApiClassLoaderTest.kt$ApiClassLoaderTest$@Test fun `api-jar-only type is unresolvable without the ApiClassLoader`()</ID>
-    <ID>FunctionNaming:ApiClassLoaderTest.kt$ApiClassLoaderTest$@Test fun `api-jar-only type resolves with one identity across plugin classloaders`()</ID>
-    <ID>FunctionNaming:ApiClassLoaderTest.kt$ApiClassLoaderTest$@Test fun `fromPluginDir degrades to an empty loader when no api jar exists`()</ID>
-    <ID>FunctionNaming:ApiClassLoaderTest.kt$ApiClassLoaderTest$@Test fun `fromPluginDir ignores jars with a different pluginId`()</ID>
-    <ID>FunctionNaming:ApiClassLoaderTest.kt$ApiClassLoaderTest$@Test fun `fromPluginDir picks the highest semver api jar`()</ID>
-    <ID>FunctionNaming:ApiClassLoaderTest.kt$ApiClassLoaderTest$@Test fun `initializeApiLayer is idempotent`()</ID>
-    <ID>FunctionNaming:ApiClassLoaderTest.kt$ApiClassLoaderTest$@Test fun `manager parents new plugin classloaders to the installed api layer`()</ID>
-    <ID>FunctionNaming:ApiClassLoaderTest.kt$ApiClassLoaderTest$@Test fun `swapApiLayer replaces the shared layer and closes the old loader`()</ID>
-    <ID>FunctionNaming:ApiClassLoaderTest.kt$ApiClassLoaderTest$@Test fun `type present in the host wins parent-first over the api jar`()</ID>
-    <ID>FunctionNaming:BinaryCompatibilityValidatorTest.kt$BinaryCompatibilityValidatorTest$@Test fun `api package references do not soft-fail`()</ID>
-    <ID>FunctionNaming:BinaryCompatibilityValidatorTest.kt$BinaryCompatibilityValidatorTest$@Test fun `concrete class still resolves Object methods via the superclass walk`()</ID>
-    <ID>FunctionNaming:BinaryCompatibilityValidatorTest.kt$BinaryCompatibilityValidatorTest$@Test fun `interface ref to Object's equals resolves`()</ID>
-    <ID>FunctionNaming:BinaryCompatibilityValidatorTest.kt$BinaryCompatibilityValidatorTest$@Test fun `interface ref to Object's hashCode resolves`()</ID>
-    <ID>FunctionNaming:BinaryCompatibilityValidatorTest.kt$BinaryCompatibilityValidatorTest$@Test fun `interface ref to Object's toString resolves`()</ID>
-    <ID>FunctionNaming:BinaryCompatibilityValidatorTest.kt$BinaryCompatibilityValidatorTest$@Test fun `interface ref to a declared interface method resolves`()</ID>
-    <ID>FunctionNaming:BinaryCompatibilityValidatorTest.kt$BinaryCompatibilityValidatorTest$@Test fun `interface ref to a genuinely missing method does not resolve`()</ID>
-    <ID>FunctionNaming:BinaryCompatibilityValidatorTest.kt$BinaryCompatibilityValidatorTest$@Test fun `jdk and other packages do not soft-fail`()</ID>
-    <ID>FunctionNaming:BinaryCompatibilityValidatorTest.kt$BinaryCompatibilityValidatorTest$@Test fun `prefix is anchored to the package boundary`()</ID>
-    <ID>FunctionNaming:BinaryCompatibilityValidatorTest.kt$BinaryCompatibilityValidatorTest$@Test fun `runtime package references soft-fail`()</ID>
-    <ID>FunctionNaming:ForceUnloadTest.kt$ForceUnloadTest$@Test fun `forced unload bypasses canUnload=false`()</ID>
-    <ID>FunctionNaming:ForceUnloadTest.kt$ForceUnloadTest$@Test fun `non-forced unload refuses a canUnload=false plugin`()</ID>
-    <ID>FunctionNaming:LoadTimeSignatureVerificationTest.kt$LoadTimeSignatureVerificationTest$@Test fun `dev mode does not rescue a tampered sidecar`()</ID>
-    <ID>FunctionNaming:LoadTimeSignatureVerificationTest.kt$LoadTimeSignatureVerificationTest$@Test fun `missing sidecar hard-fails once enforcement is on`()</ID>
-    <ID>FunctionNaming:LoadTimeSignatureVerificationTest.kt$LoadTimeSignatureVerificationTest$@Test fun `missing sidecar is allowed during rollout`()</ID>
-    <ID>FunctionNaming:LoadTimeSignatureVerificationTest.kt$LoadTimeSignatureVerificationTest$@Test fun `missing sidecar stays allowed in dev mode even under enforcement`()</ID>
-    <ID>FunctionNaming:LoadTimeSignatureVerificationTest.kt$LoadTimeSignatureVerificationTest$@Test fun `sidecar signed for a different version is rejected`()</ID>
-    <ID>FunctionNaming:LoadTimeSignatureVerificationTest.kt$LoadTimeSignatureVerificationTest$@Test fun `tampered jar with a valid-looking sidecar is rejected`()</ID>
-    <ID>FunctionNaming:LoadTimeSignatureVerificationTest.kt$LoadTimeSignatureVerificationTest$@Test fun `valid sidecar passes the signature gate`()</ID>
-    <ID>FunctionNaming:MinApiVersionGateTest.kt$MinApiVersionGateTest$@Test fun `gate fails open on unparseable requirement`()</ID>
-    <ID>FunctionNaming:MinApiVersionGateTest.kt$MinApiVersionGateTest$@Test fun `gate fails open when currentApiVersion is not set`()</ID>
-    <ID>FunctionNaming:MinApiVersionGateTest.kt$MinApiVersionGateTest$@Test fun `plugin requiring newer api layer is rejected with PluginApiLevelException`()</ID>
-    <ID>FunctionNaming:MinApiVersionGateTest.kt$MinApiVersionGateTest$@Test fun `plugin whose requirement is satisfied passes the gate`()</ID>
-    <ID>FunctionNaming:PluginClassLoaderManagerCloseTest.kt$PluginClassLoaderManagerCloseTest$@Test fun `closeClassLoader un-registers so the plugin can be loaded again`()</ID>
-    <ID>FunctionNaming:PluginClassLoaderManagerCloseTest.kt$PluginClassLoaderManagerCloseTest$@Test fun `closing a stale loader does not clobber a newer registration`()</ID>
-    <ID>FunctionNaming:PluginClassLoaderManagerCloseTest.kt$PluginClassLoaderManagerCloseTest$@Test fun `create still rejects a duplicate while the first is active`()</ID>
-    <ID>FunctionNaming:PluginSignatureEnforcementTest.kt$PluginSignatureEnforcementTest$@Test fun `common falsy spellings all disable enforcement`()</ID>
-    <ID>FunctionNaming:PluginSignatureEnforcementTest.kt$PluginSignatureEnforcementTest$@Test fun `common truthy spellings all enable enforcement`()</ID>
-    <ID>FunctionNaming:PluginSignatureEnforcementTest.kt$PluginSignatureEnforcementTest$@Test fun `unrecognized value falls back to default without throwing`()</ID>
-    <ID>FunctionNaming:PluginSignatureEnforcementTest.kt$PluginSignatureEnforcementTest$@Test fun `unset falls back to compiled default (warn during rollout)`()</ID>
-    <ID>FunctionNaming:PluginSignatureSidecarTest.kt$PluginSignatureSidecarTest$@Test fun `delete removes the sidecar`()</ID>
-    <ID>FunctionNaming:PluginSignatureSidecarTest.kt$PluginSignatureSidecarTest$@Test fun `persist with a signature writes it`()</ID>
-    <ID>FunctionNaming:PluginSignatureSidecarTest.kt$PluginSignatureSidecarTest$@Test fun `persist with blank clears rather than writing an empty sidecar`()</ID>
-    <ID>FunctionNaming:PluginSignatureSidecarTest.kt$PluginSignatureSidecarTest$@Test fun `persist with null clears a stale sidecar`()</ID>
-    <ID>FunctionNaming:PluginSignatureSidecarTest.kt$PluginSignatureSidecarTest$@Test fun `read returns null for an empty sidecar`()</ID>
-    <ID>FunctionNaming:PluginSignatureSidecarTest.kt$PluginSignatureSidecarTest$@Test fun `read returns null when no sidecar exists`()</ID>
-    <ID>FunctionNaming:PluginSignatureSidecarTest.kt$PluginSignatureSidecarTest$@Test fun `write then read round-trips the signature`()</ID>
-    <ID>FunctionNaming:PluginSignatureVerifierTest.kt$PluginSignatureVerifierTest$@Test fun `anchor is case-insensitive on the digest`()</ID>
-    <ID>FunctionNaming:PluginSignatureVerifierTest.kt$PluginSignatureVerifierTest$@Test fun `corrupted signature fails with sanitized reason`()</ID>
-    <ID>FunctionNaming:PluginSignatureVerifierTest.kt$PluginSignatureVerifierTest$@Test fun `no trusted keys fails closed`()</ID>
-    <ID>FunctionNaming:PluginSignatureVerifierTest.kt$PluginSignatureVerifierTest$@Test fun `signature from untrusted key fails`()</ID>
-    <ID>FunctionNaming:PluginSignatureVerifierTest.kt$PluginSignatureVerifierTest$@Test fun `signature over a different message fails`()</ID>
-    <ID>FunctionNaming:PluginSignatureVerifierTest.kt$PluginSignatureVerifierTest$@Test fun `store trust anchor parses`()</ID>
-    <ID>FunctionNaming:PluginSignatureVerifierTest.kt$PluginSignatureVerifierTest$@Test fun `valid message signature verifies`()</ID>
-    <ID>FunctionNaming:VersionTest.kt$VersionTest$@Test fun `beta satisfies alpha requirement`()</ID>
-    <ID>FunctionNaming:VersionTest.kt$VersionTest$@Test fun `isNewerThan works correctly`()</ID>
-    <ID>FunctionNaming:VersionTest.kt$VersionTest$@Test fun `known prerelease satisfies unknown prerelease with lower patch`()</ID>
-    <ID>FunctionNaming:VersionTest.kt$VersionTest$@Test fun `prerelease ordering alpha less than beta`()</ID>
-    <ID>FunctionNaming:VersionTest.kt$VersionTest$@Test fun `prerelease ordering alpha satisfies earlier alpha`()</ID>
-    <ID>FunctionNaming:VersionTest.kt$VersionTest$@Test fun `prerelease ordering beta less than rc`()</ID>
-    <ID>FunctionNaming:VersionTest.kt$VersionTest$@Test fun `prerelease ordering same alpha version is equal`()</ID>
-    <ID>FunctionNaming:VersionTest.kt$VersionTest$@Test fun `prerelease version is less than stable`()</ID>
-    <ID>FunctionNaming:VersionTest.kt$VersionTest$@Test fun `rc satisfies beta requirement`()</ID>
-    <ID>FunctionNaming:VersionTest.kt$VersionTest$@Test fun `stable satisfies unknown prerelease requirement`()</ID>
-    <ID>FunctionNaming:VersionTest.kt$VersionTest$@Test fun `stable version satisfies prerelease requirement`()</ID>
-    <ID>FunctionNaming:VersionTest.kt$VersionTest$@Test fun `unknown prerelease type is greater than rc`()</ID>
-    <ID>FunctionNaming:VersionTest.kt$VersionTest$@Test fun `unknown prerelease type is less than stable`()</ID>
-    <ID>FunctionNaming:VersionTest.kt$VersionTest$@Test fun `unknown prerelease types compared by ordinal then number`()</ID>
-    <ID>FunctionNaming:VersionTest.kt$VersionTest$@Test fun `version parsing returns null for invalid versions`()</ID>
-    <ID>FunctionNaming:VersionTest.kt$VersionTest$@Test fun `version parsing works for standard versions`()</ID>
-    <ID>FunctionNaming:VersionTest.kt$VersionTest$@Test fun `version parsing works with prerelease suffix`()</ID>
-    <ID>FunctionNaming:VersionTest.kt$VersionTest$@Test fun `version parsing works with v prefix`()</ID>
-    <ID>FunctionNaming:VersionTest.kt$VersionTest$@Test fun `version toString formats correctly`()</ID>
-    <ID>FunctionNaming:VersionTest.kt$VersionTest$@Test fun `version validation allows equal versions`()</ID>
-    <ID>FunctionNaming:VersionTest.kt$VersionTest$@Test fun `version validation allows newer major version`()</ID>
-    <ID>FunctionNaming:VersionTest.kt$VersionTest$@Test fun `version validation allows newer minor version`()</ID>
-    <ID>FunctionNaming:VersionTest.kt$VersionTest$@Test fun `version validation allows newer patch version`()</ID>
-    <ID>FunctionNaming:VersionTest.kt$VersionTest$@Test fun `version validation rejects older major version`()</ID>
-    <ID>FunctionNaming:VersionTest.kt$VersionTest$@Test fun `version validation rejects older minor version`()</ID>
-    <ID>FunctionNaming:VersionTest.kt$VersionTest$@Test fun `version validation rejects older patch version`()</ID>
-    <ID>LongMethod:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$fun validate(classLoader: ClassLoader, jarPath: String): ValidationResult</ID>
+    <ID>LongMethod:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$fun validate( classLoader: ClassLoader, jarPath: String, ): ValidationResult</ID>
     <ID>LongMethod:BinaryCompatibilityValidator.kt$ConstantPoolParser$fun extractReferences(classBytes: ByteArray): List&lt;MemberRef&gt;</ID>
+    <ID>LongMethod:BinaryCompatibilityValidator.kt$ConstantPoolParser$fun parseDescriptorParams( descriptor: String, classLoader: ClassLoader, ): Array&lt;Class&lt;*&gt;&gt;</ID>
     <ID>LongMethod:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$override suspend fun loadPlugin(jarPath: String): Result&lt;LoadedPlugin&gt;</ID>
-    <ID>LongMethod:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$override suspend fun unloadPlugin(pluginId: String, waitForGC: Boolean, force: Boolean): Result&lt;Unit&gt;</ID>
+    <ID>LongMethod:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$override suspend fun unloadPlugin( pluginId: String, waitForGC: Boolean, force: Boolean, ): Result&lt;Unit&gt;</ID>
+    <ID>LongMethod:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$suspend fun loadBundledPlugins(bundledDir: java.io.File): List&lt;LoadedPlugin&gt;</ID>
     <ID>LoopWithTooManyJumpStatements:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$for</ID>
-    <ID>MaxLineLength:ApiClassLoader.kt$ApiClassLoader.Companion$logger</ID>
-    <ID>MaxLineLength:ApiClassLoaderTest.kt$ApiClassLoaderTest$private</ID>
     <ID>MaxLineLength:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$errors.add("$sourceClass -&gt; ${ref.ownerClassName}.${ref.name}(${ref.descriptor}): method not found")</ID>
     <ID>MaxLineLength:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$errors.add("$sourceClass -&gt; ${ref.ownerClassName}.&lt;init&gt;(${ref.descriptor}): constructor not found")</ID>
+    <ID>MaxLineLength:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$internal</ID>
     <ID>MaxLineLength:BinaryCompatibilityValidator.kt$ConstantPoolParser$*</ID>
+    <ID>MaxLineLength:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$"Plugin has no store signature — allowing for now, will be rejected once signature enforcement is enabled"</ID>
     <ID>MaxLineLength:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$"Plugin requires API version ${manifest.apiVersion}, but current version is ${PluginManifestConstants.CURRENT_API_VERSION}"</ID>
+    <ID>MaxLineLength:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$"Plugin requires BOSS version $minBossVersion or later, but current version is $currentVersion"</ID>
     <ID>MaxLineLength:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$"Plugin requires boss-plugin-api $minApiVersion or later, but installed API layer is $installedApiVersion"</ID>
-    <ID>MaxLineLength:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$logger</ID>
-    <ID>MaxLineLength:PluginManifestReader.kt$PluginManifestReader$val current = PluginManifestConstants.CURRENT_API_VERSION.split(".").firstOrNull()?.toIntOrNull() ?: return false</ID>
-    <ID>MaxLineLength:PluginSignatureEnforcement.kt$PluginSignatureEnforcement$logger</ID>
-    <ID>NestedBlockDepth:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$fun validate(classLoader: ClassLoader, jarPath: String): ValidationResult</ID>
-    <ID>NestedBlockDepth:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$override suspend fun unloadPlugin(pluginId: String, waitForGC: Boolean, force: Boolean): Result&lt;Unit&gt;</ID>
-    <ID>ReturnCount:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$internal fun hasMethod(clazz: Class&lt;*&gt;, name: String, paramTypes: Array&lt;Class&lt;*&gt;&gt;): Boolean</ID>
-    <ID>ReturnCount:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$private fun verifyReference( ref: ConstantPoolParser.MemberRef, classLoader: ClassLoader, sourceClass: String, errors: MutableList&lt;String&gt; )</ID>
+    <ID>MaxLineLength:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$"Plugin signature verification failed — plugin will NOT load and will keep being rejected until it is reinstalled or removed"</ID>
+    <ID>MaxLineLength:PluginSignatureEnforcement.kt$PluginSignatureEnforcement$"Unrecognized plugin-signature enforcement flag value — flag IGNORED, falling back to default (enforcement ${if (DEFAULT) "ON" else "OFF"})"</ID>
+    <ID>NestedBlockDepth:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$fun validate( classLoader: ClassLoader, jarPath: String, ): ValidationResult</ID>
+    <ID>NestedBlockDepth:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$override suspend fun unloadPlugin( pluginId: String, waitForGC: Boolean, force: Boolean, ): Result&lt;Unit&gt;</ID>
+    <ID>ReturnCount:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$internal fun hasMethod( clazz: Class&lt;*&gt;, name: String, paramTypes: Array&lt;Class&lt;*&gt;&gt;, ): Boolean</ID>
+    <ID>ReturnCount:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$private fun verifyReference( ref: ConstantPoolParser.MemberRef, classLoader: ClassLoader, sourceClass: String, errors: MutableList&lt;String&gt;, )</ID>
     <ID>ReturnCount:BinaryCompatibilityValidator.kt$ConstantPoolParser$fun extractReferences(classBytes: ByteArray): List&lt;MemberRef&gt;</ID>
-    <ID>ReturnCount:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$override suspend fun unloadPlugin(pluginId: String, waitForGC: Boolean, force: Boolean): Result&lt;Unit&gt;</ID>
-    <ID>ReturnCount:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$private fun isBossVersionCompatible(requiredVersion: String, currentVersion: String): Boolean</ID>
-    <ID>ReturnCount:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$private fun verifySignatureOrThrow(jarPath: String, manifest: PluginManifest): PluginSignatureException?</ID>
+    <ID>ReturnCount:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$override suspend fun unloadPlugin( pluginId: String, waitForGC: Boolean, force: Boolean, ): Result&lt;Unit&gt;</ID>
+    <ID>ReturnCount:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$private fun isBossVersionCompatible( requiredVersion: String, currentVersion: String, ): Boolean</ID>
+    <ID>ReturnCount:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$private fun verifySignatureOrThrow( jarPath: String, manifest: PluginManifest, ): PluginSignatureException?</ID>
     <ID>ReturnCount:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$suspend fun loadBundledPlugins(bundledDir: java.io.File): List&lt;LoadedPlugin&gt;</ID>
     <ID>ReturnCount:PluginClassLoaderManager.kt$PluginClassLoaderManager$fun initializeApiLayer(pluginDir: File): ApiClassLoader</ID>
     <ID>ReturnCount:PluginManifestReader.kt$PluginManifestReader$private fun isCompatibleApiVersion(requiredVersion: String): Boolean</ID>
-    <ID>ReturnCount:PluginSignatureVerifier.kt$PluginSignatureVerifier$fun verifySignedMessage(message: String, signatureBase64: String): SignatureVerificationResult</ID>
+    <ID>ReturnCount:PluginSignatureVerifier.kt$PluginSignatureVerifier$fun verifySignedMessage( message: String, signatureBase64: String, ): SignatureVerificationResult</ID>
     <ID>SpreadOperator:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$(*paramTypes)</ID>
     <ID>SpreadOperator:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$(name, *paramTypes)</ID>
-    <ID>SwallowedException:ApiClassLoader.kt$ApiClassLoader.Companion$e: Exception</ID>
-    <ID>SwallowedException:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$e: ClassNotFoundException</ID>
-    <ID>SwallowedException:DynamicPluginLoader.kt$DynamicPluginLoaderImpl$e: NoSuchFieldException</ID>
-    <ID>SwallowedException:PluginClassLoader.kt$PluginClassLoader$e: ClassNotFoundException</ID>
-    <ID>SwallowedException:PluginManifestReader.kt$PluginManifestReader$e: Exception</ID>
     <ID>ThrowsCount:PluginManifestReader.kt$PluginManifestReader$fun readFromJar(jarPath: String): PluginManifest</ID>
     <ID>TooGenericExceptionCaught:ApiClassLoader.kt$ApiClassLoader.Companion$e: Exception</ID>
     <ID>TooGenericExceptionCaught:BinaryCompatibilityValidator.kt$BinaryCompatibilityValidator$e: Exception</ID>
@@ -132,11 +49,7 @@
     <ID>TooGenericExceptionCaught:PluginClassLoaderManager.kt$PluginClassLoaderManager$e: Exception</ID>
     <ID>TooGenericExceptionCaught:PluginManifestReader.kt$PluginManifestReader$e: Exception</ID>
     <ID>TooGenericExceptionCaught:PluginSignatureVerifier.kt$PluginSignatureVerifier$e: Exception</ID>
-    <ID>TooManyFunctions:ApiClassLoaderTest.kt$ApiClassLoaderTest</ID>
     <ID>TooManyFunctions:DynamicPluginLoader.kt$DynamicPluginLoaderImpl : DynamicPluginLoader</ID>
-    <ID>TooManyFunctions:LoadTimeSignatureVerificationTest.kt$LoadTimeSignatureVerificationTest</ID>
     <ID>TooManyFunctions:PluginClassLoaderManager.kt$PluginClassLoaderManager</ID>
-    <ID>TooManyFunctions:VersionTest.kt$VersionTest</ID>
-    <ID>UnusedPrivateProperty:PluginClassLoaderManager.kt$PluginClassLoaderManager.Companion$private val companionLogger = BossLogger.forComponent("PluginClassLoaderManager")</ID>
   </CurrentIssues>
 </SmellBaseline>

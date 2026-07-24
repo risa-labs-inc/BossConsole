@@ -27,11 +27,22 @@ data class InstalledPluginRef(
 
 /** Outcome of an on-demand "check for updates" for a single plugin. */
 sealed class UpdateCheckOutcome {
-    data class Available(val displayName: String, val currentVersion: String, val newVersion: String) : UpdateCheckOutcome()
+    data class Available(
+        val displayName: String,
+        val currentVersion: String,
+        val newVersion: String,
+    ) : UpdateCheckOutcome()
+
     data object UpToDate : UpdateCheckOutcome()
+
     /** A newer version exists but it requires a newer BOSS (IPC) than the host provides. */
-    data class Incompatible(val advertisedLatest: String) : UpdateCheckOutcome()
-    data class Error(val message: String) : UpdateCheckOutcome()
+    data class Incompatible(
+        val advertisedLatest: String,
+    ) : UpdateCheckOutcome()
+
+    data class Error(
+        val message: String,
+    ) : UpdateCheckOutcome()
 }
 
 /**

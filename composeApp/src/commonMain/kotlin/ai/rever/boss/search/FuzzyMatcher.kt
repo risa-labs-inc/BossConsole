@@ -12,13 +12,12 @@ import kotlin.math.max
  * - Earlier matches score higher than later matches
  */
 object FuzzyMatcher {
-
     /**
      * Match result containing the score and matched character ranges.
      */
     data class MatchResult(
         val score: Int,
-        val matchRanges: List<MatchRange>
+        val matchRanges: List<MatchRange>,
     )
 
     /**
@@ -29,7 +28,11 @@ object FuzzyMatcher {
      * @param targetLower The lowercase version of target (for performance)
      * @return MatchResult if pattern matches, null otherwise
      */
-    fun match(pattern: String, target: String, targetLower: String = target.lowercase()): MatchResult? {
+    fun match(
+        pattern: String,
+        target: String,
+        targetLower: String = target.lowercase(),
+    ): MatchResult? {
         if (pattern.isEmpty()) return MatchResult(0, emptyList())
         if (pattern.length > target.length) return null
 
@@ -61,7 +64,11 @@ object FuzzyMatcher {
     /**
      * Calculate the match score based on various factors.
      */
-    private fun calculateScore(target: String, targetLower: String, matchIndices: List<Int>): Int {
+    private fun calculateScore(
+        target: String,
+        targetLower: String,
+        matchIndices: List<Int>,
+    ): Int {
         if (matchIndices.isEmpty()) return 0
 
         var score = 0
@@ -123,7 +130,10 @@ object FuzzyMatcher {
      * - Transition from lowercase to uppercase (camelCase)
      * - After a dot
      */
-    private fun isWordBoundary(text: String, index: Int): Boolean {
+    private fun isWordBoundary(
+        text: String,
+        index: Int,
+    ): Boolean {
         if (index == 0) return true
         if (index >= text.length) return false
 
@@ -165,7 +175,8 @@ object FuzzyMatcher {
      * Compare two match results for sorting.
      * Higher scores should come first.
      */
-    fun compareResults(a: MatchResult, b: MatchResult): Int {
-        return b.score - a.score
-    }
+    fun compareResults(
+        a: MatchResult,
+        b: MatchResult,
+    ): Int = b.score - a.score
 }

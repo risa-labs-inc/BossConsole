@@ -17,7 +17,6 @@ import kotlin.test.assertNull
  * stop updating the tab bar after the tab moves to another split panel.
  */
 class TabUpdateRegistryMoveTest {
-
     private val typeId = TabTypeId("fluck")
 
     /** Factory owning a mutable set of tab ids; records every update it receives. */
@@ -29,14 +28,30 @@ class TabUpdateRegistryMoveTest {
         val openedUrls = mutableListOf<String>()
         var closeCount = 0
 
-        override fun createProvider(tabId: String, typeId: TabTypeId): TabUpdateProvider? {
+        override fun createProvider(
+            tabId: String,
+            typeId: TabTypeId,
+        ): TabUpdateProvider? {
             if (tabId !in ownedTabs) return null
             return object : TabUpdateProvider {
                 override val tabId: String = tabId
-                override fun updateTitle(title: String) { titles += title }
-                override fun updateFavicon(faviconUrl: String?) { favicons += faviconUrl }
-                override fun updateUrl(url: String) { urls += url }
-                override fun closeTab() { closeCount++ }
+
+                override fun updateTitle(title: String) {
+                    titles += title
+                }
+
+                override fun updateFavicon(faviconUrl: String?) {
+                    favicons += faviconUrl
+                }
+
+                override fun updateUrl(url: String) {
+                    urls += url
+                }
+
+                override fun closeTab() {
+                    closeCount++
+                }
+
                 override fun openNewTab(url: String): String? {
                     openedUrls += url
                     return "new-tab-id"

@@ -22,7 +22,7 @@ data class FileOpenEvent(
     val fileName: String,
     val line: Int = 0,
     val column: Int = 0,
-    val sourceWindowId: String
+    val sourceWindowId: String,
 )
 
 /**
@@ -30,7 +30,10 @@ data class FileOpenEvent(
  * Implement this to track file opens (e.g., recent files tracking).
  */
 fun interface FileOpenCallback {
-    fun onFileOpen(filePath: String, projectPath: String)
+    fun onFileOpen(
+        filePath: String,
+        projectPath: String,
+    )
 }
 
 /**
@@ -48,22 +51,31 @@ fun interface FileOpenCallback {
  * special characters are preserved as-is after stripping the prefix. The underlying
  * file system APIs handle these correctly.
  */
-fun stripFilePrefix(path: String): String {
-    return when {
-        path.startsWith("file:///") -> path.removePrefix("file://")  // Keep leading / for absolute path
+fun stripFilePrefix(path: String): String =
+    when {
+        path.startsWith("file:///") -> path.removePrefix("file://")
+
+        // Keep leading / for absolute path
         path.startsWith("file://") -> path.removePrefix("file://")
+
         path.startsWith("file:/") -> path.removePrefix("file:")
+
         path.startsWith("file:") -> path.removePrefix("file:")
+
         else -> path
     }
-}
 
 /**
  * Result of file path validation.
  */
 sealed class FileValidationResult {
-    data class Valid(val canonicalPath: String) : FileValidationResult()
-    data class Invalid(val reason: String) : FileValidationResult()
+    data class Valid(
+        val canonicalPath: String,
+    ) : FileValidationResult()
+
+    data class Invalid(
+        val reason: String,
+    ) : FileValidationResult()
 }
 
 /**
@@ -76,7 +88,7 @@ sealed class FileValidationResult {
 data class ParsedFileReference(
     val path: String,
     val line: Int = 0,
-    val column: Int = 0
+    val column: Int = 0,
 )
 
 /**
@@ -85,8 +97,7 @@ data class ParsedFileReference(
  * @receiver The string to check
  * @return true if the string starts with a drive letter followed by colon
  */
-private fun String.hasWindowsDriveLetter(): Boolean =
-    length >= 2 && this[0].isLetter() && this[1] == ':'
+private fun String.hasWindowsDriveLetter(): Boolean = length >= 2 && this[0].isLetter() && this[1] == ':'
 
 /**
  * Parses a file reference that may include line and column numbers.
@@ -109,17 +120,18 @@ private fun String.hasWindowsDriveLetter(): Boolean =
 fun parseFileReference(fileUrl: String): ParsedFileReference {
     // URL-decode the path first (handles %20 for spaces, etc.)
     // JVM-only: Desktop target only
-    val decoded = try {
-        java.net.URLDecoder.decode(fileUrl, "UTF-8")
-    } catch (e: Exception) {
-        // Fall back to original if decoding fails
-        fileRefLogger.debug(
-            LogCategory.FILE,
-            "URL-decode of file reference failed - using raw value",
-            mapOf("error" to e.toString()),
-        )
-        fileUrl
-    }
+    val decoded =
+        try {
+            java.net.URLDecoder.decode(fileUrl, "UTF-8")
+        } catch (e: Exception) {
+            // Fall back to original if decoding fails
+            fileRefLogger.debug(
+                LogCategory.FILE,
+                "URL-decode of file reference failed - using raw value",
+                mapOf("error" to e.toString()),
+            )
+            fileUrl
+        }
 
     // Check for Windows drive letter pattern (e.g., C:\)
     val isWindowsPath = decoded.hasWindowsDriveLetter()
@@ -131,32 +143,40 @@ fun parseFileReference(fileUrl: String): ParsedFileReference {
     val secondLastColonIndex = decoded.lastIndexOf(':', lastColonIndex - 1)
 
     // Check if what's after the last colon looks like a number
-    val afterLastColon = if (lastColonIndex > startIndex) {
-        decoded.substring(lastColonIndex + 1)
-    } else null
+    val afterLastColon =
+        if (lastColonIndex > startIndex) {
+            decoded.substring(lastColonIndex + 1)
+        } else {
+            null
+        }
 
-    val afterSecondLastColon = if (secondLastColonIndex > startIndex && lastColonIndex > secondLastColonIndex) {
-        decoded.substring(secondLastColonIndex + 1, lastColonIndex)
-    } else null
+    val afterSecondLastColon =
+        if (secondLastColonIndex > startIndex && lastColonIndex > secondLastColonIndex) {
+            decoded.substring(secondLastColonIndex + 1, lastColonIndex)
+        } else {
+            null
+        }
 
     return when {
         // Pattern: path:line:column
         afterSecondLastColon != null &&
-        afterSecondLastColon.toIntOrNull() != null &&
-        afterLastColon?.toIntOrNull() != null -> {
+            afterSecondLastColon.toIntOrNull() != null &&
+            afterLastColon?.toIntOrNull() != null -> {
             ParsedFileReference(
                 path = decoded.substring(0, secondLastColonIndex),
                 line = afterSecondLastColon.toInt(),
-                column = afterLastColon.toInt()
+                column = afterLastColon.toInt(),
             )
         }
+
         // Pattern: path:line
         afterLastColon?.toIntOrNull() != null && lastColonIndex > startIndex -> {
             ParsedFileReference(
                 path = decoded.substring(0, lastColonIndex),
-                line = afterLastColon.toInt()
+                line = afterLastColon.toInt(),
             )
         }
+
         // Pattern: path only
         else -> {
             ParsedFileReference(path = decoded)
@@ -211,10 +231,11 @@ fun String.extractFileName(): String = this.substringAfterLast('/').substringAft
 
 object FileEventBus {
     private val logger = BossLogger.forComponent("FileEventBus")
-    private val _fileOpenEvents = MutableSharedFlow<FileOpenEvent>(
-        replay = 0,  // Don't replay past events to new subscribers (new windows)
-        extraBufferCapacity = 10  // Buffer up to 10 events if collector not ready yet
-    )
+    private val _fileOpenEvents =
+        MutableSharedFlow<FileOpenEvent>(
+            replay = 0, // Don't replay past events to new subscribers (new windows)
+            extraBufferCapacity = 10, // Buffer up to 10 events if collector not ready yet
+        )
     val fileOpenEvents: SharedFlow<FileOpenEvent> = _fileOpenEvents.asSharedFlow()
 
     // Callback for file tracking (e.g., recent files)
@@ -237,7 +258,13 @@ object FileEventBus {
      * @param sourceWindowId The window that initiated this event (required for multi-window support)
      * @param projectPath The current project path for tracking recent files
      */
-    suspend fun openFile(filePath: String, line: Int = 0, column: Int = 0, sourceWindowId: String, projectPath: String = "") {
+    suspend fun openFile(
+        filePath: String,
+        line: Int = 0,
+        column: Int = 0,
+        sourceWindowId: String,
+        projectPath: String = "",
+    ) {
         // Strip file: prefix if present (may come from terminal hyperlinks)
         val cleanPath = stripFilePrefix(filePath)
         val fileName = cleanPath.extractFileName().ifEmpty { "untitled" }
@@ -245,7 +272,16 @@ object FileEventBus {
         // Notify callback for tracking (e.g., recent files)
         fileOpenCallback?.onFileOpen(cleanPath, projectPath)
 
-        logger.debug(LogCategory.FILE, "Opening file", mapOf("path" to cleanPath, "line" to line, "column" to column, "window" to sourceWindowId))
+        logger.debug(
+            LogCategory.FILE,
+            "Opening file",
+            mapOf(
+                "path" to cleanPath,
+                "line" to line,
+                "column" to column,
+                "window" to sourceWindowId,
+            ),
+        )
         _fileOpenEvents.emit(FileOpenEvent(cleanPath, fileName, line, column, sourceWindowId))
     }
 }

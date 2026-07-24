@@ -10,7 +10,7 @@ data class PasskeyRegistrationRequest(
     val userId: String,
     val displayName: String,
     val challenge: String,
-    val authenticatorSelection: AuthenticatorSelectionCriteria? = null
+    val authenticatorSelection: AuthenticatorSelectionCriteria? = null,
 )
 
 @Serializable
@@ -23,7 +23,7 @@ data class PasskeyChallengeResponse(
     val authenticatorSelection: AuthenticatorSelectionCriteria? = null,
     val excludeCredentials: List<String>? = null,
     val challengeId: String = "", // Kept for legacy API compatibility
-    val sessionId: String? = null // Optional session ID for efficient status polling
+    val sessionId: String? = null, // Optional session ID for efficient status polling
 )
 
 @Serializable
@@ -33,7 +33,7 @@ data class PasskeyRegistrationData(
     val credentialId: String,
     val attestationObject: String,
     val clientDataJSON: String,
-    val transports: List<String>
+    val transports: List<String>,
 )
 
 @Serializable
@@ -46,14 +46,14 @@ data class PasskeyCredential(
     val transports: List<String>,
     val created_at: Long = System.currentTimeMillis(),
     val last_used_at: Long? = null,
-    val active: Boolean = true
+    val active: Boolean = true,
 )
 
 @Serializable
 data class PasskeyCredentialResponse(
     val success: Boolean,
     val credential: PasskeyCredential? = null,
-    val error: String? = null
+    val error: String? = null,
 )
 
 @Serializable
@@ -61,7 +61,7 @@ data class PasskeyAuthenticationRequest(
     val email: String? = null,
     val challenge: String,
     val sessionId: String? = null,
-    val op: String? = null
+    val op: String? = null,
 )
 
 @Serializable
@@ -70,14 +70,14 @@ data class PasskeyAuthenticationChallenge(
     val timeout: Long = 60000L,
     val rpId: String, // No default - must be provided based on environment
     val allowCredentials: List<PasskeyAllowedCredential>? = null,
-    val userVerification: String = "preferred"
+    val userVerification: String = "preferred",
 )
 
 @Serializable
 data class PasskeyAllowedCredential(
     val id: String,
     val type: String = "public-key",
-    val transports: List<String>? = null
+    val transports: List<String>? = null,
 )
 
 @Serializable
@@ -86,7 +86,7 @@ data class PasskeyAuthenticationChallengeResponse(
     val timeout: Long = 60000L,
     val rpId: String? = null, // Optional - client will fall back to config if not provided
     val allowCredentials: List<PasskeyAllowedCredential>? = null,
-    val userVerification: String = "preferred"
+    val userVerification: String = "preferred",
 )
 
 @Serializable
@@ -96,7 +96,7 @@ data class PasskeyAuthenticationData(
     val authenticatorData: String,
     val signature: String,
     val clientDataJSON: String,
-    val userHandle: String? = null
+    val userHandle: String? = null,
 )
 
 @Serializable
@@ -108,14 +108,14 @@ data class PasskeyAuthenticationResult(
     val accessToken: String? = null,
     val refreshToken: String? = null,
     val expiresAt: Long? = null,
-    val error: String? = null
+    val error: String? = null,
 )
 
 @Serializable
 data class PasskeyManagementRequest(
     val action: String, // "delete" or "list"
     val userId: String,
-    val passkeyId: String? = null // Required for delete action
+    val passkeyId: String? = null, // Required for delete action
 )
 
 @Serializable
@@ -124,7 +124,7 @@ data class PasskeyManagementResponse(
     val passkeys: List<PasskeyCredential>? = null, // Server returns "passkeys" field, not "data"
     val data: List<PasskeyCredential>? = null, // Keep for backward compatibility
     val message: String? = null,
-    val error: String? = null
+    val error: String? = null,
 ) {
     // Helper to get passkeys from either field
     fun passkeyList(): List<PasskeyCredential> = passkeys ?: data ?: emptyList()
@@ -139,6 +139,5 @@ data class PasskeyAuthStatusResponse(
     val completedAt: String? = null,
     val message: String? = null,
     val accessToken: String? = null,
-    val refreshToken: String? = null
+    val refreshToken: String? = null,
 )
-

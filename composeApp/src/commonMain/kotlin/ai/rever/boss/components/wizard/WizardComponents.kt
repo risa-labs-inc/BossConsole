@@ -53,56 +53,59 @@ import androidx.compose.ui.unit.sp
 fun WizardStepIndicator(
     currentStep: Int,
     totalSteps: Int,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     Row(
         modifier = modifier,
         horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         for (step in 1..totalSteps) {
             val isCompleted = step < currentStep
             val isCurrent = step == currentStep
 
             val backgroundColor by animateColorAsState(
-                targetValue = when {
-                    isCompleted -> BossTheme.colors.ok
-                    isCurrent -> BossTheme.colors.signal
-                    else -> BossTheme.colors.raised
-                },
-                label = "step_bg_$step"
+                targetValue =
+                    when {
+                        isCompleted -> BossTheme.colors.ok
+                        isCurrent -> BossTheme.colors.signal
+                        else -> BossTheme.colors.raised
+                    },
+                label = "step_bg_$step",
             )
 
             val borderColor by animateColorAsState(
-                targetValue = when {
-                    isCompleted || isCurrent -> Color.Transparent
-                    else -> BossTheme.colors.line
-                },
-                label = "step_border_$step"
+                targetValue =
+                    when {
+                        isCompleted || isCurrent -> Color.Transparent
+                        else -> BossTheme.colors.line
+                    },
+                label = "step_border_$step",
             )
 
             // Step circle
             Box(
-                modifier = Modifier
-                    .size(28.dp)
-                    .clip(CircleShape)
-                    .background(backgroundColor)
-                    .border(1.dp, borderColor, CircleShape),
-                contentAlignment = Alignment.Center
+                modifier =
+                    Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(backgroundColor)
+                        .border(1.dp, borderColor, CircleShape),
+                contentAlignment = Alignment.Center,
             ) {
                 if (isCompleted) {
                     Icon(
                         imageVector = Icons.Default.Check,
                         contentDescription = "Completed",
                         modifier = Modifier.size(16.dp),
-                        tint = BossTheme.colors.onSignal
+                        tint = BossTheme.colors.onSignal,
                     )
                 } else {
                     Text(
                         text = step.toString(),
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
-                        color = if (isCurrent) BossTheme.colors.onSignal else BossTheme.colors.textSecondary
+                        color = if (isCurrent) BossTheme.colors.onSignal else BossTheme.colors.textSecondary,
                     )
                 }
             }
@@ -111,13 +114,14 @@ fun WizardStepIndicator(
             if (step < totalSteps) {
                 val lineColor by animateColorAsState(
                     targetValue = if (isCompleted) BossTheme.colors.ok else BossTheme.colors.line,
-                    label = "line_$step"
+                    label = "line_$step",
                 )
                 Box(
-                    modifier = Modifier
-                        .width(40.dp)
-                        .height(2.dp)
-                        .background(lineColor)
+                    modifier =
+                        Modifier
+                            .width(40.dp)
+                            .height(2.dp)
+                            .background(lineColor),
                 )
             }
         }
@@ -141,7 +145,7 @@ fun SelectionCard(
     icon: ImageVector? = null,
     isSelected: Boolean,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
@@ -149,46 +153,49 @@ fun SelectionCard(
     val scale by animateFloatAsState(
         targetValue = if (isHovered) 1.02f else 1f,
         animationSpec = spring(dampingRatio = 0.6f),
-        label = "selection_card_scale"
+        label = "selection_card_scale",
     )
 
     val backgroundColor by animateColorAsState(
-        targetValue = when {
-            isSelected -> BossTheme.colors.signalWash
-            isHovered -> BossTheme.colors.signalWash
-            else -> BossTheme.colors.raised
-        },
-        label = "selection_card_bg"
+        targetValue =
+            when {
+                isSelected -> BossTheme.colors.signalWash
+                isHovered -> BossTheme.colors.signalWash
+                else -> BossTheme.colors.raised
+            },
+        label = "selection_card_bg",
     )
 
     val borderColor by animateColorAsState(
-        targetValue = when {
-            isSelected -> BossTheme.colors.signal
-            isHovered -> BossTheme.colors.line.copy(alpha = 0.8f)
-            else -> Color.Transparent
-        },
-        label = "selection_card_border"
+        targetValue =
+            when {
+                isSelected -> BossTheme.colors.signal
+                isHovered -> BossTheme.colors.line.copy(alpha = 0.8f)
+                else -> Color.Transparent
+            },
+        label = "selection_card_border",
     )
 
     Box(
-        modifier = modifier
-            .scale(scale)
-            .clip(RoundedCornerShape(12.dp))
-            .background(backgroundColor)
-            .border(1.dp, borderColor, RoundedCornerShape(12.dp))
-            .clickable { onClick() }
-            .hoverable(interactionSource)
-            .padding(16.dp)
+        modifier =
+            modifier
+                .scale(scale)
+                .clip(RoundedCornerShape(12.dp))
+                .background(backgroundColor)
+                .border(1.dp, borderColor, RoundedCornerShape(12.dp))
+                .clickable { onClick() }
+                .hoverable(interactionSource)
+                .padding(16.dp),
     ) {
         Row(
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             if (icon != null) {
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
                     modifier = Modifier.size(24.dp),
-                    tint = if (isSelected) BossTheme.colors.signal else BossTheme.colors.textSecondary
+                    tint = if (isSelected) BossTheme.colors.signal else BossTheme.colors.textSecondary,
                 )
                 Spacer(modifier = Modifier.width(12.dp))
             }
@@ -200,7 +207,7 @@ fun SelectionCard(
                     fontWeight = FontWeight.Medium,
                     color = if (isSelected || isHovered) BossTheme.colors.textPrimary else BossTheme.colors.textSecondary,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
                 )
                 if (description.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(4.dp))
@@ -210,7 +217,7 @@ fun SelectionCard(
                         color = BossTheme.colors.textSecondary.copy(alpha = 0.8f),
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
-                        lineHeight = 16.sp
+                        lineHeight = 16.sp,
                     )
                 }
             }
@@ -218,17 +225,18 @@ fun SelectionCard(
             if (isSelected) {
                 Spacer(modifier = Modifier.width(12.dp))
                 Box(
-                    modifier = Modifier
-                        .size(20.dp)
-                        .clip(CircleShape)
-                        .background(BossTheme.colors.signal),
-                    contentAlignment = Alignment.Center
+                    modifier =
+                        Modifier
+                            .size(20.dp)
+                            .clip(CircleShape)
+                            .background(BossTheme.colors.signal),
+                    contentAlignment = Alignment.Center,
                 ) {
                     Icon(
                         imageVector = Icons.Default.Check,
                         contentDescription = "Selected",
                         modifier = Modifier.size(14.dp),
-                        tint = BossTheme.colors.onSignal
+                        tint = BossTheme.colors.onSignal,
                     )
                 }
             }
@@ -255,53 +263,57 @@ fun CheckboxCard(
     isChecked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     enabled: Boolean = true,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
 
     val backgroundColor by animateColorAsState(
-        targetValue = when {
-            !enabled -> BossTheme.colors.raised.copy(alpha = 0.5f)
-            isChecked -> BossTheme.colors.signalWash
-            isHovered -> BossTheme.colors.signalWash
-            else -> BossTheme.colors.raised
-        },
-        label = "checkbox_card_bg"
+        targetValue =
+            when {
+                !enabled -> BossTheme.colors.raised.copy(alpha = 0.5f)
+                isChecked -> BossTheme.colors.signalWash
+                isHovered -> BossTheme.colors.signalWash
+                else -> BossTheme.colors.raised
+            },
+        label = "checkbox_card_bg",
     )
 
     val borderColor by animateColorAsState(
-        targetValue = when {
-            !enabled -> Color.Transparent
-            isChecked -> BossTheme.colors.signal.copy(alpha = 0.5f)
-            isHovered -> BossTheme.colors.line.copy(alpha = 0.8f)
-            else -> Color.Transparent
-        },
-        label = "checkbox_card_border"
+        targetValue =
+            when {
+                !enabled -> Color.Transparent
+                isChecked -> BossTheme.colors.signal.copy(alpha = 0.5f)
+                isHovered -> BossTheme.colors.line.copy(alpha = 0.8f)
+                else -> Color.Transparent
+            },
+        label = "checkbox_card_border",
     )
 
     Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(backgroundColor)
-            .border(1.dp, borderColor, RoundedCornerShape(12.dp))
-            .clickable(enabled = enabled) { onCheckedChange(!isChecked) }
-            .hoverable(interactionSource)
-            .padding(12.dp)
+        modifier =
+            modifier
+                .clip(RoundedCornerShape(12.dp))
+                .background(backgroundColor)
+                .border(1.dp, borderColor, RoundedCornerShape(12.dp))
+                .clickable(enabled = enabled) { onCheckedChange(!isChecked) }
+                .hoverable(interactionSource)
+                .padding(12.dp),
     ) {
         Row(
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Checkbox(
                 checked = isChecked,
                 onCheckedChange = if (enabled) onCheckedChange else null,
                 enabled = enabled,
-                colors = CheckboxDefaults.colors(
-                    checkedColor = BossTheme.colors.signal,
-                    uncheckedColor = BossTheme.colors.line,
-                    disabledColor = BossTheme.colors.line.copy(alpha = 0.5f),
-                    checkmarkColor = BossTheme.colors.onSignal
-                )
+                colors =
+                    CheckboxDefaults.colors(
+                        checkedColor = BossTheme.colors.signal,
+                        uncheckedColor = BossTheme.colors.line,
+                        disabledColor = BossTheme.colors.line.copy(alpha = 0.5f),
+                        checkmarkColor = BossTheme.colors.onSignal,
+                    ),
             )
 
             Spacer(modifier = Modifier.width(8.dp))
@@ -311,11 +323,12 @@ fun CheckboxCard(
                     imageVector = icon,
                     contentDescription = null,
                     modifier = Modifier.size(20.dp),
-                    tint = if (enabled) {
-                        if (isChecked) BossTheme.colors.signal else BossTheme.colors.textSecondary
-                    } else {
-                        BossTheme.colors.textSecondary.copy(alpha = 0.5f)
-                    }
+                    tint =
+                        if (enabled) {
+                            if (isChecked) BossTheme.colors.signal else BossTheme.colors.textSecondary
+                        } else {
+                            BossTheme.colors.textSecondary.copy(alpha = 0.5f)
+                        },
                 )
                 Spacer(modifier = Modifier.width(10.dp))
             }
@@ -325,13 +338,14 @@ fun CheckboxCard(
                     text = title,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
-                    color = if (enabled) {
-                        if (isChecked || isHovered) BossTheme.colors.textPrimary else BossTheme.colors.textSecondary
-                    } else {
-                        BossTheme.colors.textSecondary.copy(alpha = 0.5f)
-                    },
+                    color =
+                        if (enabled) {
+                            if (isChecked || isHovered) BossTheme.colors.textPrimary else BossTheme.colors.textSecondary
+                        } else {
+                            BossTheme.colors.textSecondary.copy(alpha = 0.5f)
+                        },
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
                 )
                 if (description.isNotEmpty()) {
                     Text(
@@ -340,7 +354,7 @@ fun CheckboxCard(
                         color = BossTheme.colors.textSecondary.copy(alpha = if (enabled) 0.7f else 0.4f),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        lineHeight = 14.sp
+                        lineHeight = 14.sp,
                     )
                 }
             }
@@ -357,20 +371,21 @@ fun CheckboxCard(
 @Composable
 fun WizardNote(
     text: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(BossTheme.colors.raised.copy(alpha = 0.5f))
-            .padding(12.dp)
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(BossTheme.colors.raised.copy(alpha = 0.5f))
+                .padding(12.dp),
     ) {
         Text(
             text = text,
             fontSize = 12.sp,
             color = BossTheme.colors.textSecondary,
-            lineHeight = 16.sp
+            lineHeight = 16.sp,
         )
     }
 }

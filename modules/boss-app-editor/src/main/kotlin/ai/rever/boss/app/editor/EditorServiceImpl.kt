@@ -18,7 +18,6 @@ import java.util.concurrent.ConcurrentHashMap
  * - GetTokens / NavigateToDefinition: require PSI (in composeApp) — return empty
  */
 class EditorServiceImpl : EditorServiceGrpcKt.EditorServiceCoroutineImplBase() {
-
     private val logger = LoggerFactory.getLogger(EditorServiceImpl::class.java)
 
     /** path → isDirty: tracks files opened in this session */
@@ -35,14 +34,15 @@ class EditorServiceImpl : EditorServiceGrpcKt.EditorServiceCoroutineImplBase() {
     }
 
     // Language-specific main/entry-point patterns
-    private val mainPatterns = listOf(
-        Regex("""^\s*(?:suspend\s+)?fun\s+main\s*\("""),        // Kotlin
-        Regex("""^\s*public\s+static\s+void\s+main\s*\(\s*String"""), // Java
-        Regex("""^\s*if\s+__name__\s*==\s*['"]__main__['"]\s*:"""),    // Python
-        Regex("""^\s*func\s+main\s*\(\s*\)"""),                 // Go / Swift
-        Regex("""^\s*fn\s+main\s*\(\s*\)"""),                   // Rust
-        Regex("""^\s*int\s+main\s*\("""),                       // C / C++
-    )
+    private val mainPatterns =
+        listOf(
+            Regex("""^\s*(?:suspend\s+)?fun\s+main\s*\("""), // Kotlin
+            Regex("""^\s*public\s+static\s+void\s+main\s*\(\s*String"""), // Java
+            Regex("""^\s*if\s+__name__\s*==\s*['"]__main__['"]\s*:"""), // Python
+            Regex("""^\s*func\s+main\s*\(\s*\)"""), // Go / Swift
+            Regex("""^\s*fn\s+main\s*\(\s*\)"""), // Rust
+            Regex("""^\s*int\s+main\s*\("""), // C / C++
+        )
 
     override suspend fun openFile(request: OpenFileRequest): OpenFileResponse =
         withContext(Dispatchers.IO) {
@@ -50,7 +50,8 @@ class EditorServiceImpl : EditorServiceGrpcKt.EditorServiceCoroutineImplBase() {
             validatePath(request.path)
             val file = File(request.path)
             if (!file.exists() || !file.isFile) {
-                return@withContext OpenFileResponse.newBuilder()
+                return@withContext OpenFileResponse
+                    .newBuilder()
                     .setSuccess(false)
                     .setErrorMessage("File not found: ${request.path}")
                     .build()
@@ -58,14 +59,16 @@ class EditorServiceImpl : EditorServiceGrpcKt.EditorServiceCoroutineImplBase() {
             try {
                 val content = file.readText(Charsets.UTF_8)
                 openFiles[request.path] = false
-                OpenFileResponse.newBuilder()
+                OpenFileResponse
+                    .newBuilder()
                     .setSuccess(true)
                     .setContent(content)
                     .setLanguage(detectLanguage(file.extension))
                     .build()
             } catch (e: Exception) {
                 logger.warn("openFile read failed: {}", e.message)
-                OpenFileResponse.newBuilder()
+                OpenFileResponse
+                    .newBuilder()
                     .setSuccess(false)
                     .setErrorMessage(e.message ?: "Read failed")
                     .build()
@@ -110,12 +113,14 @@ class EditorServiceImpl : EditorServiceGrpcKt.EditorServiceCoroutineImplBase() {
             try {
                 file.readLines(Charsets.UTF_8).forEachIndexed { idx, line ->
                     if (mainPatterns.any { it.containsMatchIn(line) }) {
-                        functions += MainFunctionInfo.newBuilder()
-                            .setName("main")
-                            .setLine(idx + 1)
-                            .setDisplayName("main (line ${idx + 1})")
-                            .setQualifiedName("${file.nameWithoutExtension}.main")
-                            .build()
+                        functions +=
+                            MainFunctionInfo
+                                .newBuilder()
+                                .setName("main")
+                                .setLine(idx + 1)
+                                .setDisplayName("main (line ${idx + 1})")
+                                .setQualifiedName("${file.nameWithoutExtension}.main")
+                                .build()
                     }
                 }
             } catch (e: Exception) {
@@ -126,37 +131,43 @@ class EditorServiceImpl : EditorServiceGrpcKt.EditorServiceCoroutineImplBase() {
         }
 
     override suspend fun listOpenFiles(request: Empty): ListOpenFilesResponse {
-        val infos = openFiles.entries.map { (path, dirty) ->
-            OpenFileInfo.newBuilder().setPath(path).setIsModified(dirty).build()
-        }
+        val infos =
+            openFiles.entries.map { (path, dirty) ->
+                OpenFileInfo
+                    .newBuilder()
+                    .setPath(path)
+                    .setIsModified(dirty)
+                    .build()
+            }
         return ListOpenFilesResponse.newBuilder().addAllFiles(infos).build()
     }
 
-    private fun detectLanguage(ext: String): String = when (ext.lowercase()) {
-        "kt", "kts" -> "kotlin"
-        "java" -> "java"
-        "py", "pyw" -> "python"
-        "js", "mjs" -> "javascript"
-        "ts", "tsx" -> "typescript"
-        "go" -> "go"
-        "rs" -> "rust"
-        "c", "h" -> "c"
-        "cpp", "cxx", "cc", "hpp" -> "cpp"
-        "cs" -> "csharp"
-        "swift" -> "swift"
-        "rb" -> "ruby"
-        "php" -> "php"
-        "sh", "bash", "zsh" -> "shell"
-        "html", "htm" -> "html"
-        "css", "scss", "sass" -> "css"
-        "json" -> "json"
-        "xml" -> "xml"
-        "yaml", "yml" -> "yaml"
-        "toml" -> "toml"
-        "md" -> "markdown"
-        "gradle" -> "groovy"
-        "proto" -> "protobuf"
-        "sql" -> "sql"
-        else -> "plaintext"
-    }
+    private fun detectLanguage(ext: String): String =
+        when (ext.lowercase()) {
+            "kt", "kts" -> "kotlin"
+            "java" -> "java"
+            "py", "pyw" -> "python"
+            "js", "mjs" -> "javascript"
+            "ts", "tsx" -> "typescript"
+            "go" -> "go"
+            "rs" -> "rust"
+            "c", "h" -> "c"
+            "cpp", "cxx", "cc", "hpp" -> "cpp"
+            "cs" -> "csharp"
+            "swift" -> "swift"
+            "rb" -> "ruby"
+            "php" -> "php"
+            "sh", "bash", "zsh" -> "shell"
+            "html", "htm" -> "html"
+            "css", "scss", "sass" -> "css"
+            "json" -> "json"
+            "xml" -> "xml"
+            "yaml", "yml" -> "yaml"
+            "toml" -> "toml"
+            "md" -> "markdown"
+            "gradle" -> "groovy"
+            "proto" -> "protobuf"
+            "sql" -> "sql"
+            else -> "plaintext"
+        }
 }

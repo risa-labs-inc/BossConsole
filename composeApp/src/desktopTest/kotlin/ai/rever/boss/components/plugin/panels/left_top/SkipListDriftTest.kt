@@ -12,7 +12,6 @@ import kotlin.test.assertEquals
  * provider semantics across transports.
  */
 class SkipListDriftTest {
-
     @Test
     fun `in-process and IPC skip-lists are identical`() {
         assertEquals(scannerSkippedDirectoryNames, ProviderScanFilter.skippedDirectoryNames)
@@ -26,7 +25,7 @@ class SkipListDriftTest {
                 assertEquals(
                     isVisibleScanEntry(name, showHidden),
                     ProviderScanFilter.isVisibleLocalEntry(name, showHidden),
-                    "Visibility rules diverge for '$name' (showHidden=$showHidden)"
+                    "Visibility rules diverge for '$name' (showHidden=$showHidden)",
                 )
             }
         }

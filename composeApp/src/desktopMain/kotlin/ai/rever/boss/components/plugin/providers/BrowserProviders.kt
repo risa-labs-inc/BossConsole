@@ -1,8 +1,6 @@
 package ai.rever.boss.components.plugin.providers
 
-import ai.rever.boss.plugin.browser.BrowserZoomSettingsManager
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
-import ai.rever.boss.plugin.browser.UrlHistoryManager
 import ai.rever.boss.components.window_panel.SplitViewStateRegistry
 import ai.rever.boss.platform.MacOSScreenCapture
 import ai.rever.boss.plugin.api.InternalBrowserTabData
@@ -10,6 +8,8 @@ import ai.rever.boss.plugin.api.ScreenCaptureProvider
 import ai.rever.boss.plugin.api.UrlHistoryEntry
 import ai.rever.boss.plugin.api.UrlHistoryProvider
 import ai.rever.boss.plugin.api.ZoomSettingsProvider
+import ai.rever.boss.plugin.browser.BrowserZoomSettingsManager
+import ai.rever.boss.plugin.browser.UrlHistoryManager
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlin.math.abs
@@ -24,13 +24,14 @@ private class DesktopZoomSettingsProvider : ZoomSettingsProvider {
         return if (abs(zoom - 1.0) < 0.001) null else zoom
     }
 
-    override fun setZoomForDomain(domain: String, zoomLevel: Double) {
+    override fun setZoomForDomain(
+        domain: String,
+        zoomLevel: Double,
+    ) {
         BrowserZoomSettingsManager.setZoomForDomain(domain, zoomLevel)
     }
 
-    override fun extractDomain(url: String): String? {
-        return BrowserZoomSettingsManager.extractDomain(url)
-    }
+    override fun extractDomain(url: String): String? = BrowserZoomSettingsManager.extractDomain(url)
 
     override fun clearZoomForDomain(domain: String) {
         BrowserZoomSettingsManager.clearDomainZoom(domain)
@@ -45,21 +46,26 @@ private class DesktopZoomSettingsProvider : ZoomSettingsProvider {
  * Desktop implementation of UrlHistoryProvider that delegates to UrlHistoryManager.
  */
 private class DesktopUrlHistoryProvider : UrlHistoryProvider {
-    override fun addUrl(url: String, title: String) {
+    override fun addUrl(
+        url: String,
+        title: String,
+    ) {
         UrlHistoryManager.addUrl(url, title)
     }
 
-    override fun getSuggestions(query: String, limit: Int): List<UrlHistoryEntry> {
-        return UrlHistoryManager.getSuggestions(query, limit).map { internal ->
+    override fun getSuggestions(
+        query: String,
+        limit: Int,
+    ): List<UrlHistoryEntry> =
+        UrlHistoryManager.getSuggestions(query, limit).map { internal ->
             UrlHistoryEntry(
                 url = internal.url,
                 title = internal.title,
                 domain = internal.domain,
                 visitCount = internal.visitCount,
-                lastVisited = internal.lastVisited
+                lastVisited = internal.lastVisited,
             )
         }
-    }
 
     override fun deleteUrl(url: String) {
         UrlHistoryManager.deleteUrl(url)
@@ -99,7 +105,8 @@ private class DesktopScreenCaptureProvider : ScreenCaptureProvider {
 
         try {
             SplitViewStateRegistry.getAllStates().forEach { (windowId, state) ->
-                state.collectAllActiveTabs(null, windowId)
+                state
+                    .collectAllActiveTabs(null, windowId)
                     .filter { it.tabInfo is FluckTabInfo }
                     .forEachIndexed { index, activeTab ->
                         val fluckTab = activeTab.tabInfo as FluckTabInfo
@@ -107,8 +114,8 @@ private class DesktopScreenCaptureProvider : ScreenCaptureProvider {
                             InternalBrowserTabData(
                                 title = fluckTab.title,
                                 url = fluckTab.currentUrl,
-                                faviconCacheKey = fluckTab.faviconCacheKey
-                            )
+                                faviconCacheKey = fluckTab.faviconCacheKey,
+                            ),
                         )
                     }
             }
@@ -119,13 +126,9 @@ private class DesktopScreenCaptureProvider : ScreenCaptureProvider {
         return internalTabs
     }
 
-    override fun hasPermission(): Boolean {
-        return MacOSScreenCapture.hasPermission()
-    }
+    override fun hasPermission(): Boolean = MacOSScreenCapture.hasPermission()
 
-    override fun requestPermission(): Boolean {
-        return MacOSScreenCapture.requestPermission()
-    }
+    override fun requestPermission(): Boolean = MacOSScreenCapture.requestPermission()
 }
 
 // Lazy singleton
@@ -136,7 +139,10 @@ private val screenCaptureProviderInstance by lazy { DesktopScreenCaptureProvider
  */
 actual fun createScreenCaptureProvider(): ScreenCaptureProvider = screenCaptureProviderInstance
 
-private val coBrowseRtcProviderInstance by lazy { ai.rever.boss.plugin.browser.CoBrowseRtcProviderImpl() }
+private val coBrowseRtcProviderInstance by lazy {
+    ai.rever.boss.plugin.browser
+        .CoBrowseRtcProviderImpl()
+}
 
 /** WebRTC peer provider — backed by an offscreen JxBrowser page on desktop. */
 actual fun createCoBrowseRtcProvider(): ai.rever.boss.plugin.api.CoBrowseRtcProvider? = coBrowseRtcProviderInstance

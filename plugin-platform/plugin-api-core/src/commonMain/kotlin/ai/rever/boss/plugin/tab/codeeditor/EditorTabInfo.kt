@@ -26,9 +26,8 @@ data class EditorTabInfo(
     override val title: String = "Untitled",
     override val icon: ImageVector = Icons.Outlined.Code,
     override val tabIcon: TabIcon? = null,
-    val filePath: String = ""
+    val filePath: String = "",
 ) : TabInfo {
-
     companion object {
         /** Maximum length for editor tab titles */
         const val MAX_TITLE_LENGTH = 64
@@ -39,11 +38,12 @@ data class EditorTabInfo(
      * Title is truncated to [MAX_TITLE_LENGTH] characters.
      */
     fun updateTitle(newTitle: String): EditorTabInfo {
-        val truncatedTitle = if (newTitle.length > MAX_TITLE_LENGTH) {
-            newTitle.take(MAX_TITLE_LENGTH)
-        } else {
-            newTitle
-        }
+        val truncatedTitle =
+            if (newTitle.length > MAX_TITLE_LENGTH) {
+                newTitle.take(MAX_TITLE_LENGTH)
+            } else {
+                newTitle
+            }
         return copy(title = truncatedTitle)
     }
 }

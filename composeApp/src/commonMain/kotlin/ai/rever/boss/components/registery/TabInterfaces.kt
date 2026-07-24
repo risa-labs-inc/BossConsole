@@ -1,4 +1,5 @@
 @file:Suppress("UNUSED")
+
 package ai.rever.boss.components.registery
 
 import ai.rever.boss.plugin.api.TabIcon as PluginTabIcon

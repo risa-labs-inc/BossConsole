@@ -11,7 +11,8 @@ package ai.rever.boss.plugin.loader
 object PluginStoreTrust {
     const val PUBLISHER = "boss-plugin-store"
 
-    val PUBLIC_KEY_PEM = """
+    val PUBLIC_KEY_PEM =
+        """
         -----BEGIN PUBLIC KEY-----
         MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAleoguYaY21h3LEKsxC3q
         EfAVXCWZ7IkxBy6BohJwpfaYDJwyID8l5K+P+jHPZeS1Spxxol5CgJhij6HGFmcr
@@ -26,7 +27,7 @@ object PluginStoreTrust {
         2IYqdAXle8zJzXps0RVjhtcny8a7nwH6A6zrg8/aFUfjuKgAcI1eUDiil9IwltnJ
         4dNvQ+d7SRuA57gdpdyCgfsCAwEAAQ==
         -----END PUBLIC KEY-----
-    """.trimIndent()
+        """.trimIndent()
 
     /**
      * All currently trusted store keys by publisher label. (Declared after
@@ -68,6 +69,9 @@ object PluginStoreTrust {
      * manifest.version == row version at publish time so this can't happen;
      * keep that guard if this format changes.
      */
-    fun versionAnchor(pluginId: String, version: String, sha256Hex: String): String =
-        "$pluginId|$version|${sha256Hex.lowercase()}"
+    fun versionAnchor(
+        pluginId: String,
+        version: String,
+        sha256Hex: String,
+    ): String = "$pluginId|$version|${sha256Hex.lowercase()}"
 }

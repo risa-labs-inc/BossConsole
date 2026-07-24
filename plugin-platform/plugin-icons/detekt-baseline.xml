@@ -8,53 +8,11 @@
     <ID>CyclomaticComplexMethod:LanguageIcons.kt$LanguageIcons$fun forExtension(extension: String): Pair&lt;ImageVector, Color&gt;</ID>
     <ID>CyclomaticComplexMethod:LanguageIcons.kt$LanguageIcons$fun forFramework(framework: String): Pair&lt;ImageVector, Color&gt;</ID>
     <ID>CyclomaticComplexMethod:LanguageIcons.kt$LanguageIcons$fun forLanguage(language: String): Pair&lt;ImageVector, Color&gt;</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.FileIconsForFileTests$@Test fun `handles case-insensitive extensions`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.FileIconsForFileTests$@Test fun `handles paths with directories`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.FileIconsForFileTests$@Test fun `returns correct icon for CSS files`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.FileIconsForFileTests$@Test fun `returns correct icon for Go files`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.FileIconsForFileTests$@Test fun `returns correct icon for HTML files`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.FileIconsForFileTests$@Test fun `returns correct icon for JSON files`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.FileIconsForFileTests$@Test fun `returns correct icon for Java files`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.FileIconsForFileTests$@Test fun `returns correct icon for JavaScript files`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.FileIconsForFileTests$@Test fun `returns correct icon for Kotlin files`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.FileIconsForFileTests$@Test fun `returns correct icon for Kotlin script files`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.FileIconsForFileTests$@Test fun `returns correct icon for Markdown files`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.FileIconsForFileTests$@Test fun `returns correct icon for Python files`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.FileIconsForFileTests$@Test fun `returns correct icon for Rust files`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.FileIconsForFileTests$@Test fun `returns correct icon for TypeScript files`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.FileIconsForFileTests$@Test fun `returns correct icon for YAML files`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.FileIconsForFileTests$@Test fun `returns correct icon for shell scripts`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.FileIconsForFileTests$@Test fun `returns default icon for unknown extensions`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.FolderIconTests$@Test fun `default folder is not expanded`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.FolderIconTests$@Test fun `returns closed folder icon when not expanded`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.FolderIconTests$@Test fun `returns open folder icon when expanded`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.MediaFileTests$@Test fun `returns archive icon for archive files`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.MediaFileTests$@Test fun `returns audio icon for audio files`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.MediaFileTests$@Test fun `returns font icon for font files`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.MediaFileTests$@Test fun `returns image icon for image files`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.MediaFileTests$@Test fun `returns video icon for video files`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.SpecialFileNameTests$@Test fun `returns Docker icon for Dockerfile variants`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.SpecialFileNameTests$@Test fun `returns Docker icon for Dockerfile`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.SpecialFileNameTests$@Test fun `returns Docker icon for docker-compose files`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.SpecialFileNameTests$@Test fun `returns Git icon for gitignore`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.SpecialFileNameTests$@Test fun `returns Go icon for go mod`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.SpecialFileNameTests$@Test fun `returns Gradle icon for build gradle files`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.SpecialFileNameTests$@Test fun `returns Kubernetes icon for k8s yaml files`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.SpecialFileNameTests$@Test fun `returns Maven icon for pom xml`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.SpecialFileNameTests$@Test fun `returns cargo icon for Cargo toml`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.SpecialFileNameTests$@Test fun `returns lock icon for env files`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.SpecialFileNameTests$@Test fun `returns lock icon for key and pem files`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.SpecialFileNameTests$@Test fun `returns npm icon for package json`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.SpecialFileNameTests$@Test fun `returns npm icon for package-lock json`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.SpecialFileNameTests$@Test fun `returns pip icon for requirements txt`()</ID>
-    <ID>FunctionNaming:FileIconsTest.kt$FileIconsTest.SpecialFileNameTests$@Test fun `returns yarn icon for yarn lock`()</ID>
     <ID>LongMethod:FileIcons.kt$FileIcons$fun forFile(fileName: String): FileIconInfo</ID>
+    <ID>LongMethod:FileIcons.kt$FileIcons$private fun forSpecialFileName(fileName: String): FileIconInfo?</ID>
     <ID>LongMethod:LanguageIcons.kt$LanguageIcons$fun forExtension(extension: String): Pair&lt;ImageVector, Color&gt;</ID>
     <ID>LongMethod:LanguageIcons.kt$LanguageIcons$fun forFramework(framework: String): Pair&lt;ImageVector, Color&gt;</ID>
-    <ID>MaxLineLength:FileIcons.kt$FileIcons$"bat", "cmd" -&gt; FileIconInfo(LanguageIcons.powershell, LanguageIcons.Colors.powershell)</ID>
     <ID>MaxLineLength:FileIcons.kt$FileIcons$"png", "jpg", "jpeg", "gif", "bmp", "ico", "icns", "webp", "avif", "tiff", "tif" -&gt; FileIconInfo(image, Colors.image)</ID>
-    <ID>TooManyFunctions:FileIconsTest.kt$FileIconsTest$FileIconsForFileTests</ID>
-    <ID>TooManyFunctions:FileIconsTest.kt$FileIconsTest$SpecialFileNameTests</ID>
     <ID>WildcardImport:FileIcons.kt$import androidx.compose.material.icons.outlined.*</ID>
     <ID>WildcardImport:LanguageIcons.kt$import compose.icons.simpleicons.*</ID>
   </CurrentIssues>

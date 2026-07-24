@@ -19,7 +19,6 @@ import kotlinx.serialization.json.JsonElement
  * returns raw JSON strings from Postgrest responses.
  */
 class SupabaseDataProviderImpl : SupabaseDataProvider {
-
     private val logger = BossLogger.forComponent("SupabaseDataProvider")
     private val client get() = SupabaseConfig.client
 
@@ -27,43 +26,47 @@ class SupabaseDataProviderImpl : SupabaseDataProvider {
         table: String,
         columns: String,
         filters: List<QueryFilter>,
-        range: QueryRange?
-    ): Result<String> {
-        return try {
-            val result = client.from(table)
-                .select(io.github.jan.supabase.postgrest.query.Columns.raw(columns)) {
-                    if (range != null) {
-                        range(range.from, range.to)
-                    }
-                    filter {
-                        for (f in filters) {
-                            applyFilter(f)
+        range: QueryRange?,
+    ): Result<String> =
+        try {
+            val result =
+                client
+                    .from(table)
+                    .select(
+                        io.github.jan.supabase.postgrest.query.Columns
+                            .raw(columns),
+                    ) {
+                        if (range != null) {
+                            range(range.from, range.to)
+                        }
+                        filter {
+                            for (f in filters) {
+                                applyFilter(f)
+                            }
                         }
                     }
-                }
             Result.success(result.data)
         } catch (e: Exception) {
             logger.error(LogCategory.NETWORK, "Supabase select failed", data = mapOf("table" to table), error = e)
             Result.failure(Exception("Select on '$table' failed: ${e.message}"))
         }
-    }
 
     override suspend fun rpc(
         function: String,
-        parameters: String
-    ): Result<String> {
-        return try {
+        parameters: String,
+    ): Result<String> =
+        try {
             val params: JsonElement = Json.parseToJsonElement(parameters)
-            val result = client.postgrest.rpc(
-                function = function,
-                parameters = params
-            )
+            val result =
+                client.postgrest.rpc(
+                    function = function,
+                    parameters = params,
+                )
             Result.success(result.data)
         } catch (e: Exception) {
             logger.error(LogCategory.NETWORK, "Supabase rpc failed", data = mapOf("function" to function), error = e)
             Result.failure(Exception("RPC '$function' failed: ${e.message}"))
         }
-    }
 
     private fun io.github.jan.supabase.postgrest.query.filter.PostgrestFilterBuilder.applyFilter(f: QueryFilter) {
         when (f.operator) {

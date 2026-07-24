@@ -22,7 +22,6 @@ class ProjectDataProviderProxy(
     channel: ManagedChannel,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
 ) : ProjectDataProvider {
-
     private val stub = ProjectDataServiceGrpcKt.ProjectDataServiceCoroutineStub(channel)
 
     private val _recentProjects = MutableStateFlow<List<ProjectData>>(emptyList())
@@ -40,8 +39,14 @@ class ProjectDataProviderProxy(
                     _recentProjects.value = response.projectsList.map { it.toData() }
                 }
                 delayMs = 1_000L
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (_: Exception) { delay(delayMs); delayMs = (delayMs * 2).coerceAtMost(30_000L) }
+            } catch (
+                e: kotlinx.coroutines.CancellationException,
+            ) {
+                throw e
+            } catch (_: Exception) {
+                delay(delayMs)
+                delayMs = (delayMs * 2).coerceAtMost(30_000L)
+            }
         }
     }
 
@@ -49,7 +54,8 @@ class ProjectDataProviderProxy(
         scope.launch {
             try {
                 stub.updateRecentProjects(project.toProto())
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
         }
     }
 
@@ -57,7 +63,8 @@ class ProjectDataProviderProxy(
         scope.launch {
             try {
                 stub.removeRecentProject(ProjectPathRequest.newBuilder().setPath(projectPath).build())
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
         }
     }
 
@@ -65,18 +72,21 @@ class ProjectDataProviderProxy(
         scope.launch {
             try {
                 stub.selectProject(project.toProto())
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
         }
     }
 
-    private fun ProjectProto.toData() = ProjectData(
-        name = name,
-        path = path,
-        lastOpened = lastOpened,
-    )
+    private fun ProjectProto.toData() =
+        ProjectData(
+            name = name,
+            path = path,
+            lastOpened = lastOpened,
+        )
 
     private fun ProjectData.toProto(): ProjectProto =
-        ProjectProto.newBuilder()
+        ProjectProto
+            .newBuilder()
             .setName(name)
             .setPath(path)
             .setLastOpened(lastOpened)

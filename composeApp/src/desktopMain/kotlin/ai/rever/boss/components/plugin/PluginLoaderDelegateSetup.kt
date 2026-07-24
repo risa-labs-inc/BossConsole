@@ -12,7 +12,6 @@ import ai.rever.boss.utils.logging.LogCategory
  * (like plugin-manager) can interact with the plugin system.
  */
 actual object PluginLoaderDelegateSetup {
-
     private val logger = BossLogger.forComponent("PluginLoaderDelegateSetup")
 
     /**
@@ -23,7 +22,7 @@ actual object PluginLoaderDelegateSetup {
      */
     actual fun register(
         context: PluginContext,
-        dynamicPluginManager: DynamicPluginManager
+        dynamicPluginManager: DynamicPluginManager,
     ) {
         logger.info(LogCategory.SYSTEM, "Registering PluginLoaderDelegate for dynamic plugins")
 

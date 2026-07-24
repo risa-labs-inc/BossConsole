@@ -9,8 +9,8 @@ import ai.rever.boss.components.dialogs.NewWorkspaceDialog
 import ai.rever.boss.components.dialogs.RemoveBookmarkConfirmationDialog
 import ai.rever.boss.components.dialogs.RenameDialog
 import ai.rever.boss.components.dialogs.WorkspaceSelectionDialog
-import ai.rever.boss.plugin.bookmark.BookmarkCollection
 import ai.rever.boss.plugin.api.BookmarksDialogProvider
+import ai.rever.boss.plugin.bookmark.BookmarkCollection
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.workspace.LayoutWorkspace
 import androidx.compose.material.icons.Icons
@@ -25,20 +25,25 @@ import androidx.compose.runtime.Composable
  * allowing the bookmarks plugin to use the application's native dialog styling.
  */
 object BookmarksDialogProviderImpl : BookmarksDialogProvider {
-
     @Composable
-    override fun NewCollectionDialog(onDismiss: () -> Unit, onCreate: (String) -> Unit) {
+    override fun NewCollectionDialog(
+        onDismiss: () -> Unit,
+        onCreate: (String) -> Unit,
+    ) {
         NewCollectionDialog(
             onDismiss = onDismiss,
-            onCreate = onCreate
+            onCreate = onCreate,
         )
     }
 
     @Composable
-    override fun NewWorkspaceDialog(onDismiss: () -> Unit, onCreate: (String) -> Unit) {
+    override fun NewWorkspaceDialog(
+        onDismiss: () -> Unit,
+        onCreate: (String) -> Unit,
+    ) {
         NewWorkspaceDialog(
             onDismiss = onDismiss,
-            onCreate = onCreate
+            onCreate = onCreate,
         )
     }
 
@@ -48,7 +53,7 @@ object BookmarksDialogProviderImpl : BookmarksDialogProvider {
         message: String,
         confirmText: String,
         onDismiss: () -> Unit,
-        onConfirm: () -> Unit
+        onConfirm: () -> Unit,
     ) {
         ConfirmationDialog(
             title = title,
@@ -57,7 +62,7 @@ object BookmarksDialogProviderImpl : BookmarksDialogProvider {
             iconTint = BossTheme.colors.alert,
             confirmText = confirmText,
             onDismiss = onDismiss,
-            onConfirm = onConfirm
+            onConfirm = onConfirm,
         )
     }
 
@@ -65,12 +70,12 @@ object BookmarksDialogProviderImpl : BookmarksDialogProvider {
     override fun RemoveBookmarkConfirmationDialog(
         bookmarkTitle: String,
         onDismiss: () -> Unit,
-        onConfirm: () -> Unit
+        onConfirm: () -> Unit,
     ) {
         RemoveBookmarkConfirmationDialog(
             bookmarkTitle = bookmarkTitle,
             onDismiss = onDismiss,
-            onConfirm = onConfirm
+            onConfirm = onConfirm,
         )
     }
 
@@ -81,7 +86,7 @@ object BookmarksDialogProviderImpl : BookmarksDialogProvider {
         excludeCollectionId: String,
         isMoveMode: Boolean,
         onDismiss: () -> Unit,
-        onConfirm: (List<String>) -> Unit
+        onConfirm: (List<String>) -> Unit,
     ) {
         CollectionSelectionDialog(
             title = title,
@@ -89,7 +94,7 @@ object BookmarksDialogProviderImpl : BookmarksDialogProvider {
             excludeCollectionId = excludeCollectionId,
             mode = if (isMoveMode) CollectionSelectionMode.MOVE else CollectionSelectionMode.COPY,
             onDismiss = onDismiss,
-            onConfirm = { selectedSet -> onConfirm(selectedSet.toList()) }
+            onConfirm = { selectedSet -> onConfirm(selectedSet.toList()) },
         )
     }
 
@@ -99,14 +104,14 @@ object BookmarksDialogProviderImpl : BookmarksDialogProvider {
         workspaces: List<LayoutWorkspace>,
         preselectedWorkspaces: Map<String, String?>,
         onDismiss: () -> Unit,
-        onConfirm: (Map<String, String?>) -> Unit
+        onConfirm: (Map<String, String?>) -> Unit,
     ) {
         WorkspaceSelectionDialog(
             title = title,
             workspaces = workspaces,
             preselectedWorkspaces = preselectedWorkspaces,
             onDismiss = onDismiss,
-            onConfirm = onConfirm
+            onConfirm = onConfirm,
         )
     }
 
@@ -116,14 +121,14 @@ object BookmarksDialogProviderImpl : BookmarksDialogProvider {
         currentName: String,
         label: String,
         onDismiss: () -> Unit,
-        onRename: (String) -> Unit
+        onRename: (String) -> Unit,
     ) {
         RenameDialog(
             title = title,
             currentName = currentName,
             label = label,
             onDismiss = onDismiss,
-            onRename = onRename
+            onRename = onRename,
         )
     }
 
@@ -133,7 +138,7 @@ object BookmarksDialogProviderImpl : BookmarksDialogProvider {
         collections: List<BookmarkCollection>,
         workspaces: List<LayoutWorkspace>,
         onDismiss: () -> Unit,
-        onConfirm: (List<String>, Map<String, String?>) -> Unit
+        onConfirm: (List<String>, Map<String, String?>) -> Unit,
     ) {
         BookmarkDialog(
             tabTitle = tabTitle,
@@ -142,7 +147,7 @@ object BookmarksDialogProviderImpl : BookmarksDialogProvider {
             onDismiss = onDismiss,
             onConfirm = { selectedSet, workspaceMap ->
                 onConfirm(selectedSet.toList(), workspaceMap)
-            }
+            },
         )
     }
 }

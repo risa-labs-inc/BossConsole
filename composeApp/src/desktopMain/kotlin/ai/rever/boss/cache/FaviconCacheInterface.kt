@@ -14,6 +14,7 @@ actual fun loadFaviconFromCache(cacheKey: String?): ai.rever.boss.plugin.api.Tab
  * Desktop implementation of high-quality favicon loading.
  * Uses Google's favicon service for larger icons (128px).
  */
-actual suspend fun loadHighQualityFavicon(url: String, standardCacheKey: String?): ai.rever.boss.plugin.api.TabIcon.Image? {
-    return HighQualityFaviconService.getHighQualityFavicon(url, standardCacheKey)
-}
+actual suspend fun loadHighQualityFavicon(
+    url: String,
+    standardCacheKey: String?,
+): ai.rever.boss.plugin.api.TabIcon.Image? = HighQualityFaviconService.getHighQualityFavicon(url, standardCacheKey)

@@ -11,30 +11,32 @@ import kotlin.test.assertEquals
  * would break existing settings files).
  */
 class TerminalLinkSettingsSerializationTest {
-
     // Mirrors DesktopTerminalLinkSettingsManager's configuration.
-    private val json = Json {
-        prettyPrint = true
-        ignoreUnknownKeys = true
-        encodeDefaults = true
-    }
+    private val json =
+        Json {
+            prettyPrint = true
+            ignoreUnknownKeys = true
+            encodeDefaults = true
+        }
 
     @Test
     fun `every open mode round-trips`() {
         for (mode in TerminalLinkOpenMode.entries) {
             val settings = TerminalLinkSettings(openMode = mode)
-            val decoded = json.decodeFromString<TerminalLinkSettings>(
-                json.encodeToString(TerminalLinkSettings.serializer(), settings)
-            )
+            val decoded =
+                json.decodeFromString<TerminalLinkSettings>(
+                    json.encodeToString(TerminalLinkSettings.serializer(), settings),
+                )
             assertEquals(settings, decoded, "round-trip failed for $mode")
         }
     }
 
     @Test
     fun `system default decodes from persisted json by name`() {
-        val decoded = json.decodeFromString<TerminalLinkSettings>(
-            """{"openMode": "SYSTEM_DEFAULT", "existingSplitTarget": "MOST_RECENT_ACTIVE"}"""
-        )
+        val decoded =
+            json.decodeFromString<TerminalLinkSettings>(
+                """{"openMode": "SYSTEM_DEFAULT", "existingSplitTarget": "MOST_RECENT_ACTIVE"}""",
+            )
         assertEquals(TerminalLinkOpenMode.SYSTEM_DEFAULT, decoded.openMode)
     }
 

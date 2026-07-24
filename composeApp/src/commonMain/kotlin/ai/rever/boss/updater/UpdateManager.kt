@@ -5,11 +5,11 @@ import ai.rever.boss.utils.Version
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.*
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.time.Clock
 import kotlin.time.Duration
 
@@ -21,14 +21,14 @@ class UpdateManager {
 
     // Internal for access by VersionListManager
     internal val updateService = UpdateService()
-    
+
     // Update state flows
     private val _updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
     val updateState: StateFlow<UpdateState> = _updateState.asStateFlow()
-    
+
     private val _lastCheckTime = MutableStateFlow<kotlin.time.Instant?>(null)
     val lastCheckTime: StateFlow<kotlin.time.Instant?> = _lastCheckTime.asStateFlow()
-    
+
     private val _updateInfo = MutableStateFlow<UpdateInfo?>(null)
 
     // Whether the "update available" dialog should be visible.
@@ -39,11 +39,11 @@ class UpdateManager {
     // Background job for periodic checks
     private var periodicCheckJob: Job? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    
+
     companion object {
         val instance = UpdateManager()
     }
-    
+
     /**
      * Start periodic update checks.
      *
@@ -55,19 +55,20 @@ class UpdateManager {
      */
     fun startPeriodicChecks() {
         periodicCheckJob?.cancel()
-        periodicCheckJob = scope.launch {
-            while (isActive) {
-                try {
-                    checkForUpdatesInternal()
-                    delay(UpdateSettings.checkIntervalHours * 60 * 60 * 1000) // Convert hours to milliseconds
-                } catch (e: Exception) {
-                    logger.warn(LogCategory.SYSTEM, "Error in periodic update check", error = e)
-                    delay(60 * 60 * 1000) // Retry in 1 hour on error
+        periodicCheckJob =
+            scope.launch {
+                while (isActive) {
+                    try {
+                        checkForUpdatesInternal()
+                        delay(UpdateSettings.checkIntervalHours * 60 * 60 * 1000) // Convert hours to milliseconds
+                    } catch (e: Exception) {
+                        logger.warn(LogCategory.SYSTEM, "Error in periodic update check", error = e)
+                        delay(60 * 60 * 1000) // Retry in 1 hour on error
+                    }
                 }
             }
-        }
     }
-    
+
     /**
      * Stop periodic update checks
      */
@@ -75,7 +76,7 @@ class UpdateManager {
         periodicCheckJob?.cancel()
         periodicCheckJob = null
     }
-    
+
     /**
      * Check for updates.
      *
@@ -83,9 +84,7 @@ class UpdateManager {
      * persisted per-version dismissal so the prompt is shown even for a version
      * the user previously dismissed. Automatic (startup/periodic) checks use false.
      */
-    suspend fun checkForUpdates(force: Boolean = false): UpdateResult {
-        return checkForUpdatesInternal(force)
-    }
+    suspend fun checkForUpdates(force: Boolean = false): UpdateResult = checkForUpdatesInternal(force)
 
     // Coalesces concurrent checks so the startup stampede doesn't fire 2-3 network
     // checks at once (and possibly double-pop the dialog).
@@ -147,6 +146,7 @@ class UpdateManager {
                         UpdateResult.UpdateAvailable(updateInfo)
                     }
                 }
+
                 else -> {
                     _updateState.value = UpdateState.UpToDate
                     UpdateResult.NoUpdateAvailable
@@ -188,7 +188,7 @@ class UpdateManager {
     fun dismissDialogOnly() {
         _showUpdateDialog.value = false
     }
-    
+
     /**
      * Launch [downloadUpdate] on the manager's own long-lived scope so the
      * download survives the window that started it — the update dialog lives
@@ -202,13 +202,14 @@ class UpdateManager {
     /**
      * Download the available update
      */
-    suspend fun downloadUpdate(updateInfo: UpdateInfo): UpdateResult {
-        return try {
+    suspend fun downloadUpdate(updateInfo: UpdateInfo): UpdateResult =
+        try {
             _updateState.value = UpdateState.Downloading(0f)
 
-            val downloadPath = updateService.downloadUpdate(updateInfo) { progress ->
-                _updateState.value = UpdateState.Downloading(progress)
-            }
+            val downloadPath =
+                updateService.downloadUpdate(updateInfo) { progress ->
+                    _updateState.value = UpdateState.Downloading(progress)
+                }
 
             if (downloadPath != null) {
                 _updateState.value = UpdateState.ReadyToInstall(downloadPath)
@@ -223,30 +224,31 @@ class UpdateManager {
             _updateState.value = UpdateState.Error(errorMsg)
             UpdateResult.Error(errorMsg, e)
         }
-    }
 
     /**
      * Download a specific version (for upgrades or downgrades)
      */
-    suspend fun downloadSpecificVersion(versionInfo: VersionInfo): UpdateResult {
-        return try {
+    suspend fun downloadSpecificVersion(versionInfo: VersionInfo): UpdateResult =
+        try {
             _updateState.value = UpdateState.Downloading(0f)
 
             // Convert VersionInfo to UpdateInfo
-            val updateInfo = UpdateInfo(
-                available = true,
-                currentVersion = AppVersion.CURRENT,
-                latestVersion = versionInfo.version,
-                releaseNotes = versionInfo.releaseNotes,
-                downloadUrl = versionInfo.downloadUrl,
-                assetSize = versionInfo.downloadSize,
-                assetName = updateService.getExpectedAssetName(versionInfo.version),
-                sha256 = versionInfo.sha256
-            )
+            val updateInfo =
+                UpdateInfo(
+                    available = true,
+                    currentVersion = AppVersion.CURRENT,
+                    latestVersion = versionInfo.version,
+                    releaseNotes = versionInfo.releaseNotes,
+                    downloadUrl = versionInfo.downloadUrl,
+                    assetSize = versionInfo.downloadSize,
+                    assetName = updateService.getExpectedAssetName(versionInfo.version),
+                    sha256 = versionInfo.sha256,
+                )
 
-            val downloadPath = updateService.downloadUpdate(updateInfo) { progress ->
-                _updateState.value = UpdateState.Downloading(progress)
-            }
+            val downloadPath =
+                updateService.downloadUpdate(updateInfo) { progress ->
+                    _updateState.value = UpdateState.Downloading(progress)
+                }
 
             if (downloadPath != null) {
                 _updateState.value = UpdateState.ReadyToInstall(downloadPath)
@@ -261,15 +263,14 @@ class UpdateManager {
             _updateState.value = UpdateState.Error(errorMsg)
             UpdateResult.Error(errorMsg, e)
         }
-    }
-    
+
     /**
      * Install the downloaded update
      */
-    suspend fun installUpdate(downloadPath: String): Boolean {
-        return try {
+    suspend fun installUpdate(downloadPath: String): Boolean =
+        try {
             _updateState.value = UpdateState.Installing
-            
+
             val success = updateService.installUpdate(downloadPath)
             if (success) {
                 _updateState.value = UpdateState.RestartRequired
@@ -281,13 +282,12 @@ class UpdateManager {
             _updateState.value = UpdateState.Error("Installation failed: ${e.message}")
             false
         }
-    }
-    
+
     /**
      * Get current application version
      */
     fun getCurrentVersion(): Version = AppVersion.CURRENT
-    
+
     /**
      * Check if enough time has passed since last check for automatic checking
      */
@@ -299,7 +299,7 @@ class UpdateManager {
         val timeSinceLastCheck = now - lastCheck
         return timeSinceLastCheck.inWholeHours >= UpdateSettings.checkIntervalHours
     }
-    
+
     /**
      * Reset update state to idle. Does NOT persist dismissal (see [dismissVersion]).
      */
@@ -307,7 +307,7 @@ class UpdateManager {
         _updateState.value = UpdateState.Idle
         _showUpdateDialog.value = false
     }
-    
+
     /**
      * Clean up resources
      */
@@ -322,12 +322,28 @@ class UpdateManager {
  */
 sealed class UpdateState {
     object Idle : UpdateState()
+
     object CheckingForUpdates : UpdateState()
+
     object UpToDate : UpdateState()
-    data class UpdateAvailable(val updateInfo: UpdateInfo) : UpdateState()
-    data class Downloading(val progress: Float) : UpdateState() // 0.0 to 1.0
-    data class ReadyToInstall(val downloadPath: String) : UpdateState()
+
+    data class UpdateAvailable(
+        val updateInfo: UpdateInfo,
+    ) : UpdateState()
+
+    data class Downloading(
+        val progress: Float,
+    ) : UpdateState() // 0.0 to 1.0
+
+    data class ReadyToInstall(
+        val downloadPath: String,
+    ) : UpdateState()
+
     object Installing : UpdateState()
+
     object RestartRequired : UpdateState()
-    data class Error(val message: String) : UpdateState()
+
+    data class Error(
+        val message: String,
+    ) : UpdateState()
 }

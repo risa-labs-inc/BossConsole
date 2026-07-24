@@ -7,15 +7,45 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 
 // Event data classes with sourceWindowId for multi-window support (Issue #506)
-data class DashboardOpenFileEvent(val path: String, val sourceWindowId: String)
-data class DashboardOpenUrlEvent(val url: String, val sourceWindowId: String)
-data class DashboardNewTabEvent(val sourceWindowId: String)
-data class DashboardNewTerminalEvent(val sourceWindowId: String)
-data class DashboardShowProjectDialogEvent(val sourceWindowId: String)
-data class DashboardShowFileDialogEvent(val sourceWindowId: String)
-data class DashboardShowNewProjectEvent(val sourceWindowId: String)
-data class DashboardApplySplitTemplateEvent(val template: SplitTemplate, val sourceWindowId: String)
-data class DashboardActivatePluginEvent(val pluginId: String, val sourceWindowId: String)
+data class DashboardOpenFileEvent(
+    val path: String,
+    val sourceWindowId: String,
+)
+
+data class DashboardOpenUrlEvent(
+    val url: String,
+    val sourceWindowId: String,
+)
+
+data class DashboardNewTabEvent(
+    val sourceWindowId: String,
+)
+
+data class DashboardNewTerminalEvent(
+    val sourceWindowId: String,
+)
+
+data class DashboardShowProjectDialogEvent(
+    val sourceWindowId: String,
+)
+
+data class DashboardShowFileDialogEvent(
+    val sourceWindowId: String,
+)
+
+data class DashboardShowNewProjectEvent(
+    val sourceWindowId: String,
+)
+
+data class DashboardApplySplitTemplateEvent(
+    val template: SplitTemplate,
+    val sourceWindowId: String,
+)
+
+data class DashboardActivatePluginEvent(
+    val pluginId: String,
+    val sourceWindowId: String,
+)
 
 /**
  * Event bus for Dashboard actions triggered from Fluck tabs.
@@ -62,47 +92,67 @@ object DashboardEventBus {
     val activatePluginEvents: SharedFlow<DashboardActivatePluginEvent> = _activatePluginEvents.asSharedFlow()
 
     // Emit functions with sourceWindowId parameter (required for multi-window support)
-    suspend fun openFile(path: String, sourceWindowId: String) {
+    suspend fun openFile(
+        path: String,
+        sourceWindowId: String,
+    ) {
         val event = DashboardOpenFileEvent(path, sourceWindowId)
         _openFileEvents.emit(event)
         ipcBridge?.forward("DashboardOpenFileEvent", event, sourceWindowId)
     }
-    suspend fun openUrlInNewTab(url: String, sourceWindowId: String) {
+
+    suspend fun openUrlInNewTab(
+        url: String,
+        sourceWindowId: String,
+    ) {
         val event = DashboardOpenUrlEvent(url, sourceWindowId)
         _openUrlInNewTabEvents.emit(event)
         ipcBridge?.forward("DashboardOpenUrlEvent", event, sourceWindowId)
     }
+
     suspend fun newTab(sourceWindowId: String) {
         val event = DashboardNewTabEvent(sourceWindowId)
         _newTabEvents.emit(event)
         ipcBridge?.forward("DashboardNewTabEvent", event, sourceWindowId)
     }
+
     suspend fun newTerminal(sourceWindowId: String) {
         val event = DashboardNewTerminalEvent(sourceWindowId)
         _newTerminalEvents.emit(event)
         ipcBridge?.forward("DashboardNewTerminalEvent", event, sourceWindowId)
     }
+
     suspend fun showProjectDialog(sourceWindowId: String) {
         val event = DashboardShowProjectDialogEvent(sourceWindowId)
         _showProjectDialogEvents.emit(event)
         ipcBridge?.forward("DashboardShowProjectDialogEvent", event, sourceWindowId)
     }
+
     suspend fun showFileDialog(sourceWindowId: String) {
         val event = DashboardShowFileDialogEvent(sourceWindowId)
         _showFileDialogEvents.emit(event)
         ipcBridge?.forward("DashboardShowFileDialogEvent", event, sourceWindowId)
     }
+
     suspend fun showNewProject(sourceWindowId: String) {
         val event = DashboardShowNewProjectEvent(sourceWindowId)
         _showNewProjectEvents.emit(event)
         ipcBridge?.forward("DashboardShowNewProjectEvent", event, sourceWindowId)
     }
-    suspend fun applySplitTemplate(template: SplitTemplate, sourceWindowId: String) {
+
+    suspend fun applySplitTemplate(
+        template: SplitTemplate,
+        sourceWindowId: String,
+    ) {
         val event = DashboardApplySplitTemplateEvent(template, sourceWindowId)
         _applySplitTemplateEvents.emit(event)
         ipcBridge?.forward("DashboardApplySplitTemplateEvent", event, sourceWindowId)
     }
-    suspend fun activatePlugin(pluginId: String, sourceWindowId: String) {
+
+    suspend fun activatePlugin(
+        pluginId: String,
+        sourceWindowId: String,
+    ) {
         val event = DashboardActivatePluginEvent(pluginId, sourceWindowId)
         _activatePluginEvents.emit(event)
         ipcBridge?.forward("DashboardActivatePluginEvent", event, sourceWindowId)

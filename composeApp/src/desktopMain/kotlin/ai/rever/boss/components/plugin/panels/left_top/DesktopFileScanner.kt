@@ -12,7 +12,10 @@ private val logger = BossLogger.forComponent("DesktopFileScanner")
 
 actual fun scanDirectory(path: String): FileNodeData? = scanDirectory(path, showHidden = false)
 
-actual fun scanDirectory(path: String, showHidden: Boolean): FileNodeData? {
+actual fun scanDirectory(
+    path: String,
+    showHidden: Boolean,
+): FileNodeData? {
     val file = File(path)
     if (!file.exists()) return null
 
@@ -20,10 +23,18 @@ actual fun scanDirectory(path: String, showHidden: Boolean): FileNodeData? {
     return scanFileRecursively(file, maxDepth = 1, showHidden = showHidden)
 }
 
-actual suspend fun scanDirectoryWithDepth(path: String, maxDepth: Int, startDepth: Int): FileNodeData? =
-    scanDirectoryWithDepth(path, maxDepth, startDepth, showHidden = false)
+actual suspend fun scanDirectoryWithDepth(
+    path: String,
+    maxDepth: Int,
+    startDepth: Int,
+): FileNodeData? = scanDirectoryWithDepth(path, maxDepth, startDepth, showHidden = false)
 
-actual suspend fun scanDirectoryWithDepth(path: String, maxDepth: Int, startDepth: Int, showHidden: Boolean): FileNodeData? {
+actual suspend fun scanDirectoryWithDepth(
+    path: String,
+    maxDepth: Int,
+    startDepth: Int,
+    showHidden: Boolean,
+): FileNodeData? {
     val file = File(path)
     if (!file.exists()) return null
 
@@ -38,7 +49,10 @@ actual suspend fun scanDirectoryWithDepth(path: String, maxDepth: Int, startDept
  */
 actual fun directoryHasChildren(path: String): Boolean = directoryHasChildren(path, showHidden = false)
 
-actual fun directoryHasChildren(path: String, showHidden: Boolean): Boolean {
+actual fun directoryHasChildren(
+    path: String,
+    showHidden: Boolean,
+): Boolean {
     return try {
         val dir = Paths.get(path)
         if (!Files.isDirectory(dir)) return false
@@ -63,58 +77,62 @@ private fun scanFileRecursively(
     file: File,
     currentDepth: Int = 0,
     maxDepth: Int = 5,
-    showHidden: Boolean = false
+    showHidden: Boolean = false,
 ): FileNodeData {
     val isDirectory = file.isDirectory
     val shouldLoadChildren = isDirectory && currentDepth < maxDepth
 
-    val children: List<FileNodeData> = if (shouldLoadChildren) {
-        file.listFiles()
-            ?.filter { isVisibleScanEntry(it.name, showHidden) }
-            // Stat each entry once up front — sort comparators re-invoke their
-            // selectors, and File.isDirectory is a syscall per call.
-            ?.map { it to it.isDirectory }
-            ?.sortedWith(compareBy({ !it.second }, { it.first.name.lowercase() }))
-            ?.map { (childFile, childIsDirectory) ->
-                // For directories at the edge of our scan depth, just create a placeholder
-                if (childIsDirectory && currentDepth + 1 >= maxDepth) {
-                    // Quick check if this directory has children (isAlwaysShowPlus pattern)
-                    val hasKids = directoryHasChildren(childFile.absolutePath, showHidden)
-                    FileNodeData(
-                        name = childFile.name,
-                        path = childFile.absolutePath,
-                        isDirectory = true,
-                        children = emptyList(),
-                        hasChildren = hasKids,
-                        loadingState = NodeLoadingStateData.UNKNOWN,
-                        loadDepth = currentDepth + 1
-                    )
-                } else {
-                    scanFileRecursively(childFile, currentDepth + 1, maxDepth, showHidden)
+    val children: List<FileNodeData> =
+        if (shouldLoadChildren) {
+            file
+                .listFiles()
+                ?.filter { isVisibleScanEntry(it.name, showHidden) }
+                // Stat each entry once up front — sort comparators re-invoke their
+                // selectors, and File.isDirectory is a syscall per call.
+                ?.map { it to it.isDirectory }
+                ?.sortedWith(compareBy({ !it.second }, { it.first.name.lowercase() }))
+                ?.map { (childFile, childIsDirectory) ->
+                    // For directories at the edge of our scan depth, just create a placeholder
+                    if (childIsDirectory && currentDepth + 1 >= maxDepth) {
+                        // Quick check if this directory has children (isAlwaysShowPlus pattern)
+                        val hasKids = directoryHasChildren(childFile.absolutePath, showHidden)
+                        FileNodeData(
+                            name = childFile.name,
+                            path = childFile.absolutePath,
+                            isDirectory = true,
+                            children = emptyList(),
+                            hasChildren = hasKids,
+                            loadingState = NodeLoadingStateData.UNKNOWN,
+                            loadDepth = currentDepth + 1,
+                        )
+                    } else {
+                        scanFileRecursively(childFile, currentDepth + 1, maxDepth, showHidden)
+                    }
                 }
-            }
-            ?: emptyList()
-    } else {
-        emptyList()
-    }
+                ?: emptyList()
+        } else {
+            emptyList()
+        }
 
     // Determine loading state
-    val loadingState = when {
-        !isDirectory -> NodeLoadingStateData.LOADED
-        currentDepth >= maxDepth - 1 -> NodeLoadingStateData.UNKNOWN
-        else -> NodeLoadingStateData.LOADED
-    }
+    val loadingState =
+        when {
+            !isDirectory -> NodeLoadingStateData.LOADED
+            currentDepth >= maxDepth - 1 -> NodeLoadingStateData.UNKNOWN
+            else -> NodeLoadingStateData.LOADED
+        }
 
     // When we already listed this directory (shouldLoadChildren), the filtered
     // children list is the authoritative answer -- re-streaming via
     // directoryHasChildren would just repeat the same filter over the same
     // listing. Only fall back to it when we skipped listing (depth limit).
-    val hasChildren = when {
-        !isDirectory -> false
-        children.isNotEmpty() -> true
-        shouldLoadChildren -> false
-        else -> directoryHasChildren(file.absolutePath, showHidden)
-    }
+    val hasChildren =
+        when {
+            !isDirectory -> false
+            children.isNotEmpty() -> true
+            shouldLoadChildren -> false
+            else -> directoryHasChildren(file.absolutePath, showHidden)
+        }
 
     return FileNodeData(
         name = file.name,
@@ -123,6 +141,6 @@ private fun scanFileRecursively(
         children = children,
         hasChildren = hasChildren,
         loadingState = loadingState,
-        loadDepth = currentDepth
+        loadDepth = currentDepth,
     )
 }

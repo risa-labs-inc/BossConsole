@@ -9,7 +9,6 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 
 class PluginSignatureSidecarTest {
-
     private val tempDir = createTempDirectory("sidecar-test").toFile()
 
     @AfterTest

@@ -1,7 +1,7 @@
 package ai.rever.boss.plugin.ipc
 
-import ai.rever.boss.ipc.proto.services.*
 import ai.rever.boss.ipc.proto.Empty
+import ai.rever.boss.ipc.proto.services.*
 import ai.rever.boss.plugin.api.AuthDataProvider
 import ai.rever.boss.plugin.api.UserData
 import io.grpc.ManagedChannel
@@ -26,7 +26,6 @@ class AuthDataProviderProxy(
     channel: ManagedChannel,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
 ) : AuthDataProvider {
-
     private val stub = AuthServiceGrpcKt.AuthServiceCoroutineStub(channel)
 
     private val _currentUser = MutableStateFlow<UserData?>(null)
@@ -47,14 +46,15 @@ class AuthDataProviderProxy(
                     stub.watchCurrentUser(Empty.getDefaultInstance()).collect { response ->
                         if (response.authenticated && response.hasUser()) {
                             val user = response.user
-                            _currentUser.value = UserData(
-                                id = user.userId,
-                                email = user.email,
-                                displayName = user.displayName.takeIf { it.isNotEmpty() },
-                                avatarUrl = user.avatarUrl.takeIf { it.isNotEmpty() },
-                                roles = user.rolesList,
-                                createdAt = user.sessionCreatedAt,
-                            )
+                            _currentUser.value =
+                                UserData(
+                                    id = user.userId,
+                                    email = user.email,
+                                    displayName = user.displayName.takeIf { it.isNotEmpty() },
+                                    avatarUrl = user.avatarUrl.takeIf { it.isNotEmpty() },
+                                    roles = user.rolesList,
+                                    createdAt = user.sessionCreatedAt,
+                                )
                             _isAdmin.value = user.isAdmin
                             _userPermissions.value = user.permissionsList.toSet()
                         } else {
@@ -83,9 +83,7 @@ class AuthDataProviderProxy(
     }
 
     // Non-suspend: check cached permissions (updated by background watcher)
-    override fun hasPermission(permission: String): Boolean {
-        return permission in _userPermissions.value
-    }
+    override fun hasPermission(permission: String): Boolean = permission in _userPermissions.value
 
     override fun hasAnyPermission(vararg permissions: String): Boolean {
         val current = _userPermissions.value

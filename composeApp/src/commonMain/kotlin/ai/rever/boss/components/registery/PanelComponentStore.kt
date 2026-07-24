@@ -8,9 +8,10 @@ import com.arkivanov.decompose.ComponentContext
 
 class PanelComponentStore(
     private val rootContext: ComponentContext,
-    private val registry: PanelRegistry
+    private val registry: PanelRegistry,
 ) {
     private val logger = BossLogger.forComponent("PanelComponentStore")
+
     // Map of active components by panel ID
     val activeComponents: SnapshotStateMap<PanelId, PanelComponentWithUI> = mutableStateMapOf()
 
@@ -26,7 +27,7 @@ class PanelComponentStore(
         activeComponents[panelId] = component
         return component
     }
-    
+
     // Remove a component when panel is closed
     fun removeComponent(panelId: PanelId) {
         activeComponents.remove(panelId)
@@ -94,5 +95,4 @@ class PanelComponentStore(
             return false
         }
     }
-
 }

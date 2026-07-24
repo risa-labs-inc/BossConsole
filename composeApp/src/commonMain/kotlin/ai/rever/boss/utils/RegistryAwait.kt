@@ -32,7 +32,7 @@ suspend fun awaitRegistryCondition(
     addListener: (() -> Unit) -> Unit,
     removeListener: (() -> Unit) -> Unit,
     timeoutMs: Long = PLUGIN_REGISTRATION_TIMEOUT_MS,
-    condition: () -> Boolean
+    condition: () -> Boolean,
 ): Boolean {
     if (condition()) return true
 
@@ -45,8 +45,11 @@ suspend fun awaitRegistryCondition(
     return try {
         // Re-check after subscribing: the condition may have become true
         // between the first check and the listener registration.
-        if (condition()) true
-        else withTimeoutOrNull(timeoutMs) { satisfied.await() } != null
+        if (condition()) {
+            true
+        } else {
+            withTimeoutOrNull(timeoutMs) { satisfied.await() } != null
+        }
     } finally {
         removeListener(listener)
     }

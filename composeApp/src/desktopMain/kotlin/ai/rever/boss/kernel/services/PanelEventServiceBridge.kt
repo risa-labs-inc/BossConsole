@@ -8,23 +8,24 @@ import ai.rever.boss.plugin.api.PanelId
 class PanelEventServiceBridge(
     private val provider: PanelEventProvider,
 ) : PanelEventServiceGrpcKt.PanelEventServiceCoroutineImplBase() {
-
     override suspend fun closePanel(request: ClosePanelRequest): Empty {
-        val panelId = PanelId(
-            panelId = request.panelId,
-            pluginId = request.pluginId,
-            defaultOrder = request.defaultOrder,
-        )
+        val panelId =
+            PanelId(
+                panelId = request.panelId,
+                pluginId = request.pluginId,
+                defaultOrder = request.defaultOrder,
+            )
         provider.closePanel(panelId, request.windowId)
         return Empty.getDefaultInstance()
     }
 
     override suspend fun openPanel(request: OpenPanelRequest): Empty {
-        val panelId = PanelId(
-            panelId = request.panelId,
-            pluginId = request.pluginId,
-            defaultOrder = request.defaultOrder,
-        )
+        val panelId =
+            PanelId(
+                panelId = request.panelId,
+                pluginId = request.pluginId,
+                defaultOrder = request.defaultOrder,
+            )
         provider.openPanel(panelId, request.windowId)
         return Empty.getDefaultInstance()
     }

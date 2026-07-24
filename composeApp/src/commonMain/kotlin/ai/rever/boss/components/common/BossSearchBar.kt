@@ -1,11 +1,12 @@
 @file:Suppress("UNUSED")
+
 package ai.rever.boss.components.common
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Search
 
 /**
  * Re-exports from plugin-search module for backward compatibility.
@@ -20,7 +21,7 @@ fun BossSearchBar(
     modifier: Modifier = Modifier,
     leadingIcon: ImageVector = Icons.Outlined.Search,
     showClearButton: Boolean = true,
-    onFocusChanged: ((Boolean) -> Unit)? = null
+    onFocusChanged: ((Boolean) -> Unit)? = null,
 ) = ai.rever.boss.plugin.search.BossSearchBar(
     query = query,
     onQueryChange = onQueryChange,
@@ -28,5 +29,5 @@ fun BossSearchBar(
     modifier = modifier,
     leadingIcon = leadingIcon,
     showClearButton = showClearButton,
-    onFocusChanged = onFocusChanged
+    onFocusChanged = onFocusChanged,
 )

@@ -14,15 +14,20 @@ import kotlin.test.assertNull
  * a new versioned name mid-startup.
  */
 class FindRelocatedPluginJarTest {
-
-    private fun tempDir(): File = File.createTempFile("plugins", null).apply {
-        delete()
-        mkdirs()
-        deleteOnExit()
-    }
+    private fun tempDir(): File =
+        File.createTempFile("plugins", null).apply {
+            delete()
+            mkdirs()
+            deleteOnExit()
+        }
 
     /** Write a minimal plugin jar with the given manifest fields. */
-    private fun writeJar(dir: File, fileName: String, pluginId: String, version: String): File {
+    private fun writeJar(
+        dir: File,
+        fileName: String,
+        pluginId: String,
+        version: String,
+    ): File {
         val jar = File(dir, fileName)
         ZipOutputStream(jar.outputStream()).use { zip ->
             zip.putNextEntry(ZipEntry("META-INF/boss-plugin/plugin.json"))
@@ -36,7 +41,7 @@ class FindRelocatedPluginJarTest {
                   "apiVersion": "1.0.0",
                   "mainClass": "com.example.TestPlugin"
                 }
-                """.trimIndent().toByteArray()
+                """.trimIndent().toByteArray(),
             )
             zip.closeEntry()
         }

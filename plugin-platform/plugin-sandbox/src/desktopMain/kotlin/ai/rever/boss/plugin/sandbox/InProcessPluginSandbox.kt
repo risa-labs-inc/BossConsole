@@ -1,9 +1,9 @@
 package ai.rever.boss.plugin.sandbox
 
-import ai.rever.boss.plugin.sandbox.health.PluginHealthMetrics
-import ai.rever.boss.plugin.sandbox.ui.PluginCrashRegistry
 import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
+import ai.rever.boss.plugin.sandbox.health.PluginHealthMetrics
+import ai.rever.boss.plugin.sandbox.ui.PluginCrashRegistry
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -12,11 +12,11 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -32,9 +32,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class InProcessPluginSandbox(
     override val pluginId: String,
-    private val config: SandboxConfig = SandboxConfig()
+    private val config: SandboxConfig = SandboxConfig(),
 ) : PluginSandbox {
-
     private val logger = BossLogger.forComponent("InProcessPluginSandbox")
 
     // State management
@@ -46,18 +45,26 @@ class InProcessPluginSandbox(
 
     // Thread pool and coroutine scope - @Volatile for visibility across threads during restart
     @Volatile
-    private var executor = Executors.newFixedThreadPool(config.maxThreads) { runnable ->
-        Thread(runnable, "plugin-sandbox-$pluginId-${System.currentTimeMillis()}")
-    }
+    private var executor =
+        Executors.newFixedThreadPool(config.maxThreads) { runnable ->
+            Thread(runnable, "plugin-sandbox-$pluginId-${System.currentTimeMillis()}")
+        }
+
     @Volatile
     private var dispatcher = executor.asCoroutineDispatcher()
 
-    private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
-        logger.error(LogCategory.SYSTEM, "Uncaught exception in plugin sandbox", mapOf(
-            "pluginId" to pluginId
-        ), throwable)
-        recordError(throwable)
-    }
+    private val exceptionHandler =
+        CoroutineExceptionHandler { _, throwable ->
+            logger.error(
+                LogCategory.SYSTEM,
+                "Uncaught exception in plugin sandbox",
+                mapOf(
+                    "pluginId" to pluginId,
+                ),
+                throwable,
+            )
+            recordError(throwable)
+        }
 
     @Volatile
     private var _sandboxScope: CoroutineScope = createScope()
@@ -81,23 +88,29 @@ class InProcessPluginSandbox(
     @Volatile
     private var heartbeatJob: Job? = null
 
-    private fun createScope(): CoroutineScope {
-        return CoroutineScope(dispatcher + SupervisorJob() + exceptionHandler)
-    }
+    private fun createScope(): CoroutineScope = CoroutineScope(dispatcher + SupervisorJob() + exceptionHandler)
 
     override suspend fun start(): Result<Unit> {
         return runCatching {
             if (isRunning.getAndSet(true)) {
-                logger.debug(LogCategory.SYSTEM, "Sandbox already running", mapOf(
-                    "pluginId" to pluginId
-                ))
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Sandbox already running",
+                    mapOf(
+                        "pluginId" to pluginId,
+                    ),
+                )
                 return@runCatching
             }
 
-            logger.info(LogCategory.SYSTEM, "Starting plugin sandbox", mapOf(
-                "pluginId" to pluginId,
-                "maxThreads" to config.maxThreads
-            ))
+            logger.info(
+                LogCategory.SYSTEM,
+                "Starting plugin sandbox",
+                mapOf(
+                    "pluginId" to pluginId,
+                    "maxThreads" to config.maxThreads,
+                ),
+            )
 
             _state.value = SandboxState.RUNNING
             _healthMetrics.value = PluginHealthMetrics.initial()
@@ -114,27 +127,36 @@ class InProcessPluginSandbox(
     private fun startHeartbeatJob() {
         heartbeatJob?.cancel()
         // Launch first, then assign - ensures we only hold reference to successfully created job
-        val newJob = _sandboxScope.launch {
-            while (isActive) {
-                recordHeartbeat()
-                delay(config.heartbeatIntervalMs)
+        val newJob =
+            _sandboxScope.launch {
+                while (isActive) {
+                    recordHeartbeat()
+                    delay(config.heartbeatIntervalMs)
+                }
             }
-        }
         heartbeatJob = newJob
     }
 
     override suspend fun stop(): Result<Unit> {
         return runCatching {
             if (!isRunning.getAndSet(false)) {
-                logger.debug(LogCategory.SYSTEM, "Sandbox already stopped", mapOf(
-                    "pluginId" to pluginId
-                ))
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Sandbox already stopped",
+                    mapOf(
+                        "pluginId" to pluginId,
+                    ),
+                )
                 return@runCatching
             }
 
-            logger.info(LogCategory.SYSTEM, "Stopping plugin sandbox", mapOf(
-                "pluginId" to pluginId
-            ))
+            logger.info(
+                LogCategory.SYSTEM,
+                "Stopping plugin sandbox",
+                mapOf(
+                    "pluginId" to pluginId,
+                ),
+            )
 
             _state.value = SandboxState.STOPPED
 
@@ -149,9 +171,13 @@ class InProcessPluginSandbox(
             executor.shutdown()
             try {
                 if (!executor.awaitTermination(2, TimeUnit.SECONDS)) {
-                    logger.warn(LogCategory.SYSTEM, "Executor didn't terminate gracefully, forcing shutdown", mapOf(
-                        "pluginId" to pluginId
-                    ))
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Executor didn't terminate gracefully, forcing shutdown",
+                        mapOf(
+                            "pluginId" to pluginId,
+                        ),
+                    )
                     executor.shutdownNow()
                 }
             } catch (e: InterruptedException) {
@@ -161,12 +187,16 @@ class InProcessPluginSandbox(
         }
     }
 
-    override suspend fun restart(): Result<Unit> {
-        return runCatching {
-            logger.info(LogCategory.SYSTEM, "Restarting plugin sandbox", mapOf(
-                "pluginId" to pluginId,
-                "restartAttempt" to (_healthMetrics.value.restartAttempts + 1)
-            ))
+    override suspend fun restart(): Result<Unit> =
+        runCatching {
+            logger.info(
+                LogCategory.SYSTEM,
+                "Restarting plugin sandbox",
+                mapOf(
+                    "pluginId" to pluginId,
+                    "restartAttempt" to (_healthMetrics.value.restartAttempts + 1),
+                ),
+            )
 
             _state.value = SandboxState.RESTARTING
 
@@ -194,9 +224,10 @@ class InProcessPluginSandbox(
                 }
 
                 // Create new executor and scope atomically
-                executor = Executors.newFixedThreadPool(config.maxThreads) { runnable ->
-                    Thread(runnable, "plugin-sandbox-$pluginId-${System.currentTimeMillis()}")
-                }
+                executor =
+                    Executors.newFixedThreadPool(config.maxThreads) { runnable ->
+                        Thread(runnable, "plugin-sandbox-$pluginId-${System.currentTimeMillis()}")
+                    }
                 dispatcher = executor.asCoroutineDispatcher()
                 _sandboxScope = createScope()
             }
@@ -209,11 +240,14 @@ class InProcessPluginSandbox(
             // Start automatic heartbeat recording
             startHeartbeatJob()
 
-            logger.info(LogCategory.SYSTEM, "Plugin sandbox restarted successfully", mapOf(
-                "pluginId" to pluginId
-            ))
+            logger.info(
+                LogCategory.SYSTEM,
+                "Plugin sandbox restarted successfully",
+                mapOf(
+                    "pluginId" to pluginId,
+                ),
+            )
         }
-    }
 
     override fun recordHeartbeat() {
         _healthMetrics.update { it.withHeartbeat() }
@@ -227,21 +261,30 @@ class InProcessPluginSandbox(
         // Wrap the error with plugin attribution
         val wrappedError = PluginException.createByPlugin(pluginId, error)
 
-        logger.warn(LogCategory.SYSTEM, "Recording error in plugin sandbox", mapOf(
-            "pluginId" to pluginId,
-            "consecutiveErrors" to (_healthMetrics.value.consecutiveErrors + 1),
-            "errorType" to error.javaClass.simpleName
-        ), wrappedError)
+        logger.warn(
+            LogCategory.SYSTEM,
+            "Recording error in plugin sandbox",
+            mapOf(
+                "pluginId" to pluginId,
+                "consecutiveErrors" to (_healthMetrics.value.consecutiveErrors + 1),
+                "errorType" to error.javaClass.simpleName,
+            ),
+            wrappedError,
+        )
 
         _healthMetrics.update { it.withError() }
 
         // Binary incompatibility is deterministic — restart will never fix it.
         // Skip the restart loop and disable immediately.
         if (PluginErrorClassifier.isBinaryIncompatibility(error)) {
-            logger.error(LogCategory.SYSTEM, "Binary incompatibility detected, disabling plugin", mapOf(
-                "pluginId" to pluginId,
-                "errorType" to error.javaClass.simpleName
-            ))
+            logger.error(
+                LogCategory.SYSTEM,
+                "Binary incompatibility detected, disabling plugin",
+                mapOf(
+                    "pluginId" to pluginId,
+                    "errorType" to error.javaClass.simpleName,
+                ),
+            )
             PluginCrashRegistry.markIncompatible(pluginId)
             _state.value = SandboxState.DISABLED
             return
@@ -255,9 +298,13 @@ class InProcessPluginSandbox(
 
     override fun markUnhealthy() {
         if (_state.value == SandboxState.RUNNING) {
-            logger.warn(LogCategory.SYSTEM, "Marking plugin sandbox as unhealthy", mapOf(
-                "pluginId" to pluginId
-            ))
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Marking plugin sandbox as unhealthy",
+                mapOf(
+                    "pluginId" to pluginId,
+                ),
+            )
             _state.value = SandboxState.UNHEALTHY
             // Note: heartbeatJob intentionally continues running when unhealthy.
             // This allows: (1) the watchdog to detect heartbeat timeouts for restart decisions,
@@ -267,13 +314,17 @@ class InProcessPluginSandbox(
     }
 
     override fun resetHealth() {
-        logger.info(LogCategory.SYSTEM, "Resetting plugin sandbox health", mapOf(
-            "pluginId" to pluginId
-        ))
+        logger.info(
+            LogCategory.SYSTEM,
+            "Resetting plugin sandbox health",
+            mapOf(
+                "pluginId" to pluginId,
+            ),
+        )
         _healthMetrics.update {
             it.copy(
                 consecutiveErrors = 0,
-                lastHeartbeat = System.currentTimeMillis()
+                lastHeartbeat = System.currentTimeMillis(),
             )
         }
         // If sandbox was unhealthy, mark it as running again
@@ -287,9 +338,13 @@ class InProcessPluginSandbox(
      * This is called by the PluginSandboxManager when a plugin is disabled.
      */
     fun setDisabled() {
-        logger.info(LogCategory.SYSTEM, "Setting plugin sandbox as disabled", mapOf(
-            "pluginId" to pluginId
-        ))
+        logger.info(
+            LogCategory.SYSTEM,
+            "Setting plugin sandbox as disabled",
+            mapOf(
+                "pluginId" to pluginId,
+            ),
+        )
         _state.value = SandboxState.DISABLED
     }
 
@@ -298,11 +353,15 @@ class InProcessPluginSandbox(
      * Used internally for state management.
      */
     internal fun setState(newState: SandboxState) {
-        logger.debug(LogCategory.SYSTEM, "Setting sandbox state", mapOf(
-            "pluginId" to pluginId,
-            "oldState" to _state.value.name,
-            "newState" to newState.name
-        ))
+        logger.debug(
+            LogCategory.SYSTEM,
+            "Setting sandbox state",
+            mapOf(
+                "pluginId" to pluginId,
+                "oldState" to _state.value.name,
+                "newState" to newState.name,
+            ),
+        )
         _state.value = newState
     }
 }

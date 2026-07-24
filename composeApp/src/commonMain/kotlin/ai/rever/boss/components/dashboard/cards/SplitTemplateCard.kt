@@ -47,14 +47,14 @@ import androidx.compose.ui.unit.sp
 fun SplitTemplateCard(
     template: SplitTemplate,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
 
     val scale by animateFloatAsState(
         targetValue = if (isHovered) 1.02f else 1f,
-        animationSpec = spring(dampingRatio = 0.6f)
+        animationSpec = spring(dampingRatio = 0.6f),
     )
 
     val backgroundColor = if (isHovered) BossTheme.colors.signalWash else BossTheme.colors.raised
@@ -63,28 +63,29 @@ fun SplitTemplateCard(
     val cardShape = RoundedCornerShape(12.dp)
 
     Column(
-        modifier = modifier
-            .width(180.dp)
-            .height(140.dp) // Fixed height for consistency
-            .scale(scale)
-            .clip(cardShape)
-            .background(color = backgroundColor)
-            .border(
-                width = 1.dp,
-                color = borderColor,
-                shape = cardShape
-            )
-            .clickable { onClick() }
-            .hoverable(interactionSource)
-            .padding(12.dp),
-        verticalArrangement = Arrangement.SpaceBetween
+        modifier =
+            modifier
+                .width(180.dp)
+                .height(140.dp) // Fixed height for consistency
+                .scale(scale)
+                .clip(cardShape)
+                .background(color = backgroundColor)
+                .border(
+                    width = 1.dp,
+                    color = borderColor,
+                    shape = cardShape,
+                ).clickable { onClick() }
+                .hoverable(interactionSource)
+                .padding(12.dp),
+        verticalArrangement = Arrangement.SpaceBetween,
     ) {
         // Template name
         Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(18.dp),
-            contentAlignment = Alignment.Center
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .height(18.dp),
+            contentAlignment = Alignment.Center,
         ) {
             Text(
                 text = template.name,
@@ -92,7 +93,7 @@ fun SplitTemplateCard(
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
             )
         }
 
@@ -101,17 +102,18 @@ fun SplitTemplateCard(
 
         // Description
         Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(28.dp),
-            contentAlignment = Alignment.Center
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .height(28.dp),
+            contentAlignment = Alignment.Center,
         ) {
             Text(
                 text = template.description,
                 color = BossTheme.colors.textSecondary,
                 fontSize = 10.sp,
                 maxLines = 2,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
@@ -126,18 +128,19 @@ private fun SplitPreview(template: SplitTemplate) {
     val rightPanel = template.panels.find { it.position == "right" }
 
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(50.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .background(BossTheme.colors.ink),
-        horizontalArrangement = Arrangement.spacedBy(2.dp)
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .height(50.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(BossTheme.colors.ink),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         // Left panel
         if (leftPanel != null) {
             PanelPreview(
                 type = leftPanel.type,
-                modifier = Modifier.weight(1f).fillMaxHeight()
+                modifier = Modifier.weight(1f).fillMaxHeight(),
             )
         }
 
@@ -145,7 +148,7 @@ private fun SplitPreview(template: SplitTemplate) {
         if (rightPanel != null) {
             PanelPreview(
                 type = rightPanel.type,
-                modifier = Modifier.weight(1f).fillMaxHeight()
+                modifier = Modifier.weight(1f).fillMaxHeight(),
             )
         }
     }
@@ -157,35 +160,39 @@ private fun SplitPreview(template: SplitTemplate) {
 @Composable
 private fun PanelPreview(
     type: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
-    val (icon, color, label) = when (type) {
-        "terminal" -> Triple(Icons.Outlined.Terminal, BossTheme.colors.ok, "Term")
-        "browser" -> Triple(Icons.Outlined.Language, BossTheme.colors.data, "Web")
-        // Deliberate one-off: the design system has no purple token (editor identity color).
-        "editor" -> Triple(Icons.Outlined.Code, Color(0xFFB877DB), "Code")
-        else -> Triple(Icons.Outlined.Code, BossTheme.colors.textSecondary, type)
-    }
+    val (icon, color, label) =
+        when (type) {
+            "terminal" -> Triple(Icons.Outlined.Terminal, BossTheme.colors.ok, "Term")
+
+            "browser" -> Triple(Icons.Outlined.Language, BossTheme.colors.data, "Web")
+
+            // Deliberate one-off: the design system has no purple token (editor identity color).
+            "editor" -> Triple(Icons.Outlined.Code, Color(0xFFB877DB), "Code")
+
+            else -> Triple(Icons.Outlined.Code, BossTheme.colors.textSecondary, type)
+        }
 
     Box(
         modifier = modifier.background(BossTheme.colors.raised),
-        contentAlignment = Alignment.Center
+        contentAlignment = Alignment.Center,
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(2.dp)
+            verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = type,
                 tint = color,
-                modifier = Modifier.size(16.dp)
+                modifier = Modifier.size(16.dp),
             )
             Text(
                 text = label,
                 color = color.copy(alpha = 0.8f),
                 fontSize = 8.sp,
-                fontWeight = FontWeight.Medium
+                fontWeight = FontWeight.Medium,
             )
         }
     }

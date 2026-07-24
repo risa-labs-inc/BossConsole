@@ -5,7 +5,6 @@ package ai.rever.boss.run
  * Handles cross-platform differences between Unix shells and Windows PowerShell.
  */
 object ShellUtils {
-
     /**
      * Whether we're running on Windows.
      */
@@ -41,23 +40,22 @@ object ShellUtils {
      * Escape a string for safe use inside double quotes in shell.
      * Platform-aware escaping for Unix shells vs Windows PowerShell.
      */
-    fun escapeForDoubleQuotes(str: String): String {
-        return if (isWindows) {
+    fun escapeForDoubleQuotes(str: String): String =
+        if (isWindows) {
             // PowerShell escaping: backtick is the escape character
             str
-                .replace("`", "``")     // Backtick must be escaped first
-                .replace("\"", "`\"")   // Double quotes
-                .replace("\$", "`\$")   // Dollar sign (prevents variable expansion)
+                .replace("`", "``") // Backtick must be escaped first
+                .replace("\"", "`\"") // Double quotes
+                .replace("\$", "`\$") // Dollar sign (prevents variable expansion)
         } else {
             // Unix shell escaping
             str
-                .replace("\\", "\\\\")  // Backslash must be escaped first
-                .replace("\"", "\\\"")  // Double quotes
-                .replace("\$", "\\\$")  // Dollar sign (prevents variable expansion)
-                .replace("`", "\\`")    // Backticks (prevents command substitution)
-                .replace("!", "\\!")    // Exclamation (history expansion in interactive shells)
+                .replace("\\", "\\\\") // Backslash must be escaped first
+                .replace("\"", "\\\"") // Double quotes
+                .replace("\$", "\\\$") // Dollar sign (prevents variable expansion)
+                .replace("`", "\\`") // Backticks (prevents command substitution)
+                .replace("!", "\\!") // Exclamation (history expansion in interactive shells)
         }
-    }
 
     /**
      * Build a command with cd to working directory.
@@ -68,14 +66,16 @@ object ShellUtils {
      * @param workingDirectory Optional working directory to cd into first
      * @return The full command with cd prefix if workingDirectory is provided
      */
-    fun buildCommandWithWorkingDirectory(command: String, workingDirectory: String?): String {
-        return if (!workingDirectory.isNullOrBlank()) {
+    fun buildCommandWithWorkingDirectory(
+        command: String,
+        workingDirectory: String?,
+    ): String =
+        if (!workingDirectory.isNullOrBlank()) {
             val escapedDir = escapeForDoubleQuotes(workingDirectory)
             "cd \"$escapedDir\"$commandSeparator$command"
         } else {
             command
         }
-    }
 
     /**
      * Chain multiple commands together using platform-appropriate separator.
@@ -83,7 +83,5 @@ object ShellUtils {
      * @param commands The commands to chain
      * @return The chained command string
      */
-    fun chainCommands(vararg commands: String): String {
-        return commands.joinToString(commandSeparator)
-    }
+    fun chainCommands(vararg commands: String): String = commands.joinToString(commandSeparator)
 }

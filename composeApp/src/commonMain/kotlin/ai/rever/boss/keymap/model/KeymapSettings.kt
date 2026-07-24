@@ -12,7 +12,7 @@ import kotlinx.serialization.Serializable
 @Serializable
 enum class TabSwitchMode {
     POSITIONAL,
-    MRU
+    MRU,
 }
 
 /**
@@ -30,7 +30,7 @@ data class KeymapSettings(
     val presetName: String = "BOSS Default",
     val customized: Boolean = false,
     val tabSwitchMode: TabSwitchMode = TabSwitchMode.MRU,
-    val version: Int = 1
+    val version: Int = 1,
 ) {
     /**
      * Get a key binding by action ID.
@@ -40,37 +40,27 @@ data class KeymapSettings(
     /**
      * Get all bindings for a specific context.
      */
-    fun getBindingsForContext(context: ShortcutContext): List<KeyBinding> {
-        return shortcuts.values.filter { it.context == context }
-    }
+    fun getBindingsForContext(context: ShortcutContext): List<KeyBinding> = shortcuts.values.filter { it.context == context }
 
     /**
      * Get all enabled bindings.
      */
-    fun getEnabledBindings(): List<KeyBinding> {
-        return shortcuts.values.filter { it.enabled }
-    }
+    fun getEnabledBindings(): List<KeyBinding> = shortcuts.values.filter { it.enabled }
 
     /**
      * Get bindings grouped by category.
      */
-    fun getBindingsByCategory(): Map<String, List<KeyBinding>> {
-        return shortcuts.values.groupBy { it.category }
-    }
+    fun getBindingsByCategory(): Map<String, List<KeyBinding>> = shortcuts.values.groupBy { it.category }
 
     /**
      * Check if a specific action is bound to any key.
      */
-    fun hasBinding(actionId: String): Boolean {
-        return shortcuts.containsKey(actionId) && shortcuts[actionId]?.enabled == true
-    }
+    fun hasBinding(actionId: String): Boolean = shortcuts.containsKey(actionId) && shortcuts[actionId]?.enabled == true
 
     /**
      * Get all action IDs that are bound.
      */
-    fun getBoundActionIds(): Set<String> {
-        return shortcuts.keys
-    }
+    fun getBoundActionIds(): Set<String> = shortcuts.keys
 
     /**
      * Create a modified copy with a new or updated binding.
@@ -80,7 +70,7 @@ data class KeymapSettings(
         updatedShortcuts[binding.actionId] = binding
         return copy(
             shortcuts = updatedShortcuts,
-            customized = true
+            customized = true,
         )
     }
 
@@ -92,7 +82,7 @@ data class KeymapSettings(
         updatedShortcuts.remove(actionId)
         return copy(
             shortcuts = updatedShortcuts,
-            customized = true
+            customized = true,
         )
     }
 
@@ -124,14 +114,14 @@ data class KeymapSettings(
         fun fromBindings(
             bindings: List<KeyBinding>,
             presetName: String = "BOSS Default",
-            customized: Boolean = false
+            customized: Boolean = false,
         ): KeymapSettings {
             val shortcutsMap = bindings.associateBy { it.actionId }
             return KeymapSettings(
                 shortcuts = shortcutsMap,
                 presetName = presetName,
                 customized = customized,
-                version = 1
+                version = 1,
             )
         }
     }

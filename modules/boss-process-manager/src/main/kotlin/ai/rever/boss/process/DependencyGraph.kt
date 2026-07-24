@@ -17,14 +17,16 @@ import org.slf4j.LoggerFactory
  * ```
  */
 class DependencyGraph {
-
     private val logger = LoggerFactory.getLogger(DependencyGraph::class.java)
     private val nodes = mutableMapOf<String, MutableSet<String>>()
 
     /**
      * Add a process with its dependencies.
      */
-    fun addProcess(id: String, dependencies: List<String> = emptyList()) {
+    fun addProcess(
+        id: String,
+        dependencies: List<String> = emptyList(),
+    ) {
         nodes.getOrPut(id) { mutableSetOf() }.addAll(dependencies)
         // Ensure dependency nodes exist in the graph
         dependencies.forEach { dep ->
@@ -44,7 +46,10 @@ class DependencyGraph {
     /**
      * Check if a process can start (all dependencies are satisfied).
      */
-    fun canStart(id: String, runningProcesses: Set<String>): Boolean {
+    fun canStart(
+        id: String,
+        runningProcesses: Set<String>,
+    ): Boolean {
         val deps = nodes[id] ?: return true
         return deps.all { it in runningProcesses }
     }

@@ -49,55 +49,59 @@ fun ProjectCard(
     project: Project,
     onClick: () -> Unit,
     onRemove: (() -> Unit)? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
 
     val scale by animateFloatAsState(
         targetValue = if (isHovered) 1.02f else 1f,
-        animationSpec = spring(dampingRatio = 0.6f)
+        animationSpec = spring(dampingRatio = 0.6f),
     )
 
     val backgroundColor = if (isHovered) BossTheme.colors.signalWash else BossTheme.colors.raised
     val cardShape = RoundedCornerShape(12.dp)
 
     Box(
-        modifier = modifier
-            .width(140.dp)
-            .scale(scale)
-            .clip(cardShape)
-            .background(color = backgroundColor)
-            .clickable { onClick() }
-            .hoverable(interactionSource)
+        modifier =
+            modifier
+                .width(140.dp)
+                .scale(scale)
+                .clip(cardShape)
+                .background(color = backgroundColor)
+                .clickable { onClick() }
+                .hoverable(interactionSource),
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             // Project logo - same as top bar selection
             Surface(
-                modifier = Modifier
-                    .padding(2.dp)
-                    .size(32.dp),
+                modifier =
+                    Modifier
+                        .padding(2.dp)
+                        .size(32.dp),
                 shape = RoundedCornerShape(4.dp),
                 color = BossTheme.colors.signal,
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
-                    val initials = when {
-                        project.name.length >= 2 -> project.name.substring(0, 2)
-                        project.name.isNotEmpty() -> project.name[0].toString()
-                        else -> "?"
-                    }
+                    val initials =
+                        when {
+                            project.name.length >= 2 -> project.name.substring(0, 2)
+                            project.name.isNotEmpty() -> project.name[0].toString()
+                            else -> "?"
+                        }
                     Text(
                         text = initials.uppercase(),
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         color = BossTheme.colors.onSignal,
-                        modifier = Modifier.align(Alignment.Center)
+                        modifier = Modifier.align(Alignment.Center),
                     )
                 }
             }
@@ -108,14 +112,14 @@ fun ProjectCard(
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
             )
 
             Text(
                 text = formatRelativeTime(project.lastOpened),
                 color = BossTheme.colors.textSecondary,
                 fontSize = 11.sp,
-                maxLines = 1
+                maxLines = 1,
             )
         }
 
@@ -125,25 +129,26 @@ fun ProjectCard(
                 visible = isHovered,
                 enter = fadeIn(),
                 exit = fadeOut(),
-                modifier = Modifier.align(Alignment.TopEnd)
+                modifier = Modifier.align(Alignment.TopEnd),
             ) {
                 Box(
-                    modifier = Modifier
-                        .padding(4.dp)
-                        .size(18.dp)
-                        .clip(CircleShape)
-                        .background(BossTheme.colors.lineStrong)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) { onRemove() },
-                    contentAlignment = Alignment.Center
+                    modifier =
+                        Modifier
+                            .padding(4.dp)
+                            .size(18.dp)
+                            .clip(CircleShape)
+                            .background(BossTheme.colors.lineStrong)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                            ) { onRemove() },
+                    contentAlignment = Alignment.Center,
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Close,
                         contentDescription = "Remove",
                         tint = BossTheme.colors.textSecondary,
-                        modifier = Modifier.size(12.dp)
+                        modifier = Modifier.size(12.dp),
                     )
                 }
             }

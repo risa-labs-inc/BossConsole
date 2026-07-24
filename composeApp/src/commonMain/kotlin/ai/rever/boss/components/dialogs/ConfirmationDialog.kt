@@ -36,38 +36,40 @@ fun ConfirmationDialog(
     confirmText: String = "Confirm",
     confirmColor: Color = BossTheme.colors.alert, // destructive
     onDismiss: () -> Unit,
-    onConfirm: () -> Unit
+    onConfirm: () -> Unit,
 ) {
     val colors = BossTheme.colors
     val radii = BossTheme.radius
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            dismissOnClickOutside = true,
-            dismissOnBackPress = true
-        )
+        properties =
+            DialogProperties(
+                dismissOnClickOutside = true,
+                dismissOnBackPress = true,
+            ),
     ) {
         Surface(
-            modifier = Modifier
-                .width(400.dp)
-                .wrapContentHeight(),
+            modifier =
+                Modifier
+                    .width(400.dp)
+                    .wrapContentHeight(),
             shape = RoundedCornerShape(radii.dialog),
-            color = colors.panel
+            color = colors.panel,
         ) {
             Column(
-                modifier = Modifier.padding(24.dp)
+                modifier = Modifier.padding(24.dp),
             ) {
                 // Icon and title
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
                     if (icon != null) {
                         Icon(
                             imageVector = icon,
                             contentDescription = title,
                             tint = iconTint,
-                            modifier = Modifier.size(24.dp)
+                            modifier = Modifier.size(24.dp),
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                     }
@@ -75,7 +77,7 @@ fun ConfirmationDialog(
                         text = title,
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold,
-                        color = colors.textPrimary
+                        color = colors.textPrimary,
                     )
                 }
 
@@ -86,7 +88,7 @@ fun ConfirmationDialog(
                     text = message,
                     fontSize = 14.sp,
                     color = colors.textSecondary,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
                 )
 
                 Spacer(modifier = Modifier.height(24.dp))
@@ -94,13 +96,14 @@ fun ConfirmationDialog(
                 // Action buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
+                    horizontalArrangement = Arrangement.End,
                 ) {
                     TextButton(
                         onClick = onDismiss,
-                        colors = ButtonDefaults.textButtonColors(
-                            contentColor = colors.textSecondary
-                        )
+                        colors =
+                            ButtonDefaults.textButtonColors(
+                                contentColor = colors.textSecondary,
+                            ),
                     ) {
                         Text("Cancel")
                     }
@@ -112,11 +115,12 @@ fun ConfirmationDialog(
                             onConfirm()
                             onDismiss()
                         },
-                        colors = ButtonDefaults.buttonColors(
-                            backgroundColor = confirmColor,
-                            contentColor = Color.White
-                        ),
-                        shape = RoundedCornerShape(radii.button)
+                        colors =
+                            ButtonDefaults.buttonColors(
+                                backgroundColor = confirmColor,
+                                contentColor = Color.White,
+                            ),
+                        shape = RoundedCornerShape(radii.button),
                     ) {
                         Text(confirmText, fontWeight = FontWeight.Medium)
                     }

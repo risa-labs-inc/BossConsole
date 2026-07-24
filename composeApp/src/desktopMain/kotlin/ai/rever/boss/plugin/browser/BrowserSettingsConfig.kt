@@ -17,12 +17,13 @@ object BrowserSettings {
     // JavaScript dialog settings (configurable via Settings > Browser)
     // Due to JxBrowser threading limitations, dialogs must be auto-handled
     enum class JsConfirmBehavior { AUTO_CONFIRM, AUTO_CANCEL }
+
     var jsConfirmBehavior: JsConfirmBehavior = JsConfirmBehavior.AUTO_CONFIRM
-    var jsPromptDefaultValue: String = ""  // Empty string or user-configured default
-    var jsPromptUsePageDefault: Boolean = true  // Use page's default value if true, else use jsPromptDefaultValue
+    var jsPromptDefaultValue: String = "" // Empty string or user-configured default
+    var jsPromptUsePageDefault: Boolean = true // Use page's default value if true, else use jsPromptDefaultValue
 
     // Secret Manager settings (configurable via Settings > Browser > Secret Manager)
-    var discretePasswordFill: Boolean = true  // Hide filled passwords with blur effect for privacy
+    var discretePasswordFill: Boolean = true // Hide filled passwords with blur effect for privacy
 
     // Tab sharing (configurable via Settings > Browser > Tab Sharing). OFF by default:
     // the co-browse share (QR) button stays hidden in the browser toolbar until the

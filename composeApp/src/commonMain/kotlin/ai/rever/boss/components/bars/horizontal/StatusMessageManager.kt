@@ -31,14 +31,18 @@ object StatusMessageManager {
      * @param message The message to display
      * @param durationMs How long to show the message (default 2 seconds)
      */
-    fun showMessage(message: String, durationMs: Long = 2000) {
+    fun showMessage(
+        message: String,
+        durationMs: Long = 2000,
+    ) {
         scope.launch {
             currentMessageJob?.cancel()
-            currentMessageJob = scope.launch {
-                _currentMessage.value = message
-                delay(durationMs)
-                _currentMessage.value = null
-            }
+            currentMessageJob =
+                scope.launch {
+                    _currentMessage.value = message
+                    delay(durationMs)
+                    _currentMessage.value = null
+                }
         }
     }
 

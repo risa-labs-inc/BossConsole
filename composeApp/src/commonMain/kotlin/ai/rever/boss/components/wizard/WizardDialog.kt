@@ -78,7 +78,7 @@ fun WizardDialog(
     width: Dp = 650.dp,
     minHeight: Dp = 500.dp,
     maxHeight: Dp = 600.dp,
-    content: @Composable () -> Unit
+    content: @Composable () -> Unit,
 ) {
     Dialog(
         onDismissRequest = {
@@ -86,30 +86,33 @@ fun WizardDialog(
                 onDismiss()
             }
         },
-        properties = DialogProperties(
-            dismissOnClickOutside = dismissOnClickOutside,
-            dismissOnBackPress = true,
-            usePlatformDefaultWidth = false
-        )
+        properties =
+            DialogProperties(
+                dismissOnClickOutside = dismissOnClickOutside,
+                dismissOnBackPress = true,
+                usePlatformDefaultWidth = false,
+            ),
     ) {
         Box(
-            modifier = Modifier
-                .width(width)
-                .heightIn(min = minHeight, max = maxHeight)
-                .clip(RoundedCornerShape(16.dp))
-                .background(BossTheme.colors.panel)
+            modifier =
+                Modifier
+                    .width(width)
+                    .heightIn(min = minHeight, max = maxHeight)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(BossTheme.colors.panel),
         ) {
             Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(32.dp)
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .padding(32.dp),
             ) {
                 // Header
                 WizardDialogHeader(
                     title = title,
                     subtitle = subtitle,
                     onBack = onBack,
-                    onDismiss = if (showCloseButton) onDismiss else null
+                    onDismiss = if (showCloseButton) onDismiss else null,
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -118,7 +121,7 @@ fun WizardDialog(
                 WizardStepIndicator(
                     currentStep = currentStep,
                     totalSteps = totalSteps,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
                 )
 
                 Spacer(modifier = Modifier.height(24.dp))
@@ -136,7 +139,7 @@ fun WizardDialog(
                     onNext = onNext,
                     isLastStep = isLastStep,
                     nextButtonText = nextButtonText,
-                    nextButtonEnabled = nextButtonEnabled
+                    nextButtonEnabled = nextButtonEnabled,
                 )
             }
         }
@@ -148,21 +151,21 @@ private fun WizardDialogHeader(
     title: String,
     subtitle: String?,
     onBack: (() -> Unit)?,
-    onDismiss: (() -> Unit)?
+    onDismiss: (() -> Unit)?,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         if (onBack != null) {
             IconButton(
                 onClick = onBack,
-                modifier = Modifier.padding(end = 12.dp)
+                modifier = Modifier.padding(end = 12.dp),
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
                     contentDescription = "Back",
-                    tint = BossTheme.colors.textSecondary
+                    tint = BossTheme.colors.textSecondary,
                 )
             }
         }
@@ -172,13 +175,13 @@ private fun WizardDialogHeader(
                 text = title,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = BossTheme.colors.textPrimary
+                color = BossTheme.colors.textPrimary,
             )
             if (subtitle != null) {
                 Text(
                     text = subtitle,
                     fontSize = 13.sp,
-                    color = BossTheme.colors.textSecondary
+                    color = BossTheme.colors.textSecondary,
                 )
             }
         }
@@ -188,7 +191,7 @@ private fun WizardDialogHeader(
                 Icon(
                     imageVector = Icons.Outlined.Close,
                     contentDescription = "Close",
-                    tint = BossTheme.colors.textSecondary
+                    tint = BossTheme.colors.textSecondary,
                 )
             }
         }
@@ -201,20 +204,21 @@ private fun WizardNavigationButtons(
     onNext: () -> Unit,
     isLastStep: Boolean,
     nextButtonText: String,
-    nextButtonEnabled: Boolean
+    nextButtonEnabled: Boolean,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Spacer(modifier = Modifier.weight(1f))
 
         if (onBack != null) {
             TextButton(
                 onClick = onBack,
-                colors = ButtonDefaults.textButtonColors(
-                    contentColor = BossTheme.colors.textSecondary
-                )
+                colors =
+                    ButtonDefaults.textButtonColors(
+                        contentColor = BossTheme.colors.textSecondary,
+                    ),
             ) {
                 Text("Back")
             }
@@ -225,14 +229,15 @@ private fun WizardNavigationButtons(
         Button(
             onClick = onNext,
             enabled = nextButtonEnabled,
-            colors = ButtonDefaults.buttonColors(
-                backgroundColor = BossTheme.colors.signal,
-                contentColor = Color.White,
-                disabledBackgroundColor = BossTheme.colors.line,
-                disabledContentColor = BossTheme.colors.textSecondary
-            ),
+            colors =
+                ButtonDefaults.buttonColors(
+                    backgroundColor = BossTheme.colors.signal,
+                    contentColor = Color.White,
+                    disabledBackgroundColor = BossTheme.colors.line,
+                    disabledContentColor = BossTheme.colors.textSecondary,
+                ),
             shape = RoundedCornerShape(8.dp),
-            modifier = Modifier.height(40.dp)
+            modifier = Modifier.height(40.dp),
         ) {
             Text(nextButtonText, fontWeight = FontWeight.Medium)
         }

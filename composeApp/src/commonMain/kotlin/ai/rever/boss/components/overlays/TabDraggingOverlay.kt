@@ -45,26 +45,29 @@ fun TabDraggableComponent.TabDraggingOverlay() {
     val tabHeightPx = with(density) { 32.dp.toPx() }
 
     // Position slightly offset from cursor so user can see where they're dropping
-    val offsetPosition = Offset(
-        currentPosition.x - tabWidthPx / 4,
-        currentPosition.y - tabHeightPx / 2
-    )
+    val offsetPosition =
+        Offset(
+            currentPosition.x - tabWidthPx / 4,
+            currentPosition.y - tabHeightPx / 2,
+        )
 
     Box(
-        modifier = Modifier
-            .offset { IntOffset(offsetPosition.x.toInt(), offsetPosition.y.toInt()) }
-            .shadow(8.dp, RoundedCornerShape(4.dp))
-            .width(180.dp)
-            .height(32.dp)
-            .background(BossTheme.colors.raised.copy(alpha = 0.95f), RoundedCornerShape(4.dp))
-            .border(1.dp, BossTheme.colors.signal, RoundedCornerShape(4.dp))
-            .alpha(0.9f)
+        modifier =
+            Modifier
+                .offset { IntOffset(offsetPosition.x.toInt(), offsetPosition.y.toInt()) }
+                .shadow(8.dp, RoundedCornerShape(4.dp))
+                .width(180.dp)
+                .height(32.dp)
+                .background(BossTheme.colors.raised.copy(alpha = 0.95f), RoundedCornerShape(4.dp))
+                .border(1.dp, BossTheme.colors.signal, RoundedCornerShape(4.dp))
+                .alpha(0.9f),
     ) {
         Row(
-            modifier = Modifier
-                .padding(horizontal = 8.dp)
-                .align(Alignment.CenterStart),
-            verticalAlignment = Alignment.CenterVertically
+            modifier =
+                Modifier
+                    .padding(horizontal = 8.dp)
+                    .align(Alignment.CenterStart),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             // Tab icon
             when (val icon = dragging.icon) {
@@ -73,24 +76,26 @@ fun TabDraggableComponent.TabDraggingOverlay() {
                         imageVector = icon.imageVector,
                         contentDescription = null,
                         modifier = Modifier.size(16.dp),
-                        tint = BossTheme.colors.textPrimary
+                        tint = BossTheme.colors.textPrimary,
                     )
                 }
+
                 is ai.rever.boss.plugin.api.TabIcon.Image -> {
                     Icon(
                         painter = icon.painter,
                         contentDescription = null,
                         modifier = Modifier.size(16.dp),
-                        tint = BossTheme.colors.textPrimary
+                        tint = BossTheme.colors.textPrimary,
                     )
                 }
+
                 null -> {
                     // Use default icon from tabInfo
                     Icon(
                         imageVector = dragging.tabInfo.icon,
                         contentDescription = null,
                         modifier = Modifier.size(16.dp),
-                        tint = BossTheme.colors.textPrimary
+                        tint = BossTheme.colors.textPrimary,
                     )
                 }
             }
@@ -104,7 +109,7 @@ fun TabDraggableComponent.TabDraggingOverlay() {
                 fontSize = 12.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false)
+                modifier = Modifier.weight(1f, fill = false),
             )
         }
     }

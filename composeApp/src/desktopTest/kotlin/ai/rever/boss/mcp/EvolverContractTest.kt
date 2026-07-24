@@ -20,40 +20,46 @@ import kotlin.test.assertTrue
  * tool's handler intact.
  */
 class EvolverContractTest {
+    private fun openToolProvider(onPluginId: (String?) -> Unit) =
+        object : McpToolProvider {
+            override val providerId = "tool-evolver-test"
 
-    private fun openToolProvider(onPluginId: (String?) -> Unit) = object : McpToolProvider {
-        override val providerId = "tool-evolver-test"
-        override fun tools() = listOf(
-            McpToolDefinition(
-                name = EvolverContract.OPEN_TOOL,
-                description = "test double of the evolver's open tool",
-                handler = McpToolHandler { args ->
-                    val id = args.string(EvolverContract.ARG_PLUGIN_ID)
-                    onPluginId(id)
-                    if (id == null) McpToolResult("Missing plugin_id", isError = true)
-                    else McpToolResult("opened:$id")
-                },
-            )
-        )
-    }
+            override fun tools() =
+                listOf(
+                    McpToolDefinition(
+                        name = EvolverContract.OPEN_TOOL,
+                        description = "test double of the evolver's open tool",
+                        handler =
+                            McpToolHandler { args ->
+                                val id = args.string(EvolverContract.ARG_PLUGIN_ID)
+                                onPluginId(id)
+                                if (id == null) {
+                                    McpToolResult("Missing plugin_id", isError = true)
+                                } else {
+                                    McpToolResult("opened:$id")
+                                }
+                            },
+                    ),
+                )
+        }
 
     /** Exactly the argument string SidePanel builds for the menu item. */
-    private fun sidePanelArgs(pluginId: String): String =
-        buildJsonObject { put(EvolverContract.ARG_PLUGIN_ID, pluginId) }.toString()
+    private fun sidePanelArgs(pluginId: String): String = buildJsonObject { put(EvolverContract.ARG_PLUGIN_ID, pluginId) }.toString()
 
     @Test
-    fun `open evolver dispatch round-trips the plugin id to the handler`() = runBlocking {
-        val core = McpToolRegistryCore(disabledFile = null)
-        var received: String? = null
-        core.registerProvider(openToolProvider { received = it })
+    fun `open evolver dispatch round-trips the plugin id to the handler`() =
+        runBlocking {
+            val core = McpToolRegistryCore(disabledFile = null)
+            var received: String? = null
+            core.registerProvider(openToolProvider { received = it })
 
-        val pluginId = "ai.rever.boss.plugin.dynamic.bookmarks"
-        val result = core.invoke(EvolverContract.OPEN_TOOL, sidePanelArgs(pluginId))
+            val pluginId = "ai.rever.boss.plugin.dynamic.bookmarks"
+            val result = core.invoke(EvolverContract.OPEN_TOOL, sidePanelArgs(pluginId))
 
-        assertFalse(result.isError, "expected success, got: ${result.text}")
-        assertEquals(pluginId, received)
-        assertEquals("opened:$pluginId", result.text)
-    }
+            assertFalse(result.isError, "expected success, got: ${result.text}")
+            assertEquals(pluginId, received)
+            assertEquals("opened:$pluginId", result.text)
+        }
 
     @Test
     fun `menu gating predicate matches the registered tool name`() {
@@ -65,18 +71,19 @@ class EvolverContractTest {
     }
 
     @Test
-    fun `hostile characters in the id survive json building without corrupting the arg map`() = runBlocking {
-        // Plugin ids are constrained to reverse-DNS chars elsewhere, but this call
-        // path must not depend on that invariant: quotes/backslashes must arrive
-        // verbatim rather than producing malformed JSON that parses to no args.
-        val core = McpToolRegistryCore(disabledFile = null)
-        var received: String? = null
-        core.registerProvider(openToolProvider { received = it })
+    fun `hostile characters in the id survive json building without corrupting the arg map`() =
+        runBlocking {
+            // Plugin ids are constrained to reverse-DNS chars elsewhere, but this call
+            // path must not depend on that invariant: quotes/backslashes must arrive
+            // verbatim rather than producing malformed JSON that parses to no args.
+            val core = McpToolRegistryCore(disabledFile = null)
+            var received: String? = null
+            core.registerProvider(openToolProvider { received = it })
 
-        val hostile = "we\"ird\\plug\$in"
-        val result = core.invoke(EvolverContract.OPEN_TOOL, sidePanelArgs(hostile))
+            val hostile = "we\"ird\\plug\$in"
+            val result = core.invoke(EvolverContract.OPEN_TOOL, sidePanelArgs(hostile))
 
-        assertFalse(result.isError, "expected success, got: ${result.text}")
-        assertEquals(hostile, received)
-    }
+            assertFalse(result.isError, "expected success, got: ${result.text}")
+            assertEquals(hostile, received)
+        }
 }

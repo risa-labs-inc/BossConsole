@@ -10,11 +10,12 @@ import java.io.File
 object PluginPersistence {
     private val logger = BossLogger.forComponent("PluginPersistence")
 
-    private val json = Json {
-        ignoreUnknownKeys = true
-        prettyPrint = true
-        encodeDefaults = true
-    }
+    private val json =
+        Json {
+            ignoreUnknownKeys = true
+            prettyPrint = true
+            encodeDefaults = true
+        }
 
     private val configFile: File by lazy {
         File(PluginStoreSetup.getPluginDir(), "installed.json")
@@ -26,12 +27,12 @@ object PluginPersistence {
         val jarPath: String,
         val enabled: Boolean = true,
         val sourceUrl: String? = null,
-        val installedVersion: String? = null
+        val installedVersion: String? = null,
     )
 
     @Serializable
     data class InstalledPluginsConfig(
-        val plugins: MutableList<InstalledPluginEntry> = mutableListOf()
+        val plugins: MutableList<InstalledPluginEntry> = mutableListOf(),
     )
 
     private var config: InstalledPluginsConfig? = null
@@ -49,9 +50,13 @@ object PluginPersistence {
             if (configFile.exists()) {
                 val content = configFile.readText()
                 config = json.decodeFromString<InstalledPluginsConfig>(content)
-                logger.info(LogCategory.SYSTEM, "Loaded installed plugins config", mapOf(
-                    "count" to (config?.plugins?.size ?: 0)
-                ))
+                logger.info(
+                    LogCategory.SYSTEM,
+                    "Loaded installed plugins config",
+                    mapOf(
+                        "count" to (config?.plugins?.size ?: 0),
+                    ),
+                )
                 // Backfill missing installedVersion from JAR manifests
                 backfillMissingVersions(config!!)
                 config!!
@@ -73,19 +78,28 @@ object PluginPersistence {
      */
     private fun backfillMissingVersions(cfg: InstalledPluginsConfig) {
         var updated = false
-        val updatedPlugins = cfg.plugins.map { entry ->
-            if (entry.installedVersion == null) {
-                val version = extractVersionFromJar(entry.jarPath)
-                if (version != null) {
-                    updated = true
-                    logger.debug(LogCategory.SYSTEM, "Backfilled plugin version from JAR", mapOf(
-                        "pluginId" to entry.pluginId,
-                        "version" to version
-                    ))
-                    entry.copy(installedVersion = version)
-                } else entry
-            } else entry
-        }
+        val updatedPlugins =
+            cfg.plugins.map { entry ->
+                if (entry.installedVersion == null) {
+                    val version = extractVersionFromJar(entry.jarPath)
+                    if (version != null) {
+                        updated = true
+                        logger.debug(
+                            LogCategory.SYSTEM,
+                            "Backfilled plugin version from JAR",
+                            mapOf(
+                                "pluginId" to entry.pluginId,
+                                "version" to version,
+                            ),
+                        )
+                        entry.copy(installedVersion = version)
+                    } else {
+                        entry
+                    }
+                } else {
+                    entry
+                }
+            }
         if (updated) {
             cfg.plugins.clear()
             cfg.plugins.addAll(updatedPlugins)
@@ -96,8 +110,8 @@ object PluginPersistence {
     /**
      * Extract version from a plugin JAR's META-INF/boss-plugin/plugin.json manifest.
      */
-    private fun extractVersionFromJar(jarPath: String): String? {
-        return try {
+    private fun extractVersionFromJar(jarPath: String): String? =
+        try {
             val jarFile = java.util.jar.JarFile(File(jarPath))
             val entry = jarFile.getJarEntry("META-INF/boss-plugin/plugin.json")
             if (entry != null) {
@@ -118,7 +132,6 @@ object PluginPersistence {
             )
             null
         }
-    }
 
     /**
      * Internal save without synchronization - for use inside synchronized blocks.
@@ -128,9 +141,13 @@ object PluginPersistence {
             val cfg = config ?: return
             configFile.parentFile?.mkdirs()
             configFile.writeText(json.encodeToString(cfg))
-            logger.debug(LogCategory.SYSTEM, "Saved installed plugins config", mapOf(
-                "count" to cfg.plugins.size
-            ))
+            logger.debug(
+                LogCategory.SYSTEM,
+                "Saved installed plugins config",
+                mapOf(
+                    "count" to cfg.plugins.size,
+                ),
+            )
         } catch (e: Exception) {
             logger.error(LogCategory.SYSTEM, "Failed to save installed plugins config", error = e)
         }
@@ -163,7 +180,7 @@ object PluginPersistence {
         jarPath: String,
         enabled: Boolean = true,
         sourceUrl: String? = null,
-        installedVersion: String? = null
+        installedVersion: String? = null,
     ) {
         synchronized(configLock) {
             val cfg = loadConfigInternal()
@@ -172,11 +189,15 @@ object PluginPersistence {
             // Add new entry
             cfg.plugins.add(InstalledPluginEntry(pluginId, jarPath, enabled, sourceUrl, installedVersion))
             saveConfigInternal()
-            logger.info(LogCategory.SYSTEM, "Added plugin to installed config", mapOf(
-                "pluginId" to pluginId,
-                "jarPath" to jarPath,
-                "sourceUrl" to (sourceUrl ?: "none")
-            ))
+            logger.info(
+                LogCategory.SYSTEM,
+                "Added plugin to installed config",
+                mapOf(
+                    "pluginId" to pluginId,
+                    "jarPath" to jarPath,
+                    "sourceUrl" to (sourceUrl ?: "none"),
+                ),
+            )
         }
     }
 
@@ -193,7 +214,10 @@ object PluginPersistence {
      * Update source URL for an installed plugin.
      * Thread-safe: entire read-modify-write operation is atomic.
      */
-    fun updateSourceUrl(pluginId: String, sourceUrl: String) {
+    fun updateSourceUrl(
+        pluginId: String,
+        sourceUrl: String,
+    ) {
         synchronized(configLock) {
             val cfg = loadConfigInternal()
             val entry = cfg.plugins.find { it.pluginId == pluginId }
@@ -215,9 +239,13 @@ object PluginPersistence {
             val removed = cfg.plugins.removeIf { it.pluginId == pluginId }
             if (removed) {
                 saveConfigInternal()
-                logger.info(LogCategory.SYSTEM, "Removed plugin from installed config", mapOf(
-                    "pluginId" to pluginId
-                ))
+                logger.info(
+                    LogCategory.SYSTEM,
+                    "Removed plugin from installed config",
+                    mapOf(
+                        "pluginId" to pluginId,
+                    ),
+                )
             }
         }
     }
@@ -226,7 +254,10 @@ object PluginPersistence {
      * Update the enabled state of a plugin.
      * Thread-safe: entire read-modify-write operation is atomic.
      */
-    fun setPluginEnabled(pluginId: String, enabled: Boolean) {
+    fun setPluginEnabled(
+        pluginId: String,
+        enabled: Boolean,
+    ) {
         synchronized(configLock) {
             val cfg = loadConfigInternal()
             val entry = cfg.plugins.find { it.pluginId == pluginId }
@@ -234,10 +265,14 @@ object PluginPersistence {
                 val index = cfg.plugins.indexOf(entry)
                 cfg.plugins[index] = entry.copy(enabled = enabled)
                 saveConfigInternal()
-                logger.debug(LogCategory.SYSTEM, "Updated plugin enabled state", mapOf(
-                    "pluginId" to pluginId,
-                    "enabled" to enabled
-                ))
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Updated plugin enabled state",
+                    mapOf(
+                        "pluginId" to pluginId,
+                        "enabled" to enabled,
+                    ),
+                )
             }
         }
     }

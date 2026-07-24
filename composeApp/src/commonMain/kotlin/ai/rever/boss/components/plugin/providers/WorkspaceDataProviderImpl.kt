@@ -10,9 +10,8 @@ import kotlinx.coroutines.flow.StateFlow
  * This allows plugins to interact with workspaces without direct coupling.
  */
 class WorkspaceDataProviderImpl(
-    private val workspaceManager: WorkspaceManager
+    private val workspaceManager: WorkspaceManager,
 ) : WorkspaceDataProvider {
-
     override val workspaces: StateFlow<List<LayoutWorkspace>>
         get() = workspaceManager.workspaces
 
@@ -27,13 +26,9 @@ class WorkspaceDataProviderImpl(
         workspaceManager.updateCurrentWorkspace(newWorkspace)
     }
 
-    override fun saveCurrentWorkspace(name: String?): LayoutWorkspace? {
-        return workspaceManager.saveCurrentWorkspace(name)
-    }
+    override fun saveCurrentWorkspace(name: String?): LayoutWorkspace? = workspaceManager.saveCurrentWorkspace(name)
 
-    override fun exportWorkspace(workspace: LayoutWorkspace): String {
-        return workspaceManager.exportWorkspace(workspace)
-    }
+    override fun exportWorkspace(workspace: LayoutWorkspace): String = workspaceManager.exportWorkspace(workspace)
 
     override fun deleteWorkspace(name: String) {
         // Find workspace by name and delete it
@@ -43,7 +38,10 @@ class WorkspaceDataProviderImpl(
         }
     }
 
-    override fun renameWorkspace(oldName: String, newName: String) {
+    override fun renameWorkspace(
+        oldName: String,
+        newName: String,
+    ) {
         // Find workspace by old name and rename it
         val workspace = workspaceManager.workspaces.value.find { it.name == oldName }
         if (workspace != null) {

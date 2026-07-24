@@ -18,15 +18,16 @@ import androidx.compose.runtime.Composable
 fun PerformanceIndicator(
     snapshot: PerformanceSnapshot?,
     health: PerformanceHealth,
-    onClick: () -> Unit
+    onClick: () -> Unit,
 ) {
     if (snapshot == null) return
 
-    val color = when (health.overall) {
-        HealthStatus.GOOD -> BossTheme.colors.ok
-        HealthStatus.WARNING -> BossTheme.colors.warn
-        HealthStatus.CRITICAL -> BossTheme.colors.alert
-    }
+    val color =
+        when (health.overall) {
+            HealthStatus.GOOD -> BossTheme.colors.ok
+            HealthStatus.WARNING -> BossTheme.colors.warn
+            HealthStatus.CRITICAL -> BossTheme.colors.alert
+        }
 
     val memoryUsed = FormatUtils.formatMegabytes(snapshot.memory.heapUsedMB, compact = true)
     val memoryMax = FormatUtils.formatMegabytes(snapshot.memory.heapMaxMB, compact = true)
@@ -36,6 +37,6 @@ fun PerformanceIndicator(
     BossActionButton(
         text = "$memoryText $cpuText",
         color = color,
-        onClick = onClick
+        onClick = onClick,
     )
 }

@@ -1,9 +1,5 @@
 package ai.rever.boss
 
-import ai.rever.boss.utils.logging.BossLogger
-import ai.rever.boss.utils.logging.LogCategory
-import androidx.compose.runtime.*
-import androidx.compose.runtime.key
 import ai.rever.boss.components.auth.LoginScreen
 import ai.rever.boss.components.misc.LoadingScreen
 import ai.rever.boss.components.misc.OfflineScreen
@@ -13,6 +9,10 @@ import ai.rever.boss.services.auth.PasskeySessionEventHandler
 import ai.rever.boss.services.supabase.AuthService
 import ai.rever.boss.utils.DeepLinkHandler
 import ai.rever.boss.utils.WindowFocusManager
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
+import androidx.compose.runtime.*
+import androidx.compose.runtime.key
 import com.arkivanov.decompose.ComponentContext
 import kotlinx.coroutines.launch
 
@@ -30,16 +30,16 @@ fun ComponentContext.BossAppWithAuth(
     windowId: String,
     isFirstWindow: Boolean = false,
     panelRegistry: ai.rever.boss.components.registery.PanelRegistry,
-    onToggleMaximize: (() -> Unit)? = null
+    onToggleMaximize: (() -> Unit)? = null,
 ) {
     val authState by AuthService.authState.collectAsState()
     val coroutineScope = rememberCoroutineScope()
-    
+
     // Initialize authentication service
     LaunchedEffect(Unit) {
         AuthService.initialize()
     }
-    
+
     // Handle deep links for email verification
     val deepLink by DeepLinkHandler.deepLinkFlow.collectAsState()
 
@@ -52,13 +52,14 @@ fun ComponentContext.BossAppWithAuth(
             // Bring window to front
             WindowFocusManager.bringToFront()
 
-            val sessionId = try {
-                val regex = Regex("sessionId=([^&]+)")
-                regex.find(uri)?.groupValues?.get(1)
-            } catch (_: Exception) {
-                logger.warn(LogCategory.AUTH, "Failed to extract sessionId from deep link", mapOf("uri" to uri))
-                null
-            }
+            val sessionId =
+                try {
+                    val regex = Regex("sessionId=([^&]+)")
+                    regex.find(uri)?.groupValues?.get(1)
+                } catch (_: Exception) {
+                    logger.warn(LogCategory.AUTH, "Failed to extract sessionId from deep link", mapOf("uri" to uri))
+                    null
+                }
 
             when {
                 uri.contains("passkey/registered") -> {
@@ -68,6 +69,7 @@ fun ComponentContext.BossAppWithAuth(
                     }
                     DeepLinkHandler.clearDeepLink()
                 }
+
                 uri.contains("passkey/authenticated") -> {
                     sessionId?.let { id ->
                         logger.info(LogCategory.AUTH, "Passkey authentication completed", mapOf("sessionId" to id))
@@ -89,6 +91,7 @@ fun ComponentContext.BossAppWithAuth(
                     }
                     DeepLinkHandler.clearDeepLink()
                 }
+
                 uri.contains("auth/verify") -> {
                     val token = DeepLinkHandler.extractVerificationToken(uri)
                     val type = DeepLinkHandler.extractVerificationType(uri) ?: "magiclink"
@@ -105,21 +108,21 @@ fun ComponentContext.BossAppWithAuth(
                                         // Trigger a refresh to check if user can now sign in
                                         AuthService.initialize()
                                     }
-
                                 },
                                 onFailure = { error ->
                                     logger.error(LogCategory.AUTH, "Magic link authentication failed", error = error)
                                     // Set error so UI can display it
                                     MagicLinkErrorService.setError(
-                                        error.message ?: "Magic link verification failed"
+                                        error.message ?: "Magic link verification failed",
                                     )
-                                }
+                                },
                             )
                         }
                     }
 
                     DeepLinkHandler.clearDeepLink()
                 }
+
                 else -> {
                     // Route non-auth deep links (boss://url, boss://file, boss://folder, boss://terminal, boss://workspace)
                     // back to DeepLinkHandler for processing
@@ -130,12 +133,12 @@ fun ComponentContext.BossAppWithAuth(
             }
         }
     }
-    
+
     // Debug auth state changes
     LaunchedEffect(authState) {
         logger.debug(LogCategory.AUTH, "AuthState changed", mapOf("state" to authState.toString()))
     }
-    
+
     when (authState) {
         is AuthService.AuthState.Loading -> {
             // Show loading screen
@@ -149,19 +152,20 @@ fun ComponentContext.BossAppWithAuth(
             OfflineScreen(
                 onRetry = {
                     CoreAuthService.retryInitialization()
-                }
+                },
             )
         }
 
         is AuthService.AuthState.NotAuthenticated,
-        is AuthService.AuthState.Error -> {
+        is AuthService.AuthState.Error,
+        -> {
             // Show login screen (it will handle 2FA verification internally)
             // Use key() to prevent recreation when switching between these states
             key("login_screen") {
                 LoginScreen(
                     onLoginSuccess = {
                         // This will be called after successful login (and 2FA if required)
-                    }
+                    },
                 )
             }
         }
@@ -173,7 +177,7 @@ fun ComponentContext.BossAppWithAuth(
                 windowId = windowId,
                 isFirstWindow = isFirstWindow,
                 panelRegistry = panelRegistry,
-                onToggleMaximize = onToggleMaximize
+                onToggleMaximize = onToggleMaximize,
             )
         }
     }

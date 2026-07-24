@@ -146,7 +146,10 @@ object MenuActionsHandler {
      * @param windowId The window ID
      * @param enabled Whether split should be enabled
      */
-    fun updateSplitEnabled(windowId: String, enabled: Boolean) {
+    fun updateSplitEnabled(
+        windowId: String,
+        enabled: Boolean,
+    ) {
         _splitEnabledState.value = _splitEnabledState.value + (windowId to enabled)
     }
 
@@ -156,9 +159,7 @@ object MenuActionsHandler {
      * @param windowId The window ID
      * @return True if split is enabled (has active tabs), false otherwise
      */
-    fun isSplitEnabled(windowId: String): Boolean {
-        return _splitEnabledState.value[windowId] ?: false
-    }
+    fun isSplitEnabled(windowId: String): Boolean = _splitEnabledState.value[windowId] ?: false
 
     /**
      * Update the panel count for a window.
@@ -167,7 +168,10 @@ object MenuActionsHandler {
      * @param windowId The window ID
      * @param count The number of panels in the window
      */
-    fun updatePanelCount(windowId: String, count: Int) {
+    fun updatePanelCount(
+        windowId: String,
+        count: Int,
+    ) {
         _panelCountState.value = _panelCountState.value + (windowId to count)
     }
 
@@ -306,7 +310,10 @@ object MenuActionsHandler {
      * @param windowId The ID of the window where the action was triggered
      * @param section Optional section name to navigate to (e.g., "TERMINAL", "KEYMAP")
      */
-    fun triggerOpenSettings(windowId: String, section: String? = null) {
+    fun triggerOpenSettings(
+        windowId: String,
+        section: String? = null,
+    ) {
         _openSettingsEvents.tryEmit(windowId to section)
     }
 
@@ -337,9 +344,11 @@ object MenuActionsHandler {
         _splitHorizontallyEvents.tryEmit(windowId)
     }
 
-
-    private val _applyWorkspaceEvents = MutableSharedFlow<Pair<String, ai.rever.boss.components.workspaces.LayoutWorkspace>>(extraBufferCapacity = 10)
-    val applyWorkspaceEvents: SharedFlow<Pair<String, ai.rever.boss.components.workspaces.LayoutWorkspace>> = _applyWorkspaceEvents.asSharedFlow()
+    private val _applyWorkspaceEvents =
+        MutableSharedFlow<Pair<String, ai.rever.boss.components.workspaces.LayoutWorkspace>>(extraBufferCapacity = 10)
+    val applyWorkspaceEvents: SharedFlow<Pair<String, ai.rever.boss.components.workspaces.LayoutWorkspace>> =
+        _applyWorkspaceEvents
+            .asSharedFlow()
 
     /**
      * Trigger an "Apply Workspace" action for the specified window.
@@ -347,7 +356,10 @@ object MenuActionsHandler {
      * @param windowId The ID of the window where the action was triggered
      * @param workspace The workspace to apply
      */
-    fun triggerApplyWorkspace(windowId: String, workspace: ai.rever.boss.components.workspaces.LayoutWorkspace) {
+    fun triggerApplyWorkspace(
+        windowId: String,
+        workspace: ai.rever.boss.components.workspaces.LayoutWorkspace,
+    ) {
         _applyWorkspaceEvents.tryEmit(Pair(windowId, workspace))
     }
 
@@ -357,7 +369,10 @@ object MenuActionsHandler {
      * @param windowId The ID of the window where the action was triggered
      * @param pluginId The ID of the plugin to reveal
      */
-    fun triggerRevealPlugin(windowId: String, pluginId: String) {
+    fun triggerRevealPlugin(
+        windowId: String,
+        pluginId: String,
+    ) {
         _revealPluginEvents.tryEmit(Pair(windowId, pluginId))
     }
 
@@ -451,10 +466,14 @@ object MenuActionsHandler {
     fun triggerCustomizeSidebar(windowId: String) {
         val id = _customizeRequestId.updateAndGet { it + 1 }
         _customizeSidebarTriggers.update { it + (windowId to id) }
-        logger.debug(LogCategory.UI, "Customize-sidebar trigger fired", mapOf(
-            "windowId" to windowId,
-            "requestId" to id.toString()
-        ))
+        logger.debug(
+            LogCategory.UI,
+            "Customize-sidebar trigger fired",
+            mapOf(
+                "windowId" to windowId,
+                "requestId" to id.toString(),
+            ),
+        )
     }
 
     /**
@@ -479,72 +498,72 @@ object MenuActionsHandler {
     fun triggerShowShortcutHelp(windowId: String) {
         _showShortcutHelpEvents.tryEmit(windowId)
     }
-    
+
     // ========== Refactoring Events ==========
-    
+
     private val _refactorRenameEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val refactorRenameEvents: SharedFlow<String> = _refactorRenameEvents.asSharedFlow()
-    
+
     private val _refactorExtractVariableEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val refactorExtractVariableEvents: SharedFlow<String> = _refactorExtractVariableEvents.asSharedFlow()
-    
+
     private val _refactorExtractMethodEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val refactorExtractMethodEvents: SharedFlow<String> = _refactorExtractMethodEvents.asSharedFlow()
-    
+
     private val _refactorExtractConstantEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val refactorExtractConstantEvents: SharedFlow<String> = _refactorExtractConstantEvents.asSharedFlow()
-    
+
     private val _refactorInlineEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val refactorInlineEvents: SharedFlow<String> = _refactorInlineEvents.asSharedFlow()
-    
+
     private val _refactorChangeSignatureEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val refactorChangeSignatureEvents: SharedFlow<String> = _refactorChangeSignatureEvents.asSharedFlow()
-    
+
     private val _refactorSafeDeleteEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val refactorSafeDeleteEvents: SharedFlow<String> = _refactorSafeDeleteEvents.asSharedFlow()
-    
+
     /**
      * Trigger a "Rename" refactoring action for the specified window.
      */
     fun triggerRefactorRename(windowId: String) {
         _refactorRenameEvents.tryEmit(windowId)
     }
-    
+
     /**
      * Trigger an "Extract Variable" refactoring action for the specified window.
      */
     fun triggerRefactorExtractVariable(windowId: String) {
         _refactorExtractVariableEvents.tryEmit(windowId)
     }
-    
+
     /**
      * Trigger an "Extract Method" refactoring action for the specified window.
      */
     fun triggerRefactorExtractMethod(windowId: String) {
         _refactorExtractMethodEvents.tryEmit(windowId)
     }
-    
+
     /**
      * Trigger an "Extract Constant" refactoring action for the specified window.
      */
     fun triggerRefactorExtractConstant(windowId: String) {
         _refactorExtractConstantEvents.tryEmit(windowId)
     }
-    
+
     /**
      * Trigger an "Inline" refactoring action for the specified window.
      */
     fun triggerRefactorInline(windowId: String) {
         _refactorInlineEvents.tryEmit(windowId)
     }
-    
+
     /**
      * Trigger a "Change Signature" refactoring action for the specified window.
      */
     fun triggerRefactorChangeSignature(windowId: String) {
         _refactorChangeSignatureEvents.tryEmit(windowId)
     }
-    
+
     /**
      * Trigger a "Safe Delete" refactoring action for the specified window.
      */
@@ -578,7 +597,10 @@ object MenuActionsHandler {
      * @param windowId The ID of the window where the action was triggered
      * @param panelId The PanelId used to look up the owning plugin
      */
-    fun triggerReloadPlugin(windowId: String, panelId: ai.rever.boss.plugin.api.PanelId) {
+    fun triggerReloadPlugin(
+        windowId: String,
+        panelId: ai.rever.boss.plugin.api.PanelId,
+    ) {
         _reloadPluginEvents.tryEmit(Pair(windowId, panelId))
     }
 
@@ -588,7 +610,10 @@ object MenuActionsHandler {
      * @param windowId The ID of the window where the action was triggered
      * @param panelId The PanelId used to look up the owning plugin
      */
-    fun triggerCheckPluginUpdates(windowId: String, panelId: ai.rever.boss.plugin.api.PanelId) {
+    fun triggerCheckPluginUpdates(
+        windowId: String,
+        panelId: ai.rever.boss.plugin.api.PanelId,
+    ) {
         _checkPluginUpdatesEvents.tryEmit(Pair(windowId, panelId))
     }
 

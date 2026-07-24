@@ -17,26 +17,30 @@ import java.time.format.DateTimeFormatter
  * Provides API key management functionality for the Secret Manager plugin.
  */
 class PluginStoreApiKeyProviderImpl : PluginStoreApiKeyProvider {
-
     private val logger = BossLogger.forComponent("PluginStoreApiKeyProvider")
 
     override suspend fun createApiKey(
         name: String,
         scopes: List<String>,
-        expiresInDays: Int?
+        expiresInDays: Int?,
     ): Result<ApiKeyCreationResult> {
         return try {
-            logger.info(LogCategory.NETWORK, "Creating API key", mapOf(
-                "name" to name,
-                "scopes" to scopes.joinToString(","),
-                "expiresInDays" to (expiresInDays?.toString() ?: "never")
-            ))
-
-            val request = CreateApiKeyRequest(
-                name = name,
-                scopes = scopes,
-                expiresInDays = expiresInDays
+            logger.info(
+                LogCategory.NETWORK,
+                "Creating API key",
+                mapOf(
+                    "name" to name,
+                    "scopes" to scopes.joinToString(","),
+                    "expiresInDays" to (expiresInDays?.toString() ?: "never"),
+                ),
             )
+
+            val request =
+                CreateApiKeyRequest(
+                    name = name,
+                    scopes = scopes,
+                    expiresInDays = expiresInDays,
+                )
 
             val response = PluginStoreClient.createApiKey(request)
 
@@ -48,19 +52,22 @@ class PluginStoreApiKeyProviderImpl : PluginStoreApiKeyProvider {
                 return Result.failure(Exception(response.error ?: "Unknown error"))
             }
 
-            Result.success(ApiKeyCreationResult(
-                apiKey = apiKey,
-                keyInfo = ApiKeyInfo(
-                    id = keyInfo.id,
-                    name = keyInfo.name,
-                    keyPrefix = keyInfo.keyPrefix,
-                    scopes = keyInfo.scopes,
-                    createdAt = parseTimestamp(keyInfo.createdAt),
-                    lastUsedAt = keyInfo.lastUsedAt?.let { parseTimestamp(it) },
-                    expiresAt = keyInfo.expiresAt?.let { parseTimestamp(it) },
-                    isRevoked = false
-                )
-            ))
+            Result.success(
+                ApiKeyCreationResult(
+                    apiKey = apiKey,
+                    keyInfo =
+                        ApiKeyInfo(
+                            id = keyInfo.id,
+                            name = keyInfo.name,
+                            keyPrefix = keyInfo.keyPrefix,
+                            scopes = keyInfo.scopes,
+                            createdAt = parseTimestamp(keyInfo.createdAt),
+                            lastUsedAt = keyInfo.lastUsedAt?.let { parseTimestamp(it) },
+                            expiresAt = keyInfo.expiresAt?.let { parseTimestamp(it) },
+                            isRevoked = false,
+                        ),
+                ),
+            )
         } catch (e: Exception) {
             logger.error(LogCategory.NETWORK, "Failed to create API key", error = e)
             Result.failure(e)
@@ -78,18 +85,19 @@ class PluginStoreApiKeyProviderImpl : PluginStoreApiKeyProvider {
                 return Result.failure(Exception(response.error ?: "Unknown error"))
             }
 
-            val keys = response.keys.map { key ->
-                ApiKeyInfo(
-                    id = key.id,
-                    name = key.name,
-                    keyPrefix = key.keyPrefix,
-                    scopes = key.scopes,
-                    createdAt = parseTimestamp(key.createdAt),
-                    lastUsedAt = key.lastUsedAt?.let { parseTimestamp(it) },
-                    expiresAt = key.expiresAt?.let { parseTimestamp(it) },
-                    isRevoked = key.isExpired
-                )
-            }
+            val keys =
+                response.keys.map { key ->
+                    ApiKeyInfo(
+                        id = key.id,
+                        name = key.name,
+                        keyPrefix = key.keyPrefix,
+                        scopes = key.scopes,
+                        createdAt = parseTimestamp(key.createdAt),
+                        lastUsedAt = key.lastUsedAt?.let { parseTimestamp(it) },
+                        expiresAt = key.expiresAt?.let { parseTimestamp(it) },
+                        isRevoked = key.isExpired,
+                    )
+                }
 
             Result.success(keys)
         } catch (e: Exception) {
@@ -123,10 +131,14 @@ class PluginStoreApiKeyProviderImpl : PluginStoreApiKeyProvider {
         val isAdmin = PluginStoreConfig.isAdmin
         val hasPluginAdminRole = AuthStateManager.currentUser.value?.hasRole("plugin_admin") == true
 
-        logger.debug(LogCategory.AUTH, "Checking API key management permission", mapOf(
-            "isAdmin" to isAdmin,
-            "hasPluginAdminRole" to hasPluginAdminRole
-        ))
+        logger.debug(
+            LogCategory.AUTH,
+            "Checking API key management permission",
+            mapOf(
+                "isAdmin" to isAdmin,
+                "hasPluginAdminRole" to hasPluginAdminRole,
+            ),
+        )
 
         return isAdmin || hasPluginAdminRole
     }
@@ -134,8 +146,8 @@ class PluginStoreApiKeyProviderImpl : PluginStoreApiKeyProvider {
     /**
      * Parse ISO timestamp to epoch milliseconds.
      */
-    private fun parseTimestamp(timestamp: String): Long {
-        return try {
+    private fun parseTimestamp(timestamp: String): Long =
+        try {
             Instant.from(DateTimeFormatter.ISO_INSTANT.parse(timestamp)).toEpochMilli()
         } catch (_: Exception) {
             try {
@@ -145,5 +157,4 @@ class PluginStoreApiKeyProviderImpl : PluginStoreApiKeyProvider {
                 0L
             }
         }
-    }
 }

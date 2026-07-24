@@ -8,17 +8,27 @@ import ai.rever.boss.components.window_panel.SplitViewState
  * Includes bounds checking to handle cases where tab list may have changed during drag.
  * Internal (not private) so the drop-path branching is unit-testable.
  */
-internal fun handleTabDropResult(result: TabDropResult, splitViewState: SplitViewState) {
+internal fun handleTabDropResult(
+    result: TabDropResult,
+    splitViewState: SplitViewState,
+) {
     when (result) {
         is TabDropResult.Reorder -> {
             // Reorder within the same panel
             val panel = splitViewState.getPanel(result.panelId)
-            val tabCount = panel?.tabsComponent?.tabsState?.value?.tabs?.size ?: 0
+            val tabCount =
+                panel
+                    ?.tabsComponent
+                    ?.tabsState
+                    ?.value
+                    ?.tabs
+                    ?.size ?: 0
             // Validate indices are within bounds before reordering
             if (result.fromIndex in 0 until tabCount && result.toIndex in 0..tabCount) {
                 panel?.tabsComponent?.moveTab(result.fromIndex, result.toIndex)
             }
         }
+
         is TabDropResult.MoveToPanel -> {
             // Move tab from source panel to target panel
             val sourcePanel = splitViewState.getPanel(result.sourcePanelId)
@@ -47,29 +57,37 @@ internal fun handleTabDropResult(result: TabDropResult, splitViewState: SplitVie
                 }
             }
         }
+
         is TabDropResult.CreateSplit -> {
             // Cross-panel edge drag is a MOVE: detach the live component from the source so
             // the new split adopts it as-is (no reload, no leaked instance). Same-panel edge
             // drops keep their existing copy semantics (handled by tabToMove below).
             val crossPanel = result.sourcePanelId != result.targetPanelId
-            val detached = if (crossPanel) {
-                splitViewState.getPanel(result.sourcePanelId)
-                    ?.tabsComponent?.detachTab(result.tabInfo.id)
-            } else {
-                null
-            }
+            val detached =
+                if (crossPanel) {
+                    splitViewState
+                        .getPanel(result.sourcePanelId)
+                        ?.tabsComponent
+                        ?.detachTab(result.tabInfo.id)
+                } else {
+                    null
+                }
             // Cross-panel detach failed: recreate-from-config only if the tab entry still
             // exists in the source (component missing) — removing it first, mirroring
             // MoveToPanel. A tab closed mid-drag drops the move instead of resurrecting.
-            val recreateTab = if (crossPanel && detached == null) {
-                val stillInSource = splitViewState.getPanel(result.sourcePanelId)
-                    ?.tabsComponent?.removeTabById(result.tabInfo.id) == true
-                if (stillInSource) result.tabInfo else null
-            } else if (!crossPanel) {
-                result.tabInfo
-            } else {
-                null
-            }
+            val recreateTab =
+                if (crossPanel && detached == null) {
+                    val stillInSource =
+                        splitViewState
+                            .getPanel(result.sourcePanelId)
+                            ?.tabsComponent
+                            ?.removeTabById(result.tabInfo.id) == true
+                    if (stillInSource) result.tabInfo else null
+                } else if (!crossPanel) {
+                    result.tabInfo
+                } else {
+                    null
+                }
 
             // Create a new split with the tab
             if (detached != null || recreateTab != null) {
@@ -77,7 +95,7 @@ internal fun handleTabDropResult(result: TabDropResult, splitViewState: SplitVie
                     panelId = result.targetPanelId,
                     orientation = result.orientation,
                     tabToMove = recreateTab,
-                    detachedTab = detached
+                    detachedTab = detached,
                 )
             }
         }

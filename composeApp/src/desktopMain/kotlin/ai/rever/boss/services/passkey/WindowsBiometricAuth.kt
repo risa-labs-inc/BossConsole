@@ -5,7 +5,6 @@ package ai.rever.boss.services.passkey
  * Only checks biometric availability - passkey management removed
  */
 object WindowsBiometricAuth {
-
     /**
      * Check if biometric authentication is available on this device
      */

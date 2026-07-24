@@ -25,9 +25,8 @@ import kotlinx.serialization.json.Json
  * wrapping [FallbackUpdateSource] can react.
  */
 class GitHubUpdateSource(
-    private val apiClient: HttpClient = defaultApiClient()
+    private val apiClient: HttpClient = defaultApiClient(),
 ) : UpdateSource {
-
     override val name: String = "github"
     private val logger = BossLogger.forComponent("GitHubUpdateSource")
 
@@ -36,19 +35,22 @@ class GitHubUpdateSource(
         private const val RELEASES_REPO = "risa-labs-inc/BossConsole-Releases"
         private const val RELEASES_ENDPOINT = "$GITHUB_API_BASE/repos/$RELEASES_REPO/releases"
 
-        private fun defaultApiClient(): HttpClient = HttpClient(CIO) {
-            install(ContentNegotiation) {
-                json(Json {
-                    ignoreUnknownKeys = true
-                    isLenient = true
-                })
+        private fun defaultApiClient(): HttpClient =
+            HttpClient(CIO) {
+                install(ContentNegotiation) {
+                    json(
+                        Json {
+                            ignoreUnknownKeys = true
+                            isLenient = true
+                        },
+                    )
+                }
+                install(HttpTimeout) {
+                    requestTimeoutMillis = 30_000
+                    connectTimeoutMillis = 15_000
+                    socketTimeoutMillis = 15_000
+                }
             }
-            install(HttpTimeout) {
-                requestTimeoutMillis = 30_000
-                connectTimeoutMillis = 15_000
-                socketTimeoutMillis = 15_000
-            }
-        }
     }
 
     /**
@@ -58,16 +60,17 @@ class GitHubUpdateSource(
      */
     private suspend fun makeGitHubRequest(
         url: String,
-        authContext: GitHubConfig.GitHubAuthContext
+        authContext: GitHubConfig.GitHubAuthContext,
     ): HttpResponse {
         if (authContext.isAuthenticated) {
-            val authenticatedResponse = apiClient.get(url) {
-                headers {
-                    append("Accept", "application/vnd.github.v3+json")
-                    append("User-Agent", "BOSS-Desktop-${AppVersion.CURRENT}")
-                    append("Authorization", "Bearer ${authContext.token}")
+            val authenticatedResponse =
+                apiClient.get(url) {
+                    headers {
+                        append("Accept", "application/vnd.github.v3+json")
+                        append("User-Agent", "BOSS-Desktop-${AppVersion.CURRENT}")
+                        append("Authorization", "Bearer ${authContext.token}")
+                    }
                 }
-            }
             if (authenticatedResponse.status.value in 200..299) {
                 return authenticatedResponse
             }
@@ -105,7 +108,7 @@ class GitHubUpdateSource(
                 logger.warn(
                     LogCategory.NETWORK,
                     "Failed to fetch releases page",
-                    mapOf("page" to page, "status" to response.status.value)
+                    mapOf("page" to page, "status" to response.status.value),
                 )
                 break
             }

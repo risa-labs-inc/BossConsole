@@ -15,7 +15,7 @@ import java.security.MessageDigest
  * @param cacheDir Directory to store cached JARs (defaults to ~/.boss/plugin-cache)
  */
 class PluginDownloadCache(
-    private val cacheDir: File = BossDirectories.resolve("plugin-cache")
+    private val cacheDir: File = BossDirectories.resolve("plugin-cache"),
 ) {
     private val logger = BossLogger.forComponent("PluginDownloadCache")
 
@@ -34,7 +34,11 @@ class PluginDownloadCache(
      * @param expectedSha256 The expected SHA-256 hash (must be non-blank)
      * @return The cached file if valid, null otherwise
      */
-    fun getCachedJar(pluginId: String, version: String, expectedSha256: String): File? {
+    fun getCachedJar(
+        pluginId: String,
+        version: String,
+        expectedSha256: String,
+    ): File? {
         val cachedFile = getCacheFile(pluginId, version)
 
         if (!cachedFile.exists()) {
@@ -45,20 +49,28 @@ class PluginDownloadCache(
         // we never load unhashed or tampered JARs from cache.
         val actualSha256 = cachedFile.sha256()
         if (!actualSha256.equals(expectedSha256, ignoreCase = true)) {
-            logger.warn(LogCategory.SYSTEM, "Cached JAR SHA-256 mismatch, removing", mapOf(
-                "pluginId" to pluginId,
-                "version" to version,
-                "expected" to expectedSha256.take(16) + "...",
-                "actual" to actualSha256.take(16) + "..."
-            ))
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Cached JAR SHA-256 mismatch, removing",
+                mapOf(
+                    "pluginId" to pluginId,
+                    "version" to version,
+                    "expected" to expectedSha256.take(16) + "...",
+                    "actual" to actualSha256.take(16) + "...",
+                ),
+            )
             cachedFile.delete()
             return null
         }
 
-        logger.debug(LogCategory.SYSTEM, "Found valid cached JAR", mapOf(
-            "pluginId" to pluginId,
-            "version" to version
-        ))
+        logger.debug(
+            LogCategory.SYSTEM,
+            "Found valid cached JAR",
+            mapOf(
+                "pluginId" to pluginId,
+                "version" to version,
+            ),
+        )
 
         return cachedFile
     }
@@ -71,21 +83,29 @@ class PluginDownloadCache(
      * @param sourceFile The downloaded JAR file to cache
      * @return The cached file
      */
-    fun cacheJar(pluginId: String, version: String, sourceFile: File): File {
+    fun cacheJar(
+        pluginId: String,
+        version: String,
+        sourceFile: File,
+    ): File {
         val cachedFile = getCacheFile(pluginId, version)
-        
+
         // Ensure parent directory exists
         cachedFile.parentFile?.mkdirs()
-        
+
         // Copy to cache
         sourceFile.copyTo(cachedFile, overwrite = true)
-        
-        logger.debug(LogCategory.SYSTEM, "Cached plugin JAR", mapOf(
-            "pluginId" to pluginId,
-            "version" to version,
-            "size" to cachedFile.length()
-        ))
-        
+
+        logger.debug(
+            LogCategory.SYSTEM,
+            "Cached plugin JAR",
+            mapOf(
+                "pluginId" to pluginId,
+                "version" to version,
+                "size" to cachedFile.length(),
+            ),
+        )
+
         return cachedFile
     }
 
@@ -96,28 +116,35 @@ class PluginDownloadCache(
      * @param version The plugin version
      * @return true if removed, false if not found
      */
-    fun removeCachedJar(pluginId: String, version: String): Boolean {
+    fun removeCachedJar(
+        pluginId: String,
+        version: String,
+    ): Boolean {
         val cachedFile = getCacheFile(pluginId, version)
-        
+
         if (!cachedFile.exists()) {
             return false
         }
 
         val deleted = cachedFile.delete()
-        
+
         if (deleted) {
-            logger.debug(LogCategory.SYSTEM, "Removed cached JAR", mapOf(
-                "pluginId" to pluginId,
-                "version" to version
-            ))
-            
+            logger.debug(
+                LogCategory.SYSTEM,
+                "Removed cached JAR",
+                mapOf(
+                    "pluginId" to pluginId,
+                    "version" to version,
+                ),
+            )
+
             // Clean up empty parent directory
             val pluginDir = cachedFile.parentFile
             if (pluginDir?.listFiles()?.isEmpty() == true) {
                 pluginDir.delete()
             }
         }
-        
+
         return deleted
     }
 
@@ -129,21 +156,25 @@ class PluginDownloadCache(
      */
     fun removeAllVersions(pluginId: String): Int {
         val pluginDir = File(cacheDir, sanitizePluginId(pluginId))
-        
+
         if (!pluginDir.exists()) {
             return 0
         }
 
         val files = pluginDir.listFiles() ?: return 0
         val count = files.size
-        
+
         pluginDir.deleteRecursively()
-        
-        logger.info(LogCategory.SYSTEM, "Removed all cached versions", mapOf(
-            "pluginId" to pluginId,
-            "count" to count
-        ))
-        
+
+        logger.info(
+            LogCategory.SYSTEM,
+            "Removed all cached versions",
+            mapOf(
+                "pluginId" to pluginId,
+                "count" to count,
+            ),
+        )
+
         return count
     }
 
@@ -155,41 +186,43 @@ class PluginDownloadCache(
     fun clearCache(): Int {
         val files = cacheDir.walkTopDown().filter { it.isFile }.toList()
         val count = files.size
-        
+
         cacheDir.deleteRecursively()
         cacheDir.mkdirs()
-        
-        logger.info(LogCategory.SYSTEM, "Cleared plugin cache", mapOf(
-            "filesRemoved" to count
-        ))
-        
+
+        logger.info(
+            LogCategory.SYSTEM,
+            "Cleared plugin cache",
+            mapOf(
+                "filesRemoved" to count,
+            ),
+        )
+
         return count
     }
 
     /**
      * Get the total size of the cache in bytes.
      */
-    fun getCacheSize(): Long {
-        return cacheDir.walkTopDown()
+    fun getCacheSize(): Long =
+        cacheDir
+            .walkTopDown()
             .filter { it.isFile }
             .sumOf { it.length() }
-    }
 
     /**
      * Get the number of cached plugins.
      */
-    fun getCachedPluginCount(): Int {
-        return cacheDir.listFiles()?.count { it.isDirectory } ?: 0
-    }
+    fun getCachedPluginCount(): Int = cacheDir.listFiles()?.count { it.isDirectory } ?: 0
 
     /**
      * Get the number of cached JAR files.
      */
-    fun getCachedFileCount(): Int {
-        return cacheDir.walkTopDown()
+    fun getCachedFileCount(): Int =
+        cacheDir
+            .walkTopDown()
             .filter { it.isFile && it.extension == "jar" }
             .count()
-    }
 
     /**
      * List all cached plugins with their versions.
@@ -198,18 +231,20 @@ class PluginDownloadCache(
      */
     fun listCachedPlugins(): Map<String, List<String>> {
         val result = mutableMapOf<String, List<String>>()
-        
+
         cacheDir.listFiles()?.filter { it.isDirectory }?.forEach { pluginDir ->
-            val versions = pluginDir.listFiles()
-                ?.filter { it.isFile && it.extension == "jar" }
-                ?.map { it.nameWithoutExtension.substringAfterLast("_") }
-                ?: emptyList()
-            
+            val versions =
+                pluginDir
+                    .listFiles()
+                    ?.filter { it.isFile && it.extension == "jar" }
+                    ?.map { it.nameWithoutExtension.substringAfterLast("_") }
+                    ?: emptyList()
+
             if (versions.isNotEmpty()) {
                 result[pluginDir.name] = versions
             }
         }
-        
+
         return result
     }
 
@@ -223,27 +258,33 @@ class PluginDownloadCache(
     fun cleanOldEntries(maxAgeDays: Int = 30): Int {
         val cutoffTime = System.currentTimeMillis() - (maxAgeDays * 24 * 60 * 60 * 1000L)
         var removed = 0
-        
-        cacheDir.walkTopDown()
+
+        cacheDir
+            .walkTopDown()
             .filter { it.isFile && it.lastModified() < cutoffTime }
             .forEach { file ->
                 if (file.delete()) {
                     removed++
                 }
             }
-        
+
         // Clean up empty directories
-        cacheDir.walkBottomUp()
+        cacheDir
+            .walkBottomUp()
             .filter { it.isDirectory && it != cacheDir && (it.listFiles()?.isEmpty() == true) }
             .forEach { it.delete() }
-        
+
         if (removed > 0) {
-            logger.info(LogCategory.SYSTEM, "Cleaned old cache entries", mapOf(
-                "removed" to removed,
-                "maxAgeDays" to maxAgeDays
-            ))
+            logger.info(
+                LogCategory.SYSTEM,
+                "Cleaned old cache entries",
+                mapOf(
+                    "removed" to removed,
+                    "maxAgeDays" to maxAgeDays,
+                ),
+            )
         }
-        
+
         return removed
     }
 
@@ -251,9 +292,12 @@ class PluginDownloadCache(
     // Helper Functions
     // ============================================================================
 
-    private fun getCacheFile(pluginId: String, version: String): File {
+    private fun getCacheFile(
+        pluginId: String,
+        version: String,
+    ): File {
         val sanitizedId = sanitizePluginId(pluginId)
-        return File(cacheDir, "$sanitizedId/${sanitizedId}_${version}.jar")
+        return File(cacheDir, "$sanitizedId/${sanitizedId}_$version.jar")
     }
 
     private fun sanitizePluginId(pluginId: String): String {

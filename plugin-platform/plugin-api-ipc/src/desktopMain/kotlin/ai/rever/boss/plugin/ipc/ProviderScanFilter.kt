@@ -18,13 +18,14 @@ package ai.rever.boss.plugin.ipc
  * can't share a constant.
  */
 object ProviderScanFilter {
-
     /** Keep in sync with composeApp's scannerSkippedDirectoryNames (CodeBase.kt). */
     val skippedDirectoryNames = setOf("build", "node_modules")
 
     /** Name-only visibility, for local (non-recursive) listings. */
-    fun isVisibleLocalEntry(name: String, showHidden: Boolean): Boolean =
-        (showHidden || !name.startsWith(".")) && name !in skippedDirectoryNames
+    fun isVisibleLocalEntry(
+        name: String,
+        showHidden: Boolean,
+    ): Boolean = (showHidden || !name.startsWith(".")) && name !in skippedDirectoryNames
 
     /**
      * Visibility of a scanned entry, considering every path segment BELOW
@@ -42,7 +43,11 @@ object ProviderScanFilter {
      * root — which would silently empty scans of projects living under
      * dot-directories (e.g. ~/.config/...).
      */
-    fun isVisibleProviderEntry(rootPath: String, entryPath: String, showHidden: Boolean): Boolean {
+    fun isVisibleProviderEntry(
+        rootPath: String,
+        entryPath: String,
+        showHidden: Boolean,
+    ): Boolean {
         val root = rootPath.replace('\\', '/').trimEnd('/')
         val entry = entryPath.replace('\\', '/')
 

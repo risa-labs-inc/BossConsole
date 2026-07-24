@@ -44,7 +44,6 @@ import kotlin.test.assertTrue
  * ratio to preserve — structure, panel ids, and tab mapping are the contract.
  */
 class WorkspaceExtractorTest {
-
     private object JupyterStubType : TabTypeInfo {
         override val typeId = JupyterTabInfo.TYPE_ID
         override val displayName = "Notebook"
@@ -59,7 +58,7 @@ class WorkspaceExtractorTest {
 
     private data class CustomTabInfo(
         override val id: String,
-        override val title: String
+        override val title: String,
     ) : TabInfo {
         override val typeId: TabTypeId = CustomTabType.typeId
         override val icon get() = Icons.Outlined.Language
@@ -69,20 +68,22 @@ class WorkspaceExtractorTest {
     private class StubTabComponent(
         ctx: ComponentContext,
         override val config: TabInfo,
-        override val tabTypeInfo: TabTypeInfo
-    ) : TabComponentWithUI, ComponentContext by ctx {
+        override val tabTypeInfo: TabTypeInfo,
+    ) : TabComponentWithUI,
+        ComponentContext by ctx {
         @Composable
         override fun Content() {
             // Fixture tab renders nothing; extraction only reads tab metadata.
         }
     }
 
-    private val tabRegistry = TabRegistry().apply {
-        listOf(TerminalTabType, CodeEditorTabType, FluckTabType, JupyterStubType, CustomTabType, PanelHostTabType)
-            .forEach { type ->
-                registerTabType(type) { config, ctx -> StubTabComponent(ctx, config, type) }
-            }
-    }
+    private val tabRegistry =
+        TabRegistry().apply {
+            listOf(TerminalTabType, CodeEditorTabType, FluckTabType, JupyterStubType, CustomTabType, PanelHostTabType)
+                .forEach { type ->
+                    registerTabType(type) { config, ctx -> StubTabComponent(ctx, config, type) }
+                }
+        }
 
     private fun newSplitViewState() = SplitViewState(tabRegistry, windowId = "test-window")
 
@@ -172,8 +173,8 @@ class WorkspaceExtractorTest {
                 id = "term-1",
                 title = "Terminal: build",
                 initialCommand = "./gradlew build",
-                workingDirectory = "/repo"
-            )
+                workingDirectory = "/repo",
+            ),
         )
 
         val tab = singleTab(state)
@@ -189,7 +190,7 @@ class WorkspaceExtractorTest {
     fun `editor tab maps file path`() {
         val state = newSplitViewState()
         state.getPanel("main")!!.tabsComponent.addTab(
-            EditorTabInfo(id = "ed-1", title = "App.kt", filePath = "/repo/src/App.kt")
+            EditorTabInfo(id = "ed-1", title = "App.kt", filePath = "/repo/src/App.kt"),
         )
 
         val tab = singleTab(state)
@@ -202,7 +203,7 @@ class WorkspaceExtractorTest {
     fun `jupyter tab maps file path`() {
         val state = newSplitViewState()
         state.getPanel("main")!!.tabsComponent.addTab(
-            JupyterTabInfo(id = "jp-1", title = "analysis.ipynb", filePath = "/repo/analysis.ipynb")
+            JupyterTabInfo(id = "jp-1", title = "analysis.ipynb", filePath = "/repo/analysis.ipynb"),
         )
 
         val tab = singleTab(state)
@@ -214,13 +215,14 @@ class WorkspaceExtractorTest {
     @Test
     fun `browser tab saves the CURRENT url, not the initial one`() {
         val state = newSplitViewState()
-        val fluckTab = FluckTabInfo(
-            id = "fluck-1",
-            typeId = FluckTabType.typeId,
-            _title = "Docs",
-            url = "https://start.example",
-            faviconCacheKey = "fav-1"
-        ).updateNavigation("Docs 2", "https://current.example/page")
+        val fluckTab =
+            FluckTabInfo(
+                id = "fluck-1",
+                typeId = FluckTabType.typeId,
+                _title = "Docs",
+                url = "https://start.example",
+                faviconCacheKey = "fav-1",
+            ).updateNavigation("Docs 2", "https://current.example/page")
         state.getPanel("main")!!.tabsComponent.addTab(fluckTab)
 
         val tab = singleTab(state)
@@ -271,12 +273,13 @@ class WorkspaceExtractorTest {
 
     @Test
     fun `explicit name, description and project path are preserved`() {
-        val workspace = extractCurrentWorkspace(
-            newSplitViewState(),
-            projectPath = "/Users/dev/proj",
-            name = "My Workspace",
-            description = "Saved layout"
-        )
+        val workspace =
+            extractCurrentWorkspace(
+                newSplitViewState(),
+                projectPath = "/Users/dev/proj",
+                name = "My Workspace",
+                description = "Saved layout",
+            )
 
         assertEquals("My Workspace", workspace.name)
         assertEquals("Saved layout", workspace.description)

@@ -16,7 +16,7 @@ sealed class SignatureVerificationResult {
      * Plugin is signed by a trusted publisher.
      */
     data class Verified(
-        val publisher: String
+        val publisher: String,
     ) : SignatureVerificationResult()
 
     /**
@@ -24,7 +24,7 @@ sealed class SignatureVerificationResult {
      */
     data class Failed(
         val reason: String,
-        val error: Throwable? = null
+        val error: Throwable? = null,
     ) : SignatureVerificationResult()
 
     val isVerified: Boolean get() = this is Verified
@@ -51,34 +51,47 @@ sealed class SignatureVerificationResult {
  * JAR's own embedded certificates, so without a trust-anchor check any
  * self-signed JAR would pass; an earlier implementation had exactly that hole.
  */
-class PluginSignatureVerifier(trustedKeyPems: Map<String, String> = emptyMap()) {
+class PluginSignatureVerifier(
+    trustedKeyPems: Map<String, String> = emptyMap(),
+) {
     private val logger = BossLogger.forComponent("PluginSignatureVerifier")
 
     /**
      * Trusted public keys by publisher name. Parsed once at construction;
      * never mutated.
      */
-    private val trustedKeys: Map<String, PublicKey> = buildMap {
-        for ((publisher, pem) in trustedKeyPems) {
-            try {
-                val pemContent = pem
-                    .replace("-----BEGIN PUBLIC KEY-----", "")
-                    .replace("-----END PUBLIC KEY-----", "")
-                    .replace("\\s".toRegex(), "")
+    private val trustedKeys: Map<String, PublicKey> =
+        buildMap {
+            for ((publisher, pem) in trustedKeyPems) {
+                try {
+                    val pemContent =
+                        pem
+                            .replace("-----BEGIN PUBLIC KEY-----", "")
+                            .replace("-----END PUBLIC KEY-----", "")
+                            .replace("\\s".toRegex(), "")
 
-                val decoded = Base64.getDecoder().decode(pemContent)
-                put(publisher, KeyFactory.getInstance("RSA").generatePublic(X509EncodedKeySpec(decoded)))
+                    val decoded = Base64.getDecoder().decode(pemContent)
+                    put(publisher, KeyFactory.getInstance("RSA").generatePublic(X509EncodedKeySpec(decoded)))
 
-                logger.info(LogCategory.SYSTEM, "Added trusted public key", mapOf(
-                    "publisher" to publisher
-                ))
-            } catch (e: Exception) {
-                logger.error(LogCategory.SYSTEM, "Failed to parse trusted public key", mapOf(
-                    "publisher" to publisher
-                ), e)
+                    logger.info(
+                        LogCategory.SYSTEM,
+                        "Added trusted public key",
+                        mapOf(
+                            "publisher" to publisher,
+                        ),
+                    )
+                } catch (e: Exception) {
+                    logger.error(
+                        LogCategory.SYSTEM,
+                        "Failed to parse trusted public key",
+                        mapOf(
+                            "publisher" to publisher,
+                        ),
+                        e,
+                    )
+                }
             }
         }
-    }
 
     /**
      * Strictly verify a detached signature over a canonical message.
@@ -93,18 +106,22 @@ class PluginSignatureVerifier(trustedKeyPems: Map<String, String> = emptyMap()) 
      * @param signatureBase64 Base64-encoded signature
      * @return Verification result
      */
-    fun verifySignedMessage(message: String, signatureBase64: String): SignatureVerificationResult {
+    fun verifySignedMessage(
+        message: String,
+        signatureBase64: String,
+    ): SignatureVerificationResult {
         if (trustedKeys.isEmpty()) {
             return SignatureVerificationResult.Failed("No trusted keys configured")
         }
 
-        val signatureBytes = try {
-            Base64.getDecoder().decode(signatureBase64)
-        } catch (e: IllegalArgumentException) {
-            // Reason strings surface in user-facing install errors — keep
-            // crypto/exception internals in the throwable, not the text.
-            return SignatureVerificationResult.Failed("Signature is not valid base64", e)
-        }
+        val signatureBytes =
+            try {
+                Base64.getDecoder().decode(signatureBase64)
+            } catch (e: IllegalArgumentException) {
+                // Reason strings surface in user-facing install errors — keep
+                // crypto/exception internals in the throwable, not the text.
+                return SignatureVerificationResult.Failed("Signature is not valid base64", e)
+            }
         val messageBytes = message.toByteArray(Charsets.UTF_8)
 
         var lastError: Throwable? = null

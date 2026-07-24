@@ -1,8 +1,9 @@
 package ai.rever.boss.dashboard
 
+import ai.rever.boss.components.workspaces.CommandProcessor
+import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
-import ai.rever.boss.components.workspaces.CommandProcessor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -16,16 +17,15 @@ import kotlinx.serialization.json.Json
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
-import ai.rever.boss.plugin.pathutils.BossDirectories
 
 /**
  * Configuration for a panel in a split template.
  */
 @Serializable
 data class TemplatePanelContent(
-    val command: String? = null,      // For terminal: command to run
-    val url: String? = null,          // For browser: URL to open
-    val filePath: String? = null      // For editor: file to open
+    val command: String? = null, // For terminal: command to run
+    val url: String? = null, // For browser: URL to open
+    val filePath: String? = null, // For editor: file to open
 )
 
 /**
@@ -33,9 +33,9 @@ data class TemplatePanelContent(
  */
 @Serializable
 data class TemplatePanelConfig(
-    val type: String,                 // "terminal", "browser", "editor"
-    val position: String,             // "left", "right", "top", "bottom"
-    val content: TemplatePanelContent
+    val type: String, // "terminal", "browser", "editor"
+    val position: String, // "left", "right", "top", "bottom"
+    val content: TemplatePanelContent,
 )
 
 /**
@@ -46,9 +46,9 @@ data class SplitTemplate(
     val id: String,
     val name: String,
     val description: String,
-    val icon: String,                 // Icon identifier
+    val icon: String, // Icon identifier
     val isBuiltIn: Boolean = true,
-    val panels: List<TemplatePanelConfig>
+    val panels: List<TemplatePanelConfig>,
 )
 
 /**
@@ -56,7 +56,7 @@ data class SplitTemplate(
  */
 @Serializable
 data class CustomTemplatesData(
-    val templates: List<SplitTemplate> = emptyList()
+    val templates: List<SplitTemplate> = emptyList(),
 )
 
 /**
@@ -70,185 +70,209 @@ data class CustomTemplatesData(
 object SplitTemplatesManager {
     private val logger = BossLogger.forComponent("SplitTemplatesManager")
     private val settingsFile = BossDirectories.resolve("split-templates.json")
-    private val json = Json {
-        prettyPrint = true
-        ignoreUnknownKeys = true
-        encodeDefaults = true
-    }
+    private val json =
+        Json {
+            prettyPrint = true
+            ignoreUnknownKeys = true
+            encodeDefaults = true
+        }
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     // Built-in templates that are always available
-    private val builtInTemplates = listOf(
-        SplitTemplate(
-            id = "claude-code",
-            name = "Claude Code",
-            description = "Terminal with Claude CLI + Browser with GitHub",
-            icon = "terminal-browser",
-            isBuiltIn = true,
-            panels = listOf(
-                TemplatePanelConfig(
-                    type = "terminal",
-                    position = "left",
-                    content = TemplatePanelContent(
-                        command = "cd {projectPath} && claude --dangerously-skip-permissions"
-                    )
-                ),
-                TemplatePanelConfig(
-                    type = "browser",
-                    position = "right",
-                    content = TemplatePanelContent(
-                        url = "{gitRemoteUrl}"
-                    )
-                )
-            )
-        ),
-        SplitTemplate(
-            id = "code-review",
-            name = "Code Review",
-            description = "README + GitHub + Claude Code",
-            icon = "git-pull-request",
-            isBuiltIn = true,
-            panels = listOf(
-                TemplatePanelConfig(
-                    type = "editor",
-                    position = "left",
-                    content = TemplatePanelContent(
-                        filePath = "{projectPath}/README.md"
-                    )
-                ),
-                TemplatePanelConfig(
-                    type = "browser",
-                    position = "right",
-                    content = TemplatePanelContent(
-                        url = "{gitRemoteUrl}"
-                    )
-                ),
-                TemplatePanelConfig(
-                    type = "terminal",
-                    position = "bottom",
-                    content = TemplatePanelContent(
-                        command = "cd {projectPath} && claude --dangerously-skip-permissions"
-                    )
-                )
-            )
-        ),
-        SplitTemplate(
-            id = "gemini",
-            name = "Gemini",
-            description = "Gemini CLI + GitHub",
-            icon = "terminal-browser",
-            isBuiltIn = true,
-            panels = listOf(
-                TemplatePanelConfig(
-                    type = "terminal",
-                    position = "left",
-                    content = TemplatePanelContent(
-                        command = "cd {projectPath} && gemini"
-                    )
-                ),
-                TemplatePanelConfig(
-                    type = "browser",
-                    position = "right",
-                    content = TemplatePanelContent(
-                        url = "{gitRemoteUrl}"
-                    )
-                )
-            )
-        ),
-        SplitTemplate(
-            id = "codex",
-            name = "Codex",
-            description = "OpenAI Codex CLI + GitHub",
-            icon = "terminal-browser",
-            isBuiltIn = true,
-            panels = listOf(
-                TemplatePanelConfig(
-                    type = "terminal",
-                    position = "left",
-                    content = TemplatePanelContent(
-                        command = "cd {projectPath} && codex"
-                    )
-                ),
-                TemplatePanelConfig(
-                    type = "browser",
-                    position = "right",
-                    content = TemplatePanelContent(
-                        url = "{gitRemoteUrl}"
-                    )
-                )
-            )
-        ),
-        SplitTemplate(
-            id = "opencode",
-            name = "OpenCode",
-            description = "OpenCode AI CLI + GitHub",
-            icon = "terminal-browser",
-            isBuiltIn = true,
-            panels = listOf(
-                TemplatePanelConfig(
-                    type = "terminal",
-                    position = "left",
-                    content = TemplatePanelContent(
-                        command = "cd {projectPath} && opencode"
-                    )
-                ),
-                TemplatePanelConfig(
-                    type = "browser",
-                    position = "right",
-                    content = TemplatePanelContent(
-                        url = "{gitRemoteUrl}"
-                    )
-                )
-            )
-        ),
-        SplitTemplate(
-            id = "terminal-browser",
-            name = "Terminal + Browser",
-            description = "Terminal on left, Browser on right",
-            icon = "layout-split",
-            isBuiltIn = true,
-            panels = listOf(
-                TemplatePanelConfig(
-                    type = "terminal",
-                    position = "left",
-                    content = TemplatePanelContent(
-                        command = "cd {projectPath}"
-                    )
-                ),
-                TemplatePanelConfig(
-                    type = "browser",
-                    position = "right",
-                    content = TemplatePanelContent(
-                        url = "https://google.com"
-                    )
-                )
-            )
-        ),
-        SplitTemplate(
-            id = "dual-terminal",
-            name = "Dual Terminal",
-            description = "Two terminals side by side",
-            icon = "terminal-dual",
-            isBuiltIn = true,
-            panels = listOf(
-                TemplatePanelConfig(
-                    type = "terminal",
-                    position = "left",
-                    content = TemplatePanelContent(
-                        command = "cd {projectPath}"
-                    )
-                ),
-                TemplatePanelConfig(
-                    type = "terminal",
-                    position = "right",
-                    content = TemplatePanelContent(
-                        command = "cd {projectPath}"
-                    )
-                )
-            )
+    private val builtInTemplates =
+        listOf(
+            SplitTemplate(
+                id = "claude-code",
+                name = "Claude Code",
+                description = "Terminal with Claude CLI + Browser with GitHub",
+                icon = "terminal-browser",
+                isBuiltIn = true,
+                panels =
+                    listOf(
+                        TemplatePanelConfig(
+                            type = "terminal",
+                            position = "left",
+                            content =
+                                TemplatePanelContent(
+                                    command = "cd {projectPath} && claude --dangerously-skip-permissions",
+                                ),
+                        ),
+                        TemplatePanelConfig(
+                            type = "browser",
+                            position = "right",
+                            content =
+                                TemplatePanelContent(
+                                    url = "{gitRemoteUrl}",
+                                ),
+                        ),
+                    ),
+            ),
+            SplitTemplate(
+                id = "code-review",
+                name = "Code Review",
+                description = "README + GitHub + Claude Code",
+                icon = "git-pull-request",
+                isBuiltIn = true,
+                panels =
+                    listOf(
+                        TemplatePanelConfig(
+                            type = "editor",
+                            position = "left",
+                            content =
+                                TemplatePanelContent(
+                                    filePath = "{projectPath}/README.md",
+                                ),
+                        ),
+                        TemplatePanelConfig(
+                            type = "browser",
+                            position = "right",
+                            content =
+                                TemplatePanelContent(
+                                    url = "{gitRemoteUrl}",
+                                ),
+                        ),
+                        TemplatePanelConfig(
+                            type = "terminal",
+                            position = "bottom",
+                            content =
+                                TemplatePanelContent(
+                                    command = "cd {projectPath} && claude --dangerously-skip-permissions",
+                                ),
+                        ),
+                    ),
+            ),
+            SplitTemplate(
+                id = "gemini",
+                name = "Gemini",
+                description = "Gemini CLI + GitHub",
+                icon = "terminal-browser",
+                isBuiltIn = true,
+                panels =
+                    listOf(
+                        TemplatePanelConfig(
+                            type = "terminal",
+                            position = "left",
+                            content =
+                                TemplatePanelContent(
+                                    command = "cd {projectPath} && gemini",
+                                ),
+                        ),
+                        TemplatePanelConfig(
+                            type = "browser",
+                            position = "right",
+                            content =
+                                TemplatePanelContent(
+                                    url = "{gitRemoteUrl}",
+                                ),
+                        ),
+                    ),
+            ),
+            SplitTemplate(
+                id = "codex",
+                name = "Codex",
+                description = "OpenAI Codex CLI + GitHub",
+                icon = "terminal-browser",
+                isBuiltIn = true,
+                panels =
+                    listOf(
+                        TemplatePanelConfig(
+                            type = "terminal",
+                            position = "left",
+                            content =
+                                TemplatePanelContent(
+                                    command = "cd {projectPath} && codex",
+                                ),
+                        ),
+                        TemplatePanelConfig(
+                            type = "browser",
+                            position = "right",
+                            content =
+                                TemplatePanelContent(
+                                    url = "{gitRemoteUrl}",
+                                ),
+                        ),
+                    ),
+            ),
+            SplitTemplate(
+                id = "opencode",
+                name = "OpenCode",
+                description = "OpenCode AI CLI + GitHub",
+                icon = "terminal-browser",
+                isBuiltIn = true,
+                panels =
+                    listOf(
+                        TemplatePanelConfig(
+                            type = "terminal",
+                            position = "left",
+                            content =
+                                TemplatePanelContent(
+                                    command = "cd {projectPath} && opencode",
+                                ),
+                        ),
+                        TemplatePanelConfig(
+                            type = "browser",
+                            position = "right",
+                            content =
+                                TemplatePanelContent(
+                                    url = "{gitRemoteUrl}",
+                                ),
+                        ),
+                    ),
+            ),
+            SplitTemplate(
+                id = "terminal-browser",
+                name = "Terminal + Browser",
+                description = "Terminal on left, Browser on right",
+                icon = "layout-split",
+                isBuiltIn = true,
+                panels =
+                    listOf(
+                        TemplatePanelConfig(
+                            type = "terminal",
+                            position = "left",
+                            content =
+                                TemplatePanelContent(
+                                    command = "cd {projectPath}",
+                                ),
+                        ),
+                        TemplatePanelConfig(
+                            type = "browser",
+                            position = "right",
+                            content =
+                                TemplatePanelContent(
+                                    url = "https://google.com",
+                                ),
+                        ),
+                    ),
+            ),
+            SplitTemplate(
+                id = "dual-terminal",
+                name = "Dual Terminal",
+                description = "Two terminals side by side",
+                icon = "terminal-dual",
+                isBuiltIn = true,
+                panels =
+                    listOf(
+                        TemplatePanelConfig(
+                            type = "terminal",
+                            position = "left",
+                            content =
+                                TemplatePanelContent(
+                                    command = "cd {projectPath}",
+                                ),
+                        ),
+                        TemplatePanelConfig(
+                            type = "terminal",
+                            position = "right",
+                            content =
+                                TemplatePanelContent(
+                                    command = "cd {projectPath}",
+                                ),
+                        ),
+                    ),
+            ),
         )
-    )
 
     private val _customTemplates = MutableStateFlow<List<SplitTemplate>>(emptyList())
     val customTemplates: StateFlow<List<SplitTemplate>> = _customTemplates.asStateFlow()
@@ -266,35 +290,37 @@ object SplitTemplatesManager {
     /**
      * Load custom templates from disk asynchronously.
      */
-    private suspend fun loadAsync() = withContext(Dispatchers.IO) {
-        try {
-            settingsFile.parentFile?.mkdirs()
+    private suspend fun loadAsync() =
+        withContext(Dispatchers.IO) {
+            try {
+                settingsFile.parentFile?.mkdirs()
 
-            if (settingsFile.exists()) {
-                val content = settingsFile.readText()
-                val data = json.decodeFromString<CustomTemplatesData>(content)
-                _customTemplates.value = data.templates
-                updateAllTemplates()
-                logger.debug(LogCategory.SYSTEM, "Loaded custom templates", mapOf("count" to data.templates.size))
+                if (settingsFile.exists()) {
+                    val content = settingsFile.readText()
+                    val data = json.decodeFromString<CustomTemplatesData>(content)
+                    _customTemplates.value = data.templates
+                    updateAllTemplates()
+                    logger.debug(LogCategory.SYSTEM, "Loaded custom templates", mapOf("count" to data.templates.size))
+                }
+            } catch (e: Exception) {
+                logger.warn(LogCategory.SYSTEM, "Error loading templates", error = e)
             }
-        } catch (e: Exception) {
-            logger.warn(LogCategory.SYSTEM, "Error loading templates", error = e)
         }
-    }
 
     /**
      * Save custom templates to disk.
      */
-    private suspend fun saveAsync() = withContext(Dispatchers.IO) {
-        try {
-            settingsFile.parentFile?.mkdirs()
-            val data = CustomTemplatesData(templates = _customTemplates.value)
-            val content = json.encodeToString(CustomTemplatesData.serializer(), data)
-            settingsFile.writeText(content)
-        } catch (e: Exception) {
-            logger.warn(LogCategory.SYSTEM, "Error saving templates", error = e)
+    private suspend fun saveAsync() =
+        withContext(Dispatchers.IO) {
+            try {
+                settingsFile.parentFile?.mkdirs()
+                val data = CustomTemplatesData(templates = _customTemplates.value)
+                val content = json.encodeToString(CustomTemplatesData.serializer(), data)
+                settingsFile.writeText(content)
+            } catch (e: Exception) {
+                logger.warn(LogCategory.SYSTEM, "Error saving templates", error = e)
+            }
         }
-    }
 
     private fun updateAllTemplates() {
         _allTemplates.value = builtInTemplates + _customTemplates.value
@@ -303,9 +329,7 @@ object SplitTemplatesManager {
     /**
      * Get a template by ID.
      */
-    fun getTemplate(id: String): SplitTemplate? {
-        return _allTemplates.value.find { it.id == id }
-    }
+    fun getTemplate(id: String): SplitTemplate? = _allTemplates.value.find { it.id == id }
 
     /**
      * Add a custom template.
@@ -336,7 +360,11 @@ object SplitTemplatesManager {
      * user who worked around the bug with `cd "{projectPath}"`) are left raw,
      * to avoid double-quoting like `cd "'…'"`.
      */
-    internal fun substituteProjectPath(content: String, pathValue: String, quote: Boolean): String {
+    internal fun substituteProjectPath(
+        content: String,
+        pathValue: String,
+        quote: Boolean,
+    ): String {
         if (!quote) return content.replace("{projectPath}", pathValue)
         val quoted = CommandProcessor.quotePath(pathValue)
         // Quote only occurrences NOT already adjacent to a quote char. The
@@ -374,7 +402,7 @@ object SplitTemplatesManager {
         content: String,
         projectPath: String?,
         currentFile: String? = null,
-        quoteProjectPath: Boolean = false
+        quoteProjectPath: Boolean = false,
     ): String {
         var result = content
 
@@ -406,18 +434,22 @@ object SplitTemplatesManager {
      */
     private fun getGitRemoteUrl(projectPath: String): String {
         return try {
-            val process = ProcessBuilder("git", "remote", "get-url", "origin")
-                .directory(File(projectPath))
-                .redirectError(ProcessBuilder.Redirect.DISCARD)
-                .start()
+            val process =
+                ProcessBuilder("git", "remote", "get-url", "origin")
+                    .directory(File(projectPath))
+                    .redirectError(ProcessBuilder.Redirect.DISCARD)
+                    .start()
 
             val reader = BufferedReader(InputStreamReader(process.inputStream))
             val url = reader.readLine()?.trim() ?: return "https://google.com"
             val exitCode = process.waitFor()
 
             // Validate: git must succeed and output must look like a URL/remote
-            if (exitCode != 0 || (!url.startsWith("git@") && !url.startsWith("https://") &&
-                        !url.startsWith("http://") && !url.startsWith("ssh://"))) {
+            if (exitCode != 0 || (
+                    !url.startsWith("git@") && !url.startsWith("https://") &&
+                        !url.startsWith("http://") && !url.startsWith("ssh://")
+                )
+            ) {
                 return "https://google.com"
             }
 
@@ -470,9 +502,9 @@ object SplitTemplatesManager {
             // Look for non-empty .jsonl files that are not agent sessions
             claudeProjectDir.listFiles()?.any { file ->
                 file.isFile &&
-                file.name.endsWith(".jsonl") &&
-                !file.name.startsWith("agent-") &&
-                file.length() > 0
+                    file.name.endsWith(".jsonl") &&
+                    !file.name.startsWith("agent-") &&
+                    file.length() > 0
             } ?: false
         } catch (e: Exception) {
             logger.debug(LogCategory.SYSTEM, "Error checking Claude session", mapOf("error" to e.toString()))

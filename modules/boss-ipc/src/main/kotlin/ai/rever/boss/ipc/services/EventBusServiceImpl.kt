@@ -19,13 +19,13 @@ import java.util.concurrent.atomic.AtomicInteger
  * This replaces the in-process SharedFlow event buses for cross-process communication.
  */
 class EventBusServiceImpl : EventBusServiceGrpcKt.EventBusServiceCoroutineImplBase() {
-
     private val logger = LoggerFactory.getLogger(EventBusServiceImpl::class.java)
 
     // Central event flow that all subscribers read from
-    private val eventFlow = MutableSharedFlow<EventEnvelope>(
-        extraBufferCapacity = 256,
-    )
+    private val eventFlow =
+        MutableSharedFlow<EventEnvelope>(
+            extraBufferCapacity = 256,
+        )
 
     // Track active subscribers for metrics
     private val subscriberCount = AtomicInteger(0)
@@ -38,12 +38,13 @@ class EventBusServiceImpl : EventBusServiceGrpcKt.EventBusServiceCoroutineImplBa
         val eventTypes = request.eventTypesList.toSet()
         val windowFilter = request.sourceWindowId.takeIf { it.isNotEmpty() }
 
-        subscriberInfo[subscriberId] = SubscriberInfo(
-            subscriberId = subscriberId,
-            eventTypes = eventTypes,
-            windowFilter = windowFilter,
-            subscribedAt = System.currentTimeMillis(),
-        )
+        subscriberInfo[subscriberId] =
+            SubscriberInfo(
+                subscriberId = subscriberId,
+                eventTypes = eventTypes,
+                windowFilter = windowFilter,
+                subscribedAt = System.currentTimeMillis(),
+            )
 
         logger.debug("New subscriber: id={}, types={}, window={}", subscriberId, eventTypes, windowFilter)
 
@@ -53,10 +54,9 @@ class EventBusServiceImpl : EventBusServiceGrpcKt.EventBusServiceCoroutineImplBa
                     .filter { envelope ->
                         // Type filter: empty = subscribe to all
                         (eventTypes.isEmpty() || envelope.eventType in eventTypes) &&
-                        // Window filter: empty = all windows
-                        (windowFilter == null || envelope.sourceWindowId == windowFilter)
-                    }
-                    .collect { emit(it) }
+                            // Window filter: empty = all windows
+                            (windowFilter == null || envelope.sourceWindowId == windowFilter)
+                    }.collect { emit(it) }
             } finally {
                 subscriberInfo.remove(subscriberId)
                 subscriberCount.decrementAndGet()
@@ -68,7 +68,8 @@ class EventBusServiceImpl : EventBusServiceGrpcKt.EventBusServiceCoroutineImplBa
     override suspend fun publish(request: EventEnvelope): PublishResponse {
         eventFlow.emit(request)
 
-        return PublishResponse.newBuilder()
+        return PublishResponse
+            .newBuilder()
             .setSuccess(true)
             .setSubscriberCount(subscriberCount.get())
             .build()
@@ -77,7 +78,8 @@ class EventBusServiceImpl : EventBusServiceGrpcKt.EventBusServiceCoroutineImplBa
     override suspend fun publishBatch(request: PublishBatchRequest): PublishResponse {
         request.eventsList.forEach { eventFlow.emit(it) }
 
-        return PublishResponse.newBuilder()
+        return PublishResponse
+            .newBuilder()
             .setSuccess(true)
             .setSubscriberCount(subscriberCount.get())
             .build()

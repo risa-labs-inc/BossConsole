@@ -31,8 +31,10 @@ fun BossDraggableComponent.ProcessPendingPromoteToTab(
                 val tabInfo = PanelHostTabInfo(panelId, info.displayName, info.icon)
                 when (val target = request.target) {
                     // Drag-out onto a panel edge → create a split holding the plugin tab.
-                    is TabDropTarget.SplitPanel ->
+                    is TabDropTarget.SplitPanel -> {
                         splitViewState.splitPanel(target.panelId, target.orientation, tabToMove = tabInfo)
+                    }
+
                     // Drag-out onto a panel center → add to that panel's tab bar.
                     is TabDropTarget.ExistingPanel -> {
                         splitViewState.getPanelTabsComponent(target.panelId)?.let { tabs ->
@@ -41,10 +43,13 @@ fun BossDraggableComponent.ProcessPendingPromoteToTab(
                             splitViewState.setActivePanel(target.panelId)
                         }
                     }
+
                     // No specific target (menu "Open as Tab") → the active panel.
-                    else -> splitViewState.getActiveTabsComponent()?.let { tabs ->
-                        val index = tabs.addTab(tabInfo)
-                        if (index >= 0) tabs.selectTab(index)
+                    else -> {
+                        splitViewState.getActiveTabsComponent()?.let { tabs ->
+                            val index = tabs.addTab(tabInfo)
+                            if (index >= 0) tabs.selectTab(index)
+                        }
                     }
                 }
                 // Move: collapse the panel in the sidebar.
@@ -62,17 +67,16 @@ fun BossDraggableComponent.ProcessPendingPromoteToTab(
  * the first match.
  */
 @Composable
-fun BossDraggableComponent.ProcessPendingFocusHostedTab(
-    splitViewState: SplitViewState,
-) {
+fun BossDraggableComponent.ProcessPendingFocusHostedTab(splitViewState: SplitViewState) {
     val pending = pendingFocusHostedTab
     LaunchedEffect(pending) {
         if (pending != null) {
             var targetPanelId: String? = null
             var targetTabId: String? = null
             for (panel in splitViewState.getAllPanels()) {
-                val match = panel.tabsComponent.tabsState.value.tabs
-                    .firstOrNull { it is PanelHostTabInfo && it.panelId == pending }
+                val match =
+                    panel.tabsComponent.tabsState.value.tabs
+                        .firstOrNull { it is PanelHostTabInfo && it.panelId == pending }
                 if (match != null) {
                     targetPanelId = panel.id
                     targetTabId = match.id

@@ -46,7 +46,7 @@ fun BookmarkDialog(
     collections: List<BookmarkCollection>,
     workspaces: List<ai.rever.boss.components.workspaces.LayoutWorkspace>,
     onDismiss: () -> Unit,
-    onConfirm: (collectionIds: Set<String>, workspacePanelMap: Map<String, String?>) -> Unit
+    onConfirm: (collectionIds: Set<String>, workspacePanelMap: Map<String, String?>) -> Unit,
 ) {
     // Multi-select state
     // Preselect "Favorites" collection
@@ -61,31 +61,33 @@ fun BookmarkDialog(
 
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            dismissOnClickOutside = true,
-            dismissOnBackPress = true
-        )
+        properties =
+            DialogProperties(
+                dismissOnClickOutside = true,
+                dismissOnBackPress = true,
+            ),
     ) {
         Surface(
-            modifier = Modifier
-                .width(700.dp)
-                .heightIn(max = 500.dp),
+            modifier =
+                Modifier
+                    .width(700.dp)
+                    .heightIn(max = 500.dp),
             shape = RoundedCornerShape(8.dp),
-            color = BossTheme.colors.panel
+            color = BossTheme.colors.panel,
         ) {
             Column(
-                modifier = Modifier.padding(20.dp)
+                modifier = Modifier.padding(20.dp),
             ) {
                 // Title
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
                     Icon(
                         imageVector = Icons.Outlined.Star,
                         contentDescription = "Bookmark",
                         tint = BossTheme.colors.signal,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(24.dp),
                     )
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
@@ -93,7 +95,7 @@ fun BookmarkDialog(
                             text = "Add to Bookmarks",
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold,
-                            color = BossTheme.colors.textPrimary
+                            color = BossTheme.colors.textPrimary,
                         )
                         Text(
                             text = tabTitle,
@@ -101,7 +103,7 @@ fun BookmarkDialog(
                             color = BossTheme.colors.textSecondary,
                             modifier = Modifier.padding(top = 2.dp),
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                 }
@@ -110,16 +112,17 @@ fun BookmarkDialog(
 
                 // Scrollable content
                 Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .verticalScroll(rememberScrollState())
+                    modifier =
+                        Modifier
+                            .weight(1f)
+                            .verticalScroll(rememberScrollState()),
                 ) {
                     // Section 1: Collections (multi-select pills)
                     Text(
                         text = "Select Collections",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
-                        color = BossTheme.colors.textPrimary
+                        color = BossTheme.colors.textPrimary,
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
@@ -128,7 +131,7 @@ fun BookmarkDialog(
                         Text(
                             text = "No collections available",
                             fontSize = 13.sp,
-                            color = BossTheme.colors.textSecondary
+                            color = BossTheme.colors.textSecondary,
                         )
                     } else {
                         // Simple wrapping layout for pills
@@ -136,12 +139,13 @@ fun BookmarkDialog(
                             collections = collections,
                             selectedCollections = selectedCollections,
                             onToggleCollection = { collectionId ->
-                                selectedCollections = if (selectedCollections.contains(collectionId)) {
-                                    selectedCollections - collectionId
-                                } else {
-                                    selectedCollections + collectionId
-                                }
-                            }
+                                selectedCollections =
+                                    if (selectedCollections.contains(collectionId)) {
+                                        selectedCollections - collectionId
+                                    } else {
+                                        selectedCollections + collectionId
+                                    }
+                            },
                         )
                     }
 
@@ -149,41 +153,43 @@ fun BookmarkDialog(
 
                     // Horizontal divider
                     Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(1.dp)
-                            .background(BossTheme.colors.line)
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .height(1.dp)
+                                .background(BossTheme.colors.line),
                     )
 
                     Spacer(modifier = Modifier.height(20.dp))
 
                     // Section 2: Workspaces (expandable multi-select pills with panel dropdown)
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { workspacesSectionExpanded = !workspacesSectionExpanded }
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { workspacesSectionExpanded = !workspacesSectionExpanded }
+                                .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(
                             imageVector = if (workspacesSectionExpanded) Icons.Filled.ExpandMore else Icons.Filled.ChevronRight,
                             contentDescription = if (workspacesSectionExpanded) "Collapse" else "Expand",
                             modifier = Modifier.size(16.dp),
-                            tint = BossTheme.colors.textSecondary
+                            tint = BossTheme.colors.textSecondary,
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Icon(
                             imageVector = Icons.Outlined.WorkOutline,
                             contentDescription = "Workspaces",
                             modifier = Modifier.size(16.dp),
-                            tint = BossTheme.colors.textSecondary
+                            tint = BossTheme.colors.textSecondary,
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = "Open In Workspaces",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Medium,
-                            color = BossTheme.colors.textPrimary
+                            color = BossTheme.colors.textPrimary,
                         )
                     }
 
@@ -194,7 +200,7 @@ fun BookmarkDialog(
                             Text(
                                 text = "No workspaces available",
                                 fontSize = 13.sp,
-                                color = BossTheme.colors.textSecondary
+                                color = BossTheme.colors.textSecondary,
                             )
                         } else {
                             // Workspace pills with inline panel selection
@@ -202,15 +208,16 @@ fun BookmarkDialog(
                                 workspaces = workspaces,
                                 workspacePanelSelections = workspacePanelSelections,
                                 onToggleWorkspace = { workspaceName, panelId ->
-                                    workspacePanelSelections = if (workspacePanelSelections.containsKey(workspaceName)) {
-                                        workspacePanelSelections - workspaceName
-                                    } else {
-                                        workspacePanelSelections + (workspaceName to panelId)
-                                    }
+                                    workspacePanelSelections =
+                                        if (workspacePanelSelections.containsKey(workspaceName)) {
+                                            workspacePanelSelections - workspaceName
+                                        } else {
+                                            workspacePanelSelections + (workspaceName to panelId)
+                                        }
                                 },
                                 onUpdatePanel = { workspaceName, panelId ->
                                     workspacePanelSelections = workspacePanelSelections + (workspaceName to panelId)
-                                }
+                                },
                             )
                         }
 
@@ -218,7 +225,7 @@ fun BookmarkDialog(
                             text = "Leave empty to use current workspace",
                             fontSize = 11.sp,
                             color = BossTheme.colors.textSecondary,
-                            modifier = Modifier.padding(top = 8.dp)
+                            modifier = Modifier.padding(top = 8.dp),
                         )
                     }
                 }
@@ -228,13 +235,14 @@ fun BookmarkDialog(
                 // Action buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
+                    horizontalArrangement = Arrangement.End,
                 ) {
                     TextButton(
                         onClick = onDismiss,
-                        colors = ButtonDefaults.textButtonColors(
-                            contentColor = BossTheme.colors.textSecondary
-                        )
+                        colors =
+                            ButtonDefaults.textButtonColors(
+                                contentColor = BossTheme.colors.textSecondary,
+                            ),
                     ) {
                         Text("Cancel")
                     }
@@ -244,13 +252,14 @@ fun BookmarkDialog(
                     Button(
                         onClick = { onConfirm(selectedCollections, workspacePanelSelections) },
                         enabled = selectedCollections.isNotEmpty(),
-                        colors = ButtonDefaults.buttonColors(
-                            backgroundColor = BossTheme.colors.signal,
-                            contentColor = BossTheme.colors.onSignal,
-                            disabledBackgroundColor = BossTheme.colors.line,
-                            disabledContentColor = BossTheme.colors.textSecondary
-                        ),
-                        shape = RoundedCornerShape(6.dp)
+                        colors =
+                            ButtonDefaults.buttonColors(
+                                backgroundColor = BossTheme.colors.signal,
+                                contentColor = BossTheme.colors.onSignal,
+                                disabledBackgroundColor = BossTheme.colors.line,
+                                disabledContentColor = BossTheme.colors.textSecondary,
+                            ),
+                        shape = RoundedCornerShape(6.dp),
                     ) {
                         Text("Add Bookmark", fontWeight = FontWeight.Medium)
                     }
@@ -267,12 +276,12 @@ fun BookmarkDialog(
 private fun CollectionPillsLayout(
     collections: List<BookmarkCollection>,
     selectedCollections: Set<String>,
-    onToggleCollection: (String) -> Unit
+    onToggleCollection: (String) -> Unit,
 ) {
     // Simple wrapping flow layout using Row with Modifier.weight
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         collections.chunked(3).forEach { rowCollections ->
             Column(modifier = Modifier.weight(1f)) {
@@ -280,7 +289,7 @@ private fun CollectionPillsLayout(
                     CollectionPill(
                         collection = collection,
                         isSelected = selectedCollections.contains(collection.id),
-                        onClick = { onToggleCollection(collection.id) }
+                        onClick = { onToggleCollection(collection.id) },
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                 }
@@ -296,25 +305,26 @@ private fun CollectionPillsLayout(
 private fun CollectionPill(
     collection: BookmarkCollection,
     isSelected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
 ) {
     Surface(
-        modifier = Modifier
-            .clickable(onClick = onClick),
+        modifier =
+            Modifier
+                .clickable(onClick = onClick),
         shape = RoundedCornerShape(16.dp),
         color = if (isSelected) BossTheme.colors.signal else BossTheme.colors.raised,
-        border = if (isSelected) null else androidx.compose.foundation.BorderStroke(1.dp, BossTheme.colors.line)
+        border = if (isSelected) null else androidx.compose.foundation.BorderStroke(1.dp, BossTheme.colors.line),
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             if (collection.isFavorite) {
                 Icon(
                     imageVector = Icons.Filled.Star,
                     contentDescription = "Favorite",
                     modifier = Modifier.size(14.dp),
-                    tint = if (isSelected) BossTheme.colors.onSignal else BossTheme.colors.signal
+                    tint = if (isSelected) BossTheme.colors.onSignal else BossTheme.colors.signal,
                 )
                 Spacer(modifier = Modifier.width(4.dp))
             }
@@ -322,7 +332,7 @@ private fun CollectionPill(
                 text = collection.name,
                 fontSize = 13.sp,
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                color = if (isSelected) BossTheme.colors.onSignal else BossTheme.colors.textPrimary
+                color = if (isSelected) BossTheme.colors.onSignal else BossTheme.colors.textPrimary,
             )
         }
     }
@@ -336,11 +346,11 @@ private fun WorkspacePillsLayout(
     workspaces: List<ai.rever.boss.components.workspaces.LayoutWorkspace>,
     workspacePanelSelections: Map<String, String?>,
     onToggleWorkspace: (workspaceName: String, panelId: String?) -> Unit,
-    onUpdatePanel: (workspaceName: String, panelId: String?) -> Unit
+    onUpdatePanel: (workspaceName: String, panelId: String?) -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         workspaces.forEach { workspace ->
             val isSelected = workspacePanelSelections.containsKey(workspace.name)
@@ -351,7 +361,7 @@ private fun WorkspacePillsLayout(
                 isSelected = isSelected,
                 selectedPanelId = selectedPanelId,
                 onToggle = { onToggleWorkspace(workspace.name, null) },
-                onPanelSelected = { panelId -> onUpdatePanel(workspace.name, panelId) }
+                onPanelSelected = { panelId -> onUpdatePanel(workspace.name, panelId) },
             )
         }
     }
@@ -366,53 +376,56 @@ private fun WorkspacePill(
     isSelected: Boolean,
     selectedPanelId: String?,
     onToggle: () -> Unit,
-    onPanelSelected: (String?) -> Unit
+    onPanelSelected: (String?) -> Unit,
 ) {
     var showPanelDropdown by remember { mutableStateOf(false) }
     val panels = workspace.layout.extractPanels()
 
     // Get panel display name
-    val panelDisplayName = if (selectedPanelId == null) {
-        "Auto"
-    } else {
-        panels.find { it.first == selectedPanelId }?.second ?: "Auto"
-    }
+    val panelDisplayName =
+        if (selectedPanelId == null) {
+            "Auto"
+        } else {
+            panels.find { it.first == selectedPanelId }?.second ?: "Auto"
+        }
 
     Column {
         Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onToggle),
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onToggle),
             shape = RoundedCornerShape(16.dp),
             color = if (isSelected) BossTheme.colors.signal else BossTheme.colors.raised,
-            border = if (isSelected) null else androidx.compose.foundation.BorderStroke(1.dp, BossTheme.colors.line)
+            border = if (isSelected) null else androidx.compose.foundation.BorderStroke(1.dp, BossTheme.colors.line),
         ) {
             Row(
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text(
-                    text = if (isSelected && selectedPanelId != null) {
-                        "${workspace.name}: $panelDisplayName"
-                    } else {
-                        workspace.name
-                    },
+                    text =
+                        if (isSelected && selectedPanelId != null) {
+                            "${workspace.name}: $panelDisplayName"
+                        } else {
+                            workspace.name
+                        },
                     fontSize = 13.sp,
                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                    color = if (isSelected) BossTheme.colors.onSignal else BossTheme.colors.textPrimary
+                    color = if (isSelected) BossTheme.colors.onSignal else BossTheme.colors.textPrimary,
                 )
 
                 if (isSelected) {
                     Spacer(modifier = Modifier.width(8.dp))
                     IconButton(
                         onClick = { showPanelDropdown = !showPanelDropdown },
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(20.dp),
                     ) {
                         Icon(
                             imageVector = Icons.Filled.ArrowDropDown,
                             contentDescription = "Select Panel",
-                            tint = BossTheme.colors.onSignal
+                            tint = BossTheme.colors.onSignal,
                         )
                     }
                 }
@@ -422,12 +435,13 @@ private fun WorkspacePill(
         // Inline panel dropdown
         if (isSelected && showPanelDropdown) {
             Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 16.dp, top = 4.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, top = 4.dp),
                 shape = RoundedCornerShape(8.dp),
                 color = BossTheme.colors.raised,
-                border = androidx.compose.foundation.BorderStroke(1.dp, BossTheme.colors.line)
+                border = androidx.compose.foundation.BorderStroke(1.dp, BossTheme.colors.line),
             ) {
                 Column(modifier = Modifier.padding(8.dp)) {
                     // Auto option
@@ -437,7 +451,7 @@ private fun WorkspacePill(
                         onClick = {
                             onPanelSelected(null)
                             showPanelDropdown = false
-                        }
+                        },
                     )
 
                     // Panel options
@@ -448,7 +462,7 @@ private fun WorkspacePill(
                             onClick = {
                                 onPanelSelected(panelId)
                                 showPanelDropdown = false
-                            }
+                            },
                         )
                     }
                 }
@@ -464,24 +478,24 @@ private fun WorkspacePill(
 private fun PanelOption(
     displayName: String,
     isSelected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
 ) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .background(
-                color = if (isSelected) BossTheme.colors.raised.copy(alpha = 0.6f) else Color.Transparent,
-                shape = RoundedCornerShape(4.dp)
-            )
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .background(
+                    color = if (isSelected) BossTheme.colors.raised.copy(alpha = 0.6f) else Color.Transparent,
+                    shape = RoundedCornerShape(4.dp),
+                ).padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = displayName,
             fontSize = 12.sp,
             fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal,
-            color = if (isSelected) BossTheme.colors.signal else BossTheme.colors.textPrimary
+            color = if (isSelected) BossTheme.colors.signal else BossTheme.colors.textPrimary,
         )
     }
 }

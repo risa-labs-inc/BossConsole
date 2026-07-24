@@ -11,7 +11,6 @@ import kotlin.test.assertEquals
  * live inline in the BossWindow collector (and where the `coerceIn`-throws bug was).
  */
 class WindowFitMathTest {
-
     private val current = DpSize(800.dp, 600.dp)
     private val noClamp = 100_000f
 

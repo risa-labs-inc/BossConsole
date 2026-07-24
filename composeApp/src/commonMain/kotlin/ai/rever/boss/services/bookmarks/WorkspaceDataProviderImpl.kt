@@ -10,9 +10,8 @@ import kotlinx.coroutines.flow.StateFlow
  * Adapter implementation that wraps WorkspaceManager for the plugin API.
  */
 class WorkspaceDataProviderImpl(
-    private val manager: WorkspaceManager = workspaceManager
+    private val manager: WorkspaceManager = workspaceManager,
 ) : WorkspaceDataProvider {
-
     override val workspaces: StateFlow<List<LayoutWorkspace>> = manager.workspaces
 
     override val currentWorkspace: StateFlow<LayoutWorkspace?> = manager.currentWorkspace
@@ -25,19 +24,18 @@ class WorkspaceDataProviderImpl(
         manager.updateCurrentWorkspace(newWorkspace)
     }
 
-    override fun saveCurrentWorkspace(name: String?): LayoutWorkspace? {
-        return manager.saveCurrentWorkspace(name)
-    }
+    override fun saveCurrentWorkspace(name: String?): LayoutWorkspace? = manager.saveCurrentWorkspace(name)
 
-    override fun exportWorkspace(workspace: LayoutWorkspace): String {
-        return manager.exportWorkspace(workspace)
-    }
+    override fun exportWorkspace(workspace: LayoutWorkspace): String = manager.exportWorkspace(workspace)
 
     override fun deleteWorkspace(name: String) {
         manager.deleteWorkspace(name)
     }
 
-    override fun renameWorkspace(oldName: String, newName: String) {
+    override fun renameWorkspace(
+        oldName: String,
+        newName: String,
+    ) {
         manager.renameWorkspace(oldName, newName)
     }
 }

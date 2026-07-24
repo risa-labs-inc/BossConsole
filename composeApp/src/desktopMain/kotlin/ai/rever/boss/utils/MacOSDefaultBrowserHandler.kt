@@ -28,57 +28,67 @@ object MacOSDefaultBrowserHandler {
      * Uses a single Swift script with LSCopyDefaultHandlerForURLScheme to query
      * both http and https handlers, avoiding double Swift JIT compilation overhead.
      */
-    suspend fun isDefaultBrowser(): Result<Boolean> = withContext(Dispatchers.IO) {
-        try {
-            val handlers = getDefaultHandlers()
-            val httpDefault = handlers["http"]
-            val httpsDefault = handlers["https"]
+    suspend fun isDefaultBrowser(): Result<Boolean> =
+        withContext(Dispatchers.IO) {
+            try {
+                val handlers = getDefaultHandlers()
+                val httpDefault = handlers["http"]
+                val httpsDefault = handlers["https"]
 
-            logger.debug(LogCategory.BROWSER, "macOS default browser check", mapOf("httpHandler" to (httpDefault ?: "none"), "httpsHandler" to (httpsDefault ?: "none")))
+                logger.debug(
+                    LogCategory.BROWSER,
+                    "macOS default browser check",
+                    mapOf(
+                        "httpHandler" to (httpDefault ?: "none"),
+                        "httpsHandler" to (httpsDefault ?: "none"),
+                    ),
+                )
 
-            // BOSS is default if both schemes point to our bundle ID
-            val isDefault = BOSS_MACOS_BUNDLE_ID.equals(httpDefault, ignoreCase = true) &&
-                BOSS_MACOS_BUNDLE_ID.equals(httpsDefault, ignoreCase = true)
+                // BOSS is default if both schemes point to our bundle ID
+                val isDefault =
+                    BOSS_MACOS_BUNDLE_ID.equals(httpDefault, ignoreCase = true) &&
+                        BOSS_MACOS_BUNDLE_ID.equals(httpsDefault, ignoreCase = true)
 
-            Result.success(isDefault)
-        } catch (e: Exception) {
-            logger.warn(LogCategory.BROWSER, "Error checking default browser on macOS", error = e)
-            Result.failure(e)
+                Result.success(isDefault)
+            } catch (e: Exception) {
+                logger.warn(LogCategory.BROWSER, "Error checking default browser on macOS", error = e)
+                Result.failure(e)
+            }
         }
-    }
 
     /**
      * Set BOSS as the default browser on macOS
      *
      * Uses LSSetDefaultHandlerForURLScheme via Swift script or system commands
      */
-    suspend fun setAsDefaultBrowser(): Result<Boolean> = withContext(Dispatchers.IO) {
-        try {
-            // First check if already default
-            val checkResult = isDefaultBrowser()
-            if (checkResult.isSuccess && checkResult.getOrNull() == true) {
-                logger.info(LogCategory.BROWSER, "BOSS is already the default browser")
-                return@withContext Result.success(true)
-            }
+    suspend fun setAsDefaultBrowser(): Result<Boolean> =
+        withContext(Dispatchers.IO) {
+            try {
+                // First check if already default
+                val checkResult = isDefaultBrowser()
+                if (checkResult.isSuccess && checkResult.getOrNull() == true) {
+                    logger.info(LogCategory.BROWSER, "BOSS is already the default browser")
+                    return@withContext Result.success(true)
+                }
 
-            // Try to set as default using Swift script
-            val setHttpResult = setDefaultHandlerForScheme("http")
-            val setHttpsResult = setDefaultHandlerForScheme("https")
+                // Try to set as default using Swift script
+                val setHttpResult = setDefaultHandlerForScheme("http")
+                val setHttpsResult = setDefaultHandlerForScheme("https")
 
-            if (setHttpResult && setHttpsResult) {
-                logger.info(LogCategory.BROWSER, "Successfully set BOSS as default browser on macOS")
-                Result.success(true)
-            } else {
-                // If Swift approach fails, open System Preferences
-                logger.warn(LogCategory.BROWSER, "Could not set default programmatically, opening System Preferences")
-                openSystemPreferences()
-                Result.success(false)
+                if (setHttpResult && setHttpsResult) {
+                    logger.info(LogCategory.BROWSER, "Successfully set BOSS as default browser on macOS")
+                    Result.success(true)
+                } else {
+                    // If Swift approach fails, open System Preferences
+                    logger.warn(LogCategory.BROWSER, "Could not set default programmatically, opening System Preferences")
+                    openSystemPreferences()
+                    Result.success(false)
+                }
+            } catch (e: Exception) {
+                logger.error(LogCategory.BROWSER, "Error setting default browser on macOS", error = e)
+                Result.failure(e)
             }
-        } catch (e: Exception) {
-            logger.error(LogCategory.BROWSER, "Error setting default browser on macOS", error = e)
-            Result.failure(e)
         }
-    }
 
     /**
      * Get default handlers for both http and https schemes in a single Swift invocation.
@@ -89,7 +99,8 @@ object MacOSDefaultBrowserHandler {
     private fun getDefaultHandlers(): Map<String, String> {
         val scriptFile = createTempFile("get_default_browser", ".swift").toFile()
         try {
-            val swiftScript = """
+            val swiftScript =
+                """
                 import Foundation
                 import ApplicationServices
 
@@ -98,18 +109,20 @@ object MacOSDefaultBrowserHandler {
                         print("\(scheme)=\(handler.takeRetainedValue() as String)")
                     }
                 }
-            """.trimIndent()
+                """.trimIndent()
 
             scriptFile.writeText(swiftScript)
 
-            val process = ProcessBuilder("swift", scriptFile.absolutePath)
-                .redirectErrorStream(true)
-                .start()
+            val process =
+                ProcessBuilder("swift", scriptFile.absolutePath)
+                    .redirectErrorStream(true)
+                    .start()
 
             // Read output on background thread so waitFor timeout can fire if Swift hangs
-            val outputFuture = CompletableFuture.supplyAsync {
-                BufferedReader(InputStreamReader(process.inputStream)).use { it.readText().trim() }
-            }
+            val outputFuture =
+                CompletableFuture.supplyAsync {
+                    BufferedReader(InputStreamReader(process.inputStream)).use { it.readText().trim() }
+                }
 
             val finished = process.waitFor(PROCESS_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             if (!finished) {
@@ -123,12 +136,12 @@ object MacOSDefaultBrowserHandler {
             val output = outputFuture.get(1, TimeUnit.SECONDS)
 
             // Parse "http=com.apple.Safari\nhttps=com.apple.Safari" format
-            return output.lines()
+            return output
+                .lines()
                 .mapNotNull { line ->
                     val parts = line.split("=", limit = 2)
                     if (parts.size == 2) parts[0] to parts[1] else null
-                }
-                .toMap()
+                }.toMap()
         } catch (e: Exception) {
             logger.warn(LogCategory.BROWSER, "Error getting default handlers", error = e)
             return emptyMap()
@@ -143,7 +156,8 @@ object MacOSDefaultBrowserHandler {
     private fun setDefaultHandlerForScheme(scheme: String): Boolean {
         val scriptFile = createTempFile("set_default_browser", ".swift").toFile()
         try {
-            val swiftScript = """
+            val swiftScript =
+                """
                 import AppKit
                 import ApplicationServices
 
@@ -159,18 +173,20 @@ object MacOSDefaultBrowserHandler {
                     print("❌ Failed to set default handler for \(scheme): \(status)")
                     exit(1)
                 }
-            """.trimIndent()
+                """.trimIndent()
 
             scriptFile.writeText(swiftScript)
 
-            val process = ProcessBuilder("swift", scriptFile.absolutePath)
-                .redirectErrorStream(true)
-                .start()
+            val process =
+                ProcessBuilder("swift", scriptFile.absolutePath)
+                    .redirectErrorStream(true)
+                    .start()
 
             // Read output on background thread so waitFor timeout can fire if Swift hangs
-            val outputFuture = CompletableFuture.supplyAsync {
-                BufferedReader(InputStreamReader(process.inputStream)).use { it.readText().trim() }
-            }
+            val outputFuture =
+                CompletableFuture.supplyAsync {
+                    BufferedReader(InputStreamReader(process.inputStream)).use { it.readText().trim() }
+                }
 
             val finished = process.waitFor(PROCESS_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             if (!finished) {
@@ -184,7 +200,11 @@ object MacOSDefaultBrowserHandler {
 
             return process.exitValue() == 0
         } catch (e: Exception) {
-            logger.warn(LogCategory.BROWSER, "Error setting default handler", mapOf("scheme" to scheme, "error" to (e.message ?: "unknown")))
+            logger.warn(
+                LogCategory.BROWSER,
+                "Error setting default handler",
+                mapOf("scheme" to scheme, "error" to (e.message ?: "unknown")),
+            )
             return false
         } finally {
             scriptFile.delete()
@@ -197,11 +217,12 @@ object MacOSDefaultBrowserHandler {
      */
     private fun openSystemPreferences() {
         try {
-            val url = if (getMacOSMajorVersion() >= 13) {
-                "x-apple.systempreferences:com.apple.Desktop-Settings.extension"
-            } else {
-                "x-apple.systempreferences:com.apple.preference.general"
-            }
+            val url =
+                if (getMacOSMajorVersion() >= 13) {
+                    "x-apple.systempreferences:com.apple.Desktop-Settings.extension"
+                } else {
+                    "x-apple.systempreferences:com.apple.preference.general"
+                }
 
             val process = ProcessBuilder("open", url).start()
             if (!process.waitFor(PROCESS_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {

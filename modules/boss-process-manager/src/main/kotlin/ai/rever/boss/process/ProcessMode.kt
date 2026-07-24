@@ -10,6 +10,7 @@ package ai.rever.boss.process
 enum class ProcessMode {
     /** Everything runs in a single JVM process (default, backward compatible) */
     MONOLITH,
+
     /** Kernel spawns child processes for services, apps, and plugins */
     KERNEL,
 }

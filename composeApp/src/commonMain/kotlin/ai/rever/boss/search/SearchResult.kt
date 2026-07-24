@@ -25,7 +25,7 @@ sealed class SearchResult {
         val path: String,
         val relativePath: String,
         override val score: Int,
-        val matchRanges: List<MatchRange>
+        val matchRanges: List<MatchRange>,
     ) : SearchResult() {
         override val displayName: String = name
         override val category: SearchCategory = SearchCategory.FILES
@@ -55,7 +55,7 @@ sealed class SearchResult {
         val url: String? = null,
         val filePath: String? = null,
         override val score: Int,
-        val matchRanges: List<MatchRange>
+        val matchRanges: List<MatchRange>,
     ) : SearchResult() {
         override val displayName: String = title
         override val category: SearchCategory = SearchCategory.TABS
@@ -83,7 +83,7 @@ sealed class SearchResult {
         val url: String? = null,
         val filePath: String? = null,
         override val score: Int,
-        val matchRanges: List<MatchRange>
+        val matchRanges: List<MatchRange>,
     ) : SearchResult() {
         override val displayName: String = title
         override val category: SearchCategory = SearchCategory.BOOKMARKS
@@ -107,7 +107,7 @@ sealed class SearchResult {
         val filePath: String,
         val configType: String,
         override val score: Int,
-        val matchRanges: List<MatchRange>
+        val matchRanges: List<MatchRange>,
     ) : SearchResult() {
         override val displayName: String = name
         override val category: SearchCategory = SearchCategory.RUN_CONFIGS
@@ -125,7 +125,7 @@ sealed class SearchResult {
         val actionId: String,
         val description: String,
         val shortcut: String?,
-        override val score: Int
+        override val score: Int,
     ) : SearchResult() {
         override val displayName: String = description
         override val category: SearchCategory = SearchCategory.COMMANDS
@@ -135,13 +135,16 @@ sealed class SearchResult {
 /**
  * Categories of search results for filtering.
  */
-enum class SearchCategory(val displayName: String, val icon: String) {
+enum class SearchCategory(
+    val displayName: String,
+    val icon: String,
+) {
     ALL("All", "apps"),
     TABS("Open Tabs", "tab"),
     FILES("Files", "description"),
     BOOKMARKS("Bookmarks", "bookmark"),
     RUN_CONFIGS("Run Configs", "play_arrow"),
-    COMMANDS("Commands", "terminal")
+    COMMANDS("Commands", "terminal"),
 }
 
 /**
@@ -151,7 +154,10 @@ enum class SearchCategory(val displayName: String, val icon: String) {
  * @property start The start index (inclusive)
  * @property end The end index (exclusive)
  */
-data class MatchRange(val start: Int, val end: Int)
+data class MatchRange(
+    val start: Int,
+    val end: Int,
+)
 
 /**
  * An indexed file entry for fast searching.
@@ -165,5 +171,5 @@ data class IndexedFile(
     val name: String,
     val path: String,
     val relativePath: String,
-    val lowerName: String = name.lowercase()
+    val lowerName: String = name.lowercase(),
 )

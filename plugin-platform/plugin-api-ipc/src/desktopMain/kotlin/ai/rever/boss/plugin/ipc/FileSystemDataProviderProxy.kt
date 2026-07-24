@@ -2,9 +2,9 @@ package ai.rever.boss.plugin.ipc
 
 import ai.rever.boss.ipc.proto.EventBusServiceGrpcKt
 import ai.rever.boss.ipc.proto.EventEnvelope
-import ai.rever.boss.ipc.proto.services.FileSystemServiceGrpcKt
 import ai.rever.boss.ipc.proto.services.CreateFileRequest
 import ai.rever.boss.ipc.proto.services.DeleteFileRequest
+import ai.rever.boss.ipc.proto.services.FileSystemServiceGrpcKt
 import ai.rever.boss.ipc.proto.services.ReadFileRequest
 import ai.rever.boss.ipc.proto.services.RenameFileRequest
 import ai.rever.boss.ipc.proto.services.ScanDirectoryRequest
@@ -39,7 +39,6 @@ class FileSystemDataProviderProxy(
     private val eventChannel: ManagedChannel,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
 ) : FileSystemDataProvider {
-
     private val fsStub = FileSystemServiceGrpcKt.FileSystemServiceCoroutineStub(fsChannel)
     private val eventStub = EventBusServiceGrpcKt.EventBusServiceCoroutineStub(eventChannel)
 
@@ -47,35 +46,40 @@ class FileSystemDataProviderProxy(
     // Scan results are re-filtered through ProviderScanFilter: the kernel's
     // general-purpose service doesn't enforce provider-contract semantics.
 
-    override suspend fun scanDirectory(path: String): FileNodeData? =
-        scanDirectory(path, showHidden = false)
+    override suspend fun scanDirectory(path: String): FileNodeData? = scanDirectory(path, showHidden = false)
 
-    override suspend fun scanDirectory(path: String, showHidden: Boolean): FileNodeData? =
+    override suspend fun scanDirectory(
+        path: String,
+        showHidden: Boolean,
+    ): FileNodeData? =
         withContext(Dispatchers.Default) {
             try {
-                val response = fsStub.scanDirectory(
-                    ScanDirectoryRequest.newBuilder()
-                        .setPath(path)
-                        .setRecursive(false)
-                        .setIncludeHidden(showHidden)
-                        .build()
-                )
+                val response =
+                    fsStub.scanDirectory(
+                        ScanDirectoryRequest
+                            .newBuilder()
+                            .setPath(path)
+                            .setRecursive(false)
+                            .setIncludeHidden(showHidden)
+                            .build(),
+                    )
                 if (response.errorMessage.isNotBlank()) return@withContext null
                 val dir = File(path)
                 FileNodeData(
                     name = dir.name,
                     path = path,
                     isDirectory = true,
-                    children = response.entriesList
-                        .filter { ProviderScanFilter.isVisibleProviderEntry(path, it.path, showHidden) }
-                        .map { entry ->
-                            FileNodeData(
-                                name = entry.name,
-                                path = entry.path,
-                                isDirectory = entry.isDirectory,
-                                loadingState = NodeLoadingStateData.LOADED,
-                            )
-                        },
+                    children =
+                        response.entriesList
+                            .filter { ProviderScanFilter.isVisibleProviderEntry(path, it.path, showHidden) }
+                            .map { entry ->
+                                FileNodeData(
+                                    name = entry.name,
+                                    path = entry.path,
+                                    isDirectory = entry.isDirectory,
+                                    loadingState = NodeLoadingStateData.LOADED,
+                                )
+                            },
                     loadingState = NodeLoadingStateData.LOADED,
                 )
             } catch (_: Exception) {
@@ -83,36 +87,47 @@ class FileSystemDataProviderProxy(
             }
         }
 
-    override suspend fun scanDirectoryWithDepth(path: String, maxDepth: Int, startDepth: Int): FileNodeData? =
-        scanDirectoryWithDepth(path, maxDepth, startDepth, showHidden = false)
+    override suspend fun scanDirectoryWithDepth(
+        path: String,
+        maxDepth: Int,
+        startDepth: Int,
+    ): FileNodeData? = scanDirectoryWithDepth(path, maxDepth, startDepth, showHidden = false)
 
-    override suspend fun scanDirectoryWithDepth(path: String, maxDepth: Int, startDepth: Int, showHidden: Boolean): FileNodeData? =
+    override suspend fun scanDirectoryWithDepth(
+        path: String,
+        maxDepth: Int,
+        startDepth: Int,
+        showHidden: Boolean,
+    ): FileNodeData? =
         withContext(Dispatchers.Default) {
             try {
-                val response = fsStub.scanDirectory(
-                    ScanDirectoryRequest.newBuilder()
-                        .setPath(path)
-                        .setRecursive(maxDepth > 1)
-                        .setMaxDepth(maxDepth)
-                        .setIncludeHidden(showHidden)
-                        .build()
-                )
+                val response =
+                    fsStub.scanDirectory(
+                        ScanDirectoryRequest
+                            .newBuilder()
+                            .setPath(path)
+                            .setRecursive(maxDepth > 1)
+                            .setMaxDepth(maxDepth)
+                            .setIncludeHidden(showHidden)
+                            .build(),
+                    )
                 if (response.errorMessage.isNotBlank()) return@withContext null
                 val dir = File(path)
                 FileNodeData(
                     name = dir.name,
                     path = path,
                     isDirectory = true,
-                    children = response.entriesList
-                        .filter { ProviderScanFilter.isVisibleProviderEntry(path, it.path, showHidden) }
-                        .map { entry ->
-                            FileNodeData(
-                                name = entry.name,
-                                path = entry.path,
-                                isDirectory = entry.isDirectory,
-                                loadingState = NodeLoadingStateData.LOADED,
-                            )
-                        },
+                    children =
+                        response.entriesList
+                            .filter { ProviderScanFilter.isVisibleProviderEntry(path, it.path, showHidden) }
+                            .map { entry ->
+                                FileNodeData(
+                                    name = entry.name,
+                                    path = entry.path,
+                                    isDirectory = entry.isDirectory,
+                                    loadingState = NodeLoadingStateData.LOADED,
+                                )
+                            },
                     loadingState = NodeLoadingStateData.LOADED,
                 )
             } catch (_: Exception) {
@@ -121,11 +136,12 @@ class FileSystemDataProviderProxy(
         }
 
     /** Answered locally — cheap O(1) check without a gRPC round-trip. */
-    override fun directoryHasChildren(path: String): Boolean =
-        directoryHasChildren(path, showHidden = false)
+    override fun directoryHasChildren(path: String): Boolean = directoryHasChildren(path, showHidden = false)
 
-    override fun directoryHasChildren(path: String, showHidden: Boolean): Boolean =
-        File(path).listFiles()?.any { ProviderScanFilter.isVisibleLocalEntry(it.name, showHidden) } ?: false
+    override fun directoryHasChildren(
+        path: String,
+        showHidden: Boolean,
+    ): Boolean = File(path).listFiles()?.any { ProviderScanFilter.isVisibleLocalEntry(it.name, showHidden) } ?: false
 
     // The FileSystemService proto has carried include_hidden since v1 and the
     // kernel-side service honors it, so the showHidden overloads work
@@ -134,16 +150,20 @@ class FileSystemDataProviderProxy(
     // results match the in-process provider regardless of transport.
     override val supportsHiddenEntries: Boolean get() = true
 
-    override suspend fun createFile(parentPath: String, fileName: String): Result<String> =
+    override suspend fun createFile(
+        parentPath: String,
+        fileName: String,
+    ): Result<String> =
         withContext(Dispatchers.Default) {
             try {
                 val fullPath = "$parentPath/$fileName"
                 fsStub.createFile(
-                    CreateFileRequest.newBuilder()
+                    CreateFileRequest
+                        .newBuilder()
                         .setPath(fullPath)
                         .setIsDirectory(false)
                         .setCreateParents(true)
-                        .build()
+                        .build(),
                 )
                 Result.success(fullPath)
             } catch (e: Exception) {
@@ -151,16 +171,20 @@ class FileSystemDataProviderProxy(
             }
         }
 
-    override suspend fun createFolder(parentPath: String, folderName: String): Result<String> =
+    override suspend fun createFolder(
+        parentPath: String,
+        folderName: String,
+    ): Result<String> =
         withContext(Dispatchers.Default) {
             try {
                 val fullPath = "$parentPath/$folderName"
                 fsStub.createFile(
-                    CreateFileRequest.newBuilder()
+                    CreateFileRequest
+                        .newBuilder()
                         .setPath(fullPath)
                         .setIsDirectory(true)
                         .setCreateParents(true)
-                        .build()
+                        .build(),
                 )
                 Result.success(fullPath)
             } catch (e: Exception) {
@@ -172,10 +196,11 @@ class FileSystemDataProviderProxy(
         withContext(Dispatchers.Default) {
             try {
                 fsStub.deleteFile(
-                    DeleteFileRequest.newBuilder()
+                    DeleteFileRequest
+                        .newBuilder()
                         .setPath(path)
                         .setRecursive(true)
-                        .build()
+                        .build(),
                 )
                 Result.success(Unit)
             } catch (e: Exception) {
@@ -183,17 +208,21 @@ class FileSystemDataProviderProxy(
             }
         }
 
-    override suspend fun rename(path: String, newName: String): Result<String> =
+    override suspend fun rename(
+        path: String,
+        newName: String,
+    ): Result<String> =
         withContext(Dispatchers.Default) {
             try {
                 val parent = File(path).parent ?: ""
                 val newPath = if (parent.isNotBlank()) "$parent/$newName" else newName
                 fsStub.renameFile(
-                    RenameFileRequest.newBuilder()
+                    RenameFileRequest
+                        .newBuilder()
                         .setSourcePath(path)
                         .setDestinationPath(newPath)
                         .setOverwrite(false)
-                        .build()
+                        .build(),
                 )
                 Result.success(newPath)
             } catch (e: Exception) {
@@ -201,16 +230,20 @@ class FileSystemDataProviderProxy(
             }
         }
 
-    override suspend fun writeFile(path: String, content: String): Result<Unit> =
+    override suspend fun writeFile(
+        path: String,
+        content: String,
+    ): Result<Unit> =
         withContext(Dispatchers.Default) {
             try {
                 fsStub.writeFile(
-                    WriteFileRequest.newBuilder()
+                    WriteFileRequest
+                        .newBuilder()
                         .setPath(path)
                         .setContent(ByteString.copyFromUtf8(content))
                         .setCreateParents(true)
                         .setOverwrite(true)
-                        .build()
+                        .build(),
                 )
                 Result.success(Unit)
             } catch (e: Exception) {
@@ -221,9 +254,10 @@ class FileSystemDataProviderProxy(
     override suspend fun readFile(path: String): Result<String> =
         withContext(Dispatchers.Default) {
             try {
-                val response = fsStub.readFile(
-                    ReadFileRequest.newBuilder().setPath(path).build()
-                )
+                val response =
+                    fsStub.readFile(
+                        ReadFileRequest.newBuilder().setPath(path).build(),
+                    )
                 if (response.errorMessage.isNotBlank()) {
                     Result.failure(Exception(response.errorMessage))
                 } else {
@@ -236,7 +270,10 @@ class FileSystemDataProviderProxy(
 
     // ---- UI-trigger methods (via EventBus) ----
 
-    override fun openFile(path: String, windowId: String) {
+    override fun openFile(
+        path: String,
+        windowId: String,
+    ) {
         scope.launch {
             publishEvent(
                 type = "boss.ui.OpenFileEvent",
@@ -268,25 +305,31 @@ class FileSystemDataProviderProxy(
 
     // ---- Pure system queries (answered locally) ----
 
-    override fun getDownloadsDirectory(): String =
-        System.getProperty("user.home") + "/Downloads"
+    override fun getDownloadsDirectory(): String = System.getProperty("user.home") + "/Downloads"
 
-    override fun getHomeDirectory(): String =
-        System.getProperty("user.home")
+    override fun getHomeDirectory(): String = System.getProperty("user.home")
 
     // ---- Helpers ----
 
-    private suspend fun publishEvent(type: String, payload: String, windowId: String = "") {
+    private suspend fun publishEvent(
+        type: String,
+        payload: String,
+        windowId: String = "",
+    ) {
         try {
             eventStub.publish(
-                EventEnvelope.newBuilder()
+                EventEnvelope
+                    .newBuilder()
                     .setEventType(type)
-                    .setPayload(com.google.protobuf.ByteString.copyFromUtf8(payload))
-                    .setSourceWindowId(windowId)
+                    .setPayload(
+                        com.google.protobuf.ByteString
+                            .copyFromUtf8(payload),
+                    ).setSourceWindowId(windowId)
                     .setTimestamp(System.currentTimeMillis())
-                    .build()
+                    .build(),
             )
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
     }
 
     private fun String.jsonEscape(): String {

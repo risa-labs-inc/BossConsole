@@ -29,9 +29,10 @@ actual object RunExecutionService {
         // Update isRunning based on running processes
         scope.launch {
             _runningProcesses.collect { processes ->
-                _isRunning.value = processes.any {
-                    it.status == ProcessStatus.STARTING || it.status == ProcessStatus.RUNNING
-                }
+                _isRunning.value =
+                    processes.any {
+                        it.status == ProcessStatus.STARTING || it.status == ProcessStatus.RUNNING
+                    }
             }
         }
     }
@@ -42,7 +43,11 @@ actual object RunExecutionService {
      *
      * @param windowId The window ID that initiated the run (Issue #498)
      */
-    actual suspend fun execute(config: RunConfiguration, debug: Boolean, windowId: String): RunningProcess? {
+    actual suspend fun execute(
+        config: RunConfiguration,
+        debug: Boolean,
+        windowId: String,
+    ): RunningProcess? {
         try {
             val processId = UUID.randomUUID().toString()
 
@@ -50,14 +55,15 @@ actual object RunExecutionService {
             val command = buildFullCommand(config, debug)
 
             // Create running process entry
-            val process = RunningProcess(
-                id = processId,
-                configId = config.id,
-                configName = config.name,
-                command = command,
-                startTime = System.currentTimeMillis(),
-                status = ProcessStatus.STARTING
-            )
+            val process =
+                RunningProcess(
+                    id = processId,
+                    configId = config.id,
+                    configName = config.name,
+                    command = command,
+                    startTime = System.currentTimeMillis(),
+                    status = ProcessStatus.STARTING,
+                )
 
             // Add to running processes
             _runningProcesses.value = _runningProcesses.value + process
@@ -79,13 +85,17 @@ actual object RunExecutionService {
     /**
      * Build the full command including cd to working directory.
      */
-    private fun buildFullCommand(config: RunConfiguration, debug: Boolean): String {
-        val baseCommand = if (debug) {
-            // Add debug flags for supported languages (future feature)
-            config.command
-        } else {
-            config.command
-        }
+    private fun buildFullCommand(
+        config: RunConfiguration,
+        debug: Boolean,
+    ): String {
+        val baseCommand =
+            if (debug) {
+                // Add debug flags for supported languages (future feature)
+                config.command
+            } else {
+                config.command
+            }
 
         // If working directory is specified and different from current, cd first
         return ShellUtils.buildCommandWithWorkingDirectory(baseCommand, config.workingDirectory)
@@ -121,26 +131,34 @@ actual object RunExecutionService {
     /**
      * Mark a process as completed.
      */
-    actual fun markCompleted(processId: String, failed: Boolean) {
+    actual fun markCompleted(
+        processId: String,
+        failed: Boolean,
+    ) {
         val status = if (failed) ProcessStatus.FAILED else ProcessStatus.STOPPED
         updateProcessStatus(processId, status)
 
         // Clean up old completed processes after a delay
         scope.launch {
             kotlinx.coroutines.delay(5000)
-            _runningProcesses.value = _runningProcesses.value.filter {
-                it.id != processId || it.status == ProcessStatus.RUNNING || it.status == ProcessStatus.STARTING
-            }
+            _runningProcesses.value =
+                _runningProcesses.value.filter {
+                    it.id != processId || it.status == ProcessStatus.RUNNING || it.status == ProcessStatus.STARTING
+                }
         }
     }
 
-    private fun updateProcessStatus(processId: String, status: ProcessStatus) {
-        _runningProcesses.value = _runningProcesses.value.map { process ->
-            if (process.id == processId) {
-                process.copy(status = status)
-            } else {
-                process
+    private fun updateProcessStatus(
+        processId: String,
+        status: ProcessStatus,
+    ) {
+        _runningProcesses.value =
+            _runningProcesses.value.map { process ->
+                if (process.id == processId) {
+                    process.copy(status = status)
+                } else {
+                    process
+                }
             }
-        }
     }
 }

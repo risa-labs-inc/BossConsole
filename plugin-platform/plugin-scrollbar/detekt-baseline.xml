@@ -4,9 +4,10 @@
   <CurrentIssues>
     <ID>CyclomaticComplexMethod:BossScrollBar.kt$fun Modifier.lazyListScrollbar( listState: LazyListState, direction: Orientation, config: ScrollbarConfig = ScrollbarConfig(), ): Modifier</ID>
     <ID>CyclomaticComplexMethod:BossScrollBar.kt$fun Modifier.scrollbar( scrollState: ScrollState, direction: Orientation, config: ScrollbarConfig = ScrollbarConfig(), ): Modifier</ID>
-    <ID>DestructuringDeclarationWithTooManyEntries:BossScrollBar.kt$val (topPadding, bottomPadding, startPadding, endPadding) = arrayOf( padding.calculateTopPadding().toPx(), padding.calculateBottomPadding().toPx(), padding.calculateStartPadding(layoutDirection).toPx(), padding.calculateEndPadding(layoutDirection).toPx() )</ID>
-    <ID>DestructuringDeclarationWithTooManyEntries:BossScrollBar.kt$var ( indicatorThickness, indicatorColor, indicatorCornerRadius, alpha, alphaAnimationSpec, padding ) = config</ID>
+    <ID>DestructuringDeclarationWithTooManyEntries:BossScrollBar.kt$val (topPadding, bottomPadding, startPadding, endPadding) = arrayOf( padding.calculateTopPadding().toPx(), padding.calculateBottomPadding().toPx(), padding.calculateStartPadding(layoutDirection).toPx(), padding.calculateEndPadding(layoutDirection).toPx(), )</ID>
+    <ID>DestructuringDeclarationWithTooManyEntries:BossScrollBar.kt$var ( indicatorThickness, indicatorColor, indicatorCornerRadius, alpha, alphaAnimationSpec, padding, ) = config</ID>
     <ID>LongMethod:BossScrollBar.kt$fun Modifier.lazyListScrollbar( listState: LazyListState, direction: Orientation, config: ScrollbarConfig = ScrollbarConfig(), ): Modifier</ID>
+    <ID>LongMethod:BossScrollBar.kt$fun Modifier.scrollbar( scrollState: ScrollState, direction: Orientation, config: ScrollbarConfig = ScrollbarConfig(), ): Modifier</ID>
     <ID>MaxLineLength:ScrollbarSettingsManager.kt$ScrollbarSettingsManager$logger.debug(LogCategory.SYSTEM, "Created default settings", mapOf("path" to settingsFile.absolutePath))</ID>
     <ID>TooGenericExceptionCaught:ScrollbarSettingsManager.kt$ScrollbarSettingsManager$e: Exception</ID>
   </CurrentIssues>

@@ -21,7 +21,6 @@ import kotlin.test.assertTrue
  * tests can feed them raw porcelain lines without spawning git processes.
  */
 class GitPorcelainParserTest {
-
     // ==================== parseStatusChar ====================
 
     @Test
@@ -129,7 +128,7 @@ class GitPorcelainParserTest {
     @Disabled(
         "documents bug: '!!' (ignored) sets isStaged=true because only UNTRACKED is " +
             "carved out of the isStaged computation; an ignored file is never staged. " +
-            "Currently unreachable in production (getStatus never passes --ignored)."
+            "Currently unreachable in production (getStatus never passes --ignored).",
     )
     @Test
     fun `ignored file is not staged`() {
@@ -277,7 +276,7 @@ class GitPorcelainParserTest {
         timestamp: String = "1721721600",
         subject: String = "Fix the thing",
         parents: String? = "b".repeat(40),
-        refs: String? = ""
+        refs: String? = "",
     ): String {
         val fields = mutableListOf(hash, short, author, email, timestamp, subject)
         if (parents != null) fields.add(parents)
@@ -287,9 +286,10 @@ class GitPorcelainParserTest {
 
     @Test
     fun `parses a full commit line field by field`() {
-        val commit = GitService.parseCommitLine(
-            commitLine(refs = "HEAD -> main, origin/main, tag: v1.2.3")
-        )
+        val commit =
+            GitService.parseCommitLine(
+                commitLine(refs = "HEAD -> main, origin/main, tag: v1.2.3"),
+            )
         assertNotNull(commit)
         assertEquals("a".repeat(40), commit.hash)
         assertEquals("aaaaaaa", commit.shortHash)
@@ -420,7 +420,7 @@ class GitPorcelainParserTest {
     fun `scp-style ssh remote becomes https`() {
         assertEquals(
             "https://github.com/owner/repo",
-            GitService.parseRemoteUrl("git@github.com:owner/repo.git")
+            GitService.parseRemoteUrl("git@github.com:owner/repo.git"),
         )
     }
 
@@ -428,7 +428,7 @@ class GitPorcelainParserTest {
     fun `scp-style ssh remote with nested groups`() {
         assertEquals(
             "https://gitlab.com/group/subgroup/repo",
-            GitService.parseRemoteUrl("git@gitlab.com:group/subgroup/repo.git")
+            GitService.parseRemoteUrl("git@gitlab.com:group/subgroup/repo.git"),
         )
     }
 
@@ -436,7 +436,7 @@ class GitPorcelainParserTest {
     fun `ssh protocol remote becomes https`() {
         assertEquals(
             "https://github.com/owner/repo",
-            GitService.parseRemoteUrl("ssh://git@github.com/owner/repo.git")
+            GitService.parseRemoteUrl("ssh://git@github.com/owner/repo.git"),
         )
     }
 
@@ -444,11 +444,11 @@ class GitPorcelainParserTest {
     fun `https remote just loses the git suffix`() {
         assertEquals(
             "https://github.com/owner/repo",
-            GitService.parseRemoteUrl("https://github.com/owner/repo.git")
+            GitService.parseRemoteUrl("https://github.com/owner/repo.git"),
         )
         assertEquals(
             "https://github.com/owner/repo",
-            GitService.parseRemoteUrl("https://github.com/owner/repo")
+            GitService.parseRemoteUrl("https://github.com/owner/repo"),
         )
     }
 
@@ -456,7 +456,7 @@ class GitPorcelainParserTest {
     fun `http remote is kept as http`() {
         assertEquals(
             "http://git.internal/owner/repo",
-            GitService.parseRemoteUrl("http://git.internal/owner/repo.git")
+            GitService.parseRemoteUrl("http://git.internal/owner/repo.git"),
         )
     }
 

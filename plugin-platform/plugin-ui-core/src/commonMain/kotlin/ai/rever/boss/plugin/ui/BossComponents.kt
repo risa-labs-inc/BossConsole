@@ -52,19 +52,20 @@ import androidx.compose.ui.unit.sp
 fun BossCard(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
-    content: @Composable ColumnScope.() -> Unit
+    content: @Composable ColumnScope.() -> Unit,
 ) {
     Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier),
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier),
         color = BossThemeColors.SurfaceColor,
         shape = RoundedCornerShape(6.dp),
-        border = BorderStroke(1.dp, BossThemeColors.BorderColor)
+        border = BorderStroke(1.dp, BossThemeColors.BorderColor),
     ) {
         Column(
             modifier = Modifier.padding(12.dp),
-            content = content
+            content = content,
         )
     }
 }
@@ -77,29 +78,29 @@ fun BossSection(
     title: String,
     modifier: Modifier = Modifier,
     description: String? = null,
-    content: @Composable ColumnScope.() -> Unit
+    content: @Composable ColumnScope.() -> Unit,
 ) {
     Column(
-        modifier = modifier.fillMaxWidth()
+        modifier = modifier.fillMaxWidth(),
     ) {
         Text(
             text = title,
             color = BossThemeColors.TextPrimary,
             fontSize = 16.sp,
-            fontWeight = FontWeight.SemiBold
+            fontWeight = FontWeight.SemiBold,
         )
         if (description != null) {
             Text(
                 text = description,
                 color = BossThemeColors.TextSecondary,
                 fontSize = 13.sp,
-                modifier = Modifier.padding(top = 4.dp)
+                modifier = Modifier.padding(top = 4.dp),
             )
         }
         Spacer(modifier = Modifier.height(12.dp))
         Column(
             verticalArrangement = Arrangement.spacedBy(8.dp),
-            content = content
+            content = content,
         )
     }
 }
@@ -114,30 +115,31 @@ fun BossToggle(
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     description: String? = null,
-    enabled: Boolean = true
+    enabled: Boolean = true,
 ) {
     Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
-            .background(BossThemeColors.SurfaceColor)
-            .clickable(enabled = enabled) { onCheckedChange(!checked) }
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
+                .background(BossThemeColors.SurfaceColor)
+                .clickable(enabled = enabled) { onCheckedChange(!checked) }
+                .padding(horizontal = 12.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = label,
                 color = if (enabled) BossThemeColors.TextPrimary else BossThemeColors.TextMuted,
-                fontSize = 13.sp
+                fontSize = 13.sp,
             )
             if (description != null) {
                 Text(
                     text = description,
                     color = BossThemeColors.TextMuted,
                     fontSize = 11.sp,
-                    modifier = Modifier.padding(top = 2.dp)
+                    modifier = Modifier.padding(top = 2.dp),
                 )
             }
         }
@@ -145,12 +147,13 @@ fun BossToggle(
             checked = checked,
             onCheckedChange = onCheckedChange,
             enabled = enabled,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = BossThemeColors.AccentColor,
-                checkedTrackColor = BossThemeColors.AccentColor.copy(alpha = 0.5f),
-                uncheckedThumbColor = BossThemeColors.TextMuted,
-                uncheckedTrackColor = BossThemeColors.BorderColor
-            )
+            colors =
+                SwitchDefaults.colors(
+                    checkedThumbColor = BossThemeColors.AccentColor,
+                    checkedTrackColor = BossThemeColors.AccentColor.copy(alpha = 0.5f),
+                    uncheckedThumbColor = BossThemeColors.TextMuted,
+                    uncheckedTrackColor = BossThemeColors.BorderColor,
+                ),
         )
     }
 }
@@ -164,37 +167,38 @@ fun BossInfoRow(
     value: String,
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
-    description: String? = null
+    description: String? = null,
 ) {
     Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
-            .background(BossThemeColors.SurfaceColor)
-            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
+                .background(BossThemeColors.SurfaceColor)
+                .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = label,
                 color = BossThemeColors.TextPrimary,
-                fontSize = 13.sp
+                fontSize = 13.sp,
             )
             if (description != null) {
                 Text(
                     text = description,
                     color = BossThemeColors.TextMuted,
                     fontSize = 11.sp,
-                    modifier = Modifier.padding(top = 2.dp)
+                    modifier = Modifier.padding(top = 2.dp),
                 )
             }
         }
         Text(
             text = value,
             color = if (onClick != null) BossThemeColors.AccentColor else BossThemeColors.TextSecondary,
-            fontSize = 13.sp
+            fontSize = 13.sp,
         )
     }
 }
@@ -210,39 +214,41 @@ fun BossButtonRow(
     modifier: Modifier = Modifier,
     description: String? = null,
     enabled: Boolean = true,
-    isDestructive: Boolean = false
+    isDestructive: Boolean = false,
 ) {
     Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
-            .background(BossThemeColors.SurfaceColor)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
+                .background(BossThemeColors.SurfaceColor)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = label,
                 color = if (enabled) BossThemeColors.TextPrimary else BossThemeColors.TextMuted,
-                fontSize = 13.sp
+                fontSize = 13.sp,
             )
             if (description != null) {
                 Text(
                     text = description,
                     color = BossThemeColors.TextMuted,
                     fontSize = 11.sp,
-                    modifier = Modifier.padding(top = 2.dp)
+                    modifier = Modifier.padding(top = 2.dp),
                 )
             }
         }
         TextButton(
             onClick = onClick,
             enabled = enabled,
-            colors = ButtonDefaults.textButtonColors(
-                contentColor = if (isDestructive) BossThemeColors.ErrorColor else BossThemeColors.AccentColor,
-                disabledContentColor = BossThemeColors.TextMuted
-            )
+            colors =
+                ButtonDefaults.textButtonColors(
+                    contentColor = if (isDestructive) BossThemeColors.ErrorColor else BossThemeColors.AccentColor,
+                    disabledContentColor = BossThemeColors.TextMuted,
+                ),
         ) {
             Text(buttonText, fontSize = 13.sp)
         }
@@ -258,54 +264,56 @@ fun BossSearchBar(
     query: String,
     onQueryChange: (String) -> Unit,
     modifier: Modifier = Modifier,
-    placeholder: String = "Search..."
+    placeholder: String = "Search...",
 ) {
     BasicTextField(
         value = query,
         onValueChange = onQueryChange,
         singleLine = true,
-        textStyle = TextStyle(
-            color = BossThemeColors.TextPrimary,
-            fontSize = 13.sp
-        ),
+        textStyle =
+            TextStyle(
+                color = BossThemeColors.TextPrimary,
+                fontSize = 13.sp,
+            ),
         cursorBrush = SolidColor(BossThemeColors.AccentColor),
         decorationBox = { innerTextField ->
             Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(BossThemeColors.SurfaceColor)
-                    .border(1.dp, BossThemeColors.BorderColor.copy(alpha = 0.5f))
-                    .padding(horizontal = 8.dp, vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .background(BossThemeColors.SurfaceColor)
+                        .border(1.dp, BossThemeColors.BorderColor.copy(alpha = 0.5f))
+                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
                     imageVector = Icons.Default.Search,
                     contentDescription = null,
                     tint = BossThemeColors.TextMuted,
-                    modifier = Modifier.size(14.dp)
+                    modifier = Modifier.size(14.dp),
                 )
                 Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .padding(start = 6.dp),
-                    contentAlignment = Alignment.CenterStart
+                    modifier =
+                        Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .padding(start = 6.dp),
+                    contentAlignment = Alignment.CenterStart,
                 ) {
                     if (query.isEmpty()) {
                         Text(
                             text = placeholder,
                             color = BossThemeColors.TextMuted.copy(alpha = 0.6f),
-                            fontSize = 13.sp
+                            fontSize = 13.sp,
                         )
                     }
                     innerTextField()
                 }
             }
         },
-        modifier = modifier.height(28.dp)
+        modifier = modifier.height(28.dp),
     )
 }
-
 
 /**
  * A text field with Boss theme styling.
@@ -332,69 +340,71 @@ fun BossTextField(
     isError: Boolean = false,
     errorMessage: String? = null,
     singleLine: Boolean = true,
-    required: Boolean = false
+    required: Boolean = false,
 ) {
     Column(modifier = modifier) {
         // Label row
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(bottom = 4.dp)
+            modifier = Modifier.padding(bottom = 4.dp),
         ) {
             Text(
                 text = label,
                 color = if (enabled) BossThemeColors.TextPrimary else BossThemeColors.TextMuted,
                 fontSize = 12.sp,
-                fontWeight = FontWeight.Medium
+                fontWeight = FontWeight.Medium,
             )
             if (required) {
                 Text(
                     text = " *",
                     color = BossThemeColors.ErrorColor,
                     fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.Medium,
                 )
             }
         }
 
         // Text field
-        val borderColor = when {
-            isError -> BossThemeColors.ErrorColor
-            !enabled -> BossThemeColors.BorderColor.copy(alpha = 0.5f)
-            else -> BossThemeColors.BorderColor
-        }
+        val borderColor =
+            when {
+                isError -> BossThemeColors.ErrorColor
+                !enabled -> BossThemeColors.BorderColor.copy(alpha = 0.5f)
+                else -> BossThemeColors.BorderColor
+            }
 
         BasicTextField(
             value = value,
             onValueChange = onValueChange,
             enabled = enabled,
             singleLine = singleLine,
-            textStyle = TextStyle(
-                color = if (enabled) BossThemeColors.TextPrimary else BossThemeColors.TextMuted,
-                fontSize = 13.sp
-            ),
+            textStyle =
+                TextStyle(
+                    color = if (enabled) BossThemeColors.TextPrimary else BossThemeColors.TextMuted,
+                    fontSize = 13.sp,
+                ),
             cursorBrush = SolidColor(BossThemeColors.AccentColor),
             decorationBox = { innerTextField ->
                 Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(
-                            if (enabled) BossThemeColors.SurfaceColor else BossThemeColors.SurfaceColor.copy(alpha = 0.5f),
-                            RoundedCornerShape(6.dp)
-                        )
-                        .border(1.dp, borderColor, RoundedCornerShape(6.dp))
-                        .padding(horizontal = 10.dp, vertical = 8.dp),
-                    contentAlignment = Alignment.CenterStart
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .background(
+                                if (enabled) BossThemeColors.SurfaceColor else BossThemeColors.SurfaceColor.copy(alpha = 0.5f),
+                                RoundedCornerShape(6.dp),
+                            ).border(1.dp, borderColor, RoundedCornerShape(6.dp))
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                    contentAlignment = Alignment.CenterStart,
                 ) {
                     if (value.isEmpty() && placeholder.isNotEmpty()) {
                         Text(
                             text = placeholder,
                             color = BossThemeColors.TextMuted.copy(alpha = 0.6f),
-                            fontSize = 13.sp
+                            fontSize = 13.sp,
                         )
                     }
                     innerTextField()
                 }
-            }
+            },
         )
 
         // Error message
@@ -403,7 +413,7 @@ fun BossTextField(
                 text = errorMessage,
                 color = BossThemeColors.ErrorColor,
                 fontSize = 11.sp,
-                modifier = Modifier.padding(top = 4.dp)
+                modifier = Modifier.padding(top = 4.dp),
             )
         }
     }
@@ -434,7 +444,7 @@ fun BossTextArea(
     isError: Boolean = false,
     errorMessage: String? = null,
     minLines: Int = 3,
-    maxLines: Int = 5
+    maxLines: Int = 5,
 ) {
     Column(modifier = modifier) {
         // Label
@@ -443,15 +453,16 @@ fun BossTextArea(
             color = if (enabled) BossThemeColors.TextPrimary else BossThemeColors.TextMuted,
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
-            modifier = Modifier.padding(bottom = 4.dp)
+            modifier = Modifier.padding(bottom = 4.dp),
         )
 
         // Text area
-        val borderColor = when {
-            isError -> BossThemeColors.ErrorColor
-            !enabled -> BossThemeColors.BorderColor.copy(alpha = 0.5f)
-            else -> BossThemeColors.BorderColor
-        }
+        val borderColor =
+            when {
+                isError -> BossThemeColors.ErrorColor
+                !enabled -> BossThemeColors.BorderColor.copy(alpha = 0.5f)
+                else -> BossThemeColors.BorderColor
+            }
 
         // Calculate minimum height based on line count
         val minHeight = (minLines * 20 + 16).dp
@@ -462,33 +473,34 @@ fun BossTextArea(
             enabled = enabled,
             singleLine = false,
             maxLines = maxLines,
-            textStyle = TextStyle(
-                color = if (enabled) BossThemeColors.TextPrimary else BossThemeColors.TextMuted,
-                fontSize = 13.sp
-            ),
+            textStyle =
+                TextStyle(
+                    color = if (enabled) BossThemeColors.TextPrimary else BossThemeColors.TextMuted,
+                    fontSize = 13.sp,
+                ),
             cursorBrush = SolidColor(BossThemeColors.AccentColor),
             decorationBox = { innerTextField ->
                 Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(minHeight)
-                        .background(
-                            if (enabled) BossThemeColors.SurfaceColor else BossThemeColors.SurfaceColor.copy(alpha = 0.5f),
-                            RoundedCornerShape(6.dp)
-                        )
-                        .border(1.dp, borderColor, RoundedCornerShape(6.dp))
-                        .padding(horizontal = 10.dp, vertical = 8.dp)
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .height(minHeight)
+                            .background(
+                                if (enabled) BossThemeColors.SurfaceColor else BossThemeColors.SurfaceColor.copy(alpha = 0.5f),
+                                RoundedCornerShape(6.dp),
+                            ).border(1.dp, borderColor, RoundedCornerShape(6.dp))
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
                 ) {
                     if (value.isEmpty() && placeholder.isNotEmpty()) {
                         Text(
                             text = placeholder,
                             color = BossThemeColors.TextMuted.copy(alpha = 0.6f),
-                            fontSize = 13.sp
+                            fontSize = 13.sp,
                         )
                     }
                     innerTextField()
                 }
-            }
+            },
         )
 
         // Error message
@@ -497,7 +509,7 @@ fun BossTextArea(
                 text = errorMessage,
                 color = BossThemeColors.ErrorColor,
                 fontSize = 11.sp,
-                modifier = Modifier.padding(top = 4.dp)
+                modifier = Modifier.padding(top = 4.dp),
             )
         }
     }
@@ -512,25 +524,26 @@ fun BossPrimaryButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-    icon: ImageVector? = null
+    icon: ImageVector? = null,
 ) {
     Button(
         onClick = onClick,
         enabled = enabled,
         modifier = modifier,
-        colors = ButtonDefaults.buttonColors(
-            backgroundColor = BossThemeColors.AccentColor,
-            contentColor = Color.White,
-            disabledBackgroundColor = BossThemeColors.BorderColor,
-            disabledContentColor = BossThemeColors.TextMuted
-        ),
-        shape = RoundedCornerShape(6.dp)
+        colors =
+            ButtonDefaults.buttonColors(
+                backgroundColor = BossThemeColors.AccentColor,
+                contentColor = Color.White,
+                disabledBackgroundColor = BossThemeColors.BorderColor,
+                disabledContentColor = BossThemeColors.TextMuted,
+            ),
+        shape = RoundedCornerShape(6.dp),
     ) {
         if (icon != null) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                modifier = Modifier.size(16.dp)
+                modifier = Modifier.size(16.dp),
             )
             Spacer(Modifier.width(4.dp))
         }
@@ -548,33 +561,35 @@ fun BossSecondaryButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     isDestructive: Boolean = false,
-    icon: ImageVector? = null
+    icon: ImageVector? = null,
 ) {
-    val contentColor = when {
-        !enabled -> BossThemeColors.TextMuted
-        isDestructive -> BossThemeColors.ErrorColor
-        else -> BossThemeColors.AccentColor
-    }
+    val contentColor =
+        when {
+            !enabled -> BossThemeColors.TextMuted
+            isDestructive -> BossThemeColors.ErrorColor
+            else -> BossThemeColors.AccentColor
+        }
 
     Button(
         onClick = onClick,
         enabled = enabled,
         modifier = modifier,
-        colors = ButtonDefaults.buttonColors(
-            backgroundColor = Color.Transparent,
-            contentColor = contentColor,
-            disabledBackgroundColor = Color.Transparent,
-            disabledContentColor = BossThemeColors.TextMuted
-        ),
+        colors =
+            ButtonDefaults.buttonColors(
+                backgroundColor = Color.Transparent,
+                contentColor = contentColor,
+                disabledBackgroundColor = Color.Transparent,
+                disabledContentColor = BossThemeColors.TextMuted,
+            ),
         border = BorderStroke(1.dp, if (enabled) contentColor else BossThemeColors.BorderColor),
         shape = RoundedCornerShape(6.dp),
-        elevation = null
+        elevation = null,
     ) {
         if (icon != null) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                modifier = Modifier.size(16.dp)
+                modifier = Modifier.size(16.dp),
             )
             Spacer(Modifier.width(4.dp))
         }
@@ -586,13 +601,12 @@ fun BossSecondaryButton(
  * A tab indicator for Boss-styled tabs.
  */
 @Composable
-fun BossTabIndicator(
-    modifier: Modifier = Modifier
-) {
+fun BossTabIndicator(modifier: Modifier = Modifier) {
     Box(
-        modifier = modifier
-            .height(3.dp)
-            .background(BossThemeColors.AccentColor, RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp))
+        modifier =
+            modifier
+                .height(3.dp)
+                .background(BossThemeColors.AccentColor, RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp)),
     )
 }
 
@@ -602,21 +616,22 @@ fun BossTabIndicator(
 @Composable
 fun BossBadge(
     count: Int,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     if (count > 0) {
         Box(
-            modifier = modifier
-                .size(20.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(BossThemeColors.AccentColor),
-            contentAlignment = Alignment.Center
+            modifier =
+                modifier
+                    .size(20.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(BossThemeColors.AccentColor),
+            contentAlignment = Alignment.Center,
         ) {
             Text(
                 text = if (count > 99) "99+" else count.toString(),
                 color = Color.White,
                 fontSize = 10.sp,
-                fontWeight = FontWeight.Medium
+                fontWeight = FontWeight.Medium,
             )
         }
     }
@@ -630,30 +645,30 @@ fun BossEmptyState(
     icon: ImageVector,
     message: String,
     description: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     Column(
         modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Icon(
             imageVector = icon,
             contentDescription = null,
             modifier = Modifier.size(48.dp),
-            tint = BossThemeColors.TextMuted.copy(alpha = 0.5f)
+            tint = BossThemeColors.TextMuted.copy(alpha = 0.5f),
         )
         Spacer(Modifier.height(16.dp))
         Text(
             text = message,
             color = BossThemeColors.TextSecondary,
             fontSize = 14.sp,
-            fontWeight = FontWeight.Medium
+            fontWeight = FontWeight.Medium,
         )
         Spacer(Modifier.height(4.dp))
         Text(
             text = description,
             color = BossThemeColors.TextMuted,
-            fontSize = 12.sp
+            fontSize = 12.sp,
         )
     }
 }

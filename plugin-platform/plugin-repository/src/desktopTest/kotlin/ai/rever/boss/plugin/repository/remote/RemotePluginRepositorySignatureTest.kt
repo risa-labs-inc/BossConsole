@@ -1,9 +1,9 @@
 package ai.rever.boss.plugin.repository.remote
 
-import ai.rever.boss.plugin.repository.DownloadException
 import ai.rever.boss.plugin.loader.PluginSignatureEnforcement
 import ai.rever.boss.plugin.loader.PluginSignatureVerifier
 import ai.rever.boss.plugin.loader.PluginStoreTrust
+import ai.rever.boss.plugin.repository.DownloadException
 import java.io.File
 import java.security.KeyPair
 import java.security.KeyPairGenerator
@@ -22,37 +22,46 @@ import kotlin.test.assertTrue
  * security control (the verifier itself is covered separately).
  */
 class RemotePluginRepositorySignatureTest {
-
     private val tempDir = createTempDirectory("sig-enforce-test").toFile()
 
-    private val keyPair: KeyPair = KeyPairGenerator.getInstance("RSA").apply {
-        initialize(2048)
-    }.generateKeyPair()
+    private val keyPair: KeyPair =
+        KeyPairGenerator
+            .getInstance("RSA")
+            .apply {
+                initialize(2048)
+            }.generateKeyPair()
 
-    private val verifier = PluginSignatureVerifier(
-        mapOf(
-            "test-store" to (
-                "-----BEGIN PUBLIC KEY-----\n" +
-                    Base64.getMimeEncoder(64, "\n".toByteArray()).encodeToString(keyPair.public.encoded) +
-                    "\n-----END PUBLIC KEY-----"
-                )
+    private val verifier =
+        PluginSignatureVerifier(
+            mapOf(
+                "test-store" to (
+                    "-----BEGIN PUBLIC KEY-----\n" +
+                        Base64.getMimeEncoder(64, "\n".toByteArray()).encodeToString(keyPair.public.encoded) +
+                        "\n-----END PUBLIC KEY-----"
+                ),
+            ),
         )
-    )
 
-    private val repository = RemotePluginRepository(
-        downloadCache = PluginDownloadCache(File(tempDir, "cache")),
-        storeVerifier = verifier
-    )
+    private val repository =
+        RemotePluginRepository(
+            downloadCache = PluginDownloadCache(File(tempDir, "cache")),
+            storeVerifier = verifier,
+        )
 
     private val pluginId = "test.plugin"
     private val digest = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"
 
-    private fun signAnchor(pluginId: String, version: String, sha256: String): String {
+    private fun signAnchor(
+        pluginId: String,
+        version: String,
+        sha256: String,
+    ): String {
         val anchor = PluginStoreTrust.versionAnchor(pluginId, version, sha256)
-        val sig = Signature.getInstance("SHA256withRSA").apply {
-            initSign(keyPair.private)
-            update(anchor.toByteArray(Charsets.UTF_8))
-        }
+        val sig =
+            Signature.getInstance("SHA256withRSA").apply {
+                initSign(keyPair.private)
+                update(anchor.toByteArray(Charsets.UTF_8))
+            }
         return Base64.getEncoder().encodeToString(sig.sign())
     }
 
@@ -72,7 +81,7 @@ class RemotePluginRepositorySignatureTest {
             pluginId = pluginId,
             versionLabel = "1.0.0",
             requestedVersion = "1.0.0",
-            onVerificationFailure = { jar.delete() }
+            onVerificationFailure = { jar.delete() },
         )
         assertTrue(jar.exists())
     }
@@ -86,7 +95,7 @@ class RemotePluginRepositorySignatureTest {
             pluginId = pluginId,
             versionLabel = "1.0.0",
             requestedVersion = null,
-            onVerificationFailure = { jar.delete() }
+            onVerificationFailure = { jar.delete() },
         )
         assertTrue(jar.exists())
     }
@@ -103,7 +112,7 @@ class RemotePluginRepositorySignatureTest {
                     pluginId = pluginId,
                     versionLabel = "1.0.0",
                     requestedVersion = null,
-                    onVerificationFailure = { jar.delete() }
+                    onVerificationFailure = { jar.delete() },
                 )
             }
             assertFalse(jar.exists())
@@ -126,7 +135,7 @@ class RemotePluginRepositorySignatureTest {
                 pluginId = pluginId,
                 versionLabel = "2.0.0",
                 requestedVersion = "2.0.0",
-                onVerificationFailure = { jar.delete() }
+                onVerificationFailure = { jar.delete() },
             )
         }
         assertFalse(jar.exists())
@@ -144,7 +153,7 @@ class RemotePluginRepositorySignatureTest {
                 pluginId = pluginId,
                 versionLabel = "1.0.0",
                 requestedVersion = "2.0.0",
-                onVerificationFailure = { jar.delete() }
+                onVerificationFailure = { jar.delete() },
             )
         }
         assertFalse(jar.exists())
@@ -162,7 +171,10 @@ class RemotePluginRepositorySignatureTest {
                 pluginId = pluginId,
                 versionLabel = "1.0.0",
                 requestedVersion = "1.0.0",
-                onVerificationFailure = { jar.delete(); cached.delete() }
+                onVerificationFailure = {
+                    jar.delete()
+                    cached.delete()
+                },
             )
         }
         assertFalse(jar.exists())
@@ -179,7 +191,7 @@ class RemotePluginRepositorySignatureTest {
                 pluginId = pluginId,
                 versionLabel = "1.0.0",
                 requestedVersion = null,
-                onVerificationFailure = { jar.delete() }
+                onVerificationFailure = { jar.delete() },
             )
         }
         assertFalse(jar.exists())

@@ -14,7 +14,9 @@ import kotlinx.coroutines.flow.asStateFlow
  * This allows different windows to have different configurations selected
  * in their top run bar dropdowns without affecting each other.
  */
-class WindowRunnerState(val windowId: String) {
+class WindowRunnerState(
+    val windowId: String,
+) {
     private val logger = BossLogger.forComponent("WindowRunnerState")
     private val _selectedConfiguration = MutableStateFlow<RunConfiguration?>(null)
     val selectedConfiguration: StateFlow<RunConfiguration?> = _selectedConfiguration.asStateFlow()

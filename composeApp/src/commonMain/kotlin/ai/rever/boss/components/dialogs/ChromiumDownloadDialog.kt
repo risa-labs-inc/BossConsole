@@ -24,24 +24,25 @@ private fun DownloadSurface(
     status: String,
     error: String?,
     onCancel: () -> Unit,
-    onRetry: (() -> Unit)?
+    onRetry: (() -> Unit)?,
 ) {
     Surface(
-        modifier = Modifier
-            .width(450.dp)
-            .wrapContentHeight(),
+        modifier =
+            Modifier
+                .width(450.dp)
+                .wrapContentHeight(),
         shape = RoundedCornerShape(8.dp),
-        color = BossTheme.colors.panel
+        color = BossTheme.colors.panel,
     ) {
         Column(
-            modifier = Modifier.padding(24.dp)
+            modifier = Modifier.padding(24.dp),
         ) {
             // Title
             Text(
                 text = "Downloading Browser Engine",
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
-                color = BossTheme.colors.textPrimary
+                color = BossTheme.colors.textPrimary,
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -52,7 +53,7 @@ private fun DownloadSurface(
                     text = "Download failed",
                     fontSize = 14.sp,
                     color = BossTheme.colors.alert, // Red
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.Medium,
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 // Bound the error message height so a long failure reason scrolls
@@ -61,16 +62,17 @@ private fun DownloadSurface(
                     text = error,
                     fontSize = 13.sp,
                     color = BossTheme.colors.textSecondary,
-                    modifier = Modifier
-                        .heightIn(max = 120.dp)
-                        .verticalScroll(rememberScrollState())
+                    modifier =
+                        Modifier
+                            .heightIn(max = 120.dp)
+                            .verticalScroll(rememberScrollState()),
                 )
             } else {
                 // Status message
                 Text(
                     text = status,
                     fontSize = 14.sp,
-                    color = BossTheme.colors.textSecondary
+                    color = BossTheme.colors.textSecondary,
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -80,7 +82,7 @@ private fun DownloadSurface(
                     progress = progress.coerceIn(0f, 1f),
                     modifier = Modifier.fillMaxWidth().height(6.dp),
                     color = BossTheme.colors.signal, // Blue
-                    backgroundColor = BossTheme.colors.raised // Dark gray
+                    backgroundColor = BossTheme.colors.raised, // Dark gray
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -88,17 +90,17 @@ private fun DownloadSurface(
                 // Progress text
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Text(
                         text = if (totalMB > 0) "${downloadedMB}MB / ${totalMB}MB" else "Connecting...",
                         fontSize = 12.sp,
-                        color = BossTheme.colors.textSecondary
+                        color = BossTheme.colors.textSecondary,
                     )
                     Text(
                         text = "${(progress * 100).toInt()}%",
                         fontSize = 12.sp,
-                        color = BossTheme.colors.textSecondary
+                        color = BossTheme.colors.textSecondary,
                     )
                 }
             }
@@ -109,14 +111,15 @@ private fun DownloadSurface(
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (error != null && onRetry != null) {
                     TextButton(
                         onClick = onRetry,
-                        colors = ButtonDefaults.textButtonColors(
-                            contentColor = BossTheme.colors.signal
-                        )
+                        colors =
+                            ButtonDefaults.textButtonColors(
+                                contentColor = BossTheme.colors.signal,
+                            ),
                     ) {
                         Text("Retry", fontWeight = FontWeight.Medium)
                     }
@@ -125,9 +128,10 @@ private fun DownloadSurface(
 
                 TextButton(
                     onClick = onCancel,
-                    colors = ButtonDefaults.textButtonColors(
-                        contentColor = BossTheme.colors.textSecondary
-                    )
+                    colors =
+                        ButtonDefaults.textButtonColors(
+                            contentColor = BossTheme.colors.textSecondary,
+                        ),
                 ) {
                     Text(if (error != null) "Exit" else "Cancel", fontWeight = FontWeight.Medium)
                 }
@@ -149,11 +153,11 @@ fun ChromiumDownloadContent(
     status: String = "Installing BOSS Browser Engine...",
     error: String? = null,
     onCancel: () -> Unit,
-    onRetry: (() -> Unit)? = null
+    onRetry: (() -> Unit)? = null,
 ) {
     Box(
         modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
+        contentAlignment = Alignment.Center,
     ) {
         DownloadSurface(
             progress = progress,
@@ -162,7 +166,7 @@ fun ChromiumDownloadContent(
             status = status,
             error = error,
             onCancel = onCancel,
-            onRetry = onRetry
+            onRetry = onRetry,
         )
     }
 }

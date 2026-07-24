@@ -1,29 +1,30 @@
 package ai.rever.boss.window
 
 import ai.rever.boss.BossAppWithAuth
-import ai.rever.boss.plugin.ui.BossTheme
-import ai.rever.boss.plugin.ui.BossThemeController
 import ai.rever.boss.components.dialogs.CLIInstallationDialog
 import ai.rever.boss.components.window_panel.components.main_window_panels.createBossAppContext
-import ai.rever.boss.utils.CLIInstaller
-import ai.rever.boss.utils.DisplayUtils
-import ai.rever.boss.utils.WindowFocusManager
+import ai.rever.boss.focusmode.FocusModeSettingsManager
 import ai.rever.boss.keymap.KeymapSettingsManager
 import ai.rever.boss.keymap.menu.MenuShortcutBridge
 import ai.rever.boss.keymap.model.KeymapActions
-import ai.rever.boss.focusmode.FocusModeSettingsManager
 import ai.rever.boss.plugin.api.PanelRegistry
-import ai.rever.boss.window.WindowType
-import ai.rever.boss.updater.UpdateManager
 import ai.rever.boss.plugin.browser.FluckEngine
 import ai.rever.boss.plugin.browser.LocalAwtWindow
 import ai.rever.boss.plugin.browser.ScreenCaptureNotifier
 import ai.rever.boss.plugin.browser.ScreenCapturePickerDialog
+import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.plugin.ui.BossThemeController
 import ai.rever.boss.services.terminal.TerminalAPIAccess
+import ai.rever.boss.updater.UpdateManager
+import ai.rever.boss.utils.CLIInstaller
+import ai.rever.boss.utils.DisplayUtils
+import ai.rever.boss.utils.WindowFocusManager
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.window.WindowType
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.material.AlertDialog
 import androidx.compose.material.Button
 import androidx.compose.material.ButtonDefaults
@@ -31,26 +32,25 @@ import androidx.compose.material.Text
 import androidx.compose.material.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.ui.unit.DpSize
-import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.*
+import boss_kotlin.composeapp.generated.resources.Res
+import boss_kotlin.composeapp.generated.resources.boss_icon
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import androidx.compose.ui.Alignment
 import org.jetbrains.compose.resources.painterResource
-import boss_kotlin.composeapp.generated.resources.Res
-import boss_kotlin.composeapp.generated.resources.boss_icon
-import androidx.compose.ui.window.*
-import ai.rever.boss.utils.logging.BossLogger
-import ai.rever.boss.utils.logging.LogCategory
 import java.awt.Color
 import java.awt.Frame
 
@@ -86,12 +86,14 @@ internal fun computeFitSize(
 ): DpSize {
     val sx = scaleX.takeIf { it > 0f } ?: 1f
     val sy = scaleY.takeIf { it > 0f } ?: 1f
-    val newW = (current.width.value + deltaWidthPx / sx)
-        .coerceAtMost(maxWidthDp)
-        .coerceAtLeast(minOf(minWidthDp, maxWidthDp))
-    val newH = (current.height.value + deltaHeightPx / sy)
-        .coerceAtMost(maxHeightDp)
-        .coerceAtLeast(minOf(minHeightDp, maxHeightDp))
+    val newW =
+        (current.width.value + deltaWidthPx / sx)
+            .coerceAtMost(maxWidthDp)
+            .coerceAtLeast(minOf(minWidthDp, maxWidthDp))
+    val newH =
+        (current.height.value + deltaHeightPx / sy)
+            .coerceAtMost(maxHeightDp)
+            .coerceAtLeast(minOf(minHeightDp, maxHeightDp))
     return DpSize(newW.dp, newH.dp)
 }
 
@@ -111,22 +113,24 @@ internal fun computeFitSize(
 @Composable
 fun ApplicationScope.BossWindow(
     windowState: BossWindowState,
-    onCloseRequest: () -> Unit
+    onCloseRequest: () -> Unit,
 ) {
     // Calculate adaptive window size based on window type and screen dimensions
-    val windowSize = when (windowState.windowType) {
-        WindowType.MAIN -> DisplayUtils.calculateMainWindowSize()
-        WindowType.AUTH -> DisplayUtils.calculateAuthWindowSize()
-        WindowType.SETTINGS -> DisplayUtils.calculateSettingsWindowSize()
-    }
+    val windowSize =
+        when (windowState.windowType) {
+            WindowType.MAIN -> DisplayUtils.calculateMainWindowSize()
+            WindowType.AUTH -> DisplayUtils.calculateAuthWindowSize()
+            WindowType.SETTINGS -> DisplayUtils.calculateSettingsWindowSize()
+        }
 
     // Remember window state for Compose Window
     // Main window starts maximized, other windows use calculated size
-    val composeWindowState = rememberWindowState(
-        position = windowState.position ?: WindowPosition.Aligned(Alignment.Center),
-        size = windowSize,
-        placement = if (windowState.windowType == WindowType.MAIN) WindowPlacement.Maximized else WindowPlacement.Floating
-    )
+    val composeWindowState =
+        rememberWindowState(
+            position = windowState.position ?: WindowPosition.Aligned(Alignment.Center),
+            size = windowSize,
+            placement = if (windowState.windowType == WindowType.MAIN) WindowPlacement.Maximized else WindowPlacement.Floating,
+        )
 
     // Track full screen state for reactive menu text
     var isMaximized by remember { mutableStateOf(false) }
@@ -139,7 +143,7 @@ fun ApplicationScope.BossWindow(
         onCloseRequest = onCloseRequest,
         title = windowState.title,
         state = composeWindowState,
-        icon = painterResource(Res.drawable.boss_icon)
+        icon = painterResource(Res.drawable.boss_icon),
     ) {
         // Apply programmatic resize requests (BossTerm "Fit host to my screen").
         // Lives inside Window {} so it can read this window's `window` (AWT
@@ -169,27 +173,33 @@ fun ApplicationScope.BossWindow(
                         val tf = gc?.defaultTransform
                         // Usable area of THIS window's screen, in logical points
                         // (same units as WindowState.size dp).
-                        val usable = runCatching {
-                            val b = gc!!.bounds
-                            val insets = java.awt.Toolkit.getDefaultToolkit().getScreenInsets(gc)
-                            (b.width - insets.left - insets.right).toFloat() to
-                                (b.height - insets.top - insets.bottom).toFloat()
-                        }.getOrNull()
-                        val target = computeFitSize(
-                            current = composeWindowState.size,
-                            deltaWidthPx = req.deltaWidthPx,
-                            deltaHeightPx = req.deltaHeightPx,
-                            scaleX = tf?.scaleX?.toFloat() ?: 1f,
-                            scaleY = tf?.scaleY?.toFloat() ?: 1f,
-                            maxWidthDp = usable?.first ?: 100_000f,
-                            maxHeightDp = usable?.second ?: 100_000f,
-                        )
+                        val usable =
+                            runCatching {
+                                val b = gc!!.bounds
+                                val insets =
+                                    java.awt.Toolkit
+                                        .getDefaultToolkit()
+                                        .getScreenInsets(gc)
+                                (b.width - insets.left - insets.right).toFloat() to
+                                    (b.height - insets.top - insets.bottom).toFloat()
+                            }.getOrNull()
+                        val target =
+                            computeFitSize(
+                                current = composeWindowState.size,
+                                deltaWidthPx = req.deltaWidthPx,
+                                deltaHeightPx = req.deltaHeightPx,
+                                scaleX = tf?.scaleX?.toFloat() ?: 1f,
+                                scaleY = tf?.scaleY?.toFloat() ?: 1f,
+                                maxWidthDp = usable?.first ?: 100_000f,
+                                maxHeightDp = usable?.second ?: 100_000f,
+                            )
                         // Maximized ignores an explicit size — drop to Floating first.
                         if (composeWindowState.placement != WindowPlacement.Floating) {
                             composeWindowState.placement = WindowPlacement.Floating
                         }
                         composeWindowState.size = target
                     }
+
                     WindowSizeRequest.Restore -> {
                         preFit?.let { (size, placement) ->
                             // Restore size first (so a re-maximized window also gets
@@ -213,7 +223,7 @@ fun ApplicationScope.BossWindow(
                 // otherwise the app may exit before the dialog appears
                 Thread.getDefaultUncaughtExceptionHandler()?.uncaughtException(
                     Thread.currentThread(),
-                    testException
+                    testException,
                 )
                 // Main window will be closed by terminateAfterCrash() after user dismisses dialog
             }
@@ -222,7 +232,11 @@ fun ApplicationScope.BossWindow(
         // Set window appearance - using native OS title bar.
         // toArgb(), not value.toInt(): Compose Color.value packs ARGB in the
         // UPPER 32 bits of a ULong, so value.toInt() reads the empty low bits.
-        window.background = Color(BossThemeController.current.colors.raised.toArgb())
+        window.background =
+            Color(
+                BossThemeController.current.colors.raised
+                    .toArgb(),
+            )
 
         // Enable native macOS fullscreen support and extend content into title bar
         // This allows the green traffic light button to enter proper native fullscreen,
@@ -250,9 +264,10 @@ fun ApplicationScope.BossWindow(
         val keymapSettings by KeymapSettingsManager.currentSettings.collectAsState()
 
         // Create shortcut bridge for menu items
-        val shortcutBridge = remember(keymapSettings) {
-            MenuShortcutBridge.from(keymapSettings)
-        }
+        val shortcutBridge =
+            remember(keymapSettings) {
+                MenuShortcutBridge.from(keymapSettings)
+            }
 
         // State for CLI installation dialog
         var showCLIInstallDialog by remember { mutableStateOf(false) }
@@ -274,11 +289,12 @@ fun ApplicationScope.BossWindow(
             // Initialize state from current window state
             isMaximized = window.extendedState == Frame.MAXIMIZED_BOTH
 
-            val listener = object : java.awt.event.WindowAdapter() {
-                override fun windowStateChanged(e: java.awt.event.WindowEvent) {
-                    isMaximized = window.extendedState == Frame.MAXIMIZED_BOTH
+            val listener =
+                object : java.awt.event.WindowAdapter() {
+                    override fun windowStateChanged(e: java.awt.event.WindowEvent) {
+                        isMaximized = window.extendedState == Frame.MAXIMIZED_BOTH
+                    }
                 }
-            }
             window.addWindowStateListener(listener)
             onDispose {
                 window.removeWindowStateListener(listener)
@@ -290,7 +306,11 @@ fun ApplicationScope.BossWindow(
         val isFocusModeEnabled = focusModeSettings.enabled
 
         // Get workspace list for workspace submenu
-        val workspaceManager = remember { ai.rever.boss.components.workspaces.WorkspaceManager() }
+        val workspaceManager =
+            remember {
+                ai.rever.boss.components.workspaces
+                    .WorkspaceManager()
+            }
         val workspaces by workspaceManager.workspaces.collectAsState()
         val currentWorkspace by workspaceManager.currentWorkspace.collectAsState()
 
@@ -306,9 +326,10 @@ fun ApplicationScope.BossWindow(
         // Get registered plugins for Plugin menu
         val panelRegistry = remember { PanelRegistry() }
         var registeredPluginsVersion by remember { mutableStateOf(0) }
-        val registeredPlugins = remember(registeredPluginsVersion) {
-            panelRegistry.getAllPanels()
-        }
+        val registeredPlugins =
+            remember(registeredPluginsVersion) {
+                panelRegistry.getAllPanels()
+            }
 
         // Coroutine scope for menu actions (like checking for updates)
         val menuScope = rememberCoroutineScope()
@@ -336,37 +357,37 @@ fun ApplicationScope.BossWindow(
                     shortcut = shortcutBridge.getKeyShortcut(KeymapActions.TAB_NEW),
                     onClick = {
                         MenuActionsHandler.triggerNewTab(windowState.id)
-                    }
+                    },
                 )
                 Item(
                     "New Window",
                     shortcut = shortcutBridge.getKeyShortcut(KeymapActions.WINDOW_NEW),
-                    onClick = { WindowOperations.createNewWindow() }
+                    onClick = { WindowOperations.createNewWindow() },
                 )
                 Item(
                     "Open Project...",
                     onClick = {
                         MenuActionsHandler.triggerOpenProject(windowState.id)
-                    }
+                    },
                 )
                 Item(
                     "Open File...",
                     onClick = {
                         MenuActionsHandler.triggerOpenFile(windowState.id)
-                    }
+                    },
                 )
                 Item(
                     "New Terminal Tab",
                     onClick = {
                         MenuActionsHandler.triggerNewTerminal(windowState.id)
-                    }
+                    },
                 )
                 Item(
                     "Close Tab",
                     shortcut = shortcutBridge.getKeyShortcut(KeymapActions.TAB_CLOSE),
                     onClick = {
                         MenuActionsHandler.triggerCloseTab(windowState.id)
-                    }
+                    },
                 )
 
                 Separator()
@@ -379,7 +400,7 @@ fun ApplicationScope.BossWindow(
                             onClick = {
                                 MenuActionsHandler.triggerApplyWorkspace(windowState.id, workspace)
                             },
-                            enabled = currentWorkspace?.id != workspace.id  // Disable current workspace
+                            enabled = currentWorkspace?.id != workspace.id, // Disable current workspace
                         )
                     }
 
@@ -387,7 +408,7 @@ fun ApplicationScope.BossWindow(
                         Item(
                             text = "(No workspaces available)",
                             onClick = { },
-                            enabled = false
+                            enabled = false,
                         )
                     }
 
@@ -399,7 +420,7 @@ fun ApplicationScope.BossWindow(
                         shortcut = shortcutBridge.getKeyShortcut(KeymapActions.QUICK_SWITCHER_OPEN),
                         onClick = {
                             MenuActionsHandler.triggerSelectWorkspace(windowState.id)
-                        }
+                        },
                     )
                 }
 
@@ -410,7 +431,7 @@ fun ApplicationScope.BossWindow(
                     shortcut = shortcutBridge.getKeyShortcut(KeymapActions.WORKSPACE_SAVE),
                     onClick = {
                         MenuActionsHandler.triggerSaveWorkspace(windowState.id)
-                    }
+                    },
                 )
 
                 Item(
@@ -418,24 +439,29 @@ fun ApplicationScope.BossWindow(
                     shortcut = shortcutBridge.getKeyShortcut(KeymapActions.CODEBASE_OPEN),
                     onClick = {
                         MenuActionsHandler.triggerOpenCodebase(windowState.id)
-                    }
+                    },
                 )
 
                 Separator()
 
                 // Process Mode toggle
-                val isKernelMode = remember {
-                    val mode = System.getenv("BOSS_MODE")
-                        ?: ai.rever.boss.config.ConfigLoader.getConfig("BOSS_MODE")
-                    mode == "KERNEL"
-                }
+                val isKernelMode =
+                    remember {
+                        val mode =
+                            System.getenv("BOSS_MODE")
+                                ?: ai.rever.boss.config.ConfigLoader
+                                    .getConfig("BOSS_MODE")
+                        mode == "KERNEL"
+                    }
                 CheckboxItem(
                     "Microkernel Mode",
                     checked = isKernelMode,
                     onCheckedChange = {
                         // Toggle in env_vars file; requires restart
                         menuScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                            val envFile = ai.rever.boss.plugin.pathutils.BossDirectories.resolve("env_vars")
+                            val envFile =
+                                ai.rever.boss.plugin.pathutils.BossDirectories
+                                    .resolve("env_vars")
                             envFile.parentFile?.mkdirs()
                             if (!envFile.exists()) {
                                 envFile.writeText(if (it) "BOSS_MODE=KERNEL\n" else "# BOSS_MODE=KERNEL\n", Charsets.UTF_8)
@@ -443,12 +469,16 @@ fun ApplicationScope.BossWindow(
                                 val lines = envFile.readLines(Charsets.UTF_8).toMutableList()
                                 val idx = lines.indexOfFirst { l -> l.trimStart('#', ' ').startsWith("BOSS_MODE") }
                                 val newLine = if (it) "BOSS_MODE=KERNEL" else "# BOSS_MODE=KERNEL"
-                                if (idx >= 0) lines[idx] = newLine
-                                else { lines.add(""); lines.add(newLine) }
+                                if (idx >= 0) {
+                                    lines[idx] = newLine
+                                } else {
+                                    lines.add("")
+                                    lines.add(newLine)
+                                }
                                 envFile.writeText(lines.joinToString("\n") + "\n", Charsets.UTF_8)
                             }
                         }
-                    }
+                    },
                 )
 
                 Separator()
@@ -458,11 +488,11 @@ fun ApplicationScope.BossWindow(
                     shortcut = shortcutBridge.getKeyShortcut(KeymapActions.SETTINGS_OPEN),
                     onClick = {
                         MenuActionsHandler.triggerOpenSettings(windowState.id)
-                    }
+                    },
                 )
                 Item(
                     "Quit BOSS",
-                    onClick = { exitApplication() }
+                    onClick = { exitApplication() },
                 )
             }
 
@@ -472,19 +502,19 @@ fun ApplicationScope.BossWindow(
                     "Cut",
                     onClick = {
                         ClipboardHelper.cut()
-                    }
+                    },
                 )
                 Item(
                     "Copy",
                     onClick = {
                         ClipboardHelper.copy()
-                    }
+                    },
                 )
                 Item(
                     "Paste",
                     onClick = {
                         ClipboardHelper.paste()
-                    }
+                    },
                 )
 
                 Separator()
@@ -493,7 +523,7 @@ fun ApplicationScope.BossWindow(
                     "Select All",
                     onClick = {
                         ClipboardHelper.selectAll()
-                    }
+                    },
                 )
             }
 
@@ -503,52 +533,52 @@ fun ApplicationScope.BossWindow(
                     "Rename Symbol",
                     onClick = {
                         MenuActionsHandler.triggerRefactorRename(windowState.id)
-                    }
+                    },
                 )
-                
+
                 Separator()
-                
+
                 Item(
                     "Extract Variable",
                     onClick = {
                         MenuActionsHandler.triggerRefactorExtractVariable(windowState.id)
-                    }
+                    },
                 )
                 Item(
                     "Extract Method",
                     onClick = {
                         MenuActionsHandler.triggerRefactorExtractMethod(windowState.id)
-                    }
+                    },
                 )
                 Item(
                     "Extract Constant",
                     onClick = {
                         MenuActionsHandler.triggerRefactorExtractConstant(windowState.id)
-                    }
+                    },
                 )
-                
+
                 Separator()
-                
+
                 Item(
                     "Inline",
                     onClick = {
                         MenuActionsHandler.triggerRefactorInline(windowState.id)
-                    }
+                    },
                 )
-                
+
                 Separator()
-                
+
                 Item(
                     "Change Signature",
                     onClick = {
                         MenuActionsHandler.triggerRefactorChangeSignature(windowState.id)
-                    }
+                    },
                 )
                 Item(
                     "Safe Delete",
                     onClick = {
                         MenuActionsHandler.triggerRefactorSafeDelete(windowState.id)
-                    }
+                    },
                 )
             }
 
@@ -559,7 +589,7 @@ fun ApplicationScope.BossWindow(
                     shortcut = shortcutBridge.getKeyShortcut(KeymapActions.FOCUS_MODE_TOGGLE),
                     onClick = {
                         MenuActionsHandler.triggerToggleFocusMode(windowState.id)
-                    }
+                    },
                 )
 
                 Separator()
@@ -570,7 +600,7 @@ fun ApplicationScope.BossWindow(
                     onClick = {
                         MenuActionsHandler.triggerSplitVertically(windowState.id)
                     },
-                    enabled = isSplitEnabled
+                    enabled = isSplitEnabled,
                 )
                 Item(
                     "Split Horizontally",
@@ -578,7 +608,7 @@ fun ApplicationScope.BossWindow(
                     onClick = {
                         MenuActionsHandler.triggerSplitHorizontally(windowState.id)
                     },
-                    enabled = isSplitEnabled
+                    enabled = isSplitEnabled,
                 )
 
                 Separator()
@@ -588,28 +618,28 @@ fun ApplicationScope.BossWindow(
                     shortcut = shortcutBridge.getKeyShortcut(KeymapActions.BROWSER_ZOOM_RESET),
                     onClick = {
                         MenuActionsHandler.triggerActualSize(windowState.id)
-                    }
+                    },
                 )
                 Item(
                     "Zoom In",
                     shortcut = shortcutBridge.getKeyShortcut(KeymapActions.BROWSER_ZOOM_IN),
                     onClick = {
                         MenuActionsHandler.triggerZoomIn(windowState.id)
-                    }
+                    },
                 )
                 Item(
                     "Zoom Out",
                     shortcut = shortcutBridge.getKeyShortcut(KeymapActions.BROWSER_ZOOM_OUT),
                     onClick = {
                         MenuActionsHandler.triggerZoomOut(windowState.id)
-                    }
+                    },
                 )
                 Item(
                     "Reload",
                     shortcut = shortcutBridge.getKeyShortcut(KeymapActions.BROWSER_RELOAD),
                     onClick = {
                         MenuActionsHandler.triggerReloadBrowser(windowState.id)
-                    }
+                    },
                 )
 
                 Separator()
@@ -621,7 +651,7 @@ fun ApplicationScope.BossWindow(
                     onClick = {
                         MenuActionsHandler.triggerNavigatePanelLeft(windowState.id)
                     },
-                    enabled = isPanelNavigationEnabled
+                    enabled = isPanelNavigationEnabled,
                 )
                 Item(
                     "Navigate Right",
@@ -629,7 +659,7 @@ fun ApplicationScope.BossWindow(
                     onClick = {
                         MenuActionsHandler.triggerNavigatePanelRight(windowState.id)
                     },
-                    enabled = isPanelNavigationEnabled
+                    enabled = isPanelNavigationEnabled,
                 )
                 Item(
                     "Navigate Up",
@@ -637,7 +667,7 @@ fun ApplicationScope.BossWindow(
                     onClick = {
                         MenuActionsHandler.triggerNavigatePanelUp(windowState.id)
                     },
-                    enabled = isPanelNavigationEnabled
+                    enabled = isPanelNavigationEnabled,
                 )
                 Item(
                     "Navigate Down",
@@ -645,7 +675,7 @@ fun ApplicationScope.BossWindow(
                     onClick = {
                         MenuActionsHandler.triggerNavigatePanelDown(windowState.id)
                     },
-                    enabled = isPanelNavigationEnabled
+                    enabled = isPanelNavigationEnabled,
                 )
 
                 Separator()
@@ -654,7 +684,7 @@ fun ApplicationScope.BossWindow(
                     "Customize Sidebar…",
                     onClick = {
                         MenuActionsHandler.triggerCustomizeSidebar(windowState.id)
-                    }
+                    },
                 )
 
                 Separator()
@@ -663,12 +693,13 @@ fun ApplicationScope.BossWindow(
                     if (isFullScreen) "Exit Full Screen" else "Enter Full Screen",
                     onClick = {
                         // Toggle between Fullscreen and Floating window placements
-                        composeWindowState.placement = if (composeWindowState.placement == WindowPlacement.Fullscreen) {
-                            WindowPlacement.Floating
-                        } else {
-                            WindowPlacement.Fullscreen
-                        }
-                    }
+                        composeWindowState.placement =
+                            if (composeWindowState.placement == WindowPlacement.Fullscreen) {
+                                WindowPlacement.Floating
+                            } else {
+                                WindowPlacement.Fullscreen
+                            }
+                    },
                 )
             }
 
@@ -680,9 +711,9 @@ fun ApplicationScope.BossWindow(
                         onClick = {
                             MenuActionsHandler.triggerRevealPlugin(
                                 windowId = windowState.id,
-                                pluginId = panelInfo.id.panelId
+                                pluginId = panelInfo.id.panelId,
                             )
-                        }
+                        },
                     )
 
                     // Add separator after every 3rd item for visual grouping
@@ -696,7 +727,7 @@ fun ApplicationScope.BossWindow(
                     Item(
                         text = "(No tools available)",
                         onClick = { },
-                        enabled = false
+                        enabled = false,
                     )
                 }
             }
@@ -707,7 +738,7 @@ fun ApplicationScope.BossWindow(
                     text = if (isCliInstalled) "Reinstall BOSS CLI" else "Install BOSS CLI",
                     onClick = {
                         showCLIInstallDialog = true
-                    }
+                    },
                 )
             }
 
@@ -716,7 +747,7 @@ fun ApplicationScope.BossWindow(
                 Item(
                     "Close Window",
                     shortcut = shortcutBridge.getKeyShortcut(KeymapActions.WINDOW_CLOSE),
-                    onClick = { WindowOperations.closeWindow(windowState.id) }
+                    onClick = { WindowOperations.closeWindow(windowState.id) },
                 )
 
                 Separator()
@@ -725,17 +756,18 @@ fun ApplicationScope.BossWindow(
                     "Minimize",
                     onClick = {
                         window.extendedState = Frame.ICONIFIED
-                    }
+                    },
                 )
                 Item(
                     "Zoom",
                     onClick = {
-                        window.extendedState = if (window.extendedState == Frame.MAXIMIZED_BOTH) {
-                            Frame.NORMAL
-                        } else {
-                            Frame.MAXIMIZED_BOTH
-                        }
-                    }
+                        window.extendedState =
+                            if (window.extendedState == Frame.MAXIMIZED_BOTH) {
+                                Frame.NORMAL
+                            } else {
+                                Frame.MAXIMIZED_BOTH
+                            }
+                    },
                 )
 
                 Separator()
@@ -750,7 +782,7 @@ fun ApplicationScope.BossWindow(
                                 awtWindow.toFront()
                             }
                         }
-                    }
+                    },
                 )
 
                 // Dynamic window list
@@ -763,7 +795,7 @@ fun ApplicationScope.BossWindow(
                                 // Focus would be handled here if we had window focus API
                                 // For now, this shows the window in the list
                             },
-                            enabled = win.id != windowState.id  // Disable current window
+                            enabled = win.id != windowState.id, // Disable current window
                         )
                     }
                 }
@@ -776,7 +808,7 @@ fun ApplicationScope.BossWindow(
                     shortcut = shortcutBridge.getKeyShortcut(KeymapActions.HELP_SHORTCUTS),
                     onClick = {
                         MenuActionsHandler.triggerShowShortcutHelp(windowState.id)
-                    }
+                    },
                 )
 
                 Separator()
@@ -785,14 +817,14 @@ fun ApplicationScope.BossWindow(
                     "Welcome Wizard...",
                     onClick = {
                         showWelcomeWizard = true
-                    }
+                    },
                 )
 
                 Item(
                     "Toolbox Setup Wizard...",
                     onClick = {
                         MenuActionsHandler.triggerShowPluginWizard(windowState.id)
-                    }
+                    },
                 )
 
                 Separator()
@@ -804,7 +836,7 @@ fun ApplicationScope.BossWindow(
                             // Manual check: bypass per-version dismissal
                             UpdateManager.instance.checkForUpdates(force = true)
                         }
-                    }
+                    },
                 )
 
                 Separator()
@@ -813,14 +845,14 @@ fun ApplicationScope.BossWindow(
                     "Reset Browser...",
                     onClick = {
                         showResetBrowserDialog = true
-                    }
+                    },
                 )
 
                 Item(
                     "Reset Terminal...",
                     onClick = {
                         showResetTerminalDialog = true
-                    }
+                    },
                 )
 
                 Separator()
@@ -831,7 +863,7 @@ fun ApplicationScope.BossWindow(
                         menuScope.launch {
                             MenuActionsHandler.triggerReloadAllPlugins(windowState.id)
                         }
-                    }
+                    },
                 )
 
                 // Debug: Test crash reporter (Issue #543)
@@ -841,7 +873,7 @@ fun ApplicationScope.BossWindow(
                     "Trigger Test Crash...",
                     onClick = {
                         shouldTriggerTestCrash = true
-                    }
+                    },
                 )
             }
         }
@@ -865,7 +897,7 @@ fun ApplicationScope.BossWindow(
                             window.extendedState = if (shouldMaximize) Frame.MAXIMIZED_BOTH else Frame.NORMAL
                             // isMaximized will be updated by WindowStateListener
                         }
-                    }
+                    },
                 )
             }
         }
@@ -877,7 +909,7 @@ fun ApplicationScope.BossWindow(
                     showCLIInstallDialog = false
                     // Refresh CLI installation status after dialog closes
                     isCliInstalled = CLIInstaller.isInstalled()
-                }
+                },
             )
         }
 
@@ -900,27 +932,50 @@ fun ApplicationScope.BossWindow(
                         when {
                             isResetting -> {
                                 Text("Resetting browser profile...")
-                                Spacer(modifier = androidx.compose.ui.Modifier.height(8.dp))
+                                Spacer(
+                                    modifier =
+                                        androidx.compose.ui.Modifier
+                                            .height(8.dp),
+                                )
                                 Text("Please wait, this may take a moment.")
                             }
+
                             resetBrowserResult == null -> {
                                 Text("This will reset the browser to fix persistent issues.")
-                                Spacer(modifier = androidx.compose.ui.Modifier.height(8.dp))
+                                Spacer(
+                                    modifier =
+                                        androidx.compose.ui.Modifier
+                                            .height(8.dp),
+                                )
                                 Text("The following will be cleared:")
                                 Text("• Browser cache and cookies")
                                 Text("• Saved login sessions")
                                 Text("• Browser history")
-                                Spacer(modifier = androidx.compose.ui.Modifier.height(8.dp))
+                                Spacer(
+                                    modifier =
+                                        androidx.compose.ui.Modifier
+                                            .height(8.dp),
+                                )
                                 Text("All browser tabs will be closed. Continue?")
                             }
+
                             resetBrowserResult == true -> {
                                 Text("✅ Browser reset successful!")
-                                Spacer(modifier = androidx.compose.ui.Modifier.height(8.dp))
+                                Spacer(
+                                    modifier =
+                                        androidx.compose.ui.Modifier
+                                            .height(8.dp),
+                                )
                                 Text("Please close any browser tabs and reopen them.")
                             }
+
                             else -> {
                                 Text("❌ Browser reset failed.")
-                                Spacer(modifier = androidx.compose.ui.Modifier.height(8.dp))
+                                Spacer(
+                                    modifier =
+                                        androidx.compose.ui.Modifier
+                                            .height(8.dp),
+                                )
                                 Text("Please try restarting BOSS manually.")
                             }
                         }
@@ -931,6 +986,7 @@ fun ApplicationScope.BossWindow(
                         isResetting -> {
                             // No button while resetting
                         }
+
                         resetBrowserResult == null -> {
                             Button(
                                 onClick = {
@@ -941,19 +997,21 @@ fun ApplicationScope.BossWindow(
                                         isResetting = false
                                     }
                                 },
-                                colors = ButtonDefaults.buttonColors(
-                                    backgroundColor = BossTheme.colors.alert
-                                )
+                                colors =
+                                    ButtonDefaults.buttonColors(
+                                        backgroundColor = BossTheme.colors.alert,
+                                    ),
                             ) {
                                 Text("Reset Browser", color = BossTheme.colors.onSignal)
                             }
                         }
+
                         else -> {
                             Button(
                                 onClick = {
                                     showResetBrowserDialog = false
                                     resetBrowserResult = null
-                                }
+                                },
                             ) {
                                 Text("Close")
                             }
@@ -965,12 +1023,12 @@ fun ApplicationScope.BossWindow(
                         TextButton(
                             onClick = {
                                 showResetBrowserDialog = false
-                            }
+                            },
                         ) {
                             Text("Cancel")
                         }
                     }
-                }
+                },
             )
         }
 
@@ -993,27 +1051,50 @@ fun ApplicationScope.BossWindow(
                         when {
                             isResetting -> {
                                 Text("Resetting terminal sessions...")
-                                Spacer(modifier = androidx.compose.ui.Modifier.height(8.dp))
+                                Spacer(
+                                    modifier =
+                                        androidx.compose.ui.Modifier
+                                            .height(8.dp),
+                                )
                                 Text("Please wait, this may take a moment.")
                             }
+
                             resetTerminalResult == null -> {
                                 Text("This will reset all terminals to fix persistent issues.")
-                                Spacer(modifier = androidx.compose.ui.Modifier.height(8.dp))
+                                Spacer(
+                                    modifier =
+                                        androidx.compose.ui.Modifier
+                                            .height(8.dp),
+                                )
                                 Text("The following will be cleared:")
                                 Text("• All terminal sessions")
                                 Text("• Terminal history in current session")
                                 Text("• Running processes")
-                                Spacer(modifier = androidx.compose.ui.Modifier.height(8.dp))
+                                Spacer(
+                                    modifier =
+                                        androidx.compose.ui.Modifier
+                                            .height(8.dp),
+                                )
                                 Text("All terminals will be reset with fresh sessions. Continue?")
                             }
+
                             resetTerminalResult == true -> {
                                 Text("✅ Terminal reset successful!")
-                                Spacer(modifier = androidx.compose.ui.Modifier.height(8.dp))
+                                Spacer(
+                                    modifier =
+                                        androidx.compose.ui.Modifier
+                                            .height(8.dp),
+                                )
                                 Text("Terminal tabs will refresh with new sessions automatically.")
                             }
+
                             else -> {
                                 Text("❌ Terminal reset failed.")
-                                Spacer(modifier = androidx.compose.ui.Modifier.height(8.dp))
+                                Spacer(
+                                    modifier =
+                                        androidx.compose.ui.Modifier
+                                            .height(8.dp),
+                                )
                                 Text("Please try restarting BOSS manually.")
                             }
                         }
@@ -1024,6 +1105,7 @@ fun ApplicationScope.BossWindow(
                         isResetting -> {
                             // No button while resetting
                         }
+
                         resetTerminalResult == null -> {
                             Button(
                                 onClick = {
@@ -1046,19 +1128,21 @@ fun ApplicationScope.BossWindow(
                                         isResetting = false
                                     }
                                 },
-                                colors = ButtonDefaults.buttonColors(
-                                    backgroundColor = BossTheme.colors.alert
-                                )
+                                colors =
+                                    ButtonDefaults.buttonColors(
+                                        backgroundColor = BossTheme.colors.alert,
+                                    ),
                             ) {
                                 Text("Reset Terminal", color = BossTheme.colors.onSignal)
                             }
                         }
+
                         else -> {
                             Button(
                                 onClick = {
                                     showResetTerminalDialog = false
                                     resetTerminalResult = null
-                                }
+                                },
                             ) {
                                 Text("Close")
                             }
@@ -1070,12 +1154,12 @@ fun ApplicationScope.BossWindow(
                         TextButton(
                             onClick = {
                                 showResetTerminalDialog = false
-                            }
+                            },
                         ) {
                             Text("Cancel")
                         }
                     }
-                }
+                },
             )
         }
 
@@ -1083,7 +1167,7 @@ fun ApplicationScope.BossWindow(
         if (showWelcomeWizard) {
             TerminalAPIAccess.TerminalOnboardingWizard(
                 onDismiss = { showWelcomeWizard = false },
-                onComplete = { showWelcomeWizard = false }
+                onComplete = { showWelcomeWizard = false },
             )
         }
 
@@ -1097,7 +1181,7 @@ fun ApplicationScope.BossWindow(
                 onDismiss = { ScreenCaptureNotifier.cancel(request.requestId) },
                 onSelect = { source, audioMode ->
                     ScreenCaptureNotifier.selectSource(request.requestId, source, audioMode)
-                }
+                },
             )
         }
 
@@ -1111,7 +1195,7 @@ fun ApplicationScope.BossWindow(
                     Text(
                         "To share a screen, window, or browser tab, BOSS needs macOS " +
                             "Screen Recording permission. macOS will now ask you to allow \u201CBOSS\u201D. " +
-                            "You can change this anytime in System Settings \u203A Privacy & Security \u203A Screen Recording."
+                            "You can change this anytime in System Settings \u203A Privacy & Security \u203A Screen Recording.",
                     )
                 },
                 confirmButton = {
@@ -1119,7 +1203,7 @@ fun ApplicationScope.BossWindow(
                 },
                 dismissButton = {
                     TextButton(onClick = { ScreenCaptureNotifier.resolvePermissionRationale(false) }) { Text("Not now") }
-                }
+                },
             )
         }
     }

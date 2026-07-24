@@ -21,11 +21,12 @@ import java.io.File
 actual object WorkspaceSettingsManager {
     private val logger = BossLogger.forComponent("WorkspaceSettingsManager")
     private val settingsFile = BossDirectories.resolve("workspace-settings.json")
-    private val json = Json {
-        prettyPrint = true
-        ignoreUnknownKeys = true
-        encodeDefaults = true
-    }
+    private val json =
+        Json {
+            prettyPrint = true
+            ignoreUnknownKeys = true
+            encodeDefaults = true
+        }
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -38,34 +39,36 @@ actual object WorkspaceSettingsManager {
         }
     }
 
-    private suspend fun loadSettingsAsync() = withContext(Dispatchers.IO) {
-        try {
-            settingsFile.parentFile?.mkdirs()
+    private suspend fun loadSettingsAsync() =
+        withContext(Dispatchers.IO) {
+            try {
+                settingsFile.parentFile?.mkdirs()
 
-            if (settingsFile.exists()) {
-                val content = settingsFile.readText()
-                val settings = json.decodeFromString<WorkspaceSettings>(content)
-                _currentSettings.value = settings
-                logger.debug(LogCategory.SYSTEM, "Loaded settings")
-            } else {
+                if (settingsFile.exists()) {
+                    val content = settingsFile.readText()
+                    val settings = json.decodeFromString<WorkspaceSettings>(content)
+                    _currentSettings.value = settings
+                    logger.debug(LogCategory.SYSTEM, "Loaded settings")
+                } else {
+                    val content = json.encodeToString(WorkspaceSettings.serializer(), _currentSettings.value)
+                    settingsFile.writeText(content)
+                    logger.debug(LogCategory.SYSTEM, "Created default settings file")
+                }
+            } catch (e: Exception) {
+                logger.warn(LogCategory.SYSTEM, "Error loading settings", error = e)
+            }
+        }
+
+    actual suspend fun saveSettings() =
+        withContext(Dispatchers.IO) {
+            try {
                 val content = json.encodeToString(WorkspaceSettings.serializer(), _currentSettings.value)
                 settingsFile.writeText(content)
-                logger.debug(LogCategory.SYSTEM, "Created default settings file")
+                logger.debug(LogCategory.SYSTEM, "Settings saved")
+            } catch (e: Exception) {
+                logger.warn(LogCategory.SYSTEM, "Error saving settings", error = e)
             }
-        } catch (e: Exception) {
-            logger.warn(LogCategory.SYSTEM, "Error loading settings", error = e)
         }
-    }
-
-    actual suspend fun saveSettings() = withContext(Dispatchers.IO) {
-        try {
-            val content = json.encodeToString(WorkspaceSettings.serializer(), _currentSettings.value)
-            settingsFile.writeText(content)
-            logger.debug(LogCategory.SYSTEM, "Settings saved")
-        } catch (e: Exception) {
-            logger.warn(LogCategory.SYSTEM, "Error saving settings", error = e)
-        }
-    }
 
     actual suspend fun updateSettings(settings: WorkspaceSettings) {
         _currentSettings.value = settings

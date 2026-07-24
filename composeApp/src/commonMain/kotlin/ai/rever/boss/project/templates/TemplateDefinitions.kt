@@ -7,487 +7,517 @@ package ai.rever.boss.project.templates
  * - {PACKAGE_NAME} - Package name derived from project name (lowercase, no spaces/special chars)
  */
 object TemplateDefinitions {
-
     // ========== Empty Project ==========
 
-    val emptyFiles: List<TemplateFile> = listOf(
-        TemplateFile(
-            relativePath = ".gitignore",
-            content = """
-                # IDE
-                .idea/
-                *.iml
-                .vscode/
+    val emptyFiles: List<TemplateFile> =
+        listOf(
+            TemplateFile(
+                relativePath = ".gitignore",
+                content =
+                    """
+                    # IDE
+                    .idea/
+                    *.iml
+                    .vscode/
 
-                # OS
-                .DS_Store
-                Thumbs.db
+                    # OS
+                    .DS_Store
+                    Thumbs.db
 
-                # Build outputs
-                build/
-                dist/
-                out/
-            """.trimIndent()
-        ),
-        TemplateFile(
-            relativePath = "README.md",
-            content = """
-                # {PROJECT_NAME}
+                    # Build outputs
+                    build/
+                    dist/
+                    out/
+                    """.trimIndent(),
+            ),
+            TemplateFile(
+                relativePath = "README.md",
+                content =
+                    """
+                    # {PROJECT_NAME}
 
-                A new project created with BOSS Console.
+                    A new project created with BOSS Console.
 
-                ## Getting Started
+                    ## Getting Started
 
-                Add your project description and instructions here.
-            """.trimIndent()
+                    Add your project description and instructions here.
+                    """.trimIndent(),
+            ),
         )
-    )
 
     // ========== Kotlin/JVM Project ==========
 
-    val kotlinJvmFiles: List<TemplateFile> = listOf(
-        TemplateFile(
-            relativePath = "build.gradle.kts",
-            content = """
-                plugins {
-                    kotlin("jvm") version "2.0.21"
-                    application
-                }
+    val kotlinJvmFiles: List<TemplateFile> =
+        listOf(
+            TemplateFile(
+                relativePath = "build.gradle.kts",
+                content =
+                    """
+                    plugins {
+                        kotlin("jvm") version "2.0.21"
+                        application
+                    }
 
-                group = "{PACKAGE_NAME}"
-                version = "1.0-SNAPSHOT"
+                    group = "{PACKAGE_NAME}"
+                    version = "1.0-SNAPSHOT"
 
-                repositories {
-                    mavenCentral()
-                }
+                    repositories {
+                        mavenCentral()
+                    }
 
-                dependencies {
-                    testImplementation(kotlin("test"))
-                }
+                    dependencies {
+                        testImplementation(kotlin("test"))
+                    }
 
-                tasks.test {
-                    useJUnitPlatform()
-                }
+                    tasks.test {
+                        useJUnitPlatform()
+                    }
 
-                kotlin {
-                    jvmToolchain(21)
-                }
+                    kotlin {
+                        jvmToolchain(21)
+                    }
 
-                application {
-                    mainClass.set("{PACKAGE_NAME}.MainKt")
-                }
-            """.trimIndent()
-        ),
-        TemplateFile(
-            relativePath = "settings.gradle.kts",
-            content = """
-                rootProject.name = "{PROJECT_NAME}"
-            """.trimIndent()
-        ),
-        TemplateFile(
-            relativePath = "gradle.properties",
-            content = """
-                kotlin.code.style=official
-            """.trimIndent()
-        ),
-        TemplateFile(
-            relativePath = "src/main/kotlin/Main.kt",
-            content = """
-                package {PACKAGE_NAME}
+                    application {
+                        mainClass.set("{PACKAGE_NAME}.MainKt")
+                    }
+                    """.trimIndent(),
+            ),
+            TemplateFile(
+                relativePath = "settings.gradle.kts",
+                content =
+                    """
+                    rootProject.name = "{PROJECT_NAME}"
+                    """.trimIndent(),
+            ),
+            TemplateFile(
+                relativePath = "gradle.properties",
+                content =
+                    """
+                    kotlin.code.style=official
+                    """.trimIndent(),
+            ),
+            TemplateFile(
+                relativePath = "src/main/kotlin/Main.kt",
+                content =
+                    """
+                    package {PACKAGE_NAME}
 
-                fun main() {
-                    println("Hello, {PROJECT_NAME}!")
-                }
-            """.trimIndent()
-        ),
-        TemplateFile(
-            relativePath = "src/test/kotlin/.gitkeep",
-            content = ""
-        ),
-        TemplateFile(
-            relativePath = ".gitignore",
-            content = """
-                # Gradle
-                .gradle/
-                build/
-                !gradle/wrapper/gradle-wrapper.jar
+                    fun main() {
+                        println("Hello, {PROJECT_NAME}!")
+                    }
+                    """.trimIndent(),
+            ),
+            TemplateFile(
+                relativePath = "src/test/kotlin/.gitkeep",
+                content = "",
+            ),
+            TemplateFile(
+                relativePath = ".gitignore",
+                content =
+                    """
+                    # Gradle
+                    .gradle/
+                    build/
+                    !gradle/wrapper/gradle-wrapper.jar
 
-                # IDE
-                .idea/
-                *.iml
-                .vscode/
+                    # IDE
+                    .idea/
+                    *.iml
+                    .vscode/
 
-                # OS
-                .DS_Store
-                Thumbs.db
+                    # OS
+                    .DS_Store
+                    Thumbs.db
 
-                # Kotlin
-                *.class
-            """.trimIndent()
-        ),
-        TemplateFile(
-            relativePath = "README.md",
-            content = """
-                # {PROJECT_NAME}
+                    # Kotlin
+                    *.class
+                    """.trimIndent(),
+            ),
+            TemplateFile(
+                relativePath = "README.md",
+                content =
+                    """
+                    # {PROJECT_NAME}
 
-                A Kotlin/JVM project created with BOSS Console.
+                    A Kotlin/JVM project created with BOSS Console.
 
-                ## Building
+                    ## Building
 
-                ```bash
-                ./gradlew build
-                ```
+                    ```bash
+                    ./gradlew build
+                    ```
 
-                ## Running
+                    ## Running
 
-                ```bash
-                ./gradlew run
-                ```
+                    ```bash
+                    ./gradlew run
+                    ```
 
-                ## Testing
+                    ## Testing
 
-                ```bash
-                ./gradlew test
-                ```
-            """.trimIndent()
+                    ```bash
+                    ./gradlew test
+                    ```
+                    """.trimIndent(),
+            ),
         )
-    )
 
     // ========== Node.js Project ==========
 
-    val nodeJsFiles: List<TemplateFile> = listOf(
-        TemplateFile(
-            relativePath = "package.json",
-            content = """
-                {
-                  "name": "{PACKAGE_NAME}",
-                  "version": "1.0.0",
-                  "description": "A Node.js project created with BOSS Console",
-                  "main": "index.js",
-                  "scripts": {
-                    "start": "node index.js",
-                    "test": "echo \"Error: no test specified\" && exit 1"
-                  },
-                  "keywords": [],
-                  "author": "",
-                  "license": "ISC"
-                }
-            """.trimIndent()
-        ),
-        TemplateFile(
-            relativePath = "index.js",
-            content = """
-                // {PROJECT_NAME}
-                // A Node.js project created with BOSS Console
+    val nodeJsFiles: List<TemplateFile> =
+        listOf(
+            TemplateFile(
+                relativePath = "package.json",
+                content =
+                    """
+                    {
+                      "name": "{PACKAGE_NAME}",
+                      "version": "1.0.0",
+                      "description": "A Node.js project created with BOSS Console",
+                      "main": "index.js",
+                      "scripts": {
+                        "start": "node index.js",
+                        "test": "echo \"Error: no test specified\" && exit 1"
+                      },
+                      "keywords": [],
+                      "author": "",
+                      "license": "ISC"
+                    }
+                    """.trimIndent(),
+            ),
+            TemplateFile(
+                relativePath = "index.js",
+                content =
+                    """
+                    // {PROJECT_NAME}
+                    // A Node.js project created with BOSS Console
 
-                console.log('Hello from {PROJECT_NAME}!');
-            """.trimIndent()
-        ),
-        TemplateFile(
-            relativePath = ".gitignore",
-            content = """
-                # Dependencies
-                node_modules/
+                    console.log('Hello from {PROJECT_NAME}!');
+                    """.trimIndent(),
+            ),
+            TemplateFile(
+                relativePath = ".gitignore",
+                content =
+                    """
+                    # Dependencies
+                    node_modules/
 
-                # Build outputs
-                dist/
-                build/
+                    # Build outputs
+                    dist/
+                    build/
 
-                # Environment
-                .env
-                .env.local
-                .env.*.local
+                    # Environment
+                    .env
+                    .env.local
+                    .env.*.local
 
-                # IDE
-                .idea/
-                .vscode/
-                *.iml
+                    # IDE
+                    .idea/
+                    .vscode/
+                    *.iml
 
-                # OS
-                .DS_Store
-                Thumbs.db
+                    # OS
+                    .DS_Store
+                    Thumbs.db
 
-                # Logs
-                *.log
-                npm-debug.log*
-            """.trimIndent()
-        ),
-        TemplateFile(
-            relativePath = "README.md",
-            content = """
-                # {PROJECT_NAME}
+                    # Logs
+                    *.log
+                    npm-debug.log*
+                    """.trimIndent(),
+            ),
+            TemplateFile(
+                relativePath = "README.md",
+                content =
+                    """
+                    # {PROJECT_NAME}
 
-                A Node.js project created with BOSS Console.
+                    A Node.js project created with BOSS Console.
 
-                ## Getting Started
+                    ## Getting Started
 
-                ```bash
-                npm install
-                npm start
-                ```
-            """.trimIndent()
+                    ```bash
+                    npm install
+                    npm start
+                    ```
+                    """.trimIndent(),
+            ),
         )
-    )
 
     // ========== Go Project ==========
 
-    val goFiles: List<TemplateFile> = listOf(
-        TemplateFile(
-            relativePath = "go.mod",
-            content = """
-                module {PACKAGE_NAME}
+    val goFiles: List<TemplateFile> =
+        listOf(
+            TemplateFile(
+                relativePath = "go.mod",
+                content =
+                    """
+                    module {PACKAGE_NAME}
 
-                go 1.22
-            """.trimIndent()
-        ),
-        TemplateFile(
-            relativePath = "main.go",
-            content = """
-                package main
+                    go 1.22
+                    """.trimIndent(),
+            ),
+            TemplateFile(
+                relativePath = "main.go",
+                content =
+                    """
+                    package main
 
-                import "fmt"
+                    import "fmt"
 
-                func main() {
-                	fmt.Println("Hello from {PROJECT_NAME}!")
-                }
-            """.trimIndent()
-        ),
-        TemplateFile(
-            relativePath = ".gitignore",
-            content = """
-                # Binaries
-                *.exe
-                *.exe~
-                *.dll
-                *.so
-                *.dylib
+                    func main() {
+                    	fmt.Println("Hello from {PROJECT_NAME}!")
+                    }
+                    """.trimIndent(),
+            ),
+            TemplateFile(
+                relativePath = ".gitignore",
+                content =
+                    """
+                    # Binaries
+                    *.exe
+                    *.exe~
+                    *.dll
+                    *.so
+                    *.dylib
 
-                # Test binary
-                *.test
+                    # Test binary
+                    *.test
 
-                # Output
-                /bin/
-                /build/
+                    # Output
+                    /bin/
+                    /build/
 
-                # Go workspace
-                go.work
+                    # Go workspace
+                    go.work
 
-                # IDE
-                .idea/
-                .vscode/
-                *.iml
+                    # IDE
+                    .idea/
+                    .vscode/
+                    *.iml
 
-                # OS
-                .DS_Store
-                Thumbs.db
-            """.trimIndent()
-        ),
-        TemplateFile(
-            relativePath = "README.md",
-            content = """
-                # {PROJECT_NAME}
+                    # OS
+                    .DS_Store
+                    Thumbs.db
+                    """.trimIndent(),
+            ),
+            TemplateFile(
+                relativePath = "README.md",
+                content =
+                    """
+                    # {PROJECT_NAME}
 
-                A Go project created with BOSS Console.
+                    A Go project created with BOSS Console.
 
-                ## Building
+                    ## Building
 
-                ```bash
-                go build
-                ```
+                    ```bash
+                    go build
+                    ```
 
-                ## Running
+                    ## Running
 
-                ```bash
-                go run .
-                ```
+                    ```bash
+                    go run .
+                    ```
 
-                ## Testing
+                    ## Testing
 
-                ```bash
-                go test ./...
-                ```
-            """.trimIndent()
+                    ```bash
+                    go test ./...
+                    ```
+                    """.trimIndent(),
+            ),
         )
-    )
 
     // ========== Rust Project ==========
 
-    val rustFiles: List<TemplateFile> = listOf(
-        TemplateFile(
-            relativePath = "Cargo.toml",
-            content = """
-                [package]
-                name = "{PACKAGE_NAME}"
-                version = "0.1.0"
-                edition = "2021"
+    val rustFiles: List<TemplateFile> =
+        listOf(
+            TemplateFile(
+                relativePath = "Cargo.toml",
+                content =
+                    """
+                    [package]
+                    name = "{PACKAGE_NAME}"
+                    version = "0.1.0"
+                    edition = "2021"
 
-                [dependencies]
-            """.trimIndent()
-        ),
-        TemplateFile(
-            relativePath = "src/main.rs",
-            content = """
-                fn main() {
-                    println!("Hello from {PROJECT_NAME}!");
-                }
-            """.trimIndent()
-        ),
-        TemplateFile(
-            relativePath = ".gitignore",
-            content = """
-                # Cargo
-                /target/
-                Cargo.lock
+                    [dependencies]
+                    """.trimIndent(),
+            ),
+            TemplateFile(
+                relativePath = "src/main.rs",
+                content =
+                    """
+                    fn main() {
+                        println!("Hello from {PROJECT_NAME}!");
+                    }
+                    """.trimIndent(),
+            ),
+            TemplateFile(
+                relativePath = ".gitignore",
+                content =
+                    """
+                    # Cargo
+                    /target/
+                    Cargo.lock
 
-                # IDE
-                .idea/
-                .vscode/
-                *.iml
+                    # IDE
+                    .idea/
+                    .vscode/
+                    *.iml
 
-                # OS
-                .DS_Store
-                Thumbs.db
-            """.trimIndent()
-        ),
-        TemplateFile(
-            relativePath = "README.md",
-            content = """
-                # {PROJECT_NAME}
+                    # OS
+                    .DS_Store
+                    Thumbs.db
+                    """.trimIndent(),
+            ),
+            TemplateFile(
+                relativePath = "README.md",
+                content =
+                    """
+                    # {PROJECT_NAME}
 
-                A Rust project created with BOSS Console.
+                    A Rust project created with BOSS Console.
 
-                ## Building
+                    ## Building
 
-                ```bash
-                cargo build
-                ```
+                    ```bash
+                    cargo build
+                    ```
 
-                ## Running
+                    ## Running
 
-                ```bash
-                cargo run
-                ```
+                    ```bash
+                    cargo run
+                    ```
 
-                ## Testing
+                    ## Testing
 
-                ```bash
-                cargo test
-                ```
-            """.trimIndent()
+                    ```bash
+                    cargo test
+                    ```
+                    """.trimIndent(),
+            ),
         )
-    )
 
     // ========== Python Project ==========
 
-    val pythonFiles: List<TemplateFile> = listOf(
-        TemplateFile(
-            relativePath = "pyproject.toml",
-            content = """
-                [build-system]
-                requires = ["setuptools>=61.0"]
-                build-backend = "setuptools.build_meta"
+    val pythonFiles: List<TemplateFile> =
+        listOf(
+            TemplateFile(
+                relativePath = "pyproject.toml",
+                content =
+                    """
+                    [build-system]
+                    requires = ["setuptools>=61.0"]
+                    build-backend = "setuptools.build_meta"
 
-                [project]
-                name = "{PACKAGE_NAME}"
-                version = "0.1.0"
-                description = "A Python project created with BOSS Console"
-                readme = "README.md"
-                requires-python = ">=3.10"
-                dependencies = []
+                    [project]
+                    name = "{PACKAGE_NAME}"
+                    version = "0.1.0"
+                    description = "A Python project created with BOSS Console"
+                    readme = "README.md"
+                    requires-python = ">=3.10"
+                    dependencies = []
 
-                [project.optional-dependencies]
-                dev = [
-                    "pytest>=7.0",
-                ]
-            """.trimIndent()
-        ),
-        TemplateFile(
-            relativePath = "main.py",
-            content = """
-                #!/usr/bin/env python3
-                \"\"\"
-                {PROJECT_NAME}
-                A Python project created with BOSS Console.
-                \"\"\"
-
-
-                def main():
-                    print("Hello from {PROJECT_NAME}!")
+                    [project.optional-dependencies]
+                    dev = [
+                        "pytest>=7.0",
+                    ]
+                    """.trimIndent(),
+            ),
+            TemplateFile(
+                relativePath = "main.py",
+                content =
+                    """
+                    #!/usr/bin/env python3
+                    \"\"\"
+                    {PROJECT_NAME}
+                    A Python project created with BOSS Console.
+                    \"\"\"
 
 
-                if __name__ == "__main__":
-                    main()
-            """.trimIndent(),
-            isExecutable = true
-        ),
-        TemplateFile(
-            relativePath = "requirements.txt",
-            content = """
-                # Add your dependencies here
-            """.trimIndent()
-        ),
-        TemplateFile(
-            relativePath = ".gitignore",
-            content = """
-                # Python
-                __pycache__/
-                *.py[cod]
-                *${'$'}py.class
-                *.so
+                    def main():
+                        print("Hello from {PROJECT_NAME}!")
 
-                # Virtual environments
-                .venv/
-                venv/
-                ENV/
-                env/
 
-                # Distribution / packaging
-                dist/
-                build/
-                *.egg-info/
+                    if __name__ == "__main__":
+                        main()
+                    """.trimIndent(),
+                isExecutable = true,
+            ),
+            TemplateFile(
+                relativePath = "requirements.txt",
+                content =
+                    """
+                    # Add your dependencies here
+                    """.trimIndent(),
+            ),
+            TemplateFile(
+                relativePath = ".gitignore",
+                content =
+                    """
+                    # Python
+                    __pycache__/
+                    *.py[cod]
+                    *${'$'}py.class
+                    *.so
 
-                # IDE
-                .idea/
-                .vscode/
-                *.iml
+                    # Virtual environments
+                    .venv/
+                    venv/
+                    ENV/
+                    env/
 
-                # OS
-                .DS_Store
-                Thumbs.db
+                    # Distribution / packaging
+                    dist/
+                    build/
+                    *.egg-info/
 
-                # Testing
-                .pytest_cache/
-                .coverage
-                htmlcov/
-            """.trimIndent()
-        ),
-        TemplateFile(
-            relativePath = "README.md",
-            content = """
-                # {PROJECT_NAME}
+                    # IDE
+                    .idea/
+                    .vscode/
+                    *.iml
 
-                A Python project created with BOSS Console.
+                    # OS
+                    .DS_Store
+                    Thumbs.db
 
-                ## Setup
+                    # Testing
+                    .pytest_cache/
+                    .coverage
+                    htmlcov/
+                    """.trimIndent(),
+            ),
+            TemplateFile(
+                relativePath = "README.md",
+                content =
+                    """
+                    # {PROJECT_NAME}
 
-                ```bash
-                python -m venv .venv
-                source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-                pip install -e ".[dev]"
-                ```
+                    A Python project created with BOSS Console.
 
-                ## Running
+                    ## Setup
 
-                ```bash
-                python main.py
-                ```
+                    ```bash
+                    python -m venv .venv
+                    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+                    pip install -e ".[dev]"
+                    ```
 
-                ## Testing
+                    ## Running
 
-                ```bash
-                pytest
-                ```
-            """.trimIndent()
+                    ```bash
+                    python main.py
+                    ```
+
+                    ## Testing
+
+                    ```bash
+                    pytest
+                    ```
+                    """.trimIndent(),
+            ),
         )
-    )
 }

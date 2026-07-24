@@ -43,42 +43,44 @@ fun TerminalLinkOpenDialog(
     hasTabs: Boolean,
     hasSplits: Boolean,
     onDismiss: () -> Unit,
-    onOpenLink: (mode: TerminalLinkOpenMode, rememberChoice: Boolean) -> Unit
+    onOpenLink: (mode: TerminalLinkOpenMode, rememberChoice: Boolean) -> Unit,
 ) {
     var rememberChoice by remember { mutableStateOf(false) }
 
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            dismissOnBackPress = true,
-            dismissOnClickOutside = true,
-            usePlatformDefaultWidth = false
-        )
+        properties =
+            DialogProperties(
+                dismissOnBackPress = true,
+                dismissOnClickOutside = true,
+                usePlatformDefaultWidth = false,
+            ),
     ) {
         Card(
-            modifier = Modifier
-                .width(380.dp)
-                .onKeyEvent { event ->
-                    if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
-                        onDismiss()
-                        true
-                    } else {
-                        false
-                    }
-                },
+            modifier =
+                Modifier
+                    .width(380.dp)
+                    .onKeyEvent { event ->
+                        if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                            onDismiss()
+                            true
+                        } else {
+                            false
+                        }
+                    },
             shape = RoundedCornerShape(8.dp),
             backgroundColor = BossTheme.colors.panel,
-            elevation = 8.dp
+            elevation = 8.dp,
         ) {
             Column(
-                modifier = Modifier.padding(20.dp)
+                modifier = Modifier.padding(20.dp),
             ) {
                 // Title
                 Text(
                     text = "Open Link",
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
-                    color = BossTheme.colors.textPrimary
+                    color = BossTheme.colors.textPrimary,
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -89,7 +91,7 @@ fun TerminalLinkOpenDialog(
                     fontSize = 12.sp,
                     color = BossTheme.colors.textSecondary,
                     maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
                 )
 
                 Spacer(modifier = Modifier.height(20.dp))
@@ -102,7 +104,7 @@ fun TerminalLinkOpenDialog(
                             icon = Icons.AutoMirrored.Outlined.OpenInNew,
                             title = "Existing Split",
                             description = "Open in other panel",
-                            onClick = { onOpenLink(TerminalLinkOpenMode.EXISTING_SPLIT, rememberChoice) }
+                            onClick = { onOpenLink(TerminalLinkOpenMode.EXISTING_SPLIT, rememberChoice) },
                         )
 
                         Spacer(modifier = Modifier.height(8.dp))
@@ -112,7 +114,7 @@ fun TerminalLinkOpenDialog(
                         icon = Icons.Outlined.ViewColumn,
                         title = if (hasSplits) "New Vertical Split" else "Vertical Split",
                         description = "Open alongside current tab",
-                        onClick = { onOpenLink(TerminalLinkOpenMode.VERTICAL_SPLIT, rememberChoice) }
+                        onClick = { onOpenLink(TerminalLinkOpenMode.VERTICAL_SPLIT, rememberChoice) },
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
@@ -121,7 +123,7 @@ fun TerminalLinkOpenDialog(
                         icon = Icons.Outlined.ViewAgenda,
                         title = if (hasSplits) "New Horizontal Split" else "Horizontal Split",
                         description = "Open below current tab",
-                        onClick = { onOpenLink(TerminalLinkOpenMode.HORIZONTAL_SPLIT, rememberChoice) }
+                        onClick = { onOpenLink(TerminalLinkOpenMode.HORIZONTAL_SPLIT, rememberChoice) },
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
@@ -131,7 +133,7 @@ fun TerminalLinkOpenDialog(
                     icon = Icons.Outlined.Tab,
                     title = "New Tab",
                     description = "Open in browser tab",
-                    onClick = { onOpenLink(TerminalLinkOpenMode.NEW_TAB, rememberChoice) }
+                    onClick = { onOpenLink(TerminalLinkOpenMode.NEW_TAB, rememberChoice) },
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -140,7 +142,7 @@ fun TerminalLinkOpenDialog(
                     icon = Icons.AutoMirrored.Outlined.Launch,
                     title = "System Default",
                     description = "Open outside BOSS with the default app",
-                    onClick = { onOpenLink(TerminalLinkOpenMode.SYSTEM_DEFAULT, rememberChoice) }
+                    onClick = { onOpenLink(TerminalLinkOpenMode.SYSTEM_DEFAULT, rememberChoice) },
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -148,25 +150,27 @@ fun TerminalLinkOpenDialog(
                 // Remember checkbox - Row handles click, so Checkbox uses null for onCheckedChange
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { rememberChoice = !rememberChoice }
-                        .padding(vertical = 4.dp)
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { rememberChoice = !rememberChoice }
+                            .padding(vertical = 4.dp),
                 ) {
                     Checkbox(
                         checked = rememberChoice,
                         onCheckedChange = null, // Row handles click
-                        colors = CheckboxDefaults.colors(
-                            checkedColor = BossTheme.colors.signal,
-                            uncheckedColor = BossTheme.colors.textMuted,
-                            checkmarkColor = Color.White
-                        )
+                        colors =
+                            CheckboxDefaults.colors(
+                                checkedColor = BossTheme.colors.signal,
+                                uncheckedColor = BossTheme.colors.textMuted,
+                                checkmarkColor = Color.White,
+                            ),
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "Remember my choice",
                         fontSize = 14.sp,
-                        color = BossTheme.colors.textPrimary
+                        color = BossTheme.colors.textPrimary,
                     )
                 }
 
@@ -175,13 +179,14 @@ fun TerminalLinkOpenDialog(
                 // Cancel button
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
+                    horizontalArrangement = Arrangement.End,
                 ) {
                     TextButton(
                         onClick = onDismiss,
-                        colors = ButtonDefaults.textButtonColors(
-                            contentColor = BossTheme.colors.textSecondary
-                        )
+                        colors =
+                            ButtonDefaults.textButtonColors(
+                                contentColor = BossTheme.colors.textSecondary,
+                            ),
                     ) {
                         Text("Cancel")
                     }
@@ -199,27 +204,29 @@ private fun LinkOpenOption(
     icon: ImageVector,
     title: String,
     description: String,
-    onClick: () -> Unit
+    onClick: () -> Unit,
 ) {
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() },
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable { onClick() },
         backgroundColor = BossTheme.colors.raised,
         shape = RoundedCornerShape(6.dp),
-        elevation = 0.dp
+        elevation = 0.dp,
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = title,
                 tint = BossTheme.colors.signal,
-                modifier = Modifier.size(24.dp)
+                modifier = Modifier.size(24.dp),
             )
             Spacer(modifier = Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -227,12 +234,12 @@ private fun LinkOpenOption(
                     text = title,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
-                    color = BossTheme.colors.textPrimary
+                    color = BossTheme.colors.textPrimary,
                 )
                 Text(
                     text = description,
                     fontSize = 12.sp,
-                    color = BossTheme.colors.textSecondary
+                    color = BossTheme.colors.textSecondary,
                 )
             }
         }

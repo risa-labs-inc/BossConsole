@@ -15,7 +15,6 @@ import kotlin.time.Duration.Companion.seconds
  * policy backs the host-side recovery loop in [CoreAuthService].
  */
 internal object SessionRecoveryPolicy {
-
     sealed interface Action {
         /** Transient failure (connectivity, timeout, 5xx) — retry with backoff. */
         data object Retry : Action
@@ -35,17 +34,18 @@ internal object SessionRecoveryPolicy {
      * timeout) and 429 (rate limited — GoTrue and the Cloudflare edge both
      * emit these under load) say nothing about the token itself and retry.
      */
-    fun actionFor(error: Throwable): Action = when (error) {
-        is RestException -> actionForStatus(error.statusCode)
-        else -> Action.Retry
-    }
+    fun actionFor(error: Throwable): Action =
+        when (error) {
+            is RestException -> actionForStatus(error.statusCode)
+            else -> Action.Retry
+        }
 
-    fun actionForStatus(statusCode: Int): Action = when {
-        statusCode == 408 || statusCode == 429 -> Action.Retry
-        statusCode in 400..499 -> Action.ClearSession
-        else -> Action.Retry
-    }
+    fun actionForStatus(statusCode: Int): Action =
+        when {
+            statusCode == 408 || statusCode == 429 -> Action.Retry
+            statusCode in 400..499 -> Action.ClearSession
+            else -> Action.Retry
+        }
 
-    fun nextBackoff(current: Duration): Duration =
-        (current * 2).coerceAtMost(maxBackoff)
+    fun nextBackoff(current: Duration): Duration = (current * 2).coerceAtMost(maxBackoff)
 }

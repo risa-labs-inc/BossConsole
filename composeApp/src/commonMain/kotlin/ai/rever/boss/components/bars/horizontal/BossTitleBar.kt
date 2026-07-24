@@ -19,17 +19,18 @@ import androidx.compose.ui.unit.sp
 fun BossTitleBar(
     title: String = "Boss Console",
     height: Dp = 26.dp,
-    onToggleMaximize: (() -> Unit)? = null
+    onToggleMaximize: (() -> Unit)? = null,
 ) {
     HorizontalBar(
-        modifier = Modifier.pointerInput(Unit) {
-            detectTapGestures(
-                onDoubleTap = {
-                    onToggleMaximize?.invoke()
-                }
-            )
-        },
-        height = height
+        modifier =
+            Modifier.pointerInput(Unit) {
+                detectTapGestures(
+                    onDoubleTap = {
+                        onToggleMaximize?.invoke()
+                    },
+                )
+            },
+        height = height,
     ) {
         Text(
             text = title,
@@ -37,9 +38,10 @@ fun BossTitleBar(
             fontSize = 13.sp,
             fontWeight = FontWeight.Medium,
             textAlign = TextAlign.Center,
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.Center)
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.Center),
         )
     }
     Divider(color = BossTheme.colors.line)

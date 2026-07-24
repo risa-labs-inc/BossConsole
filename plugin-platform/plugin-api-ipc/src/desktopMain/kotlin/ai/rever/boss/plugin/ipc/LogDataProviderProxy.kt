@@ -25,7 +25,6 @@ class LogDataProviderProxy(
     channel: ManagedChannel,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
 ) : LogDataProvider {
-
     private val stub = LogServiceGrpcKt.LogServiceCoroutineStub(channel)
 
     private val _logs = MutableStateFlow<List<LogEntryData>>(emptyList())
@@ -55,8 +54,14 @@ class LogDataProviderProxy(
                     _logs.value = response.entriesList.map { it.toData() }
                 }
                 delayMs = 1_000L
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (_: Exception) { delay(delayMs); delayMs = (delayMs * 2).coerceAtMost(30_000L) }
+            } catch (
+                e: kotlinx.coroutines.CancellationException,
+            ) {
+                throw e
+            } catch (_: Exception) {
+                delay(delayMs)
+                delayMs = (delayMs * 2).coerceAtMost(30_000L)
+            }
         }
     }
 
@@ -65,15 +70,22 @@ class LogDataProviderProxy(
         while (scope.isActive) {
             try {
                 stub.watchFilter(Empty.getDefaultInstance()).collect { response ->
-                    _filter.value = when (response.filter) {
-                        LogFilterType.LOG_FILTER_TYPE_STDOUT -> LogFilterData.STDOUT
-                        LogFilterType.LOG_FILTER_TYPE_STDERR -> LogFilterData.STDERR
-                        else -> LogFilterData.ALL
-                    }
+                    _filter.value =
+                        when (response.filter) {
+                            LogFilterType.LOG_FILTER_TYPE_STDOUT -> LogFilterData.STDOUT
+                            LogFilterType.LOG_FILTER_TYPE_STDERR -> LogFilterData.STDERR
+                            else -> LogFilterData.ALL
+                        }
                 }
                 delayMs = 1_000L
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (_: Exception) { delay(delayMs); delayMs = (delayMs * 2).coerceAtMost(30_000L) }
+            } catch (
+                e: kotlinx.coroutines.CancellationException,
+            ) {
+                throw e
+            } catch (_: Exception) {
+                delay(delayMs)
+                delayMs = (delayMs * 2).coerceAtMost(30_000L)
+            }
         }
     }
 
@@ -85,8 +97,14 @@ class LogDataProviderProxy(
                     _searchQuery.value = response.value
                 }
                 delayMs = 1_000L
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (_: Exception) { delay(delayMs); delayMs = (delayMs * 2).coerceAtMost(30_000L) }
+            } catch (
+                e: kotlinx.coroutines.CancellationException,
+            ) {
+                throw e
+            } catch (_: Exception) {
+                delay(delayMs)
+                delayMs = (delayMs * 2).coerceAtMost(30_000L)
+            }
         }
     }
 
@@ -98,21 +116,29 @@ class LogDataProviderProxy(
                     _autoScroll.value = response.value
                 }
                 delayMs = 1_000L
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (_: Exception) { delay(delayMs); delayMs = (delayMs * 2).coerceAtMost(30_000L) }
+            } catch (
+                e: kotlinx.coroutines.CancellationException,
+            ) {
+                throw e
+            } catch (_: Exception) {
+                delay(delayMs)
+                delayMs = (delayMs * 2).coerceAtMost(30_000L)
+            }
         }
     }
 
     override fun setFilter(filter: LogFilterData) {
         scope.launch {
             try {
-                val protoFilter = when (filter) {
-                    LogFilterData.ALL -> LogFilterType.LOG_FILTER_TYPE_ALL
-                    LogFilterData.STDOUT -> LogFilterType.LOG_FILTER_TYPE_STDOUT
-                    LogFilterData.STDERR -> LogFilterType.LOG_FILTER_TYPE_STDERR
-                }
+                val protoFilter =
+                    when (filter) {
+                        LogFilterData.ALL -> LogFilterType.LOG_FILTER_TYPE_ALL
+                        LogFilterData.STDOUT -> LogFilterType.LOG_FILTER_TYPE_STDOUT
+                        LogFilterData.STDERR -> LogFilterType.LOG_FILTER_TYPE_STDERR
+                    }
                 stub.setFilter(LogFilterProto.newBuilder().setFilter(protoFilter).build())
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
         }
     }
 
@@ -120,34 +146,46 @@ class LogDataProviderProxy(
         scope.launch {
             try {
                 stub.setSearchQuery(LogStringRequest.newBuilder().setValue(query).build())
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
         }
     }
 
     override fun toggleAutoScroll() {
         scope.launch {
-            try { stub.toggleAutoScroll(Empty.getDefaultInstance()) } catch (_: Exception) {}
+            try {
+                stub.toggleAutoScroll(Empty.getDefaultInstance())
+            } catch (_: Exception) {
+            }
         }
     }
 
     override fun clearLogs() {
         scope.launch {
-            try { stub.clearLogs(Empty.getDefaultInstance()) } catch (_: Exception) {}
+            try {
+                stub.clearLogs(Empty.getDefaultInstance())
+            } catch (_: Exception) {
+            }
         }
     }
 
-    override fun exportLogs(): String = try {
-        runBlocking {
-            stub.exportLogs(Empty.getDefaultInstance()).value
+    override fun exportLogs(): String =
+        try {
+            runBlocking {
+                stub.exportLogs(Empty.getDefaultInstance()).value
+            }
+        } catch (_: Exception) {
+            ""
         }
-    } catch (_: Exception) { "" }
 
-    private fun LogEntryProto.toData() = LogEntryData(
-        timestamp = timestamp,
-        message = message,
-        source = when (source) {
-            LogSourceProto.LOG_SOURCE_STDERR -> LogSourceData.STDERR
-            else -> LogSourceData.STDOUT
-        },
-    )
+    private fun LogEntryProto.toData() =
+        LogEntryData(
+            timestamp = timestamp,
+            message = message,
+            source =
+                when (source) {
+                    LogSourceProto.LOG_SOURCE_STDERR -> LogSourceData.STDERR
+                    else -> LogSourceData.STDOUT
+                },
+        )
 }

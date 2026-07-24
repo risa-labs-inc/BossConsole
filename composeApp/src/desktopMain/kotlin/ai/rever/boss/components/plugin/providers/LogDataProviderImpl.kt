@@ -1,12 +1,12 @@
 package ai.rever.boss.components.plugin.providers
 
+import ai.rever.boss.logging.GlobalLogCapture
+import ai.rever.boss.logging.LogEntry
+import ai.rever.boss.logging.LogSource
 import ai.rever.boss.plugin.api.LogDataProvider
 import ai.rever.boss.plugin.api.LogEntryData
 import ai.rever.boss.plugin.api.LogFilterData
 import ai.rever.boss.plugin.api.LogSourceData
-import ai.rever.boss.logging.GlobalLogCapture
-import ai.rever.boss.logging.LogEntry
-import ai.rever.boss.logging.LogSource
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -58,20 +58,22 @@ class LogDataProviderImpl : LogDataProvider {
         val allLogs = logCapture.getLogs()
 
         // Apply filter
-        val filtered = when (_filter.value) {
-            LogFilterData.ALL -> allLogs
-            LogFilterData.STDOUT -> allLogs.filter { it.source == LogSource.STDOUT }
-            LogFilterData.STDERR -> allLogs.filter { it.source == LogSource.STDERR }
-        }
+        val filtered =
+            when (_filter.value) {
+                LogFilterData.ALL -> allLogs
+                LogFilterData.STDOUT -> allLogs.filter { it.source == LogSource.STDOUT }
+                LogFilterData.STDERR -> allLogs.filter { it.source == LogSource.STDERR }
+            }
 
         // Apply search
-        val searched = if (_searchQuery.value.isNotEmpty()) {
-            filtered.filter {
-                it.message.contains(_searchQuery.value, ignoreCase = true)
+        val searched =
+            if (_searchQuery.value.isNotEmpty()) {
+                filtered.filter {
+                    it.message.contains(_searchQuery.value, ignoreCase = true)
+                }
+            } else {
+                filtered
             }
-        } else {
-            filtered
-        }
 
         // Convert to API data classes
         _logs.value = searched.map { convertToLogEntryData(it) }
@@ -96,23 +98,22 @@ class LogDataProviderImpl : LogDataProvider {
         updateLogs()
     }
 
-    override fun exportLogs(): String {
-        return _logs.value.joinToString("\n") { entry ->
+    override fun exportLogs(): String =
+        _logs.value.joinToString("\n") { entry ->
             "[${entry.formatTimestamp()}] [${entry.source}] ${entry.message}"
         }
-    }
 
     /**
      * Convert internal LogEntry to API LogEntryData.
      */
-    private fun convertToLogEntryData(entry: LogEntry): LogEntryData {
-        return LogEntryData(
+    private fun convertToLogEntryData(entry: LogEntry): LogEntryData =
+        LogEntryData(
             timestamp = entry.timestamp,
             message = entry.message,
-            source = when (entry.source) {
-                LogSource.STDOUT -> LogSourceData.STDOUT
-                LogSource.STDERR -> LogSourceData.STDERR
-            }
+            source =
+                when (entry.source) {
+                    LogSource.STDOUT -> LogSourceData.STDOUT
+                    LogSource.STDERR -> LogSourceData.STDERR
+                },
         )
-    }
 }

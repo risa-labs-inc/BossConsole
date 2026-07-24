@@ -5,19 +5,19 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 
 class WidgetTreeBuilderTest {
-
     @Test
     fun `build tree column with text button and row`() {
-        val tree = widgetTree {
-            column {
-                text("Hello")
-                button("Click me", "click1")
-                row {
-                    icon("star", 24)
-                    text("World")
+        val tree =
+            widgetTree {
+                column {
+                    text("Hello")
+                    button("Click me", "click1")
+                    row {
+                        icon("star", 24)
+                        text("World")
+                    }
                 }
             }
-        }
 
         // column + text + button + row + icon + text = 6 nodes
         assertEquals(6, tree.nodes.size)
@@ -30,16 +30,17 @@ class WidgetTreeBuilderTest {
 
     @Test
     fun `verify parent-child relationships`() {
-        val tree = widgetTree {
-            column {
-                text("Hello")
-                button("Click me", "click1")
-                row {
-                    icon("star", 24)
-                    text("World")
+        val tree =
+            widgetTree {
+                column {
+                    text("Hello")
+                    button("Click me", "click1")
+                    row {
+                        icon("star", 24)
+                        text("World")
+                    }
                 }
             }
-        }
 
         val root = tree.nodes[tree.rootId]!!
         val textId = root.childIds[0]
@@ -64,20 +65,21 @@ class WidgetTreeBuilderTest {
 
     @Test
     fun `build tree with all leaf widget types`() {
-        val tree = widgetTree {
-            column {
-                text("label")
-                icon("home")
-                button("OK", "ok_event")
-                textField("", "change_event", "placeholder")
-                checkbox(true, "toggle_event", "Accept")
-                dropdown("opt1", listOf("opt1", "opt2"), "select_event")
-                progress(0.5f, false)
-                spacer(16)
-                divider()
-                list(listOf("a", "b", "c"))
+        val tree =
+            widgetTree {
+                column {
+                    text("label")
+                    icon("home")
+                    button("OK", "ok_event")
+                    textField("", "change_event", "placeholder")
+                    checkbox(true, "toggle_event", "Accept")
+                    dropdown("opt1", listOf("opt1", "opt2"), "select_event")
+                    progress(0.5f, false)
+                    spacer(16)
+                    divider()
+                    list(listOf("a", "b", "c"))
+                }
             }
-        }
 
         // 1 column + 10 leaf nodes = 11
         assertEquals(11, tree.nodes.size)
@@ -87,12 +89,13 @@ class WidgetTreeBuilderTest {
 
     @Test
     fun `scroll container wraps children`() {
-        val tree = widgetTree {
-            scroll {
-                text("item1")
-                text("item2")
+        val tree =
+            widgetTree {
+                scroll {
+                    text("item1")
+                    text("item2")
+                }
             }
-        }
 
         assertEquals(3, tree.nodes.size)
         val root = tree.nodes[tree.rootId]!!

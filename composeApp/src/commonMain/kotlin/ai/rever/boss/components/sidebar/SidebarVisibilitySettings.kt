@@ -59,42 +59,64 @@ data class SidebarVisibilitySettings(
         const val SLOT_RIGHT_TOP_TOP = "right.top.top"
         const val SLOT_RIGHT_TOP_BOTTOM = "right.top.bottom"
 
-        val ALL_SLOT_IDS = setOf(
-            SLOT_LEFT_TOP_TOP,
-            SLOT_LEFT_TOP_BOTTOM,
-            SLOT_LEFT_BOTTOM,
-            SLOT_RIGHT_TOP_TOP,
-            SLOT_RIGHT_TOP_BOTTOM,
-        )
+        val ALL_SLOT_IDS =
+            setOf(
+                SLOT_LEFT_TOP_TOP,
+                SLOT_LEFT_TOP_BOTTOM,
+                SLOT_LEFT_BOTTOM,
+                SLOT_RIGHT_TOP_TOP,
+                SLOT_RIGHT_TOP_BOTTOM,
+            )
 
         /** Map a [Panel] to one of the rendered sidebar slot ids, or null. */
-        fun slotIdFor(panel: Panel): String? = when (panel) {
-            left.top.top -> SLOT_LEFT_TOP_TOP
-            left.top.bottom -> SLOT_LEFT_TOP_BOTTOM
-            left.bottom -> SLOT_LEFT_BOTTOM
-            right.top.top -> SLOT_RIGHT_TOP_TOP
-            right.top.bottom -> SLOT_RIGHT_TOP_BOTTOM
-            else -> null
-        }
+        fun slotIdFor(panel: Panel): String? =
+            when (panel) {
+                left.top.top -> SLOT_LEFT_TOP_TOP
+                left.top.bottom -> SLOT_LEFT_TOP_BOTTOM
+                left.bottom -> SLOT_LEFT_BOTTOM
+                right.top.top -> SLOT_RIGHT_TOP_TOP
+                right.top.bottom -> SLOT_RIGHT_TOP_BOTTOM
+                else -> null
+            }
 
         /** Resolve a slot id back to its [Panel]; falls back to left.top.bottom. */
-        fun panelFor(slotId: String): Panel = when (slotId) {
-            SLOT_LEFT_TOP_TOP -> left.top.top
-            SLOT_LEFT_TOP_BOTTOM -> left.top.bottom
-            SLOT_LEFT_BOTTOM -> left.bottom
-            SLOT_RIGHT_TOP_TOP -> right.top.top
-            SLOT_RIGHT_TOP_BOTTOM -> right.top.bottom
-            else -> {
-                // The fallback is forward-compat (a slot id from a newer
-                // version of BOSS persisted in the user's settings would
-                // otherwise crash). Logging surfaces typos and stale ids
-                // in our own code without changing behaviour.
-                logger.warn(LogCategory.UI, "Unknown sidebar slot id, falling back to left.top.bottom", mapOf(
-                    "slotId" to slotId
-                ))
-                left.top.bottom
+        fun panelFor(slotId: String): Panel =
+            when (slotId) {
+                SLOT_LEFT_TOP_TOP -> {
+                    left.top.top
+                }
+
+                SLOT_LEFT_TOP_BOTTOM -> {
+                    left.top.bottom
+                }
+
+                SLOT_LEFT_BOTTOM -> {
+                    left.bottom
+                }
+
+                SLOT_RIGHT_TOP_TOP -> {
+                    right.top.top
+                }
+
+                SLOT_RIGHT_TOP_BOTTOM -> {
+                    right.top.bottom
+                }
+
+                else -> {
+                    // The fallback is forward-compat (a slot id from a newer
+                    // version of BOSS persisted in the user's settings would
+                    // otherwise crash). Logging surfaces typos and stale ids
+                    // in our own code without changing behaviour.
+                    logger.warn(
+                        LogCategory.UI,
+                        "Unknown sidebar slot id, falling back to left.top.bottom",
+                        mapOf(
+                            "slotId" to slotId,
+                        ),
+                    )
+                    left.top.bottom
+                }
             }
-        }
 
         /**
          * True if [slotId] belongs to the left sidebar column.
@@ -103,18 +125,31 @@ data class SidebarVisibilitySettings(
          * the slot-id naming convention is an implementation detail of
          * this class and shouldn't leak into callers.
          */
-        fun isLeftSide(slotId: String): Boolean = when (slotId) {
-            SLOT_LEFT_TOP_TOP,
-            SLOT_LEFT_TOP_BOTTOM,
-            SLOT_LEFT_BOTTOM -> true
-            SLOT_RIGHT_TOP_TOP,
-            SLOT_RIGHT_TOP_BOTTOM -> false
-            else -> {
-                logger.warn(LogCategory.UI, "Unknown sidebar slot id, treating as left-side", mapOf(
-                    "slotId" to slotId
-                ))
-                true // matches panelFor's fallback
+        fun isLeftSide(slotId: String): Boolean =
+            when (slotId) {
+                SLOT_LEFT_TOP_TOP,
+                SLOT_LEFT_TOP_BOTTOM,
+                SLOT_LEFT_BOTTOM,
+                -> {
+                    true
+                }
+
+                SLOT_RIGHT_TOP_TOP,
+                SLOT_RIGHT_TOP_BOTTOM,
+                -> {
+                    false
+                }
+
+                else -> {
+                    logger.warn(
+                        LogCategory.UI,
+                        "Unknown sidebar slot id, treating as left-side",
+                        mapOf(
+                            "slotId" to slotId,
+                        ),
+                    )
+                    true // matches panelFor's fallback
+                }
             }
-        }
     }
 }

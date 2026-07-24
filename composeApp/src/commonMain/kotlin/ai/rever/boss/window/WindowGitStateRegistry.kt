@@ -40,8 +40,7 @@ object WindowGitStateRegistry {
     /**
      * Get or create the git state for a window.
      */
-    fun getOrCreate(windowId: String): WindowGitState =
-        _states.getOrPut(windowId) { WindowGitState(windowId) }
+    fun getOrCreate(windowId: String): WindowGitState = _states.getOrPut(windowId) { WindowGitState(windowId) }
 
     /**
      * Unregister a window git state when the window is closed.

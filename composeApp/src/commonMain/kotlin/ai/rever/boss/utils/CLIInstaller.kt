@@ -8,7 +8,7 @@ data class CLIInstallResult(
     val installPath: String? = null,
     val shellConfigPath: String? = null,
     val message: String,
-    val requiresRestart: Boolean = true
+    val requiresRestart: Boolean = true,
 )
 
 /**

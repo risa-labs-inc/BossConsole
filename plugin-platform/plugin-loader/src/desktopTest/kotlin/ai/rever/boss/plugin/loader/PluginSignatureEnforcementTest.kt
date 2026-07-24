@@ -6,7 +6,6 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class PluginSignatureEnforcementTest {
-
     @AfterTest
     fun cleanup() {
         System.clearProperty(PluginSignatureEnforcement.PROPERTY)

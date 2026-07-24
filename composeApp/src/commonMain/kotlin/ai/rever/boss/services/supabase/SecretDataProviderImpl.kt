@@ -26,64 +26,62 @@ import ai.rever.boss.services.supabase.models.UpdateSecretRequest
  * plugin module while keeping the actual Supabase service in composeApp.
  */
 class SecretDataProviderImpl : SecretDataProvider {
-
-    override suspend fun getUserSecrets(limit: Int, offset: Int): Result<PaginatedSecretsData> {
-        return SecretService.getUserSecrets(limit, offset).map { paginated ->
+    override suspend fun getUserSecrets(
+        limit: Int,
+        offset: Int,
+    ): Result<PaginatedSecretsData> =
+        SecretService.getUserSecrets(limit, offset).map { paginated ->
             PaginatedSecretsData(
                 data = paginated.data.map { it.toPluginData() },
-                hasMore = paginated.hasMore
+                hasMore = paginated.hasMore,
             )
         }
-    }
 
-    override suspend fun getUserSecretsWithSharingInfo(limit: Int, offset: Int): Result<PaginatedSecretsWithSharingData> {
-        return SecretService.getUserSecretsWithSharingInfo(limit, offset).map { paginated ->
+    override suspend fun getUserSecretsWithSharingInfo(
+        limit: Int,
+        offset: Int,
+    ): Result<PaginatedSecretsWithSharingData> =
+        SecretService.getUserSecretsWithSharingInfo(limit, offset).map { paginated ->
             PaginatedSecretsWithSharingData(
                 data = paginated.data.map { it.toPluginDataWithSharing() },
-                hasMore = paginated.hasMore
+                hasMore = paginated.hasMore,
             )
         }
-    }
 
-    override suspend fun searchSecrets(query: String, limit: Int, offset: Int): Result<PaginatedSecretsData> {
-        return SecretService.searchSecrets(query, limit, offset).map { paginated ->
+    override suspend fun searchSecrets(
+        query: String,
+        limit: Int,
+        offset: Int,
+    ): Result<PaginatedSecretsData> =
+        SecretService.searchSecrets(query, limit, offset).map { paginated ->
             PaginatedSecretsData(
                 data = paginated.data.map { it.toPluginData() },
-                hasMore = paginated.hasMore
+                hasMore = paginated.hasMore,
             )
         }
-    }
 
-    override suspend fun createSecret(request: CreateSecretRequestData): Result<Unit> {
-        return SecretService.createSecret(request.toServiceRequest())
-    }
+    override suspend fun createSecret(request: CreateSecretRequestData): Result<Unit> =
+        SecretService.createSecret(request.toServiceRequest())
 
-    override suspend fun updateSecret(request: UpdateSecretRequestData): Result<Unit> {
-        return SecretService.updateSecret(request.toServiceRequest())
-    }
+    override suspend fun updateSecret(request: UpdateSecretRequestData): Result<Unit> =
+        SecretService.updateSecret(request.toServiceRequest())
 
-    override suspend fun deleteSecret(id: String): Result<Unit> {
-        return SecretService.deleteSecret(id)
-    }
+    override suspend fun deleteSecret(id: String): Result<Unit> = SecretService.deleteSecret(id)
 
-    override suspend fun getSecretShares(secretId: String): Result<List<SecretShareData>> {
-        return SecretService.getSecretShares(secretId).map { shares ->
+    override suspend fun getSecretShares(secretId: String): Result<List<SecretShareData>> =
+        SecretService.getSecretShares(secretId).map { shares ->
             shares.map { it.toPluginData() }
         }
-    }
 
-    override suspend fun shareSecret(request: ShareSecretRequestData): Result<Unit> {
-        return SecretService.shareSecret(request.toServiceRequest())
-    }
+    override suspend fun shareSecret(request: ShareSecretRequestData): Result<Unit> = SecretService.shareSecret(request.toServiceRequest())
 
-    override suspend fun unshareSecret(request: UnshareSecretRequestData): Result<Unit> {
-        return SecretService.unshareSecret(request.toServiceRequest())
-    }
+    override suspend fun unshareSecret(request: UnshareSecretRequestData): Result<Unit> =
+        SecretService.unshareSecret(request.toServiceRequest())
 
     // Mapping functions from internal types to plugin API types
 
-    private fun SecretEntry.toPluginData(): SecretEntryData {
-        return SecretEntryData(
+    private fun SecretEntry.toPluginData(): SecretEntryData =
+        SecretEntryData(
             id = id,
             website = website,
             username = username,
@@ -91,21 +89,21 @@ class SecretDataProviderImpl : SecretDataProvider {
             notes = notes,
             expirationDate = expirationDate,
             tags = tags,
-            metadata = metadata?.let { meta ->
-                SecretMetadataData(
-                    twofaEnabled = meta.twofaEnabled,
-                    twofaType = meta.twofaType,
-                    twofaSecret = meta.twofaSecret,
-                    recoveryCodes = meta.recoveryCodes
-                )
-            },
+            metadata =
+                metadata?.let { meta ->
+                    SecretMetadataData(
+                        twofaEnabled = meta.twofaEnabled,
+                        twofaType = meta.twofaType,
+                        twofaSecret = meta.twofaSecret,
+                        recoveryCodes = meta.recoveryCodes,
+                    )
+                },
             createdAt = createdAt,
-            updatedAt = updatedAt
+            updatedAt = updatedAt,
         )
-    }
 
-    private fun SecretEntryWithSharing.toPluginDataWithSharing(): SecretEntryWithSharingData {
-        return SecretEntryWithSharingData(
+    private fun SecretEntryWithSharing.toPluginDataWithSharing(): SecretEntryWithSharingData =
+        SecretEntryWithSharingData(
             id = id,
             website = website,
             username = username,
@@ -113,24 +111,24 @@ class SecretDataProviderImpl : SecretDataProvider {
             notes = notes,
             expirationDate = expirationDate,
             tags = tags,
-            metadata = metadata?.let { meta ->
-                SecretMetadataData(
-                    twofaEnabled = meta.twofaEnabled,
-                    twofaType = meta.twofaType,
-                    twofaSecret = meta.twofaSecret,
-                    recoveryCodes = meta.recoveryCodes
-                )
-            },
+            metadata =
+                metadata?.let { meta ->
+                    SecretMetadataData(
+                        twofaEnabled = meta.twofaEnabled,
+                        twofaType = meta.twofaType,
+                        twofaSecret = meta.twofaSecret,
+                        recoveryCodes = meta.recoveryCodes,
+                    )
+                },
             createdAt = createdAt,
             updatedAt = updatedAt,
             isOwner = isOwner,
             sharedByEmail = sharedByEmail,
-            accessLevel = accessLevel
+            accessLevel = accessLevel,
         )
-    }
 
-    private fun SecretShareEntry.toPluginData(): SecretShareData {
-        return SecretShareData(
+    private fun SecretShareEntry.toPluginData(): SecretShareData =
+        SecretShareData(
             shareId = shareId,
             sharedWithUserId = sharedWithUserId,
             sharedWithUserEmail = sharedWithUserEmail,
@@ -140,12 +138,11 @@ class SecretDataProviderImpl : SecretDataProvider {
             sharedByEmail = sharedByEmail,
             createdAt = createdAt,
             expiresAt = expiresAt,
-            notes = notes
+            notes = notes,
         )
-    }
 
-    private fun CreateSecretRequestData.toServiceRequest(): CreateSecretRequest {
-        return CreateSecretRequest(
+    private fun CreateSecretRequestData.toServiceRequest(): CreateSecretRequest =
+        CreateSecretRequest(
             website = website,
             username = username,
             password = password,
@@ -154,12 +151,11 @@ class SecretDataProviderImpl : SecretDataProvider {
             tags = tags,
             twofaEnabled = twofaEnabled,
             twofaType = twofaType,
-            recoveryCodes = recoveryCodes
+            recoveryCodes = recoveryCodes,
         )
-    }
 
-    private fun UpdateSecretRequestData.toServiceRequest(): UpdateSecretRequest {
-        return UpdateSecretRequest(
+    private fun UpdateSecretRequestData.toServiceRequest(): UpdateSecretRequest =
+        UpdateSecretRequest(
             secretId = secretId,
             website = website,
             username = username,
@@ -169,25 +165,22 @@ class SecretDataProviderImpl : SecretDataProvider {
             tags = tags,
             twofaEnabled = twofaEnabled,
             twofaType = twofaType,
-            recoveryCodes = recoveryCodes
+            recoveryCodes = recoveryCodes,
         )
-    }
 
-    private fun ShareSecretRequestData.toServiceRequest(): ShareSecretRequest {
-        return ShareSecretRequest(
+    private fun ShareSecretRequestData.toServiceRequest(): ShareSecretRequest =
+        ShareSecretRequest(
             secretId = secretId,
             targetUserId = targetUserId,
             targetRoleId = targetRoleId,
             notes = notes,
-            expiresAt = expiresAt
+            expiresAt = expiresAt,
         )
-    }
 
-    private fun UnshareSecretRequestData.toServiceRequest(): UnshareSecretRequest {
-        return UnshareSecretRequest(
+    private fun UnshareSecretRequestData.toServiceRequest(): UnshareSecretRequest =
+        UnshareSecretRequest(
             secretId = secretId,
             targetUserId = targetUserId,
-            targetRoleId = targetRoleId
+            targetRoleId = targetRoleId,
         )
-    }
 }

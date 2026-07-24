@@ -1,10 +1,10 @@
 package ai.rever.boss.components.plugin.tab_types.fluck
 
 import ai.rever.boss.services.supabase.SecretService
-import ai.rever.boss.utils.logging.BossLogger
-import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.services.supabase.models.SecretEntry
 import ai.rever.boss.utils.WebsiteMatchingUtil
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -84,36 +84,39 @@ class BrowserSecretIntegrationViewModel {
 
         state = state.copy(isLoadingSecrets = true)
 
-        loadJob = coroutineScope.launch {
-            val result = SecretService.getUserSecretsWithShared(limit = 1000, offset = 0)
+        loadJob =
+            coroutineScope.launch {
+                val result = SecretService.getUserSecretsWithShared(limit = 1000, offset = 0)
 
-            result.fold(
-                onSuccess = { paginatedSecrets ->
-                    state = state.copy(
-                        allSecrets = paginatedSecrets.data,
-                        isLoadingSecrets = false,
-                        error = null
-                    )
+                result.fold(
+                    onSuccess = { paginatedSecrets ->
+                        state =
+                            state.copy(
+                                allSecrets = paginatedSecrets.data,
+                                isLoadingSecrets = false,
+                                error = null,
+                            )
 
-                    // Re-match if we have a current URL
-                    if (state.currentDomain != null) {
-                        updateMatchedSecrets(state.currentDomain!!)
-                    }
-                },
-                onFailure = { error ->
-                    // Silently ignore cancellation - it's expected when a new load starts (Issue #352)
-                    if (error is CancellationException) {
-                        logger.debug(LogCategory.BROWSER, "Load cancelled (new request started)")
-                        return@launch
-                    }
+                        // Re-match if we have a current URL
+                        if (state.currentDomain != null) {
+                            updateMatchedSecrets(state.currentDomain!!)
+                        }
+                    },
+                    onFailure = { error ->
+                        // Silently ignore cancellation - it's expected when a new load starts (Issue #352)
+                        if (error is CancellationException) {
+                            logger.debug(LogCategory.BROWSER, "Load cancelled (new request started)")
+                            return@launch
+                        }
 
-                    state = state.copy(
-                        isLoadingSecrets = false,
-                        error = "Failed to load secrets: ${error.message}"
-                    )
-                }
-            )
-        }
+                        state =
+                            state.copy(
+                                isLoadingSecrets = false,
+                                error = "Failed to load secrets: ${error.message}",
+                            )
+                    },
+                )
+            }
     }
 
     /**
@@ -126,10 +129,11 @@ class BrowserSecretIntegrationViewModel {
     fun onUrlChanged(url: String) {
         val domain = WebsiteMatchingUtil.extractMainDomain(url)
 
-        state = state.copy(
-            currentUrl = url,
-            currentDomain = domain
-        )
+        state =
+            state.copy(
+                currentUrl = url,
+                currentDomain = domain,
+            )
 
         // Match secrets for new domain
         if (domain != null) {
@@ -143,15 +147,17 @@ class BrowserSecretIntegrationViewModel {
      * Update matched secrets for current domain.
      */
     private fun updateMatchedSecrets(domain: String) {
-        val matched = WebsiteMatchingUtil.matchSecretsForDomain(
-            domain = domain,
-            secrets = state.allSecrets,
-            maxResults = 10
-        )
+        val matched =
+            WebsiteMatchingUtil.matchSecretsForDomain(
+                domain = domain,
+                secrets = state.allSecrets,
+                maxResults = 10,
+            )
 
-        state = state.copy(
-            matchingSecrets = matched.map { it.secret }
-        )
+        state =
+            state.copy(
+                matchingSecrets = matched.map { it.secret },
+            )
     }
 
     /**
@@ -176,10 +182,11 @@ class BrowserSecretIntegrationViewModel {
      * Called when user clicks "Show All Secrets..." in context menu.
      */
     fun showAllSecretsDialog() {
-        state = state.copy(
-            showAllSecretsDialog = true,
-            showSecretMenu = false
-        )
+        state =
+            state.copy(
+                showAllSecretsDialog = true,
+                showSecretMenu = false,
+            )
     }
 
     /**
@@ -197,21 +204,23 @@ class BrowserSecretIntegrationViewModel {
      * @param websitePrefill Domain to pre-fill in the dialog
      */
     fun showQuickCreateDialog(websitePrefill: String) {
-        state = state.copy(
-            showQuickCreateDialog = true,
-            quickCreateWebsitePrefill = websitePrefill,
-            showSecretMenu = false
-        )
+        state =
+            state.copy(
+                showQuickCreateDialog = true,
+                quickCreateWebsitePrefill = websitePrefill,
+                showSecretMenu = false,
+            )
     }
 
     /**
      * Hide quick secret creation dialog.
      */
     fun hideQuickCreateDialog() {
-        state = state.copy(
-            showQuickCreateDialog = false,
-            quickCreateWebsitePrefill = null
-        )
+        state =
+            state.copy(
+                showQuickCreateDialog = false,
+                quickCreateWebsitePrefill = null,
+            )
     }
 
     /**
@@ -237,12 +246,13 @@ class BrowserSecretIntegrationViewModel {
 
         val lowerQuery = query.lowercase().trim()
 
-        val filtered = state.allSecrets.filter { secret ->
-            secret.website.lowercase().contains(lowerQuery) ||
-            secret.username.lowercase().contains(lowerQuery) ||
-            secret.notes?.lowercase()?.contains(lowerQuery) == true ||
-            secret.tags.any { it.lowercase().contains(lowerQuery) }
-        }
+        val filtered =
+            state.allSecrets.filter { secret ->
+                secret.website.lowercase().contains(lowerQuery) ||
+                    secret.username.lowercase().contains(lowerQuery) ||
+                    secret.notes?.lowercase()?.contains(lowerQuery) == true ||
+                    secret.tags.any { it.lowercase().contains(lowerQuery) }
+            }
 
         state = state.copy(filteredSecrets = filtered)
     }
@@ -262,21 +272,17 @@ data class BrowserSecretState(
     // Current page info
     val currentUrl: String = "",
     val currentDomain: String? = null,
-
     // Secrets data
     val allSecrets: List<SecretEntry> = emptyList(),
     val matchingSecrets: List<SecretEntry> = emptyList(),
     val filteredSecrets: List<SecretEntry> = emptyList(),
-
     // UI state
     val isLoadingSecrets: Boolean = false,
     val showSecretMenu: Boolean = false,
     val showAllSecretsDialog: Boolean = false,
     val showQuickCreateDialog: Boolean = false,
-
     // Quick create prefill
     val quickCreateWebsitePrefill: String? = null,
-
     // Error state
-    val error: String? = null
+    val error: String? = null,
 )

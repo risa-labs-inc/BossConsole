@@ -19,9 +19,8 @@ import kotlinx.coroutines.launch
  */
 class PluginToastState(
     private val scope: CoroutineScope,
-    private val maxToasts: Int = 3
+    private val maxToasts: Int = 3,
 ) : ToastController {
-
     private val _toasts = MutableStateFlow<List<ToastMessage>>(emptyList())
 
     /**
@@ -38,16 +37,18 @@ class PluginToastState(
 
         // Schedule auto-dismiss based on duration
         if (message.duration != ToastDuration.INDEFINITE) {
-            val delayMs = when (message.duration) {
-                ToastDuration.SHORT -> 3000L
-                ToastDuration.LONG -> 6000L
-                ToastDuration.INDEFINITE -> Long.MAX_VALUE
-            }
+            val delayMs =
+                when (message.duration) {
+                    ToastDuration.SHORT -> 3000L
+                    ToastDuration.LONG -> 6000L
+                    ToastDuration.INDEFINITE -> Long.MAX_VALUE
+                }
 
-            dismissJobs[message.id] = scope.launch {
-                delay(delayMs)
-                dismiss(message.id)
-            }
+            dismissJobs[message.id] =
+                scope.launch {
+                    delay(delayMs)
+                    dismiss(message.id)
+                }
         }
     }
 

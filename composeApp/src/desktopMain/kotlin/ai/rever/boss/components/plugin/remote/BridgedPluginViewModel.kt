@@ -53,7 +53,10 @@ class BridgedPluginViewModel<S>(
     /**
      * Send an intent to the child process via the state bridge.
      */
-    suspend fun sendIntent(intentType: String, payload: ByteArray = ByteArray(0)) {
+    suspend fun sendIntent(
+        intentType: String,
+        payload: ByteArray = ByteArray(0),
+    ) {
         bridge.sendIntent(intentType, payload)
     }
 }

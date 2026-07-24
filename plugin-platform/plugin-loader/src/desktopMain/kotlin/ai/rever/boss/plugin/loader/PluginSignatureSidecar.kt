@@ -26,12 +26,18 @@ object PluginSignatureSidecar {
      * this (not [write]) on any path that replaces a JAR in place, so a stale
      * sidecar can't linger beside new bytes.
      */
-    fun persist(jarPath: String, signatureBase64: String?) {
+    fun persist(
+        jarPath: String,
+        signatureBase64: String?,
+    ) {
         if (!signatureBase64.isNullOrBlank()) write(jarPath, signatureBase64) else delete(jarPath)
     }
 
     /** Persist the base64 store signature beside [jarPath]. Best-effort. */
-    fun write(jarPath: String, signatureBase64: String) {
+    fun write(
+        jarPath: String,
+        signatureBase64: String,
+    ) {
         File(pathFor(jarPath)).writeText(signatureBase64)
     }
 

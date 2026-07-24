@@ -30,7 +30,7 @@ kotlin {
                 implementation(libs.compose.mp.ui)
                 implementation(libs.compose.mp.foundation)
                 implementation(libs.compose.mp.material)
-                implementation(compose.materialIconsExtended)  // No base KMP artifact
+                implementation(compose.materialIconsExtended) // No base KMP artifact
             }
         }
         named("desktopMain") {

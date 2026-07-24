@@ -21,31 +21,26 @@ data class PluginPersistedState(
      * Unique plugin ID.
      */
     val pluginId: String,
-
     /**
      * Path to the plugin JAR file.
      */
     val jarPath: String,
-
     /**
      * Whether the plugin is enabled.
      */
     val enabled: Boolean = true,
-
     /**
      * Timestamp when the plugin was installed.
      */
     val installedAt: Long = System.currentTimeMillis(),
-
     /**
      * Plugin version (for update tracking).
      */
     val version: String = "",
-
     /**
      * Whether this plugin should auto-load on startup.
      */
-    val autoLoad: Boolean = true
+    val autoLoad: Boolean = true,
 )
 
 /**
@@ -57,11 +52,10 @@ data class PluginStatesFile(
      * Version of the state file format.
      */
     val version: Int = 1,
-
     /**
      * Map of plugin ID to persisted state.
      */
-    val plugins: Map<String, PluginPersistedState> = emptyMap()
+    val plugins: Map<String, PluginPersistedState> = emptyMap(),
 )
 
 /**
@@ -77,7 +71,7 @@ class PluginStateManager(
      * Base directory for BOSS configuration files.
      * Defaults to `~/.boss`.
      */
-    private val configDir: File = BossDirectories.rootDir
+    private val configDir: File = BossDirectories.rootDir,
 ) {
     private val logger = BossLogger.forComponent("PluginStateManager")
 
@@ -94,11 +88,12 @@ class PluginStateManager(
     /**
      * JSON serializer with pretty printing for human-readable state files.
      */
-    private val json = Json {
-        prettyPrint = true
-        ignoreUnknownKeys = true
-        encodeDefaults = true
-    }
+    private val json =
+        Json {
+            prettyPrint = true
+            ignoreUnknownKeys = true
+            encodeDefaults = true
+        }
 
     /**
      * In-memory cache of plugin states.
@@ -110,59 +105,69 @@ class PluginStateManager(
      *
      * @return Map of plugin ID to persisted state
      */
-    suspend fun loadStates(): Map<String, PluginPersistedState> = mutex.withLock {
-        withContext(Dispatchers.IO) {
-            try {
-                if (!stateFile.exists()) {
-                    logger.debug(LogCategory.SYSTEM, "Plugin states file does not exist")
+    suspend fun loadStates(): Map<String, PluginPersistedState> =
+        mutex.withLock {
+            withContext(Dispatchers.IO) {
+                try {
+                    if (!stateFile.exists()) {
+                        logger.debug(LogCategory.SYSTEM, "Plugin states file does not exist")
+                        cachedStates = PluginStatesFile()
+                        return@withContext emptyMap()
+                    }
+
+                    val content = stateFile.readText()
+                    val states = json.decodeFromString<PluginStatesFile>(content)
+                    cachedStates = states
+
+                    logger.info(
+                        LogCategory.SYSTEM,
+                        "Loaded plugin states",
+                        mapOf(
+                            "count" to states.plugins.size,
+                        ),
+                    )
+
+                    states.plugins
+                } catch (e: Exception) {
+                    logger.error(LogCategory.SYSTEM, "Failed to load plugin states", error = e)
                     cachedStates = PluginStatesFile()
-                    return@withContext emptyMap()
+                    emptyMap()
                 }
-
-                val content = stateFile.readText()
-                val states = json.decodeFromString<PluginStatesFile>(content)
-                cachedStates = states
-
-                logger.info(LogCategory.SYSTEM, "Loaded plugin states", mapOf(
-                    "count" to states.plugins.size
-                ))
-
-                states.plugins
-            } catch (e: Exception) {
-                logger.error(LogCategory.SYSTEM, "Failed to load plugin states", error = e)
-                cachedStates = PluginStatesFile()
-                emptyMap()
             }
         }
-    }
 
     /**
      * Save all plugin states to disk.
      *
      * @param states Map of plugin ID to persisted state
      */
-    suspend fun saveStates(states: Map<String, PluginPersistedState>) = mutex.withLock {
-        withContext(Dispatchers.IO) {
-            try {
-                // Ensure config directory exists
-                if (!configDir.exists()) {
-                    configDir.mkdirs()
+    suspend fun saveStates(states: Map<String, PluginPersistedState>) =
+        mutex.withLock {
+            withContext(Dispatchers.IO) {
+                try {
+                    // Ensure config directory exists
+                    if (!configDir.exists()) {
+                        configDir.mkdirs()
+                    }
+
+                    val statesFile = PluginStatesFile(plugins = states)
+                    val content = json.encodeToString(statesFile)
+                    stateFile.writeText(content)
+
+                    cachedStates = statesFile
+
+                    logger.info(
+                        LogCategory.SYSTEM,
+                        "Saved plugin states",
+                        mapOf(
+                            "count" to states.size,
+                        ),
+                    )
+                } catch (e: Exception) {
+                    logger.error(LogCategory.SYSTEM, "Failed to save plugin states", error = e)
                 }
-
-                val statesFile = PluginStatesFile(plugins = states)
-                val content = json.encodeToString(statesFile)
-                stateFile.writeText(content)
-
-                cachedStates = statesFile
-
-                logger.info(LogCategory.SYSTEM, "Saved plugin states", mapOf(
-                    "count" to states.size
-                ))
-            } catch (e: Exception) {
-                logger.error(LogCategory.SYSTEM, "Failed to save plugin states", error = e)
             }
         }
-    }
 
     /**
      * Add or update a plugin's persisted state.
@@ -203,7 +208,10 @@ class PluginStateManager(
      * @param pluginId The plugin ID
      * @param enabled Whether the plugin is enabled
      */
-    suspend fun setPluginEnabled(pluginId: String, enabled: Boolean) {
+    suspend fun setPluginEnabled(
+        pluginId: String,
+        enabled: Boolean,
+    ) {
         val currentState = getPluginState(pluginId) ?: return
         savePluginState(currentState.copy(enabled = enabled))
     }
@@ -231,18 +239,19 @@ class PluginStateManager(
     /**
      * Clear all persisted states.
      */
-    suspend fun clearAll() = mutex.withLock {
-        withContext(Dispatchers.IO) {
-            try {
-                if (stateFile.exists()) {
-                    stateFile.delete()
-                }
-                cachedStates = PluginStatesFile()
+    suspend fun clearAll() =
+        mutex.withLock {
+            withContext(Dispatchers.IO) {
+                try {
+                    if (stateFile.exists()) {
+                        stateFile.delete()
+                    }
+                    cachedStates = PluginStatesFile()
 
-                logger.info(LogCategory.SYSTEM, "Cleared all plugin states")
-            } catch (e: Exception) {
-                logger.error(LogCategory.SYSTEM, "Failed to clear plugin states", error = e)
+                    logger.info(LogCategory.SYSTEM, "Cleared all plugin states")
+                } catch (e: Exception) {
+                    logger.error(LogCategory.SYSTEM, "Failed to clear plugin states", error = e)
+                }
             }
         }
-    }
 }

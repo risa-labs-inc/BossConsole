@@ -21,7 +21,6 @@ import java.util.concurrent.ConcurrentHashMap
  * every mutation and read once at startup.
  */
 class WorkspaceServiceImpl : WorkspaceServiceGrpcKt.WorkspaceServiceCoroutineImplBase() {
-
     private val logger = LoggerFactory.getLogger(WorkspaceServiceImpl::class.java)
 
     @Serializable
@@ -36,7 +35,11 @@ class WorkspaceServiceImpl : WorkspaceServiceGrpcKt.WorkspaceServiceCoroutineImp
         val metadata: Map<String, String> = emptyMap(),
     )
 
-    private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
+    private val json =
+        Json {
+            ignoreUnknownKeys = true
+            prettyPrint = true
+        }
     private val bossDir = File(System.getProperty("user.home"), ".boss/workspaces").also { it.mkdirs() }
 
     private val workspaces = ConcurrentHashMap<String, WorkspaceInfo>()
@@ -63,16 +66,17 @@ class WorkspaceServiceImpl : WorkspaceServiceGrpcKt.WorkspaceServiceCoroutineImp
 
     private fun saveToDisk(ws: WorkspaceInfo) {
         try {
-            val pw = PersistedWorkspace(
-                id = ws.id,
-                name = ws.name,
-                projectPath = ws.projectPath,
-                description = ws.description,
-                createdAt = ws.createdAt,
-                lastOpenedAt = ws.lastOpenedAt,
-                tabCount = ws.tabCount,
-                metadata = ws.metadataMap,
-            )
+            val pw =
+                PersistedWorkspace(
+                    id = ws.id,
+                    name = ws.name,
+                    projectPath = ws.projectPath,
+                    description = ws.description,
+                    createdAt = ws.createdAt,
+                    lastOpenedAt = ws.lastOpenedAt,
+                    tabCount = ws.tabCount,
+                    metadata = ws.metadataMap,
+                )
             File(bossDir, "${ws.id}.json").writeText(json.encodeToString(pw))
         } catch (e: Exception) {
             logger.warn("Failed to persist workspace {}: {}", ws.id, e.message)
@@ -87,63 +91,77 @@ class WorkspaceServiceImpl : WorkspaceServiceGrpcKt.WorkspaceServiceCoroutineImp
         }
     }
 
-    private fun PersistedWorkspace.toProto(): WorkspaceInfo = WorkspaceInfo.newBuilder()
-        .setId(id)
-        .setName(name)
-        .setProjectPath(projectPath)
-        .setDescription(description)
-        .setCreatedAt(createdAt)
-        .setLastOpenedAt(lastOpenedAt)
-        .setTabCount(tabCount)
-        .putAllMetadata(metadata)
-        .build()
+    private fun PersistedWorkspace.toProto(): WorkspaceInfo =
+        WorkspaceInfo
+            .newBuilder()
+            .setId(id)
+            .setName(name)
+            .setProjectPath(projectPath)
+            .setDescription(description)
+            .setCreatedAt(createdAt)
+            .setLastOpenedAt(lastOpenedAt)
+            .setTabCount(tabCount)
+            .putAllMetadata(metadata)
+            .build()
 
     // ---- gRPC method implementations ----
 
-    override suspend fun getWorkspaces(request: Empty): WorkspacesResponse {
-        return WorkspacesResponse.newBuilder()
+    override suspend fun getWorkspaces(request: Empty): WorkspacesResponse =
+        WorkspacesResponse
+            .newBuilder()
             .addAllWorkspaces(workspaces.values.toList())
             .build()
-    }
 
-    override fun watchWorkspaces(request: Empty): Flow<WorkspacesResponse> = flow {
-        // Emit current snapshot first, then re-emit on every currentWorkspace change
-        // (all mutations also touch currentWorkspaceFlow so watchers stay in sync)
-        emit(WorkspacesResponse.newBuilder().addAllWorkspaces(workspaces.values.toList()).build())
-        currentWorkspaceFlow.collect {
+    override fun watchWorkspaces(request: Empty): Flow<WorkspacesResponse> =
+        flow {
+            // Emit current snapshot first, then re-emit on every currentWorkspace change
+            // (all mutations also touch currentWorkspaceFlow so watchers stay in sync)
             emit(WorkspacesResponse.newBuilder().addAllWorkspaces(workspaces.values.toList()).build())
+            currentWorkspaceFlow.collect {
+                emit(WorkspacesResponse.newBuilder().addAllWorkspaces(workspaces.values.toList()).build())
+            }
         }
-    }
 
     override suspend fun getCurrentWorkspace(request: Empty): WorkspaceResponse {
         val ws = currentWorkspaceFlow.value
-        return WorkspaceResponse.newBuilder()
+        return WorkspaceResponse
+            .newBuilder()
             .setFound(ws != null)
             .apply { ws?.let { setWorkspace(it) } }
             .build()
     }
 
-    override fun watchCurrentWorkspace(request: Empty): Flow<WorkspaceResponse> = flow {
-        currentWorkspaceFlow.collect { ws ->
-            emit(
-                WorkspaceResponse.newBuilder()
-                    .setFound(ws != null)
-                    .apply { ws?.let { setWorkspace(it) } }
-                    .build()
-            )
+    override fun watchCurrentWorkspace(request: Empty): Flow<WorkspaceResponse> =
+        flow {
+            currentWorkspaceFlow.collect { ws ->
+                emit(
+                    WorkspaceResponse
+                        .newBuilder()
+                        .setFound(ws != null)
+                        .apply { ws?.let { setWorkspace(it) } }
+                        .build(),
+                )
+            }
         }
-    }
 
     override suspend fun loadWorkspace(request: LoadWorkspaceRequest): WorkspaceResponse =
         withContext(Dispatchers.IO) {
             logger.info("loadWorkspace: id={}, path={}", request.workspaceId, request.projectPath)
 
-            val ws = when {
-                request.workspaceId.isNotBlank() -> workspaces[request.workspaceId]
-                request.projectPath.isNotBlank() ->
-                    workspaces.values.firstOrNull { it.projectPath == request.projectPath }
-                else -> null
-            }
+            val ws =
+                when {
+                    request.workspaceId.isNotBlank() -> {
+                        workspaces[request.workspaceId]
+                    }
+
+                    request.projectPath.isNotBlank() -> {
+                        workspaces.values.firstOrNull { it.projectPath == request.projectPath }
+                    }
+
+                    else -> {
+                        null
+                    }
+                }
 
             if (ws != null) {
                 val now = System.currentTimeMillis()
@@ -151,26 +169,37 @@ class WorkspaceServiceImpl : WorkspaceServiceGrpcKt.WorkspaceServiceCoroutineImp
                 workspaces[ws.id] = updated
                 saveToDisk(updated)
                 currentWorkspaceFlow.value = updated
-                return@withContext WorkspaceResponse.newBuilder().setFound(true).setWorkspace(updated).build()
+                return@withContext WorkspaceResponse
+                    .newBuilder()
+                    .setFound(true)
+                    .setWorkspace(updated)
+                    .build()
             }
 
             if (request.projectPath.isNotBlank()) {
                 // Auto-create workspace for unknown path
                 val now = System.currentTimeMillis()
-                val newWs = WorkspaceInfo.newBuilder()
-                    .setId("workspace-$now")
-                    .setName(File(request.projectPath).name)
-                    .setProjectPath(request.projectPath)
-                    .setCreatedAt(now)
-                    .setLastOpenedAt(now)
-                    .build()
+                val newWs =
+                    WorkspaceInfo
+                        .newBuilder()
+                        .setId("workspace-$now")
+                        .setName(File(request.projectPath).name)
+                        .setProjectPath(request.projectPath)
+                        .setCreatedAt(now)
+                        .setLastOpenedAt(now)
+                        .build()
                 workspaces[newWs.id] = newWs
                 saveToDisk(newWs)
                 currentWorkspaceFlow.value = newWs
-                return@withContext WorkspaceResponse.newBuilder().setFound(true).setWorkspace(newWs).build()
+                return@withContext WorkspaceResponse
+                    .newBuilder()
+                    .setFound(true)
+                    .setWorkspace(newWs)
+                    .build()
             }
 
-            WorkspaceResponse.newBuilder()
+            WorkspaceResponse
+                .newBuilder()
                 .setFound(false)
                 .setErrorMessage("Workspace not found: ${request.workspaceId}")
                 .build()
@@ -181,14 +210,16 @@ class WorkspaceServiceImpl : WorkspaceServiceGrpcKt.WorkspaceServiceCoroutineImp
             logger.info("saveWorkspace: id={}", request.workspaceId)
             val existing = workspaces[request.workspaceId]
             val now = System.currentTimeMillis()
-            val ws = WorkspaceInfo.newBuilder()
-                .setId(request.workspaceId)
-                .setName(request.name)
-                .setProjectPath(request.projectPath)
-                .setCreatedAt(existing?.createdAt ?: now)
-                .setLastOpenedAt(now)
-                .putAllMetadata(request.metadataMap)
-                .build()
+            val ws =
+                WorkspaceInfo
+                    .newBuilder()
+                    .setId(request.workspaceId)
+                    .setName(request.name)
+                    .setProjectPath(request.projectPath)
+                    .setCreatedAt(existing?.createdAt ?: now)
+                    .setLastOpenedAt(now)
+                    .putAllMetadata(request.metadataMap)
+                    .build()
             workspaces[ws.id] = ws
             saveToDisk(ws)
             // Propagate to watchers via currentWorkspaceFlow nudge
@@ -198,7 +229,11 @@ class WorkspaceServiceImpl : WorkspaceServiceGrpcKt.WorkspaceServiceCoroutineImp
                 val prev = currentWorkspaceFlow.value
                 currentWorkspaceFlow.value = prev // triggers distinct-until-changed pass-through
             }
-            WorkspaceResponse.newBuilder().setFound(true).setWorkspace(ws).build()
+            WorkspaceResponse
+                .newBuilder()
+                .setFound(true)
+                .setWorkspace(ws)
+                .build()
         }
 
     override suspend fun deleteWorkspace(request: DeleteWorkspaceRequest): Empty =

@@ -1,7 +1,7 @@
 package ai.rever.boss.project
 
-import ai.rever.boss.window.Project
 import ai.rever.boss.project.templates.ProjectTemplate
+import ai.rever.boss.window.Project
 
 /**
  * Service for creating new projects from templates.
@@ -21,7 +21,7 @@ expect object ProjectCreationService {
         name: String,
         parentDirectory: String,
         template: ProjectTemplate,
-        onProgress: (Float, String) -> Unit
+        onProgress: (Float, String) -> Unit,
     ): Result<Project>
 
     /**
@@ -31,7 +31,10 @@ expect object ProjectCreationService {
      * @param projectName The name of the project (will be the directory name)
      * @return ValidationResult indicating if the location is valid or the reason it's not
      */
-    fun validateProjectLocation(parentDirectory: String, projectName: String): ValidationResult
+    fun validateProjectLocation(
+        parentDirectory: String,
+        projectName: String,
+    ): ValidationResult
 
     /**
      * Gets the default projects directory.
@@ -61,5 +64,7 @@ sealed class ValidationResult {
     /**
      * The location is invalid with a reason.
      */
-    data class Invalid(val reason: String) : ValidationResult()
+    data class Invalid(
+        val reason: String,
+    ) : ValidationResult()
 }

@@ -14,12 +14,12 @@ import kotlin.test.assertNull
  * a silent precedence regression would break production credential delivery.
  */
 class ConfigLoaderTest {
-
     private val key = "SOME_KEY"
 
-    private fun props(value: String?) = Properties().apply {
-        if (value != null) setProperty(key, value)
-    }
+    private fun props(value: String?) =
+        Properties().apply {
+            if (value != null) setProperty(key, value)
+        }
 
     private fun resolve(
         env: String? = null,

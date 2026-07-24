@@ -8,7 +8,6 @@ package ai.rever.boss.mastery
  * capability invocation pattern from mastery.proto).
  */
 interface CapabilityResolver {
-
     /**
      * Invoke a plugin capability and return its output.
      *

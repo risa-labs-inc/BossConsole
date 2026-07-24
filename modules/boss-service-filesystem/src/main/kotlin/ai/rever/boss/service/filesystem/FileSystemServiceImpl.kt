@@ -25,7 +25,6 @@ import java.util.concurrent.TimeUnit
  * java.nio.file.WatchService for live filesystem change events.
  */
 class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutineImplBase() {
-
     private val logger = LoggerFactory.getLogger(FileSystemServiceImpl::class.java)
 
     /** Paths that must not be accessed via IPC — prevents privilege-escalation via path injection. */
@@ -48,36 +47,41 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
             validatePath(request.path)
             val dir = File(request.path)
             if (!dir.exists() || !dir.isDirectory) {
-                return@withContext ScanDirectoryResponse.newBuilder()
+                return@withContext ScanDirectoryResponse
+                    .newBuilder()
                     .setErrorMessage("Directory not found: ${request.path}")
                     .build()
             }
 
             val maxDepth = if (request.maxDepth > 0) request.maxDepth else Int.MAX_VALUE
-            val sequence: Sequence<File> = if (request.recursive) {
-                dir.walkTopDown().maxDepth(maxDepth)
-            } else {
-                dir.listFiles()?.asSequence() ?: emptySequence()
-            }
+            val sequence: Sequence<File> =
+                if (request.recursive) {
+                    dir.walkTopDown().maxDepth(maxDepth)
+                } else {
+                    dir.listFiles()?.asSequence() ?: emptySequence()
+                }
 
             val filterExtensions = request.extensionsList.toSet()
 
-            val entries = sequence
-                .filter { it != dir }
-                .filter { request.includeHidden || !it.name.startsWith(".") }
-                .filter { it.isDirectory || filterExtensions.isEmpty() || it.extension in filterExtensions }
-                .map { f ->
-                    FileEntry.newBuilder()
-                        .setPath(f.absolutePath)
-                        .setName(f.name)
-                        .setIsDirectory(f.isDirectory)
-                        .setSizeBytes(if (f.isDirectory) 0L else f.length())
-                        .setModifiedAt(f.lastModified())
-                        .setIsHidden(f.name.startsWith("."))
-                        .build()
-                }.toList()
+            val entries =
+                sequence
+                    .filter { it != dir }
+                    .filter { request.includeHidden || !it.name.startsWith(".") }
+                    .filter { it.isDirectory || filterExtensions.isEmpty() || it.extension in filterExtensions }
+                    .map { f ->
+                        FileEntry
+                            .newBuilder()
+                            .setPath(f.absolutePath)
+                            .setName(f.name)
+                            .setIsDirectory(f.isDirectory)
+                            .setSizeBytes(if (f.isDirectory) 0L else f.length())
+                            .setModifiedAt(f.lastModified())
+                            .setIsHidden(f.name.startsWith("."))
+                            .build()
+                    }.toList()
 
-            ScanDirectoryResponse.newBuilder()
+            ScanDirectoryResponse
+                .newBuilder()
                 .addAllEntries(entries)
                 .build()
         }
@@ -88,7 +92,8 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
             validatePath(request.path)
             val file = File(request.path)
             if (!file.exists()) {
-                return@withContext ReadFileResponse.newBuilder()
+                return@withContext ReadFileResponse
+                    .newBuilder()
                     .setErrorMessage("File not found: ${request.path}")
                     .build()
             }
@@ -98,18 +103,21 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
                 val offsetBytes = request.offsetBytes.coerceAtLeast(0L).toInt()
                 val slice = if (offsetBytes > 0 && offsetBytes < bytes.size) bytes.drop(offsetBytes).toByteArray() else bytes
                 val maxBytes = request.maxBytes
-                val (content, truncated) = if (maxBytes > 0 && slice.size > maxBytes) {
-                    slice.take(maxBytes.toInt()).toByteArray() to true
-                } else {
-                    slice to false
-                }
-                ReadFileResponse.newBuilder()
+                val (content, truncated) =
+                    if (maxBytes > 0 && slice.size > maxBytes) {
+                        slice.take(maxBytes.toInt()).toByteArray() to true
+                    } else {
+                        slice to false
+                    }
+                ReadFileResponse
+                    .newBuilder()
                     .setContent(ByteString.copyFrom(content))
                     .setTotalSizeBytes(totalSize)
                     .setTruncated(truncated)
                     .build()
             } catch (e: Exception) {
-                ReadFileResponse.newBuilder()
+                ReadFileResponse
+                    .newBuilder()
                     .setErrorMessage(e.message ?: "Read failed")
                     .build()
             }
@@ -123,19 +131,22 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
                 val file = File(request.path)
                 if (request.createParents) file.parentFile?.mkdirs()
                 if (!request.overwrite && file.exists()) {
-                    return@withContext WriteFileResponse.newBuilder()
+                    return@withContext WriteFileResponse
+                        .newBuilder()
                         .setSuccess(false)
                         .setErrorMessage("File already exists: ${request.path}")
                         .build()
                 }
                 val bytes = request.content.toByteArray()
                 file.writeBytes(bytes)
-                WriteFileResponse.newBuilder()
+                WriteFileResponse
+                    .newBuilder()
                     .setSuccess(true)
                     .setBytesWritten(bytes.size.toLong())
                     .build()
             } catch (e: Exception) {
-                WriteFileResponse.newBuilder()
+                WriteFileResponse
+                    .newBuilder()
                     .setSuccess(false)
                     .setErrorMessage(e.message ?: "Write failed")
                     .build()
@@ -178,77 +189,89 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
             Empty.getDefaultInstance()
         }
 
-    override fun watchFileChanges(request: WatchFileChangesRequest): Flow<FileChangeEvent> = flow {
-        logger.info("watchFileChanges: path={}, recursive={}", request.path, request.recursive)
-        validatePath(request.path)
-        val root = Paths.get(request.path)
-        if (!Files.exists(root)) {
-            logger.warn("watchFileChanges: path not found: {}", request.path)
-            return@flow
-        }
-
-        val kinds = arrayOf(
-            StandardWatchEventKinds.ENTRY_CREATE,
-            StandardWatchEventKinds.ENTRY_MODIFY,
-            StandardWatchEventKinds.ENTRY_DELETE,
-        )
-
-        val watchService = FileSystems.getDefault().newWatchService()
-        try {
-            // Register root (and subdirs if recursive)
-            root.register(watchService, *kinds)
-            if (request.recursive && Files.isDirectory(root)) {
-                Files.walk(root)
-                    .filter { Files.isDirectory(it) && it != root }
-                    .forEach { dir ->
-                        try { dir.register(watchService, *kinds) } catch (_: Exception) {}
-                    }
+    override fun watchFileChanges(request: WatchFileChangesRequest): Flow<FileChangeEvent> =
+        flow {
+            logger.info("watchFileChanges: path={}, recursive={}", request.path, request.recursive)
+            validatePath(request.path)
+            val root = Paths.get(request.path)
+            if (!Files.exists(root)) {
+                logger.warn("watchFileChanges: path not found: {}", request.path)
+                return@flow
             }
 
-            while (currentCoroutineContext().isActive) {
-                val key = withContext(Dispatchers.IO) {
-                    watchService.poll(500, TimeUnit.MILLISECONDS)
-                } ?: continue
+            val kinds =
+                arrayOf(
+                    StandardWatchEventKinds.ENTRY_CREATE,
+                    StandardWatchEventKinds.ENTRY_MODIFY,
+                    StandardWatchEventKinds.ENTRY_DELETE,
+                )
 
-                for (event in key.pollEvents()) {
-                    if (event.kind() == StandardWatchEventKinds.OVERFLOW) continue
-
-                    @Suppress("UNCHECKED_CAST")
-                    val ev = event as WatchEvent<Path>
-                    val dir = key.watchable() as Path
-                    val filePath = dir.resolve(ev.context())
-
-                    val changeType = when (event.kind()) {
-                        StandardWatchEventKinds.ENTRY_CREATE -> FileChangeType.FILE_CHANGE_TYPE_CREATED
-                        StandardWatchEventKinds.ENTRY_MODIFY -> FileChangeType.FILE_CHANGE_TYPE_MODIFIED
-                        StandardWatchEventKinds.ENTRY_DELETE -> FileChangeType.FILE_CHANGE_TYPE_DELETED
-                        else -> FileChangeType.FILE_CHANGE_TYPE_UNSPECIFIED
-                    }
-
-                    // Register newly created directories for recursive watching
-                    if (request.recursive
-                        && event.kind() == StandardWatchEventKinds.ENTRY_CREATE
-                        && Files.isDirectory(filePath)
-                    ) {
-                        try { filePath.register(watchService, *kinds) } catch (_: Exception) {}
-                    }
-
-                    emit(
-                        FileChangeEvent.newBuilder()
-                            .setPath(filePath.toAbsolutePath().toString())
-                            .setChangeType(changeType)
-                            .setTimestamp(System.currentTimeMillis())
-                            .build()
-                    )
+            val watchService = FileSystems.getDefault().newWatchService()
+            try {
+                // Register root (and subdirs if recursive)
+                root.register(watchService, *kinds)
+                if (request.recursive && Files.isDirectory(root)) {
+                    Files
+                        .walk(root)
+                        .filter { Files.isDirectory(it) && it != root }
+                        .forEach { dir ->
+                            try {
+                                dir.register(watchService, *kinds)
+                            } catch (_: Exception) {
+                            }
+                        }
                 }
 
-                if (!key.reset()) {
-                    logger.info("watchFileChanges: watch key invalid, stopping: {}", request.path)
-                    break
+                while (currentCoroutineContext().isActive) {
+                    val key =
+                        withContext(Dispatchers.IO) {
+                            watchService.poll(500, TimeUnit.MILLISECONDS)
+                        } ?: continue
+
+                    for (event in key.pollEvents()) {
+                        if (event.kind() == StandardWatchEventKinds.OVERFLOW) continue
+
+                        @Suppress("UNCHECKED_CAST")
+                        val ev = event as WatchEvent<Path>
+                        val dir = key.watchable() as Path
+                        val filePath = dir.resolve(ev.context())
+
+                        val changeType =
+                            when (event.kind()) {
+                                StandardWatchEventKinds.ENTRY_CREATE -> FileChangeType.FILE_CHANGE_TYPE_CREATED
+                                StandardWatchEventKinds.ENTRY_MODIFY -> FileChangeType.FILE_CHANGE_TYPE_MODIFIED
+                                StandardWatchEventKinds.ENTRY_DELETE -> FileChangeType.FILE_CHANGE_TYPE_DELETED
+                                else -> FileChangeType.FILE_CHANGE_TYPE_UNSPECIFIED
+                            }
+
+                        // Register newly created directories for recursive watching
+                        if (request.recursive &&
+                            event.kind() == StandardWatchEventKinds.ENTRY_CREATE &&
+                            Files.isDirectory(filePath)
+                        ) {
+                            try {
+                                filePath.register(watchService, *kinds)
+                            } catch (_: Exception) {
+                            }
+                        }
+
+                        emit(
+                            FileChangeEvent
+                                .newBuilder()
+                                .setPath(filePath.toAbsolutePath().toString())
+                                .setChangeType(changeType)
+                                .setTimestamp(System.currentTimeMillis())
+                                .build(),
+                        )
+                    }
+
+                    if (!key.reset()) {
+                        logger.info("watchFileChanges: watch key invalid, stopping: {}", request.path)
+                        break
+                    }
                 }
+            } finally {
+                watchService.close()
             }
-        } finally {
-            watchService.close()
         }
-    }
 }

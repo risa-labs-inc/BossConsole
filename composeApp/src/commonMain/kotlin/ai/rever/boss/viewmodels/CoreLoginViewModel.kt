@@ -28,8 +28,10 @@ class CoreLoginViewModel {
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
-
-    fun sendMagicLink(email: String, onSuccess: () -> Unit) {
+    fun sendMagicLink(
+        email: String,
+        onSuccess: () -> Unit,
+    ) {
         if (email.isBlank()) {
             _errorMessage.value = "Please enter your email"
             return
@@ -49,7 +51,7 @@ class CoreLoginViewModel {
                 onFailure = { error ->
                     logger.warn(LogCategory.AUTH, "Magic link sending failed", error = error)
                     _errorMessage.value = error.message
-                }
+                },
             )
 
             _isLoading.value = false
@@ -71,5 +73,4 @@ class CoreLoginViewModel {
         logger.debug(LogCategory.AUTH, "Setting magic link verification error", mapOf("error" to errorMessage))
         _errorMessage.value = errorMessage
     }
-
 }

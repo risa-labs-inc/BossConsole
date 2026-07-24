@@ -47,7 +47,6 @@ import kotlinx.serialization.json.*
  * ```
  */
 object SecretService {
-
     private val client
         get() = SupabaseConfig.client
 
@@ -58,17 +57,22 @@ object SecretService {
      * @param offset Number of secrets to skip
      * @return Paginated result with decrypted secrets
      */
-    suspend fun getUserSecrets(limit: Int = 50, offset: Int = 0): Result<PaginatedSecrets> {
-        return try {
-            val params = buildJsonObject {
-                put("p_limit", limit)
-                put("p_offset", offset)
-            }
+    suspend fun getUserSecrets(
+        limit: Int = 50,
+        offset: Int = 0,
+    ): Result<PaginatedSecrets> =
+        try {
+            val params =
+                buildJsonObject {
+                    put("p_limit", limit)
+                    put("p_offset", offset)
+                }
 
-            val postgrestResult = client.postgrest.rpc(
-                function = "get_user_secrets",
-                parameters = params
-            )
+            val postgrestResult =
+                client.postgrest.rpc(
+                    function = "get_user_secrets",
+                    parameters = params,
+                )
 
             val jsonElement = Json.parseToJsonElement(postgrestResult.data)
             val secrets = Json.decodeFromJsonElement<List<SecretEntry>>(jsonElement)
@@ -78,7 +82,6 @@ object SecretService {
         } catch (e: Exception) {
             Result.failure(e)
         }
-    }
 
     /**
      * Search user secrets by website or username
@@ -91,19 +94,21 @@ object SecretService {
     suspend fun searchSecrets(
         query: String,
         limit: Int = 50,
-        offset: Int = 0
-    ): Result<PaginatedSecrets> {
-        return try {
-            val params = buildJsonObject {
-                put("p_query", query)
-                put("p_limit", limit)
-                put("p_offset", offset)
-            }
+        offset: Int = 0,
+    ): Result<PaginatedSecrets> =
+        try {
+            val params =
+                buildJsonObject {
+                    put("p_query", query)
+                    put("p_limit", limit)
+                    put("p_offset", offset)
+                }
 
-            val postgrestResult = client.postgrest.rpc(
-                function = "search_user_secrets",
-                parameters = params
-            )
+            val postgrestResult =
+                client.postgrest.rpc(
+                    function = "search_user_secrets",
+                    parameters = params,
+                )
 
             val jsonElement = Json.parseToJsonElement(postgrestResult.data)
             val secrets = Json.decodeFromJsonElement<List<SecretEntry>>(jsonElement)
@@ -114,13 +119,12 @@ object SecretService {
             Result.success(
                 PaginatedSecrets(
                     data = secrets,
-                    hasMore = hasMore
-                )
+                    hasMore = hasMore,
+                ),
             )
         } catch (e: Exception) {
             Result.failure(e)
         }
-    }
 
     /**
      * Create a new secret
@@ -132,32 +136,34 @@ object SecretService {
         return try {
             request.validate().getOrElse { return Result.failure(it) }
 
-            val params = buildJsonObject {
-                put("p_website", request.website)
-                put("p_username", request.username)
-                put("p_password", request.password)
-                if (request.notes != null) {
-                    put("p_notes", request.notes)
+            val params =
+                buildJsonObject {
+                    put("p_website", request.website)
+                    put("p_username", request.username)
+                    put("p_password", request.password)
+                    if (request.notes != null) {
+                        put("p_notes", request.notes)
+                    }
+                    if (request.expirationDate != null) {
+                        put("p_expiration_date", request.expirationDate)
+                    }
+                    if (request.tags.isNotEmpty()) {
+                        put("p_tags", JsonArray(request.tags.map { JsonPrimitive(it) }))
+                    }
+                    put("p_twofa_enabled", request.twofaEnabled)
+                    if (request.twofaType != null) {
+                        put("p_twofa_type", request.twofaType)
+                    }
+                    if (request.recoveryCodes.isNotEmpty()) {
+                        put("p_recovery_codes", JsonArray(request.recoveryCodes.map { JsonPrimitive(it) }))
+                    }
                 }
-                if (request.expirationDate != null) {
-                    put("p_expiration_date", request.expirationDate)
-                }
-                if (request.tags.isNotEmpty()) {
-                    put("p_tags", JsonArray(request.tags.map { JsonPrimitive(it) }))
-                }
-                put("p_twofa_enabled", request.twofaEnabled)
-                if (request.twofaType != null) {
-                    put("p_twofa_type", request.twofaType)
-                }
-                if (request.recoveryCodes.isNotEmpty()) {
-                    put("p_recovery_codes", JsonArray(request.recoveryCodes.map { JsonPrimitive(it) }))
-                }
-            }
 
-            val postgrestResult = client.postgrest.rpc(
-                function = "create_secret",
-                parameters = params
-            )
+            val postgrestResult =
+                client.postgrest.rpc(
+                    function = "create_secret",
+                    parameters = params,
+                )
 
             val jsonElement = Json.parseToJsonElement(postgrestResult.data)
             val result = Json.decodeFromJsonElement<RpcResponse>(jsonElement)
@@ -183,33 +189,35 @@ object SecretService {
             // Validate request
             request.validate().getOrElse { return Result.failure(it) }
 
-            val params = buildJsonObject {
-                put("p_secret_id", request.secretId)
-                put("p_website", request.website)
-                put("p_username", request.username)
-                put("p_password", request.password)
-                if (request.notes != null) {
-                    put("p_notes", request.notes)
+            val params =
+                buildJsonObject {
+                    put("p_secret_id", request.secretId)
+                    put("p_website", request.website)
+                    put("p_username", request.username)
+                    put("p_password", request.password)
+                    if (request.notes != null) {
+                        put("p_notes", request.notes)
+                    }
+                    if (request.expirationDate != null) {
+                        put("p_expiration_date", request.expirationDate)
+                    }
+                    if (request.tags.isNotEmpty()) {
+                        put("p_tags", JsonArray(request.tags.map { JsonPrimitive(it) }))
+                    }
+                    put("p_twofa_enabled", request.twofaEnabled)
+                    if (request.twofaType != null) {
+                        put("p_twofa_type", request.twofaType)
+                    }
+                    if (request.recoveryCodes.isNotEmpty()) {
+                        put("p_recovery_codes", JsonArray(request.recoveryCodes.map { JsonPrimitive(it) }))
+                    }
                 }
-                if (request.expirationDate != null) {
-                    put("p_expiration_date", request.expirationDate)
-                }
-                if (request.tags.isNotEmpty()) {
-                    put("p_tags", JsonArray(request.tags.map { JsonPrimitive(it) }))
-                }
-                put("p_twofa_enabled", request.twofaEnabled)
-                if (request.twofaType != null) {
-                    put("p_twofa_type", request.twofaType)
-                }
-                if (request.recoveryCodes.isNotEmpty()) {
-                    put("p_recovery_codes", JsonArray(request.recoveryCodes.map { JsonPrimitive(it) }))
-                }
-            }
 
-            val postgrestResult = client.postgrest.rpc(
-                function = "update_secret",
-                parameters = params
-            )
+            val postgrestResult =
+                client.postgrest.rpc(
+                    function = "update_secret",
+                    parameters = params,
+                )
 
             val jsonElement = Json.parseToJsonElement(postgrestResult.data)
             val result = Json.decodeFromJsonElement<RpcResponse>(jsonElement)
@@ -230,16 +238,18 @@ object SecretService {
      * @param secretId ID of the secret to delete
      * @return Result with success/failure
      */
-    suspend fun deleteSecret(secretId: String): Result<Unit> {
-        return try {
-            val params = buildJsonObject {
-                put("p_secret_id", secretId)
-            }
+    suspend fun deleteSecret(secretId: String): Result<Unit> =
+        try {
+            val params =
+                buildJsonObject {
+                    put("p_secret_id", secretId)
+                }
 
-            val postgrestResult = client.postgrest.rpc(
-                function = "delete_secret",
-                parameters = params
-            )
+            val postgrestResult =
+                client.postgrest.rpc(
+                    function = "delete_secret",
+                    parameters = params,
+                )
 
             val jsonElement = Json.parseToJsonElement(postgrestResult.data)
             val result = Json.decodeFromJsonElement<RpcResponse>(jsonElement)
@@ -252,7 +262,6 @@ object SecretService {
         } catch (e: Exception) {
             Result.failure(e)
         }
-    }
 
     /**
      * Get user secrets including shared secrets
@@ -261,17 +270,22 @@ object SecretService {
      * @param offset Number of secrets to skip
      * @return Paginated result with decrypted secrets (own + shared)
      */
-    suspend fun getUserSecretsWithShared(limit: Int = 50, offset: Int = 0): Result<PaginatedSecrets> {
-        return try {
-            val params = buildJsonObject {
-                put("p_limit", limit)
-                put("p_offset", offset)
-            }
+    suspend fun getUserSecretsWithShared(
+        limit: Int = 50,
+        offset: Int = 0,
+    ): Result<PaginatedSecrets> =
+        try {
+            val params =
+                buildJsonObject {
+                    put("p_limit", limit)
+                    put("p_offset", offset)
+                }
 
-            val postgrestResult = client.postgrest.rpc(
-                function = "get_user_secrets_with_shared",
-                parameters = params
-            )
+            val postgrestResult =
+                client.postgrest.rpc(
+                    function = "get_user_secrets_with_shared",
+                    parameters = params,
+                )
 
             val jsonElement = Json.parseToJsonElement(postgrestResult.data)
             val secretsWithSharing = Json.decodeFromJsonElement<List<SecretEntryWithSharing>>(jsonElement)
@@ -282,7 +296,6 @@ object SecretService {
         } catch (e: Exception) {
             Result.failure(e)
         }
-    }
 
     /**
      * Get user secrets with sharing information (keeps sharing metadata)
@@ -295,17 +308,22 @@ object SecretService {
      * @param offset Number of secrets to skip
      * @return Paginated result with secrets including sharing metadata
      */
-    suspend fun getUserSecretsWithSharingInfo(limit: Int = 50, offset: Int = 0): Result<PaginatedSecretsWithSharing> {
-        return try {
-            val params = buildJsonObject {
-                put("p_limit", limit)
-                put("p_offset", offset)
-            }
+    suspend fun getUserSecretsWithSharingInfo(
+        limit: Int = 50,
+        offset: Int = 0,
+    ): Result<PaginatedSecretsWithSharing> =
+        try {
+            val params =
+                buildJsonObject {
+                    put("p_limit", limit)
+                    put("p_offset", offset)
+                }
 
-            val postgrestResult = client.postgrest.rpc(
-                function = "get_user_secrets_with_shared",
-                parameters = params
-            )
+            val postgrestResult =
+                client.postgrest.rpc(
+                    function = "get_user_secrets_with_shared",
+                    parameters = params,
+                )
 
             val jsonElement = Json.parseToJsonElement(postgrestResult.data)
             val secretsWithSharing = Json.decodeFromJsonElement<List<SecretEntryWithSharing>>(jsonElement)
@@ -315,7 +333,6 @@ object SecretService {
         } catch (e: Exception) {
             Result.failure(e)
         }
-    }
 
     /**
      * Share a secret with a user or role
@@ -327,26 +344,28 @@ object SecretService {
         return try {
             request.validate().getOrElse { return Result.failure(it) }
 
-            val params = buildJsonObject {
-                put("p_secret_id", request.secretId)
-                if (request.targetUserId != null) {
-                    put("p_target_user_id", request.targetUserId)
+            val params =
+                buildJsonObject {
+                    put("p_secret_id", request.secretId)
+                    if (request.targetUserId != null) {
+                        put("p_target_user_id", request.targetUserId)
+                    }
+                    if (request.targetRoleId != null) {
+                        put("p_target_role_id", request.targetRoleId)
+                    }
+                    if (request.notes != null) {
+                        put("p_notes", request.notes)
+                    }
+                    if (request.expiresAt != null) {
+                        put("p_expires_at", request.expiresAt)
+                    }
                 }
-                if (request.targetRoleId != null) {
-                    put("p_target_role_id", request.targetRoleId)
-                }
-                if (request.notes != null) {
-                    put("p_notes", request.notes)
-                }
-                if (request.expiresAt != null) {
-                    put("p_expires_at", request.expiresAt)
-                }
-            }
 
-            val postgrestResult = client.postgrest.rpc(
-                function = "share_secret",
-                parameters = params
-            )
+            val postgrestResult =
+                client.postgrest.rpc(
+                    function = "share_secret",
+                    parameters = params,
+                )
 
             val jsonElement = Json.parseToJsonElement(postgrestResult.data)
             val result = Json.decodeFromJsonElement<RpcResponse>(jsonElement)
@@ -371,20 +390,22 @@ object SecretService {
         return try {
             request.validate().getOrElse { return Result.failure(it) }
 
-            val params = buildJsonObject {
-                put("p_secret_id", request.secretId)
-                if (request.targetUserId != null) {
-                    put("p_target_user_id", request.targetUserId)
+            val params =
+                buildJsonObject {
+                    put("p_secret_id", request.secretId)
+                    if (request.targetUserId != null) {
+                        put("p_target_user_id", request.targetUserId)
+                    }
+                    if (request.targetRoleId != null) {
+                        put("p_target_role_id", request.targetRoleId)
+                    }
                 }
-                if (request.targetRoleId != null) {
-                    put("p_target_role_id", request.targetRoleId)
-                }
-            }
 
-            val postgrestResult = client.postgrest.rpc(
-                function = "unshare_secret",
-                parameters = params
-            )
+            val postgrestResult =
+                client.postgrest.rpc(
+                    function = "unshare_secret",
+                    parameters = params,
+                )
 
             val jsonElement = Json.parseToJsonElement(postgrestResult.data)
             val result = Json.decodeFromJsonElement<RpcResponse>(jsonElement)
@@ -405,16 +426,18 @@ object SecretService {
      * @param secretId ID of the secret to get shares for
      * @return Result with list of share entries
      */
-    suspend fun getSecretShares(secretId: String): Result<List<SecretShareEntry>> {
-        return try {
-            val params = buildJsonObject {
-                put("p_secret_id", secretId)
-            }
+    suspend fun getSecretShares(secretId: String): Result<List<SecretShareEntry>> =
+        try {
+            val params =
+                buildJsonObject {
+                    put("p_secret_id", secretId)
+                }
 
-            val postgrestResult = client.postgrest.rpc(
-                function = "get_secret_shares",
-                parameters = params
-            )
+            val postgrestResult =
+                client.postgrest.rpc(
+                    function = "get_secret_shares",
+                    parameters = params,
+                )
 
             val jsonElement = Json.parseToJsonElement(postgrestResult.data)
             val shares = Json.decodeFromJsonElement<List<SecretShareEntry>>(jsonElement)
@@ -423,7 +446,6 @@ object SecretService {
         } catch (e: Exception) {
             Result.failure(e)
         }
-    }
 
     /**
      * RPC response structure for create/update/delete operations
@@ -433,9 +455,9 @@ object SecretService {
         val success: Boolean,
         val error: String? = null,
         val message: String? = null,
-        val secret_id: String? = null,  // ID of created/updated secret
-        val target_email: String? = null,  // Email of user shared with (for share_secret)
-        val target_role: String? = null,  // Name of role shared with (for share_secret)
-        val revoked_count: Int? = null  // Number of shares revoked (for unshare_secret)
+        val secret_id: String? = null, // ID of created/updated secret
+        val target_email: String? = null, // Email of user shared with (for share_secret)
+        val target_role: String? = null, // Name of role shared with (for share_secret)
+        val revoked_count: Int? = null, // Number of shares revoked (for unshare_secret)
     )
 }

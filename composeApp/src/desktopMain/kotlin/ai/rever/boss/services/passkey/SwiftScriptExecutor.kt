@@ -14,23 +14,30 @@ object SwiftScriptExecutor {
     /**
      * Execute a Swift file with arguments and return the output
      */
-    fun executeSwiftFile(fileName: String, vararg args: String): String {
+    fun executeSwiftFile(
+        fileName: String,
+        vararg args: String,
+    ): String {
         val swiftFilesDir = getSwiftFilesDirectory()
         val swiftFile = File(swiftFilesDir, fileName)
-        
+
         if (!swiftFile.exists()) {
             throw IllegalArgumentException("Swift file not found: ${swiftFile.absolutePath}")
         }
-        
+
         val command = mutableListOf("swift", swiftFile.absolutePath)
         command.addAll(args)
-        
+
         val process = ProcessBuilder(command).start()
-        val output = process.inputStream.bufferedReader().readText().trim()
+        val output =
+            process.inputStream
+                .bufferedReader()
+                .readText()
+                .trim()
         val exitCode = process.waitFor()
-        
+
         logger.debug(LogCategory.PASSKEY, "Executed Swift file", mapOf("fileName" to fileName, "exitCode" to exitCode))
-        
+
         return output
     }
 
@@ -40,13 +47,14 @@ object SwiftScriptExecutor {
     private fun getSwiftFilesDirectory(): File {
         val projectDir = System.getProperty("user.dir")
         logger.debug(LogCategory.PASSKEY, "Project dir", mapOf("path" to projectDir))
-        
+
         // Try multiple possible paths
-        val possiblePaths = listOf(
-            "$projectDir/composeApp/src/desktopMain/kotlin/ai/rever/boss/services/passkey/swift",
-            "$projectDir/src/desktopMain/kotlin/ai/rever/boss/services/passkey/swift"
-        )
-        
+        val possiblePaths =
+            listOf(
+                "$projectDir/composeApp/src/desktopMain/kotlin/ai/rever/boss/services/passkey/swift",
+                "$projectDir/src/desktopMain/kotlin/ai/rever/boss/services/passkey/swift",
+            )
+
         for (path in possiblePaths) {
             val dir = File(path)
             logger.debug(LogCategory.PASSKEY, "Checking path", mapOf("path" to dir.absolutePath))
@@ -55,15 +63,15 @@ object SwiftScriptExecutor {
                 return dir
             }
         }
-        
+
         throw IllegalStateException("Swift files directory not found. Checked paths: $possiblePaths")
     }
 
     /**
      * Check if macOS Swift compiler is available
      */
-    fun isSwiftAvailable(): Boolean {
-        return try {
+    fun isSwiftAvailable(): Boolean =
+        try {
             val process = ProcessBuilder("swift", "--version").start()
             val exitCode = process.waitFor()
             exitCode == 0
@@ -71,5 +79,4 @@ object SwiftScriptExecutor {
             logger.debug(LogCategory.PASSKEY, "Swift not available", mapOf("error" to e.toString()))
             false
         }
-    }
 }

@@ -10,7 +10,7 @@ package ai.rever.boss.logging
 data class LogEntry(
     val timestamp: Long,
     val message: String,
-    val source: LogSource
+    val source: LogSource,
 ) {
     /**
      * Format timestamp as HH:mm:ss.SSS
@@ -49,5 +49,5 @@ enum class LogSource {
     /**
      * Standard error (System.err)
      */
-    STDERR
+    STDERR,
 }

@@ -15,9 +15,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Desktop implementation of GenericDialogProvider factory.
  */
-actual fun createGenericDialogProvider(): GenericDialogProvider? {
-    return GenericDialogProviderImpl.getInstance()
-}
+actual fun createGenericDialogProvider(): GenericDialogProvider? = GenericDialogProviderImpl.getInstance()
 
 /**
  * State for a pending dialog request.
@@ -32,7 +30,7 @@ sealed interface DialogRequest {
         val initialValue: String,
         val placeholder: String,
         val validation: ((String) -> String?)?,
-        val result: CompletableDeferred<String?>
+        val result: CompletableDeferred<String?>,
     ) : DialogRequest
 
     data class Confirmation(
@@ -42,7 +40,7 @@ sealed interface DialogRequest {
         val confirmText: String,
         val cancelText: String,
         val isDestructive: Boolean,
-        val result: CompletableDeferred<Boolean>
+        val result: CompletableDeferred<Boolean>,
     ) : DialogRequest
 
     data class SingleChoice(
@@ -51,7 +49,7 @@ sealed interface DialogRequest {
         val message: String?,
         val choices: List<DialogChoice>,
         val selectedIndex: Int,
-        val result: CompletableDeferred<DialogChoice?>
+        val result: CompletableDeferred<DialogChoice?>,
     ) : DialogRequest
 
     data class MultiChoice(
@@ -59,7 +57,7 @@ sealed interface DialogRequest {
         val title: String,
         val message: String?,
         val choices: List<DialogChoiceItem>,
-        val result: CompletableDeferred<List<DialogChoiceItem>?>
+        val result: CompletableDeferred<List<DialogChoiceItem>?>,
     ) : DialogRequest
 
     data class Alert(
@@ -67,7 +65,7 @@ sealed interface DialogRequest {
         val title: String,
         val message: String,
         val buttonText: String,
-        val result: CompletableDeferred<Unit>
+        val result: CompletableDeferred<Unit>,
     ) : DialogRequest
 
     data class ThreeButton(
@@ -77,7 +75,7 @@ sealed interface DialogRequest {
         val positiveText: String,
         val negativeText: String,
         val neutralText: String,
-        val result: CompletableDeferred<DialogButton>
+        val result: CompletableDeferred<DialogButton>,
     ) : DialogRequest
 
     data class Progress(
@@ -86,7 +84,7 @@ sealed interface DialogRequest {
         val message: String,
         val isIndeterminate: Boolean,
         val cancellable: Boolean,
-        val handle: ProgressDialogHandleImpl
+        val handle: ProgressDialogHandleImpl,
     ) : DialogRequest
 }
 
@@ -98,16 +96,14 @@ sealed interface DialogRequest {
  * in your UI to display the dialogs.
  */
 class GenericDialogProviderImpl private constructor() : GenericDialogProvider {
-
     companion object {
         @Volatile
         private var instance: GenericDialogProviderImpl? = null
 
-        fun getInstance(): GenericDialogProviderImpl {
-            return instance ?: synchronized(this) {
+        fun getInstance(): GenericDialogProviderImpl =
+            instance ?: synchronized(this) {
                 instance ?: GenericDialogProviderImpl().also { instance = it }
             }
-        }
     }
 
     private val _currentDialog = MutableStateFlow<DialogRequest?>(null)
@@ -123,18 +119,19 @@ class GenericDialogProviderImpl private constructor() : GenericDialogProvider {
         message: String?,
         initialValue: String,
         placeholder: String,
-        validation: ((String) -> String?)?
+        validation: ((String) -> String?)?,
     ): String? {
         val result = CompletableDeferred<String?>()
-        val request = DialogRequest.TextInput(
-            id = UUID.randomUUID().toString(),
-            title = title,
-            message = message,
-            initialValue = initialValue,
-            placeholder = placeholder,
-            validation = validation,
-            result = result
-        )
+        val request =
+            DialogRequest.TextInput(
+                id = UUID.randomUUID().toString(),
+                title = title,
+                message = message,
+                initialValue = initialValue,
+                placeholder = placeholder,
+                validation = validation,
+                result = result,
+            )
         _currentDialog.value = request
         return result.await().also { _currentDialog.value = null }
     }
@@ -144,18 +141,19 @@ class GenericDialogProviderImpl private constructor() : GenericDialogProvider {
         message: String,
         confirmText: String,
         cancelText: String,
-        isDestructive: Boolean
+        isDestructive: Boolean,
     ): Boolean {
         val result = CompletableDeferred<Boolean>()
-        val request = DialogRequest.Confirmation(
-            id = UUID.randomUUID().toString(),
-            title = title,
-            message = message,
-            confirmText = confirmText,
-            cancelText = cancelText,
-            isDestructive = isDestructive,
-            result = result
-        )
+        val request =
+            DialogRequest.Confirmation(
+                id = UUID.randomUUID().toString(),
+                title = title,
+                message = message,
+                confirmText = confirmText,
+                cancelText = cancelText,
+                isDestructive = isDestructive,
+                result = result,
+            )
         _currentDialog.value = request
         return result.await().also { _currentDialog.value = null }
     }
@@ -164,17 +162,18 @@ class GenericDialogProviderImpl private constructor() : GenericDialogProvider {
         title: String,
         message: String?,
         choices: List<DialogChoice>,
-        selectedIndex: Int
+        selectedIndex: Int,
     ): DialogChoice? {
         val result = CompletableDeferred<DialogChoice?>()
-        val request = DialogRequest.SingleChoice(
-            id = UUID.randomUUID().toString(),
-            title = title,
-            message = message,
-            choices = choices,
-            selectedIndex = selectedIndex,
-            result = result
-        )
+        val request =
+            DialogRequest.SingleChoice(
+                id = UUID.randomUUID().toString(),
+                title = title,
+                message = message,
+                choices = choices,
+                selectedIndex = selectedIndex,
+                result = result,
+            )
         _currentDialog.value = request
         return result.await().also { _currentDialog.value = null }
     }
@@ -182,16 +181,17 @@ class GenericDialogProviderImpl private constructor() : GenericDialogProvider {
     override suspend fun showMultiChoiceDialog(
         title: String,
         message: String?,
-        choices: List<DialogChoiceItem>
+        choices: List<DialogChoiceItem>,
     ): List<DialogChoiceItem>? {
         val result = CompletableDeferred<List<DialogChoiceItem>?>()
-        val request = DialogRequest.MultiChoice(
-            id = UUID.randomUUID().toString(),
-            title = title,
-            message = message,
-            choices = choices,
-            result = result
-        )
+        val request =
+            DialogRequest.MultiChoice(
+                id = UUID.randomUUID().toString(),
+                title = title,
+                message = message,
+                choices = choices,
+                result = result,
+            )
         _currentDialog.value = request
         return result.await().also { _currentDialog.value = null }
     }
@@ -199,16 +199,17 @@ class GenericDialogProviderImpl private constructor() : GenericDialogProvider {
     override suspend fun showAlertDialog(
         title: String,
         message: String,
-        buttonText: String
+        buttonText: String,
     ) {
         val result = CompletableDeferred<Unit>()
-        val request = DialogRequest.Alert(
-            id = UUID.randomUUID().toString(),
-            title = title,
-            message = message,
-            buttonText = buttonText,
-            result = result
-        )
+        val request =
+            DialogRequest.Alert(
+                id = UUID.randomUUID().toString(),
+                title = title,
+                message = message,
+                buttonText = buttonText,
+                result = result,
+            )
         _currentDialog.value = request
         result.await()
         _currentDialog.value = null
@@ -219,18 +220,19 @@ class GenericDialogProviderImpl private constructor() : GenericDialogProvider {
         message: String,
         positiveText: String,
         negativeText: String,
-        neutralText: String
+        neutralText: String,
     ): DialogButton {
         val result = CompletableDeferred<DialogButton>()
-        val request = DialogRequest.ThreeButton(
-            id = UUID.randomUUID().toString(),
-            title = title,
-            message = message,
-            positiveText = positiveText,
-            negativeText = negativeText,
-            neutralText = neutralText,
-            result = result
-        )
+        val request =
+            DialogRequest.ThreeButton(
+                id = UUID.randomUUID().toString(),
+                title = title,
+                message = message,
+                positiveText = positiveText,
+                negativeText = negativeText,
+                neutralText = neutralText,
+                result = result,
+            )
         _currentDialog.value = request
         return result.await().also { _currentDialog.value = null }
     }
@@ -239,19 +241,21 @@ class GenericDialogProviderImpl private constructor() : GenericDialogProvider {
         title: String,
         message: String,
         isIndeterminate: Boolean,
-        cancellable: Boolean
+        cancellable: Boolean,
     ): ProgressDialogHandle {
-        val handle = ProgressDialogHandleImpl(
-            onDismiss = { _currentDialog.value = null }
-        )
-        val request = DialogRequest.Progress(
-            id = UUID.randomUUID().toString(),
-            title = title,
-            message = message,
-            isIndeterminate = isIndeterminate,
-            cancellable = cancellable,
-            handle = handle
-        )
+        val handle =
+            ProgressDialogHandleImpl(
+                onDismiss = { _currentDialog.value = null },
+            )
+        val request =
+            DialogRequest.Progress(
+                id = UUID.randomUUID().toString(),
+                title = title,
+                message = message,
+                isIndeterminate = isIndeterminate,
+                cancellable = cancellable,
+                handle = handle,
+            )
         _currentDialog.value = request
         return handle
     }
@@ -269,9 +273,8 @@ class GenericDialogProviderImpl private constructor() : GenericDialogProvider {
  * Implementation of ProgressDialogHandle for desktop.
  */
 class ProgressDialogHandleImpl(
-    private val onDismiss: () -> Unit
+    private val onDismiss: () -> Unit,
 ) : ProgressDialogHandle {
-
     private val _progress = MutableStateFlow(0f)
     val progress: StateFlow<Float> = _progress.asStateFlow()
 

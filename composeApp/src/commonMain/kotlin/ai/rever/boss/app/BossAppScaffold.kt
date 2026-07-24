@@ -65,7 +65,10 @@ import kotlinx.coroutines.launch
  * providers, per-window project/runner/git state.
  */
 @Composable
-internal fun BossAppCompositionLocals(state: BossAppState, content: @Composable () -> Unit) {
+internal fun BossAppCompositionLocals(
+    state: BossAppState,
+    content: @Composable () -> Unit,
+) {
     val selectedProject by state.windowProjectState.selectedProject.collectAsState()
 
     // Bookmark data provider is provided by the bookmarks plugin via registerPluginAPI()
@@ -79,7 +82,10 @@ internal fun BossAppCompositionLocals(state: BossAppState, content: @Composable 
     CompositionLocalProvider(
         LocalWindowId provides state.windowId,
         LocalPanelPluginIdResolver provides { panelId ->
-            state.currentDefaultPlugin?.dynamicPluginManager?.getRegistrationTracker()?.getPluginIdForPanel(panelId)
+            state.currentDefaultPlugin
+                ?.dynamicPluginManager
+                ?.getRegistrationTracker()
+                ?.getPluginIdForPanel(panelId)
         },
         LocalSplitViewState provides state.splitViewState,
         LocalSplitViewOperations provides state.splitViewOperations,
@@ -91,12 +97,14 @@ internal fun BossAppCompositionLocals(state: BossAppState, content: @Composable 
         LocalWindowRunnerState provides state.windowRunnerState,
         LocalWindowGitState provides state.windowGitState,
         LocalWindowIdProvider provides windowIdProvider,
-        LocalWindowProjectStateProvider provides windowProjectStateProvider
+        LocalWindowProjectStateProvider provides windowProjectStateProvider,
     ) {
         // Initialize TopOfMind data provider for this window
         DisposableEffect(state.splitViewState, workspaceManager, state.windowId) {
             TopOfMindDataProvider.initialize(
-                state.splitViewState, workspaceManager, state.windowId
+                state.splitViewState,
+                workspaceManager,
+                state.windowId,
             )
             onDispose {
                 TopOfMindDataProvider.clear()
@@ -127,17 +135,20 @@ internal fun BossAppScaffold(
     val selectedProject by state.windowProjectState.selectedProject.collectAsState()
 
     with(state.draggablePanelComponent) {
-        Box(modifier = Modifier
-            .fillMaxSize()
-            .focusRequester(state.focusRequester)
-            .focusable()
-        ) { // Use Box to allow overlaying the drag ghost
+        Box(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .focusRequester(state.focusRequester)
+                    .focusable(),
+        ) {
+            // Use Box to allow overlaying the drag ghost
             Column(modifier = Modifier.fillMaxSize()) {
                 // Title bar - conditionally shown based on settings
                 // Default: hidden on Linux/Windows, shown on macOS
                 if (showTitleBar) {
                     BossTitleBar(
-                        onToggleMaximize = onToggleMaximize
+                        onToggleMaximize = onToggleMaximize,
                     )
                 }
 
@@ -170,7 +181,7 @@ internal fun BossAppScaffold(
                         } else {
                             UpdateManager.instance.resetState()
                         }
-                    }
+                    },
                 )
 
                 // Update dialog - dismissible prompt for a new app version,
@@ -191,24 +202,26 @@ internal fun BossAppScaffold(
                             coroutineScope.launch {
                                 UpdateManager.instance.dismissVersion(updateStateForDialog.updateInfo.latestVersion)
                             }
-                        }
+                        },
                     )
                 }
 
                 // Top bar - hidden in focus mode with smooth expand/shrink animation
                 AnimatedVisibility(
                     visible = reveal.showTopBar,
-                    enter = expandVertically(
-                        expandFrom = Alignment.Top,
-                        animationSpec = tween(durationMillis = 250)
-                    ),
-                    exit = shrinkVertically(
-                        shrinkTowards = Alignment.Top,
-                        animationSpec = tween(durationMillis = 250)
-                    )
+                    enter =
+                        expandVertically(
+                            expandFrom = Alignment.Top,
+                            animationSpec = tween(durationMillis = 250),
+                        ),
+                    exit =
+                        shrinkVertically(
+                            shrinkTowards = Alignment.Top,
+                            animationSpec = tween(durationMillis = 250),
+                        ),
                 ) {
                     Box(
-                        modifier = Modifier.hoverable(interactionSource = reveal.topBarInteractionSource)
+                        modifier = Modifier.hoverable(interactionSource = reveal.topBarInteractionSource),
                     ) {
                         BossTopBar(
                             workspaceManager = workspaceManager,
@@ -243,28 +256,30 @@ internal fun BossAppScaffold(
                             },
                             onCloneProject = {
                                 state.showCloneProjectDialog = true
-                            }
+                            },
                         )
                     }
                 }
 
                 Row(
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f),
                 ) {
                     // Left sidebar - hidden in focus mode with smooth expand/shrink animation
                     AnimatedVisibility(
                         visible = reveal.showLeftSidebar,
-                        enter = expandHorizontally(
-                            expandFrom = Alignment.Start,
-                            animationSpec = tween(durationMillis = 250)
-                        ),
-                        exit = shrinkHorizontally(
-                            shrinkTowards = Alignment.Start,
-                            animationSpec = tween(durationMillis = 250)
-                        )
+                        enter =
+                            expandHorizontally(
+                                expandFrom = Alignment.Start,
+                                animationSpec = tween(durationMillis = 250),
+                            ),
+                        exit =
+                            shrinkHorizontally(
+                                shrinkTowards = Alignment.Start,
+                                animationSpec = tween(durationMillis = 250),
+                            ),
                     ) {
                         Box(
-                            modifier = Modifier.hoverable(interactionSource = reveal.leftSidebarInteractionSource)
+                            modifier = Modifier.hoverable(interactionSource = reveal.leftSidebarInteractionSource),
                         ) {
                             BossLeftSideBar()
                         }
@@ -282,23 +297,25 @@ internal fun BossAppScaffold(
                         },
                         onShowSettings = { state.showSettingsDialog = true },
                         onOpenProjectDialog = { state.showProjectDialog = true },
-                        onNewProject = { state.showNewProjectDialog = true }
+                        onNewProject = { state.showNewProjectDialog = true },
                     )
 
                     // Right sidebar - hidden in focus mode with smooth expand/shrink animation
                     AnimatedVisibility(
                         visible = reveal.showRightSidebar,
-                        enter = expandHorizontally(
-                            expandFrom = Alignment.End,
-                            animationSpec = tween(durationMillis = 250)
-                        ),
-                        exit = shrinkHorizontally(
-                            shrinkTowards = Alignment.End,
-                            animationSpec = tween(durationMillis = 250)
-                        )
+                        enter =
+                            expandHorizontally(
+                                expandFrom = Alignment.End,
+                                animationSpec = tween(durationMillis = 250),
+                            ),
+                        exit =
+                            shrinkHorizontally(
+                                shrinkTowards = Alignment.End,
+                                animationSpec = tween(durationMillis = 250),
+                            ),
                     ) {
                         Box(
-                            modifier = Modifier.hoverable(interactionSource = reveal.rightSidebarInteractionSource)
+                            modifier = Modifier.hoverable(interactionSource = reveal.rightSidebarInteractionSource),
                         ) {
                             BossRightSideBar()
                         }
@@ -308,17 +325,19 @@ internal fun BossAppScaffold(
                 // Bottom bar - hidden in focus mode with smooth expand/shrink animation
                 AnimatedVisibility(
                     visible = reveal.showBottomBar,
-                    enter = expandVertically(
-                        expandFrom = Alignment.Bottom,
-                        animationSpec = tween(durationMillis = 250)
-                    ),
-                    exit = shrinkVertically(
-                        shrinkTowards = Alignment.Bottom,
-                        animationSpec = tween(durationMillis = 250)
-                    )
+                    enter =
+                        expandVertically(
+                            expandFrom = Alignment.Bottom,
+                            animationSpec = tween(durationMillis = 250),
+                        ),
+                    exit =
+                        shrinkVertically(
+                            shrinkTowards = Alignment.Bottom,
+                            animationSpec = tween(durationMillis = 250),
+                        ),
                 ) {
                     Box(
-                        modifier = Modifier.hoverable(interactionSource = reveal.bottomBarInteractionSource)
+                        modifier = Modifier.hoverable(interactionSource = reveal.bottomBarInteractionSource),
                     ) {
                         BossBottomBar(splitViewState.getActiveTabsComponent())
                     }
@@ -344,14 +363,14 @@ internal fun BossAppScaffold(
             state.currentDefaultPlugin?.pluginToastState?.let { toastState ->
                 PluginToastHost(
                     toastState = toastState,
-                    modifier = Modifier.align(Alignment.TopEnd)
+                    modifier = Modifier.align(Alignment.TopEnd),
                 )
             }
 
             // MRU tab-switcher overlay (Ctrl+Tab in most-recently-used mode)
             TabCycleOverlayHost(
                 data = state.tabCycleOverlay,
-                modifier = Modifier.align(Alignment.Center)
+                modifier = Modifier.align(Alignment.Center),
             )
         }
     }

@@ -1,18 +1,18 @@
 package ai.rever.boss.cli
 
-import ai.rever.boss.utils.extractFileName
+import ai.rever.boss.components.events.FileEventBus
+import ai.rever.boss.components.events.TerminalEventBus
+import ai.rever.boss.components.window_panel.SplitViewState
+import ai.rever.boss.components.workspaces.LayoutWorkspace
+import ai.rever.boss.components.workspaces.WorkspaceSerializer
+import ai.rever.boss.components.workspaces.applyWorkspace
+import ai.rever.boss.services.URLHandlerService
 import ai.rever.boss.utils.WindowFocusManager
+import ai.rever.boss.utils.extractFileName
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.Project
 import ai.rever.boss.window.WindowManager
-import ai.rever.boss.services.URLHandlerService
-import ai.rever.boss.components.events.FileEventBus
-import ai.rever.boss.components.events.TerminalEventBus
-import ai.rever.boss.components.workspaces.LayoutWorkspace
-import ai.rever.boss.components.workspaces.WorkspaceSerializer
-import ai.rever.boss.components.workspaces.applyWorkspace
-import ai.rever.boss.components.window_panel.SplitViewState
 import kotlinx.coroutines.*
 import java.io.File
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -29,7 +29,7 @@ class CLICommandHandler private constructor() {
     private val logger = BossLogger.forComponent("CLICommandHandler")
 
     private val commandQueue = ConcurrentLinkedQueue<CLICommand>()
-    private val terminalQueue = ConcurrentLinkedQueue<String>()  // Use empty string as sentinel for null
+    private val terminalQueue = ConcurrentLinkedQueue<String>() // Use empty string as sentinel for null
     private val workspaceQueue = ConcurrentLinkedQueue<String>()
     private val fileQueue = ConcurrentLinkedQueue<String>()
 
@@ -55,11 +55,10 @@ class CLICommandHandler private constructor() {
         @Volatile
         private var instance: CLICommandHandler? = null
 
-        fun getInstance(): CLICommandHandler {
-            return instance ?: synchronized(this) {
+        fun getInstance(): CLICommandHandler =
+            instance ?: synchronized(this) {
                 instance ?: CLICommandHandler().also { instance = it }
             }
-        }
     }
 
     /**
@@ -68,7 +67,7 @@ class CLICommandHandler private constructor() {
      */
     fun initialize(
         windowManager: WindowManager,
-        getSplitViewState: () -> SplitViewState?
+        getSplitViewState: () -> SplitViewState?,
     ) {
         this.windowManager = windowManager
         this.getSplitViewState = getSplitViewState
@@ -111,9 +110,13 @@ class CLICommandHandler private constructor() {
                 if (command != null) {
                     // Convert empty string sentinel back to null
                     val actualCommand = if (command.isEmpty()) null else command
-                    logger.debug(LogCategory.SYSTEM, "Processing queued terminal command", mapOf(
-                        "hasCommand" to (actualCommand != null)
-                    ))
+                    logger.debug(
+                        LogCategory.SYSTEM,
+                        "Processing queued terminal command",
+                        mapOf(
+                            "hasCommand" to (actualCommand != null),
+                        ),
+                    )
                     try {
                         handleOpenTerminal(actualCommand)
                     } catch (e: Exception) {
@@ -192,8 +195,14 @@ class CLICommandHandler private constructor() {
             logger.debug(LogCategory.SYSTEM, "Executing command", mapOf("command" to command.toString()))
 
             when (command) {
-                is CLICommand.OpenUrl -> handleOpenUrl(command.url)
-                is CLICommand.LoadWorkspace -> handleLoadWorkspace(command.configPath)
+                is CLICommand.OpenUrl -> {
+                    handleOpenUrl(command.url)
+                }
+
+                is CLICommand.LoadWorkspace -> {
+                    handleLoadWorkspace(command.configPath)
+                }
+
                 is CLICommand.OpenFile -> {
                     if (isFileHandlerReady) {
                         // File handler ready - execute immediately
@@ -205,22 +214,34 @@ class CLICommandHandler private constructor() {
                         fileQueue.add(command.filePath)
                     }
                 }
-                is CLICommand.OpenFolder -> handleOpenFolder(command.folderPath)
+
+                is CLICommand.OpenFolder -> {
+                    handleOpenFolder(command.folderPath)
+                }
+
                 is CLICommand.OpenTerminal -> {
-                    val queuedCommand = command.command ?: ""  // Use empty string as sentinel for null
+                    val queuedCommand = command.command ?: "" // Use empty string as sentinel for null
 
                     if (isTerminalHandlerReady) {
                         // Terminal handler ready - execute immediately
-                        logger.debug(LogCategory.SYSTEM, "Terminal handler ready, executing immediately", mapOf(
-                            "hasCommand" to queuedCommand.isNotEmpty()
-                        ))
+                        logger.debug(
+                            LogCategory.SYSTEM,
+                            "Terminal handler ready, executing immediately",
+                            mapOf(
+                                "hasCommand" to queuedCommand.isNotEmpty(),
+                            ),
+                        )
                         val actualCommand = if (queuedCommand.isEmpty()) null else queuedCommand
                         handleOpenTerminal(actualCommand)
                     } else {
                         // Terminal handler not ready - queue for later (cold start)
-                        logger.debug(LogCategory.SYSTEM, "Terminal handler not ready, queueing", mapOf(
-                            "hasCommand" to queuedCommand.isNotEmpty()
-                        ))
+                        logger.debug(
+                            LogCategory.SYSTEM,
+                            "Terminal handler not ready, queueing",
+                            mapOf(
+                                "hasCommand" to queuedCommand.isNotEmpty(),
+                            ),
+                        )
                         terminalQueue.add(queuedCommand)
                     }
                 }
@@ -288,11 +309,16 @@ class CLICommandHandler private constructor() {
 
         // Emit workspace load event - BossApp will handle the actual loading
         // This is much simpler than trying to access splitViewState from CLI layer
-        ai.rever.boss.components.events.WorkspaceEventBus.loadWorkspace(file.absolutePath, sourceWindowId = focusedWindowId)
-        logger.debug(LogCategory.SYSTEM, "Emitted workspace load event", mapOf(
-            "path" to file.absolutePath,
-            "windowId" to focusedWindowId
-        ))
+        ai.rever.boss.components.events.WorkspaceEventBus
+            .loadWorkspace(file.absolutePath, sourceWindowId = focusedWindowId)
+        logger.debug(
+            LogCategory.SYSTEM,
+            "Emitted workspace load event",
+            mapOf(
+                "path" to file.absolutePath,
+                "windowId" to focusedWindowId,
+            ),
+        )
     }
 
     /**
@@ -333,17 +359,22 @@ class CLICommandHandler private constructor() {
         }
 
         // Track file processing (prevents New Tab Dialog race condition)
-        ai.rever.boss.services.FileHandlerService.incrementProcessing()
+        ai.rever.boss.services.FileHandlerService
+            .incrementProcessing()
 
         // Emit file open event via FileEventBus
         // The active window's BossApp will listen and create the editor tab
         CoroutineScope(Dispatchers.Main).launch {
             try {
                 FileEventBus.openFile(file.absolutePath, sourceWindowId = focusedWindowId)
-                logger.debug(LogCategory.SYSTEM, "Emitted file open event", mapOf(
-                    "path" to file.absolutePath,
-                    "windowId" to focusedWindowId
-                ))
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Emitted file open event",
+                    mapOf(
+                        "path" to file.absolutePath,
+                        "windowId" to focusedWindowId,
+                    ),
+                )
 
                 // CRITICAL: Wait for file tab to actually be created before decrementing
                 delay(500)
@@ -351,7 +382,8 @@ class CLICommandHandler private constructor() {
                 logger.error(LogCategory.SYSTEM, "Failed to emit file event", error = e)
             } finally {
                 // Always decrement, even on error
-                ai.rever.boss.services.FileHandlerService.decrementProcessing()
+                ai.rever.boss.services.FileHandlerService
+                    .decrementProcessing()
             }
         }
     }
@@ -386,19 +418,25 @@ class CLICommandHandler private constructor() {
         withContext(Dispatchers.Main) {
             // Get focused window for multi-window support
             val focusedWindowId = WindowFocusManager.focusedWindowFlow.value
-            val windowProjectState = focusedWindowId?.let { ai.rever.boss.window.WindowProjectStateRegistry.get(it) }
+            val windowProjectState =
+                focusedWindowId?.let {
+                    ai.rever.boss.window.WindowProjectStateRegistry
+                        .get(it)
+                }
 
-            val project = Project(
-                name = folder.name.extractFileName(),
-                path = folder.absolutePath,
-                lastOpened = System.currentTimeMillis()
-            )
+            val project =
+                Project(
+                    name = folder.name.extractFileName(),
+                    path = folder.absolutePath,
+                    lastOpened = System.currentTimeMillis(),
+                )
 
             if (windowProjectState != null) {
                 windowProjectState.selectProject(project)
             } else {
                 // Fall back to just updating recent projects if no window state available
-                ai.rever.boss.components.plugin.panels.left_top.ProjectState.updateRecentProjects(project)
+                ai.rever.boss.components.plugin.panels.left_top.ProjectState
+                    .updateRecentProjects(project)
             }
             logger.debug(LogCategory.SYSTEM, "Folder opened in codebase plugin", mapOf("path" to folder.absolutePath))
         }
@@ -425,17 +463,22 @@ class CLICommandHandler private constructor() {
         }
 
         // Track terminal processing (prevents New Tab Dialog race condition)
-        ai.rever.boss.services.TerminalHandlerService.incrementProcessing()
+        ai.rever.boss.services.TerminalHandlerService
+            .incrementProcessing()
 
         // Emit terminal open event via TerminalEventBus
         // The active window's BossApp will listen and create the terminal tab
         CoroutineScope(Dispatchers.Main).launch {
             try {
                 TerminalEventBus.openTerminal(command, sourceWindowId = focusedWindowId)
-                logger.debug(LogCategory.SYSTEM, "Emitted terminal open event", mapOf(
-                    "hasCommand" to (command != null),
-                    "windowId" to focusedWindowId
-                ))
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Emitted terminal open event",
+                    mapOf(
+                        "hasCommand" to (command != null),
+                        "windowId" to focusedWindowId,
+                    ),
+                )
 
                 // CRITICAL: Wait for terminal tab to actually be created before decrementing
                 delay(500)
@@ -443,7 +486,8 @@ class CLICommandHandler private constructor() {
                 logger.error(LogCategory.SYSTEM, "Failed to emit terminal event", error = e)
             } finally {
                 // Always decrement, even on error
-                ai.rever.boss.services.TerminalHandlerService.decrementProcessing()
+                ai.rever.boss.services.TerminalHandlerService
+                    .decrementProcessing()
             }
         }
     }
@@ -453,9 +497,23 @@ class CLICommandHandler private constructor() {
  * Sealed class representing CLI commands.
  */
 sealed class CLICommand {
-    data class OpenUrl(val url: String) : CLICommand()
-    data class LoadWorkspace(val configPath: String) : CLICommand()
-    data class OpenFile(val filePath: String) : CLICommand()
-    data class OpenFolder(val folderPath: String) : CLICommand()
-    data class OpenTerminal(val command: String?) : CLICommand()
+    data class OpenUrl(
+        val url: String,
+    ) : CLICommand()
+
+    data class LoadWorkspace(
+        val configPath: String,
+    ) : CLICommand()
+
+    data class OpenFile(
+        val filePath: String,
+    ) : CLICommand()
+
+    data class OpenFolder(
+        val folderPath: String,
+    ) : CLICommand()
+
+    data class OpenTerminal(
+        val command: String?,
+    ) : CLICommand()
 }

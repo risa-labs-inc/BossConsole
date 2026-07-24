@@ -16,7 +16,6 @@ import androidx.compose.ui.unit.IntOffset
  */
 @OptIn(ExperimentalComposeUiApi::class)
 actual class ContextMenuHandler {
-
     /**
      * Desktop implementation uses right-click as primary activation method
      * with long press as fallback for touchpads.
@@ -24,38 +23,39 @@ actual class ContextMenuHandler {
     actual fun Modifier.applyContextMenuBehavior(
         showMenu: Boolean,
         setShowMenu: (Boolean) -> Unit,
-        setMenuPosition: (IntOffset) -> Unit
-    ): Modifier = composed {
-        pointerInput(Unit) {
-            // For desktop platforms, detect right-click
-            awaitPointerEventScope {
-                while (true) {
-                    val event = awaitPointerEvent(PointerEventPass.Main)
+        setMenuPosition: (IntOffset) -> Unit,
+    ): Modifier =
+        composed {
+            pointerInput(Unit) {
+                // For desktop platforms, detect right-click
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Main)
 
-                    // Handle right-click (secondary button only, not back/forward buttons)
-                    val pointerPress = event.changes.find { it.type == PointerType.Companion.Mouse }
-                    if (event.type == PointerEventType.Companion.Press &&
-                        event.buttons.isSecondaryPressed &&
-                        pointerPress != null) {
-
-                        setMenuPosition(
-                            IntOffset(
-                                pointerPress.position.x.toInt(),
-                                pointerPress.position.y.toInt()
+                        // Handle right-click (secondary button only, not back/forward buttons)
+                        val pointerPress = event.changes.find { it.type == PointerType.Companion.Mouse }
+                        if (event.type == PointerEventType.Companion.Press &&
+                            event.buttons.isSecondaryPressed &&
+                            pointerPress != null
+                        ) {
+                            setMenuPosition(
+                                IntOffset(
+                                    pointerPress.position.x.toInt(),
+                                    pointerPress.position.y.toInt(),
+                                ),
                             )
-                        )
-                        setShowMenu(true)
-                        pointerPress.consume()
-                    }
+                            setShowMenu(true)
+                            pointerPress.consume()
+                        }
 
-                    // Handle left-click to dismiss menu
-                    if (showMenu && event.type == PointerEventType.Companion.Press &&
-                        event.buttons.isPrimaryPressed) {
-                        setShowMenu(false)
+                        // Handle left-click to dismiss menu
+                        if (showMenu && event.type == PointerEventType.Companion.Press &&
+                            event.buttons.isPrimaryPressed
+                        ) {
+                            setShowMenu(false)
+                        }
                     }
                 }
             }
         }
-    }
-
 }

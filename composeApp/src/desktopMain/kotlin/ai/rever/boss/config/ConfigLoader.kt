@@ -26,7 +26,7 @@ object ConfigLoader {
         loadLocalProperties()
         loadEmbeddedProperties()
     }
-    
+
     /**
      * Loads properties from local.properties file if it exists.
      * This file should not be committed to version control.
@@ -34,26 +34,31 @@ object ConfigLoader {
     private fun loadLocalProperties() {
         try {
             // Try multiple locations where local.properties might be
-            val possibleLocations = listOf(
-                File("local.properties"),  // Current directory
-                File("../local.properties"),  // Parent directory (when running from composeApp)
-                File(System.getProperty("user.dir"), "local.properties"),
-                File(System.getProperty("user.dir"), "../local.properties")
-            )
-            
+            val possibleLocations =
+                listOf(
+                    File("local.properties"), // Current directory
+                    File("../local.properties"), // Parent directory (when running from composeApp)
+                    File(System.getProperty("user.dir"), "local.properties"),
+                    File(System.getProperty("user.dir"), "../local.properties"),
+                )
+
             for (localPropertiesFile in possibleLocations) {
                 if (localPropertiesFile.exists()) {
                     logger.debug(LogCategory.SYSTEM, "Loading local.properties", mapOf("path" to localPropertiesFile.absolutePath))
                     FileInputStream(localPropertiesFile).use { input ->
                         properties.load(input)
                     }
-                    logger.debug(LogCategory.SYSTEM, "Loaded properties from local.properties", mapOf(
-                        "count" to properties.size,
-                        "hasSupabaseUrl" to properties.containsKey("SUPABASE_URL"),
-                        "hasSupabaseAnonKey" to properties.containsKey("SUPABASE_ANON_KEY"),
-                        "hasSupabaseFunctionUrl" to properties.containsKey("SUPABASE_FUNCTION_URL")
-                    ))
-                    return  // Stop after finding the first one
+                    logger.debug(
+                        LogCategory.SYSTEM,
+                        "Loaded properties from local.properties",
+                        mapOf(
+                            "count" to properties.size,
+                            "hasSupabaseUrl" to properties.containsKey("SUPABASE_URL"),
+                            "hasSupabaseAnonKey" to properties.containsKey("SUPABASE_ANON_KEY"),
+                            "hasSupabaseFunctionUrl" to properties.containsKey("SUPABASE_FUNCTION_URL"),
+                        ),
+                    )
+                    return // Stop after finding the first one
                 }
             }
 
@@ -63,14 +68,18 @@ object ConfigLoader {
             logger.warn(LogCategory.SYSTEM, "Could not load local.properties", error = e)
         }
     }
-    
+
     private fun loadEmbeddedProperties() {
         try {
             ConfigLoader::class.java.getResourceAsStream("/boss-build-config.properties")?.use { input ->
                 embeddedProperties.load(input)
-                logger.debug(LogCategory.SYSTEM, "Loaded embedded build config", mapOf(
-                    "count" to embeddedProperties.size
-                ))
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Loaded embedded build config",
+                    mapOf(
+                        "count" to embeddedProperties.size,
+                    ),
+                )
             } ?: logger.debug(LogCategory.SYSTEM, "No embedded build config resource present")
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Could not load embedded build config", error = e)
@@ -85,14 +94,18 @@ object ConfigLoader {
      * 4. Embedded build config (baked in at build time from CI secrets)
      * 5. Default value
      */
-    fun getConfig(key: String, defaultValue: String? = null): String? = resolve(
-        key = key,
-        defaultValue = defaultValue,
-        envValue = System.getenv(key),
-        sysPropValue = System.getProperty(key),
-        localProps = properties,
-        embeddedProps = embeddedProperties,
-    )
+    fun getConfig(
+        key: String,
+        defaultValue: String? = null,
+    ): String? =
+        resolve(
+            key = key,
+            defaultValue = defaultValue,
+            envValue = System.getenv(key),
+            sysPropValue = System.getProperty(key),
+            localProps = properties,
+            embeddedProps = embeddedProperties,
+        )
 
     /**
      * The precedence contract as a pure function, separated from the process
@@ -105,9 +118,10 @@ object ConfigLoader {
         sysPropValue: String?,
         localProps: Properties,
         embeddedProps: Properties,
-    ): String? = envValue
-        ?: sysPropValue
-        ?: localProps.getProperty(key)
-        ?: embeddedProps.getProperty(key)
-        ?: defaultValue
+    ): String? =
+        envValue
+            ?: sysPropValue
+            ?: localProps.getProperty(key)
+            ?: embeddedProps.getProperty(key)
+            ?: defaultValue
 }

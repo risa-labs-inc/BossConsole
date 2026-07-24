@@ -33,37 +33,50 @@ class AuthOptionsManager {
     /**
      * Check if a user exists with the given email and return their authentication options
      */
-    fun checkUserExists(email: String, onResult: (AuthOptions) -> Unit) {
+    fun checkUserExists(
+        email: String,
+        onResult: (AuthOptions) -> Unit,
+    ) {
         if (email.isBlank()) {
             onResult(AuthOptions.Invalid("Please enter a valid email address"))
             return
         }
-        
+
         viewModelScope.launch {
             _isLoading.value = true
             _errorMessage.value = null
-            
+
             AuthService.checkUserExists(email).fold(
                 onSuccess = { userExistence ->
-                    logger.debug(LogCategory.AUTH, "User existence check completed", mapOf(
-                        "exists" to userExistence.exists,
-                        "hasPasskeys" to userExistence.hasPasskeys
-                    ))
+                    logger.debug(
+                        LogCategory.AUTH,
+                        "User existence check completed",
+                        mapOf(
+                            "exists" to userExistence.exists,
+                            "hasPasskeys" to userExistence.hasPasskeys,
+                        ),
+                    )
 
                     // Store available credentials for passkey selection
                     _availableCredentials.value = userExistence.availableCredentials
-                    logger.debug(LogCategory.AUTH, "Stored available credentials", mapOf("count" to userExistence.availableCredentials.size))
+                    logger.debug(
+                        LogCategory.AUTH,
+                        "Stored available credentials",
+                        mapOf("count" to userExistence.availableCredentials.size),
+                    )
 
-                    val authOptions = when {
-                        userExistence.exists && userExistence.hasPasskeys -> {
-                            // User has passkeys - show simplified passkey + password options
-                            AuthOptions.WithPasskey(email)
+                    val authOptions =
+                        when {
+                            userExistence.exists && userExistence.hasPasskeys -> {
+                                // User has passkeys - show simplified passkey + password options
+                                AuthOptions.WithPasskey(email)
+                            }
+
+                            else -> {
+                                // User doesn't exist or has no passkeys - show magic link only
+                                AuthOptions.MagicLinkOnly(email)
+                            }
                         }
-                        else -> {
-                            // User doesn't exist or has no passkeys - show magic link only
-                            AuthOptions.MagicLinkOnly(email)
-                        }
-                    }
 
                     _isLoading.value = false
                     onResult(authOptions)
@@ -73,11 +86,10 @@ class AuthOptionsManager {
                     // On error, default to magic link authentication
                     _isLoading.value = false
                     onResult(AuthOptions.MagicLinkOnly(email))
-                }
+                },
             )
         }
     }
-
 }
 
 /**
@@ -85,7 +97,15 @@ class AuthOptionsManager {
  * Passwordless authentication only - magic link provides inherent 2FA
  */
 sealed class AuthOptions {
-    data class Invalid(val message: String) : AuthOptions()
-    data class WithPasskey(val email: String) : AuthOptions()
-    data class MagicLinkOnly(val email: String) : AuthOptions()
+    data class Invalid(
+        val message: String,
+    ) : AuthOptions()
+
+    data class WithPasskey(
+        val email: String,
+    ) : AuthOptions()
+
+    data class MagicLinkOnly(
+        val email: String,
+    ) : AuthOptions()
 }

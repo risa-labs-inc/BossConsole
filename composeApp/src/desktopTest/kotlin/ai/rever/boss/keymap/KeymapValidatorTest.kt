@@ -20,25 +20,26 @@ import kotlin.test.assertTrue
  * - Conflict suggestions
  */
 class KeymapValidatorTest {
-
     // ==================== NO CONFLICT TESTS ====================
 
     @Test
     fun `no conflicts with unique key combinations`() {
-        val binding1 = KeyBinding(
-            actionId = "action1",
-            key = "N",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
-        val binding2 = KeyBinding(
-            actionId = "action2",
-            key = "T",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
+        val binding1 =
+            KeyBinding(
+                actionId = "action1",
+                key = "N",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
+        val binding2 =
+            KeyBinding(
+                actionId = "action2",
+                key = "T",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
 
         val settings = KeymapSettings.fromBindings(listOf(binding1, binding2))
         val conflicts = KeymapValidator.validate(settings)
@@ -48,20 +49,22 @@ class KeymapValidatorTest {
 
     @Test
     fun `no conflicts between different non-global contexts`() {
-        val browserBinding = KeyBinding(
-            actionId = "browser.reload",
-            key = "R",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.BROWSER,
-            enabled = true
-        )
-        val terminalBinding = KeyBinding(
-            actionId = "terminal.reset",
-            key = "R",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.TERMINAL,
-            enabled = true
-        )
+        val browserBinding =
+            KeyBinding(
+                actionId = "browser.reload",
+                key = "R",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.BROWSER,
+                enabled = true,
+            )
+        val terminalBinding =
+            KeyBinding(
+                actionId = "terminal.reset",
+                key = "R",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.TERMINAL,
+                enabled = true,
+            )
 
         val settings = KeymapSettings.fromBindings(listOf(browserBinding, terminalBinding))
         val conflicts = KeymapValidator.validate(settings)
@@ -71,20 +74,22 @@ class KeymapValidatorTest {
 
     @Test
     fun `no conflicts when one binding is disabled`() {
-        val enabledBinding = KeyBinding(
-            actionId = "action1",
-            key = "N",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
-        val disabledBinding = KeyBinding(
-            actionId = "action2",
-            key = "N",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = false
-        )
+        val enabledBinding =
+            KeyBinding(
+                actionId = "action1",
+                key = "N",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
+        val disabledBinding =
+            KeyBinding(
+                actionId = "action2",
+                key = "N",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = false,
+            )
 
         val settings = KeymapSettings.fromBindings(listOf(enabledBinding, disabledBinding))
         val conflicts = KeymapValidator.validate(settings)
@@ -96,22 +101,24 @@ class KeymapValidatorTest {
 
     @Test
     fun `detects conflict between same context bindings`() {
-        val binding1 = KeyBinding(
-            actionId = "action1",
-            key = "N",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.BROWSER,
-            enabled = true,
-            description = "Action 1"
-        )
-        val binding2 = KeyBinding(
-            actionId = "action2",
-            key = "N",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.BROWSER,
-            enabled = true,
-            description = "Action 2"
-        )
+        val binding1 =
+            KeyBinding(
+                actionId = "action1",
+                key = "N",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.BROWSER,
+                enabled = true,
+                description = "Action 1",
+            )
+        val binding2 =
+            KeyBinding(
+                actionId = "action2",
+                key = "N",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.BROWSER,
+                enabled = true,
+                description = "Action 2",
+            )
 
         val settings = KeymapSettings.fromBindings(listOf(binding1, binding2))
         val conflicts = KeymapValidator.validate(settings)
@@ -125,22 +132,24 @@ class KeymapValidatorTest {
         // Note: The signature includes context, so GLOBAL:Cmd+R and BROWSER:Cmd+R
         // are different signatures and don't conflict in findConflicts().
         // This is by design - context-specific shortcuts override global ones during matching.
-        val globalBinding = KeyBinding(
-            actionId = "global.action",
-            key = "R",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true,
-            description = "Global Action"
-        )
-        val browserBinding = KeyBinding(
-            actionId = "browser.reload",
-            key = "R",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.BROWSER,
-            enabled = true,
-            description = "Browser Reload"
-        )
+        val globalBinding =
+            KeyBinding(
+                actionId = "global.action",
+                key = "R",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+                description = "Global Action",
+            )
+        val browserBinding =
+            KeyBinding(
+                actionId = "browser.reload",
+                key = "R",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.BROWSER,
+                enabled = true,
+                description = "Browser Reload",
+            )
 
         val settings = KeymapSettings.fromBindings(listOf(globalBinding, browserBinding))
         val conflicts = KeymapValidator.validate(settings)
@@ -153,23 +162,25 @@ class KeymapValidatorTest {
     fun `checkBinding uses signature which includes context`() {
         // checkBinding uses signature() which includes context in the signature
         // So GLOBAL:Cmd+R and BROWSER:Cmd+R are different signatures
-        val globalBinding = KeyBinding(
-            actionId = "global.action",
-            key = "R",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
+        val globalBinding =
+            KeyBinding(
+                actionId = "global.action",
+                key = "R",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
 
         val settings = KeymapSettings.fromBindings(listOf(globalBinding))
 
-        val browserBinding = KeyBinding(
-            actionId = "browser.reload",
-            key = "R",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.BROWSER,
-            enabled = true
-        )
+        val browserBinding =
+            KeyBinding(
+                actionId = "browser.reload",
+                key = "R",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.BROWSER,
+                enabled = true,
+            )
 
         val conflicts = KeymapValidator.checkBinding(browserBinding, settings)
 
@@ -179,23 +190,25 @@ class KeymapValidatorTest {
 
     @Test
     fun `checkBinding detects same context conflict`() {
-        val existingBinding = KeyBinding(
-            actionId = "browser.back",
-            key = "R",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.BROWSER,
-            enabled = true
-        )
+        val existingBinding =
+            KeyBinding(
+                actionId = "browser.back",
+                key = "R",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.BROWSER,
+                enabled = true,
+            )
 
         val settings = KeymapSettings.fromBindings(listOf(existingBinding))
 
-        val newBinding = KeyBinding(
-            actionId = "browser.reload",
-            key = "R",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.BROWSER,
-            enabled = true
-        )
+        val newBinding =
+            KeyBinding(
+                actionId = "browser.reload",
+                key = "R",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.BROWSER,
+                enabled = true,
+            )
 
         val conflicts = KeymapValidator.checkBinding(newBinding, settings)
 
@@ -205,12 +218,13 @@ class KeymapValidatorTest {
 
     @Test
     fun `multiple conflicts detected separately`() {
-        val bindings = listOf(
-            KeyBinding(actionId = "action1", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
-            KeyBinding(actionId = "action2", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
-            KeyBinding(actionId = "action3", key = "T", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
-            KeyBinding(actionId = "action4", key = "T", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true)
-        )
+        val bindings =
+            listOf(
+                KeyBinding(actionId = "action1", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
+                KeyBinding(actionId = "action2", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
+                KeyBinding(actionId = "action3", key = "T", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
+                KeyBinding(actionId = "action4", key = "T", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
+            )
 
         val settings = KeymapSettings.fromBindings(bindings)
         val conflicts = KeymapValidator.validate(settings)
@@ -222,23 +236,25 @@ class KeymapValidatorTest {
 
     @Test
     fun `checkBinding finds existing conflicts`() {
-        val existingBinding = KeyBinding(
-            actionId = "existing.action",
-            key = "N",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
+        val existingBinding =
+            KeyBinding(
+                actionId = "existing.action",
+                key = "N",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
 
         val settings = KeymapSettings.fromBindings(listOf(existingBinding))
 
-        val newBinding = KeyBinding(
-            actionId = "new.action",
-            key = "N",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
+        val newBinding =
+            KeyBinding(
+                actionId = "new.action",
+                key = "N",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
 
         val conflicts = KeymapValidator.checkBinding(newBinding, settings)
 
@@ -248,29 +264,32 @@ class KeymapValidatorTest {
 
     @Test
     fun `checkBinding excludes action being edited`() {
-        val existingBinding = KeyBinding(
-            actionId = "action.to.edit",
-            key = "N",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
+        val existingBinding =
+            KeyBinding(
+                actionId = "action.to.edit",
+                key = "N",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
 
         val settings = KeymapSettings.fromBindings(listOf(existingBinding))
 
-        val updatedBinding = KeyBinding(
-            actionId = "action.to.edit",
-            key = "N",
-            modifiers = listOf("Cmd"),
-            context = ShortcutContext.GLOBAL,
-            enabled = true
-        )
+        val updatedBinding =
+            KeyBinding(
+                actionId = "action.to.edit",
+                key = "N",
+                modifiers = listOf("Cmd"),
+                context = ShortcutContext.GLOBAL,
+                enabled = true,
+            )
 
-        val conflicts = KeymapValidator.checkBinding(
-            updatedBinding,
-            settings,
-            excludeActionId = "action.to.edit"
-        )
+        val conflicts =
+            KeymapValidator.checkBinding(
+                updatedBinding,
+                settings,
+                excludeActionId = "action.to.edit",
+            )
 
         assertTrue(conflicts.isEmpty(), "Should not conflict with itself when editing")
     }
@@ -279,10 +298,11 @@ class KeymapValidatorTest {
 
     @Test
     fun `hasConflicts returns true when conflicts exist`() {
-        val bindings = listOf(
-            KeyBinding(actionId = "action1", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
-            KeyBinding(actionId = "action2", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true)
-        )
+        val bindings =
+            listOf(
+                KeyBinding(actionId = "action1", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
+                KeyBinding(actionId = "action2", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
+            )
 
         val settings = KeymapSettings.fromBindings(bindings)
 
@@ -291,10 +311,11 @@ class KeymapValidatorTest {
 
     @Test
     fun `hasConflicts returns false when no conflicts`() {
-        val bindings = listOf(
-            KeyBinding(actionId = "action1", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
-            KeyBinding(actionId = "action2", key = "T", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true)
-        )
+        val bindings =
+            listOf(
+                KeyBinding(actionId = "action1", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
+                KeyBinding(actionId = "action2", key = "T", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
+            )
 
         val settings = KeymapSettings.fromBindings(bindings)
 
@@ -303,11 +324,12 @@ class KeymapValidatorTest {
 
     @Test
     fun `conflictCount returns correct number`() {
-        val bindings = listOf(
-            KeyBinding(actionId = "action1", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
-            KeyBinding(actionId = "action2", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
-            KeyBinding(actionId = "action3", key = "T", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true)
-        )
+        val bindings =
+            listOf(
+                KeyBinding(actionId = "action1", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
+                KeyBinding(actionId = "action2", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
+                KeyBinding(actionId = "action3", key = "T", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
+            )
 
         val settings = KeymapSettings.fromBindings(bindings)
 
@@ -316,19 +338,29 @@ class KeymapValidatorTest {
 
     @Test
     fun `getSummary returns correct message for no conflicts`() {
-        val settings = KeymapSettings.fromBindings(
-            listOf(KeyBinding(actionId = "action1", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true))
-        )
+        val settings =
+            KeymapSettings.fromBindings(
+                listOf(
+                    KeyBinding(
+                        actionId = "action1",
+                        key = "N",
+                        modifiers = listOf("Cmd"),
+                        context = ShortcutContext.GLOBAL,
+                        enabled = true,
+                    ),
+                ),
+            )
 
         assertEquals("No conflicts detected", KeymapValidator.getSummary(settings))
     }
 
     @Test
     fun `getSummary returns correct message for single conflict`() {
-        val bindings = listOf(
-            KeyBinding(actionId = "action1", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
-            KeyBinding(actionId = "action2", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true)
-        )
+        val bindings =
+            listOf(
+                KeyBinding(actionId = "action1", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
+                KeyBinding(actionId = "action2", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
+            )
 
         val settings = KeymapSettings.fromBindings(bindings)
 
@@ -337,12 +369,13 @@ class KeymapValidatorTest {
 
     @Test
     fun `getSummary returns correct message for multiple conflicts`() {
-        val bindings = listOf(
-            KeyBinding(actionId = "action1", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
-            KeyBinding(actionId = "action2", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
-            KeyBinding(actionId = "action3", key = "T", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
-            KeyBinding(actionId = "action4", key = "T", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true)
-        )
+        val bindings =
+            listOf(
+                KeyBinding(actionId = "action1", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
+                KeyBinding(actionId = "action2", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
+                KeyBinding(actionId = "action3", key = "T", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
+                KeyBinding(actionId = "action4", key = "T", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
+            )
 
         val settings = KeymapSettings.fromBindings(bindings)
 
@@ -353,10 +386,25 @@ class KeymapValidatorTest {
 
     @Test
     fun `suggestFixes provides disable suggestions`() {
-        val bindings = listOf(
-            KeyBinding(actionId = "action1", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true, description = "Action One"),
-            KeyBinding(actionId = "action2", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true, description = "Action Two")
-        )
+        val bindings =
+            listOf(
+                KeyBinding(
+                    actionId = "action1",
+                    key = "N",
+                    modifiers = listOf("Cmd"),
+                    context = ShortcutContext.GLOBAL,
+                    enabled = true,
+                    description = "Action One",
+                ),
+                KeyBinding(
+                    actionId = "action2",
+                    key = "N",
+                    modifiers = listOf("Cmd"),
+                    context = ShortcutContext.GLOBAL,
+                    enabled = true,
+                    description = "Action Two",
+                ),
+            )
 
         val settings = KeymapSettings.fromBindings(bindings)
         val conflicts = KeymapValidator.validate(settings)
@@ -370,10 +418,25 @@ class KeymapValidatorTest {
 
     @Test
     fun `suggestFixes provides key change suggestions`() {
-        val bindings = listOf(
-            KeyBinding(actionId = "action1", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true, description = "Action One"),
-            KeyBinding(actionId = "action2", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true, description = "Action Two")
-        )
+        val bindings =
+            listOf(
+                KeyBinding(
+                    actionId = "action1",
+                    key = "N",
+                    modifiers = listOf("Cmd"),
+                    context = ShortcutContext.GLOBAL,
+                    enabled = true,
+                    description = "Action One",
+                ),
+                KeyBinding(
+                    actionId = "action2",
+                    key = "N",
+                    modifiers = listOf("Cmd"),
+                    context = ShortcutContext.GLOBAL,
+                    enabled = true,
+                    description = "Action Two",
+                ),
+            )
 
         val settings = KeymapSettings.fromBindings(bindings)
         val conflicts = KeymapValidator.validate(settings)
@@ -389,10 +452,11 @@ class KeymapValidatorTest {
 
     @Test
     fun `isSafeToSave returns true even with conflicts`() {
-        val bindings = listOf(
-            KeyBinding(actionId = "action1", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
-            KeyBinding(actionId = "action2", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true)
-        )
+        val bindings =
+            listOf(
+                KeyBinding(actionId = "action1", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
+                KeyBinding(actionId = "action2", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true),
+            )
 
         val settings = KeymapSettings.fromBindings(bindings)
 
@@ -403,10 +467,25 @@ class KeymapValidatorTest {
 
     @Test
     fun `conflict description includes action names`() {
-        val bindings = listOf(
-            KeyBinding(actionId = "action1", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true, description = "New Window"),
-            KeyBinding(actionId = "action2", key = "N", modifiers = listOf("Cmd"), context = ShortcutContext.GLOBAL, enabled = true, description = "New Tab")
-        )
+        val bindings =
+            listOf(
+                KeyBinding(
+                    actionId = "action1",
+                    key = "N",
+                    modifiers = listOf("Cmd"),
+                    context = ShortcutContext.GLOBAL,
+                    enabled = true,
+                    description = "New Window",
+                ),
+                KeyBinding(
+                    actionId = "action2",
+                    key = "N",
+                    modifiers = listOf("Cmd"),
+                    context = ShortcutContext.GLOBAL,
+                    enabled = true,
+                    description = "New Tab",
+                ),
+            )
 
         val settings = KeymapSettings.fromBindings(bindings)
         val conflicts = KeymapValidator.validate(settings)

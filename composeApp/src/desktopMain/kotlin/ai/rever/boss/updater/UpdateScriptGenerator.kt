@@ -18,7 +18,6 @@ private val logger = BossLogger.forComponent("UpdateScriptGenerator")
  * - Cleaning up the script itself
  */
 object UpdateScriptGenerator {
-
     /**
      * Escape a string for safe use as a shell argument
      *
@@ -73,7 +72,10 @@ object UpdateScriptGenerator {
      * @param description Description for error messages (e.g., "DMG path")
      * @throws SecurityException if path contains dangerous characters
      */
-    private fun validatePath(path: String, description: String) {
+    private fun validatePath(
+        path: String,
+        description: String,
+    ) {
         // Check for null bytes (can bypass path checks)
         if (path.contains('\u0000')) {
             throw SecurityException("$description contains null byte - possible directory traversal attack")
@@ -119,7 +121,7 @@ object UpdateScriptGenerator {
     fun generateMacOSUpdateScript(
         dmgPath: String,
         targetAppPath: String,
-        appPid: Long
+        appPid: Long,
     ): File {
         // Validate inputs for security
         validatePath(dmgPath, "DMG path")
@@ -136,7 +138,8 @@ object UpdateScriptGenerator {
 
         val scriptFile = File(tempDir, "update_boss_${System.currentTimeMillis()}.sh")
 
-        val script = """
+        val script =
+            """
             #!/bin/bash
 
             # BOSS Update Helper Script
@@ -249,7 +252,7 @@ object UpdateScriptGenerator {
             rm -f "${'$'}0"
 
             exit 0
-        """.trimIndent()
+            """.trimIndent()
 
         scriptFile.writeText(script)
         makeExecutable(scriptFile)
@@ -267,7 +270,7 @@ object UpdateScriptGenerator {
      */
     fun generateWindowsUpdateScript(
         msiPath: String,
-        appPid: Long
+        appPid: Long,
     ): File {
         // Validate input for security
         validatePath(msiPath, "MSI path")
@@ -282,7 +285,8 @@ object UpdateScriptGenerator {
 
         val scriptFile = File(tempDir, "update_boss_${System.currentTimeMillis()}.bat")
 
-        val script = """
+        val script =
+            """
             @echo off
             REM BOSS Update Helper Script
 
@@ -314,7 +318,7 @@ object UpdateScriptGenerator {
             REM Clean up
             timeout /t 2 /nobreak >NUL
             del "%~f0"
-        """.trimIndent()
+            """.trimIndent()
 
         scriptFile.writeText(script)
 
@@ -331,7 +335,7 @@ object UpdateScriptGenerator {
      */
     fun generateLinuxDebUpdateScript(
         debPath: String,
-        appPid: Long
+        appPid: Long,
     ): File {
         // Validate input for security
         validatePath(debPath, "DEB path")
@@ -346,7 +350,8 @@ object UpdateScriptGenerator {
 
         val scriptFile = File(tempDir, "update_boss_${System.currentTimeMillis()}.sh")
 
-        val script = """
+        val script =
+            """
             #!/bin/bash
 
             # BOSS Update Helper Script (Debian/Ubuntu)
@@ -518,7 +523,7 @@ ASKPASS_EOF
                 echo "You can manually install with: sudo dpkg -i $escapedDebPath"
                 exit 1
             fi
-        """.trimIndent()
+            """.trimIndent()
 
         scriptFile.writeText(script)
         makeExecutable(scriptFile)
@@ -536,7 +541,7 @@ ASKPASS_EOF
      */
     fun generateLinuxRpmUpdateScript(
         rpmPath: String,
-        appPid: Long
+        appPid: Long,
     ): File {
         // Validate input for security
         validatePath(rpmPath, "RPM path")
@@ -551,7 +556,8 @@ ASKPASS_EOF
 
         val scriptFile = File(tempDir, "update_boss_${System.currentTimeMillis()}.sh")
 
-        val script = """
+        val script =
+            """
             #!/bin/bash
 
             # BOSS Update Helper Script (Fedora/RHEL)
@@ -728,7 +734,7 @@ ASKPASS_EOF
                 echo "You can manually install with: sudo rpm -U $escapedRpmPath"
                 exit 1
             fi
-        """.trimIndent()
+            """.trimIndent()
 
         scriptFile.writeText(script)
         makeExecutable(scriptFile)
@@ -747,28 +753,35 @@ ASKPASS_EOF
             val logDir = File("/tmp/boss-updater")
             logDir.mkdirs()
             val timestamp = System.currentTimeMillis()
-            val logFile = File(logDir, "update-${timestamp}.log")
+            val logFile = File(logDir, "update-$timestamp.log")
 
             val os = System.getProperty("os.name").lowercase()
-            val command = when {
-                os.contains("mac") || os.contains("darwin") || os.contains("linux") -> {
-                    // macOS/Linux: Launch in background with nohup
-                    listOf("nohup", "bash", scriptFile.absolutePath)
-                }
-                os.contains("win") -> {
-                    // Windows: Launch detached
-                    listOf("cmd", "/c", "start", "/b", scriptFile.absolutePath)
-                }
-                else -> {
-                    logger.warn(LogCategory.SYSTEM, "Unknown OS, attempting direct execution")
-                    listOf("bash", scriptFile.absolutePath)
-                }
-            }
+            val command =
+                when {
+                    os.contains("mac") || os.contains("darwin") || os.contains("linux") -> {
+                        // macOS/Linux: Launch in background with nohup
+                        listOf("nohup", "bash", scriptFile.absolutePath)
+                    }
 
-            logger.info(LogCategory.SYSTEM, "Launching update script", mapOf(
-                "command" to command.joinToString(" "),
-                "logFile" to logFile.absolutePath
-            ))
+                    os.contains("win") -> {
+                        // Windows: Launch detached
+                        listOf("cmd", "/c", "start", "/b", scriptFile.absolutePath)
+                    }
+
+                    else -> {
+                        logger.warn(LogCategory.SYSTEM, "Unknown OS, attempting direct execution")
+                        listOf("bash", scriptFile.absolutePath)
+                    }
+                }
+
+            logger.info(
+                LogCategory.SYSTEM,
+                "Launching update script",
+                mapOf(
+                    "command" to command.joinToString(" "),
+                    "logFile" to logFile.absolutePath,
+                ),
+            )
 
             val processBuilder = ProcessBuilder(command)
 
@@ -783,16 +796,23 @@ ASKPASS_EOF
             Thread.sleep(500)
             if (!process.isAlive) {
                 val exitCode = process.exitValue()
-                logger.warn(LogCategory.SYSTEM, "Update script exited immediately", mapOf(
-                    "exitCode" to exitCode,
-                    "logFile" to logFile.absolutePath
-                ))
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Update script exited immediately",
+                    mapOf(
+                        "exitCode" to exitCode,
+                        "logFile" to logFile.absolutePath,
+                    ),
+                )
             } else {
-                logger.info(LogCategory.SYSTEM, "Update script launched successfully", mapOf(
-                    "logFile" to logFile.absolutePath
-                ))
+                logger.info(
+                    LogCategory.SYSTEM,
+                    "Update script launched successfully",
+                    mapOf(
+                        "logFile" to logFile.absolutePath,
+                    ),
+                )
             }
-
         } catch (e: Exception) {
             logger.error(LogCategory.SYSTEM, "Failed to launch update script", error = e)
             throw e

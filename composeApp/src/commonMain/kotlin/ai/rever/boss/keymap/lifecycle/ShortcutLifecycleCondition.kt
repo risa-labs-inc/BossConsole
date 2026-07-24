@@ -58,7 +58,7 @@ object AlwaysEnabledCondition : ShortcutLifecycleCondition {
  * Used for disabled or deprecated shortcuts.
  */
 class NeverEnabledCondition(
-    override val disabledReason: String = "Shortcut disabled"
+    override val disabledReason: String = "Shortcut disabled",
 ) : ShortcutLifecycleCondition {
     override suspend fun isEnabled(): Boolean = false
 
@@ -70,11 +70,9 @@ class NeverEnabledCondition(
  * All conditions must be enabled for the result to be enabled.
  */
 class AndCondition(
-    private val conditions: List<ShortcutLifecycleCondition>
+    private val conditions: List<ShortcutLifecycleCondition>,
 ) : ShortcutLifecycleCondition {
-    override suspend fun isEnabled(): Boolean {
-        return conditions.all { it.isEnabled() }
-    }
+    override suspend fun isEnabled(): Boolean = conditions.all { it.isEnabled() }
 
     override val disabledReason: String
         get() = "Multiple conditions not met"
@@ -88,11 +86,9 @@ class AndCondition(
  * At least one condition must be enabled for the result to be enabled.
  */
 class OrCondition(
-    private val conditions: List<ShortcutLifecycleCondition>
+    private val conditions: List<ShortcutLifecycleCondition>,
 ) : ShortcutLifecycleCondition {
-    override suspend fun isEnabled(): Boolean {
-        return conditions.any { it.isEnabled() }
-    }
+    override suspend fun isEnabled(): Boolean = conditions.any { it.isEnabled() }
 
     override val disabledReason: String
         get() = "All conditions disabled: " + conditions.joinToString(", ") { it.disabledReason }

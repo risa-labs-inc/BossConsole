@@ -18,23 +18,36 @@ internal class CoBrowseRtcBridge(
     @Volatile var onState: ((Boolean) -> Unit)? = null,
 ) {
     @JsAccessible
-    fun answer(sdp: String) { runCatching { onAnswer?.invoke(sdp) } }
+    fun answer(sdp: String) {
+        runCatching { onAnswer?.invoke(sdp) }
+    }
 
     @JsAccessible
-    fun ice(candidateJson: String) { runCatching { onIce?.invoke(candidateJson) } }
+    fun ice(candidateJson: String) {
+        runCatching { onIce?.invoke(candidateJson) }
+    }
 
     @JsAccessible
-    fun input(json: String) { runCatching { onInput?.invoke(json) } }
+    fun input(json: String) {
+        runCatching { onInput?.invoke(json) }
+    }
 
     @JsAccessible
-    fun state(connected: Boolean) { runCatching { onState?.invoke(connected) } }
+    fun state(connected: Boolean) {
+        runCatching { onState?.invoke(connected) }
+    }
 
     @JsAccessible
-    fun videoError(msg: String) { runCatching { onVideoError?.invoke(msg) } }
+    fun videoError(msg: String) {
+        runCatching { onVideoError?.invoke(msg) }
+    }
 
     @JsAccessible
-    fun videoState(msg: String) { runCatching { onVideoState?.invoke(msg) } }
+    fun videoState(msg: String) {
+        runCatching { onVideoState?.invoke(msg) }
+    }
 
     @Volatile var onVideoError: ((String) -> Unit)? = null
+
     @Volatile var onVideoState: ((String) -> Unit)? = null
 }

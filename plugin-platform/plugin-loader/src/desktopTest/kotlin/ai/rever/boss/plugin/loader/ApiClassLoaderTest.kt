@@ -27,7 +27,6 @@ import kotlin.test.assertSame
  * - The manager's disposeAll/close lifecycle never touches the api layer.
  */
 class ApiClassLoaderTest {
-
     private val tempFiles = mutableListOf<File>()
 
     private val jarOnlyTypeName = "ai.rever.boss.plugin.api.apitest.JarOnlyType"
@@ -51,23 +50,36 @@ class ApiClassLoaderTest {
         tempFiles.forEach { it.deleteRecursively() }
     }
 
-    private fun tempDir(): File = File.createTempFile("api-cl-test", "").let {
-        it.delete(); it.mkdirs(); tempFiles.add(it); it
-    }
+    private fun tempDir(): File =
+        File.createTempFile("api-cl-test", "").let {
+            it.delete()
+            it.mkdirs()
+            tempFiles.add(it)
+            it
+        }
 
-    private fun emptyJar(dir: File? = null, name: String = "empty.jar"): File {
+    private fun emptyJar(
+        dir: File? = null,
+        name: String = "empty.jar",
+    ): File {
         val jar = if (dir != null) File(dir, name) else File.createTempFile("empty", ".jar").also { tempFiles.add(it) }
         JarOutputStream(jar.outputStream()).close()
         return jar
     }
 
     /** Build a synthetic boss-plugin-api jar carrying JarOnlyType's real bytes. */
-    private fun apiJar(dir: File, version: String, pluginId: String = ApiClassLoader.API_PLUGIN_ID, includeClass: Boolean = true): File {
+    private fun apiJar(
+        dir: File,
+        version: String,
+        pluginId: String = ApiClassLoader.API_PLUGIN_ID,
+        includeClass: Boolean = true,
+    ): File {
         val jar = File(dir, "boss-plugin-api-$version.jar")
-        val manifest = Manifest().apply {
-            mainAttributes[Attributes.Name.MANIFEST_VERSION] = "1.0"
-            mainAttributes[Attributes.Name.IMPLEMENTATION_VERSION] = version
-        }
+        val manifest =
+            Manifest().apply {
+                mainAttributes[Attributes.Name.MANIFEST_VERSION] = "1.0"
+                mainAttributes[Attributes.Name.IMPLEMENTATION_VERSION] = version
+            }
         JarOutputStream(jar.outputStream(), manifest).use { out ->
             out.putNextEntry(JarEntry("META-INF/boss-plugin/plugin.json"))
             out.write(
@@ -80,7 +92,7 @@ class ApiClassLoaderTest {
                   "apiVersion": "1.0.0",
                   "mainClass": "com.example.Main"
                 }
-                """.trimIndent().toByteArray()
+                """.trimIndent().toByteArray(),
             )
             out.closeEntry()
             if (includeClass) {
@@ -94,11 +106,14 @@ class ApiClassLoaderTest {
         return jar
     }
 
-    private fun pluginLoader(pluginId: String, parent: ClassLoader): PluginClassLoader =
+    private fun pluginLoader(
+        pluginId: String,
+        parent: ClassLoader,
+    ): PluginClassLoader =
         PluginClassLoader(
             pluginId = pluginId,
             urls = arrayOf(emptyJar().toURI().toURL()),
-            parent = parent
+            parent = parent,
         )
 
     @Test
@@ -131,8 +146,9 @@ class ApiClassLoaderTest {
 
         val loaded = plugin.loadClass(jarOnlyTypeName)
         assertSame(
-            Class.forName(jarOnlyTypeName, false, hostLikeParent), loaded,
-            "host-compiled copy must shadow the api jar's copy"
+            Class.forName(jarOnlyTypeName, false, hostLikeParent),
+            loaded,
+            "host-compiled copy must shadow the api jar's copy",
         )
         assertSame(hostLikeParent, loaded.classLoader)
     }
@@ -174,13 +190,14 @@ class ApiClassLoaderTest {
         val installed = manager.initializeApiLayer(dir.also { apiJar(it, "1.0.42") })
         assertEquals("1.0.42", installed.apiVersion)
 
-        val manifest = ai.rever.boss.plugin.api.PluginManifest(
-            pluginId = "com.example.viaapi",
-            displayName = "Test",
-            version = "1.0.0",
-            apiVersion = "1.0.0",
-            mainClass = "com.example.Main"
-        )
+        val manifest =
+            ai.rever.boss.plugin.api.PluginManifest(
+                pluginId = "com.example.viaapi",
+                displayName = "Test",
+                version = "1.0.0",
+                apiVersion = "1.0.0",
+                mainClass = "com.example.Main",
+            )
         val pluginCl = manager.createClassLoader(manifest, emptyJar().absolutePath)
         val loaded = pluginCl.loadClass(jarOnlyTypeName)
         assertSame(installed, loaded.classLoader)
@@ -216,13 +233,14 @@ class ApiClassLoaderTest {
 
         // A plugin classloader existed and was closed (the orchestrator's
         // contract) before the newer api jar lands and the swap runs.
-        val manifest = ai.rever.boss.plugin.api.PluginManifest(
-            pluginId = "com.example.preswap",
-            displayName = "Test",
-            version = "1.0.0",
-            apiVersion = "1.0.0",
-            mainClass = "com.example.Main"
-        )
+        val manifest =
+            ai.rever.boss.plugin.api.PluginManifest(
+                pluginId = "com.example.preswap",
+                displayName = "Test",
+                version = "1.0.0",
+                apiVersion = "1.0.0",
+                mainClass = "com.example.Main",
+            )
         val pluginCl = manager.createClassLoader(manifest, emptyJar().absolutePath)
         assertSame(old, pluginCl.loadClass(jarOnlyTypeName).classLoader)
         manager.closeClassLoader(manifest.pluginId, pluginCl)
@@ -258,15 +276,19 @@ class ApiClassLoaderTest {
         val window2 = PluginClassLoaderManager(parentClassLoader = bareParent)
         assertSame(installed, window2.getApiClassLoader(), "window 2 must share window 1's API layer")
 
-        val manifest = ai.rever.boss.plugin.api.PluginManifest(
-            pluginId = "com.example.window2",
-            displayName = "Test",
-            version = "1.0.0",
-            apiVersion = "1.0.0",
-            mainClass = "com.example.Main"
-        )
+        val manifest =
+            ai.rever.boss.plugin.api.PluginManifest(
+                pluginId = "com.example.window2",
+                displayName = "Test",
+                version = "1.0.0",
+                apiVersion = "1.0.0",
+                mainClass = "com.example.Main",
+            )
         val pluginCl = window2.createClassLoader(manifest, emptyJar().absolutePath)
-        assertSame(installed, pluginCl.loadClass(jarOnlyTypeName).classLoader,
-            "a plugin loaded by window 2 must resolve api-jar types via the shared layer")
+        assertSame(
+            installed,
+            pluginCl.loadClass(jarOnlyTypeName).classLoader,
+            "a plugin loaded by window 2 must resolve api-jar types via the shared layer",
+        )
     }
 }

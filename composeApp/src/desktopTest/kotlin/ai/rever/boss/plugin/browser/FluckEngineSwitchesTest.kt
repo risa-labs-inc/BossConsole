@@ -11,17 +11,16 @@ import kotlin.test.assertTrue
  * (extra-switch injection, truthy/falsy env flags) against regressions.
  */
 class FluckEngineSwitchesTest {
-
     @Test
     fun `parseExtraSwitches splits on whitespace and keeps only switch-shaped entries`() {
         assertEquals(
             listOf("--enable-features=SkiaGraphite", "--disk-cache-size=1048576"),
-            FluckEngine.parseExtraSwitches("  --enable-features=SkiaGraphite   --disk-cache-size=1048576 ")
+            FluckEngine.parseExtraSwitches("  --enable-features=SkiaGraphite   --disk-cache-size=1048576 "),
         )
         // Entries that don't look like switches are dropped, not passed through.
         assertEquals(
             listOf("--ok"),
-            FluckEngine.parseExtraSwitches("not-a-switch --ok rm -single-dash")
+            FluckEngine.parseExtraSwitches("not-a-switch --ok rm -single-dash"),
         )
     }
 
@@ -33,7 +32,7 @@ class FluckEngineSwitchesTest {
         // platform feature set).
         assertEquals(
             listOf("--enable-features=SkiaGraphite,VaapiVideoDecoder", "--no-first-run"),
-            FluckEngine.parseExtraSwitches("--enable-features=SkiaGraphite,VaapiVideoDecoder --no-first-run")
+            FluckEngine.parseExtraSwitches("--enable-features=SkiaGraphite,VaapiVideoDecoder --no-first-run"),
         )
     }
 
@@ -88,7 +87,7 @@ class FluckEngineSwitchesTest {
         assertEquals(emptyList(), switchesFor("mac os x", arch = "aarch64"))
         assertEquals(
             listOf("--enable-features=SkiaGraphite"),
-            switchesFor("mac os x", arch = "aarch64", graphiteOptIn = true)
+            switchesFor("mac os x", arch = "aarch64", graphiteOptIn = true),
         )
         // Intel macs never get Graphite, even opted in.
         assertEquals(emptyList(), switchesFor("mac os x", arch = "x86_64", graphiteOptIn = true))
@@ -142,31 +141,34 @@ class FluckEngineSwitchesTest {
 
     @Test
     fun `window-owned browser input routes only to its focused owner`() {
-        val focusedRoute = FluckEngine.resolveBrowserKeyEventRoute(
-            ownerWindowId = "window-a",
-            ownerWindowIsFocused = true,
-            fallbackFocusedWindowId = "window-b"
-        )
+        val focusedRoute =
+            FluckEngine.resolveBrowserKeyEventRoute(
+                ownerWindowId = "window-a",
+                ownerWindowIsFocused = true,
+                fallbackFocusedWindowId = "window-b",
+            )
         assertTrue(focusedRoute.acceptsInput)
         assertEquals("window-a", focusedRoute.shortcutWindowId)
 
         // isWindowFocused returns false for both inactive and unregistered owners.
-        val unfocusedOrUnregisteredRoute = FluckEngine.resolveBrowserKeyEventRoute(
-            ownerWindowId = "window-a",
-            ownerWindowIsFocused = false,
-            fallbackFocusedWindowId = "window-b"
-        )
+        val unfocusedOrUnregisteredRoute =
+            FluckEngine.resolveBrowserKeyEventRoute(
+                ownerWindowId = "window-a",
+                ownerWindowIsFocused = false,
+                fallbackFocusedWindowId = "window-b",
+            )
         assertFalse(unfocusedOrUnregisteredRoute.acceptsInput)
         assertEquals(null, unfocusedOrUnregisteredRoute.shortcutWindowId)
     }
 
     @Test
     fun `legacy unowned browser routes shortcuts to the focused window`() {
-        val route = FluckEngine.resolveBrowserKeyEventRoute(
-            ownerWindowId = null,
-            ownerWindowIsFocused = false,
-            fallbackFocusedWindowId = "window-b"
-        )
+        val route =
+            FluckEngine.resolveBrowserKeyEventRoute(
+                ownerWindowId = null,
+                ownerWindowIsFocused = false,
+                fallbackFocusedWindowId = "window-b",
+            )
 
         assertTrue(route.acceptsInput)
         assertEquals("window-b", route.shortcutWindowId)

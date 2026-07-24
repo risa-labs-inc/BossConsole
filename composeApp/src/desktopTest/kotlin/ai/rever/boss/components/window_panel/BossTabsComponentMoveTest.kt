@@ -42,7 +42,6 @@ import kotlin.test.assertTrue
  *   panel still destroys it exactly once.
  */
 class BossTabsComponentMoveTest {
-
     private object TestTabType : TabTypeInfo {
         override val typeId = TabTypeId("move-test", "test.plugin")
         override val displayName = "Move Test"
@@ -52,7 +51,7 @@ class BossTabsComponentMoveTest {
     private data class TestTabInfo(
         override val id: String,
         override val typeId: TabTypeId = TestTabType.typeId,
-        override val title: String = "Test Tab"
+        override val title: String = "Test Tab",
     ) : TabInfo {
         override val icon get() = Icons.Outlined.Language
     }
@@ -60,23 +59,25 @@ class BossTabsComponentMoveTest {
     /** Mimics a dynamic plugin tab component: cleans up in lifecycle.onDestroy. */
     private class TestTabComponent(
         ctx: ComponentContext,
-        override val config: TabInfo
-    ) : TabComponentWithUI, ComponentContext by ctx {
+        override val config: TabInfo,
+    ) : TabComponentWithUI,
+        ComponentContext by ctx {
         override val tabTypeInfo: TabTypeInfo = TestTabType
         var destroyCount = 0
         var resumeCount = 0
 
         init {
             lifecycle.subscribe(
-                callbacks = object : Lifecycle.Callbacks {
-                    override fun onResume() {
-                        resumeCount++
-                    }
+                callbacks =
+                    object : Lifecycle.Callbacks {
+                        override fun onResume() {
+                            resumeCount++
+                        }
 
-                    override fun onDestroy() {
-                        destroyCount++
-                    }
-                }
+                        override fun onDestroy() {
+                            destroyCount++
+                        }
+                    },
             )
         }
 
@@ -85,15 +86,17 @@ class BossTabsComponentMoveTest {
         }
     }
 
-    private val tabRegistry = TabRegistry().apply {
-        registerTabType(TestTabType) { config, ctx -> TestTabComponent(ctx, config) }
-    }
+    private val tabRegistry =
+        TabRegistry().apply {
+            registerTabType(TestTabType) { config, ctx -> TestTabComponent(ctx, config) }
+        }
 
-    private fun newPanel() = BossTabsComponent(
-        componentContext = DefaultComponentContext(LifecycleRegistry()),
-        tabRegistry = tabRegistry,
-        windowId = "test-window"
-    )
+    private fun newPanel() =
+        BossTabsComponent(
+            componentContext = DefaultComponentContext(LifecycleRegistry()),
+            tabRegistry = tabRegistry,
+            windowId = "test-window",
+        )
 
     @AfterTest
     fun tearDown() {
@@ -130,14 +133,18 @@ class BossTabsComponentMoveTest {
     @Test
     fun `addTab returns -1 and stores nothing for an unregistered tab type`() {
         val panel = newPanel()
-        val unknownTab = TestTabInfo(
-            id = "tab-1",
-            typeId = TabTypeId("unknown-type", "test.plugin")
-        )
+        val unknownTab =
+            TestTabInfo(
+                id = "tab-1",
+                typeId = TabTypeId("unknown-type", "test.plugin"),
+            )
 
         assertEquals(-1, panel.addTab(unknownTab))
         assertNull(panel.getComponentById("tab-1"))
-        assertTrue(panel.tabsState.value.tabs.isEmpty())
+        assertTrue(
+            panel.tabsState.value.tabs
+                .isEmpty(),
+        )
     }
 
     @Test
@@ -152,13 +159,21 @@ class BossTabsComponentMoveTest {
         assertNotNull(detached)
         assertEquals(0, component.destroyCount)
         assertNull(source.getComponentById("tab-1"))
-        assertTrue(source.tabsState.value.tabs.isEmpty())
+        assertTrue(
+            source.tabsState.value.tabs
+                .isEmpty(),
+        )
 
         val newIndex = target.adoptTab(detached)
 
         assertTrue(newIndex >= 0)
         assertSame(component, target.getComponentById("tab-1"))
-        assertEquals("tab-1", target.tabsState.value.tabs.single().id)
+        assertEquals(
+            "tab-1",
+            target.tabsState.value.tabs
+                .single()
+                .id,
+        )
         assertEquals(0, component.destroyCount)
 
         // Closing the tab in its new panel still destroys it exactly once.
@@ -216,7 +231,11 @@ class BossTabsComponentMoveTest {
         // ...and the moved component took its place, alive.
         assertSame(moved, target.getComponentById("tab-1"))
         assertEquals(0, moved.destroyCount)
-        assertEquals(listOf("tab-1"), target.tabsState.value.tabs.map { it.id })
+        assertEquals(
+            listOf("tab-1"),
+            target.tabsState.value.tabs
+                .map { it.id },
+        )
     }
 
     @Test
@@ -227,11 +246,12 @@ class BossTabsComponentMoveTest {
         val component = mainPanel.getComponentById("tab-1") as TestTabComponent
         val detached = mainPanel.detachTab("tab-1")!!
 
-        val returnedId = splitViewState.splitPanel(
-            panelId = "no-such-panel",
-            orientation = SplitOrientation.VERTICAL,
-            detachedTab = detached
-        )
+        val returnedId =
+            splitViewState.splitPanel(
+                panelId = "no-such-panel",
+                orientation = SplitOrientation.VERTICAL,
+                detachedTab = detached,
+            )
 
         // No split was created, and the live component landed back in an existing panel
         // rather than disappearing from the UI while its component keeps running.
@@ -251,16 +271,25 @@ class BossTabsComponentMoveTest {
         // Cross-panel edge drop: detach from the source, adopt into the new split.
         val detached = mainPanel.detachTab("tab-1")
         assertNotNull(detached)
-        val newPanelId = splitViewState.splitPanel(
-            panelId = "main",
-            orientation = SplitOrientation.VERTICAL,
-            detachedTab = detached
-        )
+        val newPanelId =
+            splitViewState.splitPanel(
+                panelId = "main",
+                orientation = SplitOrientation.VERTICAL,
+                detachedTab = detached,
+            )
 
         val newPanel = splitViewState.getPanel(newPanelId)!!.tabsComponent
         assertSame(component, newPanel.getComponentById("tab-1"))
-        assertEquals("tab-1", newPanel.tabsState.value.tabs.single().id)
-        assertTrue(mainPanel.tabsState.value.tabs.isEmpty())
+        assertEquals(
+            "tab-1",
+            newPanel.tabsState.value.tabs
+                .single()
+                .id,
+        )
+        assertTrue(
+            mainPanel.tabsState.value.tabs
+                .isEmpty(),
+        )
         assertEquals(0, component.destroyCount)
     }
 }

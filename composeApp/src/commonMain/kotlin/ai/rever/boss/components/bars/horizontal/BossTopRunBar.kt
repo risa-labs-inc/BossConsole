@@ -1,14 +1,16 @@
 package ai.rever.boss.components.bars.horizontal
 
 import ai.rever.boss.components.buttons.BossActionButton
-import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.components.events.RunEventBus
-import ai.rever.boss.icons.LanguageIcons
 import ai.rever.boss.components.overlays.ContextMenuItem
+import ai.rever.boss.icons.LanguageIcons
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.run.Language
 import ai.rever.boss.run.RunConfiguration
 import ai.rever.boss.run.RunConfigurationManager
 import ai.rever.boss.run.RunnerTerminalService
+import ai.rever.boss.window.LocalWindowId
+import ai.rever.boss.window.LocalWindowRunnerState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
@@ -42,8 +44,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Terminal
-import ai.rever.boss.window.LocalWindowId
-import ai.rever.boss.window.LocalWindowRunnerState
 import kotlinx.coroutines.launch
 
 /**
@@ -72,12 +72,13 @@ fun BossTopRunBar() {
     // Issue #498: Observe configToWindows to trigger recomposition when window-config mappings change
     // This ensures the stop button updates immediately when a run starts in any window
     val configToWindows by RunnerTerminalService.configToWindows.collectAsState()
-    val isSelectedConfigRunning = selectedConfig?.let { config ->
-        configToWindows[config.id]?.contains(windowId) == true
-    } ?: false
+    val isSelectedConfigRunning =
+        selectedConfig?.let { config ->
+            configToWindows[config.id]?.contains(windowId) == true
+        } ?: false
 
     Row(
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         // Configuration selector dropdown - shows only run history (IntelliJ style)
         RunConfigurationSelector(
@@ -113,7 +114,7 @@ fun BossTopRunBar() {
                 scope.launch {
                     RunConfigurationManager.removeConfiguration(config.id)
                 }
-            }
+            },
         )
 
         Spacer(modifier = Modifier.width(4.dp))
@@ -138,7 +139,7 @@ fun BossTopRunBar() {
                         RunConfigurationManager.addConfiguration(config)
                     }
                 }
-            }
+            },
         )
 
         Spacer(modifier = Modifier.width(4.dp))
@@ -155,7 +156,7 @@ fun BossTopRunBar() {
                         RunnerTerminalService.stopRunner(windowId, config.id)
                     }
                 }
-            }
+            },
         )
     }
 }
@@ -170,46 +171,55 @@ private fun RunSquareButton(
     backgroundColor: Color,
     enabled: Boolean,
     contentDescription: String,
-    onClick: () -> Unit
+    onClick: () -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
 
     // Calculate colors based on state
-    val bgColor = when {
-        !enabled -> BossTheme.colors.raised // Muted background when disabled
-        isHovered -> backgroundColor.copy(alpha = 0.9f) // Slightly darker on hover
-        else -> backgroundColor
-    }
-    val iconColor = when {
-        !enabled -> BossTheme.colors.textMuted // Muted icon when disabled
-        else -> BossTheme.colors.onSignal
-    }
+    val bgColor =
+        when {
+            !enabled -> BossTheme.colors.raised
+
+            // Muted background when disabled
+            isHovered -> backgroundColor.copy(alpha = 0.9f)
+
+            // Slightly darker on hover
+            else -> backgroundColor
+        }
+    val iconColor =
+        when {
+            !enabled -> BossTheme.colors.textMuted
+
+            // Muted icon when disabled
+            else -> BossTheme.colors.onSignal
+        }
 
     Box(
-        modifier = Modifier
-            .size(28.dp)
-            .clip(RoundedCornerShape(4.dp))
-            .background(bgColor)
-            .hoverable(interactionSource)
-            .then(
-                if (enabled) {
-                    Modifier.clickable(
-                        interactionSource = interactionSource,
-                        indication = null,
-                        onClick = onClick
-                    )
-                } else {
-                    Modifier
-                }
-            ),
-        contentAlignment = Alignment.Center
+        modifier =
+            Modifier
+                .size(28.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(bgColor)
+                .hoverable(interactionSource)
+                .then(
+                    if (enabled) {
+                        Modifier.clickable(
+                            interactionSource = interactionSource,
+                            indication = null,
+                            onClick = onClick,
+                        )
+                    } else {
+                        Modifier
+                    },
+                ),
+        contentAlignment = Alignment.Center,
     ) {
         Icon(
             imageVector = icon,
             contentDescription = contentDescription,
             tint = iconColor,
-            modifier = Modifier.size(18.dp)
+            modifier = Modifier.size(18.dp),
         )
     }
 }
@@ -232,48 +242,55 @@ private fun RunConfigurationSelector(
     onRun: (RunConfiguration) -> Unit,
     onRerun: (RunConfiguration) -> Unit,
     onStop: (RunConfiguration) -> Unit,
-    onDelete: (RunConfiguration) -> Unit
+    onDelete: (RunConfiguration) -> Unit,
 ) {
     // Build context menu items from run history only
-    val contextMenuItems = buildList {
-        if (runHistory.isNotEmpty()) {
-            // Show run history with action buttons based on running state
-            runHistory.forEach { config ->
-                val isRunning = isConfigRunning(config.id)
-                add(ContextMenuItem(
-                    text = config.name,
-                    icon = getLanguageIcon(config.language),
-                    onClick = { onSelect(config) },
-                    // Primary action: Play (not running) or Rerun (running)
-                    trailingIcon = if (isRunning) Icons.Outlined.Refresh else Icons.Outlined.PlayArrow,
-                    trailingIconColor = BossTheme.colors.ok, // Green for both play and rerun
-                    onTrailingClick = { if (isRunning) onRerun(config) else onRun(config) },
-                    // Secondary action: Delete (not running) or Stop (running)
-                    secondaryTrailingIcon = if (isRunning) Icons.Outlined.Stop else Icons.Outlined.Close,
-                    secondaryTrailingIconColor = if (isRunning) BossTheme.colors.alert else BossTheme.colors.textSecondary,
-                    onSecondaryTrailingClick = { if (isRunning) onStop(config) else onDelete(config) }
-                ))
+    val contextMenuItems =
+        buildList {
+            if (runHistory.isNotEmpty()) {
+                // Show run history with action buttons based on running state
+                runHistory.forEach { config ->
+                    val isRunning = isConfigRunning(config.id)
+                    add(
+                        ContextMenuItem(
+                            text = config.name,
+                            icon = getLanguageIcon(config.language),
+                            onClick = { onSelect(config) },
+                            // Primary action: Play (not running) or Rerun (running)
+                            trailingIcon = if (isRunning) Icons.Outlined.Refresh else Icons.Outlined.PlayArrow,
+                            trailingIconColor = BossTheme.colors.ok, // Green for both play and rerun
+                            onTrailingClick = { if (isRunning) onRerun(config) else onRun(config) },
+                            // Secondary action: Delete (not running) or Stop (running)
+                            secondaryTrailingIcon = if (isRunning) Icons.Outlined.Stop else Icons.Outlined.Close,
+                            secondaryTrailingIconColor = if (isRunning) BossTheme.colors.alert else BossTheme.colors.textSecondary,
+                            onSecondaryTrailingClick = { if (isRunning) onStop(config) else onDelete(config) },
+                        ),
+                    )
+                }
+            } else {
+                // No run history yet
+                add(
+                    ContextMenuItem(
+                        text = "No run history",
+                        icon = null,
+                        onClick = {},
+                    ),
+                )
+                add(
+                    ContextMenuItem(
+                        text = "Run a file to add it here",
+                        icon = null,
+                        onClick = {},
+                    ),
+                )
             }
-        } else {
-            // No run history yet
-            add(ContextMenuItem(
-                text = "No run history",
-                icon = null,
-                onClick = {}
-            ))
-            add(ContextMenuItem(
-                text = "Run a file to add it here",
-                icon = null,
-                onClick = {}
-            ))
         }
-    }
 
     BossActionButton(
         leftIcon = selectedConfig?.let { getLanguageIcon(it.language) } ?: Icons.Outlined.Code,
         text = selectedConfig?.name ?: "Run History",
         contextMenuItems = contextMenuItems,
-        hintText = selectedConfig?.let { "Configuration: ${it.filePath}" } ?: "Select from run history"
+        hintText = selectedConfig?.let { "Configuration: ${it.filePath}" } ?: "Select from run history",
     )
 }
 
@@ -281,8 +298,8 @@ private fun RunConfigurationSelector(
  * Get the appropriate icon for a programming language.
  * Uses official brand icons from LanguageIcons.
  */
-private fun getLanguageIcon(language: Language): ImageVector {
-    return when (language) {
+private fun getLanguageIcon(language: Language): ImageVector =
+    when (language) {
         Language.KOTLIN -> LanguageIcons.kotlin
         Language.JAVA -> LanguageIcons.java
         Language.PYTHON -> LanguageIcons.python
@@ -292,4 +309,3 @@ private fun getLanguageIcon(language: Language): ImageVector {
         Language.RUST -> LanguageIcons.rust
         Language.UNKNOWN -> FeatherIcons.Terminal
     }
-}

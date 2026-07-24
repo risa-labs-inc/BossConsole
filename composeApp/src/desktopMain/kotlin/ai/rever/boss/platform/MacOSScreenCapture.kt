@@ -14,18 +14,20 @@ private val macOSScreenCaptureLogger = BossLogger.forComponent("MacOSScreenCaptu
 
 private interface CoreGraphics : Library {
     companion object {
-        val INSTANCE: CoreGraphics? = try {
-            Native.load("CoreGraphics", CoreGraphics::class.java)
-        } catch (e: Exception) {
-            macOSScreenCaptureLogger.debug(LogCategory.SYSTEM, "CoreGraphics not available", mapOf("error" to (e.message ?: "unknown")))
-            null
-        }
+        val INSTANCE: CoreGraphics? =
+            try {
+                Native.load("CoreGraphics", CoreGraphics::class.java)
+            } catch (e: Exception) {
+                macOSScreenCaptureLogger.debug(LogCategory.SYSTEM, "CoreGraphics not available", mapOf("error" to (e.message ?: "unknown")))
+                null
+            }
     }
 
     /**
      * Returns true if the app has screen capture access, false otherwise.
      * This does NOT trigger a permission prompt.
      */
+    @Suppress("ktlint:standard:function-naming") // JNA maps by native symbol name
     fun CGPreflightScreenCaptureAccess(): Boolean
 
     /**
@@ -33,6 +35,7 @@ private interface CoreGraphics : Library {
      * this will trigger the system permission dialog.
      * Returns true if access is granted, false otherwise.
      */
+    @Suppress("ktlint:standard:function-naming") // JNA maps by native symbol name
     fun CGRequestScreenCaptureAccess(): Boolean
 }
 

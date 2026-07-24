@@ -11,24 +11,23 @@ import ai.rever.boss.keymap.lifecycle.ShortcutLifecycleCondition
  */
 open class TabCountCondition(
     private val getTabCount: () -> Int,
-    private val minTabCount: Int = 1
+    private val minTabCount: Int = 1,
 ) : ShortcutLifecycleCondition {
-
-    override suspend fun isEnabled(): Boolean {
-        return getTabCount() >= minTabCount
-    }
+    override suspend fun isEnabled(): Boolean = getTabCount() >= minTabCount
 
     override val disabledReason: String
-        get() = when (minTabCount) {
-            1 -> "No tabs open"
-            else -> "Need at least $minTabCount tabs"
-        }
+        get() =
+            when (minTabCount) {
+                1 -> "No tabs open"
+                else -> "Need at least $minTabCount tabs"
+            }
 
     override val enabledDescription: String
-        get() = when (minTabCount) {
-            1 -> "When tabs are open"
-            else -> "When at least $minTabCount tabs exist"
-        }
+        get() =
+            when (minTabCount) {
+                1 -> "When tabs are open"
+                else -> "When at least $minTabCount tabs exist"
+            }
 }
 
 /**
@@ -38,9 +37,8 @@ open class TabCountCondition(
  * @param getTabCount Lambda that returns the current tab count
  */
 class TabNavigationCondition(
-    getTabCount: () -> Int
+    getTabCount: () -> Int,
 ) : TabCountCondition(getTabCount, minTabCount = 2) {
-
     override val disabledReason: String
         get() = "Need multiple tabs to navigate"
 
@@ -55,12 +53,9 @@ class TabNavigationCondition(
  * @param hasActiveTab Lambda that returns true if there's an active tab
  */
 class ActiveTabCondition(
-    private val hasActiveTab: () -> Boolean
+    private val hasActiveTab: () -> Boolean,
 ) : ShortcutLifecycleCondition {
-
-    override suspend fun isEnabled(): Boolean {
-        return hasActiveTab()
-    }
+    override suspend fun isEnabled(): Boolean = hasActiveTab()
 
     override val disabledReason: String
         get() = "No active tab"

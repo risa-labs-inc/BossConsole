@@ -1,8 +1,8 @@
 package ai.rever.boss.plugin.sandbox
 
-import ai.rever.boss.plugin.sandbox.health.PluginHealthMetrics
 import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
+import ai.rever.boss.plugin.sandbox.health.PluginHealthMetrics
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -35,7 +35,6 @@ class OutOfProcessPluginSandbox(
     /** Called when the sandbox should kill-and-respawn the child process. */
     private val onRestart: suspend (pluginId: String) -> Result<Unit>,
 ) : PluginSandbox {
-
     private val logger = BossLogger.forComponent("OutOfProcessPluginSandbox")
 
     private val _state = MutableStateFlow(SandboxState.STOPPED)
@@ -77,8 +76,9 @@ class OutOfProcessPluginSandbox(
 
     override suspend fun restart(): Result<Unit> {
         logger.info(
-            LogCategory.SYSTEM, "Restarting out-of-process sandbox",
-            mapOf("pluginId" to pluginId, "restartAttempt" to (_healthMetrics.value.restartAttempts + 1))
+            LogCategory.SYSTEM,
+            "Restarting out-of-process sandbox",
+            mapOf("pluginId" to pluginId, "restartAttempt" to (_healthMetrics.value.restartAttempts + 1)),
         )
         _state.value = SandboxState.RESTARTING
         _healthMetrics.update { it.withCrash() }
@@ -102,8 +102,10 @@ class OutOfProcessPluginSandbox(
 
     override fun recordError(error: Throwable) {
         logger.warn(
-            LogCategory.SYSTEM, "Error in out-of-process plugin",
-            mapOf("pluginId" to pluginId, "errorType" to error.javaClass.simpleName), error
+            LogCategory.SYSTEM,
+            "Error in out-of-process plugin",
+            mapOf("pluginId" to pluginId, "errorType" to error.javaClass.simpleName),
+            error,
         )
         _healthMetrics.update { it.withError() }
         if (_healthMetrics.value.consecutiveErrors >= config.maxConsecutiveErrors) {
@@ -114,8 +116,9 @@ class OutOfProcessPluginSandbox(
     override fun markUnhealthy() {
         if (_state.value == SandboxState.RUNNING) {
             logger.warn(
-                LogCategory.SYSTEM, "Marking out-of-process sandbox as unhealthy",
-                mapOf("pluginId" to pluginId)
+                LogCategory.SYSTEM,
+                "Marking out-of-process sandbox as unhealthy",
+                mapOf("pluginId" to pluginId),
             )
             _state.value = SandboxState.UNHEALTHY
         }
@@ -126,7 +129,7 @@ class OutOfProcessPluginSandbox(
         _healthMetrics.update {
             it.copy(
                 consecutiveErrors = 0,
-                lastHeartbeat = System.currentTimeMillis()
+                lastHeartbeat = System.currentTimeMillis(),
             )
         }
         if (_state.value == SandboxState.UNHEALTHY) {

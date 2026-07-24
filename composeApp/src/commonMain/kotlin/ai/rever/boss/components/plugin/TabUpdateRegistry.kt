@@ -31,7 +31,10 @@ object TabUpdateRegistry : TabUpdateProviderFactory {
      * @param componentId Unique ID for the component (e.g., windowId + panel ID)
      * @param factory The factory to register
      */
-    fun register(componentId: String, factory: TabUpdateProviderFactory) {
+    fun register(
+        componentId: String,
+        factory: TabUpdateProviderFactory,
+    ) {
         factories[componentId] = factory
     }
 
@@ -52,7 +55,10 @@ object TabUpdateRegistry : TabUpdateProviderFactory {
      * @param tabId The tab ID
      * @param componentId The component ID that owns this tab
      */
-    fun registerTab(tabId: String, componentId: String) {
+    fun registerTab(
+        tabId: String,
+        componentId: String,
+    ) {
         tabToComponent[tabId] = componentId
     }
 
@@ -65,7 +71,10 @@ object TabUpdateRegistry : TabUpdateProviderFactory {
      * @param tabId The tab ID to unregister
      * @param componentId The component that owned the tab
      */
-    fun unregisterTab(tabId: String, componentId: String) {
+    fun unregisterTab(
+        tabId: String,
+        componentId: String,
+    ) {
         tabToComponent.remove(tabId, componentId)
     }
 
@@ -77,7 +86,10 @@ object TabUpdateRegistry : TabUpdateProviderFactory {
      * when a tab is moved to another split panel — a provider bound to the component that
      * owned the tab at creation time would silently no-op after the move.
      */
-    override fun createProvider(tabId: String, typeId: TabTypeId): TabUpdateProvider? {
+    override fun createProvider(
+        tabId: String,
+        typeId: TabTypeId,
+    ): TabUpdateProvider? {
         // Preserve the factory contract: null when no component knows this tab.
         resolveProvider(tabId, typeId) ?: return null
         return DynamicTabUpdateProvider(tabId, typeId)
@@ -86,7 +98,10 @@ object TabUpdateRegistry : TabUpdateProviderFactory {
     /**
      * Resolve the provider bound to the component that owns [tabId] right now.
      */
-    private fun resolveProvider(tabId: String, typeId: TabTypeId): TabUpdateProvider? {
+    private fun resolveProvider(
+        tabId: String,
+        typeId: TabTypeId,
+    ): TabUpdateProvider? {
         // First, check if we know which component owns this tab
         val componentId = tabToComponent[tabId]
         if (componentId != null) {
@@ -110,14 +125,26 @@ object TabUpdateRegistry : TabUpdateProviderFactory {
      */
     private class DynamicTabUpdateProvider(
         override val tabId: String,
-        private val typeId: TabTypeId
+        private val typeId: TabTypeId,
     ) : TabUpdateProvider {
         private fun delegate(): TabUpdateProvider? = TabUpdateRegistry.resolveProvider(tabId, typeId)
 
-        override fun updateTitle(title: String) { delegate()?.updateTitle(title) }
-        override fun updateFavicon(faviconUrl: String?) { delegate()?.updateFavicon(faviconUrl) }
-        override fun updateUrl(url: String) { delegate()?.updateUrl(url) }
-        override fun closeTab() { delegate()?.closeTab() }
+        override fun updateTitle(title: String) {
+            delegate()?.updateTitle(title)
+        }
+
+        override fun updateFavicon(faviconUrl: String?) {
+            delegate()?.updateFavicon(faviconUrl)
+        }
+
+        override fun updateUrl(url: String) {
+            delegate()?.updateUrl(url)
+        }
+
+        override fun closeTab() {
+            delegate()?.closeTab()
+        }
+
         override fun openNewTab(url: String): String? = delegate()?.openNewTab(url)
     }
 

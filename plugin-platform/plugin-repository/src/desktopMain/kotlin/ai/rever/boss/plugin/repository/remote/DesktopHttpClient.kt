@@ -9,14 +9,16 @@ import kotlinx.serialization.json.Json
 /**
  * Desktop-specific HTTP client using CIO engine.
  */
-internal actual fun createHttpClient(): HttpClient {
-    return HttpClient(CIO) {
+internal actual fun createHttpClient(): HttpClient =
+    HttpClient(CIO) {
         install(ContentNegotiation) {
-            json(Json {
-                ignoreUnknownKeys = true
-                encodeDefaults = true
-                isLenient = true
-            })
+            json(
+                Json {
+                    ignoreUnknownKeys = true
+                    encodeDefaults = true
+                    isLenient = true
+                },
+            )
         }
 
         engine {
@@ -27,4 +29,3 @@ internal actual fun createHttpClient(): HttpClient {
             }
         }
     }
-}

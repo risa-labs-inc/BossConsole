@@ -1,5 +1,6 @@
 package ai.rever.boss.dashboard
 
+import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CoroutineScope
@@ -16,7 +17,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
-import ai.rever.boss.plugin.pathutils.BossDirectories
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
@@ -30,7 +30,7 @@ data class DailyActivity(
     val date: String = LocalDate.now().format(DateTimeFormatter.ISO_DATE),
     val filesOpened: Int = 0,
     val pagesVisited: Int = 0,
-    val terminalSessions: Int = 0
+    val terminalSessions: Int = 0,
 )
 
 /**
@@ -42,7 +42,7 @@ data class DashboardStats(
     val totalBrowserPagesVisited: Int = 0,
     val totalTerminalSessions: Int = 0,
     val todayActivity: DailyActivity = DailyActivity(),
-    val sessionStartTime: Long = System.currentTimeMillis()
+    val sessionStartTime: Long = System.currentTimeMillis(),
 )
 
 /**
@@ -55,11 +55,12 @@ data class DashboardStats(
 object DashboardStatsManager {
     private const val SAVE_DEBOUNCE_MS = 5000L // Debounce saves to max once per 5 seconds
     private val settingsFile = BossDirectories.resolve("dashboard-stats.json")
-    private val json = Json {
-        prettyPrint = false
-        ignoreUnknownKeys = true
-        encodeDefaults = false
-    }
+    private val json =
+        Json {
+            prettyPrint = false
+            ignoreUnknownKeys = true
+            encodeDefaults = false
+        }
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var saveJob: Job? = null
@@ -81,20 +82,21 @@ object DashboardStatsManager {
     /**
      * Load stats from disk asynchronously.
      */
-    private suspend fun loadAsync() = withContext(Dispatchers.IO) {
-        try {
-            settingsFile.parentFile?.mkdirs()
+    private suspend fun loadAsync() =
+        withContext(Dispatchers.IO) {
+            try {
+                settingsFile.parentFile?.mkdirs()
 
-            if (settingsFile.exists()) {
-                val content = settingsFile.readText()
-                val data = json.decodeFromString<DashboardStats>(content)
-                _stats.value = data
-                dashboardStatsLogger.debug(LogCategory.SYSTEM, "Loaded stats")
+                if (settingsFile.exists()) {
+                    val content = settingsFile.readText()
+                    val data = json.decodeFromString<DashboardStats>(content)
+                    _stats.value = data
+                    dashboardStatsLogger.debug(LogCategory.SYSTEM, "Loaded stats")
+                }
+            } catch (e: Exception) {
+                dashboardStatsLogger.warn(LogCategory.SYSTEM, "Error loading stats", error = e)
             }
-        } catch (e: Exception) {
-            dashboardStatsLogger.warn(LogCategory.SYSTEM, "Error loading stats", error = e)
         }
-    }
 
     /**
      * Save stats to disk with debouncing.
@@ -102,24 +104,26 @@ object DashboardStatsManager {
      */
     private fun scheduleSave() {
         saveJob?.cancel()
-        saveJob = scope.launch {
-            delay(SAVE_DEBOUNCE_MS)
-            saveImmediately()
-        }
+        saveJob =
+            scope.launch {
+                delay(SAVE_DEBOUNCE_MS)
+                saveImmediately()
+            }
     }
 
     /**
      * Immediately save stats to disk (bypasses debounce).
      */
-    private suspend fun saveImmediately() = withContext(Dispatchers.IO) {
-        try {
-            settingsFile.parentFile?.mkdirs()
-            val content = json.encodeToString(DashboardStats.serializer(), _stats.value)
-            settingsFile.writeText(content)
-        } catch (e: Exception) {
-            dashboardStatsLogger.warn(LogCategory.SYSTEM, "Error saving stats", error = e)
+    private suspend fun saveImmediately() =
+        withContext(Dispatchers.IO) {
+            try {
+                settingsFile.parentFile?.mkdirs()
+                val content = json.encodeToString(DashboardStats.serializer(), _stats.value)
+                settingsFile.writeText(content)
+            } catch (e: Exception) {
+                dashboardStatsLogger.warn(LogCategory.SYSTEM, "Error saving stats", error = e)
+            }
         }
-    }
 
     /**
      * Check if it's a new day and reset daily activity if needed.
@@ -145,14 +149,15 @@ object DashboardStatsManager {
     fun recordFileOpen() {
         val today = LocalDate.now().format(DateTimeFormatter.ISO_DATE)
         _stats.update { current ->
-            val activity = if (current.todayActivity.date != today) {
-                DailyActivity(date = today, filesOpened = 1)
-            } else {
-                current.todayActivity.copy(filesOpened = current.todayActivity.filesOpened + 1)
-            }
+            val activity =
+                if (current.todayActivity.date != today) {
+                    DailyActivity(date = today, filesOpened = 1)
+                } else {
+                    current.todayActivity.copy(filesOpened = current.todayActivity.filesOpened + 1)
+                }
             current.copy(
                 totalFilesOpened = current.totalFilesOpened + 1,
-                todayActivity = activity
+                todayActivity = activity,
             )
         }
         scheduleSave()
@@ -165,14 +170,15 @@ object DashboardStatsManager {
     fun recordPageVisit() {
         val today = LocalDate.now().format(DateTimeFormatter.ISO_DATE)
         _stats.update { current ->
-            val activity = if (current.todayActivity.date != today) {
-                DailyActivity(date = today, pagesVisited = 1)
-            } else {
-                current.todayActivity.copy(pagesVisited = current.todayActivity.pagesVisited + 1)
-            }
+            val activity =
+                if (current.todayActivity.date != today) {
+                    DailyActivity(date = today, pagesVisited = 1)
+                } else {
+                    current.todayActivity.copy(pagesVisited = current.todayActivity.pagesVisited + 1)
+                }
             current.copy(
                 totalBrowserPagesVisited = current.totalBrowserPagesVisited + 1,
-                todayActivity = activity
+                todayActivity = activity,
             )
         }
         scheduleSave()
@@ -185,14 +191,15 @@ object DashboardStatsManager {
     fun recordTerminalSession() {
         val today = LocalDate.now().format(DateTimeFormatter.ISO_DATE)
         _stats.update { current ->
-            val activity = if (current.todayActivity.date != today) {
-                DailyActivity(date = today, terminalSessions = 1)
-            } else {
-                current.todayActivity.copy(terminalSessions = current.todayActivity.terminalSessions + 1)
-            }
+            val activity =
+                if (current.todayActivity.date != today) {
+                    DailyActivity(date = today, terminalSessions = 1)
+                } else {
+                    current.todayActivity.copy(terminalSessions = current.todayActivity.terminalSessions + 1)
+                }
             current.copy(
                 totalTerminalSessions = current.totalTerminalSessions + 1,
-                todayActivity = activity
+                todayActivity = activity,
             )
         }
         scheduleSave()
@@ -201,9 +208,7 @@ object DashboardStatsManager {
     /**
      * Get the current session duration in milliseconds.
      */
-    fun getSessionDurationMs(): Long {
-        return System.currentTimeMillis() - _sessionStartTime.value
-    }
+    fun getSessionDurationMs(): Long = System.currentTimeMillis() - _sessionStartTime.value
 
     /**
      * Format session duration as human-readable string.

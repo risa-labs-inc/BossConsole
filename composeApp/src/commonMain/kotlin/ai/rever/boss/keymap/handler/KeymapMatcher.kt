@@ -6,10 +6,10 @@ import ai.rever.boss.keymap.model.ShortcutContext
 import ai.rever.boss.utils.SystemUtils
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
-import androidx.compose.ui.input.key.isMetaPressed
-import androidx.compose.ui.input.key.isCtrlPressed
-import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 
 /**
@@ -17,7 +17,7 @@ import androidx.compose.ui.input.key.key
  * Handles context-aware matching and modifier key resolution.
  */
 class KeymapMatcher(
-    private val settings: KeymapSettings
+    private val settings: KeymapSettings,
 ) {
     /**
      * Find the first matching key binding for a keyboard event in a specific context.
@@ -28,13 +28,17 @@ class KeymapMatcher(
      * 2. WORKSPACE shortcuts (work everywhere)
      * 3. GLOBAL shortcuts (fallback)
      */
-    fun match(event: KeyEvent, context: ShortcutContext): KeyBinding? {
+    fun match(
+        event: KeyEvent,
+        context: ShortcutContext,
+    ): KeyBinding? {
         // First check context-specific bindings
         val contextCandidates = getEnabledBindingsForContext(context)
 
-        val contextMatch = contextCandidates.firstOrNull { binding ->
-            matchesBinding(event, binding)
-        }
+        val contextMatch =
+            contextCandidates.firstOrNull { binding ->
+                matchesBinding(event, binding)
+            }
 
         if (contextMatch != null) return contextMatch
 
@@ -42,9 +46,10 @@ class KeymapMatcher(
         if (context != ShortcutContext.WORKSPACE) {
             val workspaceCandidates = getEnabledBindingsForContext(ShortcutContext.WORKSPACE)
 
-            val workspaceMatch = workspaceCandidates.firstOrNull { binding ->
-                matchesBinding(event, binding)
-            }
+            val workspaceMatch =
+                workspaceCandidates.firstOrNull { binding ->
+                    matchesBinding(event, binding)
+                }
 
             if (workspaceMatch != null) return workspaceMatch
         }
@@ -54,16 +59,17 @@ class KeymapMatcher(
         if (context != ShortcutContext.GLOBAL) {
             val globalCandidates = getEnabledBindingsForContext(ShortcutContext.GLOBAL)
 
-            val globalMatch = globalCandidates.firstOrNull { binding ->
-                matchesBinding(event, binding)
-            }
+            val globalMatch =
+                globalCandidates.firstOrNull { binding ->
+                    matchesBinding(event, binding)
+                }
 
             if (globalMatch != null) {
                 // For TERMINAL context, only intercept GLOBAL shortcuts with system modifiers
                 // This follows JxBrowser's pattern: let the component handle typable characters
                 // Bindings with only Shift (like '?' = Shift+/) should pass through to terminal
                 if (context == ShortcutContext.TERMINAL && !hasSystemModifier(globalMatch)) {
-                    return null  // Don't intercept - let terminal handle it
+                    return null // Don't intercept - let terminal handle it
                 }
                 return globalMatch
             }
@@ -80,25 +86,28 @@ class KeymapMatcher(
      * This follows JxBrowser's pattern: only intercept known system shortcuts,
      * let the component handle everything else (including Shift-only like '?').
      */
-    private fun hasSystemModifier(binding: KeyBinding): Boolean {
-        return binding.modifiers.any { mod ->
+    private fun hasSystemModifier(binding: KeyBinding): Boolean =
+        binding.modifiers.any { mod ->
             mod.equals("Cmd", true) || mod.equals("Meta", true) ||
-            mod.equals("Ctrl", true) || mod.equals("Control", true) ||
-            mod.equals("Alt", true) || mod.equals("Option", true)
+                mod.equals("Ctrl", true) || mod.equals("Control", true) ||
+                mod.equals("Alt", true) || mod.equals("Option", true)
         }
-    }
 
     /**
      * Find all matching key bindings for a keyboard event (including global context).
      * Returns list ordered by specificity (context-specific first, global last).
      */
-    fun matchAll(event: KeyEvent, context: ShortcutContext): List<KeyBinding> {
+    fun matchAll(
+        event: KeyEvent,
+        context: ShortcutContext,
+    ): List<KeyBinding> {
         val contextBindings = getEnabledBindingsForContext(context)
-        val globalBindings = if (context != ShortcutContext.GLOBAL) {
-            getEnabledBindingsForContext(ShortcutContext.GLOBAL)
-        } else {
-            emptyList()
-        }
+        val globalBindings =
+            if (context != ShortcutContext.GLOBAL) {
+                getEnabledBindingsForContext(ShortcutContext.GLOBAL)
+            } else {
+                emptyList()
+            }
 
         val matches = mutableListOf<KeyBinding>()
 
@@ -122,7 +131,10 @@ class KeymapMatcher(
     /**
      * Check if a keyboard event matches a specific key binding.
      */
-    private fun matchesBinding(event: KeyEvent, binding: KeyBinding): Boolean {
+    private fun matchesBinding(
+        event: KeyEvent,
+        binding: KeyBinding,
+    ): Boolean {
         if (!binding.enabled) return false
 
         // Check if key matches
@@ -144,22 +156,24 @@ class KeymapMatcher(
         val eventAlt = event.isAltPressed
 
         // Match logic: Handle platform-aware Cmd/Ctrl matching
-        val primaryModifierMatch = if (hasCmd || hasCtrl) {
-            if (isMacOS) {
-                // macOS: Cmd matches Meta, Ctrl matches Ctrl
-                (hasCmd && event.isMetaPressed) || (hasCtrl && event.isCtrlPressed)
+        val primaryModifierMatch =
+            if (hasCmd || hasCtrl) {
+                if (isMacOS) {
+                    // macOS: Cmd matches Meta, Ctrl matches Ctrl
+                    (hasCmd && event.isMetaPressed) || (hasCtrl && event.isCtrlPressed)
+                } else {
+                    // Linux/Windows: Cmd matches Ctrl (since Ctrl is the primary modifier)
+                    // Meta/Super key is rarely used for shortcuts
+                    (hasCmd && event.isCtrlPressed) || (hasCtrl && event.isMetaPressed)
+                }
             } else {
-                // Linux/Windows: Cmd matches Ctrl (since Ctrl is the primary modifier)
-                // Meta/Super key is rarely used for shortcuts
-                (hasCmd && event.isCtrlPressed) || (hasCtrl && event.isMetaPressed)
+                // Binding doesn't require primary modifier
+                // Event must not have any primary modifier pressed
+                !event.isMetaPressed && !event.isCtrlPressed
             }
-        } else {
-            // Binding doesn't require primary modifier
-            // Event must not have any primary modifier pressed
-            !event.isMetaPressed && !event.isCtrlPressed
-        }
 
-        val modifierMatch = primaryModifierMatch &&
+        val modifierMatch =
+            primaryModifierMatch &&
                 hasShift == eventShift &&
                 hasAlt == eventAlt
 
@@ -170,15 +184,19 @@ class KeymapMatcher(
      * Check if event key matches binding key.
      * Handles key name normalization and aliases.
      */
-    private fun keyMatches(eventKey: Key, bindingKeyName: String): Boolean {
+    private fun keyMatches(
+        eventKey: Key,
+        bindingKeyName: String,
+    ): Boolean {
         // Extract key name from the Key object
         // Key.toString() format is "Key: X" where X is the key name
         val eventKeyString = eventKey.toString()
-        val eventKeyName = if (eventKeyString.startsWith("Key: ")) {
-            eventKeyString.substring(5).trim()
-        } else {
-            eventKey.keyCode.toString()
-        }
+        val eventKeyName =
+            if (eventKeyString.startsWith("Key: ")) {
+                eventKeyString.substring(5).trim()
+            } else {
+                eventKey.keyCode.toString()
+            }
 
         val eventKeyNormalized = normalizeKeyName(eventKeyName)
         val bindingKeyNormalized = normalizeKeyName(bindingKeyName)
@@ -195,51 +213,176 @@ class KeymapMatcher(
     private fun normalizeKeyName(keyName: String): String {
         // Handle special symbol characters that Compose uses
         return when (keyName) {
-            "␣" -> "Space"  // Compose renders space as ␣ (U+2423 OPEN BOX)
+            "␣" -> {
+                "Space"
+            }
+
+            // Compose renders space as ␣ (U+2423 OPEN BOX)
             // Number character to word mappings
-            "0" -> "Zero"
-            "1" -> "One"
-            "2" -> "Two"
-            "3" -> "Three"
-            "4" -> "Four"
-            "5" -> "Five"
-            "6" -> "Six"
-            "7" -> "Seven"
-            "8" -> "Eight"
-            "9" -> "Nine"
+            "0" -> {
+                "Zero"
+            }
+
+            "1" -> {
+                "One"
+            }
+
+            "2" -> {
+                "Two"
+            }
+
+            "3" -> {
+                "Three"
+            }
+
+            "4" -> {
+                "Four"
+            }
+
+            "5" -> {
+                "Five"
+            }
+
+            "6" -> {
+                "Six"
+            }
+
+            "7" -> {
+                "Seven"
+            }
+
+            "8" -> {
+                "Eight"
+            }
+
+            "9" -> {
+                "Nine"
+            }
+
             // Symbol character to word mappings
-            "-" -> "Minus"
-            "=" -> "Equals"
-            "+" -> "Plus"
-            "[" -> "OpenBracket"
-            "]" -> "CloseBracket"
-            "/" -> "Slash"
-            "?" -> "Slash"  // Shift+/ produces "?" - map to Slash for matching
-            "\\" -> "Backslash"
-            ";" -> "Semicolon"
-            "'" -> "Apostrophe"
-            "," -> "Comma"
-            "." -> "Period"
-            "`" -> "Grave"
+            "-" -> {
+                "Minus"
+            }
+
+            "=" -> {
+                "Equals"
+            }
+
+            "+" -> {
+                "Plus"
+            }
+
+            "[" -> {
+                "OpenBracket"
+            }
+
+            "]" -> {
+                "CloseBracket"
+            }
+
+            "/" -> {
+                "Slash"
+            }
+
+            "?" -> {
+                "Slash"
+            }
+
+            // Shift+/ produces "?" - map to Slash for matching
+            "\\" -> {
+                "Backslash"
+            }
+
+            ";" -> {
+                "Semicolon"
+            }
+
+            "'" -> {
+                "Apostrophe"
+            }
+
+            "," -> {
+                "Comma"
+            }
+
+            "." -> {
+                "Period"
+            }
+
+            "`" -> {
+                "Grave"
+            }
+
             // Arrow character to word mappings
-            "←" -> "Left"
-            "→" -> "Right"
-            "↑" -> "Up"
-            "↓" -> "Down"
-            else -> when (keyName.lowercase()) {
-                "spacebar", "space" -> "Space"
-                "directionleft", "left" -> "Left"
-                "directionright", "right" -> "Right"
-                "directionup", "up" -> "Up"
-                "directiondown", "down" -> "Down"
-                "return", "enter" -> "Enter"
-                "escape", "esc" -> "Esc"
-                // Word names normalize to themselves (case-insensitive)
-                "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine" -> keyName.replaceFirstChar { it.uppercase() }
-                "minus", "equals", "plus" -> keyName.replaceFirstChar { it.uppercase() }
-                "openbracket", "closebracket", "slash", "backslash" -> keyName.replaceFirstChar { it.uppercase() }
-                "semicolon", "apostrophe", "comma", "period", "grave" -> keyName.replaceFirstChar { it.uppercase() }
-                else -> keyName
+            "←" -> {
+                "Left"
+            }
+
+            "→" -> {
+                "Right"
+            }
+
+            "↑" -> {
+                "Up"
+            }
+
+            "↓" -> {
+                "Down"
+            }
+
+            else -> {
+                when (keyName.lowercase()) {
+                    "spacebar", "space" -> {
+                        "Space"
+                    }
+
+                    "directionleft", "left" -> {
+                        "Left"
+                    }
+
+                    "directionright", "right" -> {
+                        "Right"
+                    }
+
+                    "directionup", "up" -> {
+                        "Up"
+                    }
+
+                    "directiondown", "down" -> {
+                        "Down"
+                    }
+
+                    "return", "enter" -> {
+                        "Enter"
+                    }
+
+                    "escape", "esc" -> {
+                        "Esc"
+                    }
+
+                    // Word names normalize to themselves (case-insensitive)
+                    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine" -> {
+                        keyName.replaceFirstChar {
+                            it.uppercase()
+                        }
+                    }
+
+                    "minus", "equals", "plus" -> {
+                        keyName.replaceFirstChar { it.uppercase() }
+                    }
+
+                    "openbracket", "closebracket", "slash", "backslash" -> {
+                        keyName.replaceFirstChar { it.uppercase() }
+                    }
+
+                    "semicolon", "apostrophe", "comma", "period", "grave" -> {
+                        keyName.replaceFirstChar { it.uppercase() }
+                    }
+
+                    else -> {
+                        keyName
+                    }
+                }
             }
         }
     }
@@ -247,24 +390,19 @@ class KeymapMatcher(
     /**
      * Get all enabled bindings for a specific context.
      */
-    private fun getEnabledBindingsForContext(context: ShortcutContext): List<KeyBinding> {
-        return settings.shortcuts.values
+    private fun getEnabledBindingsForContext(context: ShortcutContext): List<KeyBinding> =
+        settings.shortcuts.values
             .filter { it.enabled && it.context == context }
-    }
 
     /**
      * Get the display string for a matched binding.
      */
-    fun getDisplayString(binding: KeyBinding): String {
-        return binding.displayString()
-    }
+    fun getDisplayString(binding: KeyBinding): String = binding.displayString()
 
     companion object {
         /**
          * Create a KeymapMatcher from settings.
          */
-        fun from(settings: KeymapSettings): KeymapMatcher {
-            return KeymapMatcher(settings)
-        }
+        fun from(settings: KeymapSettings): KeymapMatcher = KeymapMatcher(settings)
     }
 }

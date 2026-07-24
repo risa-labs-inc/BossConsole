@@ -1,9 +1,9 @@
 package ai.rever.boss.crash
 
 import ai.rever.boss.utils.Version
+import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.LogEntry
 import ai.rever.boss.utils.logging.LogLevel
-import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.serialization.Serializable
 
 /**
@@ -32,7 +32,7 @@ data class CrashReport(
     val timestamp: Long,
     val userNotes: String? = null,
     val recentLogs: List<SanitizedLogEntry>? = null,
-    val pluginId: String? = null
+    val pluginId: String? = null,
 )
 
 /**
@@ -47,7 +47,7 @@ data class SystemInfo(
     val heapUsedMB: Long,
     val heapMaxMB: Long,
     val nonHeapUsedMB: Long,
-    val availableProcessors: Int
+    val availableProcessors: Int,
 )
 
 /**
@@ -56,7 +56,7 @@ data class SystemInfo(
 data class AppInfo(
     val version: String,
     val platform: String,
-    val isDebug: Boolean
+    val isDebug: Boolean,
 )
 
 /**
@@ -69,21 +69,22 @@ data class SanitizedLogEntry(
     val level: String,
     val category: String,
     val component: String,
-    val message: String
+    val message: String,
 ) {
     companion object {
         /**
          * Create a sanitized log entry from a full LogEntry.
          * Removes sensitive data map and error details.
          */
-        fun fromLogEntry(entry: LogEntry): SanitizedLogEntry {
-            return SanitizedLogEntry(
+        fun fromLogEntry(entry: LogEntry): SanitizedLogEntry =
+            SanitizedLogEntry(
                 timestamp = entry.timestamp,
                 level = entry.level.name,
                 category = entry.category.name,
                 component = entry.component,
-                message = ai.rever.boss.utils.logging.LogSanitizer.sanitizeLogMessage(entry.message)
+                message =
+                    ai.rever.boss.utils.logging.LogSanitizer
+                        .sanitizeLogMessage(entry.message),
             )
-        }
     }
 }

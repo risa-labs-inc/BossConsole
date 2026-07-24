@@ -21,17 +21,18 @@ data class BrowserSettingsData(
     // Secret Manager settings
     val discretePasswordFill: Boolean = true,
     // Tab sharing — show the co-browse share (QR) button in the browser toolbar (off by default)
-    val showShareButton: Boolean = false
+    val showShareButton: Boolean = false,
 )
 
 object BrowserSettingsManager {
     private val logger = BossLogger.forComponent("BrowserSettingsManager")
     private val settingsFile = BossDirectories.resolve("browser-settings.json")
-    private val json = Json { 
-        prettyPrint = true
-        ignoreUnknownKeys = true
-    }
-    
+    private val json =
+        Json {
+            prettyPrint = true
+            ignoreUnknownKeys = true
+        }
+
     init {
         // Ensure directory exists
         settingsFile.parentFile?.mkdirs()
@@ -48,13 +49,13 @@ object BrowserSettingsManager {
      * first opened, so a persisted "show share button = true" wouldn't apply on boot.
      */
     fun ensureLoaded() { /* referencing this object already ran loadSettingsSync() */ }
-    
+
     private fun loadSettingsSync() {
         try {
             if (settingsFile.exists()) {
                 val content = settingsFile.readText()
                 val settings = json.decodeFromString<BrowserSettingsData>(content)
-                
+
                 // Apply loaded settings
                 BrowserSettings.userAgent = settings.userAgent
                 BrowserSettings.customUserAgent = settings.customUserAgent
@@ -78,24 +79,25 @@ object BrowserSettingsManager {
         }
     }
 
-    suspend fun saveSettings() = withContext(Dispatchers.IO) {
-        try {
-            val settings = BrowserSettingsData(
-                userAgent = BrowserSettings.userAgent,
-                customUserAgent = BrowserSettings.customUserAgent,
-                currentProfile = BrowserSettings.currentProfile,
-                availableProfiles = BrowserSettings.availableProfiles.toList(),
-                maxInitRetries = BrowserSettings.maxInitRetries,
-                maxRecoveryAttempts = BrowserSettings.maxRecoveryAttempts,
-                discretePasswordFill = BrowserSettings.discretePasswordFill,
-                showShareButton = BrowserSettings.showShareButton
-            )
+    suspend fun saveSettings() =
+        withContext(Dispatchers.IO) {
+            try {
+                val settings =
+                    BrowserSettingsData(
+                        userAgent = BrowserSettings.userAgent,
+                        customUserAgent = BrowserSettings.customUserAgent,
+                        currentProfile = BrowserSettings.currentProfile,
+                        availableProfiles = BrowserSettings.availableProfiles.toList(),
+                        maxInitRetries = BrowserSettings.maxInitRetries,
+                        maxRecoveryAttempts = BrowserSettings.maxRecoveryAttempts,
+                        discretePasswordFill = BrowserSettings.discretePasswordFill,
+                        showShareButton = BrowserSettings.showShareButton,
+                    )
 
-            val content = json.encodeToString(settings)
-            settingsFile.writeText(content)
-        } catch (e: Exception) {
-            logger.warn(LogCategory.BROWSER, "Failed to save browser settings", error = e)
+                val content = json.encodeToString(settings)
+                settingsFile.writeText(content)
+            } catch (e: Exception) {
+                logger.warn(LogCategory.BROWSER, "Failed to save browser settings", error = e)
+            }
         }
-    }
-
 }

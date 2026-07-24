@@ -9,12 +9,9 @@ import ai.rever.boss.keymap.lifecycle.ShortcutLifecycleCondition
  * @param hasPanels Lambda that returns true if panels/splits exist
  */
 class PanelCondition(
-    private val hasPanels: () -> Boolean
+    private val hasPanels: () -> Boolean,
 ) : ShortcutLifecycleCondition {
-
-    override suspend fun isEnabled(): Boolean {
-        return hasPanels()
-    }
+    override suspend fun isEnabled(): Boolean = hasPanels()
 
     override val disabledReason: String
         get() = "No active panels"
@@ -32,12 +29,9 @@ class PanelCondition(
  */
 class CanCreateSplitCondition(
     private val getSplitCount: () -> Int,
-    private val maxSplits: Int = 4
+    private val maxSplits: Int = 4,
 ) : ShortcutLifecycleCondition {
-
-    override suspend fun isEnabled(): Boolean {
-        return getSplitCount() < maxSplits
-    }
+    override suspend fun isEnabled(): Boolean = getSplitCount() < maxSplits
 
     override val disabledReason: String
         get() = "Maximum splits reached ($maxSplits)"
@@ -53,12 +47,9 @@ class CanCreateSplitCondition(
  * @param getSplitCount Lambda that returns the current number of splits
  */
 class SplitNavigationCondition(
-    private val getSplitCount: () -> Int
+    private val getSplitCount: () -> Int,
 ) : ShortcutLifecycleCondition {
-
-    override suspend fun isEnabled(): Boolean {
-        return getSplitCount() >= 2
-    }
+    override suspend fun isEnabled(): Boolean = getSplitCount() >= 2
 
     override val disabledReason: String
         get() = "Need multiple splits to navigate"

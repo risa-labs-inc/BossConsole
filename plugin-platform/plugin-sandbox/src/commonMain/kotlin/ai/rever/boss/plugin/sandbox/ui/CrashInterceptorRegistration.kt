@@ -11,7 +11,10 @@ package ai.rever.boss.plugin.sandbox.ui
  * @param onError Callback when a crash is attributed to this plugin
  * @return A dispose function to unregister, or null if not supported on this platform
  */
-expect fun registerCrashInterceptor(pluginId: String, onError: (Throwable) -> Unit): (() -> Unit)?
+expect fun registerCrashInterceptor(
+    pluginId: String,
+    onError: (Throwable) -> Unit,
+): (() -> Unit)?
 
 /**
  * Install the platform-specific crash interceptor.

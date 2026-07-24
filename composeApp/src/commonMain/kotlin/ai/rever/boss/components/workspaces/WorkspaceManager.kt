@@ -2,12 +2,12 @@ package ai.rever.boss.components.workspaces
 
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.time.Clock
@@ -19,21 +19,21 @@ class WorkspaceManager {
     private val logger = BossLogger.forComponent("WorkspaceManager")
     private val _currentWorkspace = MutableStateFlow<LayoutWorkspace?>(null)
     val currentWorkspace: StateFlow<LayoutWorkspace?> = _currentWorkspace.asStateFlow()
-    
+
     private val _workspaces = MutableStateFlow<List<LayoutWorkspace>>(emptyList())
     val workspaces: StateFlow<List<LayoutWorkspace>> = _workspaces.asStateFlow()
-    
+
     private val fileManager = WorkspaceFileManager()
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-    
+
     // Callback for when a workspace is deleted
     private var onWorkspaceDeleted: ((String) -> Unit)? = null
-    
+
     init {
         // Load workspaces from both predefined and saved files
         loadAllWorkspaces()
     }
-    
+
     private fun loadAllWorkspaces() {
         scope.launch {
             // Start with predefined workspaces
@@ -42,20 +42,23 @@ class WorkspaceManager {
 
             // Load saved workspaces from disk
             try {
-                val savedWorkspaces = withContext(Dispatchers.IO) {
-                    fileManager.listWorkspaces()
-                }
-                savedWorkspaces.forEach { fileInfo ->
-                    val workspace = withContext(Dispatchers.IO) {
-                        fileManager.loadWorkspace(fileInfo.fileName)
+                val savedWorkspaces =
+                    withContext(Dispatchers.IO) {
+                        fileManager.listWorkspaces()
                     }
+                savedWorkspaces.forEach { fileInfo ->
+                    val workspace =
+                        withContext(Dispatchers.IO) {
+                            fileManager.loadWorkspace(fileInfo.fileName)
+                        }
                     workspace?.let {
                         // Ensure workspace has an ID
-                        val workspaceWithId = if (it.id.isEmpty()) {
-                            it.copy(id = LayoutWorkspace.generateId())
-                        } else {
-                            it
-                        }
+                        val workspaceWithId =
+                            if (it.id.isEmpty()) {
+                                it.copy(id = LayoutWorkspace.generateId())
+                            } else {
+                                it
+                            }
                         // Only add if not already in predefined list
                         if (allWorkspaces.none { ws -> ws.name == workspaceWithId.name }) {
                             allWorkspaces.add(workspaceWithId)
@@ -70,30 +73,32 @@ class WorkspaceManager {
             _workspaces.value = allWorkspaces
         }
     }
-    
+
     /**
      * Load a workspace
      */
     fun loadWorkspace(workspace: LayoutWorkspace) {
         _currentWorkspace.value = workspace
     }
-    
+
     /**
      * Save current workspace to disk
      */
     fun saveCurrentWorkspace(name: String? = null): LayoutWorkspace? {
         val current = _currentWorkspace.value ?: return null
-        val savedWorkspace = current.copy(
-            id = current.id.ifEmpty { LayoutWorkspace.generateId() },
-            name = name ?: current.name,
-            timestamp = Clock.System.now().toEpochMilliseconds()
-        )
+        val savedWorkspace =
+            current.copy(
+                id = current.id.ifEmpty { LayoutWorkspace.generateId() },
+                name = name ?: current.name,
+                timestamp = Clock.System.now().toEpochMilliseconds(),
+            )
 
         scope.launch {
             // Save to disk (on IO thread)
-            val filePath = withContext(Dispatchers.IO) {
-                fileManager.saveWorkspace(savedWorkspace)
-            }
+            val filePath =
+                withContext(Dispatchers.IO) {
+                    fileManager.saveWorkspace(savedWorkspace)
+                }
             if (filePath != null) {
                 // Update workspaces list (on Main thread)
                 val workspaces = _workspaces.value.toMutableList()
@@ -112,26 +117,24 @@ class WorkspaceManager {
 
         return savedWorkspace
     }
-    
+
     /**
      * Reset to default workspace
      */
     fun resetToDefault() {
         _currentWorkspace.value = null
     }
-    
+
     /**
      * Export workspace to JSON
      */
-    fun exportWorkspace(workspace: LayoutWorkspace): String {
-        return WorkspaceSerializer.serialize(workspace)
-    }
-    
+    fun exportWorkspace(workspace: LayoutWorkspace): String = WorkspaceSerializer.serialize(workspace)
+
     /**
      * Import workspace from JSON
      */
-    fun importWorkspace(jsonString: String): LayoutWorkspace? {
-        return try {
+    fun importWorkspace(jsonString: String): LayoutWorkspace? =
+        try {
             val workspace = WorkspaceSerializer.deserialize(jsonString)
 
             // Save the imported workspace to disk
@@ -153,8 +156,7 @@ class WorkspaceManager {
             logger.warn(LogCategory.WORKSPACE, "Failed to import workspace from JSON", error = e)
             null
         }
-    }
-    
+
     /**
      * Set callback for when a workspace is deleted
      */
@@ -172,9 +174,10 @@ class WorkspaceManager {
             if (workspace != null && !PredefinedWorkspaces.allWorkspaces.any { it.name == name }) {
                 // Only delete if it's not a predefined workspace
                 val fileName = WorkspaceFileManagerCommon.generateFileName(name)
-                val deleted = withContext(Dispatchers.IO) {
-                    fileManager.deleteWorkspace(fileName)
-                }
+                val deleted =
+                    withContext(Dispatchers.IO) {
+                        fileManager.deleteWorkspace(fileName)
+                    }
                 if (deleted) {
                     // Update state on Main thread
                     _workspaces.value = _workspaces.value.filter { it.name != name }
@@ -194,7 +197,10 @@ class WorkspaceManager {
     /**
      * Rename a workspace
      */
-    fun renameWorkspace(oldName: String, newName: String) {
+    fun renameWorkspace(
+        oldName: String,
+        newName: String,
+    ) {
         // Don't allow renaming to an existing name or empty name
         if (newName.isEmpty() || newName == oldName) return
         if (_workspaces.value.any { it.name == newName }) {
@@ -211,27 +217,30 @@ class WorkspaceManager {
                 val newFileName = WorkspaceFileManagerCommon.generateFileName(newName)
 
                 // Create renamed workspace
-                val renamedWorkspace = workspace.copy(
-                    name = newName,
-                    timestamp = Clock.System.now().toEpochMilliseconds()
-                )
+                val renamedWorkspace =
+                    workspace.copy(
+                        name = newName,
+                        timestamp = Clock.System.now().toEpochMilliseconds(),
+                    )
 
                 // Save with new name and delete old file
-                val success = withContext(Dispatchers.IO) {
-                    val saved = fileManager.saveWorkspace(renamedWorkspace, newFileName)
-                    if (saved != null) {
-                        fileManager.deleteWorkspace(oldFileName)
-                        true
-                    } else {
-                        false
+                val success =
+                    withContext(Dispatchers.IO) {
+                        val saved = fileManager.saveWorkspace(renamedWorkspace, newFileName)
+                        if (saved != null) {
+                            fileManager.deleteWorkspace(oldFileName)
+                            true
+                        } else {
+                            false
+                        }
                     }
-                }
 
                 if (success) {
                     // Update state on Main thread
-                    _workspaces.value = _workspaces.value.map {
-                        if (it.name == oldName) renamedWorkspace else it
-                    }
+                    _workspaces.value =
+                        _workspaces.value.map {
+                            if (it.name == oldName) renamedWorkspace else it
+                        }
 
                     // If current workspace was renamed, update it
                     if (_currentWorkspace.value?.name == oldName) {
@@ -241,20 +250,18 @@ class WorkspaceManager {
             }
         }
     }
-    
+
     /**
      * Update current workspace with new layout
      */
     fun updateCurrentWorkspace(newWorkspace: LayoutWorkspace) {
         _currentWorkspace.value = newWorkspace
     }
-    
+
     /**
      * Get the workspace directory path
      */
-    fun getWorkspaceDirectory(): String {
-        return fileManager.getDefaultWorkspaceDirectory()
-    }
+    fun getWorkspaceDirectory(): String = fileManager.getDefaultWorkspaceDirectory()
 }
 
 // Global instance

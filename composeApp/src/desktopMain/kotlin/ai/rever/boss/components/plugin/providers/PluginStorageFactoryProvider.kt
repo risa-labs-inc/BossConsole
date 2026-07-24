@@ -18,37 +18,32 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * Desktop implementation of PluginStorageFactory factory.
  */
-actual fun createPluginStorageFactory(): PluginStorageFactory {
-    return PluginStorageFactoryImpl.getInstance()
-}
+actual fun createPluginStorageFactory(): PluginStorageFactory = PluginStorageFactoryImpl.getInstance()
 
 /**
  * Desktop implementation of PluginStorageFactory.
  * Creates plugin-scoped storage providers that persist data to disk.
  */
 class PluginStorageFactoryImpl private constructor() : PluginStorageFactory {
-
     companion object {
         private val logger = BossLogger.forComponent("PluginStorageFactory")
 
         @Volatile
         private var instance: PluginStorageFactoryImpl? = null
 
-        fun getInstance(): PluginStorageFactoryImpl {
-            return instance ?: synchronized(this) {
+        fun getInstance(): PluginStorageFactoryImpl =
+            instance ?: synchronized(this) {
                 instance ?: PluginStorageFactoryImpl().also { instance = it }
             }
-        }
     }
 
     // Cache of storage providers per plugin
     private val storageCache = ConcurrentHashMap<String, PluginStorageProviderImpl>()
 
-    override fun createStorage(pluginId: String): PluginStorageProvider {
-        return storageCache.getOrPut(pluginId) {
+    override fun createStorage(pluginId: String): PluginStorageProvider =
+        storageCache.getOrPut(pluginId) {
             PluginStorageProviderImpl(pluginId)
         }
-    }
 }
 
 /**
@@ -56,9 +51,8 @@ class PluginStorageFactoryImpl private constructor() : PluginStorageFactory {
  * Stores data in ~/.boss/plugin-data/{pluginId}/storage.properties
  */
 class PluginStorageProviderImpl(
-    private val pluginId: String
+    private val pluginId: String,
 ) : PluginStorageProvider {
-
     companion object {
         private val logger = BossLogger.forComponent("PluginStorage")
     }
@@ -90,71 +84,90 @@ class PluginStorageProviderImpl(
 
     // ============ String Storage ============
 
-    override suspend fun putString(key: String, value: String) {
+    override suspend fun putString(
+        key: String,
+        value: String,
+    ) {
         cache[key] = value
         saveToDisk()
         _changes.tryEmit(key)
     }
 
-    override suspend fun getString(key: String, defaultValue: String?): String? {
-        return cache[key] ?: defaultValue
-    }
+    override suspend fun getString(
+        key: String,
+        defaultValue: String?,
+    ): String? = cache[key] ?: defaultValue
 
     // ============ Int Storage ============
 
-    override suspend fun putInt(key: String, value: Int) {
+    override suspend fun putInt(
+        key: String,
+        value: Int,
+    ) {
         putString(key, value.toString())
     }
 
-    override suspend fun getInt(key: String, defaultValue: Int): Int {
-        return getString(key)?.toIntOrNull() ?: defaultValue
-    }
+    override suspend fun getInt(
+        key: String,
+        defaultValue: Int,
+    ): Int = getString(key)?.toIntOrNull() ?: defaultValue
 
     // ============ Long Storage ============
 
-    override suspend fun putLong(key: String, value: Long) {
+    override suspend fun putLong(
+        key: String,
+        value: Long,
+    ) {
         putString(key, value.toString())
     }
 
-    override suspend fun getLong(key: String, defaultValue: Long): Long {
-        return getString(key)?.toLongOrNull() ?: defaultValue
-    }
+    override suspend fun getLong(
+        key: String,
+        defaultValue: Long,
+    ): Long = getString(key)?.toLongOrNull() ?: defaultValue
 
     // ============ Boolean Storage ============
 
-    override suspend fun putBoolean(key: String, value: Boolean) {
+    override suspend fun putBoolean(
+        key: String,
+        value: Boolean,
+    ) {
         putString(key, value.toString())
     }
 
-    override suspend fun getBoolean(key: String, defaultValue: Boolean): Boolean {
-        return getString(key)?.toBooleanStrictOrNull() ?: defaultValue
-    }
+    override suspend fun getBoolean(
+        key: String,
+        defaultValue: Boolean,
+    ): Boolean = getString(key)?.toBooleanStrictOrNull() ?: defaultValue
 
     // ============ Float Storage ============
 
-    override suspend fun putFloat(key: String, value: Float) {
+    override suspend fun putFloat(
+        key: String,
+        value: Float,
+    ) {
         putString(key, value.toString())
     }
 
-    override suspend fun getFloat(key: String, defaultValue: Float): Float {
-        return getString(key)?.toFloatOrNull() ?: defaultValue
-    }
+    override suspend fun getFloat(
+        key: String,
+        defaultValue: Float,
+    ): Float = getString(key)?.toFloatOrNull() ?: defaultValue
 
     // ============ JSON Storage ============
 
-    override suspend fun putJson(key: String, jsonValue: String) {
+    override suspend fun putJson(
+        key: String,
+        jsonValue: String,
+    ) {
         putString("json:$key", jsonValue)
     }
 
-    override suspend fun getJson(key: String): String? {
-        return getString("json:$key")
-    }
+    override suspend fun getJson(key: String): String? = getString("json:$key")
 
     // ============ Utility Methods ============
 
-    override suspend fun contains(key: String): Boolean {
-        return cache.containsKey(key)
-    }
+    override suspend fun contains(key: String): Boolean = cache.containsKey(key)
 
     override suspend fun remove(key: String) {
         cache.remove(key)
@@ -162,9 +175,7 @@ class PluginStorageProviderImpl(
         _changes.tryEmit(key)
     }
 
-    override suspend fun getAllKeys(): Set<String> {
-        return cache.keys.toSet()
-    }
+    override suspend fun getAllKeys(): Set<String> = cache.keys.toSet()
 
     override suspend fun clear() {
         cache.clear()
@@ -172,8 +183,9 @@ class PluginStorageProviderImpl(
         _changes.tryEmit("*")
     }
 
-    override fun observeString(key: String): Flow<String?> {
-        return _changes.asSharedFlow()
+    override fun observeString(key: String): Flow<String?> =
+        _changes
+            .asSharedFlow()
             .map { changedKey ->
                 if (changedKey == key || changedKey == "*") {
                     cache[key]
@@ -181,11 +193,8 @@ class PluginStorageProviderImpl(
                     null
                 }
             }
-    }
 
-    override fun observeChanges(): Flow<String> {
-        return _changes.asSharedFlow()
-    }
+    override fun observeChanges(): Flow<String> = _changes.asSharedFlow()
 
     // ============ Disk Operations ============
 
@@ -197,15 +206,24 @@ class PluginStorageProviderImpl(
                 properties.forEach { key, value ->
                     cache[key.toString()] = value.toString()
                 }
-                logger.debug(LogCategory.SYSTEM, "Loaded plugin storage", mapOf(
-                    "pluginId" to pluginId,
-                    "keyCount" to cache.size
-                ))
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Loaded plugin storage",
+                    mapOf(
+                        "pluginId" to pluginId,
+                        "keyCount" to cache.size,
+                    ),
+                )
             }
         } catch (e: Exception) {
-            logger.error(LogCategory.SYSTEM, "Failed to load plugin storage", mapOf(
-                "pluginId" to pluginId
-            ), e)
+            logger.error(
+                LogCategory.SYSTEM,
+                "Failed to load plugin storage",
+                mapOf(
+                    "pluginId" to pluginId,
+                ),
+                e,
+            )
         }
     }
 
@@ -220,9 +238,14 @@ class PluginStorageProviderImpl(
                     properties.store(it, "Plugin storage for $pluginId")
                 }
             } catch (e: Exception) {
-                logger.error(LogCategory.SYSTEM, "Failed to save plugin storage", mapOf(
-                    "pluginId" to pluginId
-                ), e)
+                logger.error(
+                    LogCategory.SYSTEM,
+                    "Failed to save plugin storage",
+                    mapOf(
+                        "pluginId" to pluginId,
+                    ),
+                    e,
+                )
             }
         }
     }

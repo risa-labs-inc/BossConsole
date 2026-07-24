@@ -1,7 +1,7 @@
 package ai.rever.boss.plugin.icons
 
-import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Nested
+import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 
@@ -16,10 +16,8 @@ import kotlin.test.assertNotEquals
  * Note: PathUtils tests are in plugin-path-utils module.
  */
 class FileIconsTest {
-
     @Nested
     inner class FileIconsForFileTests {
-
         @Test
         fun `returns correct icon for Kotlin files`() {
             val result = FileIcons.forFile("MyClass.kt")
@@ -145,7 +143,6 @@ class FileIconsTest {
 
     @Nested
     inner class SpecialFileNameTests {
-
         @Test
         fun `returns Docker icon for Dockerfile`() {
             val result = FileIcons.forFile("Dockerfile")
@@ -250,7 +247,6 @@ class FileIconsTest {
 
     @Nested
     inner class FolderIconTests {
-
         @Test
         fun `returns closed folder icon when not expanded`() {
             val result = FileIcons.forFolder(isExpanded = false)
@@ -274,7 +270,6 @@ class FileIconsTest {
 
     @Nested
     inner class MediaFileTests {
-
         @Test
         fun `returns image icon for image files`() {
             listOf("png", "jpg", "jpeg", "gif", "bmp", "webp", "svg").forEach { ext ->

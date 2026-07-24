@@ -22,7 +22,7 @@ import kotlinx.serialization.json.Json
  */
 @Serializable
 data class BrowserEngineSettings(
-    val selectedVersion: String? = null
+    val selectedVersion: String? = null,
 )
 
 /**
@@ -35,11 +35,12 @@ data class BrowserEngineSettings(
 object BrowserEngineSettingsManager {
     private val logger = BossLogger.forComponent("BrowserEngineSettingsManager")
     private val settingsFile = BossDirectories.resolve("browser-engine-settings.json")
-    private val json = Json {
-        prettyPrint = true
-        ignoreUnknownKeys = true
-        encodeDefaults = true
-    }
+    private val json =
+        Json {
+            prettyPrint = true
+            ignoreUnknownKeys = true
+            encodeDefaults = true
+        }
 
     private val _currentSettings = MutableStateFlow(loadSync())
     val currentSettings: StateFlow<BrowserEngineSettings> = _currentSettings.asStateFlow()
@@ -48,8 +49,8 @@ object BrowserEngineSettingsManager {
     val effectiveVersion: String
         get() = _currentSettings.value.selectedVersion ?: VersionConstants.JXBROWSER_VERSION
 
-    private fun loadSync(): BrowserEngineSettings {
-        return try {
+    private fun loadSync(): BrowserEngineSettings =
+        try {
             if (settingsFile.exists()) {
                 json.decodeFromString<BrowserEngineSettings>(settingsFile.readText())
             } else {
@@ -59,18 +60,18 @@ object BrowserEngineSettingsManager {
             logger.warn(LogCategory.BROWSER, "Error loading browser engine settings, using defaults", error = e)
             BrowserEngineSettings()
         }
-    }
 
-    suspend fun updateSettings(settings: BrowserEngineSettings) = withContext(Dispatchers.IO) {
-        _currentSettings.value = settings
-        try {
-            settingsFile.parentFile?.mkdirs()
-            settingsFile.writeText(json.encodeToString(BrowserEngineSettings.serializer(), settings))
-            logger.debug(LogCategory.BROWSER, "Browser engine settings saved")
-        } catch (e: Exception) {
-            logger.warn(LogCategory.BROWSER, "Error saving browser engine settings", error = e)
+    suspend fun updateSettings(settings: BrowserEngineSettings) =
+        withContext(Dispatchers.IO) {
+            _currentSettings.value = settings
+            try {
+                settingsFile.parentFile?.mkdirs()
+                settingsFile.writeText(json.encodeToString(BrowserEngineSettings.serializer(), settings))
+                logger.debug(LogCategory.BROWSER, "Browser engine settings saved")
+            } catch (e: Exception) {
+                logger.warn(LogCategory.BROWSER, "Error saving browser engine settings", error = e)
+            }
         }
-    }
 
     suspend fun resetToDefault() = updateSettings(BrowserEngineSettings())
 }

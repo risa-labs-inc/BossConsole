@@ -54,7 +54,7 @@ fun CrashReportDialog(
     crashReport: CrashReport,
     onDismiss: () -> Unit,
     onSubmit: (userNotes: String?, includeLogs: Boolean) -> Unit,
-    onCleanAndRestart: (() -> Unit)? = null
+    onCleanAndRestart: (() -> Unit)? = null,
 ) {
     var userNotes by remember { mutableStateOf("") }
     var includeLogs by remember { mutableStateOf(false) }
@@ -68,40 +68,41 @@ fun CrashReportDialog(
 
     // Render directly in the window (no Dialog wrapper needed since this is shown in its own JFrame)
     Card(
-        modifier = Modifier
-            .fillMaxSize()
-            .onKeyEvent { event ->
-                if (event.type == KeyEventType.KeyDown && event.key == Key.Escape && !isSubmitting) {
-                    onDismiss()
-                    true
-                } else {
-                    false
-                }
-            },
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .onKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyDown && event.key == Key.Escape && !isSubmitting) {
+                        onDismiss()
+                        true
+                    } else {
+                        false
+                    }
+                },
         shape = RoundedCornerShape(0.dp),
         backgroundColor = BossTheme.colors.panel,
-        elevation = 0.dp
+        elevation = 0.dp,
     ) {
         Column(
-            modifier = Modifier.padding(24.dp)
+            modifier = Modifier.padding(24.dp),
         ) {
             // Header with error icon
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
             ) {
                 Icon(
                     imageVector = Icons.Filled.Error,
                     contentDescription = "Error",
                     tint = BossTheme.colors.alert,
-                    modifier = Modifier.size(32.dp)
+                    modifier = Modifier.size(32.dp),
                 )
                 Spacer(modifier = Modifier.width(12.dp))
                 Text(
                     text = "BOSS Has Crashed",
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
-                    color = BossTheme.colors.textPrimary
+                    color = BossTheme.colors.textPrimary,
                 )
             }
 
@@ -111,14 +112,14 @@ fun CrashReportDialog(
             Card(
                 backgroundColor = BossTheme.colors.raised,
                 shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
                     Text(
                         text = crashReport.exceptionType,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = BossTheme.colors.alert
+                        color = BossTheme.colors.alert,
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
@@ -126,7 +127,7 @@ fun CrashReportDialog(
                         fontSize = 13.sp,
                         color = BossTheme.colors.textPrimary,
                         maxLines = 3,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
@@ -137,28 +138,29 @@ fun CrashReportDialog(
             Card(
                 backgroundColor = BossTheme.colors.raised,
                 shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
             ) {
                 Column {
                     // Header row (clickable)
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { showDetails = !showDetails }
-                            .padding(12.dp)
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { showDetails = !showDetails }
+                                .padding(12.dp),
                     ) {
                         Text(
                             text = "Technical Details",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Medium,
                             color = BossTheme.colors.textPrimary,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f),
                         )
                         Icon(
                             imageVector = if (showDetails) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
                             contentDescription = if (showDetails) "Collapse" else "Expand",
-                            tint = BossTheme.colors.textSecondary
+                            tint = BossTheme.colors.textSecondary,
                         )
                     }
 
@@ -166,31 +168,33 @@ fun CrashReportDialog(
                     AnimatedVisibility(
                         visible = showDetails,
                         enter = expandVertically(),
-                        exit = shrinkVertically()
+                        exit = shrinkVertically(),
                     ) {
                         Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp)
-                                .padding(bottom = 12.dp)
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp)
+                                    .padding(bottom = 12.dp),
                         ) {
                             // Copy button
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.End
+                                horizontalArrangement = Arrangement.End,
                             ) {
                                 TextButton(
                                     onClick = {
                                         clipboardManager.setText(AnnotatedString(crashReport.stackTrace))
                                     },
-                                    colors = ButtonDefaults.textButtonColors(
-                                        contentColor = BossTheme.colors.signal
-                                    )
+                                    colors =
+                                        ButtonDefaults.textButtonColors(
+                                            contentColor = BossTheme.colors.signal,
+                                        ),
                                 ) {
                                     Icon(
                                         imageVector = Icons.Filled.ContentCopy,
                                         contentDescription = "Copy",
-                                        modifier = Modifier.size(16.dp)
+                                        modifier = Modifier.size(16.dp),
                                     )
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text("Copy to Clipboard", fontSize = 12.sp)
@@ -202,22 +206,22 @@ fun CrashReportDialog(
                             // Stack trace
                             SelectionContainer {
                                 Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .heightIn(max = 200.dp)
-                                        .background(
-                                            BossTheme.colors.panel,
-                                            RoundedCornerShape(4.dp)
-                                        )
-                                        .padding(8.dp)
-                                        .verticalScroll(rememberScrollState())
+                                    modifier =
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(max = 200.dp)
+                                            .background(
+                                                BossTheme.colors.panel,
+                                                RoundedCornerShape(4.dp),
+                                            ).padding(8.dp)
+                                            .verticalScroll(rememberScrollState()),
                                 ) {
                                     Text(
                                         text = crashReport.stackTrace,
                                         fontSize = 11.sp,
                                         fontFamily = FontFamily.Monospace,
                                         color = BossTheme.colors.textPrimary,
-                                        lineHeight = 14.sp
+                                        lineHeight = 14.sp,
                                     )
                                 }
                             }
@@ -232,29 +236,31 @@ fun CrashReportDialog(
             Text(
                 text = "What were you doing when this happened? (optional)",
                 fontSize = 13.sp,
-                color = BossTheme.colors.textPrimary
+                color = BossTheme.colors.textPrimary,
             )
             Spacer(modifier = Modifier.height(8.dp))
             OutlinedTextField(
                 value = userNotes,
                 onValueChange = { userNotes = it },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 80.dp, max = 120.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 80.dp, max = 120.dp),
                 placeholder = {
                     Text(
                         "Describe what you were doing...",
-                        color = BossTheme.colors.textMuted
+                        color = BossTheme.colors.textMuted,
                     )
                 },
-                colors = TextFieldDefaults.outlinedTextFieldColors(
-                    textColor = BossTheme.colors.textPrimary,
-                    backgroundColor = BossTheme.colors.raised,
-                    focusedBorderColor = BossTheme.colors.signal,
-                    unfocusedBorderColor = BossTheme.colors.line,
-                    cursorColor = BossTheme.colors.signal
-                ),
-                enabled = !isSubmitting
+                colors =
+                    TextFieldDefaults.outlinedTextFieldColors(
+                        textColor = BossTheme.colors.textPrimary,
+                        backgroundColor = BossTheme.colors.raised,
+                        focusedBorderColor = BossTheme.colors.signal,
+                        unfocusedBorderColor = BossTheme.colors.line,
+                        cursorColor = BossTheme.colors.signal,
+                    ),
+                enabled = !isSubmitting,
             )
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -262,32 +268,34 @@ fun CrashReportDialog(
             // Include logs checkbox
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(enabled = !isSubmitting) { includeLogs = !includeLogs }
-                    .padding(vertical = 4.dp)
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = !isSubmitting) { includeLogs = !includeLogs }
+                        .padding(vertical = 4.dp),
             ) {
                 Checkbox(
                     checked = includeLogs,
                     onCheckedChange = null,
-                    colors = CheckboxDefaults.colors(
-                        checkedColor = BossTheme.colors.signal,
-                        uncheckedColor = BossTheme.colors.textMuted,
-                        checkmarkColor = BossTheme.colors.onSignal
-                    ),
-                    enabled = !isSubmitting
+                    colors =
+                        CheckboxDefaults.colors(
+                            checkedColor = BossTheme.colors.signal,
+                            uncheckedColor = BossTheme.colors.textMuted,
+                            checkmarkColor = BossTheme.colors.onSignal,
+                        ),
+                    enabled = !isSubmitting,
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Column {
                     Text(
                         text = "Include recent activity logs",
                         fontSize = 14.sp,
-                        color = BossTheme.colors.textPrimary
+                        color = BossTheme.colors.textPrimary,
                     )
                     Text(
                         text = "Helps with debugging (logs are sanitized)",
                         fontSize = 11.sp,
-                        color = BossTheme.colors.textMuted
+                        color = BossTheme.colors.textMuted,
                     )
                 }
             }
@@ -297,23 +305,32 @@ fun CrashReportDialog(
             // Submit result message
             submitResult?.let { result ->
                 Card(
-                    backgroundColor = when (result) {
-                        is CrashReportService.SubmitResult.Success -> BossTheme.colors.ok
-                        is CrashReportService.SubmitResult.Error -> BossTheme.colors.alert
-                    },
+                    backgroundColor =
+                        when (result) {
+                            is CrashReportService.SubmitResult.Success -> BossTheme.colors.ok
+                            is CrashReportService.SubmitResult.Error -> BossTheme.colors.alert
+                        },
                     shape = RoundedCornerShape(6.dp),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text(
-                        text = when (result) {
-                            is CrashReportService.SubmitResult.Success ->
-                                if (result.isNewIssue) "Issue created successfully!"
-                                else "Added to existing issue."
-                            is CrashReportService.SubmitResult.Error -> result.message
-                        },
+                        text =
+                            when (result) {
+                                is CrashReportService.SubmitResult.Success -> {
+                                    if (result.isNewIssue) {
+                                        "Issue created successfully!"
+                                    } else {
+                                        "Added to existing issue."
+                                    }
+                                }
+
+                                is CrashReportService.SubmitResult.Error -> {
+                                    result.message
+                                }
+                            },
                         fontSize = 13.sp,
                         color = BossTheme.colors.onSignal,
-                        modifier = Modifier.padding(12.dp)
+                        modifier = Modifier.padding(12.dp),
                     )
                 }
                 Spacer(modifier = Modifier.height(16.dp))
@@ -322,20 +339,21 @@ fun CrashReportDialog(
             // Action buttons
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
+                horizontalArrangement = Arrangement.End,
             ) {
                 // Clean & Restart button
                 if (onCleanAndRestart != null) {
                     Button(
                         onClick = onCleanAndRestart,
                         enabled = !isSubmitting,
-                        colors = ButtonDefaults.buttonColors(
-                            backgroundColor = BossTheme.colors.alert,
-                            contentColor = BossTheme.colors.onSignal,
-                            disabledBackgroundColor = BossTheme.colors.raised,
-                            disabledContentColor = BossTheme.colors.textMuted
-                        ),
-                        shape = RoundedCornerShape(6.dp)
+                        colors =
+                            ButtonDefaults.buttonColors(
+                                backgroundColor = BossTheme.colors.alert,
+                                contentColor = BossTheme.colors.onSignal,
+                                disabledBackgroundColor = BossTheme.colors.raised,
+                                disabledContentColor = BossTheme.colors.textMuted,
+                            ),
+                        shape = RoundedCornerShape(6.dp),
                     ) {
                         Text("Clean Data & Restart")
                     }
@@ -346,9 +364,10 @@ fun CrashReportDialog(
                 TextButton(
                     onClick = onDismiss,
                     enabled = !isSubmitting,
-                    colors = ButtonDefaults.textButtonColors(
-                        contentColor = BossTheme.colors.textSecondary
-                    )
+                    colors =
+                        ButtonDefaults.textButtonColors(
+                            contentColor = BossTheme.colors.textSecondary,
+                        ),
                 ) {
                     Text("Don't Send")
                 }
@@ -361,39 +380,41 @@ fun CrashReportDialog(
                         isSubmitting = true
                         coroutineScope.launch {
                             // Update report with user input
-                            CrashHandler.updateReportWithUserInput(
-                                userNotes = userNotes.takeIf { it.isNotBlank() },
-                                includeLogs = includeLogs
-                            )?.let { updatedReport ->
-                                val result = CrashReportService.submitCrashReport(updatedReport)
-                                submitResult = result
-                                isSubmitting = false
+                            CrashHandler
+                                .updateReportWithUserInput(
+                                    userNotes = userNotes.takeIf { it.isNotBlank() },
+                                    includeLogs = includeLogs,
+                                )?.let { updatedReport ->
+                                    val result = CrashReportService.submitCrashReport(updatedReport)
+                                    submitResult = result
+                                    isSubmitting = false
 
-                                // If successful, call onSubmit after a brief delay
-                                if (result is CrashReportService.SubmitResult.Success) {
-                                    kotlinx.coroutines.delay(2000)
-                                    onSubmit(userNotes.takeIf { it.isNotBlank() }, includeLogs)
-                                }
-                            } ?: run {
+                                    // If successful, call onSubmit after a brief delay
+                                    if (result is CrashReportService.SubmitResult.Success) {
+                                        kotlinx.coroutines.delay(2000)
+                                        onSubmit(userNotes.takeIf { it.isNotBlank() }, includeLogs)
+                                    }
+                                } ?: run {
                                 submitResult = CrashReportService.SubmitResult.Error("Failed to prepare report")
                                 isSubmitting = false
                             }
                         }
                     },
                     enabled = !isSubmitting && submitResult !is CrashReportService.SubmitResult.Success,
-                    colors = ButtonDefaults.buttonColors(
-                        backgroundColor = BossTheme.colors.signal,
-                        contentColor = BossTheme.colors.onSignal,
-                        disabledBackgroundColor = BossTheme.colors.raised,
-                        disabledContentColor = BossTheme.colors.textMuted
-                    ),
-                    shape = RoundedCornerShape(6.dp)
+                    colors =
+                        ButtonDefaults.buttonColors(
+                            backgroundColor = BossTheme.colors.signal,
+                            contentColor = BossTheme.colors.onSignal,
+                            disabledBackgroundColor = BossTheme.colors.raised,
+                            disabledContentColor = BossTheme.colors.textMuted,
+                        ),
+                    shape = RoundedCornerShape(6.dp),
                 ) {
                     if (isSubmitting) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(16.dp),
                             color = BossTheme.colors.textPrimary,
-                            strokeWidth = 2.dp
+                            strokeWidth = 2.dp,
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Submitting...")
@@ -408,15 +429,16 @@ fun CrashReportDialog(
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
+                    horizontalArrangement = Arrangement.End,
                 ) {
                     Button(
                         onClick = onDismiss,
-                        colors = ButtonDefaults.buttonColors(
-                            backgroundColor = BossTheme.colors.raised,
-                            contentColor = BossTheme.colors.textPrimary
-                        ),
-                        shape = RoundedCornerShape(6.dp)
+                        colors =
+                            ButtonDefaults.buttonColors(
+                                backgroundColor = BossTheme.colors.raised,
+                                contentColor = BossTheme.colors.textPrimary,
+                            ),
+                        shape = RoundedCornerShape(6.dp),
                     ) {
                         Text("Close")
                     }

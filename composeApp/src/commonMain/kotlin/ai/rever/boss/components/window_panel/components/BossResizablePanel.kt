@@ -1,8 +1,8 @@
 package ai.rever.boss.components.window_panel.components
 
+import ai.rever.boss.components.dividers.VDivider
 import ai.rever.boss.platform.CursorUtil.cursorForHorizontalResize
 import ai.rever.boss.platform.CursorUtil.cursorForVerticalResize
-import ai.rever.boss.components.dividers.VDivider
 import ai.rever.boss.plugin.api.Panel
 import ai.rever.boss.plugin.api.Panel.Companion.bottom
 import ai.rever.boss.plugin.api.Panel.Companion.isFirst
@@ -37,21 +37,22 @@ import androidx.compose.ui.unit.dp
 private const val MIN_SPLIT_FRACTION = 0.1f
 
 @Composable
-fun BossResizablePanel(modifier: Modifier,
-                       panel: Panel,
-                       isPanelVisible: Boolean = false,
-                       isMainVisible: Boolean = true,
-                       isRelative: Boolean = false,
-                       defaultWeight: Float = 1f,
-                       sideContent: (@Composable BoxScope.() -> Unit)? = null,
-                       mainContent: (@Composable BoxScope.() -> Unit)? = null) {
-
+fun BossResizablePanel(
+    modifier: Modifier,
+    panel: Panel,
+    isPanelVisible: Boolean = false,
+    isMainVisible: Boolean = true,
+    isRelative: Boolean = false,
+    defaultWeight: Float = 1f,
+    sideContent: (@Composable BoxScope.() -> Unit)? = null,
+    mainContent: (@Composable BoxScope.() -> Unit)? = null,
+) {
     val defaultPanelSize = run { if (panel.isHorizontal) 250.dp else 200.dp }
     val resizeAreaSize = 16.dp
     val dividerHeight = 1.dp
 
-    BoxWithConstraints (modifier = modifier) {
-        val maxSize = run { if (panel.isHorizontal)  maxWidth else maxHeight }
+    BoxWithConstraints(modifier = modifier) {
+        val maxSize = run { if (panel.isHorizontal) maxWidth else maxHeight }
 
         // Minimum size prevents panels from completely disappearing (Issue #248)
         // Scales with screen size: 2% of available space with 20dp floor for small screens
@@ -65,9 +66,10 @@ fun BossResizablePanel(modifier: Modifier,
         var weight by remember { mutableStateOf(defaultWeight / 2f) }
         var size by remember { mutableStateOf(defaultPanelSize) }
 
-        val panelWeight: Float = run {
-            (if (isRelative) weight else size / maxSize).coerceIn(0f, 1f)
-        }
+        val panelWeight: Float =
+            run {
+                (if (isRelative) weight else size / maxSize).coerceIn(0f, 1f)
+            }
 
         val relativeSize: Dp = run { maxSize * panelWeight }
 
@@ -76,75 +78,82 @@ fun BossResizablePanel(modifier: Modifier,
         val latestMaxSize by rememberUpdatedState(maxSize)
         val latestMinPanelSize by rememberUpdatedState(minPanelSize)
 
-        val alignDirection = run {
-            when (panel) {
-                top -> Alignment.TopCenter
-                left -> Alignment.TopStart
-                right -> Alignment.TopEnd
-                else -> Alignment.BottomCenter
+        val alignDirection =
+            run {
+                when (panel) {
+                    top -> Alignment.TopCenter
+                    left -> Alignment.TopStart
+                    right -> Alignment.TopEnd
+                    else -> Alignment.BottomCenter
+                }
             }
-        }
 
-        fun Modifier.resizeAreaOffset() = offset {
-            val halfResizeAreaSize = resizeAreaSize/2
-            val x = when (panel) {
-                left -> relativeSize - halfResizeAreaSize
-                right -> -relativeSize - dividerHeight + halfResizeAreaSize
-                else -> 0.dp
-            }.roundToPx()
-            val y = when (panel) {
-                top -> relativeSize - halfResizeAreaSize
-                bottom -> -relativeSize - dividerHeight + halfResizeAreaSize
-                else -> 0.dp
-            }.roundToPx()
+        fun Modifier.resizeAreaOffset() =
+            offset {
+                val halfResizeAreaSize = resizeAreaSize / 2
+                val x =
+                    when (panel) {
+                        left -> relativeSize - halfResizeAreaSize
+                        right -> -relativeSize - dividerHeight + halfResizeAreaSize
+                        else -> 0.dp
+                    }.roundToPx()
+                val y =
+                    when (panel) {
+                        top -> relativeSize - halfResizeAreaSize
+                        bottom -> -relativeSize - dividerHeight + halfResizeAreaSize
+                        else -> 0.dp
+                    }.roundToPx()
 
-            IntOffset(x, y)
-        }
-
-
-        fun Modifier.fillSize() = run {
-            if (!isMainVisible || mainContent == null) {
-                fillMaxSize()
-            } else if (panel.isHorizontal) {
-                fillMaxHeight().fillMaxWidth(panelWeight)
-            } else {
-                fillMaxWidth().fillMaxHeight(panelWeight)
+                IntOffset(x, y)
             }
-        }
 
-        fun Modifier.resizable() = run {
-            if (panel.isHorizontal) {
-                fillMaxHeight()
-                    .width(resizeAreaSize)
-                    .resizeAreaOffset()
-                    .cursorForHorizontalResize()
-            } else {
-                fillMaxWidth()
-                    .height(resizeAreaSize)
-                    .resizeAreaOffset()
-                    .cursorForVerticalResize()
+        fun Modifier.fillSize() =
+            run {
+                if (!isMainVisible || mainContent == null) {
+                    fillMaxSize()
+                } else if (panel.isHorizontal) {
+                    fillMaxHeight().fillMaxWidth(panelWeight)
+                } else {
+                    fillMaxWidth().fillMaxHeight(panelWeight)
+                }
             }
-        }
 
-        fun Offset.axis() = run { if (panel.isHorizontal) x  else y }
+        fun Modifier.resizable() =
+            run {
+                if (panel.isHorizontal) {
+                    fillMaxHeight()
+                        .width(resizeAreaSize)
+                        .resizeAreaOffset()
+                        .cursorForHorizontalResize()
+                } else {
+                    fillMaxWidth()
+                        .height(resizeAreaSize)
+                        .resizeAreaOffset()
+                        .cursorForVerticalResize()
+                }
+            }
 
-        fun Dp.direction() = run { this * (if (panel.isLast) - 1 else 1) }
+        fun Offset.axis() = run { if (panel.isHorizontal) x else y }
+
+        fun Dp.direction() = run { this * (if (panel.isLast) -1 else 1) }
 
         fun PointerInputScope.onDrag(dragAmount: Offset) {
             val delta = dragAmount.axis().toDp().direction()
             if (isRelative) {
                 // Both sides of a split keep a minimum size, like BossTerm panes.
                 val minSize = (latestMaxSize * MIN_SPLIT_FRACTION).coerceAtLeast(latestMinPanelSize)
-                val newSize = (latestMaxSize * weight + delta)
-                    .coerceIn(minSize, (latestMaxSize - minSize).coerceAtLeast(minSize))
+                val newSize =
+                    (latestMaxSize * weight + delta)
+                        .coerceIn(minSize, (latestMaxSize - minSize).coerceAtLeast(minSize))
                 weight = newSize / latestMaxSize
             } else {
                 // Sidebars keep their small floor, but can no longer swallow the main content.
-                size = (size + delta)
-                    .coerceIn(
-                        latestMinPanelSize,
-                        (latestMaxSize - latestMinPanelSize).coerceAtLeast(latestMinPanelSize)
-                    )
+                size =
+                    (size + delta)
+                        .coerceIn(
+                            latestMinPanelSize,
+                            (latestMaxSize - latestMinPanelSize).coerceAtLeast(latestMinPanelSize),
+                        )
             }
         }
 
@@ -198,16 +207,17 @@ fun BossResizablePanel(modifier: Modifier,
 
         if (isPanelVisible && isMainVisible) {
             Box(
-                modifier = Modifier
-                    .align(alignDirection)
-                    .resizable()
-                    .alpha(0f)
-                    .pointerInput(panel, isRelative) {
-                        detectDragGestures { change, dragAmount ->
-                            change.consume()
-                            onDrag(dragAmount)
-                        }
-                    }
+                modifier =
+                    Modifier
+                        .align(alignDirection)
+                        .resizable()
+                        .alpha(0f)
+                        .pointerInput(panel, isRelative) {
+                            detectDragGestures { change, dragAmount ->
+                                change.consume()
+                                onDrag(dragAmount)
+                            }
+                        },
             )
         }
     }

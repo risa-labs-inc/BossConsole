@@ -65,26 +65,26 @@ actual object PerformanceState {
         terminals: () -> Int,
         editorTabs: () -> Int,
         panels: () -> Int,
-        windows: () -> Int
+        windows: () -> Int,
     ) {
         PerformanceMonitor.registerResourceProviders(
             browserTabs = browserTabs,
             terminals = terminals,
             editorTabs = editorTabs,
             panels = panels,
-            windows = windows
+            windows = windows,
         )
     }
 
     actual fun registerDetailedResourceProviders(
         browserTabs: () -> List<BrowserTabInfo>,
         terminals: () -> List<TerminalInfo>,
-        editorTabs: () -> List<EditorTabResourceInfo>
+        editorTabs: () -> List<EditorTabResourceInfo>,
     ) {
         PerformanceMonitor.registerDetailedResourceProviders(
             browserTabs = browserTabs,
             terminals = terminals,
-            editorTabs = editorTabs
+            editorTabs = editorTabs,
         )
     }
 

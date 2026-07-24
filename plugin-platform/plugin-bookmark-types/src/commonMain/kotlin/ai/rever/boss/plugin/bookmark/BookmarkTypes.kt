@@ -15,7 +15,7 @@ import kotlin.time.Clock
 @Serializable
 data class WorkspacePanelTarget(
     val workspaceName: String,
-    val panelId: String? = null
+    val panelId: String? = null,
 )
 
 /**
@@ -50,7 +50,7 @@ data class Bookmark(
     val notes: String = "",
     val tags: List<String> = emptyList(),
     val createdAt: Long = Clock.System.now().toEpochMilliseconds(),
-    val lastAccessedAt: Long = 0L
+    val lastAccessedAt: Long = 0L,
 ) {
     companion object {
         /**
@@ -62,9 +62,7 @@ data class Bookmark(
     /**
      * Update last accessed time.
      */
-    fun markAsAccessed(): Bookmark {
-        return copy(lastAccessedAt = Clock.System.now().toEpochMilliseconds())
-    }
+    fun markAsAccessed(): Bookmark = copy(lastAccessedAt = Clock.System.now().toEpochMilliseconds())
 }
 
 /**
@@ -92,7 +90,7 @@ data class BookmarkCollection(
     val name: String,
     val bookmarks: List<Bookmark> = emptyList(),
     val isFavorite: Boolean = false,
-    val createdAt: Long = Clock.System.now().toEpochMilliseconds()
+    val createdAt: Long = Clock.System.now().toEpochMilliseconds(),
 ) {
     companion object {
         /**
@@ -109,32 +107,28 @@ data class BookmarkCollection(
     /**
      * Add a bookmark to this collection.
      */
-    fun addBookmark(bookmark: Bookmark): BookmarkCollection {
-        return copy(bookmarks = bookmarks + bookmark)
-    }
+    fun addBookmark(bookmark: Bookmark): BookmarkCollection = copy(bookmarks = bookmarks + bookmark)
 
     /**
      * Remove a bookmark from this collection.
      */
-    fun removeBookmark(bookmarkId: String): BookmarkCollection {
-        return copy(bookmarks = bookmarks.filter { it.id != bookmarkId })
-    }
+    fun removeBookmark(bookmarkId: String): BookmarkCollection = copy(bookmarks = bookmarks.filter { it.id != bookmarkId })
 
     /**
      * Update a bookmark in this collection.
      */
-    fun updateBookmark(bookmark: Bookmark): BookmarkCollection {
-        return copy(bookmarks = bookmarks.map {
-            if (it.id == bookmark.id) bookmark else it
-        })
-    }
+    fun updateBookmark(bookmark: Bookmark): BookmarkCollection =
+        copy(
+            bookmarks =
+                bookmarks.map {
+                    if (it.id == bookmark.id) bookmark else it
+                },
+        )
 
     /**
      * Find a bookmark by ID.
      */
-    fun findBookmark(bookmarkId: String): Bookmark? {
-        return bookmarks.find { it.id == bookmarkId }
-    }
+    fun findBookmark(bookmarkId: String): Bookmark? = bookmarks.find { it.id == bookmarkId }
 }
 
 /**
@@ -152,18 +146,20 @@ data class BookmarkCollection(
 data class FavoriteWorkspace(
     val workspaceId: String,
     val workspaceName: String,
-    val markedAt: Long = Clock.System.now().toEpochMilliseconds()
+    val markedAt: Long = Clock.System.now().toEpochMilliseconds(),
 ) {
     companion object {
         /**
          * Create a new favorite workspace entry.
          */
-        fun create(workspaceId: String, workspaceName: String): FavoriteWorkspace {
-            return FavoriteWorkspace(
+        fun create(
+            workspaceId: String,
+            workspaceName: String,
+        ): FavoriteWorkspace =
+            FavoriteWorkspace(
                 workspaceId = workspaceId,
                 workspaceName = workspaceName,
-                markedAt = Clock.System.now().toEpochMilliseconds()
+                markedAt = Clock.System.now().toEpochMilliseconds(),
             )
-        }
     }
 }

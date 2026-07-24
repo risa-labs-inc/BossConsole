@@ -18,7 +18,7 @@ import kotlin.time.Duration.Companion.hours
  * so no dedicated coroutine scope is needed here.
  */
 class VersionListManager(
-    private val updateService: UpdateService
+    private val updateService: UpdateService,
 ) {
     private val logger = BossLogger.forComponent("VersionListManager")
     private val _versions = MutableStateFlow<List<VersionInfo>>(emptyList())
@@ -41,10 +41,13 @@ class VersionListManager(
         if (_isLoading.value) return
 
         // Check cache validity
-        val now = kotlin.time.Clock.System.now()
-        val cacheValid = lastFetchTime?.let { lastFetch ->
-            (now - lastFetch) < cacheDuration
-        } ?: false
+        val now =
+            kotlin.time.Clock.System
+                .now()
+        val cacheValid =
+            lastFetchTime?.let { lastFetch ->
+                (now - lastFetch) < cacheDuration
+            } ?: false
 
         if (!forceRefresh && cacheValid && _versions.value.isNotEmpty()) {
             return // Use cached data
@@ -54,9 +57,11 @@ class VersionListManager(
         _error.value = null
 
         try {
-            val allVersions = updateService.fetchAllReleases()
-                .filter { !it.isDraft && !it.isPrerelease }
-                .sortedByDescending { it.version }
+            val allVersions =
+                updateService
+                    .fetchAllReleases()
+                    .filter { !it.isDraft && !it.isPrerelease }
+                    .sortedByDescending { it.version }
 
             _versions.value = allVersions
             lastFetchTime = now

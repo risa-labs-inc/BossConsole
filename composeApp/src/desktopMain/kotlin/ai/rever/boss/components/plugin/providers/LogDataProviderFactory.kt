@@ -6,6 +6,4 @@ import ai.rever.boss.plugin.api.LogDataProvider
  * Desktop implementation of LogDataProvider factory.
  * Returns LogDataProviderImpl which wraps GlobalLogCapture.
  */
-actual fun createLogDataProvider(): LogDataProvider {
-    return LogDataProviderImpl()
-}
+actual fun createLogDataProvider(): LogDataProvider = LogDataProviderImpl()

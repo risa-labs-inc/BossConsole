@@ -17,26 +17,30 @@ private val logger = BossLogger.forComponent("ChromiumDownloader")
  * within the context of this project.
  */
 fun main(args: Array<String>) {
-    val chromiumDir = if (args.isNotEmpty()) {
-        Paths.get(args[0])
-    } else {
-        Paths.get(System.getProperty("user.home"), "chromium-binaries")
-    }
+    val chromiumDir =
+        if (args.isNotEmpty()) {
+            Paths.get(args[0])
+        } else {
+            Paths.get(System.getProperty("user.home"), "chromium-binaries")
+        }
 
     logger.info(LogCategory.BROWSER, "Downloading Chromium binaries", mapOf("targetDir" to chromiumDir.toString()))
 
-    val licenseKey = System.getenv("JXBROWSER_LICENSE_KEY")
-        ?: System.getProperty("jxbrowser.license.key")
-        ?: error("JXBROWSER_LICENSE_KEY environment variable or jxbrowser.license.key property not set")
+    val licenseKey =
+        System.getenv("JXBROWSER_LICENSE_KEY")
+            ?: System.getProperty("jxbrowser.license.key")
+            ?: error("JXBROWSER_LICENSE_KEY environment variable or jxbrowser.license.key property not set")
 
     // Check if we should disable sandbox (needed on Linux CI where user namespaces aren't available)
     val disableSandbox = System.getenv("JXBROWSER_DISABLE_SANDBOX")?.toBoolean() ?: false
     val isLinux = System.getProperty("os.name").lowercase().contains("linux")
 
     try {
-        val optionsBuilder = EngineOptions.newBuilder(RenderingMode.OFF_SCREEN)
-            .licenseKey(licenseKey)
-            .chromiumDir(chromiumDir)
+        val optionsBuilder =
+            EngineOptions
+                .newBuilder(RenderingMode.OFF_SCREEN)
+                .licenseKey(licenseKey)
+                .chromiumDir(chromiumDir)
 
         // Disable sandbox on Linux CI environments where user namespaces aren't supported
         if (disableSandbox || (isLinux && System.getenv("CI") != null)) {
@@ -60,12 +64,13 @@ fun main(args: Array<String>) {
         // On headless Linux CI, the engine may fail to start even after downloading
         // Check if binaries were downloaded successfully
         val files = chromiumDir.toFile().listFiles()
-        val hasChromium = files?.any {
-            it.name.contains("chromium", ignoreCase = true) ||
-            it.name.contains("chrome", ignoreCase = true) ||
-            it.name == "jxbrowser-chromium" ||
-            it.isDirectory
-        } == true
+        val hasChromium =
+            files?.any {
+                it.name.contains("chromium", ignoreCase = true) ||
+                    it.name.contains("chrome", ignoreCase = true) ||
+                    it.name == "jxbrowser-chromium" ||
+                    it.isDirectory
+            } == true
 
         if (hasChromium && isLinux) {
             logger.info(LogCategory.BROWSER, "Engine failed to start but binaries were downloaded")

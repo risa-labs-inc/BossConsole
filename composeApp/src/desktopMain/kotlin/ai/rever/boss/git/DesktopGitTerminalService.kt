@@ -25,21 +25,29 @@ actual object GitTerminalService {
         windowId: String,
         command: String,
         workingDirectory: String,
-        operationName: String
+        operationName: String,
     ): Boolean {
         // Generate a unique tab ID for this git operation
         val tabId = "git-${operationName.lowercase().replace(" ", "-")}-${System.currentTimeMillis()}"
 
-        val success = TerminalAPIAccess.newSidebarTab(
-            windowId = windowId,
-            command = command,
-            workingDirectory = workingDirectory,
-            configId = tabId,
-            isRerun = false
-        )
+        val success =
+            TerminalAPIAccess.newSidebarTab(
+                windowId = windowId,
+                command = command,
+                workingDirectory = workingDirectory,
+                configId = tabId,
+                isRerun = false,
+            )
 
         if (success) {
-            logger.debug(LogCategory.TERMINAL, "Opened command in sidebar terminal", mapOf("operationName" to operationName, "windowId" to windowId))
+            logger.debug(
+                LogCategory.TERMINAL,
+                "Opened command in sidebar terminal",
+                mapOf(
+                    "operationName" to operationName,
+                    "windowId" to windowId,
+                ),
+            )
         } else {
             logger.warn(LogCategory.TERMINAL, "Failed to open in sidebar terminal - panel may not be open", mapOf("windowId" to windowId))
         }

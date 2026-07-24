@@ -40,11 +40,13 @@ class RemotePluginRepository(
     // hits, verify-before-cache on fresh downloads) is exercisable without
     // the real store.
     private val downloadInfoProvider: suspend (pluginId: String, version: String?) -> DownloadInfoResponse = { pluginId, version ->
-        if (version != null) PluginStoreClient.getDownloadUrl(pluginId, version)
-        else PluginStoreClient.getDownloadUrl(pluginId)
-    }
+        if (version != null) {
+            PluginStoreClient.getDownloadUrl(pluginId, version)
+        } else {
+            PluginStoreClient.getDownloadUrl(pluginId)
+        }
+    },
 ) : PluginRepository {
-
     private val logger = BossLogger.forComponent("RemotePluginRepository")
 
     /**
@@ -76,13 +78,14 @@ class RemotePluginRepository(
         pluginId: String,
         versionLabel: String,
         requestedVersion: String?,
-        onVerificationFailure: () -> Unit
+        onVerificationFailure: () -> Unit,
     ) {
         if (requestedVersion != null && requestedVersion != versionLabel) {
             onVerificationFailure()
             throw DownloadException(
                 "Store returned version $versionLabel but $requestedVersion was requested",
-                pluginId, id
+                pluginId,
+                id,
             )
         }
         if (signature == null) {
@@ -90,13 +93,18 @@ class RemotePluginRepository(
                 onVerificationFailure()
                 throw DownloadException(
                     "Store plugin has no signature and signature enforcement is enabled",
-                    pluginId, id
+                    pluginId,
+                    id,
                 )
             }
-            logger.warn(LogCategory.NETWORK, "Store plugin is unsigned — allowing for now, will be rejected once signature enforcement is enabled", mapOf(
-                "pluginId" to pluginId,
-                "version" to versionLabel
-            ))
+            logger.warn(
+                LogCategory.NETWORK,
+                "Store plugin is unsigned — allowing for now, will be rejected once signature enforcement is enabled",
+                mapOf(
+                    "pluginId" to pluginId,
+                    "version" to versionLabel,
+                ),
+            )
             return
         }
         val anchor = PluginStoreTrust.versionAnchor(pluginId, versionLabel, sha256)
@@ -104,19 +112,29 @@ class RemotePluginRepository(
         if (!result.isVerified) {
             onVerificationFailure()
             val failure = result as? SignatureVerificationResult.Failed
-            logger.error(LogCategory.NETWORK, "Plugin signature verification failed", mapOf(
-                "pluginId" to pluginId,
-                "version" to versionLabel
-            ), failure?.error)
+            logger.error(
+                LogCategory.NETWORK,
+                "Plugin signature verification failed",
+                mapOf(
+                    "pluginId" to pluginId,
+                    "version" to versionLabel,
+                ),
+                failure?.error,
+            )
             throw DownloadException(
                 "Plugin signature verification failed: ${failure?.reason ?: "unknown"}",
-                pluginId, id
+                pluginId,
+                id,
             )
         }
-        logger.info(LogCategory.NETWORK, "Plugin signature verified", mapOf(
-            "pluginId" to pluginId,
-            "version" to versionLabel
-        ))
+        logger.info(
+            LogCategory.NETWORK,
+            "Plugin signature verified",
+            mapOf(
+                "pluginId" to pluginId,
+                "version" to versionLabel,
+            ),
+        )
     }
 
     /**
@@ -125,19 +143,27 @@ class RemotePluginRepository(
      * install has already failed, so a survivor can't load, but it shouldn't
      * linger silently either.
      */
-    private fun deleteOrWarn(file: File, context: String) {
+    private fun deleteOrWarn(
+        file: File,
+        context: String,
+    ) {
         if (!file.delete() && file.exists()) {
-            logger.warn(LogCategory.NETWORK, "Failed to delete $context — leftover file remains", mapOf(
-                "path" to file.absolutePath
-            ))
+            logger.warn(
+                LogCategory.NETWORK,
+                "Failed to delete $context — leftover file remains",
+                mapOf(
+                    "path" to file.absolutePath,
+                ),
+            )
         }
     }
 
-    private val downloadHttpClient = HttpClient(CIO) {
-        engine {
-            requestTimeout = 300_000 // 5 minutes for large downloads
+    private val downloadHttpClient =
+        HttpClient(CIO) {
+            engine {
+                requestTimeout = 300_000 // 5 minutes for large downloads
+            }
         }
-    }
 
     /**
      * Cached plugin list from last refresh.
@@ -161,243 +187,267 @@ class RemotePluginRepository(
         return PluginStoreConfig.isInitialized
     }
 
-    override suspend fun listPlugins(): Result<List<PluginInfo>> = withContext(Dispatchers.IO) {
-        runCatching {
-            if (!PluginStoreConfig.isInitialized) {
-                logger.warn(LogCategory.NETWORK, "Plugin store not initialized")
-                return@runCatching emptyList()
-            }
+    override suspend fun listPlugins(): Result<List<PluginInfo>> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                if (!PluginStoreConfig.isInitialized) {
+                    logger.warn(LogCategory.NETWORK, "Plugin store not initialized")
+                    return@runCatching emptyList()
+                }
 
-            val response = PluginStoreClient.listPlugins(
-                page = 1,
-                pageSize = 100, // Get first 100 plugins
-                sortBy = "downloads"
-            )
+                val response =
+                    PluginStoreClient.listPlugins(
+                        page = 1,
+                        pageSize = 100, // Get first 100 plugins
+                        sortBy = "downloads",
+                    )
 
-            val plugins = response.plugins.map { it.toPluginInfo() }
-            cachedPlugins = plugins
+                val plugins = response.plugins.map { it.toPluginInfo() }
+                cachedPlugins = plugins
 
-            logger.info(LogCategory.NETWORK, "Listed remote plugins", mapOf(
-                "count" to plugins.size,
-                "totalCount" to response.totalCount
-            ))
-
-            plugins
-        }.onFailure { e ->
-            logger.error(LogCategory.NETWORK, "Failed to list remote plugins", error = e)
-        }
-    }
-
-    override suspend fun searchPlugins(filter: PluginSearchFilter): Result<PluginSearchResult> = withContext(Dispatchers.IO) {
-        runCatching {
-            if (!PluginStoreConfig.isInitialized) {
-                return@runCatching PluginSearchResult(
-                    plugins = emptyList(),
-                    totalCount = 0,
-                    page = filter.page,
-                    pageSize = filter.pageSize
+                logger.info(
+                    LogCategory.NETWORK,
+                    "Listed remote plugins",
+                    mapOf(
+                        "count" to plugins.size,
+                        "totalCount" to response.totalCount,
+                    ),
                 )
+
+                plugins
+            }.onFailure { e ->
+                logger.error(LogCategory.NETWORK, "Failed to list remote plugins", error = e)
             }
-
-            val response = PluginStoreClient.searchPlugins(filter)
-            val plugins = response.plugins.map { it.toPluginInfo() }
-
-            logger.debug(LogCategory.NETWORK, "Searched remote plugins", mapOf(
-                "query" to filter.query,
-                "resultCount" to plugins.size,
-                "totalCount" to response.totalCount
-            ))
-
-            PluginSearchResult(
-                plugins = plugins,
-                totalCount = response.totalCount,
-                page = response.page,
-                pageSize = response.pageSize
-            )
-        }.onFailure { e ->
-            logger.error(LogCategory.NETWORK, "Failed to search remote plugins", error = e)
         }
-    }
 
-    override suspend fun getPlugin(pluginId: String): Result<PluginInfo?> = withContext(Dispatchers.IO) {
-        runCatching {
-            if (!PluginStoreConfig.isInitialized) {
-                return@runCatching null
-            }
+    override suspend fun searchPlugins(filter: PluginSearchFilter): Result<PluginSearchResult> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                if (!PluginStoreConfig.isInitialized) {
+                    return@runCatching PluginSearchResult(
+                        plugins = emptyList(),
+                        totalCount = 0,
+                        page = filter.page,
+                        pageSize = filter.pageSize,
+                    )
+                }
 
-            val response = PluginStoreClient.getPlugin(pluginId)
-            response?.toPluginInfo()
-        }.onFailure { e ->
-            logger.error(LogCategory.NETWORK, "Failed to get remote plugin", mapOf("pluginId" to pluginId), e)
-        }
-    }
+                val response = PluginStoreClient.searchPlugins(filter)
+                val plugins = response.plugins.map { it.toPluginInfo() }
 
-    override suspend fun getPluginVersions(pluginId: String): Result<List<PluginInfo>> = withContext(Dispatchers.IO) {
-        runCatching {
-            if (!PluginStoreConfig.isInitialized) {
-                return@runCatching emptyList()
-            }
-
-            val response = PluginStoreClient.getPlugin(pluginId)
-                ?: return@runCatching emptyList()
-
-            // Convert each version to PluginInfo
-            response.versions.map { version ->
-                PluginInfo(
-                    pluginId = response.pluginId,
-                    displayName = response.displayName,
-                    version = version.version,
-                    description = response.description,
-                    author = response.authorName,
-                    url = response.homepageUrl,
-                    type = parsePluginType(response.type),
-                    apiVersion = response.apiVersion,
-                    minBossVersion = version.minBossVersion,
-                    minIpcVersion = version.minIpcVersion,
-                    size = version.jarSize,
-                    sha256 = version.sha256,
-                    dependencies = version.dependencies.map { it.pluginId },
-                    changelog = version.changelog,
-                    verified = response.verified
+                logger.debug(
+                    LogCategory.NETWORK,
+                    "Searched remote plugins",
+                    mapOf(
+                        "query" to filter.query,
+                        "resultCount" to plugins.size,
+                        "totalCount" to response.totalCount,
+                    ),
                 )
+
+                PluginSearchResult(
+                    plugins = plugins,
+                    totalCount = response.totalCount,
+                    page = response.page,
+                    pageSize = response.pageSize,
+                )
+            }.onFailure { e ->
+                logger.error(LogCategory.NETWORK, "Failed to search remote plugins", error = e)
             }
-        }.onFailure { e ->
-            logger.error(LogCategory.NETWORK, "Failed to get plugin versions", mapOf("pluginId" to pluginId), e)
         }
-    }
+
+    override suspend fun getPlugin(pluginId: String): Result<PluginInfo?> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                if (!PluginStoreConfig.isInitialized) {
+                    return@runCatching null
+                }
+
+                val response = PluginStoreClient.getPlugin(pluginId)
+                response?.toPluginInfo()
+            }.onFailure { e ->
+                logger.error(LogCategory.NETWORK, "Failed to get remote plugin", mapOf("pluginId" to pluginId), e)
+            }
+        }
+
+    override suspend fun getPluginVersions(pluginId: String): Result<List<PluginInfo>> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                if (!PluginStoreConfig.isInitialized) {
+                    return@runCatching emptyList()
+                }
+
+                val response =
+                    PluginStoreClient.getPlugin(pluginId)
+                        ?: return@runCatching emptyList()
+
+                // Convert each version to PluginInfo
+                response.versions.map { version ->
+                    PluginInfo(
+                        pluginId = response.pluginId,
+                        displayName = response.displayName,
+                        version = version.version,
+                        description = response.description,
+                        author = response.authorName,
+                        url = response.homepageUrl,
+                        type = parsePluginType(response.type),
+                        apiVersion = response.apiVersion,
+                        minBossVersion = version.minBossVersion,
+                        minIpcVersion = version.minIpcVersion,
+                        size = version.jarSize,
+                        sha256 = version.sha256,
+                        dependencies = version.dependencies.map { it.pluginId },
+                        changelog = version.changelog,
+                        verified = response.verified,
+                    )
+                }
+            }.onFailure { e ->
+                logger.error(LogCategory.NETWORK, "Failed to get plugin versions", mapOf("pluginId" to pluginId), e)
+            }
+        }
 
     override suspend fun downloadPlugin(
         pluginId: String,
         version: String?,
-        targetPath: String
-    ): Result<String> = withContext(Dispatchers.IO) {
-        runCatching {
-            if (!PluginStoreConfig.isInitialized) {
-                throw DownloadException("Plugin store not initialized", pluginId, id)
-            }
+        targetPath: String,
+    ): Result<String> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                if (!PluginStoreConfig.isInitialized) {
+                    throw DownloadException("Plugin store not initialized", pluginId, id)
+                }
 
-            // Get download info
-            val downloadInfo = downloadInfoProvider(pluginId, version)
+                // Get download info
+                val downloadInfo = downloadInfoProvider(pluginId, version)
 
-            // Check cache first. getCachedJar only returns a file whose
-            // SHA-256 equals downloadInfo.sha256, so the signature check
-            // below binds the cached bytes to the store key too — a JAR
-            // cached during the warn-and-allow window doesn't dodge
-            // enforcement through the cache path.
-            val cachedFile = downloadCache.getCachedJar(pluginId, downloadInfo.version, downloadInfo.sha256)
-            if (cachedFile != null) {
-                logger.info(LogCategory.NETWORK, "Using cached JAR", mapOf(
-                    "pluginId" to pluginId,
-                    "version" to downloadInfo.version
-                ))
-                // Verify BEFORE copying so a rejected artifact never lands at
-                // targetPath; on failure the poisoned entry is purged through
-                // the cache's own API.
-                enforceStoreSignature(
-                    sha256 = downloadInfo.sha256,
-                    signature = downloadInfo.signature,
-                    pluginId = pluginId,
-                    versionLabel = downloadInfo.version,
-                    requestedVersion = version,
-                    onVerificationFailure = { downloadCache.removeCachedJar(pluginId, downloadInfo.version) }
-                )
-                cachedFile.copyTo(File(targetPath), overwrite = true)
-                PluginSignatureSidecar.persist(targetPath, downloadInfo.signature)
-                return@runCatching targetPath
-            }
+                // Check cache first. getCachedJar only returns a file whose
+                // SHA-256 equals downloadInfo.sha256, so the signature check
+                // below binds the cached bytes to the store key too — a JAR
+                // cached during the warn-and-allow window doesn't dodge
+                // enforcement through the cache path.
+                val cachedFile = downloadCache.getCachedJar(pluginId, downloadInfo.version, downloadInfo.sha256)
+                if (cachedFile != null) {
+                    logger.info(
+                        LogCategory.NETWORK,
+                        "Using cached JAR",
+                        mapOf(
+                            "pluginId" to pluginId,
+                            "version" to downloadInfo.version,
+                        ),
+                    )
+                    // Verify BEFORE copying so a rejected artifact never lands at
+                    // targetPath; on failure the poisoned entry is purged through
+                    // the cache's own API.
+                    enforceStoreSignature(
+                        sha256 = downloadInfo.sha256,
+                        signature = downloadInfo.signature,
+                        pluginId = pluginId,
+                        versionLabel = downloadInfo.version,
+                        requestedVersion = version,
+                        onVerificationFailure = { downloadCache.removeCachedJar(pluginId, downloadInfo.version) },
+                    )
+                    cachedFile.copyTo(File(targetPath), overwrite = true)
+                    PluginSignatureSidecar.persist(targetPath, downloadInfo.signature)
+                    return@runCatching targetPath
+                }
 
-            // Initialize progress tracking
-            val progressFlow = MutableStateFlow(0f)
-            downloadProgress[pluginId] = progressFlow
+                // Initialize progress tracking
+                val progressFlow = MutableStateFlow(0f)
+                downloadProgress[pluginId] = progressFlow
 
-            try {
-                logger.info(LogCategory.NETWORK, "Downloading plugin", mapOf(
-                    "pluginId" to pluginId,
-                    "version" to downloadInfo.version,
-                    "size" to downloadInfo.size
-                ))
+                try {
+                    logger.info(
+                        LogCategory.NETWORK,
+                        "Downloading plugin",
+                        mapOf(
+                            "pluginId" to pluginId,
+                            "version" to downloadInfo.version,
+                            "size" to downloadInfo.size,
+                        ),
+                    )
 
-                // Download with progress tracking
-                downloadHttpClient.prepareGet(downloadInfo.downloadUrl).execute { response ->
-                    val channel = response.bodyAsChannel()
-                    val totalBytes = response.headers[io.ktor.http.HttpHeaders.ContentLength]?.toLongOrNull() ?: downloadInfo.size
-                    var downloadedBytes = 0L
+                    // Download with progress tracking
+                    downloadHttpClient.prepareGet(downloadInfo.downloadUrl).execute { response ->
+                        val channel = response.bodyAsChannel()
+                        val totalBytes = response.headers[io.ktor.http.HttpHeaders.ContentLength]?.toLongOrNull() ?: downloadInfo.size
+                        var downloadedBytes = 0L
 
-                    File(targetPath).outputStream().use { output ->
-                        val buffer = ByteArray(8192)
-                        while (!channel.isClosedForRead) {
-                            val bytes = channel.readAvailable(buffer)
-                            if (bytes > 0) {
-                                output.write(buffer, 0, bytes)
-                                downloadedBytes += bytes
-                                if (totalBytes > 0) {
-                                    progressFlow.value = downloadedBytes.toFloat() / totalBytes
+                        File(targetPath).outputStream().use { output ->
+                            val buffer = ByteArray(8192)
+                            while (!channel.isClosedForRead) {
+                                val bytes = channel.readAvailable(buffer)
+                                if (bytes > 0) {
+                                    output.write(buffer, 0, bytes)
+                                    downloadedBytes += bytes
+                                    if (totalBytes > 0) {
+                                        progressFlow.value = downloadedBytes.toFloat() / totalBytes
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                // Verify SHA-256 — every published version must have a real
-                // hash. A blank or placeholder value is treated as a mismatch
-                // so tampered or unhashed JARs never load.
-                val actualSha256 = FileHashing.sha256(File(targetPath))
-                if (!actualSha256.equals(downloadInfo.sha256, ignoreCase = true)) {
-                    deleteOrWarn(File(targetPath), "hash-mismatched download")
-                    throw DownloadException(
-                        "SHA-256 mismatch. Expected: ${downloadInfo.sha256}, Got: $actualSha256",
-                        pluginId, id
+                    // Verify SHA-256 — every published version must have a real
+                    // hash. A blank or placeholder value is treated as a mismatch
+                    // so tampered or unhashed JARs never load.
+                    val actualSha256 = FileHashing.sha256(File(targetPath))
+                    if (!actualSha256.equals(downloadInfo.sha256, ignoreCase = true)) {
+                        deleteOrWarn(File(targetPath), "hash-mismatched download")
+                        throw DownloadException(
+                            "SHA-256 mismatch. Expected: ${downloadInfo.sha256}, Got: $actualSha256",
+                            pluginId,
+                            id,
+                        )
+                    }
+
+                    // Verify the store's signature over that hash. The checksum
+                    // above binds the local bytes to the hash; the signature binds
+                    // the hash to the store's signing key, so a rewritten DB row
+                    // or storage object can't smuggle a different JAR through.
+                    enforceStoreSignature(
+                        sha256 = actualSha256,
+                        signature = downloadInfo.signature,
+                        pluginId = pluginId,
+                        versionLabel = downloadInfo.version,
+                        requestedVersion = version,
+                        onVerificationFailure = { deleteOrWarn(File(targetPath), "rejected download") },
                     )
+
+                    // Persist the signature beside the JAR so load-time
+                    // verification (which every install path funnels through) can
+                    // re-check it independently of this download path.
+                    PluginSignatureSidecar.persist(targetPath, downloadInfo.signature)
+
+                    // Cache the downloaded JAR
+                    downloadCache.cacheJar(pluginId, downloadInfo.version, File(targetPath))
+
+                    progressFlow.value = 1f
+
+                    logger.info(
+                        LogCategory.NETWORK,
+                        "Plugin downloaded successfully",
+                        mapOf(
+                            "pluginId" to pluginId,
+                            "version" to downloadInfo.version,
+                            "path" to targetPath,
+                        ),
+                    )
+
+                    targetPath
+                } finally {
+                    // Two-arg remove: if a concurrent download of another version
+                    // of the same plugin replaced our entry (progress is keyed by
+                    // pluginId alone — pre-existing), don't yank its flow out.
+                    downloadProgress.remove(pluginId, progressFlow)
                 }
-
-                // Verify the store's signature over that hash. The checksum
-                // above binds the local bytes to the hash; the signature binds
-                // the hash to the store's signing key, so a rewritten DB row
-                // or storage object can't smuggle a different JAR through.
-                enforceStoreSignature(
-                    sha256 = actualSha256,
-                    signature = downloadInfo.signature,
-                    pluginId = pluginId,
-                    versionLabel = downloadInfo.version,
-                    requestedVersion = version,
-                    onVerificationFailure = { deleteOrWarn(File(targetPath), "rejected download") }
-                )
-
-                // Persist the signature beside the JAR so load-time
-                // verification (which every install path funnels through) can
-                // re-check it independently of this download path.
-                PluginSignatureSidecar.persist(targetPath, downloadInfo.signature)
-
-                // Cache the downloaded JAR
-                downloadCache.cacheJar(pluginId, downloadInfo.version, File(targetPath))
-
-                progressFlow.value = 1f
-
-                logger.info(LogCategory.NETWORK, "Plugin downloaded successfully", mapOf(
-                    "pluginId" to pluginId,
-                    "version" to downloadInfo.version,
-                    "path" to targetPath
-                ))
-
-                targetPath
-            } finally {
-                // Two-arg remove: if a concurrent download of another version
-                // of the same plugin replaced our entry (progress is keyed by
-                // pluginId alone — pre-existing), don't yank its flow out.
-                downloadProgress.remove(pluginId, progressFlow)
+            }.onFailure { e ->
+                logger.error(LogCategory.NETWORK, "Failed to download plugin", mapOf("pluginId" to pluginId), e)
             }
-        }.onFailure { e ->
-            logger.error(LogCategory.NETWORK, "Failed to download plugin", mapOf("pluginId" to pluginId), e)
         }
-    }
 
-    override fun getDownloadProgress(pluginId: String): Flow<Float>? {
-        return downloadProgress[pluginId]?.asStateFlow()
-    }
+    override fun getDownloadProgress(pluginId: String): Flow<Float>? = downloadProgress[pluginId]?.asStateFlow()
 
-    override suspend fun refresh(): Result<Unit> {
-        return listPlugins().map { }
-    }
+    override suspend fun refresh(): Result<Unit> = listPlugins().map { }
 
     /**
      * Rate a plugin in the remote store.
@@ -409,37 +459,47 @@ class RemotePluginRepository(
      * @param review Optional review text
      * @return Result indicating success or failure
      */
-    suspend fun ratePlugin(pluginId: String, rating: Int, review: String = ""): Result<Unit> = withContext(Dispatchers.IO) {
-        runCatching {
-            val response = PluginStoreClient.ratePlugin(pluginId, rating, review)
-            if (!response.success) {
-                throw PluginStoreException(response.error ?: "Failed to rate plugin")
+    suspend fun ratePlugin(
+        pluginId: String,
+        rating: Int,
+        review: String = "",
+    ): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val response = PluginStoreClient.ratePlugin(pluginId, rating, review)
+                if (!response.success) {
+                    throw PluginStoreException(response.error ?: "Failed to rate plugin")
+                }
+                logger.info(
+                    LogCategory.NETWORK,
+                    "Plugin rated",
+                    mapOf(
+                        "pluginId" to pluginId,
+                        "rating" to rating,
+                    ),
+                )
+            }.onFailure { e ->
+                logger.error(LogCategory.NETWORK, "Failed to rate plugin", mapOf("pluginId" to pluginId), e)
             }
-            logger.info(LogCategory.NETWORK, "Plugin rated", mapOf(
-                "pluginId" to pluginId,
-                "rating" to rating
-            ))
-        }.onFailure { e ->
-            logger.error(LogCategory.NETWORK, "Failed to rate plugin", mapOf("pluginId" to pluginId), e)
         }
-    }
 
     /**
      * Check if the remote store is healthy.
      */
-    suspend fun checkHealth(): Boolean = withContext(Dispatchers.IO) {
-        if (!PluginStoreConfig.isInitialized) return@withContext false
-        PluginStoreClient.checkHealth()
-    }
+    suspend fun checkHealth(): Boolean =
+        withContext(Dispatchers.IO) {
+            if (!PluginStoreConfig.isInitialized) return@withContext false
+            PluginStoreClient.checkHealth()
+        }
 
     // ============================================================================
     // Helper Functions
     // ============================================================================
 
-    private fun parsePluginType(type: String): ai.rever.boss.plugin.api.PluginType = when (type.lowercase()) {
-        "tab" -> ai.rever.boss.plugin.api.PluginType.TAB
-        "hybrid", "mixed" -> ai.rever.boss.plugin.api.PluginType.MIXED
-        else -> ai.rever.boss.plugin.api.PluginType.PANEL
-    }
-
+    private fun parsePluginType(type: String): ai.rever.boss.plugin.api.PluginType =
+        when (type.lowercase()) {
+            "tab" -> ai.rever.boss.plugin.api.PluginType.TAB
+            "hybrid", "mixed" -> ai.rever.boss.plugin.api.PluginType.MIXED
+            else -> ai.rever.boss.plugin.api.PluginType.PANEL
+        }
 }

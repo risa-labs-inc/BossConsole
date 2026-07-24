@@ -1,5 +1,13 @@
 package ai.rever.boss.components.settings.shared
 
+import ai.rever.boss.components.settings.shared.SettingsTheme.AccentColor
+import ai.rever.boss.components.settings.shared.SettingsTheme.BackgroundColor
+import ai.rever.boss.components.settings.shared.SettingsTheme.BorderColor
+import ai.rever.boss.components.settings.shared.SettingsTheme.SurfaceColor
+import ai.rever.boss.components.settings.shared.SettingsTheme.TextMuted
+import ai.rever.boss.components.settings.shared.SettingsTheme.TextPrimary
+import ai.rever.boss.components.settings.shared.SettingsTheme.TextSecondary
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -30,14 +38,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogWindow
 import androidx.compose.ui.window.rememberDialogState
-import ai.rever.boss.plugin.ui.BossTheme
-import ai.rever.boss.components.settings.shared.SettingsTheme.AccentColor
-import ai.rever.boss.components.settings.shared.SettingsTheme.BackgroundColor
-import ai.rever.boss.components.settings.shared.SettingsTheme.BorderColor
-import ai.rever.boss.components.settings.shared.SettingsTheme.SurfaceColor
-import ai.rever.boss.components.settings.shared.SettingsTheme.TextMuted
-import ai.rever.boss.components.settings.shared.SettingsTheme.TextPrimary
-import ai.rever.boss.components.settings.shared.SettingsTheme.TextSecondary
 import kotlin.math.max
 import kotlin.math.min
 
@@ -49,29 +49,29 @@ fun SettingsSection(
     title: String,
     modifier: Modifier = Modifier,
     description: String? = null,
-    content: @Composable ColumnScope.() -> Unit
+    content: @Composable ColumnScope.() -> Unit,
 ) {
     Column(
-        modifier = modifier.fillMaxWidth()
+        modifier = modifier.fillMaxWidth(),
     ) {
         Text(
             text = title,
             color = TextPrimary,
             fontSize = 16.sp,
-            fontWeight = FontWeight.SemiBold
+            fontWeight = FontWeight.SemiBold,
         )
         if (description != null) {
             Text(
                 text = description,
                 color = TextSecondary,
                 fontSize = 13.sp,
-                modifier = Modifier.padding(top = 4.dp)
+                modifier = Modifier.padding(top = 4.dp),
             )
         }
         Spacer(modifier = Modifier.height(12.dp))
         Column(
             verticalArrangement = Arrangement.spacedBy(8.dp),
-            content = content
+            content = content,
         )
     }
 }
@@ -86,30 +86,31 @@ fun SettingsToggle(
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     description: String? = null,
-    enabled: Boolean = true
+    enabled: Boolean = true,
 ) {
     Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
-            .background(SurfaceColor)
-            .clickable(enabled = enabled) { onCheckedChange(!checked) }
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
+                .background(SurfaceColor)
+                .clickable(enabled = enabled) { onCheckedChange(!checked) }
+                .padding(horizontal = 12.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = label,
                 color = if (enabled) TextPrimary else TextMuted,
-                fontSize = 13.sp
+                fontSize = 13.sp,
             )
             if (description != null) {
                 Text(
                     text = description,
                     color = TextMuted,
                     fontSize = 11.sp,
-                    modifier = Modifier.padding(top = 2.dp)
+                    modifier = Modifier.padding(top = 2.dp),
                 )
             }
         }
@@ -117,12 +118,13 @@ fun SettingsToggle(
             checked = checked,
             onCheckedChange = onCheckedChange,
             enabled = enabled,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = AccentColor,
-                checkedTrackColor = AccentColor.copy(alpha = 0.5f),
-                uncheckedThumbColor = TextMuted,
-                uncheckedTrackColor = BorderColor
-            )
+            colors =
+                SwitchDefaults.colors(
+                    checkedThumbColor = AccentColor,
+                    checkedTrackColor = AccentColor.copy(alpha = 0.5f),
+                    uncheckedThumbColor = TextMuted,
+                    uncheckedTrackColor = BorderColor,
+                ),
         )
     }
 }
@@ -144,32 +146,33 @@ fun SettingsSlider(
     steps: Int = 0,
     valueDisplay: (Float) -> String = { "%.1f".format(it) },
     description: String? = null,
-    enabled: Boolean = true
+    enabled: Boolean = true,
 ) {
     Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
-            .background(SurfaceColor)
-            .padding(horizontal = 12.dp, vertical = 10.dp)
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
+                .background(SurfaceColor)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = label,
                     color = if (enabled) TextPrimary else TextMuted,
-                    fontSize = 13.sp
+                    fontSize = 13.sp,
                 )
                 if (description != null) {
                     Text(
                         text = description,
                         color = TextMuted,
                         fontSize = 11.sp,
-                        modifier = Modifier.padding(top = 2.dp)
+                        modifier = Modifier.padding(top = 2.dp),
                     )
                 }
             }
@@ -177,7 +180,7 @@ fun SettingsSlider(
                 text = valueDisplay(value),
                 color = AccentColor,
                 fontSize = 13.sp,
-                fontWeight = FontWeight.Medium
+                fontWeight = FontWeight.Medium,
             )
         }
         Slider(
@@ -188,14 +191,15 @@ fun SettingsSlider(
             steps = steps,
             enabled = enabled,
             modifier = Modifier.padding(top = 4.dp),
-            colors = SliderDefaults.colors(
-                thumbColor = AccentColor,
-                activeTrackColor = AccentColor,
-                inactiveTrackColor = BorderColor,
-                disabledThumbColor = TextMuted,
-                disabledActiveTrackColor = TextMuted,
-                disabledInactiveTrackColor = BorderColor
-            )
+            colors =
+                SliderDefaults.colors(
+                    thumbColor = AccentColor,
+                    activeTrackColor = AccentColor,
+                    inactiveTrackColor = BorderColor,
+                    disabledThumbColor = TextMuted,
+                    disabledActiveTrackColor = TextMuted,
+                    disabledInactiveTrackColor = BorderColor,
+                ),
         )
     }
 }
@@ -211,34 +215,35 @@ fun SettingsNumberInput(
     modifier: Modifier = Modifier,
     range: IntRange = Int.MIN_VALUE..Int.MAX_VALUE,
     description: String? = null,
-    enabled: Boolean = true
+    enabled: Boolean = true,
 ) {
     var textValue by remember(value) { mutableStateOf(value.toString()) }
 
     Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
-            .background(SurfaceColor)
-            .padding(horizontal = 12.dp, vertical = 10.dp)
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
+                .background(SurfaceColor)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = label,
                     color = if (enabled) TextPrimary else TextMuted,
-                    fontSize = 13.sp
+                    fontSize = 13.sp,
                 )
                 if (description != null) {
                     Text(
                         text = description,
                         color = TextMuted,
                         fontSize = 11.sp,
-                        modifier = Modifier.padding(top = 2.dp)
+                        modifier = Modifier.padding(top = 2.dp),
                     )
                 }
             }
@@ -254,16 +259,18 @@ fun SettingsNumberInput(
                 },
                 enabled = enabled,
                 singleLine = true,
-                textStyle = TextStyle(
-                    color = TextPrimary,
-                    fontSize = 13.sp
-                ),
+                textStyle =
+                    TextStyle(
+                        color = TextPrimary,
+                        fontSize = 13.sp,
+                    ),
                 cursorBrush = SolidColor(AccentColor),
-                modifier = Modifier
-                    .width(80.dp)
-                    .background(BackgroundColor, RoundedCornerShape(4.dp))
-                    .border(1.dp, BorderColor, RoundedCornerShape(4.dp))
-                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                modifier =
+                    Modifier
+                        .width(80.dp)
+                        .background(BackgroundColor, RoundedCornerShape(4.dp))
+                        .border(1.dp, BorderColor, RoundedCornerShape(4.dp))
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
             )
         }
     }
@@ -280,34 +287,35 @@ fun SettingsLongInput(
     modifier: Modifier = Modifier,
     range: LongRange = Long.MIN_VALUE..Long.MAX_VALUE,
     description: String? = null,
-    enabled: Boolean = true
+    enabled: Boolean = true,
 ) {
     var textValue by remember(value) { mutableStateOf(value.toString()) }
 
     Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
-            .background(SurfaceColor)
-            .padding(horizontal = 12.dp, vertical = 10.dp)
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
+                .background(SurfaceColor)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = label,
                     color = if (enabled) TextPrimary else TextMuted,
-                    fontSize = 13.sp
+                    fontSize = 13.sp,
                 )
                 if (description != null) {
                     Text(
                         text = description,
                         color = TextMuted,
                         fontSize = 11.sp,
-                        modifier = Modifier.padding(top = 2.dp)
+                        modifier = Modifier.padding(top = 2.dp),
                     )
                 }
             }
@@ -323,16 +331,18 @@ fun SettingsLongInput(
                 },
                 enabled = enabled,
                 singleLine = true,
-                textStyle = TextStyle(
-                    color = TextPrimary,
-                    fontSize = 13.sp
-                ),
+                textStyle =
+                    TextStyle(
+                        color = TextPrimary,
+                        fontSize = 13.sp,
+                    ),
                 cursorBrush = SolidColor(AccentColor),
-                modifier = Modifier
-                    .width(120.dp)
-                    .background(BackgroundColor, RoundedCornerShape(4.dp))
-                    .border(1.dp, BorderColor, RoundedCornerShape(4.dp))
-                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                modifier =
+                    Modifier
+                        .width(120.dp)
+                        .background(BackgroundColor, RoundedCornerShape(4.dp))
+                        .border(1.dp, BorderColor, RoundedCornerShape(4.dp))
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
             )
         }
     }
@@ -349,26 +359,27 @@ fun SettingsTextField(
     modifier: Modifier = Modifier,
     placeholder: String = "",
     description: String? = null,
-    enabled: Boolean = true
+    enabled: Boolean = true,
 ) {
     Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
-            .background(SurfaceColor)
-            .padding(horizontal = 12.dp, vertical = 10.dp)
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
+                .background(SurfaceColor)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         Text(
             text = label,
             color = if (enabled) TextPrimary else TextMuted,
-            fontSize = 13.sp
+            fontSize = 13.sp,
         )
         if (description != null) {
             Text(
                 text = description,
                 color = TextMuted,
                 fontSize = 11.sp,
-                modifier = Modifier.padding(top = 2.dp)
+                modifier = Modifier.padding(top = 2.dp),
             )
         }
         BasicTextField(
@@ -376,32 +387,35 @@ fun SettingsTextField(
             onValueChange = onValueChange,
             enabled = enabled,
             singleLine = true,
-            textStyle = TextStyle(
-                color = TextPrimary,
-                fontSize = 13.sp
-            ),
+            textStyle =
+                TextStyle(
+                    color = TextPrimary,
+                    fontSize = 13.sp,
+                ),
             cursorBrush = SolidColor(AccentColor),
             decorationBox = { innerTextField ->
                 Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(BackgroundColor, RoundedCornerShape(4.dp))
-                        .border(1.dp, BorderColor, RoundedCornerShape(4.dp))
-                        .padding(horizontal = 8.dp, vertical = 8.dp)
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .background(BackgroundColor, RoundedCornerShape(4.dp))
+                            .border(1.dp, BorderColor, RoundedCornerShape(4.dp))
+                            .padding(horizontal = 8.dp, vertical = 8.dp),
                 ) {
                     if (value.isEmpty()) {
                         Text(
                             text = placeholder,
                             color = TextMuted,
-                            fontSize = 13.sp
+                            fontSize = 13.sp,
                         )
                     }
                     innerTextField()
                 }
             },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp)
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
         )
     }
 }
@@ -417,75 +431,77 @@ fun SettingsDropdown(
     onOptionSelected: (String) -> Unit,
     modifier: Modifier = Modifier,
     description: String? = null,
-    enabled: Boolean = true
+    enabled: Boolean = true,
 ) {
     var expanded by remember { mutableStateOf(false) }
 
     Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
-            .background(SurfaceColor)
-            .padding(horizontal = 12.dp, vertical = 10.dp)
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
+                .background(SurfaceColor)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = label,
                     color = if (enabled) TextPrimary else TextMuted,
-                    fontSize = 13.sp
+                    fontSize = 13.sp,
                 )
                 if (description != null) {
                     Text(
                         text = description,
                         color = TextMuted,
                         fontSize = 11.sp,
-                        modifier = Modifier.padding(top = 2.dp)
+                        modifier = Modifier.padding(top = 2.dp),
                     )
                 }
             }
             Box {
                 Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(BackgroundColor)
-                        .border(1.dp, BorderColor, RoundedCornerShape(4.dp))
-                        .clickable(enabled = enabled) { expanded = true }
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    modifier =
+                        Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(BackgroundColor)
+                            .border(1.dp, BorderColor, RoundedCornerShape(4.dp))
+                            .clickable(enabled = enabled) { expanded = true }
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
                         text = selectedOption,
                         color = TextPrimary,
-                        fontSize = 13.sp
+                        fontSize = 13.sp,
                     )
                     Icon(
                         imageVector = Icons.Default.ArrowDropDown,
                         contentDescription = "Expand",
                         tint = TextSecondary,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(18.dp),
                     )
                 }
                 DropdownMenu(
                     expanded = expanded,
                     onDismissRequest = { expanded = false },
-                    modifier = Modifier.background(SurfaceColor)
+                    modifier = Modifier.background(SurfaceColor),
                 ) {
                     options.forEach { option ->
                         DropdownMenuItem(
                             onClick = {
                                 onOptionSelected(option)
                                 expanded = false
-                            }
+                            },
                         ) {
                             Text(
                                 text = option,
                                 color = if (option == selectedOption) AccentColor else TextPrimary,
-                                fontSize = 13.sp
+                                fontSize = 13.sp,
                             )
                         }
                     }
@@ -507,78 +523,81 @@ fun SettingsSectionedDropdown(
     onOptionSelected: (String) -> Unit,
     modifier: Modifier = Modifier,
     description: String? = null,
-    enabled: Boolean = true
+    enabled: Boolean = true,
 ) {
     var expanded by remember { mutableStateOf(false) }
 
     Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
-            .background(SurfaceColor)
-            .padding(horizontal = 12.dp, vertical = 10.dp)
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
+                .background(SurfaceColor)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = label,
                     color = if (enabled) TextPrimary else TextMuted,
-                    fontSize = 13.sp
+                    fontSize = 13.sp,
                 )
                 if (description != null) {
                     Text(
                         text = description,
                         color = TextMuted,
                         fontSize = 11.sp,
-                        modifier = Modifier.padding(top = 2.dp)
+                        modifier = Modifier.padding(top = 2.dp),
                     )
                 }
             }
             Box {
                 Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(BackgroundColor)
-                        .border(1.dp, BorderColor, RoundedCornerShape(4.dp))
-                        .clickable(enabled = enabled) { expanded = true }
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    modifier =
+                        Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(BackgroundColor)
+                            .border(1.dp, BorderColor, RoundedCornerShape(4.dp))
+                            .clickable(enabled = enabled) { expanded = true }
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
                         text = selectedOption,
                         color = TextPrimary,
                         fontSize = 13.sp,
-                        maxLines = 1
+                        maxLines = 1,
                     )
                     Icon(
                         imageVector = Icons.Default.ArrowDropDown,
                         contentDescription = "Expand",
                         tint = TextSecondary,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(18.dp),
                     )
                 }
                 DropdownMenu(
                     expanded = expanded,
                     onDismissRequest = { expanded = false },
-                    modifier = Modifier
-                        .background(SurfaceColor)
-                        .heightIn(max = 400.dp)
+                    modifier =
+                        Modifier
+                            .background(SurfaceColor)
+                            .heightIn(max = 400.dp),
                 ) {
                     sections.forEach { (sectionName, options) ->
                         // Section header (non-selectable)
                         DropdownMenuItem(
                             onClick = { /* Non-selectable */ },
-                            enabled = false
+                            enabled = false,
                         ) {
                             Text(
                                 text = sectionName,
                                 color = AccentColor,
                                 fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
                             )
                         }
                         // Section items
@@ -588,12 +607,12 @@ fun SettingsSectionedDropdown(
                                     onOptionSelected(option)
                                     expanded = false
                                 },
-                                modifier = Modifier.padding(start = 8.dp)
+                                modifier = Modifier.padding(start = 8.dp),
                             ) {
                                 Text(
                                     text = option,
                                     color = if (option == selectedOption) AccentColor else TextPrimary,
-                                    fontSize = 13.sp
+                                    fontSize = 13.sp,
                                 )
                             }
                         }
@@ -618,52 +637,54 @@ fun ColorSetting(
     onColorChange: (Color) -> Unit,
     modifier: Modifier = Modifier,
     description: String? = null,
-    enabled: Boolean = true
+    enabled: Boolean = true,
 ) {
     var showColorPicker by remember { mutableStateOf(false) }
 
     Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
-            .background(SurfaceColor)
-            .clickable(enabled = enabled) { showColorPicker = true }
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
+                .background(SurfaceColor)
+                .clickable(enabled = enabled) { showColorPicker = true }
+                .padding(horizontal = 12.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = label,
                 color = if (enabled) TextPrimary else TextMuted,
-                fontSize = 13.sp
+                fontSize = 13.sp,
             )
             if (description != null) {
                 Text(
                     text = description,
                     color = TextMuted,
                     fontSize = 11.sp,
-                    modifier = Modifier.padding(top = 2.dp)
+                    modifier = Modifier.padding(top = 2.dp),
                 )
             }
         }
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             // Hex value display
             Text(
                 text = color.toHexString(),
                 color = TextSecondary,
-                fontSize = 11.sp
+                fontSize = 11.sp,
             )
             // Color swatch
             Box(
-                modifier = Modifier
-                    .size(28.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(color)
-                    .border(1.dp, BorderColor, RoundedCornerShape(4.dp))
+                modifier =
+                    Modifier
+                        .size(28.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(color)
+                        .border(1.dp, BorderColor, RoundedCornerShape(4.dp)),
             )
         }
     }
@@ -675,7 +696,7 @@ fun ColorSetting(
                 onColorChange(newColor)
                 showColorPicker = false
             },
-            onDismiss = { showColorPicker = false }
+            onDismiss = { showColorPicker = false },
         )
     }
 }
@@ -684,7 +705,8 @@ fun ColorSetting(
  * Convert Color to hex string format.
  */
 fun Color.toHexString(): String {
-    val argb = (this.alpha * 255).toInt().shl(24) or
+    val argb =
+        (this.alpha * 255).toInt().shl(24) or
             (this.red * 255).toInt().shl(16) or
             (this.green * 255).toInt().shl(8) or
             (this.blue * 255).toInt()
@@ -702,64 +724,68 @@ fun SettingsFilePicker(
     modifier: Modifier = Modifier,
     description: String? = null,
     fileExtensions: List<String> = emptyList(),
-    enabled: Boolean = true
+    enabled: Boolean = true,
 ) {
     Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
-            .background(SurfaceColor)
-            .padding(horizontal = 12.dp, vertical = 10.dp)
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
+                .background(SurfaceColor)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         Text(
             text = label,
             color = if (enabled) TextPrimary else TextMuted,
-            fontSize = 13.sp
+            fontSize = 13.sp,
         )
         if (description != null) {
             Text(
                 text = description,
                 color = TextMuted,
                 fontSize = 11.sp,
-                modifier = Modifier.padding(top = 2.dp)
+                modifier = Modifier.padding(top = 2.dp),
             )
         }
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp),
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             BasicTextField(
                 value = value,
                 onValueChange = onValueChange,
                 enabled = enabled,
                 singleLine = true,
-                textStyle = TextStyle(
-                    color = TextPrimary,
-                    fontSize = 13.sp
-                ),
+                textStyle =
+                    TextStyle(
+                        color = TextPrimary,
+                        fontSize = 13.sp,
+                    ),
                 cursorBrush = SolidColor(AccentColor),
                 decorationBox = { innerTextField ->
                     Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .background(BackgroundColor, RoundedCornerShape(4.dp))
-                            .border(1.dp, BorderColor, RoundedCornerShape(4.dp))
-                            .padding(horizontal = 8.dp, vertical = 8.dp)
+                        modifier =
+                            Modifier
+                                .weight(1f)
+                                .background(BackgroundColor, RoundedCornerShape(4.dp))
+                                .border(1.dp, BorderColor, RoundedCornerShape(4.dp))
+                                .padding(horizontal = 8.dp, vertical = 8.dp),
                     ) {
                         if (value.isEmpty()) {
                             Text(
                                 text = "No file selected",
                                 color = TextMuted,
-                                fontSize = 13.sp
+                                fontSize = 13.sp,
                             )
                         }
                         innerTextField()
                     }
                 },
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f),
             )
             Button(
                 onClick = {
@@ -777,18 +803,19 @@ fun SettingsFilePicker(
                     }
                 },
                 enabled = enabled,
-                colors = ButtonDefaults.buttonColors(
-                    backgroundColor = AccentColor,
-                    contentColor = BossTheme.colors.onSignal
-                ),
-                modifier = Modifier.height(36.dp)
+                colors =
+                    ButtonDefaults.buttonColors(
+                        backgroundColor = AccentColor,
+                        contentColor = BossTheme.colors.onSignal,
+                    ),
+                modifier = Modifier.height(36.dp),
             ) {
                 Text("Browse", fontSize = 12.sp)
             }
             if (value.isNotEmpty()) {
                 TextButton(
                     onClick = { onValueChange("") },
-                    enabled = enabled
+                    enabled = enabled,
                 ) {
                     Text("Clear", color = TextSecondary, fontSize = 12.sp)
                 }
@@ -806,37 +833,38 @@ fun SettingsInfoRow(
     value: String,
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
-    description: String? = null
+    description: String? = null,
 ) {
     Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
-            .background(SurfaceColor)
-            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
+                .background(SurfaceColor)
+                .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = label,
                 color = TextPrimary,
-                fontSize = 13.sp
+                fontSize = 13.sp,
             )
             if (description != null) {
                 Text(
                     text = description,
                     color = TextMuted,
                     fontSize = 11.sp,
-                    modifier = Modifier.padding(top = 2.dp)
+                    modifier = Modifier.padding(top = 2.dp),
                 )
             }
         }
         Text(
             text = value,
             color = if (onClick != null) AccentColor else TextSecondary,
-            fontSize = 13.sp
+            fontSize = 13.sp,
         )
     }
 }
@@ -852,39 +880,41 @@ fun SettingsButtonRow(
     modifier: Modifier = Modifier,
     description: String? = null,
     enabled: Boolean = true,
-    isDestructive: Boolean = false
+    isDestructive: Boolean = false,
 ) {
     Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
-            .background(SurfaceColor)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
+                .background(SurfaceColor)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = label,
                 color = if (enabled) TextPrimary else TextMuted,
-                fontSize = 13.sp
+                fontSize = 13.sp,
             )
             if (description != null) {
                 Text(
                     text = description,
                     color = TextMuted,
                     fontSize = 11.sp,
-                    modifier = Modifier.padding(top = 2.dp)
+                    modifier = Modifier.padding(top = 2.dp),
                 )
             }
         }
         TextButton(
             onClick = onClick,
             enabled = enabled,
-            colors = ButtonDefaults.textButtonColors(
-                contentColor = if (isDestructive) BossTheme.colors.alert else AccentColor,
-                disabledContentColor = TextMuted
-            )
+            colors =
+                ButtonDefaults.textButtonColors(
+                    contentColor = if (isDestructive) BossTheme.colors.alert else AccentColor,
+                    disabledContentColor = TextMuted,
+                ),
         ) {
             Text(buttonText, fontSize = 13.sp)
         }
@@ -900,7 +930,7 @@ fun SettingsButtonRow(
 fun ColorPickerDialog(
     initialColor: Color,
     onColorSelected: (Color) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
 ) {
     // Convert initial color to HSV
     val initialHsv = remember(initialColor) { colorToHsv(initialColor) }
@@ -910,9 +940,10 @@ fun ColorPickerDialog(
     var alpha by remember { mutableStateOf(initialColor.alpha) }
 
     // Current color from HSV
-    val currentColor = remember(hue, saturation, value, alpha) {
-        hsvToColor(hue, saturation, value, alpha)
-    }
+    val currentColor =
+        remember(hue, saturation, value, alpha) {
+            hsvToColor(hue, saturation, value, alpha)
+        }
 
     // Hex input
     var hexInput by remember(currentColor) {
@@ -923,23 +954,24 @@ fun ColorPickerDialog(
         onCloseRequest = onDismiss,
         title = "Select Color",
         resizable = false,
-        state = rememberDialogState(size = DpSize(340.dp, 520.dp))
+        state = rememberDialogState(size = DpSize(340.dp, 520.dp)),
     ) {
         Surface(
             modifier = Modifier.fillMaxSize(),
-            color = BackgroundColor
+            color = BackgroundColor,
         ) {
             Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 // Saturation/Value canvas
                 Text(
                     text = "Saturation / Brightness",
                     color = TextSecondary,
-                    fontSize = 12.sp
+                    fontSize = 12.sp,
                 )
                 SaturationValuePicker(
                     hue = hue,
@@ -949,45 +981,48 @@ fun ColorPickerDialog(
                         saturation = s
                         value = v
                     },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(160.dp)
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .height(160.dp),
                 )
 
                 // Hue slider
                 Text(
                     text = "Hue",
                     color = TextSecondary,
-                    fontSize = 12.sp
+                    fontSize = 12.sp,
                 )
                 HueSlider(
                     hue = hue,
                     onHueChange = { hue = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(24.dp)
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .height(24.dp),
                 )
 
                 // Alpha slider
                 Text(
                     text = "Alpha",
                     color = TextSecondary,
-                    fontSize = 12.sp
+                    fontSize = 12.sp,
                 )
                 AlphaSlider(
                     alpha = alpha,
                     color = hsvToColor(hue, saturation, value, 1f),
                     onAlphaChange = { alpha = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(24.dp)
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .height(24.dp),
                 )
 
                 // Preview and hex input
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     // Color preview
                     Column {
@@ -995,24 +1030,26 @@ fun ColorPickerDialog(
                             text = "Preview",
                             color = TextSecondary,
                             fontSize = 12.sp,
-                            modifier = Modifier.padding(bottom = 4.dp)
+                            modifier = Modifier.padding(bottom = 4.dp),
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             // New color
                             Box(
-                                modifier = Modifier
-                                    .size(48.dp)
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(currentColor)
-                                    .border(1.dp, BorderColor, RoundedCornerShape(6.dp))
+                                modifier =
+                                    Modifier
+                                        .size(48.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(currentColor)
+                                        .border(1.dp, BorderColor, RoundedCornerShape(6.dp)),
                             )
                             // Original color
                             Box(
-                                modifier = Modifier
-                                    .size(48.dp)
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(initialColor)
-                                    .border(1.dp, BorderColor, RoundedCornerShape(6.dp))
+                                modifier =
+                                    Modifier
+                                        .size(48.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(initialColor)
+                                        .border(1.dp, BorderColor, RoundedCornerShape(6.dp)),
                             )
                         }
                     }
@@ -1023,7 +1060,7 @@ fun ColorPickerDialog(
                             text = "Hex (ARGB)",
                             color = TextSecondary,
                             fontSize = 12.sp,
-                            modifier = Modifier.padding(bottom = 4.dp)
+                            modifier = Modifier.padding(bottom = 4.dp),
                         )
                         BasicTextField(
                             value = hexInput,
@@ -1038,16 +1075,18 @@ fun ColorPickerDialog(
                                 }
                             },
                             singleLine = true,
-                            textStyle = TextStyle(
-                                color = TextPrimary,
-                                fontSize = 13.sp
-                            ),
+                            textStyle =
+                                TextStyle(
+                                    color = TextPrimary,
+                                    fontSize = 13.sp,
+                                ),
                             cursorBrush = SolidColor(AccentColor),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(SurfaceColor, RoundedCornerShape(4.dp))
-                                .border(1.dp, BorderColor, RoundedCornerShape(4.dp))
-                                .padding(horizontal = 10.dp, vertical = 8.dp)
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .background(SurfaceColor, RoundedCornerShape(4.dp))
+                                    .border(1.dp, BorderColor, RoundedCornerShape(4.dp))
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
                         )
                     }
                 }
@@ -1057,23 +1096,25 @@ fun ColorPickerDialog(
                 // Buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End)
+                    horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
                 ) {
                     Button(
                         onClick = onDismiss,
-                        colors = ButtonDefaults.buttonColors(
-                            backgroundColor = SurfaceColor
-                        ),
-                        modifier = Modifier.width(100.dp)
+                        colors =
+                            ButtonDefaults.buttonColors(
+                                backgroundColor = SurfaceColor,
+                            ),
+                        modifier = Modifier.width(100.dp),
                     ) {
                         Text("Cancel", color = TextPrimary, fontSize = 13.sp)
                     }
                     Button(
                         onClick = { onColorSelected(currentColor) },
-                        colors = ButtonDefaults.buttonColors(
-                            backgroundColor = AccentColor
-                        ),
-                        modifier = Modifier.width(100.dp)
+                        colors =
+                            ButtonDefaults.buttonColors(
+                                backgroundColor = AccentColor,
+                            ),
+                        modifier = Modifier.width(100.dp),
                     ) {
                         Text("OK", color = BossTheme.colors.onSignal, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                     }
@@ -1092,46 +1133,48 @@ private fun SaturationValuePicker(
     saturation: Float,
     value: Float,
     onSaturationValueChange: (Float, Float) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     val baseColor = hsvToColor(hue, 1f, 1f, 1f)
 
     Box(modifier = modifier) {
         Canvas(
-            modifier = Modifier
-                .fillMaxSize()
-                .clip(RoundedCornerShape(6.dp))
-                .pointerInput(Unit) {
-                    detectTapGestures { offset ->
-                        val s = (offset.x / size.width).coerceIn(0f, 1f)
-                        val v = 1f - (offset.y / size.height).coerceIn(0f, 1f)
-                        onSaturationValueChange(s, v)
-                    }
-                }
-                .pointerInput(Unit) {
-                    detectDragGestures { change, _ ->
-                        val s = (change.position.x / size.width).coerceIn(0f, 1f)
-                        val v = 1f - (change.position.y / size.height).coerceIn(0f, 1f)
-                        onSaturationValueChange(s, v)
-                    }
-                }
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(6.dp))
+                    .pointerInput(Unit) {
+                        detectTapGestures { offset ->
+                            val s = (offset.x / size.width).coerceIn(0f, 1f)
+                            val v = 1f - (offset.y / size.height).coerceIn(0f, 1f)
+                            onSaturationValueChange(s, v)
+                        }
+                    }.pointerInput(Unit) {
+                        detectDragGestures { change, _ ->
+                            val s = (change.position.x / size.width).coerceIn(0f, 1f)
+                            val v = 1f - (change.position.y / size.height).coerceIn(0f, 1f)
+                            onSaturationValueChange(s, v)
+                        }
+                    },
         ) {
             // White to hue gradient (horizontal - saturation)
             drawRect(
-                brush = Brush.horizontalGradient(
-                    colors = listOf(Color.White, baseColor)
-                )
+                brush =
+                    Brush.horizontalGradient(
+                        colors = listOf(Color.White, baseColor),
+                    ),
             )
             // Transparent to black gradient (vertical - value)
             drawRect(
-                brush = Brush.verticalGradient(
-                    colors = listOf(Color.Transparent, Color.Black)
-                )
+                brush =
+                    Brush.verticalGradient(
+                        colors = listOf(Color.Transparent, Color.Black),
+                    ),
             )
             // Border
             drawRect(
                 color = BorderColor,
-                style = Stroke(width = 1.dp.toPx())
+                style = Stroke(width = 1.dp.toPx()),
             )
 
             // Selection indicator
@@ -1141,13 +1184,13 @@ private fun SaturationValuePicker(
                 color = Color.White,
                 radius = 8.dp.toPx(),
                 center = Offset(indicatorX, indicatorY),
-                style = Stroke(width = 2.dp.toPx())
+                style = Stroke(width = 2.dp.toPx()),
             )
             drawCircle(
                 color = Color.Black,
                 radius = 6.dp.toPx(),
                 center = Offset(indicatorX, indicatorY),
-                style = Stroke(width = 1.dp.toPx())
+                style = Stroke(width = 1.dp.toPx()),
             )
         }
     }
@@ -1160,44 +1203,45 @@ private fun SaturationValuePicker(
 private fun HueSlider(
     hue: Float,
     onHueChange: (Float) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
-    val hueColors = remember {
-        listOf(
-            Color.Red,
-            Color.Yellow,
-            Color.Green,
-            Color.Cyan,
-            Color.Blue,
-            Color.Magenta,
-            Color.Red
-        )
-    }
+    val hueColors =
+        remember {
+            listOf(
+                Color.Red,
+                Color.Yellow,
+                Color.Green,
+                Color.Cyan,
+                Color.Blue,
+                Color.Magenta,
+                Color.Red,
+            )
+        }
 
     Box(modifier = modifier) {
         Canvas(
-            modifier = Modifier
-                .fillMaxSize()
-                .clip(RoundedCornerShape(4.dp))
-                .pointerInput(Unit) {
-                    detectTapGestures { offset ->
-                        onHueChange((offset.x / size.width * 360f).coerceIn(0f, 360f))
-                    }
-                }
-                .pointerInput(Unit) {
-                    detectDragGestures { change, _ ->
-                        onHueChange((change.position.x / size.width * 360f).coerceIn(0f, 360f))
-                    }
-                }
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(4.dp))
+                    .pointerInput(Unit) {
+                        detectTapGestures { offset ->
+                            onHueChange((offset.x / size.width * 360f).coerceIn(0f, 360f))
+                        }
+                    }.pointerInput(Unit) {
+                        detectDragGestures { change, _ ->
+                            onHueChange((change.position.x / size.width * 360f).coerceIn(0f, 360f))
+                        }
+                    },
         ) {
             // Hue gradient
             drawRect(
-                brush = Brush.horizontalGradient(colors = hueColors)
+                brush = Brush.horizontalGradient(colors = hueColors),
             )
             // Border
             drawRect(
                 color = BorderColor,
-                style = Stroke(width = 1.dp.toPx())
+                style = Stroke(width = 1.dp.toPx()),
             )
 
             // Selection indicator
@@ -1206,7 +1250,7 @@ private fun HueSlider(
                 color = Color.White,
                 topLeft = Offset(indicatorX - 4.dp.toPx(), 0f),
                 size = Size(8.dp.toPx(), size.height),
-                style = Stroke(width = 2.dp.toPx())
+                style = Stroke(width = 2.dp.toPx()),
             )
         }
     }
@@ -1220,23 +1264,23 @@ private fun AlphaSlider(
     alpha: Float,
     color: Color,
     onAlphaChange: (Float) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier) {
         Canvas(
-            modifier = Modifier
-                .fillMaxSize()
-                .clip(RoundedCornerShape(4.dp))
-                .pointerInput(Unit) {
-                    detectTapGestures { offset ->
-                        onAlphaChange((offset.x / size.width).coerceIn(0f, 1f))
-                    }
-                }
-                .pointerInput(Unit) {
-                    detectDragGestures { change, _ ->
-                        onAlphaChange((change.position.x / size.width).coerceIn(0f, 1f))
-                    }
-                }
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(4.dp))
+                    .pointerInput(Unit) {
+                        detectTapGestures { offset ->
+                            onAlphaChange((offset.x / size.width).coerceIn(0f, 1f))
+                        }
+                    }.pointerInput(Unit) {
+                        detectDragGestures { change, _ ->
+                            onAlphaChange((change.position.x / size.width).coerceIn(0f, 1f))
+                        }
+                    },
         ) {
             // Checkerboard pattern for transparency
             val checkerSize = 8.dp.toPx()
@@ -1246,21 +1290,22 @@ private fun AlphaSlider(
                     drawRect(
                         color = if (isLight) Color(0xFFCCCCCC) else Color(0xFF999999),
                         topLeft = Offset(col * checkerSize, row * checkerSize),
-                        size = Size(checkerSize, checkerSize)
+                        size = Size(checkerSize, checkerSize),
                     )
                 }
             }
 
             // Alpha gradient
             drawRect(
-                brush = Brush.horizontalGradient(
-                    colors = listOf(color.copy(alpha = 0f), color.copy(alpha = 1f))
-                )
+                brush =
+                    Brush.horizontalGradient(
+                        colors = listOf(color.copy(alpha = 0f), color.copy(alpha = 1f)),
+                    ),
             )
             // Border
             drawRect(
                 color = BorderColor,
-                style = Stroke(width = 1.dp.toPx())
+                style = Stroke(width = 1.dp.toPx()),
             )
 
             // Selection indicator
@@ -1269,7 +1314,7 @@ private fun AlphaSlider(
                 color = Color.White,
                 topLeft = Offset(indicatorX - 4.dp.toPx(), 0f),
                 size = Size(8.dp.toPx(), size.height),
-                style = Stroke(width = 2.dp.toPx())
+                style = Stroke(width = 2.dp.toPx()),
             )
         }
     }
@@ -1289,12 +1334,13 @@ private fun colorToHsv(color: Color): FloatArray {
     val minC = min(min(r, g), b)
     val delta = maxC - minC
 
-    val h = when {
-        delta == 0f -> 0f
-        maxC == r -> 60f * (((g - b) / delta) % 6)
-        maxC == g -> 60f * (((b - r) / delta) + 2)
-        else -> 60f * (((r - g) / delta) + 4)
-    }.let { if (it < 0) it + 360 else it }
+    val h =
+        when {
+            delta == 0f -> 0f
+            maxC == r -> 60f * (((g - b) / delta) % 6)
+            maxC == g -> 60f * (((b - r) / delta) + 2)
+            else -> 60f * (((r - g) / delta) + 4)
+        }.let { if (it < 0) it + 360 else it }
 
     val s = if (maxC == 0f) 0f else delta / maxC
     val v = maxC
@@ -1305,25 +1351,31 @@ private fun colorToHsv(color: Color): FloatArray {
 /**
  * Convert HSV to Color.
  */
-private fun hsvToColor(hue: Float, saturation: Float, value: Float, alpha: Float = 1f): Color {
+private fun hsvToColor(
+    hue: Float,
+    saturation: Float,
+    value: Float,
+    alpha: Float = 1f,
+): Color {
     val c = value * saturation
     val x = c * (1 - kotlin.math.abs((hue / 60f) % 2 - 1))
     val m = value - c
 
-    val (r, g, b) = when {
-        hue < 60 -> Triple(c, x, 0f)
-        hue < 120 -> Triple(x, c, 0f)
-        hue < 180 -> Triple(0f, c, x)
-        hue < 240 -> Triple(0f, x, c)
-        hue < 300 -> Triple(x, 0f, c)
-        else -> Triple(c, 0f, x)
-    }
+    val (r, g, b) =
+        when {
+            hue < 60 -> Triple(c, x, 0f)
+            hue < 120 -> Triple(x, c, 0f)
+            hue < 180 -> Triple(0f, c, x)
+            hue < 240 -> Triple(0f, x, c)
+            hue < 300 -> Triple(x, 0f, c)
+            else -> Triple(c, 0f, x)
+        }
 
     return Color(
         red = (r + m).coerceIn(0f, 1f),
         green = (g + m).coerceIn(0f, 1f),
         blue = (b + m).coerceIn(0f, 1f),
-        alpha = alpha
+        alpha = alpha,
     )
 }
 
@@ -1346,11 +1398,13 @@ private fun colorToHex(color: Color): String {
  * - 0xRRGGBB
  */
 private fun parseHexColor(hex: String): Color? {
-    val cleanHex = hex.trim()
-        .removePrefix("#")
-        .removePrefix("0x")
-        .removePrefix("0X")
-        .uppercase()
+    val cleanHex =
+        hex
+            .trim()
+            .removePrefix("#")
+            .removePrefix("0x")
+            .removePrefix("0X")
+            .uppercase()
 
     return try {
         when (cleanHex.length) {
@@ -1360,19 +1414,23 @@ private fun parseHexColor(hex: String): Color? {
                     red = ((rgb shr 16) and 0xFF) / 255f,
                     green = ((rgb shr 8) and 0xFF) / 255f,
                     blue = (rgb and 0xFF) / 255f,
-                    alpha = 1f
+                    alpha = 1f,
                 )
             }
+
             8 -> {
                 val argb = cleanHex.toLong(16)
                 Color(
                     alpha = ((argb shr 24) and 0xFF) / 255f,
                     red = ((argb shr 16) and 0xFF) / 255f,
                     green = ((argb shr 8) and 0xFF) / 255f,
-                    blue = (argb and 0xFF) / 255f
+                    blue = (argb and 0xFF) / 255f,
                 )
             }
-            else -> null
+
+            else -> {
+                null
+            }
         }
     } catch (e: NumberFormatException) {
         null

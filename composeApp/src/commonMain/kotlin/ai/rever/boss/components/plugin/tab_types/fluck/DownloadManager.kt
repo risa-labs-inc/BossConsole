@@ -24,12 +24,12 @@ class DownloadManager {
     private val _downloadsMap = MutableStateFlow<Map<String, DownloadItem>>(emptyMap())
 
     // Public exposed state - List sorted by start time, throttled for UI
-    val downloads: StateFlow<List<DownloadItem>> = _downloadsMap
-        .map { map ->
-            map.values.sortedByDescending { it.startedAt }
-        }
-        .sample(150.milliseconds) // Throttle to 150ms as recommended by GPT-5
-        .stateIn(scope, SharingStarted.Eagerly, emptyList())
+    val downloads: StateFlow<List<DownloadItem>> =
+        _downloadsMap
+            .map { map ->
+                map.values.sortedByDescending { it.startedAt }
+            }.sample(150.milliseconds) // Throttle to 150ms as recommended by GPT-5
+            .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     // Track speed samples for rolling average calculation
     private val speedSamples = mutableMapOf<String, SpeedCalculator>()
@@ -53,7 +53,7 @@ class DownloadManager {
         id: String,
         receivedBytes: Long,
         totalBytes: Long?,
-        instantSpeed: Double
+        instantSpeed: Double,
     ) {
         mutex.withLock {
             val current = _downloadsMap.value[id] ?: return
@@ -63,11 +63,12 @@ class DownloadManager {
             calculator.addSample(instantSpeed)
             val averageSpeed = calculator.getAverage()
 
-            val updated = current.copy(
-                receivedBytes = receivedBytes,
-                totalBytes = totalBytes ?: current.totalBytes,
-                speed = averageSpeed
-            )
+            val updated =
+                current.copy(
+                    receivedBytes = receivedBytes,
+                    totalBytes = totalBytes ?: current.totalBytes,
+                    speed = averageSpeed,
+                )
 
             _downloadsMap.value = _downloadsMap.value + (id to updated)
         }
@@ -77,15 +78,20 @@ class DownloadManager {
      * Updates download status (e.g., from DOWNLOADING to COMPLETED).
      * For terminal states, records finish time.
      */
-    suspend fun updateStatus(id: String, status: DownloadStatus, errorReason: String? = null) {
+    suspend fun updateStatus(
+        id: String,
+        status: DownloadStatus,
+        errorReason: String? = null,
+    ) {
         mutex.withLock {
             val current = _downloadsMap.value[id] ?: return
 
-            val updated = current.copy(
-                status = status,
-                finishedAt = if (status.isTerminal()) System.currentTimeMillis() else current.finishedAt,
-                errorReason = errorReason
-            )
+            val updated =
+                current.copy(
+                    status = status,
+                    finishedAt = if (status.isTerminal()) System.currentTimeMillis() else current.finishedAt,
+                    errorReason = errorReason,
+                )
 
             _downloadsMap.value = _downloadsMap.value + (id to updated)
 
@@ -99,14 +105,19 @@ class DownloadManager {
     /**
      * Updates pause/resume capability flags for a download.
      */
-    suspend fun updateCapabilities(id: String, canPause: Boolean, canResume: Boolean) {
+    suspend fun updateCapabilities(
+        id: String,
+        canPause: Boolean,
+        canResume: Boolean,
+    ) {
         mutex.withLock {
             val current = _downloadsMap.value[id] ?: return
 
-            val updated = current.copy(
-                canPause = canPause,
-                canResume = canResume
-            )
+            val updated =
+                current.copy(
+                    canPause = canPause,
+                    canResume = canResume,
+                )
 
             _downloadsMap.value = _downloadsMap.value + (id to updated)
         }
@@ -158,9 +169,10 @@ class DownloadManager {
     suspend fun clearCompleted() {
         mutex.withLock {
             val originalKeys = _downloadsMap.value.keys
-            val filtered = _downloadsMap.value.filterValues { item ->
-                item.status != DownloadStatus.COMPLETED
-            }
+            val filtered =
+                _downloadsMap.value.filterValues { item ->
+                    item.status != DownloadStatus.COMPLETED
+                }
             _downloadsMap.value = filtered
 
             // Clean up speed calculators for removed downloads
@@ -175,9 +187,10 @@ class DownloadManager {
     suspend fun clearFailedAndCancelled() {
         mutex.withLock {
             val originalKeys = _downloadsMap.value.keys
-            val filtered = _downloadsMap.value.filterValues { item ->
-                item.status != DownloadStatus.FAILED && item.status != DownloadStatus.CANCELLED
-            }
+            val filtered =
+                _downloadsMap.value.filterValues { item ->
+                    item.status != DownloadStatus.FAILED && item.status != DownloadStatus.CANCELLED
+                }
             _downloadsMap.value = filtered
 
             // Clean up speed calculators for removed downloads
@@ -189,27 +202,20 @@ class DownloadManager {
     /**
      * Gets a specific download by ID.
      */
-    fun getDownload(id: String): DownloadItem? {
-        return _downloadsMap.value[id]
-    }
+    fun getDownload(id: String): DownloadItem? = _downloadsMap.value[id]
 
     /**
      * Gets count of active downloads (downloading or queued).
      */
-    fun getActiveCount(): Int {
-        return _downloadsMap.value.values.count { it.isActive }
-    }
+    fun getActiveCount(): Int = _downloadsMap.value.values.count { it.isActive }
 
     /**
      * Gets count of completed downloads.
      */
-    fun getCompletedCount(): Int {
-        return _downloadsMap.value.values.count { it.status == DownloadStatus.COMPLETED }
-    }
+    fun getCompletedCount(): Int = _downloadsMap.value.values.count { it.status == DownloadStatus.COMPLETED }
 
-    private fun DownloadStatus.isTerminal(): Boolean {
-        return this in setOf(DownloadStatus.COMPLETED, DownloadStatus.FAILED, DownloadStatus.CANCELLED)
-    }
+    private fun DownloadStatus.isTerminal(): Boolean =
+        this in setOf(DownloadStatus.COMPLETED, DownloadStatus.FAILED, DownloadStatus.CANCELLED)
 }
 
 /**

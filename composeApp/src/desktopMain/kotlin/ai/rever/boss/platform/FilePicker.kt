@@ -14,32 +14,32 @@ private val filePickerLogger = BossLogger.forComponent("FilePicker")
 @Composable
 actual fun rememberFilePicker(
     onFileSelected: (path: String?, content: String?) -> Unit,
-    fileExtensions: List<String>
-): FilePicker {
-    return remember {
+    fileExtensions: List<String>,
+): FilePicker =
+    remember {
         DesktopFilePicker(onFileSelected, fileExtensions)
     }
-}
 
 class DesktopFilePicker(
     private val onFileSelected: (path: String?, content: String?) -> Unit,
-    private val fileExtensions: List<String>
+    private val fileExtensions: List<String>,
 ) : FilePicker {
     override fun pickFile() {
         try {
-            val fileDialog = FileDialog(null as Frame?, "Select Configuration File", FileDialog.LOAD).apply {
-                // Set file filter for JSON files
-                if (fileExtensions.isNotEmpty()) {
-                    setFilenameFilter { _, name ->
-                        fileExtensions.any { name.endsWith(".$it", ignoreCase = true) }
+            val fileDialog =
+                FileDialog(null as Frame?, "Select Configuration File", FileDialog.LOAD).apply {
+                    // Set file filter for JSON files
+                    if (fileExtensions.isNotEmpty()) {
+                        setFilenameFilter { _, name ->
+                            fileExtensions.any { name.endsWith(".$it", ignoreCase = true) }
+                        }
                     }
+                    isVisible = true
                 }
-                isVisible = true
-            }
-            
+
             val selectedFile = fileDialog.file
             val selectedDir = fileDialog.directory
-            
+
             if (selectedFile != null && selectedDir != null) {
                 val file = File(selectedDir, selectedFile)
                 val content = file.readText()
@@ -61,7 +61,7 @@ class DesktopFilePicker(
 actual fun pickSaveFile(
     suggestedFileName: String,
     initialDirectory: String?,
-    allowedExtensions: List<String>
+    allowedExtensions: List<String>,
 ): String? {
     // Sanitize the suggested file name for security
     val sanitizedFileName = FileNameSanitizer.sanitize(suggestedFileName)
@@ -71,24 +71,25 @@ actual fun pickSaveFile(
     try {
         // Must run on EDT to avoid AWT threading issues
         SwingUtilities.invokeAndWait {
-            val fileDialog = FileDialog(null as Frame?, "Save File", FileDialog.SAVE).apply {
-                // Set suggested file name
-                file = sanitizedFileName
+            val fileDialog =
+                FileDialog(null as Frame?, "Save File", FileDialog.SAVE).apply {
+                    // Set suggested file name
+                    file = sanitizedFileName
 
-                // Set initial directory if provided
-                initialDirectory?.let { directory = it }
+                    // Set initial directory if provided
+                    initialDirectory?.let { directory = it }
 
-                // Set file filter if extensions specified
-                if (allowedExtensions.isNotEmpty()) {
-                    setFilenameFilter { _, name ->
-                        allowedExtensions.any { ext ->
-                            name.endsWith(".$ext", ignoreCase = true)
-                        } || allowedExtensions.contains("*")
+                    // Set file filter if extensions specified
+                    if (allowedExtensions.isNotEmpty()) {
+                        setFilenameFilter { _, name ->
+                            allowedExtensions.any { ext ->
+                                name.endsWith(".$ext", ignoreCase = true)
+                            } || allowedExtensions.contains("*")
+                        }
                     }
-                }
 
-                isVisible = true
-            }
+                    isVisible = true
+                }
 
             val selectedFile = fileDialog.file
             val selectedDir = fileDialog.directory

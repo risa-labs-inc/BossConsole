@@ -18,57 +18,88 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
 
     companion object {
         // Regex patterns for main function detection
-        private val KOTLIN_MAIN_PATTERN = Regex(
-            """^\s*(?:@JvmStatic\s+)?fun\s+main\s*\(""",
-            RegexOption.MULTILINE
-        )
-        private val KOTLIN_PACKAGE_PATTERN = Regex(
-            """^\s*package\s+([\w.]+)""",
-            RegexOption.MULTILINE
-        )
+        private val KOTLIN_MAIN_PATTERN =
+            Regex(
+                """^\s*(?:@JvmStatic\s+)?fun\s+main\s*\(""",
+                RegexOption.MULTILINE,
+            )
+        private val KOTLIN_PACKAGE_PATTERN =
+            Regex(
+                """^\s*package\s+([\w.]+)""",
+                RegexOption.MULTILINE,
+            )
 
-        private val JAVA_MAIN_PATTERN = Regex(
-            """^\s*public\s+static\s+void\s+main\s*\(\s*String\s*\[?\s*\]?\s*\w*\s*\)""",
-            RegexOption.MULTILINE
-        )
-        private val JAVA_CLASS_PATTERN = Regex(
-            """^\s*(?:public\s+)?class\s+(\w+)""",
-            RegexOption.MULTILINE
-        )
-        private val JAVA_PACKAGE_PATTERN = Regex(
-            """^\s*package\s+([\w.]+)\s*;""",
-            RegexOption.MULTILINE
-        )
+        private val JAVA_MAIN_PATTERN =
+            Regex(
+                """^\s*public\s+static\s+void\s+main\s*\(\s*String\s*\[?\s*\]?\s*\w*\s*\)""",
+                RegexOption.MULTILINE,
+            )
+        private val JAVA_CLASS_PATTERN =
+            Regex(
+                """^\s*(?:public\s+)?class\s+(\w+)""",
+                RegexOption.MULTILINE,
+            )
+        private val JAVA_PACKAGE_PATTERN =
+            Regex(
+                """^\s*package\s+([\w.]+)\s*;""",
+                RegexOption.MULTILINE,
+            )
 
-        private val PYTHON_MAIN_PATTERN = Regex(
-            """^if\s+__name__\s*==\s*['""]__main__['""]""",
-            RegexOption.MULTILINE
-        )
+        private val PYTHON_MAIN_PATTERN =
+            Regex(
+                """^if\s+__name__\s*==\s*['""]__main__['""]""",
+                RegexOption.MULTILINE,
+            )
 
-        private val GO_MAIN_PATTERN = Regex(
-            """^\s*func\s+main\s*\(\s*\)""",
-            RegexOption.MULTILINE
-        )
-        private val GO_PACKAGE_MAIN_PATTERN = Regex(
-            """^\s*package\s+main\b""",
-            RegexOption.MULTILINE
-        )
+        private val GO_MAIN_PATTERN =
+            Regex(
+                """^\s*func\s+main\s*\(\s*\)""",
+                RegexOption.MULTILINE,
+            )
+        private val GO_PACKAGE_MAIN_PATTERN =
+            Regex(
+                """^\s*package\s+main\b""",
+                RegexOption.MULTILINE,
+            )
 
-        private val RUST_MAIN_PATTERN = Regex(
-            """^\s*fn\s+main\s*\(\s*\)""",
-            RegexOption.MULTILINE
-        )
+        private val RUST_MAIN_PATTERN =
+            Regex(
+                """^\s*fn\s+main\s*\(\s*\)""",
+                RegexOption.MULTILINE,
+            )
 
         // File extensions to scan
-        private val SCANNABLE_EXTENSIONS = setOf(
-            "kt", "kts", "java", "py", "js", "jsx", "mjs", "ts", "tsx", "go", "rs"
-        )
+        private val SCANNABLE_EXTENSIONS =
+            setOf(
+                "kt",
+                "kts",
+                "java",
+                "py",
+                "js",
+                "jsx",
+                "mjs",
+                "ts",
+                "tsx",
+                "go",
+                "rs",
+            )
 
         // Directories to skip
-        private val SKIP_DIRECTORIES = setOf(
-            "build", "node_modules", ".git", ".gradle", ".idea", "target",
-            "__pycache__", "venv", ".venv", "dist", "out", "bin"
-        )
+        private val SKIP_DIRECTORIES =
+            setOf(
+                "build",
+                "node_modules",
+                ".git",
+                ".gradle",
+                ".idea",
+                "target",
+                "__pycache__",
+                "venv",
+                ".venv",
+                "dist",
+                "out",
+                "bin",
+            )
     }
 
     override suspend fun scanProject(projectPath: String): List<RunConfiguration> =
@@ -86,13 +117,14 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
     private fun scanDirectory(
         directory: File,
         projectPath: String,
-        configurations: MutableList<RunConfiguration>
+        configurations: MutableList<RunConfiguration>,
     ) {
         directory.listFiles()?.forEach { file ->
             when {
                 file.isDirectory && !SKIP_DIRECTORIES.contains(file.name) && !file.name.startsWith(".") -> {
                     scanDirectory(file, projectPath, configurations)
                 }
+
                 file.isFile && SCANNABLE_EXTENSIONS.contains(file.extension.lowercase()) -> {
                     try {
                         val content = file.readText()
@@ -113,8 +145,8 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
                                     // execute), not the scanned workspace path which may
                                     // differ and leave the command without its ./gradlew.
                                     workingDirectory = findProjectRoot(file.absolutePath),
-                                    isAutoDetected = true
-                                )
+                                    isAutoDetected = true,
+                                ),
                             )
                         }
                     } catch (e: Exception) {
@@ -132,7 +164,7 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
     override fun detectInFile(
         filePath: String,
         content: String,
-        language: Language?
+        language: Language?,
     ): List<DetectedMainFunction> {
         val detectedLanguage = language ?: Language.fromFileName(filePath)
         return when (detectedLanguage) {
@@ -146,7 +178,10 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
         }
     }
 
-    private fun detectKotlinMain(filePath: String, content: String): List<DetectedMainFunction> {
+    private fun detectKotlinMain(
+        filePath: String,
+        content: String,
+    ): List<DetectedMainFunction> {
         val results = mutableListOf<DetectedMainFunction>()
         val lines = content.lines()
 
@@ -177,8 +212,8 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
                             className = null,
                             packageName = packageName,
                             language = Language.KOTLIN,
-                            filePath = filePath
-                        )
+                            filePath = filePath,
+                        ),
                     )
                 }
             }
@@ -187,7 +222,10 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
         return results
     }
 
-    private fun detectJavaMain(filePath: String, content: String): List<DetectedMainFunction> {
+    private fun detectJavaMain(
+        filePath: String,
+        content: String,
+    ): List<DetectedMainFunction> {
         val results = mutableListOf<DetectedMainFunction>()
         val lines = content.lines()
 
@@ -208,8 +246,8 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
                         className = className,
                         packageName = packageName,
                         language = Language.JAVA,
-                        filePath = filePath
-                    )
+                        filePath = filePath,
+                    ),
                 )
             }
         }
@@ -217,7 +255,10 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
         return results
     }
 
-    private fun detectPythonMain(filePath: String, content: String): List<DetectedMainFunction> {
+    private fun detectPythonMain(
+        filePath: String,
+        content: String,
+    ): List<DetectedMainFunction> {
         val results = mutableListOf<DetectedMainFunction>()
         val lines = content.lines()
 
@@ -230,8 +271,8 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
                         className = null,
                         packageName = null,
                         language = Language.PYTHON,
-                        filePath = filePath
-                    )
+                        filePath = filePath,
+                    ),
                 )
             }
         }
@@ -241,7 +282,7 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
 
     private fun detectJsMain(
         filePath: String,
-        language: Language
+        language: Language,
     ): List<DetectedMainFunction> {
         // For JS/TS, we consider files with certain patterns as entry points
         // This is a simplified detection - real detection would check package.json
@@ -249,11 +290,20 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
 
         // Check if it's a typical entry point file
         val fileName = File(filePath).name.lowercase()
-        val isEntryPoint = fileName in listOf(
-            "index.js", "index.ts", "index.jsx", "index.tsx",
-            "main.js", "main.ts", "app.js", "app.ts",
-            "server.js", "server.ts"
-        )
+        val isEntryPoint =
+            fileName in
+                listOf(
+                    "index.js",
+                    "index.ts",
+                    "index.jsx",
+                    "index.tsx",
+                    "main.js",
+                    "main.ts",
+                    "app.js",
+                    "app.ts",
+                    "server.js",
+                    "server.ts",
+                )
 
         if (isEntryPoint) {
             results.add(
@@ -263,15 +313,18 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
                     className = null,
                     packageName = null,
                     language = language,
-                    filePath = filePath
-                )
+                    filePath = filePath,
+                ),
             )
         }
 
         return results
     }
 
-    private fun detectGoMain(filePath: String, content: String): List<DetectedMainFunction> {
+    private fun detectGoMain(
+        filePath: String,
+        content: String,
+    ): List<DetectedMainFunction> {
         val results = mutableListOf<DetectedMainFunction>()
 
         // Go requires both package main and func main()
@@ -289,8 +342,8 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
                         className = null,
                         packageName = "main",
                         language = Language.GO,
-                        filePath = filePath
-                    )
+                        filePath = filePath,
+                    ),
                 )
             }
         }
@@ -298,7 +351,10 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
         return results
     }
 
-    private fun detectRustMain(filePath: String, content: String): List<DetectedMainFunction> {
+    private fun detectRustMain(
+        filePath: String,
+        content: String,
+    ): List<DetectedMainFunction> {
         val results = mutableListOf<DetectedMainFunction>()
         val lines = content.lines()
 
@@ -311,8 +367,8 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
                         className = null,
                         packageName = null,
                         language = Language.RUST,
-                        filePath = filePath
-                    )
+                        filePath = filePath,
+                    ),
                 )
             }
         }
@@ -320,7 +376,10 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
         return results
     }
 
-    override fun generateCommand(detected: DetectedMainFunction, projectPath: String): String {
+    override fun generateCommand(
+        detected: DetectedMainFunction,
+        projectPath: String,
+    ): String {
         // Find the actual project root by walking up from the file's directory
         val fileDir = File(detected.filePath).parentFile
         val projectDir = findProjectRootInternal(fileDir) ?: File(projectPath)
@@ -384,7 +443,10 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
         return null
     }
 
-    private fun generateKotlinCommand(detected: DetectedMainFunction, projectDir: File): String {
+    private fun generateKotlinCommand(
+        detected: DetectedMainFunction,
+        projectDir: File,
+    ): String {
         val filePath = detected.filePath
 
         // For .kts scripts, use kotlinc -script
@@ -409,7 +471,10 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
         return ShellUtils.chainCommands(compileCmd, runCmd)
     }
 
-    private fun generateJavaCommand(detected: DetectedMainFunction, projectDir: File): String {
+    private fun generateJavaCommand(
+        detected: DetectedMainFunction,
+        projectDir: File,
+    ): String {
         val filePath = detected.filePath
 
         // For Gradle projects, use ./gradlew :moduleName:run
@@ -437,27 +502,35 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
      * Detect the Gradle module name from the file path.
      * Looks for common patterns like /moduleName/src/main/... or /moduleName/src/...Main/...
      */
-    private fun detectModuleName(filePath: String, projectDir: File): String? {
+    private fun detectModuleName(
+        filePath: String,
+        projectDir: File,
+    ): String? {
         // Use File API to properly handle path separators on all platforms
         val file = File(filePath)
         val projectPath = projectDir.absolutePath
 
         // Get relative path using File API (handles both / and \ properly)
-        val relativePath = file.absolutePath.removePrefix(projectPath)
-            .removePrefix(File.separator)
-            .removePrefix("/") // Remove Unix separator if present
-            .removePrefix("\\") // Remove Windows separator if present
+        val relativePath =
+            file.absolutePath
+                .removePrefix(projectPath)
+                .removePrefix(File.separator)
+                .removePrefix("/") // Remove Unix separator if present
+                .removePrefix("\\") // Remove Windows separator if present
 
         // Pattern: moduleName/src/... (split by platform separator)
-        val parts = relativePath.split(File.separator, "/", "\\")
-            .filter { it.isNotEmpty() } // Remove empty parts
+        val parts =
+            relativePath
+                .split(File.separator, "/", "\\")
+                .filter { it.isNotEmpty() } // Remove empty parts
 
         if (parts.size >= 2 && parts[1] == "src") {
             val potentialModule = parts[0]
             // Verify it's a valid module by checking for build.gradle(.kts)
             val moduleDir = File(projectDir, potentialModule)
             if (moduleDir.isDirectory &&
-                (File(moduleDir, "build.gradle.kts").exists() || File(moduleDir, "build.gradle").exists())) {
+                (File(moduleDir, "build.gradle.kts").exists() || File(moduleDir, "build.gradle").exists())
+            ) {
                 return potentialModule
             }
         }
@@ -478,10 +551,9 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
         }
     }
 
-    private fun hasGradleWrapper(projectDir: File): Boolean {
-        return File(projectDir, "gradlew").exists() ||
-               File(projectDir, "gradlew.bat").exists()
-    }
+    private fun hasGradleWrapper(projectDir: File): Boolean =
+        File(projectDir, "gradlew").exists() ||
+            File(projectDir, "gradlew.bat").exists()
 
     /**
      * Escape a string for safe use in shell commands.
@@ -495,23 +567,18 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
         return "'" + str.replace("'", "'\\''") + "'"
     }
 
-    private fun generatePythonCommand(detected: DetectedMainFunction): String {
-        return "python3 ${shellEscape(detected.filePath)}"
-    }
+    private fun generatePythonCommand(detected: DetectedMainFunction): String = "python3 ${shellEscape(detected.filePath)}"
 
-    private fun generateJavaScriptCommand(detected: DetectedMainFunction): String {
-        return "node ${shellEscape(detected.filePath)}"
-    }
+    private fun generateJavaScriptCommand(detected: DetectedMainFunction): String = "node ${shellEscape(detected.filePath)}"
 
-    private fun generateTypeScriptCommand(detected: DetectedMainFunction): String {
-        return "npx ts-node ${shellEscape(detected.filePath)}"
-    }
+    private fun generateTypeScriptCommand(detected: DetectedMainFunction): String = "npx ts-node ${shellEscape(detected.filePath)}"
 
-    private fun generateGoCommand(detected: DetectedMainFunction): String {
-        return "go run ${shellEscape(detected.filePath)}"
-    }
+    private fun generateGoCommand(detected: DetectedMainFunction): String = "go run ${shellEscape(detected.filePath)}"
 
-    private fun generateRustCommand(detected: DetectedMainFunction, projectDir: File): String {
+    private fun generateRustCommand(
+        detected: DetectedMainFunction,
+        projectDir: File,
+    ): String {
         val filePath = detected.filePath
 
         // For Cargo projects, use cargo run
@@ -535,20 +602,27 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
     /**
      * Detect Cargo workspace member name from file path.
      */
-    private fun detectCargoModule(filePath: String, projectDir: File): String? {
+    private fun detectCargoModule(
+        filePath: String,
+        projectDir: File,
+    ): String? {
         // Use File API to properly handle path separators on all platforms
         val file = File(filePath)
         val projectPath = projectDir.absolutePath
 
         // Get relative path using File API (handles both / and \ properly)
-        val relativePath = file.absolutePath.removePrefix(projectPath)
-            .removePrefix(File.separator)
-            .removePrefix("/") // Remove Unix separator if present
-            .removePrefix("\\") // Remove Windows separator if present
+        val relativePath =
+            file.absolutePath
+                .removePrefix(projectPath)
+                .removePrefix(File.separator)
+                .removePrefix("/") // Remove Unix separator if present
+                .removePrefix("\\") // Remove Windows separator if present
 
         // Pattern: crate-name/src/... (split by platform separator)
-        val parts = relativePath.split(File.separator, "/", "\\")
-            .filter { it.isNotEmpty() } // Remove empty parts
+        val parts =
+            relativePath
+                .split(File.separator, "/", "\\")
+                .filter { it.isNotEmpty() } // Remove empty parts
 
         if (parts.size >= 2 && parts[1] == "src") {
             val potentialCrate = parts[0]
@@ -561,5 +635,4 @@ class DesktopMainFunctionDetector : MainFunctionDetector {
 
         return null
     }
-
 }

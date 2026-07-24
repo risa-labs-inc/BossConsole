@@ -79,7 +79,10 @@ object HighQualityFaviconService {
      * @param standardCacheKey The cache key from the standard favicon cache (fallback)
      * @return ai.rever.boss.plugin.api.TabIcon.Image if found, null otherwise
      */
-    suspend fun getHighQualityFavicon(url: String, standardCacheKey: String?): ai.rever.boss.plugin.api.TabIcon.Image? {
+    suspend fun getHighQualityFavicon(
+        url: String,
+        standardCacheKey: String?,
+    ): ai.rever.boss.plugin.api.TabIcon.Image? {
         return withContext(Dispatchers.IO) {
             try {
                 val domain = extractDomain(url) ?: return@withContext loadStandardFavicon(standardCacheKey)
@@ -92,9 +95,10 @@ object HighQualityFaviconService {
                 }
 
                 // Try to fetch from Google's favicon service (with concurrency limit)
-                val fetched = fetchSemaphore.withPermit {
-                    fetchFromGoogle(domain, cacheKey)
-                }
+                val fetched =
+                    fetchSemaphore.withPermit {
+                        fetchFromGoogle(domain, cacheKey)
+                    }
                 if (fetched != null) {
                     return@withContext fetched
                 }
@@ -115,8 +119,8 @@ object HighQualityFaviconService {
     /**
      * Extract domain from URL.
      */
-    private fun extractDomain(url: String): String? {
-        return try {
+    private fun extractDomain(url: String): String? =
+        try {
             val withoutProtocol = url.removePrefix("https://").removePrefix("http://")
             withoutProtocol.substringBefore('/').substringBefore('?').removePrefix("www.")
         } catch (e: Exception) {
@@ -127,7 +131,6 @@ object HighQualityFaviconService {
             )
             null
         }
-    }
 
     /**
      * Generate cache key for domain.
@@ -152,7 +155,8 @@ object HighQualityFaviconService {
 
             val bufferedImage = ImageIO.read(cacheFile) ?: return null
             val imageBitmap = bufferedImage.toComposeImageBitmap()
-            ai.rever.boss.plugin.api.TabIcon.Image(BitmapPainter(imageBitmap))
+            ai.rever.boss.plugin.api.TabIcon
+                .Image(BitmapPainter(imageBitmap))
         } catch (e: Exception) {
             logger.debug(
                 LogCategory.BROWSER,
@@ -167,15 +171,19 @@ object HighQualityFaviconService {
      * Fetch high-quality favicon from Google's service using async Ktor client.
      * URL format: https://www.google.com/s2/favicons?domain=example.com&sz=128
      */
-    private suspend fun fetchFromGoogle(domain: String, cacheKey: String): ai.rever.boss.plugin.api.TabIcon.Image? {
+    private suspend fun fetchFromGoogle(
+        domain: String,
+        cacheKey: String,
+    ): ai.rever.boss.plugin.api.TabIcon.Image? {
         val googleUrl = "https://www.google.com/s2/favicons?domain=$domain&sz=$ICON_SIZE"
 
         return try {
-            val response = httpClient.get(googleUrl) {
-                headers {
-                    append(HttpHeaders.UserAgent, "Mozilla/5.0")
+            val response =
+                httpClient.get(googleUrl) {
+                    headers {
+                        append(HttpHeaders.UserAgent, "Mozilla/5.0")
+                    }
                 }
-            }
 
             if (response.status == HttpStatusCode.OK) {
                 val bytes = response.readRawBytes()
@@ -190,7 +198,8 @@ object HighQualityFaviconService {
                     ImageIO.write(bufferedImage, "PNG", cacheFile)
 
                     val imageBitmap = bufferedImage.toComposeImageBitmap()
-                    ai.rever.boss.plugin.api.TabIcon.Image(BitmapPainter(imageBitmap))
+                    ai.rever.boss.plugin.api.TabIcon
+                        .Image(BitmapPainter(imageBitmap))
                 } else {
                     // Image too small, skip caching
                     null
@@ -218,9 +227,10 @@ object HighQualityFaviconService {
 
             if (files.size >= MAX_CACHE_SIZE) {
                 // Sort by last modified (oldest first) and delete oldest entries
-                val toDelete = files
-                    .sortedBy { it.lastModified() }
-                    .take(CACHE_EVICTION_COUNT)
+                val toDelete =
+                    files
+                        .sortedBy { it.lastModified() }
+                        .take(CACHE_EVICTION_COUNT)
 
                 toDelete.forEach { file ->
                     try {

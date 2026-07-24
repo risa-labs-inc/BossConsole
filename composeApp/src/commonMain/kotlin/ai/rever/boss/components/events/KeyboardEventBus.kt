@@ -1,10 +1,10 @@
 package ai.rever.boss.components.events
 
 import ai.rever.boss.ipc.IpcEventBridge
+import ai.rever.boss.keymap.model.ShortcutContext
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.ui.input.key.KeyEvent
-import ai.rever.boss.keymap.model.ShortcutContext
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.*
@@ -20,7 +20,7 @@ data class KeyboardEvent(
     val source: KeyEventSource,
     val context: ShortcutContext,
     val sourceWindowId: String,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
 )
 
 /**
@@ -47,14 +47,16 @@ enum class KeyEventSource {
     WORKSPACE,
 
     /** Event from automated testing */
-    TEST
+    TEST,
 }
 
 /**
  * Priority levels for keyboard event handling.
  * Lower priority values are handled first (Component > Workspace > Global).
  */
-enum class KeyboardEventPriority(val level: Int) {
+enum class KeyboardEventPriority(
+    val level: Int,
+) {
     /** Highest priority - focused component handles first */
     COMPONENT(0),
 
@@ -62,12 +64,11 @@ enum class KeyboardEventPriority(val level: Int) {
     WORKSPACE(1),
 
     /** Lowest priority - global app-wide shortcuts handled last */
-    GLOBAL(2);
+    GLOBAL(2),
+    ;
 
     companion object {
-        fun fromLevel(level: Int): KeyboardEventPriority {
-            return entries.find { it.level == level } ?: GLOBAL
-        }
+        fun fromLevel(level: Int): KeyboardEventPriority = entries.find { it.level == level } ?: GLOBAL
     }
 }
 
@@ -77,7 +78,7 @@ enum class KeyboardEventPriority(val level: Int) {
 data class KeyboardEventResult(
     val consumed: Boolean,
     val handlerName: String,
-    val actionId: String? = null
+    val actionId: String? = null,
 )
 
 /**
@@ -86,8 +87,8 @@ data class KeyboardEventResult(
  */
 private data class HandlerInfo(
     val handlerName: String,
-    val targetWindowId: String,  // Every handler must be tied to a specific window
-    val handler: suspend (KeyboardEvent) -> KeyboardEventResult
+    val targetWindowId: String, // Every handler must be tied to a specific window
+    val handler: suspend (KeyboardEvent) -> KeyboardEventResult,
 )
 
 /**
@@ -105,11 +106,12 @@ object KeyboardEventBus {
     /** Optional IPC bridge for forwarding events cross-process in kernel mode. */
     @Volatile var ipcBridge: IpcEventBridge? = null
 
-    private val _events = MutableSharedFlow<KeyboardEvent>(
-        replay = 0,
-        extraBufferCapacity = 100,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST
-    )
+    private val _events =
+        MutableSharedFlow<KeyboardEvent>(
+            replay = 0,
+            extraBufferCapacity = 100,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
 
     /**
      * Flow of all keyboard events emitted to the bus.
@@ -183,20 +185,29 @@ object KeyboardEventBus {
         priority: KeyboardEventPriority,
         handlerName: String,
         targetWindowId: String,
-        handler: suspend (KeyboardEvent) -> KeyboardEventResult
+        handler: suspend (KeyboardEvent) -> KeyboardEventResult,
     ): Job {
         // Add handler to the list for this priority (thread-safe with atomic computeIfAbsent)
         val handlerInfo = HandlerInfo(handlerName, targetWindowId, handler)
         handlers.computeIfAbsent(priority) { CopyOnWriteArrayList() }.add(handlerInfo)
 
         if (debugMode) {
-            logger.debug(LogCategory.UI, "Registered handler", mapOf("handler" to handlerName, "windowId" to targetWindowId, "priority" to priority.name))
+            logger.debug(
+                LogCategory.UI,
+                "Registered handler",
+                mapOf(
+                    "handler" to handlerName,
+                    "windowId" to targetWindowId,
+                    "priority" to priority.name,
+                ),
+            )
         }
 
         // Return a job that removes the handler when cancelled
-        val job = scope.launch {
-            awaitCancellation()
-        }
+        val job =
+            scope.launch {
+                awaitCancellation()
+            }
 
         // Use invokeOnCompletion to ensure handler removal happens synchronously
         // when the job is cancelled/completed. This runs on the thread that calls
@@ -226,7 +237,5 @@ object KeyboardEventBus {
      * Gets the count of registered handlers for each priority level.
      * Useful for debugging.
      */
-    fun getHandlerCounts(): Map<KeyboardEventPriority, Int> {
-        return handlers.mapValues { it.value.size }
-    }
+    fun getHandlerCounts(): Map<KeyboardEventPriority, Int> = handlers.mapValues { it.value.size }
 }

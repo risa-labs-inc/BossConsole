@@ -23,9 +23,9 @@ plugins {
 // files — only NEW violations fail the build. Regenerate a module's baseline
 // with `./gradlew :<module>:detektBaseline` (root: `./gradlew detektBaseline`).
 //
-// ktlint: formatting check tasks only for now (`ktlintCheck` /
-// `ktlintFormat`). ignoreFailures stays true until a format-the-world PR
-// lands; flipping it earlier would gate every build on legacy formatting.
+// ktlint: formatting gate (`ktlintCheck`, wired into `check`; `ktlintFormat`
+// to fix). The format-the-world PR normalized the whole tree, so any failure
+// is a new violation — run `./gradlew ktlintFormat` and recommit.
 // ---------------------------------------------------------------------------
 allprojects {
     apply(plugin = "io.gitlab.arturbosch.detekt")
@@ -43,10 +43,13 @@ allprojects {
     }
 
     extensions.configure<KtlintExtension> {
-        // Report-only until the format-the-world PR lands; ktlintCheck is part
-        // of `check`, so failing here would gate every build on legacy
-        // formatting before it has been normalized.
-        ignoreFailures.set(true)
+        // Pin the ktlint engine to the exact version the format-the-world
+        // reformat was produced with (ktlint-gradle 14.2.0 bundles 1.5.0 by
+        // default; rule behavior differs across engine versions).
+        version.set("1.8.0")
+        // The format-the-world PR normalized every module; ktlintCheck is part
+        // of `check` and NEW formatting violations fail the build.
+        ignoreFailures.set(false)
     }
 }
 
@@ -59,8 +62,9 @@ apply(from = "gradle/version.gradle.kts")
 // because boss-ipc is itself excluded from settings.gradle.kts there.
 val rootSettingsOsArch: String = System.getProperty("os.arch").lowercase()
 val rootSettingsOsName: String = System.getProperty("os.name").lowercase()
-val isRootWindowsArm64 = rootSettingsOsName.contains("win") &&
-    (rootSettingsOsArch == "aarch64" || rootSettingsOsArch == "arm")
+val isRootWindowsArm64 =
+    rootSettingsOsName.contains("win") &&
+        (rootSettingsOsArch == "aarch64" || rootSettingsOsArch == "arm")
 if (!isRootWindowsArm64) {
     apply(from = "gradle/upstream-artifacts.gradle.kts")
 }

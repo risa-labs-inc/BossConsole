@@ -26,35 +26,40 @@ data class PerformanceSettings(
 ) {
     companion object {
         /** Auto-detect: 2% of system RAM per plugin, clamped 256–4096 MB. */
-        val DEFAULT_PLUGIN_HEAP_MB: Int = run {
-            val totalMemMb = try {
-                val osBean = java.lang.management.ManagementFactory.getOperatingSystemMXBean()
-                val method = osBean.javaClass.getMethod("getTotalPhysicalMemorySize")
-                method.isAccessible = true
-                (method.invoke(osBean) as Long) / (1024 * 1024)
-            } catch (_: Exception) {
-                16_384L // fallback 16 GB
+        val DEFAULT_PLUGIN_HEAP_MB: Int =
+            run {
+                val totalMemMb =
+                    try {
+                        val osBean =
+                            java.lang.management.ManagementFactory
+                                .getOperatingSystemMXBean()
+                        val method = osBean.javaClass.getMethod("getTotalPhysicalMemorySize")
+                        method.isAccessible = true
+                        (method.invoke(osBean) as Long) / (1024 * 1024)
+                    } catch (_: Exception) {
+                        16_384L // fallback 16 GB
+                    }
+                (totalMemMb / 50).toInt().coerceIn(256, 4096)
             }
-            (totalMemMb / 50).toInt().coerceIn(256, 4096)
-        }
     }
 
     /**
      * Returns a validated copy of settings with values clamped to valid ranges.
      */
-    fun validated(): PerformanceSettings = copy(
-        memoryWarningThresholdPercent = memoryWarningThresholdPercent.coerceIn(1, 100),
-        memoryCriticalThresholdPercent = memoryCriticalThresholdPercent.coerceIn(1, 100),
-        cpuWarningThresholdPercent = cpuWarningThresholdPercent.coerceIn(1, 100),
-        cpuCriticalThresholdPercent = cpuCriticalThresholdPercent.coerceIn(1, 100),
-        memorySampleIntervalMs = memorySampleIntervalMs.coerceAtLeast(100),
-        cpuSampleIntervalMs = cpuSampleIntervalMs.coerceAtLeast(100),
-        resourceSampleIntervalMs = resourceSampleIntervalMs.coerceAtLeast(100),
-        gcSampleIntervalMs = gcSampleIntervalMs.coerceAtLeast(100),
-        historyRetentionMinutes = historyRetentionMinutes.coerceIn(1, 180),
-        pluginJvmHeapMb = pluginJvmHeapMb.coerceIn(128, 8192),
-        pluginJvmInitialHeapMb = pluginJvmInitialHeapMb.coerceIn(32, pluginJvmHeapMb),
-    )
+    fun validated(): PerformanceSettings =
+        copy(
+            memoryWarningThresholdPercent = memoryWarningThresholdPercent.coerceIn(1, 100),
+            memoryCriticalThresholdPercent = memoryCriticalThresholdPercent.coerceIn(1, 100),
+            cpuWarningThresholdPercent = cpuWarningThresholdPercent.coerceIn(1, 100),
+            cpuCriticalThresholdPercent = cpuCriticalThresholdPercent.coerceIn(1, 100),
+            memorySampleIntervalMs = memorySampleIntervalMs.coerceAtLeast(100),
+            cpuSampleIntervalMs = cpuSampleIntervalMs.coerceAtLeast(100),
+            resourceSampleIntervalMs = resourceSampleIntervalMs.coerceAtLeast(100),
+            gcSampleIntervalMs = gcSampleIntervalMs.coerceAtLeast(100),
+            historyRetentionMinutes = historyRetentionMinutes.coerceIn(1, 180),
+            pluginJvmHeapMb = pluginJvmHeapMb.coerceIn(128, 8192),
+            pluginJvmInitialHeapMb = pluginJvmInitialHeapMb.coerceIn(32, pluginJvmHeapMb),
+        )
 }
 
 /**
@@ -66,7 +71,7 @@ data class PerformanceSnapshot(
     val memory: MemoryMetrics,
     val cpu: CpuMetrics,
     val gc: GcMetrics,
-    val resources: ResourceMetrics
+    val resources: ResourceMetrics,
 )
 
 /**
@@ -79,7 +84,7 @@ data class MemoryMetrics(
     val heapCommittedBytes: Long,
     val nonHeapUsedBytes: Long,
     val nonHeapCommittedBytes: Long,
-    val memoryPools: List<MemoryPoolInfo> = emptyList()
+    val memoryPools: List<MemoryPoolInfo> = emptyList(),
 ) {
     val heapUsagePercent: Float
         get() = if (heapMaxBytes > 0) (heapUsedBytes.toFloat() / heapMaxBytes) * 100f else 0f
@@ -106,10 +111,10 @@ data class MemoryMetrics(
 @Serializable
 data class MemoryPoolInfo(
     val name: String,
-    val type: String,           // HEAP or NON_HEAP
+    val type: String, // HEAP or NON_HEAP
     val usedBytes: Long,
     val maxBytes: Long,
-    val committedBytes: Long
+    val committedBytes: Long,
 ) {
     val usedMB: Float
         get() = usedBytes / (1024f * 1024f)
@@ -118,9 +123,14 @@ data class MemoryPoolInfo(
         get() = if (maxBytes > 0) maxBytes / (1024f * 1024f) else committedBytes / (1024f * 1024f)
 
     val usagePercent: Float
-        get() = if (maxBytes > 0) (usedBytes.toFloat() / maxBytes) * 100f
-                else if (committedBytes > 0) (usedBytes.toFloat() / committedBytes) * 100f
-                else 0f
+        get() =
+            if (maxBytes > 0) {
+                (usedBytes.toFloat() / maxBytes) * 100f
+            } else if (committedBytes > 0) {
+                (usedBytes.toFloat() / committedBytes) * 100f
+            } else {
+                0f
+            }
 }
 
 /**
@@ -128,11 +138,11 @@ data class MemoryPoolInfo(
  */
 @Serializable
 data class CpuMetrics(
-    val processLoad: Double,      // 0.0-1.0, JVM process CPU usage
-    val systemLoad: Double,       // 0.0-1.0, overall system CPU usage
+    val processLoad: Double, // 0.0-1.0, JVM process CPU usage
+    val systemLoad: Double, // 0.0-1.0, overall system CPU usage
     val availableProcessors: Int,
     val activeThreadCount: Int,
-    val threads: List<ThreadInfo> = emptyList()
+    val threads: List<ThreadInfo> = emptyList(),
 ) {
     val processLoadPercent: Float
         get() = (processLoad * 100).toFloat()
@@ -148,11 +158,11 @@ data class CpuMetrics(
 data class ThreadInfo(
     val id: Long,
     val name: String,
-    val state: String,           // RUNNABLE, WAITING, BLOCKED, etc.
-    val cpuTimeMs: Long,         // CPU time in milliseconds
-    val userTimeMs: Long,        // User time in milliseconds
-    val blockedCount: Long,      // Times blocked
-    val waitedCount: Long        // Times waited
+    val state: String, // RUNNABLE, WAITING, BLOCKED, etc.
+    val cpuTimeMs: Long, // CPU time in milliseconds
+    val userTimeMs: Long, // User time in milliseconds
+    val blockedCount: Long, // Times blocked
+    val waitedCount: Long, // Times waited
 )
 
 /**
@@ -164,7 +174,7 @@ data class GcMetrics(
     val collectionTimeMs: Long,
     /** Time spent in GC since last sample (not individual GC event duration) */
     val gcTimeSinceLastSampleMs: Long,
-    val gcCollectors: List<GcCollectorInfo>
+    val gcCollectors: List<GcCollectorInfo>,
 )
 
 /**
@@ -175,7 +185,7 @@ data class GcCollectorInfo(
     val name: String,
     val collectionCount: Long,
     val collectionTimeMs: Long,
-    val lastGcInfo: LastGcInfo? = null
+    val lastGcInfo: LastGcInfo? = null,
 )
 
 /**
@@ -183,10 +193,10 @@ data class GcCollectorInfo(
  */
 @Serializable
 data class LastGcInfo(
-    val startTime: Long,        // Timestamp when GC started
-    val durationMs: Long,       // Duration of the GC
+    val startTime: Long, // Timestamp when GC started
+    val durationMs: Long, // Duration of the GC
     val memoryBeforeBytes: Long,
-    val memoryAfterBytes: Long
+    val memoryAfterBytes: Long,
 ) {
     val memoryReclaimedBytes: Long
         get() = memoryBeforeBytes - memoryAfterBytes
@@ -213,7 +223,7 @@ data class ResourceMetrics(
     val windowCount: Int,
     val browserTabs: List<BrowserTabInfo> = emptyList(),
     val terminals: List<TerminalInfo> = emptyList(),
-    val editorTabs: List<EditorTabResourceInfo> = emptyList()
+    val editorTabs: List<EditorTabResourceInfo> = emptyList(),
 )
 
 /**
@@ -224,7 +234,7 @@ data class BrowserTabInfo(
     val id: String,
     val title: String,
     val url: String,
-    val isActive: Boolean = false
+    val isActive: Boolean = false,
 )
 
 /**
@@ -235,7 +245,7 @@ data class TerminalInfo(
     val id: String,
     val title: String,
     val workingDirectory: String = "",
-    val isActive: Boolean = false
+    val isActive: Boolean = false,
 )
 
 /**
@@ -247,16 +257,16 @@ data class EditorTabResourceInfo(
     val fileName: String,
     val filePath: String,
     val isModified: Boolean = false,
-    val isActive: Boolean = false
+    val isActive: Boolean = false,
 )
 
 /**
  * Health status for indicators.
  */
 enum class HealthStatus {
-    GOOD,       // Green
-    WARNING,    // Yellow/Orange
-    CRITICAL    // Red
+    GOOD, // Green
+    WARNING, // Yellow/Orange
+    CRITICAL, // Red
 }
 
 /**
@@ -265,30 +275,36 @@ enum class HealthStatus {
 data class PerformanceHealth(
     val memoryStatus: HealthStatus,
     val cpuStatus: HealthStatus,
-    val overall: HealthStatus
+    val overall: HealthStatus,
 ) {
     companion object {
-        fun fromSnapshot(snapshot: PerformanceSnapshot, settings: PerformanceSettings): PerformanceHealth {
+        fun fromSnapshot(
+            snapshot: PerformanceSnapshot,
+            settings: PerformanceSettings,
+        ): PerformanceHealth {
             val memoryPercent = snapshot.memory.heapUsagePercent
             val cpuPercent = snapshot.cpu.processLoadPercent
 
-            val memoryStatus = when {
-                memoryPercent >= settings.memoryCriticalThresholdPercent -> HealthStatus.CRITICAL
-                memoryPercent >= settings.memoryWarningThresholdPercent -> HealthStatus.WARNING
-                else -> HealthStatus.GOOD
-            }
+            val memoryStatus =
+                when {
+                    memoryPercent >= settings.memoryCriticalThresholdPercent -> HealthStatus.CRITICAL
+                    memoryPercent >= settings.memoryWarningThresholdPercent -> HealthStatus.WARNING
+                    else -> HealthStatus.GOOD
+                }
 
-            val cpuStatus = when {
-                cpuPercent >= settings.cpuCriticalThresholdPercent -> HealthStatus.CRITICAL
-                cpuPercent >= settings.cpuWarningThresholdPercent -> HealthStatus.WARNING
-                else -> HealthStatus.GOOD
-            }
+            val cpuStatus =
+                when {
+                    cpuPercent >= settings.cpuCriticalThresholdPercent -> HealthStatus.CRITICAL
+                    cpuPercent >= settings.cpuWarningThresholdPercent -> HealthStatus.WARNING
+                    else -> HealthStatus.GOOD
+                }
 
-            val overall = when {
-                memoryStatus == HealthStatus.CRITICAL || cpuStatus == HealthStatus.CRITICAL -> HealthStatus.CRITICAL
-                memoryStatus == HealthStatus.WARNING || cpuStatus == HealthStatus.WARNING -> HealthStatus.WARNING
-                else -> HealthStatus.GOOD
-            }
+            val overall =
+                when {
+                    memoryStatus == HealthStatus.CRITICAL || cpuStatus == HealthStatus.CRITICAL -> HealthStatus.CRITICAL
+                    memoryStatus == HealthStatus.WARNING || cpuStatus == HealthStatus.WARNING -> HealthStatus.WARNING
+                    else -> HealthStatus.GOOD
+                }
 
             return PerformanceHealth(memoryStatus, cpuStatus, overall)
         }

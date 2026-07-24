@@ -26,30 +26,30 @@ fun DashboardSection(
     actionText: String? = null,
     onAction: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
-    content: @Composable () -> Unit
+    content: @Composable () -> Unit,
 ) {
     Column(
         modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         // Header row with title and optional action
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Column {
                 Text(
                     text = title,
                     color = BossTheme.colors.textPrimary,
                     fontSize = 16.sp,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.SemiBold,
                 )
                 if (subtitle != null) {
                     Text(
                         text = subtitle,
                         color = BossTheme.colors.textSecondary,
-                        fontSize = 12.sp
+                        fontSize = 12.sp,
                     )
                 }
             }
@@ -60,9 +60,10 @@ fun DashboardSection(
                     color = BossTheme.colors.data,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,
-                    modifier = Modifier
-                        .clickable { onAction() }
-                        .padding(4.dp)
+                    modifier =
+                        Modifier
+                            .clickable { onAction() }
+                            .padding(4.dp),
                 )
             }
         }

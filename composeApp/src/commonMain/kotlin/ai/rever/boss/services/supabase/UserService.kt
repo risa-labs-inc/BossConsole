@@ -1,12 +1,12 @@
 package ai.rever.boss.services.supabase
 
+import ai.rever.boss.services.supabase.models.*
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
-import ai.rever.boss.services.supabase.models.*
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.jan.supabase.postgrest.rpc
 import io.github.jan.supabase.postgrest.query.Columns
+import io.github.jan.supabase.postgrest.rpc
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -46,14 +46,18 @@ object UserService {
      * @param offset Number of users to skip for pagination (default: 0)
      * @return Result containing list of users and whether there are more users to load
      */
-    suspend fun getAllUsers(limit: Int = 50, offset: Int = 0): Result<PaginatedResult<UserBasicInfo>> {
-        return try {
+    suspend fun getAllUsers(
+        limit: Int = 50,
+        offset: Int = 0,
+    ): Result<PaginatedResult<UserBasicInfo>> =
+        try {
             // Fetch limit + 1 to check if there are more results
-            val users = client.from("users")
-                .select(Columns.ALL) {
-                    range(offset.toLong(), (offset + limit).toLong())
-                }
-                .decodeList<UserBasicInfo>()
+            val users =
+                client
+                    .from("users")
+                    .select(Columns.ALL) {
+                        range(offset.toLong(), (offset + limit).toLong())
+                    }.decodeList<UserBasicInfo>()
 
             // Check if there are more results
             val hasMore = users.size > limit
@@ -65,7 +69,6 @@ object UserService {
             logger.error(LogCategory.AUTH, "Failed to fetch users", error = e)
             Result.failure(Exception("Failed to fetch users: ${e.message}"))
         }
-    }
 
     /**
      * Fetch all users with their roles combined (paginated)
@@ -81,7 +84,10 @@ object UserService {
      * @param offset Number of users to skip for pagination (default: 0)
      * @return Result containing list of users with roles and whether there are more to load
      */
-    suspend fun getAllUsersWithRoles(limit: Int = 50, offset: Int = 0): Result<PaginatedResult<UserWithRoles>> {
+    suspend fun getAllUsersWithRoles(
+        limit: Int = 50,
+        offset: Int = 0,
+    ): Result<PaginatedResult<UserWithRoles>> {
         return try {
             // Step 1: Fetch users with pagination
             val usersResult = getAllUsers(limit, offset)
@@ -94,23 +100,31 @@ object UserService {
             logger.debug(LogCategory.AUTH, "Fetching roles for users", mapOf("count" to users.size, "offset" to offset))
 
             // Step 2: Fetch roles for each user
-            val usersWithRoles = users.map { user ->
-                val rolesResult = RoleService.getUserRoles(user.id)
-                val userRoles = rolesResult.getOrNull() ?: emptyList()
+            val usersWithRoles =
+                users.map { user ->
+                    val rolesResult = RoleService.getUserRoles(user.id)
+                    val userRoles = rolesResult.getOrNull() ?: emptyList()
 
-                // Get role names as strings (supports dynamic roles)
-                val roleNames = userRoles.map { it.role }
-                val isAdmin = roleNames.contains("admin")
+                    // Get role names as strings (supports dynamic roles)
+                    val roleNames = userRoles.map { it.role }
+                    val isAdmin = roleNames.contains("admin")
 
-                UserWithRoles(
-                    userId = user.id,
-                    email = user.email,
-                    roles = roleNames,
-                    isAdmin = isAdmin
-                )
-            }
+                    UserWithRoles(
+                        userId = user.id,
+                        email = user.email,
+                        roles = roleNames,
+                        isAdmin = isAdmin,
+                    )
+                }
 
-            logger.debug(LogCategory.AUTH, "Successfully fetched users with roles", mapOf("count" to usersWithRoles.size, "hasMore" to paginatedUsers.hasMore))
+            logger.debug(
+                LogCategory.AUTH,
+                "Successfully fetched users with roles",
+                mapOf(
+                    "count" to usersWithRoles.size,
+                    "hasMore" to paginatedUsers.hasMore,
+                ),
+            )
             Result.success(PaginatedResult(usersWithRoles, paginatedUsers.hasMore))
         } catch (e: Exception) {
             logger.error(LogCategory.AUTH, "Failed to fetch users with roles", error = e)
@@ -132,7 +146,7 @@ object UserService {
     suspend fun searchUsersByEmail(
         searchQuery: String,
         limit: Int = 50,
-        offset: Int = 0
+        offset: Int = 0,
     ): Result<PaginatedResult<UserWithRoles>> {
         return try {
             // If search query is blank, return all users
@@ -141,39 +155,57 @@ object UserService {
             }
 
             // Step 1: Search users in database with ILIKE (case-insensitive)
-            val users = client.from("users")
-                .select(Columns.ALL) {
-                    filter {
-                        ilike("email", "%$searchQuery%")
-                    }
-                    range(offset.toLong(), (offset + limit).toLong())
-                }
-                .decodeList<UserBasicInfo>()
+            val users =
+                client
+                    .from("users")
+                    .select(Columns.ALL) {
+                        filter {
+                            ilike("email", "%$searchQuery%")
+                        }
+                        range(offset.toLong(), (offset + limit).toLong())
+                    }.decodeList<UserBasicInfo>()
 
             // Check if there are more results
             val hasMore = users.size > limit
             val actualUsers = if (hasMore) users.take(limit) else users
 
-            logger.debug(LogCategory.AUTH, "Search found users", mapOf("count" to actualUsers.size, "query" to searchQuery, "offset" to offset, "hasMore" to hasMore))
+            logger.debug(
+                LogCategory.AUTH,
+                "Search found users",
+                mapOf(
+                    "count" to actualUsers.size,
+                    "query" to searchQuery,
+                    "offset" to offset,
+                    "hasMore" to hasMore,
+                ),
+            )
 
             // Step 2: Fetch roles for each user
-            val usersWithRoles = actualUsers.map { user ->
-                val rolesResult = RoleService.getUserRoles(user.id)
-                val userRoles = rolesResult.getOrNull() ?: emptyList()
+            val usersWithRoles =
+                actualUsers.map { user ->
+                    val rolesResult = RoleService.getUserRoles(user.id)
+                    val userRoles = rolesResult.getOrNull() ?: emptyList()
 
-                // Get role names as strings (supports dynamic roles)
-                val roleNames = userRoles.map { it.role }
-                val isAdmin = roleNames.contains("admin")
+                    // Get role names as strings (supports dynamic roles)
+                    val roleNames = userRoles.map { it.role }
+                    val isAdmin = roleNames.contains("admin")
 
-                UserWithRoles(
-                    userId = user.id,
-                    email = user.email,
-                    roles = roleNames,
-                    isAdmin = isAdmin
-                )
-            }
+                    UserWithRoles(
+                        userId = user.id,
+                        email = user.email,
+                        roles = roleNames,
+                        isAdmin = isAdmin,
+                    )
+                }
 
-            logger.debug(LogCategory.AUTH, "Successfully fetched users with roles for search", mapOf("count" to usersWithRoles.size, "query" to searchQuery))
+            logger.debug(
+                LogCategory.AUTH,
+                "Successfully fetched users with roles for search",
+                mapOf(
+                    "count" to usersWithRoles.size,
+                    "query" to searchQuery,
+                ),
+            )
             Result.success(PaginatedResult(usersWithRoles, hasMore))
         } catch (e: Exception) {
             logger.error(LogCategory.AUTH, "Failed to search users", error = e)
@@ -184,22 +216,22 @@ object UserService {
     /**
      * Fetch a single user by their ID
      */
-    suspend fun getUserById(userId: String): Result<UserBasicInfo> {
-        return try {
-            val user = client.from("users")
-                .select(Columns.ALL) {
-                    filter {
-                        eq("id", userId)
-                    }
-                }
-                .decodeSingle<UserBasicInfo>()
+    suspend fun getUserById(userId: String): Result<UserBasicInfo> =
+        try {
+            val user =
+                client
+                    .from("users")
+                    .select(Columns.ALL) {
+                        filter {
+                            eq("id", userId)
+                        }
+                    }.decodeSingle<UserBasicInfo>()
 
             Result.success(user)
         } catch (e: Exception) {
             logger.error(LogCategory.AUTH, "Failed to fetch user", mapOf("userId" to userId, "error" to (e.message ?: "unknown")))
             Result.failure(Exception("Failed to fetch user: ${e.message}"))
         }
-    }
 
     /**
      * Fetch a single user with their roles
@@ -219,12 +251,13 @@ object UserService {
             val roleNames = userRoles.map { it.role }
             val isAdmin = roleNames.contains("admin")
 
-            val userWithRoles = UserWithRoles(
-                userId = user.id,
-                email = user.email,
-                roles = roleNames,
-                isAdmin = isAdmin
-            )
+            val userWithRoles =
+                UserWithRoles(
+                    userId = user.id,
+                    email = user.email,
+                    roles = roleNames,
+                    isAdmin = isAdmin,
+                )
 
             Result.success(userWithRoles)
         } catch (e: Exception) {
@@ -246,16 +279,17 @@ object UserService {
      * @param userId The ID of the user to delete
      * @return Result indicating success or failure
      */
-    suspend fun deleteUser(userId: String): Result<Unit> {
-        return try {
+    suspend fun deleteUser(userId: String): Result<Unit> =
+        try {
             logger.info(LogCategory.AUTH, "Attempting to delete user", mapOf("userId" to userId))
 
             // Call the PostgreSQL delete_user function via RPC
             client.postgrest.rpc(
                 function = "delete_user",
-                parameters = kotlinx.serialization.json.buildJsonObject {
-                    put("target_user_id", userId)
-                }
+                parameters =
+                    kotlinx.serialization.json.buildJsonObject {
+                        put("target_user_id", userId)
+                    },
             )
 
             logger.info(LogCategory.AUTH, "Successfully deleted user", mapOf("userId" to userId))
@@ -264,7 +298,6 @@ object UserService {
             logger.error(LogCategory.AUTH, "Failed to delete user", error = e)
             Result.failure(Exception("Failed to delete user: ${e.message}"))
         }
-    }
 }
 
 /**
@@ -275,7 +308,7 @@ data class UserBasicInfo(
     val id: String,
     val email: String,
     val created_at: String? = null,
-    val updated_at: String? = null
+    val updated_at: String? = null,
 )
 
 /**
@@ -286,5 +319,5 @@ data class UserBasicInfo(
  */
 data class PaginatedResult<T>(
     val data: List<T>,
-    val hasMore: Boolean
+    val hasMore: Boolean,
 )

@@ -45,7 +45,7 @@ expect object PerformanceState {
         terminals: () -> Int,
         editorTabs: () -> Int,
         panels: () -> Int,
-        windows: () -> Int
+        windows: () -> Int,
     )
 
     /**
@@ -55,7 +55,7 @@ expect object PerformanceState {
     fun registerDetailedResourceProviders(
         browserTabs: () -> List<BrowserTabInfo>,
         terminals: () -> List<TerminalInfo>,
-        editorTabs: () -> List<EditorTabResourceInfo>
+        editorTabs: () -> List<EditorTabResourceInfo>,
     )
 
     /**

@@ -1,6 +1,8 @@
 package ai.rever.boss.components.misc
 
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.services.network.NetworkMonitorService
+import ai.rever.boss.services.network.NetworkState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -22,21 +24,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import ai.rever.boss.services.network.NetworkMonitorService
-import ai.rever.boss.services.network.NetworkState
-import kotlinx.coroutines.launch
-import org.jetbrains.compose.resources.painterResource
 import boss_kotlin.composeapp.generated.resources.Res
 import boss_kotlin.composeapp.generated.resources.boss_icon
+import kotlinx.coroutines.launch
+import org.jetbrains.compose.resources.painterResource
 
 /**
  * Screen shown when app starts without internet connectivity
  * Features retry button and auto-retry countdown
  */
 @Composable
-fun OfflineScreen(
-    onRetry: suspend () -> Boolean
-) {
+fun OfflineScreen(onRetry: suspend () -> Boolean) {
     val scope = rememberCoroutineScope()
     val networkState by NetworkMonitorService.networkState.collectAsState()
     val isAutoRetrying by NetworkMonitorService.isAutoRetrying.collectAsState()
@@ -51,19 +49,20 @@ fun OfflineScreen(
     }
 
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(BossTheme.colors.panel),
-        contentAlignment = Alignment.Center
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .background(BossTheme.colors.panel),
+        contentAlignment = Alignment.Center,
     ) {
         Column(
-            horizontalAlignment = Alignment.CenterHorizontally
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             // BOSS Logo
             Image(
                 painter = painterResource(Res.drawable.boss_icon),
                 contentDescription = "BOSS Logo",
-                modifier = Modifier.size(80.dp)
+                modifier = Modifier.size(80.dp),
             )
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -73,7 +72,7 @@ fun OfflineScreen(
                 imageVector = Icons.Filled.WifiOff,
                 contentDescription = "No Internet",
                 tint = BossTheme.colors.textSecondary,
-                modifier = Modifier.size(48.dp)
+                modifier = Modifier.size(48.dp),
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -83,7 +82,7 @@ fun OfflineScreen(
                 text = "No Internet Connection",
                 color = BossTheme.colors.textPrimary,
                 fontSize = 20.sp,
-                fontWeight = FontWeight.SemiBold
+                fontWeight = FontWeight.SemiBold,
             )
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -93,7 +92,7 @@ fun OfflineScreen(
                 text = "BOSS requires internet to authenticate.\nPlease check your connection.",
                 color = BossTheme.colors.textSecondary,
                 fontSize = 14.sp,
-                textAlign = TextAlign.Center
+                textAlign = TextAlign.Center,
             )
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -108,35 +107,38 @@ fun OfflineScreen(
                     }
                 },
                 enabled = !isManualRetrying && networkState !is NetworkState.Checking,
-                colors = ButtonDefaults.buttonColors(
-                    backgroundColor = BossTheme.colors.signal,
-                    contentColor = BossTheme.colors.onSignal,
-                    disabledBackgroundColor = BossTheme.colors.raised,
-                    disabledContentColor = BossTheme.colors.textSecondary
-                ),
+                colors =
+                    ButtonDefaults.buttonColors(
+                        backgroundColor = BossTheme.colors.signal,
+                        contentColor = BossTheme.colors.onSignal,
+                        disabledBackgroundColor = BossTheme.colors.raised,
+                        disabledContentColor = BossTheme.colors.textSecondary,
+                    ),
                 shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.padding(horizontal = 32.dp)
+                modifier = Modifier.padding(horizontal = 32.dp),
             ) {
                 if (isManualRetrying || networkState is NetworkState.Checking) {
                     CircularProgressIndicator(
                         color = BossTheme.colors.textSecondary,
                         modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp
+                        strokeWidth = 2.dp,
                     )
                 } else {
                     Icon(
                         imageVector = Icons.Filled.Refresh,
                         contentDescription = null,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(18.dp),
                     )
                 }
                 Spacer(modifier = Modifier.size(8.dp))
                 Text(
-                    text = if (isManualRetrying || networkState is NetworkState.Checking)
-                        "Checking..."
-                    else
-                        "Retry Connection",
-                    fontSize = 14.sp
+                    text =
+                        if (isManualRetrying || networkState is NetworkState.Checking) {
+                            "Checking..."
+                        } else {
+                            "Retry Connection"
+                        },
+                    fontSize = 14.sp,
                 )
             }
 
@@ -147,7 +149,7 @@ fun OfflineScreen(
                 Text(
                     text = "Auto-retry in ${nextRetryCountdown}s",
                     color = BossTheme.colors.textSecondary,
-                    fontSize = 12.sp
+                    fontSize = 12.sp,
                 )
             }
 
@@ -158,7 +160,7 @@ fun OfflineScreen(
                 Text(
                     text = "Attempt $retryAttempt",
                     color = BossTheme.colors.textSecondary.copy(alpha = 0.6f),
-                    fontSize = 11.sp
+                    fontSize = 11.sp,
                 )
             }
         }

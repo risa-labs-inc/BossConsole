@@ -29,16 +29,19 @@ object JxBrowserConfig {
                     LogCategory.BROWSER,
                     "JxBrowser license key not configured — set JXBROWSER_LICENSE_KEY " +
                         "(env var) or jxbrowser.license.key in local.properties. " +
-                        "Browser features will be unavailable."
+                        "Browser features will be unavailable.",
                 )
                 ""
             }
     }
-    
+
     // Other JxBrowser configuration options
-    val defaultUrl: String = ConfigLoader.getConfig("jxbrowser.default.url",
-        "https://www.risalabs.ai") ?: "https://www.risalabs.ai"
-    
+    val defaultUrl: String =
+        ConfigLoader.getConfig(
+            "jxbrowser.default.url",
+            "https://www.risalabs.ai",
+        ) ?: "https://www.risalabs.ai"
+
     // OFF_SCREEN mode for lightweight Compose popups compatibility.
     // HARDWARE_ACCELERATED renders into a foreign native window/CALayer owned by
     // Chromium's GPU process, which always sits above the Compose scene — Compose
@@ -48,5 +51,4 @@ object JxBrowserConfig {
     // remains the required mode. Rendering-perf work should target the engine
     // boot path and Chromium switches (see FluckEngine.applyPerformanceSwitches).
     val renderingMode = com.teamdev.jxbrowser.engine.RenderingMode.OFF_SCREEN
-
-} 
+}

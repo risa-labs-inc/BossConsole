@@ -9,16 +9,16 @@ import ai.rever.boss.plugin.api.RoleManagementProvider
 class RoleManagementServiceBridge(
     private val provider: RoleManagementProvider,
 ) : RoleManagementServiceGrpcKt.RoleManagementServiceCoroutineImplBase() {
-
     override suspend fun getAllRoles(request: Empty): RoleListResponse {
         val result = provider.getAllRoles()
         return result.fold(
             onSuccess = { roles ->
-                RoleListResponse.newBuilder()
+                RoleListResponse
+                    .newBuilder()
                     .addAllRoles(roles.map { it.toProto() })
                     .build()
             },
-            onFailure = { RoleListResponse.getDefaultInstance() }
+            onFailure = { RoleListResponse.getDefaultInstance() },
         )
     }
 
@@ -26,11 +26,12 @@ class RoleManagementServiceBridge(
         val result = provider.getAllPermissions()
         return result.fold(
             onSuccess = { perms ->
-                PermissionListResponse.newBuilder()
+                PermissionListResponse
+                    .newBuilder()
                     .addAllPermissions(perms.map { it.toProto() })
                     .build()
             },
-            onFailure = { PermissionListResponse.getDefaultInstance() }
+            onFailure = { PermissionListResponse.getDefaultInstance() },
         )
     }
 
@@ -40,7 +41,7 @@ class RoleManagementServiceBridge(
             onSuccess = { role ->
                 RoleInfoResponse.newBuilder().setRole(role.toProto()).build()
             },
-            onFailure = { RoleInfoResponse.getDefaultInstance() }
+            onFailure = { RoleInfoResponse.getDefaultInstance() },
         )
     }
 
@@ -50,46 +51,43 @@ class RoleManagementServiceBridge(
             onSuccess = { perm ->
                 PermissionInfoResponse.newBuilder().setPermission(perm.toProto()).build()
             },
-            onFailure = { PermissionInfoResponse.getDefaultInstance() }
+            onFailure = { PermissionInfoResponse.getDefaultInstance() },
         )
     }
 
-    override suspend fun deleteRole(request: RoleNameRequest): RoleOperationResult {
-        return provider.deleteRole(request.name).toOperationResult()
-    }
+    override suspend fun deleteRole(request: RoleNameRequest): RoleOperationResult = provider.deleteRole(request.name).toOperationResult()
 
-    override suspend fun deletePermission(request: PermissionNameRequest): RoleOperationResult {
-        return provider.deletePermission(request.name).toOperationResult()
-    }
+    override suspend fun deletePermission(request: PermissionNameRequest): RoleOperationResult =
+        provider.deletePermission(request.name).toOperationResult()
 
-    override suspend fun assignPermissionToRole(request: RolePermissionRequest): RoleOperationResult {
-        return provider.assignPermissionToRole(request.roleName, request.permissionName).toOperationResult()
-    }
+    override suspend fun assignPermissionToRole(request: RolePermissionRequest): RoleOperationResult =
+        provider.assignPermissionToRole(request.roleName, request.permissionName).toOperationResult()
 
-    override suspend fun removePermissionFromRole(request: RolePermissionRequest): RoleOperationResult {
-        return provider.removePermissionFromRole(request.roleName, request.permissionName).toOperationResult()
-    }
+    override suspend fun removePermissionFromRole(request: RolePermissionRequest): RoleOperationResult =
+        provider.removePermissionFromRole(request.roleName, request.permissionName).toOperationResult()
 
     override suspend fun getRolePermissions(request: RoleNameRequest): RoleWithPermissionsResponse {
         val result = provider.getRolePermissions(request.name)
         return result.fold(
             onSuccess = { data ->
-                RoleWithPermissionsResponse.newBuilder()
+                RoleWithPermissionsResponse
+                    .newBuilder()
                     .setRole(
-                        RoleInfoProto.newBuilder()
+                        RoleInfoProto
+                            .newBuilder()
                             .setName(data.roleName)
                             .addAllPermissions(data.permissions)
-                            .build()
-                    )
-                    .build()
+                            .build(),
+                    ).build()
             },
-            onFailure = { RoleWithPermissionsResponse.getDefaultInstance() }
+            onFailure = { RoleWithPermissionsResponse.getDefaultInstance() },
         )
     }
 
     override suspend fun validateRoleName(request: RoleNameRequest): ValidationResponse {
         val error = provider.validateRoleName(request.name)
-        return ValidationResponse.newBuilder()
+        return ValidationResponse
+            .newBuilder()
             .setValid(error == null)
             .setErrorMessage(error ?: "")
             .build()
@@ -97,14 +95,16 @@ class RoleManagementServiceBridge(
 
     override suspend fun validatePermissionName(request: PermissionNameRequest): ValidationResponse {
         val error = provider.validatePermissionName(request.name)
-        return ValidationResponse.newBuilder()
+        return ValidationResponse
+            .newBuilder()
             .setValid(error == null)
             .setErrorMessage(error ?: "")
             .build()
     }
 
     private fun RoleInfoData.toProto(): RoleInfoProto =
-        RoleInfoProto.newBuilder()
+        RoleInfoProto
+            .newBuilder()
             .setId(id)
             .setName(name)
             .setDescription(description ?: "")
@@ -114,7 +114,8 @@ class RoleManagementServiceBridge(
             .build()
 
     private fun PermissionInfoData.toProto(): PermissionInfoProto =
-        PermissionInfoProto.newBuilder()
+        PermissionInfoProto
+            .newBuilder()
             .setId(id)
             .setName(name)
             .setDescription(description ?: "")
@@ -128,10 +129,11 @@ class RoleManagementServiceBridge(
                 RoleOperationResult.newBuilder().setSuccess(true).build()
             },
             onFailure = { error ->
-                RoleOperationResult.newBuilder()
+                RoleOperationResult
+                    .newBuilder()
                     .setSuccess(false)
                     .setErrorMessage(error.message ?: "Unknown error")
                     .build()
-            }
+            },
         )
 }

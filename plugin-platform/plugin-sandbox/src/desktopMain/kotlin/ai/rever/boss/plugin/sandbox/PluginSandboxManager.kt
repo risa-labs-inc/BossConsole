@@ -1,10 +1,10 @@
 package ai.rever.boss.plugin.sandbox
 
+import ai.rever.boss.plugin.logging.BossLogger
+import ai.rever.boss.plugin.logging.LogCategory
 import ai.rever.boss.plugin.sandbox.health.PluginHealthMonitor
 import ai.rever.boss.plugin.sandbox.health.PluginHealthSummary
 import ai.rever.boss.plugin.sandbox.health.PluginWatchdog
-import ai.rever.boss.plugin.logging.BossLogger
-import ai.rever.boss.plugin.logging.LogCategory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -45,7 +45,10 @@ interface PluginSandboxManager {
      * @param config Optional configuration for the sandbox
      * @return The created sandbox
      */
-    fun createSandbox(pluginId: String, config: SandboxConfig = SandboxConfig()): PluginSandbox
+    fun createSandbox(
+        pluginId: String,
+        config: SandboxConfig = SandboxConfig(),
+    ): PluginSandbox
 
     /**
      * Get the sandbox for a specific plugin.
@@ -158,16 +161,18 @@ interface PluginSandboxListener {
     /**
      * Called when a plugin encounters an error.
      */
-    fun onPluginError(pluginId: String, error: Throwable) {}
+    fun onPluginError(
+        pluginId: String,
+        error: Throwable,
+    ) {}
 }
 
 /**
  * Default implementation of PluginSandboxManager.
  */
 class PluginSandboxManagerImpl(
-    private val defaultConfig: SandboxConfig = SandboxConfig()
+    private val defaultConfig: SandboxConfig = SandboxConfig(),
 ) : PluginSandboxManager {
-
     private val logger = BossLogger.forComponent("PluginSandboxManager")
 
     // Manager's own scope for internal operations
@@ -231,43 +236,57 @@ class PluginSandboxManagerImpl(
         }
     }
 
-    override fun createSandbox(pluginId: String, config: SandboxConfig): PluginSandbox {
+    override fun createSandbox(
+        pluginId: String,
+        config: SandboxConfig,
+    ): PluginSandbox {
         if (sandboxes.containsKey(pluginId)) {
-            logger.warn(LogCategory.SYSTEM, "Sandbox already exists for plugin, returning existing", mapOf(
-                "pluginId" to pluginId
-            ))
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Sandbox already exists for plugin, returning existing",
+                mapOf(
+                    "pluginId" to pluginId,
+                ),
+            )
             return sandboxes[pluginId]!!
         }
 
-        logger.info(LogCategory.SYSTEM, "Creating sandbox for plugin", mapOf(
-            "pluginId" to pluginId
-        ))
+        logger.info(
+            LogCategory.SYSTEM,
+            "Creating sandbox for plugin",
+            mapOf(
+                "pluginId" to pluginId,
+            ),
+        )
 
         val sandbox = InProcessPluginSandbox(pluginId, config)
         sandboxes[pluginId] = sandbox
         healthMonitor.registerSandbox(sandbox)
 
         // Create and start watchdog
-        val watchdog = PluginWatchdog(
-            sandbox = sandbox,
-            config = config,
-            scope = managerScope,
-            onRestartRequested = { id -> handleRestartRequest(id) }
-        )
+        val watchdog =
+            PluginWatchdog(
+                sandbox = sandbox,
+                config = config,
+                scope = managerScope,
+                onRestartRequested = { id -> handleRestartRequest(id) },
+            )
         watchdogs[pluginId] = watchdog
         watchdog.start()
 
         return sandbox
     }
 
-    override fun getSandbox(pluginId: String): PluginSandbox? {
-        return sandboxes[pluginId]
-    }
+    override fun getSandbox(pluginId: String): PluginSandbox? = sandboxes[pluginId]
 
     override suspend fun removeSandbox(pluginId: String) {
-        logger.info(LogCategory.SYSTEM, "Removing sandbox", mapOf(
-            "pluginId" to pluginId
-        ))
+        logger.info(
+            LogCategory.SYSTEM,
+            "Removing sandbox",
+            mapOf(
+                "pluginId" to pluginId,
+            ),
+        )
 
         // Stop watchdog
         watchdogs[pluginId]?.stop()
@@ -281,21 +300,29 @@ class PluginSandboxManagerImpl(
         healthMonitor.unregisterSandbox(pluginId)
     }
 
-    override suspend fun fullyUnloadPlugin(pluginId: String): Result<Unit> {
-        return runCatching {
-            logger.info(LogCategory.SYSTEM, "Fully unloading plugin", mapOf(
-                "pluginId" to pluginId
-            ))
+    override suspend fun fullyUnloadPlugin(pluginId: String): Result<Unit> =
+        runCatching {
+            logger.info(
+                LogCategory.SYSTEM,
+                "Fully unloading plugin",
+                mapOf(
+                    "pluginId" to pluginId,
+                ),
+            )
 
             // 1. Notify all cleanup callbacks
             for (callback in cleanupCallbacks) {
                 try {
                     callback.onPluginUnloading(pluginId)
                 } catch (e: Exception) {
-                    logger.warn(LogCategory.SYSTEM, "Cleanup callback failed", mapOf(
-                        "pluginId" to pluginId,
-                        "error" to (e.message ?: "unknown")
-                    ))
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Cleanup callback failed",
+                        mapOf(
+                            "pluginId" to pluginId,
+                            "error" to (e.message ?: "unknown"),
+                        ),
+                    )
                 }
             }
 
@@ -313,11 +340,14 @@ class PluginSandboxManagerImpl(
             // 5. Unregister from health monitor
             healthMonitor.unregisterSandbox(pluginId)
 
-            logger.info(LogCategory.SYSTEM, "Plugin fully unloaded", mapOf(
-                "pluginId" to pluginId
-            ))
+            logger.info(
+                LogCategory.SYSTEM,
+                "Plugin fully unloaded",
+                mapOf(
+                    "pluginId" to pluginId,
+                ),
+            )
         }
-    }
 
     override fun registerCleanupCallback(callback: PluginCleanupCallback) {
         cleanupCallbacks.add(callback)
@@ -328,12 +358,17 @@ class PluginSandboxManagerImpl(
     }
 
     override suspend fun restartPlugin(pluginId: String): Result<Unit> {
-        val sandbox = sandboxes[pluginId]
-            ?: return Result.failure(IllegalArgumentException("No sandbox found for plugin: $pluginId"))
+        val sandbox =
+            sandboxes[pluginId]
+                ?: return Result.failure(IllegalArgumentException("No sandbox found for plugin: $pluginId"))
 
-        logger.info(LogCategory.SYSTEM, "Restarting plugin", mapOf(
-            "pluginId" to pluginId
-        ))
+        logger.info(
+            LogCategory.SYSTEM,
+            "Restarting plugin",
+            mapOf(
+                "pluginId" to pluginId,
+            ),
+        )
 
         notifyListeners { it.onPluginRestarting(pluginId) }
 
@@ -342,21 +377,29 @@ class PluginSandboxManagerImpl(
                 notifyListeners { it.onPluginRestarted(pluginId) }
             } else {
                 val error = result.exceptionOrNull() ?: Exception("Unknown restart failure")
-                logger.error(LogCategory.SYSTEM, "Failed to restart plugin", mapOf(
-                    "pluginId" to pluginId,
-                    "error" to (error.message ?: "unknown")
-                ))
+                logger.error(
+                    LogCategory.SYSTEM,
+                    "Failed to restart plugin",
+                    mapOf(
+                        "pluginId" to pluginId,
+                        "error" to (error.message ?: "unknown"),
+                    ),
+                )
                 // Notify listeners about the restart failure for consistent event handling
                 notifyListeners { it.onPluginError(pluginId, error) }
             }
         }
     }
 
-    override suspend fun disablePlugin(pluginId: String): Result<Unit> {
-        return runCatching {
-            logger.info(LogCategory.SYSTEM, "Disabling plugin", mapOf(
-                "pluginId" to pluginId
-            ))
+    override suspend fun disablePlugin(pluginId: String): Result<Unit> =
+        runCatching {
+            logger.info(
+                LogCategory.SYSTEM,
+                "Disabling plugin",
+                mapOf(
+                    "pluginId" to pluginId,
+                ),
+            )
 
             disabledPlugins.add(pluginId)
 
@@ -372,25 +415,29 @@ class PluginSandboxManagerImpl(
 
             notifyListeners { it.onPluginDisabled(pluginId) }
         }
-    }
 
-    override suspend fun enablePlugin(pluginId: String): Result<Unit> {
-        return runCatching {
-            logger.info(LogCategory.SYSTEM, "Enabling plugin", mapOf(
-                "pluginId" to pluginId
-            ))
+    override suspend fun enablePlugin(pluginId: String): Result<Unit> =
+        runCatching {
+            logger.info(
+                LogCategory.SYSTEM,
+                "Enabling plugin",
+                mapOf(
+                    "pluginId" to pluginId,
+                ),
+            )
 
             disabledPlugins.remove(pluginId)
 
             val sandbox = sandboxes[pluginId]
             if (sandbox != null) {
                 // Restart the watchdog
-                val watchdog = PluginWatchdog(
-                    sandbox = sandbox,
-                    config = defaultConfig,
-                    scope = managerScope,
-                    onRestartRequested = { id -> handleRestartRequest(id) }
-                )
+                val watchdog =
+                    PluginWatchdog(
+                        sandbox = sandbox,
+                        config = defaultConfig,
+                        scope = managerScope,
+                        onRestartRequested = { id -> handleRestartRequest(id) },
+                    )
                 watchdogs[pluginId] = watchdog
                 watchdog.start()
 
@@ -398,15 +445,10 @@ class PluginSandboxManagerImpl(
                 sandbox.start()
             }
         }
-    }
 
-    override fun isPluginDisabled(pluginId: String): Boolean {
-        return disabledPlugins.contains(pluginId)
-    }
+    override fun isPluginDisabled(pluginId: String): Boolean = disabledPlugins.contains(pluginId)
 
-    override fun getDisabledPlugins(): Set<String> {
-        return disabledPlugins.toSet()
-    }
+    override fun getDisabledPlugins(): Set<String> = disabledPlugins.toSet()
 
     private suspend fun handleRestartRequest(pluginId: String) {
         val sandbox = sandboxes[pluginId] ?: return
@@ -414,10 +456,14 @@ class PluginSandboxManagerImpl(
 
         // Check if we've exceeded max restarts
         if (metrics.restartAttempts >= defaultConfig.maxRestartAttempts) {
-            logger.error(LogCategory.SYSTEM, "Plugin exceeded max restart attempts, disabling", mapOf(
-                "pluginId" to pluginId,
-                "attempts" to metrics.restartAttempts
-            ))
+            logger.error(
+                LogCategory.SYSTEM,
+                "Plugin exceeded max restart attempts, disabling",
+                mapOf(
+                    "pluginId" to pluginId,
+                    "attempts" to metrics.restartAttempts,
+                ),
+            )
             // Stop watchdog to prevent further restart attempts
             watchdogs[pluginId]?.stop()
             sandbox.stop()
@@ -429,10 +475,14 @@ class PluginSandboxManagerImpl(
 
         // Calculate backoff delay
         val backoffDelay = calculateBackoff(metrics.restartAttempts)
-        logger.info(LogCategory.SYSTEM, "Scheduling plugin restart with backoff", mapOf(
-            "pluginId" to pluginId,
-            "backoffMs" to backoffDelay
-        ))
+        logger.info(
+            LogCategory.SYSTEM,
+            "Scheduling plugin restart with backoff",
+            mapOf(
+                "pluginId" to pluginId,
+                "backoffMs" to backoffDelay,
+            ),
+        )
 
         kotlinx.coroutines.delay(backoffDelay)
         restartPlugin(pluginId)
@@ -447,9 +497,7 @@ class PluginSandboxManagerImpl(
         return minOf(delay, defaultConfig.restartBackoffMaxMs)
     }
 
-    override fun getAllSandboxes(): Map<String, PluginSandbox> {
-        return sandboxes.toMap()
-    }
+    override fun getAllSandboxes(): Map<String, PluginSandbox> = sandboxes.toMap()
 
     override suspend fun dispose() {
         logger.info(LogCategory.SYSTEM, "Disposing sandbox manager")

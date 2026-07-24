@@ -44,7 +44,8 @@ internal object CoBrowseScripts {
      * (passwords are masked regardless); otherwise all rendered content streams and
      * protection rests on E2E encryption + explicit approval in the share server.
      */
-    private fun recordBootstrap(maskInputs: Boolean): String = """
+    private fun recordBootstrap(maskInputs: Boolean): String =
+        """
         (function(){
           if (window.__bossRrwebStarted) return;
           if (typeof rrwebRecord !== 'function') return;
@@ -68,19 +69,20 @@ internal object CoBrowseScripts {
             try { console.warn('boss cobrowse record failed', err); } catch (_) {}
           }
         })();
-    """.trimIndent()
+        """.trimIndent()
 
     /** Full injection payload = recorder library + bootstrap. Injected per frame. */
     fun recordInjection(maskInputs: Boolean): String = recorderLib + "\n" + recordBootstrap(maskInputs)
 
     /** Stop recording on the current page and clear the started flag. */
-    val recordStop: String = """
+    val recordStop: String =
+        """
         (function(){
           try { if (window.__bossRrwebStop) window.__bossRrwebStop(); } catch (_) {}
           window.__bossRrwebStarted = false;
           window.__bossRrwebStop = null;
         })();
-    """.trimIndent()
+        """.trimIndent()
 
     /** Set or clear the in-page control guard (defence-in-depth alongside the host gate). */
     fun setControlGuard(granted: Boolean): String = "window.__bossControlGranted = $granted;"
@@ -96,7 +98,8 @@ internal object CoBrowseScripts {
      * Navigation actions (navigate/back/forward/reload) are applied host-side via
      * [BrowserHandle] navigation methods, not here.
      */
-    fun applyControl(payloadJsonLiteral: String): String = """
+    fun applyControl(payloadJsonLiteral: String): String =
+        """
         (function(p){
           try {
             if (!window.__bossControlGranted) return "denied";
@@ -161,5 +164,5 @@ internal object CoBrowseScripts {
             return "err:" + (err && err.message ? err.message : String(err));
           }
         })($payloadJsonLiteral);
-    """.trimIndent()
+        """.trimIndent()
 }

@@ -11,7 +11,6 @@ import kotlin.test.assertTrue
  * Tests for the Version class semantic versioning comparison logic.
  */
 class VersionTest {
-
     @Test
     fun `version parsing works for standard versions`() {
         val version = Version.parse("8.16.28")

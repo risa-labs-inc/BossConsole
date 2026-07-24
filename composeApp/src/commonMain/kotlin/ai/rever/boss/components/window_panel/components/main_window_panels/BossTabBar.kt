@@ -75,7 +75,7 @@ internal fun computeTabWidthPx(
     tabCount: Int,
     dividerPx: Int,
     minTabPx: Int,
-    maxTabPx: Int
+    maxTabPx: Int,
 ): Int {
     if (rowWidthPx <= 0 || tabCount <= 0) return maxTabPx
     val totalDividersPx = dividerPx * (tabCount - 1)
@@ -108,7 +108,7 @@ internal fun computeTabWidthPx(
 fun RowScope.BossLeftTabBar(
     listState: LazyListState,
     tabCount: Int,
-    content: LazyListScope.(tabWidth: Dp) -> Unit
+    content: LazyListScope.(tabWidth: Dp) -> Unit,
 ) {
     var rowWidthPx by remember { mutableStateOf(0) }
     val density = LocalDensity.current
@@ -116,26 +116,28 @@ fun RowScope.BossLeftTabBar(
     Column(modifier = Modifier.weight(1f).padding(horizontal = 8.dp)) {
         // All arithmetic lives in computeTabWidthPx (pure, unit-tested);
         // here we only convert the Dp constants to pixels and back.
-        val tabWidth = with(density) {
-            computeTabWidthPx(
-                rowWidthPx = rowWidthPx,
-                tabCount = tabCount,
-                dividerPx = INTER_TAB_DIVIDER_WIDTH.toPx().toInt(),
-                minTabPx = MIN_TAB_WIDTH.roundToPx(),
-                maxTabPx = MAX_TAB_WIDTH.roundToPx()
-            ).toDp()
-        }
+        val tabWidth =
+            with(density) {
+                computeTabWidthPx(
+                    rowWidthPx = rowWidthPx,
+                    tabCount = tabCount,
+                    dividerPx = INTER_TAB_DIVIDER_WIDTH.toPx().toInt(),
+                    minTabPx = MIN_TAB_WIDTH.roundToPx(),
+                    maxTabPx = MAX_TAB_WIDTH.roundToPx(),
+                ).toDp()
+            }
 
         LazyRow(
             state = listState,
-            modifier = Modifier
-                .fillMaxWidth()
-                .onSizeChanged { size -> rowWidthPx = size.width }
-                .horizontalLazyListScrollbar(
-                    listState = listState,
-                    scrollbarConfig = getBarScrollbarConfig()
-                ),
-            verticalAlignment = Alignment.CenterVertically
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .onSizeChanged { size -> rowWidthPx = size.width }
+                    .horizontalLazyListScrollbar(
+                        listState = listState,
+                        scrollbarConfig = getBarScrollbarConfig(),
+                    ),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             content(tabWidth)
         }

@@ -38,11 +38,15 @@ object VersionVerifier {
             if (propsVersion != null) {
                 if (runtimeVersion != propsVersion) {
                     // VERSION MISMATCH DETECTED - This is the Issue #111 scenario!
-                    logger.error(LogCategory.SYSTEM, "VERSION MISMATCH DETECTED - VersionConstants.kt not regenerated", mapOf(
-                        "expectedVersion" to propsVersion.toString(),
-                        "actualVersion" to runtimeVersion.toString(),
-                        "fix" to "Run ./gradlew generateVersionConstants or ./gradlew clean build"
-                    ))
+                    logger.error(
+                        LogCategory.SYSTEM,
+                        "VERSION MISMATCH DETECTED - VersionConstants.kt not regenerated",
+                        mapOf(
+                            "expectedVersion" to propsVersion.toString(),
+                            "actualVersion" to runtimeVersion.toString(),
+                            "fix" to "Run ./gradlew generateVersionConstants or ./gradlew clean build",
+                        ),
+                    )
 
                     // TODO: Consider adding analytics/crash reporting here
                     // to track how often this occurs in production
@@ -51,7 +55,11 @@ object VersionVerifier {
                 }
             } else {
                 // Production build without embedded version.properties - this is normal
-                logger.debug(LogCategory.SYSTEM, "Version verification skipped (production build)", mapOf("version" to runtimeVersion.toString()))
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Version verification skipped (production build)",
+                    mapOf("version" to runtimeVersion.toString()),
+                )
             }
         } catch (e: Exception) {
             // Don't crash the app if verification fails
@@ -63,22 +71,34 @@ object VersionVerifier {
      * Attempt to load version from embedded version.properties file.
      * Returns null if file is not available (normal for production builds).
      */
-    private fun loadVersionFromProperties(): Version? {
-        return try {
+    private fun loadVersionFromProperties(): Version? =
+        try {
             // Try to load version.properties from resources
             // This may not be available in production builds
-            val propsContent = object {}.javaClass.getResourceAsStream("/version.properties")
-                ?.bufferedReader()
-                ?.use { it.readText() }
+            val propsContent =
+                object {}
+                    .javaClass
+                    .getResourceAsStream("/version.properties")
+                    ?.bufferedReader()
+                    ?.use { it.readText() }
 
             if (propsContent != null) {
                 val lines = propsContent.lines()
-                val major = lines.find { it.startsWith("app.version.major=") }
-                    ?.substringAfter("=")?.toIntOrNull()
-                val minor = lines.find { it.startsWith("app.version.minor=") }
-                    ?.substringAfter("=")?.toIntOrNull()
-                val patch = lines.find { it.startsWith("app.version.patch=") }
-                    ?.substringAfter("=")?.toIntOrNull()
+                val major =
+                    lines
+                        .find { it.startsWith("app.version.major=") }
+                        ?.substringAfter("=")
+                        ?.toIntOrNull()
+                val minor =
+                    lines
+                        .find { it.startsWith("app.version.minor=") }
+                        ?.substringAfter("=")
+                        ?.toIntOrNull()
+                val patch =
+                    lines
+                        .find { it.startsWith("app.version.patch=") }
+                        ?.substringAfter("=")
+                        ?.toIntOrNull()
 
                 if (major != null && minor != null && patch != null) {
                     Version(major, minor, patch)
@@ -97,7 +117,6 @@ object VersionVerifier {
             )
             null
         }
-    }
 
     /**
      * Get current runtime version for display purposes.

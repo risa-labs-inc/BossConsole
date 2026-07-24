@@ -20,10 +20,11 @@ import kotlinx.serialization.json.Json
 actual object SidebarVisibilitySettingsManager {
     private val logger = BossLogger.forComponent("SidebarVisibilitySettings")
     private val settingsFile = BossDirectories.resolve("sidebar-visibility-settings.json")
-    private val json = Json {
-        prettyPrint = true
-        ignoreUnknownKeys = true
-    }
+    private val json =
+        Json {
+            prettyPrint = true
+            ignoreUnknownKeys = true
+        }
 
     private val _currentSettings = MutableStateFlow(SidebarVisibilitySettings())
     actual val currentSettings: StateFlow<SidebarVisibilitySettings> = _currentSettings.asStateFlow()
@@ -38,27 +39,34 @@ actual object SidebarVisibilitySettingsManager {
     // trivial. The previous debounced scheduler risked losing writes if
     // the app closed within the debounce window — fine for a 5 s stats
     // file like DashboardStatsManager, but not for user preferences.
-    private suspend fun saveSettings() = withContext(Dispatchers.IO) {
-        try {
-            val content = json.encodeToString(
-                SidebarVisibilitySettings.serializer(),
-                _currentSettings.value
-            )
-            settingsFile.writeText(content)
-        } catch (e: Exception) {
-            // Log the in-memory state's distinguishing fields so the
-            // user's report of "my preferences didn't stick" is
-            // diagnosable. saveSettings is async and the UI has already
-            // shown the change persisted, so a failure here is silent
-            // from the user's perspective without this context.
-            val snapshot = _currentSettings.value
-            logger.warn(LogCategory.SYSTEM, "Failed to save sidebar visibility", mapOf(
-                "hiddenCount" to snapshot.hiddenPanelIds.size,
-                "customizeSlot" to snapshot.customizeButtonSlotId,
-                "file" to settingsFile.absolutePath
-            ), error = e)
+    private suspend fun saveSettings() =
+        withContext(Dispatchers.IO) {
+            try {
+                val content =
+                    json.encodeToString(
+                        SidebarVisibilitySettings.serializer(),
+                        _currentSettings.value,
+                    )
+                settingsFile.writeText(content)
+            } catch (e: Exception) {
+                // Log the in-memory state's distinguishing fields so the
+                // user's report of "my preferences didn't stick" is
+                // diagnosable. saveSettings is async and the UI has already
+                // shown the change persisted, so a failure here is silent
+                // from the user's perspective without this context.
+                val snapshot = _currentSettings.value
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Failed to save sidebar visibility",
+                    mapOf(
+                        "hiddenCount" to snapshot.hiddenPanelIds.size,
+                        "customizeSlot" to snapshot.customizeButtonSlotId,
+                        "file" to settingsFile.absolutePath,
+                    ),
+                    error = e,
+                )
+            }
         }
-    }
 
     private fun loadSettingsSync() {
         try {
@@ -66,9 +74,13 @@ actual object SidebarVisibilitySettingsManager {
                 val content = settingsFile.readText()
                 val settings = json.decodeFromString(SidebarVisibilitySettings.serializer(), content)
                 _currentSettings.value = settings
-                logger.debug(LogCategory.SYSTEM, "Loaded sidebar visibility", mapOf(
-                    "hiddenCount" to settings.hiddenPanelIds.size
-                ))
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Loaded sidebar visibility",
+                    mapOf(
+                        "hiddenCount" to settings.hiddenPanelIds.size,
+                    ),
+                )
             } else {
                 _currentSettings.value = SidebarVisibilitySettings()
             }
@@ -78,7 +90,10 @@ actual object SidebarVisibilitySettingsManager {
         }
     }
 
-    actual suspend fun setHidden(panelId: String, hidden: Boolean) {
+    actual suspend fun setHidden(
+        panelId: String,
+        hidden: Boolean,
+    ) {
         // MutableStateFlow.update is CAS-based so two rapid toggles on
         // different panel ids can't clobber each other (the read-modify-
         // write version did — both reads would see the same baseline and
@@ -86,17 +101,27 @@ actual object SidebarVisibilitySettingsManager {
         // than once under contention; that's fine, it's idempotent.
         _currentSettings.update { current ->
             if (hidden) {
-                if (panelId in current.hiddenPanelIds) current
-                else current.copy(hiddenPanelIds = current.hiddenPanelIds + panelId)
+                if (panelId in current.hiddenPanelIds) {
+                    current
+                } else {
+                    current.copy(hiddenPanelIds = current.hiddenPanelIds + panelId)
+                }
             } else {
-                if (panelId !in current.hiddenPanelIds) current
-                else current.copy(hiddenPanelIds = current.hiddenPanelIds - panelId)
+                if (panelId !in current.hiddenPanelIds) {
+                    current
+                } else {
+                    current.copy(hiddenPanelIds = current.hiddenPanelIds - panelId)
+                }
             }
         }
-        logger.debug(LogCategory.UI, "Sidebar panel visibility toggled", mapOf(
-            "panelId" to panelId,
-            "hidden" to hidden.toString()
-        ))
+        logger.debug(
+            LogCategory.UI,
+            "Sidebar panel visibility toggled",
+            mapOf(
+                "panelId" to panelId,
+                "hidden" to hidden.toString(),
+            ),
+        )
         saveSettings()
     }
 
@@ -109,13 +134,20 @@ actual object SidebarVisibilitySettingsManager {
         if (slotId !in SidebarVisibilitySettings.ALL_SLOT_IDS) return
         val changed = _currentSettings.value.customizeButtonSlotId != slotId
         _currentSettings.update { current ->
-            if (current.customizeButtonSlotId == slotId) current
-            else current.copy(customizeButtonSlotId = slotId)
+            if (current.customizeButtonSlotId == slotId) {
+                current
+            } else {
+                current.copy(customizeButtonSlotId = slotId)
+            }
         }
         if (changed) {
-            logger.debug(LogCategory.UI, "Customize button slot moved", mapOf(
-                "slotId" to slotId
-            ))
+            logger.debug(
+                LogCategory.UI,
+                "Customize button slot moved",
+                mapOf(
+                    "slotId" to slotId,
+                ),
+            )
         }
         saveSettings()
     }

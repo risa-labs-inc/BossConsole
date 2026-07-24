@@ -1,7 +1,7 @@
 package ai.rever.boss.window
 
-import ai.rever.boss.window.Project
 import ai.rever.boss.plugin.api.TabInfo
+import ai.rever.boss.window.Project
 
 /**
  * Platform-specific window operations

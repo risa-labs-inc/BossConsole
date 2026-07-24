@@ -33,30 +33,33 @@ fun SidebarSettings() {
 
     Column(
         modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         SettingsSection(title = "Plugin Icons") {
             SettingsDropdown(
                 label = "Icons per slot",
                 options = listOf(MODE_ADAPTIVE, MODE_FIXED),
-                selectedOption = when (settings.iconLimitMode) {
-                    SidebarIconLimitMode.ADAPTIVE -> MODE_ADAPTIVE
-                    SidebarIconLimitMode.FIXED -> MODE_FIXED
-                },
+                selectedOption =
+                    when (settings.iconLimitMode) {
+                        SidebarIconLimitMode.ADAPTIVE -> MODE_ADAPTIVE
+                        SidebarIconLimitMode.FIXED -> MODE_FIXED
+                    },
                 onOptionSelected = { option ->
-                    val mode = if (option == MODE_FIXED) {
-                        SidebarIconLimitMode.FIXED
-                    } else {
-                        SidebarIconLimitMode.ADAPTIVE
-                    }
+                    val mode =
+                        if (option == MODE_FIXED) {
+                            SidebarIconLimitMode.FIXED
+                        } else {
+                            SidebarIconLimitMode.ADAPTIVE
+                        }
                     coroutineScope.launch {
                         SidebarVisibilitySettingsManager.updateSettings(
-                            settings.copy(iconLimitMode = mode)
+                            settings.copy(iconLimitMode = mode),
                         )
                     }
                 },
-                description = "Icons beyond the limit collapse into each slot's More menu. " +
-                    "Adaptive shows as many as fit the window height."
+                description =
+                    "Icons beyond the limit collapse into each slot's More menu. " +
+                        "Adaptive shows as many as fit the window height.",
             )
 
             SettingsNumberInput(
@@ -66,17 +69,18 @@ fun SidebarSettings() {
                     coroutineScope.launch {
                         SidebarVisibilitySettingsManager.updateSettings(
                             settings.copy(
-                                fixedIconLimit = newValue.coerceIn(
-                                    SidebarVisibilitySettings.FIXED_ICON_LIMIT_RANGE
-                                )
-                            )
+                                fixedIconLimit =
+                                    newValue.coerceIn(
+                                        SidebarVisibilitySettings.FIXED_ICON_LIMIT_RANGE,
+                                    ),
+                            ),
                         )
                     }
                 },
-                range = SidebarVisibilitySettings.FIXED_ICON_LIMIT_RANGE.first..
-                    SidebarVisibilitySettings.FIXED_ICON_LIMIT_RANGE.last,
+                range =
+                    SidebarVisibilitySettings.FIXED_ICON_LIMIT_RANGE.first..SidebarVisibilitySettings.FIXED_ICON_LIMIT_RANGE.last,
                 enabled = settings.iconLimitMode == SidebarIconLimitMode.FIXED,
-                description = "Maximum plugin icons per slot when using a fixed number"
+                description = "Maximum plugin icons per slot when using a fixed number",
             )
         }
     }

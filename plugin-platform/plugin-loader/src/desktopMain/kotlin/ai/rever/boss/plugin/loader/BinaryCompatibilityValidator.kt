@@ -19,12 +19,11 @@ import java.util.jar.JarFile
  * would surface as crashes during first UI render.
  */
 object BinaryCompatibilityValidator {
-
     private val logger = BossLogger.forComponent("BinaryCompatibilityValidator")
 
     data class ValidationResult(
         val isCompatible: Boolean,
-        val errors: List<String> = emptyList()
+        val errors: List<String> = emptyList(),
     )
 
     /**
@@ -36,29 +35,42 @@ object BinaryCompatibilityValidator {
      * via reflection. This forces resolution of all symbolic references that
      * the JVM would otherwise defer until first execution.
      */
-    fun validate(classLoader: ClassLoader, jarPath: String): ValidationResult {
+    fun validate(
+        classLoader: ClassLoader,
+        jarPath: String,
+    ): ValidationResult {
         val errors = mutableListOf<String>()
 
-        val classEntries = try {
-            JarFile(jarPath).use { jar ->
-                jar.entries().asSequence()
-                    .filter { it.name.endsWith(".class") && !it.name.startsWith("META-INF/") }
-                    .map { entry ->
-                        val className = entry.name.removeSuffix(".class").replace('/', '.')
-                        val bytes = jar.getInputStream(entry).use { it.readBytes() }
-                        className to bytes
-                    }
-                    .toList()
+        val classEntries =
+            try {
+                JarFile(jarPath).use { jar ->
+                    jar
+                        .entries()
+                        .asSequence()
+                        .filter { it.name.endsWith(".class") && !it.name.startsWith("META-INF/") }
+                        .map { entry ->
+                            val className = entry.name.removeSuffix(".class").replace('/', '.')
+                            val bytes = jar.getInputStream(entry).use { it.readBytes() }
+                            className to bytes
+                        }.toList()
+                }
+            } catch (e: Exception) {
+                logger.error(
+                    LogCategory.SYSTEM,
+                    "Failed to read JAR for validation",
+                    mapOf(
+                        "jarPath" to jarPath,
+                        "error" to (e.message ?: "unknown"),
+                    ),
+                )
+                return ValidationResult(
+                    isCompatible = false,
+                    errors =
+                        listOf(
+                            "Failed to read JAR: ${e.message}",
+                        ),
+                )
             }
-        } catch (e: Exception) {
-            logger.error(LogCategory.SYSTEM, "Failed to read JAR for validation", mapOf(
-                "jarPath" to jarPath,
-                "error" to (e.message ?: "unknown")
-            ))
-            return ValidationResult(isCompatible = false, errors = listOf(
-                "Failed to read JAR: ${e.message}"
-            ))
-        }
 
         // Collect all class names in this JAR — references between them are
         // self-consistent (compiled together) and don't need cross-validation.
@@ -99,29 +111,41 @@ object BinaryCompatibilityValidator {
                 }
             } catch (e: Exception) {
                 // Malformed class file — not a compatibility issue per se, skip
-                logger.debug(LogCategory.SYSTEM, "Failed to parse constant pool", mapOf(
-                    "className" to className,
-                    "error" to (e.message ?: "unknown")
-                ))
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Failed to parse constant pool",
+                    mapOf(
+                        "className" to className,
+                        "error" to (e.message ?: "unknown"),
+                    ),
+                )
             }
         }
 
         if (errors.isNotEmpty()) {
-            logger.warn(LogCategory.SYSTEM, "Binary compatibility validation failed", mapOf(
-                "jarPath" to jarPath,
-                "errorCount" to errors.size,
-                "errors" to errors.take(5)
-            ))
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Binary compatibility validation failed",
+                mapOf(
+                    "jarPath" to jarPath,
+                    "errorCount" to errors.size,
+                    "errors" to errors.take(5),
+                ),
+            )
         } else {
-            logger.debug(LogCategory.SYSTEM, "Binary compatibility validation passed", mapOf(
-                "jarPath" to jarPath,
-                "classCount" to classEntries.size
-            ))
+            logger.debug(
+                LogCategory.SYSTEM,
+                "Binary compatibility validation passed",
+                mapOf(
+                    "jarPath" to jarPath,
+                    "classCount" to classEntries.size,
+                ),
+            )
         }
 
         return ValidationResult(
             isCompatible = errors.isEmpty(),
-            errors = errors
+            errors = errors,
         )
     }
 
@@ -129,38 +153,43 @@ object BinaryCompatibilityValidator {
         ref: ConstantPoolParser.MemberRef,
         classLoader: ClassLoader,
         sourceClass: String,
-        errors: MutableList<String>
+        errors: MutableList<String>,
     ) {
         // Skip references to the plugin's own classes (they're already loaded above)
         // and primitive/array types
         if (ref.ownerClassName.startsWith("[") || ref.ownerClassName.isEmpty()) return
 
-        val ownerClass = try {
-            Class.forName(ref.ownerClassName, false, classLoader)
-        } catch (e: LinkageError) {
-            errors.add("$sourceClass -> ${ref.ownerClassName}: ${e.javaClass.simpleName} - ${e.message}")
-            return
-        } catch (e: ClassNotFoundException) {
-            // Only flag missing classes from the shared API packages, not JDK/Kotlin stdlib.
-            //
-            // `ai.rever.boss.plugin.runtime.*` classes live only on OOP plugin
-            // child-JVM classpaths (via boss-microkernel-runtime's fatJar), not
-            // on the host. OOP-aware plugins legitimately reference these from
-            // their main class so the child runtime can find them reflectively.
-            // Treat references into that package as soft — the host doesn't
-            // need to resolve them — but log so a later debug session can
-            // find the trail if the plugin actually does fail at child-JVM load.
-            if (isSoftFailReference(ref.ownerClassName)) {
-                logger.debug(LogCategory.SYSTEM, "Soft-skipping runtime-package ref", mapOf(
-                    "sourceClass" to sourceClass,
-                    "ref" to ref.ownerClassName,
-                    "error" to e.toString(),
-                ))
-            } else if (ref.ownerClassName.startsWith("ai.rever.boss.plugin.")) {
-                errors.add("$sourceClass -> ${ref.ownerClassName}: class not found")
+        val ownerClass =
+            try {
+                Class.forName(ref.ownerClassName, false, classLoader)
+            } catch (e: LinkageError) {
+                errors.add("$sourceClass -> ${ref.ownerClassName}: ${e.javaClass.simpleName} - ${e.message}")
+                return
+            } catch (e: ClassNotFoundException) {
+                // Only flag missing classes from the shared API packages, not JDK/Kotlin stdlib.
+                //
+                // `ai.rever.boss.plugin.runtime.*` classes live only on OOP plugin
+                // child-JVM classpaths (via boss-microkernel-runtime's fatJar), not
+                // on the host. OOP-aware plugins legitimately reference these from
+                // their main class so the child runtime can find them reflectively.
+                // Treat references into that package as soft — the host doesn't
+                // need to resolve them — but log so a later debug session can
+                // find the trail if the plugin actually does fail at child-JVM load.
+                if (isSoftFailReference(ref.ownerClassName)) {
+                    logger.debug(
+                        LogCategory.SYSTEM,
+                        "Soft-skipping runtime-package ref",
+                        mapOf(
+                            "sourceClass" to sourceClass,
+                            "ref" to ref.ownerClassName,
+                            "error" to e.toString(),
+                        ),
+                    )
+                } else if (ref.ownerClassName.startsWith("ai.rever.boss.plugin.")) {
+                    errors.add("$sourceClass -> ${ref.ownerClassName}: class not found")
+                }
+                return
             }
-            return
-        }
 
         // Only enforce member-level binary compatibility for the actual
         // plugin<->host CONTRACT (ai.rever.boss.plugin.*). References into
@@ -180,7 +209,8 @@ object BinaryCompatibilityValidator {
         // Verify the specific member exists
         when (ref.type) {
             ConstantPoolParser.RefType.METHOD,
-            ConstantPoolParser.RefType.INTERFACE_METHOD -> {
+            ConstantPoolParser.RefType.INTERFACE_METHOD,
+            -> {
                 if (ref.name == "<init>") {
                     // Constructor — verify parameter types match
                     val paramTypes = ref.parseParameterTypes(classLoader) ?: return
@@ -197,6 +227,7 @@ object BinaryCompatibilityValidator {
                     }
                 }
             }
+
             ConstantPoolParser.RefType.FIELD -> {
                 if (!hasField(ownerClass, ref.name)) {
                     errors.add("$sourceClass -> ${ref.ownerClassName}.${ref.name}: field not found")
@@ -216,9 +247,7 @@ object BinaryCompatibilityValidator {
      *
      * Exposed `internal` for unit tests.
      */
-    internal fun isSoftFailReference(ownerClassName: String): Boolean {
-        return ownerClassName.startsWith("ai.rever.boss.plugin.runtime.")
-    }
+    internal fun isSoftFailReference(ownerClassName: String): Boolean = ownerClassName.startsWith("ai.rever.boss.plugin.runtime.")
 
     /**
      * Check the class and its superclasses/interfaces for the method.
@@ -232,7 +261,11 @@ object BinaryCompatibilityValidator {
      *
      * Exposed `internal` for unit tests.
      */
-    internal fun hasMethod(clazz: Class<*>, name: String, paramTypes: Array<Class<*>>): Boolean {
+    internal fun hasMethod(
+        clazz: Class<*>,
+        name: String,
+        paramTypes: Array<Class<*>>,
+    ): Boolean {
         return try {
             clazz.getMethod(name, *paramTypes)
             true
@@ -267,7 +300,10 @@ object BinaryCompatibilityValidator {
     }
 
     /** Check the class and its superclasses for the field. */
-    private fun hasField(clazz: Class<*>, name: String): Boolean {
+    private fun hasField(
+        clazz: Class<*>,
+        name: String,
+    ): Boolean {
         return try {
             clazz.getField(name)
             true
@@ -296,26 +332,24 @@ object BinaryCompatibilityValidator {
  * methods, and other sections.
  */
 internal object ConstantPoolParser {
-
     enum class RefType { METHOD, FIELD, INTERFACE_METHOD }
 
     data class MemberRef(
         val type: RefType,
         val ownerClassName: String,
         val name: String,
-        val descriptor: String
+        val descriptor: String,
     ) {
         /**
          * Parse JVM method descriptor parameter types into Class objects.
          * Returns null if any type cannot be resolved (e.g. plugin-internal types).
          */
-        fun parseParameterTypes(classLoader: ClassLoader): Array<Class<*>>? {
-            return try {
+        fun parseParameterTypes(classLoader: ClassLoader): Array<Class<*>>? =
+            try {
                 parseDescriptorParams(descriptor, classLoader)
             } catch (_: ClassNotFoundException) {
                 null
             }
-        }
     }
 
     // Constant pool tag values (JVMS §4.4)
@@ -362,44 +396,69 @@ internal object ConstantPoolParser {
                 TAG_UTF8 -> {
                     utf8s[i] = dis.readUTF()
                 }
-                TAG_INTEGER, TAG_FLOAT -> dis.readInt()
+
+                TAG_INTEGER, TAG_FLOAT -> {
+                    dis.readInt()
+                }
+
                 TAG_LONG, TAG_DOUBLE -> {
                     dis.readLong()
                     i++ // 8-byte constants take two slots
                 }
-                TAG_CLASS -> classInfos[i] = dis.readUnsignedShort()
-                TAG_STRING -> dis.readUnsignedShort()
+
+                TAG_CLASS -> {
+                    classInfos[i] = dis.readUnsignedShort()
+                }
+
+                TAG_STRING -> {
+                    dis.readUnsignedShort()
+                }
+
                 TAG_FIELDREF -> {
                     val classIdx = dis.readUnsignedShort()
                     val natIdx = dis.readUnsignedShort()
                     memberRefs.add(Triple(RefType.FIELD, classIdx, natIdx))
                 }
+
                 TAG_METHODREF -> {
                     val classIdx = dis.readUnsignedShort()
                     val natIdx = dis.readUnsignedShort()
                     memberRefs.add(Triple(RefType.METHOD, classIdx, natIdx))
                 }
+
                 TAG_INTERFACE_METHODREF -> {
                     val classIdx = dis.readUnsignedShort()
                     val natIdx = dis.readUnsignedShort()
                     memberRefs.add(Triple(RefType.INTERFACE_METHOD, classIdx, natIdx))
                 }
+
                 TAG_NAME_AND_TYPE -> {
                     val nameIdx = dis.readUnsignedShort()
                     val descIdx = dis.readUnsignedShort()
                     nameAndTypes[i] = nameIdx to descIdx
                 }
+
                 TAG_METHOD_HANDLE -> {
                     dis.readUnsignedByte()
                     dis.readUnsignedShort()
                 }
-                TAG_METHOD_TYPE -> dis.readUnsignedShort()
+
+                TAG_METHOD_TYPE -> {
+                    dis.readUnsignedShort()
+                }
+
                 TAG_DYNAMIC, TAG_INVOKE_DYNAMIC -> {
                     dis.readUnsignedShort()
                     dis.readUnsignedShort()
                 }
-                TAG_MODULE, TAG_PACKAGE -> dis.readUnsignedShort()
-                else -> return emptyList() // Unknown tag, bail out safely
+
+                TAG_MODULE, TAG_PACKAGE -> {
+                    dis.readUnsignedShort()
+                }
+
+                else -> {
+                    return emptyList()
+                } // Unknown tag, bail out safely
             }
             i++
         }
@@ -422,44 +481,88 @@ internal object ConstantPoolParser {
      * Parse JVM method descriptor parameter section into Class objects.
      * e.g. "(Ljava/lang/String;IZ)V" -> [String::class.java, Int::class.javaPrimitiveType, Boolean::class.javaPrimitiveType]
      */
-    fun parseDescriptorParams(descriptor: String, classLoader: ClassLoader): Array<Class<*>> {
+    fun parseDescriptorParams(
+        descriptor: String,
+        classLoader: ClassLoader,
+    ): Array<Class<*>> {
         val params = mutableListOf<Class<*>>()
         val paramSection = descriptor.substringAfter('(').substringBefore(')')
         var idx = 0
         while (idx < paramSection.length) {
             when (paramSection[idx]) {
-                'B' -> { params.add(Byte::class.javaPrimitiveType!!); idx++ }
-                'C' -> { params.add(Char::class.javaPrimitiveType!!); idx++ }
-                'D' -> { params.add(Double::class.javaPrimitiveType!!); idx++ }
-                'F' -> { params.add(Float::class.javaPrimitiveType!!); idx++ }
-                'I' -> { params.add(Int::class.javaPrimitiveType!!); idx++ }
-                'J' -> { params.add(Long::class.javaPrimitiveType!!); idx++ }
-                'S' -> { params.add(Short::class.javaPrimitiveType!!); idx++ }
-                'Z' -> { params.add(Boolean::class.javaPrimitiveType!!); idx++ }
-                'V' -> { params.add(Void::class.javaPrimitiveType!!); idx++ }
+                'B' -> {
+                    params.add(Byte::class.javaPrimitiveType!!)
+                    idx++
+                }
+
+                'C' -> {
+                    params.add(Char::class.javaPrimitiveType!!)
+                    idx++
+                }
+
+                'D' -> {
+                    params.add(Double::class.javaPrimitiveType!!)
+                    idx++
+                }
+
+                'F' -> {
+                    params.add(Float::class.javaPrimitiveType!!)
+                    idx++
+                }
+
+                'I' -> {
+                    params.add(Int::class.javaPrimitiveType!!)
+                    idx++
+                }
+
+                'J' -> {
+                    params.add(Long::class.javaPrimitiveType!!)
+                    idx++
+                }
+
+                'S' -> {
+                    params.add(Short::class.javaPrimitiveType!!)
+                    idx++
+                }
+
+                'Z' -> {
+                    params.add(Boolean::class.javaPrimitiveType!!)
+                    idx++
+                }
+
+                'V' -> {
+                    params.add(Void::class.javaPrimitiveType!!)
+                    idx++
+                }
+
                 'L' -> {
                     val end = paramSection.indexOf(';', idx)
                     val className = paramSection.substring(idx + 1, end).replace('/', '.')
                     params.add(Class.forName(className, false, classLoader))
                     idx = end + 1
                 }
+
                 '[' -> {
                     // Array type — find the element type and use Class.forName with JVM array notation
                     val start = idx
                     while (idx < paramSection.length && paramSection[idx] == '[') idx++
-                    val arrayDesc = if (paramSection[idx] == 'L') {
-                        val end = paramSection.indexOf(';', idx)
-                        val desc = paramSection.substring(start, end + 1)
-                        idx = end + 1
-                        desc
-                    } else {
-                        val desc = paramSection.substring(start, idx + 1)
-                        idx++
-                        desc
-                    }
+                    val arrayDesc =
+                        if (paramSection[idx] == 'L') {
+                            val end = paramSection.indexOf(';', idx)
+                            val desc = paramSection.substring(start, end + 1)
+                            idx = end + 1
+                            desc
+                        } else {
+                            val desc = paramSection.substring(start, idx + 1)
+                            idx++
+                            desc
+                        }
                     params.add(Class.forName(arrayDesc.replace('/', '.'), false, classLoader))
                 }
-                else -> idx++ // Skip unknown
+
+                else -> {
+                    idx++
+                } // Skip unknown
             }
         }
         return params.toTypedArray()

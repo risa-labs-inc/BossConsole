@@ -9,14 +9,15 @@ import kotlin.coroutines.resume
 class DirectoryPickerServiceBridge(
     private val provider: DirectoryPickerProvider,
 ) : DirectoryPickerServiceGrpcKt.DirectoryPickerServiceCoroutineImplBase() {
-
     override suspend fun pickDirectory(request: Empty): DirectoryPickerResponse {
-        val path = suspendCancellableCoroutine<String?> { cont ->
-            provider.pickDirectory { result ->
-                cont.resume(result)
+        val path =
+            suspendCancellableCoroutine<String?> { cont ->
+                provider.pickDirectory { result ->
+                    cont.resume(result)
+                }
             }
-        }
-        return DirectoryPickerResponse.newBuilder()
+        return DirectoryPickerResponse
+            .newBuilder()
             .setSelected(path != null)
             .setPath(path ?: "")
             .build()

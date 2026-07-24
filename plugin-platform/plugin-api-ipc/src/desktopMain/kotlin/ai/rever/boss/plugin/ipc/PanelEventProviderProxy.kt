@@ -11,32 +11,41 @@ import io.grpc.ManagedChannel
 class PanelEventProviderProxy(
     channel: ManagedChannel,
 ) : PanelEventProvider {
-
     private val stub = PanelEventServiceGrpcKt.PanelEventServiceCoroutineStub(channel)
 
-    override suspend fun closePanel(panelId: PanelId, windowId: String) {
+    override suspend fun closePanel(
+        panelId: PanelId,
+        windowId: String,
+    ) {
         try {
             stub.closePanel(
-                ClosePanelRequest.newBuilder()
+                ClosePanelRequest
+                    .newBuilder()
                     .setPanelId(panelId.panelId)
                     .setPluginId(panelId.pluginId)
                     .setDefaultOrder(panelId.defaultOrder)
                     .setWindowId(windowId)
-                    .build()
+                    .build(),
             )
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
     }
 
-    override suspend fun openPanel(panelId: PanelId, windowId: String) {
+    override suspend fun openPanel(
+        panelId: PanelId,
+        windowId: String,
+    ) {
         try {
             stub.openPanel(
-                OpenPanelRequest.newBuilder()
+                OpenPanelRequest
+                    .newBuilder()
                     .setPanelId(panelId.panelId)
                     .setPluginId(panelId.pluginId)
                     .setDefaultOrder(panelId.defaultOrder)
                     .setWindowId(windowId)
-                    .build()
+                    .build(),
             )
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
     }
 }

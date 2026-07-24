@@ -1,110 +1,85 @@
 package ai.rever.boss.components.plugin
 
-import ai.rever.boss.plugin.pathutils.BossDirectories
-import ai.rever.boss.git.GitDataProviderImpl
-import ai.rever.boss.components.plugin.providers.PanelEventProviderImpl
-import ai.rever.boss.components.plugin.providers.SettingsProviderImpl
 import ai.rever.boss.cache.loadFaviconFromCache
 import ai.rever.boss.components.events.TerminalEventBus
 import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.contextMenu
 import ai.rever.boss.components.plugin.panels.left_top.BookmarksDialogProviderImpl
 import ai.rever.boss.components.plugin.panels.left_top.createDownloadDataProvider
-import ai.rever.boss.plugin.ui.ContextMenuItemData
-import ai.rever.boss.components.plugin.providers.DirectoryPickerProviderImpl
-import ai.rever.boss.components.plugin.providers.FileSystemDataProviderImpl
-import ai.rever.boss.components.plugin.providers.ProjectDataProviderImpl
-import ai.rever.boss.plugin.api.ProjectData
-import ai.rever.boss.window.Project
-import ai.rever.boss.window.selectProjectInWindow
-import ai.rever.boss.components.plugin.providers.SplitViewOperationsImpl
-import ai.rever.boss.components.plugin.providers.WorkspaceDataProviderImpl
-import ai.rever.boss.components.plugin.providers.createLogDataProvider
-import ai.rever.boss.components.plugin.providers.createPerformanceDataProvider
-import ai.rever.boss.components.plugin.providers.DashboardContentProviderImpl
 import ai.rever.boss.components.plugin.panels.right_top.BrowserAccessor
 import ai.rever.boss.components.plugin.panels.right_top.storeSplitViewState
-import ai.rever.boss.components.plugin.panels.right_top.BrowserIntegration as InternalBrowserIntegration
-// DYNAMIC: Tab type registrations moved to dynamic plugins
-// import ai.rever.boss.components.plugin.tab_types.registerCodeEditor
-// import ai.rever.boss.components.plugin.tab_types.registerTerminalTab
-import ai.rever.boss.components.plugin.tab_types.fluck.SecretChangeNotifier
-import ai.rever.boss.services.auth.AuthDataProviderImpl
-import ai.rever.boss.services.auth.AuthStateManager
-import ai.rever.boss.services.auth.PluginStoreApiKeyProviderImpl
-import ai.rever.boss.search.SearchRegistryImpl
-import ai.rever.boss.plugin.api.SearchProvider
-import ai.rever.boss.services.supabase.RoleManagementProviderImpl
-import ai.rever.boss.services.supabase.SecretDataProviderImpl
-import ai.rever.boss.services.supabase.SupabaseDataProviderImpl
-import ai.rever.boss.services.supabase.UserManagementProviderImpl
-import ai.rever.boss.utils.logging.BossLogger
-import ai.rever.boss.utils.logging.LogCategory
-import ai.rever.boss.utils.logging.LogSanitizer
-import ai.rever.boss.window.WindowProjectState
-import ai.rever.boss.plugin.api.ActiveTabData
-import ai.rever.boss.plugin.api.ActiveTabsProvider
-import ai.rever.boss.plugin.api.AuthDataProvider
-import ai.rever.boss.plugin.api.FileNodeData
-import ai.rever.boss.plugin.api.FileSystemDataProvider
-import ai.rever.boss.plugin.api.GitDataProvider
-import ai.rever.boss.plugin.api.NodeLoadingStateData
-import ai.rever.boss.plugin.api.ContextMenuProvider
-import ai.rever.boss.plugin.api.DashboardContentProvider
-import ai.rever.boss.plugin.api.LogDataProvider
-import ai.rever.boss.plugin.api.PanelRegistry
-import ai.rever.boss.plugin.api.PluginStoreApiKeyProvider
-import ai.rever.boss.plugin.api.BrowserIntegration as ApiBrowserIntegration
-import ai.rever.boss.plugin.api.PluginContext
-import ai.rever.boss.plugin.api.PluginSandboxRef
-import ai.rever.boss.plugin.api.RoleManagementProvider
-import ai.rever.boss.plugin.api.SplitViewOperations
-import ai.rever.boss.plugin.api.SupabaseDataProvider
-import ai.rever.boss.plugin.api.TabRegistry
-import ai.rever.boss.plugin.api.TabUpdateProviderFactory
-import ai.rever.boss.plugin.api.UserManagementProvider
-import ai.rever.boss.plugin.api.WorkspaceDataProvider
-import ai.rever.boss.plugin.api.ZoomSettingsProvider
-import ai.rever.boss.plugin.api.UrlHistoryProvider
-import ai.rever.boss.components.plugin.providers.createZoomSettingsProvider
-import ai.rever.boss.components.plugin.providers.createUrlHistoryProvider
-import ai.rever.boss.components.plugin.providers.createScreenCaptureProvider
+import ai.rever.boss.components.plugin.providers.DashboardContentProviderImpl
+import ai.rever.boss.components.plugin.providers.DirectoryPickerProviderImpl
+import ai.rever.boss.components.plugin.providers.FileSystemDataProviderImpl
+import ai.rever.boss.components.plugin.providers.NavigationTargetProviderImpl
+import ai.rever.boss.components.plugin.providers.PanelEventProviderImpl
+import ai.rever.boss.components.plugin.providers.ProjectDataProviderImpl
+import ai.rever.boss.components.plugin.providers.SettingsProviderImpl
+import ai.rever.boss.components.plugin.providers.SplitViewOperationsImpl
+import ai.rever.boss.components.plugin.providers.WorkspaceDataProviderImpl
+import ai.rever.boss.components.plugin.providers.createApplicationEventBus
+import ai.rever.boss.components.plugin.providers.createClipboardProvider
 import ai.rever.boss.components.plugin.providers.createCoBrowseRtcProvider
 import ai.rever.boss.components.plugin.providers.createEditorContentProvider
-import ai.rever.boss.plugin.api.EditorContentProvider
-import ai.rever.boss.plugin.api.NotificationProvider
+import ai.rever.boss.components.plugin.providers.createFilePickerProvider
+import ai.rever.boss.components.plugin.providers.createGenericDialogProvider
+import ai.rever.boss.components.plugin.providers.createLogDataProvider
+import ai.rever.boss.components.plugin.providers.createNavigationResolverProvider
+import ai.rever.boss.components.plugin.providers.createNotificationProvider
+import ai.rever.boss.components.plugin.providers.createPerformanceDataProvider
+import ai.rever.boss.components.plugin.providers.createPluginStorageFactory
+import ai.rever.boss.components.plugin.providers.createScreenCaptureProvider
+import ai.rever.boss.components.plugin.providers.createSemanticTokenProvider
+import ai.rever.boss.components.plugin.providers.createUrlHistoryProvider
+import ai.rever.boss.components.plugin.providers.createZoomSettingsProvider
+import ai.rever.boss.components.plugin.tab_types.fluck.SecretChangeNotifier
+import ai.rever.boss.git.GitDataProviderImpl
+import ai.rever.boss.plugin.api.ActiveTabData
+import ai.rever.boss.plugin.api.ActiveTabsProvider
 import ai.rever.boss.plugin.api.ApplicationEventBus
-import ai.rever.boss.plugin.api.PluginStorageFactory
-import ai.rever.boss.plugin.api.GenericDialogProvider
+import ai.rever.boss.plugin.api.AuthDataProvider
 import ai.rever.boss.plugin.api.BackgroundTaskHandle
 import ai.rever.boss.plugin.api.BackgroundTaskProvider
 import ai.rever.boss.plugin.api.CacheProvider
 import ai.rever.boss.plugin.api.ClipboardProvider
+import ai.rever.boss.plugin.api.ContextMenuProvider
+import ai.rever.boss.plugin.api.DashboardContentProvider
 import ai.rever.boss.plugin.api.DiagnosticEntry
 import ai.rever.boss.plugin.api.DiagnosticProvider
+import ai.rever.boss.plugin.api.EditorContentProvider
+import ai.rever.boss.plugin.api.FileNodeData
 import ai.rever.boss.plugin.api.FilePickerProvider
+import ai.rever.boss.plugin.api.FileSystemDataProvider
+import ai.rever.boss.plugin.api.GenericDialogProvider
+import ai.rever.boss.plugin.api.GitDataProvider
 import ai.rever.boss.plugin.api.KeyboardShortcutInfo
 import ai.rever.boss.plugin.api.KeyboardShortcutProvider
+import ai.rever.boss.plugin.api.LogDataProvider
 import ai.rever.boss.plugin.api.NavigationResolverProvider
 import ai.rever.boss.plugin.api.NavigationTargetProvider
+import ai.rever.boss.plugin.api.NodeLoadingStateData
+import ai.rever.boss.plugin.api.NotificationProvider
+import ai.rever.boss.plugin.api.PanelRegistry
+import ai.rever.boss.plugin.api.PluginContext
+import ai.rever.boss.plugin.api.PluginSandboxRef
+import ai.rever.boss.plugin.api.PluginStorageFactory
+import ai.rever.boss.plugin.api.PluginStoreApiKeyProvider
+import ai.rever.boss.plugin.api.ProjectData
+import ai.rever.boss.plugin.api.RoleManagementProvider
 import ai.rever.boss.plugin.api.ScreenCaptureProvider
+import ai.rever.boss.plugin.api.SearchProvider
 import ai.rever.boss.plugin.api.SemanticTokenProvider
-import ai.rever.boss.components.plugin.providers.createNotificationProvider
-import ai.rever.boss.components.plugin.providers.createClipboardProvider
-import ai.rever.boss.components.plugin.providers.createFilePickerProvider
-import ai.rever.boss.components.plugin.providers.createNavigationResolverProvider
-import ai.rever.boss.components.plugin.providers.createSemanticTokenProvider
-import ai.rever.boss.components.plugin.providers.NavigationTargetProviderImpl
-import ai.rever.boss.components.plugin.providers.createApplicationEventBus
-import ai.rever.boss.components.plugin.providers.createPluginStorageFactory
-import ai.rever.boss.components.plugin.providers.createGenericDialogProvider
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Code
-import androidx.compose.material.icons.outlined.Language
-import androidx.compose.material.icons.outlined.Tab
-import androidx.compose.material.icons.outlined.Terminal
+import ai.rever.boss.plugin.api.SplitViewOperations
+import ai.rever.boss.plugin.api.SupabaseDataProvider
+import ai.rever.boss.plugin.api.TabRegistry
+import ai.rever.boss.plugin.api.TabUpdateProviderFactory
+import ai.rever.boss.plugin.api.UrlHistoryProvider
+import ai.rever.boss.plugin.api.UserManagementProvider
+import ai.rever.boss.plugin.api.WorkspaceDataProvider
+import ai.rever.boss.plugin.api.ZoomSettingsProvider
 import ai.rever.boss.plugin.browser.BrowserService
-
+import ai.rever.boss.plugin.loader.PluginLoadException
+import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.plugin.sandbox.PluginSandboxManager
 import ai.rever.boss.plugin.sandbox.PluginSandboxManagerImpl
 import ai.rever.boss.plugin.sandbox.SandboxConfig
@@ -115,22 +90,47 @@ import ai.rever.boss.plugin.sandbox.health.PluginHealthSummary
 import ai.rever.boss.plugin.sandbox.notification.BossPluginNotificationService
 import ai.rever.boss.plugin.sandbox.notification.PluginSandboxNotificationListener
 import ai.rever.boss.plugin.sandbox.notification.PluginToastState
+import ai.rever.boss.plugin.ui.ContextMenuItemData
+import ai.rever.boss.search.SearchRegistryImpl
+import ai.rever.boss.services.auth.AuthDataProviderImpl
+import ai.rever.boss.services.auth.AuthStateManager
+import ai.rever.boss.services.auth.PluginStoreApiKeyProviderImpl
+import ai.rever.boss.services.supabase.RoleManagementProviderImpl
+import ai.rever.boss.services.supabase.SecretDataProviderImpl
+import ai.rever.boss.services.supabase.SupabaseDataProviderImpl
+import ai.rever.boss.services.supabase.UserManagementProviderImpl
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.LogSanitizer
+import ai.rever.boss.window.Project
 import ai.rever.boss.window.WindowGitState
-import ai.rever.boss.plugin.loader.PluginLoadException
+import ai.rever.boss.window.WindowProjectState
+import ai.rever.boss.window.selectProjectInWindow
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Code
+import androidx.compose.material.icons.outlined.Language
+import androidx.compose.material.icons.outlined.Tab
+import androidx.compose.material.icons.outlined.Terminal
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.io.File
+import ai.rever.boss.components.plugin.panels.right_top.BrowserIntegration as InternalBrowserIntegration
+import ai.rever.boss.plugin.api.BrowserIntegration as ApiBrowserIntegration
+
+// DYNAMIC: Tab type registrations moved to dynamic plugins
+// import ai.rever.boss.components.plugin.tab_types.registerCodeEditor
+// import ai.rever.boss.components.plugin.tab_types.registerTerminalTab
 
 /**
  * Per-window plugin context.
@@ -146,9 +146,8 @@ class DefaultPlugin(
     val windowGitState: WindowGitState? = null,
     private val _windowId: String? = null,
     private val workspaceManager: ai.rever.boss.components.workspaces.WorkspaceManager? = null,
-    private val splitViewState: ai.rever.boss.components.window_panel.SplitViewState? = null
+    private val splitViewState: ai.rever.boss.components.window_panel.SplitViewState? = null,
 ) : PluginContext {
-
     companion object {
         // Persisted plugins loading state
         @Volatile
@@ -175,6 +174,7 @@ class DefaultPlugin(
     }
 
     private val logger = BossLogger.forComponent("DefaultPlugin")
+
     // Lifecycle-aware scope for long-running operations like dynamic panel registration
     // This scope should be cancelled when the plugin is disposed
     override val pluginScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -194,14 +194,13 @@ class DefaultPlugin(
      * Get a plugin API by its interface type.
      */
     @Suppress("UNCHECKED_CAST")
-    override fun <T : Any> getPluginAPI(apiClass: Class<T>): T? {
-        return apiRegistry[apiClass] as? T
-    }
+    override fun <T : Any> getPluginAPI(apiClass: Class<T>): T? = apiRegistry[apiClass] as? T
 
     /**
      * Register a plugin API for other plugins to consume.
      * The API is registered under all interfaces it implements.
      */
+
     /**
      * Bumped whenever a plugin API registers. Compose UI that gates on
      * [getPluginAPI] availability observes this to self-heal once the
@@ -214,10 +213,14 @@ class DefaultPlugin(
         // Register under all interfaces implemented by the API
         api::class.java.interfaces.forEach { iface ->
             apiRegistry[iface] = api
-            logger.debug(LogCategory.SYSTEM, "Registered plugin API", mapOf(
-                "interface" to iface.name,
-                "implementation" to api::class.java.name
-            ))
+            logger.debug(
+                LogCategory.SYSTEM,
+                "Registered plugin API",
+                mapOf(
+                    "interface" to iface.name,
+                    "implementation" to api::class.java.name,
+                ),
+            )
         }
         // Registration happens asynchronously during plugin startup; bump the
         // observable version so Compose readers (EditorAPIAccess.rememberProvider)
@@ -245,73 +248,99 @@ class DefaultPlugin(
         // Wire out-of-process plugin spawner when running in KERNEL mode.
         // Uses reflection to avoid hard dependency on boss-process-manager
         // (which is excluded on Windows ARM64).
-        val oopSpawner: OutOfProcessPluginSpawner? = try {
-            val bootstrapCls = Class.forName("ai.rever.boss.kernel.KernelBootstrap")
-            // KernelBootstrap is a singleton-like — check if processSpawner is available
-            val spawnerCls = Class.forName("ai.rever.boss.components.plugin.OutOfProcessPluginSpawnerImpl")
-            val processSpawnerCls = Class.forName("ai.rever.boss.process.ProcessSpawner")
+        val oopSpawner: OutOfProcessPluginSpawner? =
+            try {
+                val bootstrapCls = Class.forName("ai.rever.boss.kernel.KernelBootstrap")
+                // KernelBootstrap is a singleton-like — check if processSpawner is available
+                val spawnerCls = Class.forName("ai.rever.boss.components.plugin.OutOfProcessPluginSpawnerImpl")
+                val processSpawnerCls = Class.forName("ai.rever.boss.process.ProcessSpawner")
 
-            // Only wire if BOSS_MODE=KERNEL
-            val bossMode = System.getenv("BOSS_MODE")
-                ?: try {
-                    val cfgCls = Class.forName("ai.rever.boss.config.ConfigLoader")
-                    val cfgInstance = cfgCls.getDeclaredField("INSTANCE").get(null)
-                    cfgCls.getMethod("getConfig", String::class.java, String::class.java).invoke(cfgInstance, "BOSS_MODE", null) as? String
-                } catch (e: Exception) {
-                    logger.warn(LogCategory.SYSTEM, "OOP spawner: ConfigLoader failed", mapOf("error" to e.toString()))
-                    null
-                }
-            logger.info(LogCategory.SYSTEM, "OOP spawner: BOSS_MODE resolved", mapOf("bossMode" to (bossMode ?: "null")))
-            if (bossMode == "KERNEL") {
-                // Get kernel IPC address from KernelBootstrap.instance (not env var,
-                // since BOSS_KERNEL_IPC_ADDR is only set for child processes)
-                val kernelAddr = System.getenv("BOSS_KERNEL_IPC_ADDR")
-                    ?: try {
-                        val companionCls = Class.forName("ai.rever.boss.kernel.KernelBootstrap\$Companion")
-                        val companion = bootstrapCls.getDeclaredField("Companion").get(null)
-                        val getInstance = companionCls.getMethod("getInstance")
-                        val kernelInstance = getInstance.invoke(companion)
-                        logger.info(LogCategory.SYSTEM, "OOP spawner: KernelBootstrap.instance", mapOf("isNull" to (kernelInstance == null)))
-                        if (kernelInstance != null) {
-                            bootstrapCls.getMethod("getKernelAddress").invoke(kernelInstance) as? String
-                        } else null
-                    } catch (e: Exception) {
-                        logger.warn(LogCategory.SYSTEM, "OOP spawner: kernel addr failed", mapOf("error" to e.toString()))
+                // Only wire if BOSS_MODE=KERNEL
+                val bossMode =
+                    System.getenv("BOSS_MODE")
+                        ?: try {
+                            val cfgCls = Class.forName("ai.rever.boss.config.ConfigLoader")
+                            val cfgInstance = cfgCls.getDeclaredField("INSTANCE").get(null)
+                            cfgCls
+                                .getMethod(
+                                    "getConfig",
+                                    String::class.java,
+                                    String::class.java,
+                                ).invoke(cfgInstance, "BOSS_MODE", null) as? String
+                        } catch (e: Exception) {
+                            logger.warn(LogCategory.SYSTEM, "OOP spawner: ConfigLoader failed", mapOf("error" to e.toString()))
+                            null
+                        }
+                logger.info(LogCategory.SYSTEM, "OOP spawner: BOSS_MODE resolved", mapOf("bossMode" to (bossMode ?: "null")))
+                if (bossMode == "KERNEL") {
+                    // Get kernel IPC address from KernelBootstrap.instance (not env var,
+                    // since BOSS_KERNEL_IPC_ADDR is only set for child processes)
+                    val kernelAddr =
+                        System.getenv("BOSS_KERNEL_IPC_ADDR")
+                            ?: try {
+                                val companionCls = Class.forName("ai.rever.boss.kernel.KernelBootstrap\$Companion")
+                                val companion = bootstrapCls.getDeclaredField("Companion").get(null)
+                                val getInstance = companionCls.getMethod("getInstance")
+                                val kernelInstance = getInstance.invoke(companion)
+                                logger.info(
+                                    LogCategory.SYSTEM,
+                                    "OOP spawner: KernelBootstrap.instance",
+                                    mapOf("isNull" to (kernelInstance == null)),
+                                )
+                                if (kernelInstance != null) {
+                                    bootstrapCls.getMethod("getKernelAddress").invoke(kernelInstance) as? String
+                                } else {
+                                    null
+                                }
+                            } catch (e: Exception) {
+                                logger.warn(LogCategory.SYSTEM, "OOP spawner: kernel addr failed", mapOf("error" to e.toString()))
+                                null
+                            }
+                            ?: ""
+                    logger.info(LogCategory.SYSTEM, "OOP spawner: kernelAddr resolved", mapOf("addr" to kernelAddr))
+                    if (kernelAddr.isNotEmpty()) {
+                        val processSpawner =
+                            processSpawnerCls
+                                .getConstructor(String::class.java, java.io.File::class.java)
+                                .newInstance(
+                                    kernelAddr,
+                                    java.io.File(
+                                        try {
+                                            val dirsCls2 = Class.forName("ai.rever.boss.plugin.pathutils.BossDirectories")
+                                            val dirsInst2 = dirsCls2.getDeclaredField("INSTANCE").get(null)
+                                            (dirsCls2.getMethod("getRootDir").invoke(dirsInst2) as java.io.File).absolutePath
+                                        } catch (_: Exception) {
+                                            "${System.getProperty("user.home")}/.boss"
+                                        },
+                                        "logs",
+                                    ),
+                                )
+                        spawnerCls
+                            .getConstructor(
+                                processSpawnerCls,
+                                String::class.java,
+                                String::class.java,
+                            ).newInstance(
+                                processSpawner,
+                                windowId ?: "",
+                                windowProjectState?.selectedProject?.value?.path ?: "",
+                            ) as OutOfProcessPluginSpawner
+                    } else {
                         null
                     }
-                    ?: ""
-                logger.info(LogCategory.SYSTEM, "OOP spawner: kernelAddr resolved", mapOf("addr" to kernelAddr))
-                if (kernelAddr.isNotEmpty()) {
-                    val processSpawner = processSpawnerCls.getConstructor(String::class.java, java.io.File::class.java)
-                        .newInstance(kernelAddr, java.io.File(
-                            try {
-                                val dirsCls2 = Class.forName("ai.rever.boss.plugin.pathutils.BossDirectories")
-                                val dirsInst2 = dirsCls2.getDeclaredField("INSTANCE").get(null)
-                                (dirsCls2.getMethod("getRootDir").invoke(dirsInst2) as java.io.File).absolutePath
-                            } catch (_: Exception) { "${System.getProperty("user.home")}/.boss" },
-                            "logs"
-                        ))
-                    spawnerCls.getConstructor(
-                        processSpawnerCls,
-                        String::class.java,
-                        String::class.java
-                    ).newInstance(
-                        processSpawner,
-                        windowId ?: "",
-                        windowProjectState?.selectedProject?.value?.path ?: ""
-                    ) as OutOfProcessPluginSpawner
-                } else null
-            } else null
-        } catch (e: ClassNotFoundException) {
-            logger.warn(LogCategory.SYSTEM, "OOP spawner: class not found", mapOf("error" to e.message))
-            null
-        } catch (e: NoClassDefFoundError) {
-            logger.warn(LogCategory.SYSTEM, "OOP spawner: class def not found", mapOf("error" to e.message))
-            null
-        } catch (e: Exception) {
-            logger.error(LogCategory.SYSTEM, "OOP spawner: unexpected error", mapOf("error" to e.toString()), e)
-            null
-        }
+                } else {
+                    null
+                }
+            } catch (e: ClassNotFoundException) {
+                logger.warn(LogCategory.SYSTEM, "OOP spawner: class not found", mapOf("error" to e.message))
+                null
+            } catch (e: NoClassDefFoundError) {
+                logger.warn(LogCategory.SYSTEM, "OOP spawner: class def not found", mapOf("error" to e.message))
+                null
+            } catch (e: Exception) {
+                logger.error(LogCategory.SYSTEM, "OOP spawner: unexpected error", mapOf("error" to e.toString()), e)
+                null
+            }
 
         if (oopSpawner != null) {
             logger.info(LogCategory.SYSTEM, "OutOfProcessPluginSpawner created successfully")
@@ -319,24 +348,26 @@ class DefaultPlugin(
             logger.warn(LogCategory.SYSTEM, "OutOfProcessPluginSpawner is null — OOP plugins will run in-process")
         }
 
-        val manager = DynamicPluginManager(
-            panelRegistry = panelRegistry,
-            tabRegistry = tabRegistry,
-            sandboxManager = sandboxManager,
-            createSandboxedContext = { pluginId, config ->
-                createSandboxedContext(pluginId, config)
-            },
-            outOfProcessSpawner = oopSpawner,
-        )
+        val manager =
+            DynamicPluginManager(
+                panelRegistry = panelRegistry,
+                tabRegistry = tabRegistry,
+                sandboxManager = sandboxManager,
+                createSandboxedContext = { pluginId, config ->
+                    createSandboxedContext(pluginId, config)
+                },
+                outOfProcessSpawner = oopSpawner,
+            )
 
         // Load persisted plugins on first access (only once globally).
         // The Job is kept so loadExternalPlugins can sequence after it —
         // the two passes cover overlapping jar sets and must not race.
         if (!persistedPluginsLoaded) {
             persistedPluginsLoaded = true
-            persistedPluginsLoadJob = pluginScope.launch {
-                loadPersistedPluginsInternal(manager)
-            }
+            persistedPluginsLoadJob =
+                pluginScope.launch {
+                    loadPersistedPluginsInternal(manager)
+                }
         }
 
         manager
@@ -349,23 +380,25 @@ class DefaultPlugin(
     val pluginToastState: PluginToastState = PluginToastState(pluginScope)
 
     // Notification service and listener for plugin events
-    private val notificationService = BossPluginNotificationService(
-        toastController = pluginToastState,
-        onDisablePlugin = { pluginId ->
-            pluginScope.launch {
-                sandboxManager.disablePlugin(pluginId)
-            }
-        },
-        onEnablePlugin = { pluginId ->
-            pluginScope.launch {
-                sandboxManager.enablePlugin(pluginId)
-            }
-        }
-    )
+    private val notificationService =
+        BossPluginNotificationService(
+            toastController = pluginToastState,
+            onDisablePlugin = { pluginId ->
+                pluginScope.launch {
+                    sandboxManager.disablePlugin(pluginId)
+                }
+            },
+            onEnablePlugin = { pluginId ->
+                pluginScope.launch {
+                    sandboxManager.enablePlugin(pluginId)
+                }
+            },
+        )
 
-    private val notificationListener = PluginSandboxNotificationListener(notificationService).also {
-        (sandboxManager as? PluginSandboxManagerImpl)?.addListener(it)
-    }
+    private val notificationListener =
+        PluginSandboxNotificationListener(notificationService).also {
+            (sandboxManager as? PluginSandboxManagerImpl)?.addListener(it)
+        }
 
     // No sandbox for the default context (backward compatibility)
     override val sandbox: PluginSandboxRef? = null
@@ -442,9 +475,13 @@ class DefaultPlugin(
      */
     override fun registerSearchProvider(provider: SearchProvider) {
         SearchRegistryImpl.registerProvider(provider)
-        logger.debug(LogCategory.SYSTEM, "Search provider registered", mapOf(
-            "providerId" to provider.providerId
-        ))
+        logger.debug(
+            LogCategory.SYSTEM,
+            "Search provider registered",
+            mapOf(
+                "providerId" to provider.providerId,
+            ),
+        )
     }
 
     /**
@@ -452,9 +489,13 @@ class DefaultPlugin(
      */
     override fun unregisterSearchProvider(providerId: String) {
         SearchRegistryImpl.unregisterProvider(providerId)
-        logger.debug(LogCategory.SYSTEM, "Search provider unregistered", mapOf(
-            "providerId" to providerId
-        ))
+        logger.debug(
+            LogCategory.SYSTEM,
+            "Search provider unregistered",
+            mapOf(
+                "providerId" to providerId,
+            ),
+        )
     }
 
     // ============================================================
@@ -464,17 +505,27 @@ class DefaultPlugin(
     // ============================================================
 
     override fun registerMcpToolProvider(provider: ai.rever.boss.plugin.api.McpToolProvider) {
-        ai.rever.boss.mcp.McpToolRegistryImpl.registerProvider(provider)
-        logger.debug(LogCategory.SYSTEM, "MCP tool provider registered", mapOf(
-            "providerId" to provider.providerId
-        ))
+        ai.rever.boss.mcp.McpToolRegistryImpl
+            .registerProvider(provider)
+        logger.debug(
+            LogCategory.SYSTEM,
+            "MCP tool provider registered",
+            mapOf(
+                "providerId" to provider.providerId,
+            ),
+        )
     }
 
     override fun unregisterMcpToolProvider(providerId: String) {
-        ai.rever.boss.mcp.McpToolRegistryImpl.unregisterProvider(providerId)
-        logger.debug(LogCategory.SYSTEM, "MCP tool provider unregistered", mapOf(
-            "providerId" to providerId
-        ))
+        ai.rever.boss.mcp.McpToolRegistryImpl
+            .unregisterProvider(providerId)
+        logger.debug(
+            LogCategory.SYSTEM,
+            "MCP tool provider unregistered",
+            mapOf(
+                "providerId" to providerId,
+            ),
+        )
     }
 
     override val mcpToolRegistry: ai.rever.boss.plugin.api.McpToolRegistry
@@ -489,43 +540,53 @@ class DefaultPlugin(
     // ============================================================
 
     override fun registerPanelMenuContribution(contribution: ai.rever.boss.plugin.api.PanelMenuContribution) {
-        ai.rever.boss.components.plugin.registries.PanelMenuRegistryImpl.register(contribution)
+        ai.rever.boss.components.plugin.registries.PanelMenuRegistryImpl
+            .register(contribution)
     }
 
     override fun unregisterPanelMenuContribution(contributionId: String) {
-        ai.rever.boss.components.plugin.registries.PanelMenuRegistryImpl.unregister(contributionId)
+        ai.rever.boss.components.plugin.registries.PanelMenuRegistryImpl
+            .unregister(contributionId)
     }
 
     override fun registerSettingsPage(provider: ai.rever.boss.plugin.api.SettingsPageProvider) {
-        ai.rever.boss.components.plugin.registries.SettingsPageRegistryImpl.register(provider)
+        ai.rever.boss.components.plugin.registries.SettingsPageRegistryImpl
+            .register(provider)
     }
 
     override fun unregisterSettingsPage(pageId: String) {
-        ai.rever.boss.components.plugin.registries.SettingsPageRegistryImpl.unregister(pageId)
+        ai.rever.boss.components.plugin.registries.SettingsPageRegistryImpl
+            .unregister(pageId)
     }
 
     override fun registerDeepLinkActionHandler(handler: ai.rever.boss.plugin.api.DeepLinkActionHandler) {
-        ai.rever.boss.components.plugin.registries.DeepLinkActionRegistryImpl.register(handler)
+        ai.rever.boss.components.plugin.registries.DeepLinkActionRegistryImpl
+            .register(handler)
     }
 
     override fun unregisterDeepLinkActionHandler(handlerId: String) {
-        ai.rever.boss.components.plugin.registries.DeepLinkActionRegistryImpl.unregister(handlerId)
+        ai.rever.boss.components.plugin.registries.DeepLinkActionRegistryImpl
+            .unregister(handlerId)
     }
 
     override fun registerShortcutActionProvider(provider: ai.rever.boss.plugin.api.ShortcutActionProvider) {
-        ai.rever.boss.components.plugin.registries.PluginShortcutRegistryImpl.register(provider)
+        ai.rever.boss.components.plugin.registries.PluginShortcutRegistryImpl
+            .register(provider)
     }
 
     override fun unregisterShortcutActionProvider(providerId: String) {
-        ai.rever.boss.components.plugin.registries.PluginShortcutRegistryImpl.unregister(providerId)
+        ai.rever.boss.components.plugin.registries.PluginShortcutRegistryImpl
+            .unregister(providerId)
     }
 
     override fun registerStatusBarItem(provider: ai.rever.boss.plugin.api.StatusBarItemProvider) {
-        ai.rever.boss.components.plugin.registries.StatusBarRegistryImpl.register(provider)
+        ai.rever.boss.components.plugin.registries.StatusBarRegistryImpl
+            .register(provider)
     }
 
     override fun unregisterStatusBarItem(itemId: String) {
-        ai.rever.boss.components.plugin.registries.StatusBarRegistryImpl.unregister(itemId)
+        ai.rever.boss.components.plugin.registries.StatusBarRegistryImpl
+            .unregister(itemId)
     }
 
     // Split view operations for plugins that need tab/panel operations
@@ -548,7 +609,8 @@ class DefaultPlugin(
 
     // Run configuration data provider for run-configurations plugin
     override val runConfigurationDataProvider: ai.rever.boss.plugin.api.RunConfigurationDataProvider by lazy {
-        ai.rever.boss.run.RunConfigurationDataProviderImpl()
+        ai.rever.boss.run
+            .RunConfigurationDataProviderImpl()
     }
 
     // Performance data provider for performance plugin
@@ -563,17 +625,20 @@ class DefaultPlugin(
 
     // Secret data provider for secret manager and user secret list plugins
     override val secretDataProvider: ai.rever.boss.plugin.api.SecretDataProvider by lazy {
-        ai.rever.boss.services.supabase.SecretDataProviderImpl()
+        ai.rever.boss.services.supabase
+            .SecretDataProviderImpl()
     }
 
     // Panel event provider for plugins that need to trigger panel events
     override val panelEventProvider: ai.rever.boss.plugin.api.PanelEventProvider by lazy {
-        ai.rever.boss.components.plugin.providers.PanelEventProviderImpl()
+        ai.rever.boss.components.plugin.providers
+            .PanelEventProviderImpl()
     }
 
     // Settings provider for plugins that need to open settings
     override val settingsProvider: ai.rever.boss.plugin.api.SettingsProvider by lazy {
-        ai.rever.boss.components.plugin.providers.SettingsProviderImpl()
+        ai.rever.boss.components.plugin.providers
+            .SettingsProviderImpl()
     }
 
     // Context menu provider for plugins that need context menu functionality
@@ -715,16 +780,21 @@ class DefaultPlugin(
      */
     fun createSandboxedContext(
         pluginId: String,
-        config: SandboxConfig = SandboxConfig()
+        config: SandboxConfig = SandboxConfig(),
     ): PluginContext {
         val sandbox = sandboxManager.createSandbox(pluginId, config)
 
         // Start the sandbox asynchronously to avoid blocking UI thread
         pluginScope.launch {
             sandbox.start().onFailure { error ->
-                logger.error(LogCategory.SYSTEM, "Failed to start sandbox", mapOf(
-                    "pluginId" to pluginId
-                ), error)
+                logger.error(
+                    LogCategory.SYSTEM,
+                    "Failed to start sandbox",
+                    mapOf(
+                        "pluginId" to pluginId,
+                    ),
+                    error,
+                )
             }
         }
 
@@ -736,7 +806,7 @@ class DefaultPlugin(
             _sandbox = sandbox,
             delegate = this,
             sandboxedPanelRegistry = sandboxedPanelRegistry,
-            sandboxedTabRegistry = sandboxedTabRegistry
+            sandboxedTabRegistry = sandboxedTabRegistry,
         )
     }
 
@@ -826,9 +896,13 @@ class DefaultPlugin(
         // ============================================================
         registerKernelPluginServices()
 
-        logger.info(LogCategory.SYSTEM, "DefaultPlugin initialization complete", mapOf(
-            "sandboxedPlugins" to sandboxManager.getAllSandboxes().size
-        ))
+        logger.info(
+            LogCategory.SYSTEM,
+            "DefaultPlugin initialization complete",
+            mapOf(
+                "sandboxedPlugins" to sandboxManager.getAllSandboxes().size,
+            ),
+        )
     }
 
     /**
@@ -878,9 +952,13 @@ class DefaultPlugin(
         val pluginDir = BossDirectories.resolve("plugins")
 
         if (!pluginDir.exists() || !pluginDir.isDirectory) {
-            logger.debug(LogCategory.SYSTEM, "External plugins directory not found", mapOf(
-                "path" to pluginDir.absolutePath
-            ))
+            logger.debug(
+                LogCategory.SYSTEM,
+                "External plugins directory not found",
+                mapOf(
+                    "path" to pluginDir.absolutePath,
+                ),
+            )
             return
         }
 
@@ -889,75 +967,109 @@ class DefaultPlugin(
         // pass lost log "Plugin already loaded" as a failure for most plugins
         // every startup — and let this scan force-load (enabled=true) plugins
         // whose persisted entry said enabled=false.
-        externalPluginsScanJob = pluginScope.launch {
-            val manager = dynamicPluginManager // first access starts the persisted load
-            persistedPluginsLoadJob?.join()
+        externalPluginsScanJob =
+            pluginScope.launch {
+                val manager = dynamicPluginManager // first access starts the persisted load
+                persistedPluginsLoadJob?.join()
 
-            // List the directory only NOW: the background system-plugin
-            // updater can replace jars while startup is in flight — a listing
-            // captured at init would try already-deleted files and never see
-            // freshly downloaded ones.
-            val jarFiles = pluginDir.listFiles { file ->
-                file.isFile && file.extension == "jar"
-                        // Skip microkernel runtime — it's a classpath dependency for OOP plugins, not a loadable plugin
-                        && !file.name.startsWith(MicrokernelRuntime.ARTIFACT_PREFIX)
-            } ?: emptyArray()
+                // List the directory only NOW: the background system-plugin
+                // updater can replace jars while startup is in flight — a listing
+                // captured at init would try already-deleted files and never see
+                // freshly downloaded ones.
+                val jarFiles =
+                    pluginDir.listFiles { file ->
+                        file.isFile && file.extension == "jar" &&
+                            // Skip microkernel runtime — it's a classpath dependency for OOP plugins, not a loadable plugin
+                            !file.name.startsWith(MicrokernelRuntime.ARTIFACT_PREFIX)
+                    } ?: emptyArray()
 
-            if (jarFiles.isEmpty()) {
-                logger.debug(LogCategory.SYSTEM, "No external plugins found", mapOf(
-                    "path" to pluginDir.absolutePath
-                ))
-                return@launch
-            }
+                if (jarFiles.isEmpty()) {
+                    logger.debug(
+                        LogCategory.SYSTEM,
+                        "No external plugins found",
+                        mapOf(
+                            "path" to pluginDir.absolutePath,
+                        ),
+                    )
+                    return@launch
+                }
 
-            logger.info(LogCategory.SYSTEM, "Loading external plugins", mapOf(
-                "count" to jarFiles.size,
-                "path" to pluginDir.absolutePath
-            ))
+                logger.info(
+                    LogCategory.SYSTEM,
+                    "Loading external plugins",
+                    mapOf(
+                        "count" to jarFiles.size,
+                        "path" to pluginDir.absolutePath,
+                    ),
+                )
 
-            // The persisted pass is authoritative for every jar it got into
-            // pluginStates — loaded ones and binary-incompatibility rejections
-            // (tracked as DISABLED); don't retry either. Other load failures
-            // don't land in pluginStates, so the scan may retry those and
-            // re-log the real error. This scan otherwise only picks up jars
-            // dropped into the directory manually.
-            val trackedJarPaths = manager.pluginStates.value.values.map { it.jarPath }.toSet()
+                // The persisted pass is authoritative for every jar it got into
+                // pluginStates — loaded ones and binary-incompatibility rejections
+                // (tracked as DISABLED); don't retry either. Other load failures
+                // don't land in pluginStates, so the scan may retry those and
+                // re-log the real error. This scan otherwise only picks up jars
+                // dropped into the directory manually.
+                val trackedJarPaths =
+                    manager.pluginStates.value.values
+                        .map { it.jarPath }
+                        .toSet()
 
-            for (jarFile in jarFiles) {
-                if (jarFile.absolutePath in trackedJarPaths) continue
-                try {
-                    logger.info(LogCategory.SYSTEM, "Installing external plugin", mapOf(
-                        "file" to jarFile.name
-                    ))
+                for (jarFile in jarFiles) {
+                    if (jarFile.absolutePath in trackedJarPaths) continue
+                    try {
+                        logger.info(
+                            LogCategory.SYSTEM,
+                            "Installing external plugin",
+                            mapOf(
+                                "file" to jarFile.name,
+                            ),
+                        )
 
-                    val result = manager.installPlugin(jarFile.absolutePath)
+                        val result = manager.installPlugin(jarFile.absolutePath)
 
-                    if (result.isSuccess) {
-                        val info = result.getOrThrow()
-                        logger.info(LogCategory.SYSTEM, "External plugin loaded successfully", mapOf(
-                            "pluginId" to info.manifest.pluginId,
-                            "version" to info.manifest.version,
-                            "displayName" to info.manifest.displayName
-                        ))
-                    } else if (result.exceptionOrNull()?.message?.startsWith(PluginLoadException.ALREADY_LOADED_PREFIX) == true) {
-                        // A second jar for a plugin that's already running — a
-                        // stale old version left in the directory, not a failure.
-                        logger.info(LogCategory.SYSTEM, "Skipping duplicate jar for already-loaded plugin", mapOf(
-                            "file" to jarFile.name
-                        ))
-                    } else {
-                        logger.error(LogCategory.SYSTEM, "Failed to load external plugin", mapOf(
-                            "file" to jarFile.name,
-                            "error" to (result.exceptionOrNull()?.message ?: "unknown")
-                        ))
+                        if (result.isSuccess) {
+                            val info = result.getOrThrow()
+                            logger.info(
+                                LogCategory.SYSTEM,
+                                "External plugin loaded successfully",
+                                mapOf(
+                                    "pluginId" to info.manifest.pluginId,
+                                    "version" to info.manifest.version,
+                                    "displayName" to info.manifest.displayName,
+                                ),
+                            )
+                        } else if (result.exceptionOrNull()?.message?.startsWith(PluginLoadException.ALREADY_LOADED_PREFIX) == true) {
+                            // A second jar for a plugin that's already running — a
+                            // stale old version left in the directory, not a failure.
+                            logger.info(
+                                LogCategory.SYSTEM,
+                                "Skipping duplicate jar for already-loaded plugin",
+                                mapOf(
+                                    "file" to jarFile.name,
+                                ),
+                            )
+                        } else {
+                            logger.error(
+                                LogCategory.SYSTEM,
+                                "Failed to load external plugin",
+                                mapOf(
+                                    "file" to jarFile.name,
+                                    "error" to (result.exceptionOrNull()?.message ?: "unknown"),
+                                ),
+                            )
+                        }
+                    } catch (e: Exception) {
+                        logger.error(
+                            LogCategory.SYSTEM,
+                            "Exception loading external plugin",
+                            mapOf(
+                                "file" to jarFile.name,
+                            ),
+                            e,
+                        )
                     }
-                } catch (e: Exception) {
-                    logger.error(LogCategory.SYSTEM, "Exception loading external plugin", mapOf(
-                        "file" to jarFile.name
-                    ), e)
                 }
             }
-        }
     }
 
     // ============================================================
@@ -978,41 +1090,51 @@ class DefaultPlugin(
      */
     private fun registerKernelPluginServices() {
         try {
-            val bossMode = System.getenv("BOSS_MODE")
-                ?: try {
-                    val configCls = Class.forName("ai.rever.boss.config.ConfigLoader")
-                    val cfgInst = configCls.getDeclaredField("INSTANCE").get(null)
-                    configCls.getMethod("getConfig", String::class.java, String::class.java).invoke(cfgInst, "BOSS_MODE", null) as? String
-                } catch (_: Exception) { null }
+            val bossMode =
+                System.getenv("BOSS_MODE")
+                    ?: try {
+                        val configCls = Class.forName("ai.rever.boss.config.ConfigLoader")
+                        val cfgInst = configCls.getDeclaredField("INSTANCE").get(null)
+                        configCls
+                            .getMethod(
+                                "getConfig",
+                                String::class.java,
+                                String::class.java,
+                            ).invoke(cfgInst, "BOSS_MODE", null) as? String
+                    } catch (_: Exception) {
+                        null
+                    }
             if (bossMode != "KERNEL") return
 
             val bootstrapCls = Class.forName("ai.rever.boss.kernel.KernelBootstrap")
             val companionCls = Class.forName("ai.rever.boss.kernel.KernelBootstrap\$Companion")
             val companion = bootstrapCls.getDeclaredField("Companion").get(null)
             val getInstance = companionCls.getMethod("getInstance")
-            val kernelBootstrap = getInstance.invoke(companion) ?: run {
-                logger.info(LogCategory.SYSTEM, "KernelBootstrap not yet initialized — skipping service registration")
-                return
-            }
+            val kernelBootstrap =
+                getInstance.invoke(companion) ?: run {
+                    logger.info(LogCategory.SYSTEM, "KernelBootstrap not yet initialized — skipping service registration")
+                    return
+                }
 
-            val registerMethod = bootstrapCls.getMethod(
-                "registerPluginServices",
-                ai.rever.boss.plugin.api.PerformanceDataProvider::class.java,
-                ai.rever.boss.plugin.api.DownloadDataProvider::class.java,
-                ai.rever.boss.plugin.api.GitDataProvider::class.java,
-                ai.rever.boss.plugin.api.LogDataProvider::class.java,
-                ai.rever.boss.plugin.api.ActiveTabsProvider::class.java,
-                ai.rever.boss.plugin.api.SecretDataProvider::class.java,
-                ai.rever.boss.plugin.api.SupabaseDataProvider::class.java,
-                ai.rever.boss.plugin.api.SplitViewOperations::class.java,
-                ai.rever.boss.plugin.api.ContextMenuProvider::class.java,
-                ai.rever.boss.plugin.api.RunConfigurationDataProvider::class.java,
-                ai.rever.boss.plugin.api.PanelEventProvider::class.java,
-                ai.rever.boss.plugin.api.RoleManagementProvider::class.java,
-                ai.rever.boss.plugin.api.DirectoryPickerProvider::class.java,
-                ai.rever.boss.plugin.api.ProjectDataProvider::class.java,
-                ai.rever.boss.plugin.api.NotificationProvider::class.java,
-            )
+            val registerMethod =
+                bootstrapCls.getMethod(
+                    "registerPluginServices",
+                    ai.rever.boss.plugin.api.PerformanceDataProvider::class.java,
+                    ai.rever.boss.plugin.api.DownloadDataProvider::class.java,
+                    ai.rever.boss.plugin.api.GitDataProvider::class.java,
+                    ai.rever.boss.plugin.api.LogDataProvider::class.java,
+                    ai.rever.boss.plugin.api.ActiveTabsProvider::class.java,
+                    ai.rever.boss.plugin.api.SecretDataProvider::class.java,
+                    ai.rever.boss.plugin.api.SupabaseDataProvider::class.java,
+                    ai.rever.boss.plugin.api.SplitViewOperations::class.java,
+                    ai.rever.boss.plugin.api.ContextMenuProvider::class.java,
+                    ai.rever.boss.plugin.api.RunConfigurationDataProvider::class.java,
+                    ai.rever.boss.plugin.api.PanelEventProvider::class.java,
+                    ai.rever.boss.plugin.api.RoleManagementProvider::class.java,
+                    ai.rever.boss.plugin.api.DirectoryPickerProvider::class.java,
+                    ai.rever.boss.plugin.api.ProjectDataProvider::class.java,
+                    ai.rever.boss.plugin.api.NotificationProvider::class.java,
+                )
 
             registerMethod.invoke(
                 kernelBootstrap,
@@ -1044,8 +1166,6 @@ class DefaultPlugin(
     }
 }
 
-
-
 /**
  * Adapter that implements the plugin-api ActiveTabsProvider interface
  * by wrapping the SplitViewState for tab collection.
@@ -1054,9 +1174,8 @@ private class ApiActiveTabsProviderAdapter(
     private val splitViewState: ai.rever.boss.components.window_panel.SplitViewState,
     private val workspaceManager: ai.rever.boss.components.workspaces.WorkspaceManager,
     private val windowId: String,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
 ) : ActiveTabsProvider {
-
     private val tabsLogger = BossLogger.forComponent("ActiveTabsProvider")
     private val _activeTabs = kotlinx.coroutines.flow.MutableStateFlow<List<ActiveTabData>>(emptyList())
     override val activeTabs: kotlinx.coroutines.flow.StateFlow<List<ActiveTabData>> = _activeTabs
@@ -1072,9 +1191,14 @@ private class ApiActiveTabsProviderAdapter(
                     consecutiveFailures = 0
                 } catch (e: Exception) {
                     consecutiveFailures++
-                    tabsLogger.warn(LogCategory.GENERAL, "Failed to refresh tabs", mapOf(
-                        "consecutiveFailures" to consecutiveFailures
-                    ), error = e)
+                    tabsLogger.warn(
+                        LogCategory.GENERAL,
+                        "Failed to refresh tabs",
+                        mapOf(
+                            "consecutiveFailures" to consecutiveFailures,
+                        ),
+                        error = e,
+                    )
                 }
                 // Base interval 2s, +1s per failure, max 10s
                 delay(minOf(2000L + (consecutiveFailures * 1000L), 10000L))
@@ -1087,7 +1211,10 @@ private class ApiActiveTabsProviderAdapter(
         _activeTabs.value = tabs.map { convertToActiveTabData(it) }
     }
 
-    override fun selectTab(tabId: String, panelId: String) {
+    override fun selectTab(
+        tabId: String,
+        panelId: String,
+    ) {
         splitViewState.selectTabInPanel(tabId, panelId)
     }
 
@@ -1117,9 +1244,7 @@ private class ApiActiveTabsProviderAdapter(
     }
 
     @androidx.compose.runtime.Composable
-    override fun loadFavicon(cacheKey: String?): androidx.compose.ui.graphics.painter.Painter? {
-        return loadFaviconFromCache(cacheKey)?.painter
-    }
+    override fun loadFavicon(cacheKey: String?): androidx.compose.ui.graphics.painter.Painter? = loadFaviconFromCache(cacheKey)?.painter
 
     override fun getFallbackIcon(typeId: String): androidx.compose.ui.graphics.vector.ImageVector? {
         // Return a generic tab icon based on type
@@ -1140,14 +1265,18 @@ private class ApiActiveTabsProviderAdapter(
         storeSplitViewState(splitViewState)
 
         // Get the internal browser integration
-        val internalIntegration = BrowserAccessor().getActiveBrowserIntegration()
-            ?: return null
+        val internalIntegration =
+            BrowserAccessor().getActiveBrowserIntegration()
+                ?: return null
 
         // Wrap it in an adapter that implements the plugin-api interface
         return BrowserIntegrationAdapter(internalIntegration)
     }
 
-    override fun createBrowserTab(url: String, title: String): String? {
+    override fun createBrowserTab(
+        url: String,
+        title: String,
+    ): String? {
         return try {
             val component = splitViewState.getActiveTabsComponent() ?: return null
             openFluckTabIn(component, url, title)
@@ -1157,14 +1286,18 @@ private class ApiActiveTabsProviderAdapter(
         }
     }
 
-    override fun createBrowserTabInRightSplit(url: String, title: String): String? {
+    override fun createBrowserTabInRightSplit(
+        url: String,
+        title: String,
+    ): String? {
         return try {
             // Split the active panel left/right; the new (right) panel hosts the browser.
             val activePanelId = splitViewState.activePanelId
-            val newPanelId = splitViewState.splitPanel(
-                activePanelId,
-                ai.rever.boss.components.window_panel.SplitOrientation.VERTICAL
-            )
+            val newPanelId =
+                splitViewState.splitPanel(
+                    activePanelId,
+                    ai.rever.boss.components.window_panel.SplitOrientation.VERTICAL,
+                )
             val newPanel = splitViewState.getAllPanels().firstOrNull { it.id == newPanelId } ?: return null
             val tabId = openFluckTabIn(newPanel.tabsComponent, url, title)
             if (tabId == null && newPanelId != activePanelId) {
@@ -1191,13 +1324,14 @@ private class ApiActiveTabsProviderAdapter(
         title: String,
     ): String? {
         val tabId = "plugin-tab-${kotlin.time.Clock.System.now().toEpochMilliseconds()}"
-        val fluckTab = ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo(
-            id = tabId,
-            typeId = ai.rever.boss.plugin.tab.fluck.FluckTabType.typeId,
-            _title = title,
-            _icon = androidx.compose.material.icons.Icons.Outlined.Language,
-            url = url
-        )
+        val fluckTab =
+            ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo(
+                id = tabId,
+                typeId = ai.rever.boss.plugin.tab.fluck.FluckTabType.typeId,
+                _title = title,
+                _icon = androidx.compose.material.icons.Icons.Outlined.Language,
+                url = url,
+            )
         val tabIndex = component.addTab(fluckTab)
         return if (tabIndex >= 0) {
             component.selectTab(tabIndex)
@@ -1256,20 +1390,22 @@ private class ApiActiveTabsProviderAdapter(
             windowId = tab.windowId,
             splitPosition = tab.splitPosition,
             url = url,
-            faviconCacheKey = faviconCacheKey
+            faviconCacheKey = faviconCacheKey,
         )
     }
 
     /** Helper to get a String property from an object via reflection. */
-    private fun getPropertyByReflection(obj: Any, propertyName: String): String? {
-        return try {
+    private fun getPropertyByReflection(
+        obj: Any,
+        propertyName: String,
+    ): String? =
+        try {
             obj::class.java.methods
                 .firstOrNull { it.name == "get${propertyName.replaceFirstChar { c -> c.uppercase() }}" && it.parameterCount == 0 }
                 ?.invoke(obj) as? String
         } catch (_: Exception) {
             null
         }
-    }
 }
 
 /**
@@ -1277,24 +1413,17 @@ private class ApiActiveTabsProviderAdapter(
  * This allows dynamic plugins to use browser capabilities through the PluginContext API.
  */
 private class BrowserIntegrationAdapter(
-    private val internal: InternalBrowserIntegration
+    private val internal: InternalBrowserIntegration,
 ) : ApiBrowserIntegration {
-
-    override suspend fun executeJavaScript(script: String): Any? {
-        return internal.executeJavaScript(script)
-    }
+    override suspend fun executeJavaScript(script: String): Any? = internal.executeJavaScript(script)
 
     override suspend fun navigate(url: String) {
         internal.navigate(url)
     }
 
-    override fun isBrowserAvailable(): Boolean {
-        return internal.isBrowserAvailable()
-    }
+    override fun isBrowserAvailable(): Boolean = internal.isBrowserAvailable()
 
-    override suspend fun getCurrentUrl(): String? {
-        return internal.getCurrentUrl()
-    }
+    override suspend fun getCurrentUrl(): String? = internal.getCurrentUrl()
 }
 
 /**
@@ -1308,6 +1437,7 @@ private class BrowserIntegrationAdapter(
  * Default implementation of KeyboardShortcutProvider that bridges
  * the existing getKeyboardShortcuts() data to the plugin API.
  */
+
 /**
  * Default implementation of CacheProvider.
  * Uses ~/.boss/plugin-cache/{pluginId}/ for cache storage.
@@ -1316,8 +1446,8 @@ private class DefaultCacheProvider : CacheProvider {
     private val cacheLogger = BossLogger.forComponent("DefaultCacheProvider")
     private val cacheBaseDir = BossDirectories.resolve("plugin-cache")
 
-    override fun clearPluginCache(pluginId: String): Boolean {
-        return try {
+    override fun clearPluginCache(pluginId: String): Boolean =
+        try {
             val cacheDir = File(cacheBaseDir, pluginId)
             if (cacheDir.exists()) {
                 cacheDir.deleteRecursively()
@@ -1332,10 +1462,9 @@ private class DefaultCacheProvider : CacheProvider {
             )
             false
         }
-    }
 
-    override fun getPluginCacheSize(pluginId: String): Long {
-        return try {
+    override fun getPluginCacheSize(pluginId: String): Long =
+        try {
             val cacheDir = File(cacheBaseDir, pluginId)
             if (cacheDir.exists()) {
                 cacheDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
@@ -1351,7 +1480,6 @@ private class DefaultCacheProvider : CacheProvider {
             )
             -1L
         }
-    }
 
     override fun getPluginCacheDirectory(pluginId: String): String {
         val cacheDir = File(cacheBaseDir, pluginId)
@@ -1365,21 +1493,25 @@ private class DefaultCacheProvider : CacheProvider {
  * Launches tasks on the plugin scope with tracking.
  */
 private class DefaultBackgroundTaskProvider(
-    private val scope: kotlinx.coroutines.CoroutineScope
+    private val scope: kotlinx.coroutines.CoroutineScope,
 ) : BackgroundTaskProvider {
     private val taskLogger = BossLogger.forComponent("DefaultBackgroundTaskProvider")
     private val activeTasks = java.util.concurrent.ConcurrentHashMap<String, DefaultBackgroundTaskHandle>()
 
-    override fun launchTask(name: String, task: suspend () -> Unit): BackgroundTaskHandle? {
-        return try {
-            val taskId = "${name}-${System.currentTimeMillis()}"
-            val job = scope.launch {
-                try {
-                    task()
-                } finally {
-                    activeTasks.remove(taskId)
+    override fun launchTask(
+        name: String,
+        task: suspend () -> Unit,
+    ): BackgroundTaskHandle? =
+        try {
+            val taskId = "$name-${System.currentTimeMillis()}"
+            val job =
+                scope.launch {
+                    try {
+                        task()
+                    } finally {
+                        activeTasks.remove(taskId)
+                    }
                 }
-            }
             val handle = DefaultBackgroundTaskHandle(name, job)
             activeTasks[taskId] = handle
             handle
@@ -1387,11 +1519,8 @@ private class DefaultBackgroundTaskProvider(
             taskLogger.warn(LogCategory.SYSTEM, "Failed to launch background task", mapOf("task" to name), error = e)
             null
         }
-    }
 
-    override fun getRunningTasks(): List<BackgroundTaskHandle> {
-        return activeTasks.values.filter { it.isActive }.toList()
-    }
+    override fun getRunningTasks(): List<BackgroundTaskHandle> = activeTasks.values.filter { it.isActive }.toList()
 
     override fun cancelAll(): Int {
         var count = 0
@@ -1408,9 +1537,10 @@ private class DefaultBackgroundTaskProvider(
 
 private class DefaultBackgroundTaskHandle(
     override val name: String,
-    override val job: kotlinx.coroutines.Job
+    override val job: kotlinx.coroutines.Job,
 ) : BackgroundTaskHandle {
     override val isActive: Boolean get() = job.isActive
+
     override fun cancel() = job.cancel()
 }
 
@@ -1422,22 +1552,26 @@ private class DefaultDiagnosticProvider : DiagnosticProvider {
     private val maxEntries = 200
     private val entries = java.util.concurrent.ConcurrentLinkedDeque<DiagnosticEntry>()
 
-    override fun reportDiagnostic(category: String, message: String, metadata: Map<String, String>) {
-        entries.addFirst(DiagnosticEntry(
-            timestamp = System.currentTimeMillis(),
-            category = category,
-            message = message,
-            metadata = metadata
-        ))
+    override fun reportDiagnostic(
+        category: String,
+        message: String,
+        metadata: Map<String, String>,
+    ) {
+        entries.addFirst(
+            DiagnosticEntry(
+                timestamp = System.currentTimeMillis(),
+                category = category,
+                message = message,
+                metadata = metadata,
+            ),
+        )
         // Trim to max size
         while (entries.size > maxEntries) {
             entries.removeLast()
         }
     }
 
-    override fun getRecentDiagnostics(limit: Int): List<DiagnosticEntry> {
-        return entries.take(limit)
-    }
+    override fun getRecentDiagnostics(limit: Int): List<DiagnosticEntry> = entries.take(limit)
 
     override fun clearDiagnostics() {
         entries.clear()
@@ -1445,34 +1579,33 @@ private class DefaultDiagnosticProvider : DiagnosticProvider {
 }
 
 private class DefaultKeyboardShortcutProvider : KeyboardShortcutProvider {
-    override fun getShortcuts(): List<KeyboardShortcutInfo> {
-        return ai.rever.boss.components.settings.sections.getKeyboardShortcuts().map {
+    override fun getShortcuts(): List<KeyboardShortcutInfo> =
+        ai.rever.boss.components.settings.sections.getKeyboardShortcuts().map {
             KeyboardShortcutInfo(
                 action = it.action,
                 key = it.key,
                 modifiers = it.modifiers,
-                category = it.category.name.replace("_", " ").lowercase()
-                    .replaceFirstChar { c -> c.uppercase() },
-                description = it.description
+                category =
+                    it.category.name
+                        .replace("_", " ")
+                        .lowercase()
+                        .replaceFirstChar { c -> c.uppercase() },
+                description = it.description,
             )
         }
-    }
 
-    override fun getShortcutsByCategory(category: String): List<KeyboardShortcutInfo> {
-        return getShortcuts().filter { it.category == category }
-    }
+    override fun getShortcutsByCategory(category: String): List<KeyboardShortcutInfo> = getShortcuts().filter { it.category == category }
 
-    override fun isMacOS(): Boolean {
-        return ai.rever.boss.components.settings.sections.isMacOS()
-    }
+    override fun isMacOS(): Boolean =
+        ai.rever.boss.components.settings.sections
+            .isMacOS()
 }
 
 private class DefaultContextMenuProvider : ContextMenuProvider {
-
     @androidx.compose.runtime.Composable
     override fun applyContextMenu(
         modifier: androidx.compose.ui.Modifier,
-        items: List<ContextMenuItemData>
+        items: List<ContextMenuItemData>,
     ): androidx.compose.ui.Modifier {
         // Convert plugin API items to app's ContextMenuItem format
         val appItems = items.map { it.toContextMenuItem() }
@@ -1480,11 +1613,14 @@ private class DefaultContextMenuProvider : ContextMenuProvider {
     }
 
     private fun ContextMenuItemData.toContextMenuItem(): ContextMenuItem =
-        if (isDivider) ContextMenuItem(isDivider = true)
-        else ContextMenuItem(
-            text = label,
-            icon = icon,
-            subMenu = subMenu?.map { it.toContextMenuItem() },
-            onClick = onClick
-        )
+        if (isDivider) {
+            ContextMenuItem(isDivider = true)
+        } else {
+            ContextMenuItem(
+                text = label,
+                icon = icon,
+                subMenu = subMenu?.map { it.toContextMenuItem() },
+                onClick = onClick,
+            )
+        }
 }

@@ -1,14 +1,14 @@
 package ai.rever.boss.plugin.repository.remote
 
-import ai.rever.boss.plugin.repository.PluginInfo
 import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
+import ai.rever.boss.plugin.repository.PluginInfo
 import io.github.jan.supabase.createSupabaseClient
+import io.github.jan.supabase.realtime.PostgresAction
 import io.github.jan.supabase.realtime.Realtime
+import io.github.jan.supabase.realtime.RealtimeChannel
 import io.github.jan.supabase.realtime.channel
 import io.github.jan.supabase.realtime.postgresChangeFlow
-import io.github.jan.supabase.realtime.PostgresAction
-import io.github.jan.supabase.realtime.RealtimeChannel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -27,27 +27,38 @@ sealed class PluginStoreEvent {
     /**
      * A plugin was inserted (new plugin published).
      */
-    data class PluginInserted(val pluginId: String) : PluginStoreEvent()
+    data class PluginInserted(
+        val pluginId: String,
+    ) : PluginStoreEvent()
 
     /**
      * A plugin was updated (new version, metadata change).
      */
-    data class PluginUpdated(val pluginId: String) : PluginStoreEvent()
+    data class PluginUpdated(
+        val pluginId: String,
+    ) : PluginStoreEvent()
 
     /**
      * A plugin was deleted.
      */
-    data class PluginDeleted(val pluginId: String) : PluginStoreEvent()
+    data class PluginDeleted(
+        val pluginId: String,
+    ) : PluginStoreEvent()
 
     /**
      * A version was published for a plugin.
      */
-    data class VersionPublished(val pluginId: String, val version: String) : PluginStoreEvent()
+    data class VersionPublished(
+        val pluginId: String,
+        val version: String,
+    ) : PluginStoreEvent()
 
     /**
      * Connection status changed.
      */
-    data class ConnectionStateChanged(val connected: Boolean) : PluginStoreEvent()
+    data class ConnectionStateChanged(
+        val connected: Boolean,
+    ) : PluginStoreEvent()
 }
 
 /**
@@ -57,7 +68,6 @@ sealed class PluginStoreEvent {
  * plugin_versions tables, emitting events when changes occur.
  */
 class PluginStoreRealtimeService {
-
     private val logger = BossLogger.forComponent("PluginStoreRealtime")
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
@@ -94,25 +104,29 @@ class PluginStoreRealtimeService {
             val baseUrl = PluginStoreConfig.supabaseUrl
             val anonKey = PluginStoreConfig.anonKey
 
-            logger.info(LogCategory.NETWORK, "Starting plugin store realtime", mapOf(
-                "baseUrl" to baseUrl
-            ))
+            logger.info(
+                LogCategory.NETWORK,
+                "Starting plugin store realtime",
+                mapOf(
+                    "baseUrl" to baseUrl,
+                ),
+            )
 
-            supabaseClient = createSupabaseClient(
-                supabaseUrl = baseUrl,
-                supabaseKey = anonKey
-            ) {
-                install(Realtime) {
-                    // Match main SupabaseConfig heartbeat settings to prevent
-                    // "Heartbeat timeout" crashes in Ktor websocket
-                    heartbeatInterval = kotlin.time.Duration.parse("30s")
-                    reconnectDelay = kotlin.time.Duration.parse("7s")
+            supabaseClient =
+                createSupabaseClient(
+                    supabaseUrl = baseUrl,
+                    supabaseKey = anonKey,
+                ) {
+                    install(Realtime) {
+                        // Match main SupabaseConfig heartbeat settings to prevent
+                        // "Heartbeat timeout" crashes in Ktor websocket
+                        heartbeatInterval = kotlin.time.Duration.parse("30s")
+                        reconnectDelay = kotlin.time.Duration.parse("7s")
+                    }
                 }
-            }
 
             subscribeToPlugins()
             subscribeToVersions()
-
         } catch (e: Exception) {
             logger.error(LogCategory.NETWORK, "Failed to start realtime service", error = e)
         }
@@ -128,9 +142,10 @@ class PluginStoreRealtimeService {
                     val client = supabaseClient ?: return@launch
 
                     pluginsChannel = client.channel("plugins-changes")
-                    val changeFlow = pluginsChannel!!.postgresChangeFlow<PostgresAction>(schema = "public") {
-                        table = "plugins"
-                    }
+                    val changeFlow =
+                        pluginsChannel!!.postgresChangeFlow<PostgresAction>(schema = "public") {
+                            table = "plugins"
+                        }
 
                     // Subscribe to the channel
                     pluginsChannel!!.subscribe()
@@ -149,18 +164,21 @@ class PluginStoreRealtimeService {
                                 _events.emit(PluginStoreEvent.PluginInserted(pluginId))
                                 triggerRefresh()
                             }
+
                             is PostgresAction.Update -> {
                                 val pluginId = action.record["plugin_id"]?.toString()?.removeSurrounding("\"") ?: ""
                                 logger.debug(LogCategory.NETWORK, "Plugin updated", mapOf("pluginId" to pluginId))
                                 _events.emit(PluginStoreEvent.PluginUpdated(pluginId))
                                 triggerRefresh()
                             }
+
                             is PostgresAction.Delete -> {
                                 val pluginId = action.oldRecord["plugin_id"]?.toString()?.removeSurrounding("\"") ?: ""
                                 logger.debug(LogCategory.NETWORK, "Plugin deleted", mapOf("pluginId" to pluginId))
                                 _events.emit(PluginStoreEvent.PluginDeleted(pluginId))
                                 triggerRefresh()
                             }
+
                             else -> {}
                         }
                     }
@@ -171,7 +189,10 @@ class PluginStoreRealtimeService {
                     isConnected = false
                     _events.emit(PluginStoreEvent.ConnectionStateChanged(false))
                     // Clean up before retry
-                    try { pluginsChannel?.unsubscribe() } catch (_: Exception) {}
+                    try {
+                        pluginsChannel?.unsubscribe()
+                    } catch (_: Exception) {
+                    }
                     pluginsChannel = null
                     delay(backoffMs)
                     backoffMs = (backoffMs * 2).coerceAtMost(maxBackoffMs)
@@ -190,9 +211,10 @@ class PluginStoreRealtimeService {
                     val client = supabaseClient ?: return@launch
 
                     versionsChannel = client.channel("versions-changes")
-                    val changeFlow = versionsChannel!!.postgresChangeFlow<PostgresAction>(schema = "public") {
-                        table = "plugin_versions"
-                    }
+                    val changeFlow =
+                        versionsChannel!!.postgresChangeFlow<PostgresAction>(schema = "public") {
+                            table = "plugin_versions"
+                        }
 
                     // Subscribe to the channel
                     versionsChannel!!.subscribe()
@@ -209,6 +231,7 @@ class PluginStoreRealtimeService {
                                 _events.emit(PluginStoreEvent.VersionPublished("", version))
                                 triggerRefresh()
                             }
+
                             else -> {}
                         }
                     }
@@ -217,7 +240,10 @@ class PluginStoreRealtimeService {
                 } catch (e: Exception) {
                     logger.warn(LogCategory.NETWORK, "Versions subscription lost, reconnecting in ${backoffMs}ms", error = e)
                     // Clean up before retry
-                    try { versionsChannel?.unsubscribe() } catch (_: Exception) {}
+                    try {
+                        versionsChannel?.unsubscribe()
+                    } catch (_: Exception) {
+                    }
                     versionsChannel = null
                     delay(backoffMs)
                     backoffMs = (backoffMs * 2).coerceAtMost(maxBackoffMs)

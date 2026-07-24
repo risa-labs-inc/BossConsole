@@ -37,23 +37,26 @@ object LogSanitizer {
             val localPart = parts[0]
             val domainParts = parts[1].split(".")
 
-            val maskedLocal = if (localPart.length <= 1) {
-                "*"
-            } else {
-                "${localPart.first()}${"*".repeat(minOf(localPart.length - 1, 3))}"
-            }
-
-            val maskedDomain = if (domainParts.isEmpty()) {
-                "[invalid-domain]"
-            } else {
-                val firstDomainPart = domainParts.first()
-                val maskedFirstPart = if (firstDomainPart.length <= 1) {
+            val maskedLocal =
+                if (localPart.length <= 1) {
                     "*"
                 } else {
-                    "${firstDomainPart.first()}${"*".repeat(minOf(firstDomainPart.length - 1, 3))}"
+                    "${localPart.first()}${"*".repeat(minOf(localPart.length - 1, 3))}"
                 }
-                (listOf(maskedFirstPart) + domainParts.drop(1)).joinToString(".")
-            }
+
+            val maskedDomain =
+                if (domainParts.isEmpty()) {
+                    "[invalid-domain]"
+                } else {
+                    val firstDomainPart = domainParts.first()
+                    val maskedFirstPart =
+                        if (firstDomainPart.length <= 1) {
+                            "*"
+                        } else {
+                            "${firstDomainPart.first()}${"*".repeat(minOf(firstDomainPart.length - 1, 3))}"
+                        }
+                    (listOf(maskedFirstPart) + domainParts.drop(1)).joinToString(".")
+                }
 
             "$maskedLocal@$maskedDomain"
         } catch (ignored: Exception) {
@@ -111,18 +114,19 @@ object LogSanitizer {
     fun maskUriParams(uri: String?): String {
         if (uri.isNullOrBlank()) return "[empty]"
 
-        val sensitiveParams = setOf(
-            "token",
-            "access_token",
-            "refresh_token",
-            "code",
-            "error_description",
-            "id_token",
-            "session_token",
-            "api_key",
-            "key",
-            "secret"
-        )
+        val sensitiveParams =
+            setOf(
+                "token",
+                "access_token",
+                "refresh_token",
+                "code",
+                "error_description",
+                "id_token",
+                "session_token",
+                "api_key",
+                "key",
+                "secret",
+            )
 
         return try {
             // Handle both query params (?) and fragment params (#)
@@ -151,19 +155,20 @@ object LogSanitizer {
         uri: String,
         startIndex: Int,
         endChar: Char,
-        sensitiveParams: Set<String>
+        sensitiveParams: Set<String>,
     ): String {
         val endIndex = if (endChar == '\u0000') uri.length else uri.indexOf(endChar).let { if (it < 0) uri.length else it }
         val segment = uri.substring(startIndex, endIndex)
 
-        val maskedSegment = segment.split("&").joinToString("&") { param ->
-            val parts = param.split("=", limit = 2)
-            if (parts.size == 2 && sensitiveParams.any { parts[0].equals(it, ignoreCase = true) }) {
-                "${parts[0]}=[REDACTED]"
-            } else {
-                param
+        val maskedSegment =
+            segment.split("&").joinToString("&") { param ->
+                val parts = param.split("=", limit = 2)
+                if (parts.size == 2 && sensitiveParams.any { parts[0].equals(it, ignoreCase = true) }) {
+                    "${parts[0]}=[REDACTED]"
+                } else {
+                    param
+                }
             }
-        }
 
         return uri.substring(0, startIndex) + maskedSegment + uri.substring(endIndex)
     }
@@ -197,12 +202,13 @@ object LogSanitizer {
             val hasFragment = !parsed.rawFragment.isNullOrBlank()
 
             val base = "${parsed.scheme}://${parsed.host ?: ""}${parsed.path ?: ""}"
-            val suffix = when {
-                hasQuery && hasFragment -> " (with query and fragment)"
-                hasQuery -> " (with query params)"
-                hasFragment -> " (with fragment)"
-                else -> ""
-            }
+            val suffix =
+                when {
+                    hasQuery && hasFragment -> " (with query and fragment)"
+                    hasQuery -> " (with query params)"
+                    hasFragment -> " (with fragment)"
+                    else -> ""
+                }
 
             base + suffix
         } catch (ignored: Exception) {
@@ -221,12 +227,12 @@ object LogSanitizer {
 
         // Check for common patterns
         return value.length >= 20 ||
-                value.contains("eyJ") ||  // JWT prefix
-                value.matches(Regex("^[a-zA-Z0-9_-]{20,}$")) ||
-                value.contains("sk_") ||
-                value.contains("pk_") ||
-                value.contains("ghp_") ||
-                value.contains("gho_")
+            value.contains("eyJ") || // JWT prefix
+            value.matches(Regex("^[a-zA-Z0-9_-]{20,}$")) ||
+            value.contains("sk_") ||
+            value.contains("pk_") ||
+            value.contains("ghp_") ||
+            value.contains("gho_")
     }
 
     /**
@@ -235,10 +241,18 @@ object LogSanitizer {
     fun sanitizeMap(map: Map<String, Any?>?): Map<String, Any?> {
         if (map == null) return emptyMap()
 
-        val sensitiveKeys = setOf(
-            "token", "access_token", "refresh_token", "password",
-            "secret", "api_key", "key", "credential", "credential_id"
-        )
+        val sensitiveKeys =
+            setOf(
+                "token",
+                "access_token",
+                "refresh_token",
+                "password",
+                "secret",
+                "api_key",
+                "key",
+                "credential",
+                "credential_id",
+            )
 
         return map.mapValues { (key, value) ->
             when {
@@ -287,9 +301,7 @@ object LogSanitizer {
      * @param message The log message to sanitize
      * @return The sanitized message
      */
-    fun sanitizeLogMessage(message: String?): String {
-        return sanitizeExceptionMessage(message)
-    }
+    fun sanitizeLogMessage(message: String?): String = sanitizeExceptionMessage(message)
 
     /**
      * Sanitize a stack trace by removing file paths and other sensitive data.

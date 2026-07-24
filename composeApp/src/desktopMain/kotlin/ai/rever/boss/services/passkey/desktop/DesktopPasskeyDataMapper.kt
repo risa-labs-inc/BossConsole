@@ -7,19 +7,17 @@ import ai.rever.boss.services.passkey.*
  * Converts between different data formats and creates platform-specific URLs and HTML
  */
 class DesktopPasskeyDataMapper {
-
     /**
      * Create platform-specific PasskeyRegistration for browser flows
      */
-    fun createBrowserPasskeyRegistration(sessionId: String): PasskeyRegistration {
-        return PasskeyRegistration(
-            credentialId = "browser-registration-${sessionId}",
+    fun createBrowserPasskeyRegistration(sessionId: String): PasskeyRegistration =
+        PasskeyRegistration(
+            credentialId = "browser-registration-$sessionId",
             publicKey = "",
             attestationObject = "",
             clientDataJSON = "",
-            transports = listOf("internal", "hybrid")
+            transports = listOf("internal", "hybrid"),
         )
-    }
 
     /**
      * Extract platform-specific error information
@@ -34,5 +32,4 @@ class DesktopPasskeyDataMapper {
             else -> PasskeyErrorCode.UNKNOWN_ERROR
         }
     }
-
 }

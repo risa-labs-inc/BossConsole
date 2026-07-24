@@ -46,14 +46,14 @@ fun FileCard(
     file: RecentFile,
     onClick: () -> Unit,
     onRemove: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
 
     val scale by animateFloatAsState(
         targetValue = if (isHovered) 1.02f else 1f,
-        animationSpec = spring(dampingRatio = 0.6f)
+        animationSpec = spring(dampingRatio = 0.6f),
     )
 
     val backgroundColor = if (isHovered) BossTheme.colors.signalWash else BossTheme.colors.raised
@@ -61,33 +61,35 @@ fun FileCard(
     val cardShape = RoundedCornerShape(12.dp)
 
     Box(
-        modifier = modifier.width(120.dp)
+        modifier = modifier.width(120.dp),
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .scale(scale)
-                .clip(cardShape)
-                .background(color = backgroundColor)
-                .clickable { onClick() }
-                .hoverable(interactionSource)
-                .padding(12.dp),
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .scale(scale)
+                    .clip(cardShape)
+                    .background(color = backgroundColor)
+                    .clickable { onClick() }
+                    .hoverable(interactionSource)
+                    .padding(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Icon(
                 imageVector = fileIconInfo.icon,
                 contentDescription = file.name,
                 tint = fileIconInfo.color,
-                modifier = Modifier.size(32.dp)
+                modifier = Modifier.size(32.dp),
             )
 
             // File name with fixed height for consistency
             Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(16.dp),
-                contentAlignment = Alignment.Center
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(16.dp),
+                contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text = file.name,
@@ -96,17 +98,18 @@ fun FileCard(
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center
+                    textAlign = TextAlign.Center,
                 )
             }
 
             // Parent folder with fixed height for consistency
             val parentFolder = file.path.extractParentName()
             Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(16.dp),
-                contentAlignment = Alignment.Center
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(16.dp),
+                contentAlignment = Alignment.Center,
             ) {
                 if (parentFolder.isNotEmpty()) {
                     Text(
@@ -115,7 +118,7 @@ fun FileCard(
                         fontSize = 10.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center
+                        textAlign = TextAlign.Center,
                     )
                 }
             }
@@ -124,25 +127,24 @@ fun FileCard(
         // Remove button (visible on hover)
         if (isHovered) {
             Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(4.dp)
-                    .size(16.dp)
-                    .background(
-                        color = BossTheme.colors.lineStrong,
-                        shape = CircleShape
-                    )
-                    .clickable { onRemove() },
-                contentAlignment = Alignment.Center
+                modifier =
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(4.dp)
+                        .size(16.dp)
+                        .background(
+                            color = BossTheme.colors.lineStrong,
+                            shape = CircleShape,
+                        ).clickable { onRemove() },
+                contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = Icons.Filled.Close,
                     contentDescription = "Remove",
                     tint = BossTheme.colors.textSecondary,
-                    modifier = Modifier.size(10.dp)
+                    modifier = Modifier.size(10.dp),
                 )
             }
         }
     }
 }
-

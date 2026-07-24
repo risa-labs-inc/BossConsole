@@ -9,6 +9,4 @@ import ai.rever.boss.plugin.api.SemanticTokenProvider
  * (which the plugin bundles privately), so the host has nothing to provide —
  * the plugin runs its own PluginSemanticTokenProvider internally.
  */
-actual fun createSemanticTokenProvider(): SemanticTokenProvider? {
-    return null
-}
+actual fun createSemanticTokenProvider(): SemanticTokenProvider? = null

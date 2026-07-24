@@ -12,7 +12,6 @@ import kotlin.test.assertEquals
  * assertions hold on any CI host rather than only a POSIX one.
  */
 class SubstituteProjectPathTest {
-
     private val spaced = "/Users/foo/AI Workflow Tools' Exports/claude-exports"
     private val quoted = CommandProcessor.quotePath(spaced)
 
@@ -21,11 +20,11 @@ class SubstituteProjectPathTest {
         // workingDirectory / filePath / url path: must stay verbatim (not shell-parsed).
         assertEquals(
             spaced,
-            SplitTemplatesManager.substituteProjectPath("{projectPath}", spaced, quote = false)
+            SplitTemplatesManager.substituteProjectPath("{projectPath}", spaced, quote = false),
         )
         assertEquals(
             "$spaced/README.md",
-            SplitTemplatesManager.substituteProjectPath("{projectPath}/README.md", spaced, quote = false)
+            SplitTemplatesManager.substituteProjectPath("{projectPath}/README.md", spaced, quote = false),
         )
     }
 
@@ -36,8 +35,8 @@ class SubstituteProjectPathTest {
             SplitTemplatesManager.substituteProjectPath(
                 "cd {projectPath} && clear && claude --dangerously-skip-permissions",
                 spaced,
-                quote = true
-            )
+                quote = true,
+            ),
         )
     }
 
@@ -46,7 +45,7 @@ class SubstituteProjectPathTest {
         // A user who worked around the bug with cd "{projectPath}" must NOT get cd "'…'".
         assertEquals(
             "cd \"$spaced\"",
-            SplitTemplatesManager.substituteProjectPath("cd \"{projectPath}\"", spaced, quote = true)
+            SplitTemplatesManager.substituteProjectPath("cd \"{projectPath}\"", spaced, quote = true),
         )
     }
 
@@ -54,7 +53,7 @@ class SubstituteProjectPathTest {
     fun leavesAlreadySingleQuotedTemplateRaw() {
         assertEquals(
             "cd '$spaced'",
-            SplitTemplatesManager.substituteProjectPath("cd '{projectPath}'", spaced, quote = true)
+            SplitTemplatesManager.substituteProjectPath("cd '{projectPath}'", spaced, quote = true),
         )
     }
 
@@ -64,7 +63,7 @@ class SubstituteProjectPathTest {
         val plain = "/Users/foo/bar"
         assertEquals(
             "cd '$plain'",
-            SplitTemplatesManager.substituteProjectPath("cd {projectPath}", plain, quote = true)
+            SplitTemplatesManager.substituteProjectPath("cd {projectPath}", plain, quote = true),
         )
     }
 }

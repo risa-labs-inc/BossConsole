@@ -23,9 +23,7 @@ import kotlinx.coroutines.launch
  * Shows installation progress, success, or error states
  */
 @Composable
-fun CLIInstallationDialog(
-    onDismiss: () -> Unit
-) {
+fun CLIInstallationDialog(onDismiss: () -> Unit) {
     var installState by remember { mutableStateOf<InstallState>(InstallState.Installing) }
     val scope = rememberCoroutineScope()
 
@@ -33,11 +31,12 @@ fun CLIInstallationDialog(
     LaunchedEffect(Unit) {
         scope.launch {
             val result = CLIInstaller.installCLI()
-            installState = if (result.success) {
-                InstallState.Success(result)
-            } else {
-                InstallState.Error(result.message)
-            }
+            installState =
+                if (result.success) {
+                    InstallState.Success(result)
+                } else {
+                    InstallState.Error(result.message)
+                }
         }
     }
 
@@ -48,26 +47,29 @@ fun CLIInstallationDialog(
         }
     }) {
         Card(
-            modifier = Modifier
-                .width(500.dp)
-                .padding(16.dp),
+            modifier =
+                Modifier
+                    .width(500.dp)
+                    .padding(16.dp),
             elevation = 8.dp,
-            backgroundColor = BossTheme.colors.raised
+            backgroundColor = BossTheme.colors.raised,
         ) {
             Column(
                 modifier = Modifier.padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 when (val state = installState) {
                     is InstallState.Installing -> {
                         InstallingContent()
                     }
+
                     is InstallState.Success -> {
                         SuccessContent(
                             result = state.result,
-                            onClose = onDismiss
+                            onClose = onDismiss,
                         )
                     }
+
                     is InstallState.Error -> {
                         ErrorContent(
                             message = state.message,
@@ -75,14 +77,15 @@ fun CLIInstallationDialog(
                                 installState = InstallState.Installing
                                 scope.launch {
                                     val result = CLIInstaller.installCLI()
-                                    installState = if (result.success) {
-                                        InstallState.Success(result)
-                                    } else {
-                                        InstallState.Error(result.message)
-                                    }
+                                    installState =
+                                        if (result.success) {
+                                            InstallState.Success(result)
+                                        } else {
+                                            InstallState.Error(result.message)
+                                        }
                                 }
                             },
-                            onClose = onDismiss
+                            onClose = onDismiss,
                         )
                     }
                 }
@@ -94,14 +97,15 @@ fun CLIInstallationDialog(
 @Composable
 private fun InstallingContent() {
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         CircularProgressIndicator(
             modifier = Modifier.size(64.dp),
-            color = BossTheme.colors.signal
+            color = BossTheme.colors.signal,
         )
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -110,7 +114,7 @@ private fun InstallingContent() {
             text = "Installing BOSS CLI",
             fontSize = 20.sp,
             fontWeight = FontWeight.Bold,
-            color = BossTheme.colors.textPrimary
+            color = BossTheme.colors.textPrimary,
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -118,7 +122,7 @@ private fun InstallingContent() {
         Text(
             text = "Please wait...",
             fontSize = 14.sp,
-            color = BossTheme.colors.textSecondary
+            color = BossTheme.colors.textSecondary,
         )
     }
 }
@@ -126,19 +130,20 @@ private fun InstallingContent() {
 @Composable
 private fun SuccessContent(
     result: CLIInstallResult,
-    onClose: () -> Unit
+    onClose: () -> Unit,
 ) {
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Icon(
             imageVector = Icons.Default.CheckCircle,
             contentDescription = "Success",
             modifier = Modifier.size(64.dp),
-            tint = BossTheme.colors.ok
+            tint = BossTheme.colors.ok,
         )
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -147,7 +152,7 @@ private fun SuccessContent(
             text = "CLI Installed Successfully",
             fontSize = 20.sp,
             fontWeight = FontWeight.Bold,
-            color = BossTheme.colors.textPrimary
+            color = BossTheme.colors.textPrimary,
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -155,16 +160,16 @@ private fun SuccessContent(
         Card(
             modifier = Modifier.fillMaxWidth(),
             backgroundColor = BossTheme.colors.panel,
-            elevation = 0.dp
+            elevation = 0.dp,
         ) {
             Column(
-                modifier = Modifier.padding(16.dp)
+                modifier = Modifier.padding(16.dp),
             ) {
                 Text(
                     text = result.message,
                     fontSize = 13.sp,
                     color = BossTheme.colors.textSecondary,
-                    lineHeight = 20.sp
+                    lineHeight = 20.sp,
                 )
             }
         }
@@ -173,11 +178,12 @@ private fun SuccessContent(
 
         Button(
             onClick = onClose,
-            colors = ButtonDefaults.buttonColors(
-                backgroundColor = BossTheme.colors.signal,
-                contentColor = BossTheme.colors.onSignal
-            ),
-            modifier = Modifier.fillMaxWidth()
+            colors =
+                ButtonDefaults.buttonColors(
+                    backgroundColor = BossTheme.colors.signal,
+                    contentColor = BossTheme.colors.onSignal,
+                ),
+            modifier = Modifier.fillMaxWidth(),
         ) {
             Text("OK")
         }
@@ -188,19 +194,20 @@ private fun SuccessContent(
 private fun ErrorContent(
     message: String,
     onRetry: () -> Unit,
-    onClose: () -> Unit
+    onClose: () -> Unit,
 ) {
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Icon(
             imageVector = Icons.Default.Error,
             contentDescription = "Error",
             modifier = Modifier.size(64.dp),
-            tint = BossTheme.colors.alert
+            tint = BossTheme.colors.alert,
         )
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -209,7 +216,7 @@ private fun ErrorContent(
             text = "Installation Failed",
             fontSize = 20.sp,
             fontWeight = FontWeight.Bold,
-            color = BossTheme.colors.textPrimary
+            color = BossTheme.colors.textPrimary,
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -217,16 +224,16 @@ private fun ErrorContent(
         Card(
             modifier = Modifier.fillMaxWidth(),
             backgroundColor = BossTheme.colors.panel,
-            elevation = 0.dp
+            elevation = 0.dp,
         ) {
             Column(
-                modifier = Modifier.padding(16.dp)
+                modifier = Modifier.padding(16.dp),
             ) {
                 Text(
                     text = message,
                     fontSize = 13.sp,
                     color = BossTheme.colors.textSecondary,
-                    lineHeight = 20.sp
+                    lineHeight = 20.sp,
                 )
             }
         }
@@ -235,25 +242,27 @@ private fun ErrorContent(
 
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             OutlinedButton(
                 onClick = onClose,
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = BossTheme.colors.textPrimary
-                ),
-                modifier = Modifier.weight(1f)
+                colors =
+                    ButtonDefaults.outlinedButtonColors(
+                        contentColor = BossTheme.colors.textPrimary,
+                    ),
+                modifier = Modifier.weight(1f),
             ) {
                 Text("Cancel")
             }
 
             Button(
                 onClick = onRetry,
-                colors = ButtonDefaults.buttonColors(
-                    backgroundColor = BossTheme.colors.signal,
-                    contentColor = BossTheme.colors.onSignal
-                ),
-                modifier = Modifier.weight(1f)
+                colors =
+                    ButtonDefaults.buttonColors(
+                        backgroundColor = BossTheme.colors.signal,
+                        contentColor = BossTheme.colors.onSignal,
+                    ),
+                modifier = Modifier.weight(1f),
             ) {
                 Text("Retry")
             }
@@ -263,6 +272,12 @@ private fun ErrorContent(
 
 private sealed class InstallState {
     object Installing : InstallState()
-    data class Success(val result: CLIInstallResult) : InstallState()
-    data class Error(val message: String) : InstallState()
+
+    data class Success(
+        val result: CLIInstallResult,
+    ) : InstallState()
+
+    data class Error(
+        val message: String,
+    ) : InstallState()
 }

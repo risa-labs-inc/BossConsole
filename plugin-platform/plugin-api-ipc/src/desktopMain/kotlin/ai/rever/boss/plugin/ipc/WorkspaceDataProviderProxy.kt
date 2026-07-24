@@ -31,7 +31,6 @@ class WorkspaceDataProviderProxy(
     channel: ManagedChannel,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
 ) : WorkspaceDataProvider {
-
     private val stub = WorkspaceServiceGrpcKt.WorkspaceServiceCoroutineStub(channel)
 
     private val _workspaces = MutableStateFlow<List<LayoutWorkspace>>(emptyList())
@@ -87,12 +86,14 @@ class WorkspaceDataProviderProxy(
         scope.launch {
             try {
                 stub.loadWorkspace(
-                    ai.rever.boss.ipc.proto.services.LoadWorkspaceRequest.newBuilder()
+                    ai.rever.boss.ipc.proto.services.LoadWorkspaceRequest
+                        .newBuilder()
                         .setWorkspaceId(workspace.id)
                         .setProjectPath(workspace.projectPath ?: "")
-                        .build()
+                        .build(),
                 )
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
         }
     }
 
@@ -100,7 +101,8 @@ class WorkspaceDataProviderProxy(
         scope.launch {
             try {
                 stub.saveWorkspace(newWorkspace.toSaveRequest())
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
         }
     }
 
@@ -110,33 +112,39 @@ class WorkspaceDataProviderProxy(
         scope.launch {
             try {
                 stub.saveWorkspace(toSave.toSaveRequest())
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
         }
         return toSave
     }
 
-    override fun exportWorkspace(workspace: LayoutWorkspace): String =
-        WorkspaceSerializer.serialize(workspace)
+    override fun exportWorkspace(workspace: LayoutWorkspace): String = WorkspaceSerializer.serialize(workspace)
 
     override fun deleteWorkspace(name: String) {
         val target = _workspaces.value.firstOrNull { it.name == name } ?: return
         scope.launch {
             try {
                 stub.deleteWorkspace(
-                    ai.rever.boss.ipc.proto.services.DeleteWorkspaceRequest.newBuilder()
+                    ai.rever.boss.ipc.proto.services.DeleteWorkspaceRequest
+                        .newBuilder()
                         .setWorkspaceId(target.id)
-                        .build()
+                        .build(),
                 )
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
         }
     }
 
-    override fun renameWorkspace(oldName: String, newName: String) {
+    override fun renameWorkspace(
+        oldName: String,
+        newName: String,
+    ) {
         val target = _workspaces.value.firstOrNull { it.name == oldName } ?: return
         scope.launch {
             try {
                 stub.saveWorkspace(target.copy(name = newName).toSaveRequest())
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
         }
     }
 
@@ -153,7 +161,8 @@ class WorkspaceDataProviderProxy(
 
     private fun LayoutWorkspace.toSaveRequest(): ai.rever.boss.ipc.proto.services.SaveWorkspaceRequest {
         val layoutJson = WorkspaceSerializer.serialize(this)
-        return ai.rever.boss.ipc.proto.services.SaveWorkspaceRequest.newBuilder()
+        return ai.rever.boss.ipc.proto.services.SaveWorkspaceRequest
+            .newBuilder()
             .setWorkspaceId(id)
             .setName(name)
             .setProjectPath(projectPath ?: "")

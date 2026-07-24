@@ -33,16 +33,17 @@ fun BossDraggableComponent.DraggingItemOverlay() {
         val centeredOffset = Offset(currentPosition.x - iconSizePx / 2, currentPosition.y - iconSizePx / 2)
 
         Box(
-            modifier = Modifier
-                // Position the ghost based on calculated absolute position, centered
-                .offset { centeredOffset.round() }
-                .alpha(0.7f) // Apply transparency
+            modifier =
+                Modifier
+                    // Position the ghost based on calculated absolute position, centered
+                    .offset { centeredOffset.round() }
+                    .alpha(0.7f), // Apply transparency
         ) {
             Icon(
                 imageVector = item.icon,
                 contentDescription = null, // Decorative
                 modifier = Modifier.size(22.dp), // Match icon size
-                tint = BossTheme.colors.textPrimary
+                tint = BossTheme.colors.textPrimary,
             )
         }
     }

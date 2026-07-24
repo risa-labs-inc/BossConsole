@@ -9,6 +9,4 @@ import androidx.compose.runtime.Composable
  * if the owner window closes, the next window becomes the owner automatically.
  */
 @Composable
-actual fun rememberUpdateDialogOwnership(windowId: String): Boolean {
-    return WindowManager.windows.firstOrNull()?.id == windowId
-}
+actual fun rememberUpdateDialogOwnership(windowId: String): Boolean = WindowManager.windows.firstOrNull()?.id == windowId

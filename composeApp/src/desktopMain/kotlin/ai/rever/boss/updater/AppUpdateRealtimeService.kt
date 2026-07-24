@@ -34,13 +34,14 @@ import kotlin.time.Duration.Companion.seconds
 class AppUpdateRealtimeService(
     private val supabaseUrl: String = UpdateSourceConfig.supabaseUrl,
     private val anonKey: String = UpdateSourceConfig.supabaseAnonKey,
-    private val appId: String = UpdateSourceConfig.appId
+    private val appId: String = UpdateSourceConfig.appId,
 ) {
     private val logger = BossLogger.forComponent("AppUpdateRealtime")
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
     // Touched from start()/stop() and the subscribe + triggerCheck coroutines.
     @Volatile private var client: SupabaseClient? = null
+
     @Volatile private var channel: RealtimeChannel? = null
 
     companion object {
@@ -63,21 +64,23 @@ class AppUpdateRealtimeService(
             return
         }
         try {
-            val fullUrl = if (supabaseUrl.startsWith("http://") || supabaseUrl.startsWith("https://")) {
-                supabaseUrl
-            } else {
-                "https://$supabaseUrl"
-            }
+            val fullUrl =
+                if (supabaseUrl.startsWith("http://") || supabaseUrl.startsWith("https://")) {
+                    supabaseUrl
+                } else {
+                    "https://$supabaseUrl"
+                }
             logger.info(LogCategory.NETWORK, "Starting app update realtime", mapOf("baseUrl" to fullUrl))
 
-            client = createSupabaseClient(supabaseUrl = fullUrl, supabaseKey = anonKey) {
-                install(Realtime) {
-                    // Match SupabaseConfig heartbeat settings to avoid "Heartbeat
-                    // timeout" websocket crashes in Ktor.
-                    heartbeatInterval = 30.seconds
-                    reconnectDelay = 7.seconds
+            client =
+                createSupabaseClient(supabaseUrl = fullUrl, supabaseKey = anonKey) {
+                    install(Realtime) {
+                        // Match SupabaseConfig heartbeat settings to avoid "Heartbeat
+                        // timeout" websocket crashes in Ktor.
+                        heartbeatInterval = 30.seconds
+                        reconnectDelay = 7.seconds
+                    }
                 }
-            }
             subscribe()
         } catch (e: Exception) {
             logger.error(LogCategory.NETWORK, "Failed to start app update realtime", error = e)
@@ -95,9 +98,10 @@ class AppUpdateRealtimeService(
 
                     val ch = c.channel("app-releases-changes")
                     channel = ch
-                    val changeFlow = ch.postgresChangeFlow<PostgresAction>(schema = "public") {
-                        table = "app_releases"
-                    }
+                    val changeFlow =
+                        ch.postgresChangeFlow<PostgresAction>(schema = "public") {
+                            table = "app_releases"
+                        }
 
                     ch.subscribe()
                     backoffMs = 5_000L // Reset backoff on successful connection
@@ -109,8 +113,14 @@ class AppUpdateRealtimeService(
 
                     changeFlow.collect { action ->
                         when (action) {
-                            is PostgresAction.Insert -> handleRecord(action.record["app"], action.record["version"])
-                            is PostgresAction.Update -> handleRecord(action.record["app"], action.record["version"])
+                            is PostgresAction.Insert -> {
+                                handleRecord(action.record["app"], action.record["version"])
+                            }
+
+                            is PostgresAction.Update -> {
+                                handleRecord(action.record["app"], action.record["version"])
+                            }
+
                             else -> {}
                         }
                     }
@@ -124,7 +134,10 @@ class AppUpdateRealtimeService(
                 // Common path for normal close OR error: unsubscribe the old channel
                 // (avoid leaking it) and back off before reconnecting so a flow that
                 // keeps completing immediately can't busy-spin / hammer checkForUpdates.
-                try { channel?.unsubscribe() } catch (_: Exception) {}
+                try {
+                    channel?.unsubscribe()
+                } catch (_: Exception) {
+                }
                 channel = null
                 if (!isActive) break
                 delay(backoffMs)
@@ -133,7 +146,10 @@ class AppUpdateRealtimeService(
         }
     }
 
-    private fun handleRecord(appElement: Any?, versionElement: Any?) {
+    private fun handleRecord(
+        appElement: Any?,
+        versionElement: Any?,
+    ) {
         // Shared table: ignore rows for other apps.
         val app = appElement?.toString()?.removeSurrounding("\"")
         if (app != null && app != appId) return
