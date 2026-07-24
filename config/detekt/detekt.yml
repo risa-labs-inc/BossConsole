@@ -28,6 +28,11 @@ naming:
       ]
 
 complexity:
+  LongParameterList:
+    # Composable functions take many parameters by design (state hoisting
+    # pushes every piece of state + callback through the signature); the
+    # threshold stays for regular functions.
+    ignoreAnnotated: ['Composable']
   TooManyFunctions:
     # Same desktopTest gap as FunctionNaming above: test classes grow one
     # function per case by design and are exempt in every other test source

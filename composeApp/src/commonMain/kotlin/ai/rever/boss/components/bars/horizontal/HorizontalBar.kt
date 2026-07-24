@@ -1,6 +1,6 @@
 package ai.rever.boss.components.bars.horizontal
 
-import BossDarkSurface
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.Composable
@@ -12,7 +12,7 @@ import androidx.compose.ui.unit.Dp
 @Composable
 fun HorizontalBar(
     modifier: Modifier = Modifier,
-    backgroundColor: Color = BossDarkSurface,
+    backgroundColor: Color = BossTheme.colors.raised,
     height: Dp,
     content: @Composable BoxScope.() -> Unit
 ) {

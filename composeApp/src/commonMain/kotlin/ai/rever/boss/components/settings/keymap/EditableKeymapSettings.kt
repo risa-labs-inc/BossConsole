@@ -1,13 +1,6 @@
 package ai.rever.boss.components.settings.keymap
 
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkBorder
-import BossDarkContentBackground
-import BossDarkError
-import BossDarkSurface
-import BossDarkTextPrimary
-import BossDarkTextSecondary
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -121,7 +114,7 @@ fun EditableKeymapSettings() {
                 Text(
                     text = "${keymapSettings.shortcuts.size} shortcuts configured",
                     fontSize = 13.sp,
-                    color = BossDarkTextSecondary
+                    color = BossTheme.colors.textSecondary
                 )
                 if (conflicts.isNotEmpty()) {
                     ConflictWarningBadge(
@@ -160,7 +153,7 @@ fun EditableKeymapSettings() {
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(6.dp))
-                    .background(BossDarkBackground)
+                    .background(BossTheme.colors.panel)
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
@@ -168,19 +161,19 @@ fun EditableKeymapSettings() {
                 Column {
                     Text(
                         text = "Test Shortcuts",
-                        color = BossDarkTextPrimary,
+                        color = BossTheme.colors.textPrimary,
                         fontSize = 13.sp
                     )
                     Text(
                         text = "Verify all shortcuts are working correctly",
-                        color = BossDarkTextSecondary,
+                        color = BossTheme.colors.textSecondary,
                         fontSize = 11.sp,
                         modifier = Modifier.padding(top = 2.dp)
                     )
                 }
                 TextButton(
                     onClick = { showTestDialog = true },
-                    colors = ButtonDefaults.textButtonColors(contentColor = BossDarkAccent)
+                    colors = ButtonDefaults.textButtonColors(contentColor = BossTheme.colors.signal)
                 ) {
                     Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
@@ -206,7 +199,7 @@ fun EditableKeymapSettings() {
         }
 
         item {
-            Divider(color = BossDarkBorder)
+            Divider(color = BossTheme.colors.line)
         }
 
         // Search and filter
@@ -215,7 +208,7 @@ fun EditableKeymapSettings() {
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(6.dp))
-                    .background(BossDarkBackground)
+                    .background(BossTheme.colors.panel)
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
@@ -225,15 +218,15 @@ fun EditableKeymapSettings() {
                     modifier = Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(4.dp))
-                        .background(BossDarkContentBackground)
-                        .border(1.dp, BossDarkBorder, RoundedCornerShape(4.dp))
+                        .background(BossTheme.colors.ink)
+                        .border(1.dp, BossTheme.colors.line, RoundedCornerShape(4.dp))
                         .padding(horizontal = 10.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
                         imageVector = Icons.Default.Search,
                         contentDescription = "Search",
-                        tint = BossDarkTextSecondary,
+                        tint = BossTheme.colors.textSecondary,
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
@@ -242,16 +235,16 @@ fun EditableKeymapSettings() {
                         onValueChange = { searchQuery = it },
                         modifier = Modifier.weight(1f),
                         textStyle = TextStyle(
-                            color = BossDarkTextPrimary,
+                            color = BossTheme.colors.textPrimary,
                             fontSize = 13.sp
                         ),
                         singleLine = true,
-                        cursorBrush = SolidColor(BossDarkAccent),
+                        cursorBrush = SolidColor(BossTheme.colors.signal),
                         decorationBox = { innerTextField ->
                             if (searchQuery.isEmpty()) {
                                 Text(
                                     text = "Search shortcuts...",
-                                    color = BossDarkTextSecondary,
+                                    color = BossTheme.colors.textSecondary,
                                     fontSize = 13.sp
                                 )
                             }
@@ -267,21 +260,21 @@ fun EditableKeymapSettings() {
                     Row(
                         modifier = Modifier
                             .clip(RoundedCornerShape(4.dp))
-                            .background(BossDarkContentBackground)
-                            .border(1.dp, BossDarkBorder, RoundedCornerShape(4.dp))
+                            .background(BossTheme.colors.ink)
+                            .border(1.dp, BossTheme.colors.line, RoundedCornerShape(4.dp))
                             .clickable { categoryMenuExpanded = true }
                             .padding(horizontal = 10.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
                             text = if (selectedCategory == "All") "All Categories" else selectedCategory,
-                            color = BossDarkTextPrimary,
+                            color = BossTheme.colors.textPrimary,
                             fontSize = 13.sp
                         )
                         Icon(
                             imageVector = Icons.Default.ArrowDropDown,
                             contentDescription = "Expand",
-                            tint = BossDarkTextSecondary,
+                            tint = BossTheme.colors.textSecondary,
                             modifier = Modifier.size(18.dp)
                         )
                     }
@@ -289,7 +282,7 @@ fun EditableKeymapSettings() {
                     DropdownMenu(
                         expanded = categoryMenuExpanded,
                         onDismissRequest = { categoryMenuExpanded = false },
-                        modifier = Modifier.background(BossDarkBackground)
+                        modifier = Modifier.background(BossTheme.colors.panel)
                     ) {
                         allCategories.forEach { category ->
                             DropdownMenuItem(
@@ -300,7 +293,8 @@ fun EditableKeymapSettings() {
                             ) {
                                 Text(
                                     text = if (category == "All") "All Categories" else category,
-                                    color = if (category == selectedCategory) BossDarkAccent else BossDarkTextPrimary,
+                                    color = if (category == selectedCategory) BossTheme.colors.signal
+                                    else BossTheme.colors.textPrimary,
                                     fontSize = 13.sp
                                 )
                             }
@@ -347,13 +341,13 @@ fun EditableKeymapSettings() {
                                 text = "No shortcuts found",
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.Medium,
-                                color = BossDarkTextSecondary
+                                color = BossTheme.colors.textSecondary
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 text = "Try a different search term",
                                 fontSize = 13.sp,
-                                color = BossDarkTextSecondary.copy(alpha = 0.7f)
+                                color = BossTheme.colors.textSecondary.copy(alpha = 0.7f)
                             )
                         }
                     }
@@ -401,19 +395,19 @@ private fun TabSwitchModeSelector(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(6.dp))
-            .background(BossDarkBackground)
+            .background(BossTheme.colors.panel)
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Column {
             Text(
                 text = "Tab switching (Ctrl+Tab)",
-                color = BossDarkTextPrimary,
+                color = BossTheme.colors.textPrimary,
                 fontSize = 13.sp
             )
             Text(
                 text = "How Ctrl+Tab and Ctrl+Shift+Tab move between tabs in the active panel",
-                color = BossDarkTextSecondary,
+                color = BossTheme.colors.textSecondary,
                 fontSize = 11.sp,
                 modifier = Modifier.padding(top = 2.dp)
             )
@@ -449,11 +443,11 @@ private fun TabSwitchModeChip(
         modifier = modifier
             .clip(RoundedCornerShape(6.dp))
             .background(
-                if (isSelected) BossDarkAccent.copy(alpha = 0.15f) else BossDarkContentBackground
+                if (isSelected) BossTheme.colors.signal.copy(alpha = 0.15f) else BossTheme.colors.ink
             )
             .border(
                 width = 1.dp,
-                color = if (isSelected) BossDarkAccent else BossDarkBorder,
+                color = if (isSelected) BossTheme.colors.signal else BossTheme.colors.line,
                 shape = RoundedCornerShape(6.dp)
             )
             .clickable(onClick = onClick)
@@ -462,13 +456,13 @@ private fun TabSwitchModeChip(
     ) {
         Text(
             text = label,
-            color = if (isSelected) BossDarkAccent else BossDarkTextPrimary,
+            color = if (isSelected) BossTheme.colors.signal else BossTheme.colors.textPrimary,
             fontSize = 12.sp,
             fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
         )
         Text(
             text = description,
-            color = BossDarkTextSecondary,
+            color = BossTheme.colors.textSecondary,
             fontSize = 10.sp
         )
     }
@@ -487,12 +481,12 @@ private fun CategoryHeader(category: String, count: Int) {
             text = category,
             style = MaterialTheme.typography.subtitle1,
             fontWeight = FontWeight.Bold,
-            color = BossDarkAccent
+            color = BossTheme.colors.signal
         )
         Text(
             text = "$count shortcut${if (count != 1) "s" else ""}",
             style = MaterialTheme.typography.caption,
-            color = BossDarkTextSecondary
+            color = BossTheme.colors.textSecondary
         )
     }
 }
@@ -511,8 +505,8 @@ private fun ShortcutItem(
     val lifecycleStates by ShortcutLifecycleManager.states.collectAsState()
     val lifecycleState = lifecycleStates[binding.actionId]
 
-    val borderColor = if (hasConflict) BossDarkError.copy(alpha = 0.5f) else BossDarkBorder
-    val backgroundColor = if (hasConflict) BossDarkError.copy(alpha = 0.05f) else Color.Transparent
+    val borderColor = if (hasConflict) BossTheme.colors.alert.copy(alpha = 0.5f) else BossTheme.colors.line
+    val backgroundColor = if (hasConflict) BossTheme.colors.alert.copy(alpha = 0.05f) else Color.Transparent
 
     Row(
         modifier = Modifier
@@ -530,7 +524,7 @@ private fun ShortcutItem(
                 text = binding.description,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Medium,
-                color = BossDarkTextPrimary
+                color = BossTheme.colors.textPrimary
             )
             Spacer(modifier = Modifier.height(2.dp))
             Row(
@@ -540,13 +534,13 @@ private fun ShortcutItem(
                 Text(
                     text = binding.context.displayName,
                     fontSize = 12.sp,
-                    color = BossDarkTextSecondary
+                    color = BossTheme.colors.textSecondary
                 )
                 if (!binding.enabled) {
                     Text(
                         text = "• DISABLED",
                         fontSize = 12.sp,
-                        color = BossDarkError
+                        color = BossTheme.colors.alert
                     )
                 }
                 // Show lifecycle state
@@ -554,7 +548,7 @@ private fun ShortcutItem(
                     Text(
                         text = "• ${lifecycleState.reason ?: "Unavailable"}",
                         fontSize = 12.sp,
-                        color = BossDarkTextSecondary
+                        color = BossTheme.colors.textSecondary
                     )
                 }
             }
@@ -574,14 +568,14 @@ private fun ShortcutItem(
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(4.dp))
-                    .background(BossDarkAccent.copy(alpha = 0.2f))
+                    .background(BossTheme.colors.signal.copy(alpha = 0.2f))
                     .padding(horizontal = 8.dp, vertical = 4.dp)
             ) {
                 Text(
                     text = binding.displayString(),
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
-                    color = BossDarkAccent
+                    color = BossTheme.colors.signal
                 )
             }
 
@@ -593,7 +587,7 @@ private fun ShortcutItem(
                 Icon(
                     imageVector = Icons.Default.Edit,
                     contentDescription = "Edit shortcut",
-                    tint = BossDarkTextSecondary,
+                    tint = BossTheme.colors.textSecondary,
                     modifier = Modifier.size(18.dp)
                 )
             }

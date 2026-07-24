@@ -1,12 +1,6 @@
 package ai.rever.boss.components.settings.keymap
 
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkBorder
-import BossDarkContentBackground
-import BossDarkSurface
-import BossDarkTextPrimary
-import BossDarkTextSecondary
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
@@ -60,7 +54,7 @@ fun KeyCaptureDialog(
                 .width(500.dp)
                 .wrapContentHeight(),
             shape = RoundedCornerShape(12.dp),
-            color = BossDarkBackground,
+            color = BossTheme.colors.panel,
             elevation = 8.dp
         ) {
             Column(
@@ -76,13 +70,13 @@ fun KeyCaptureDialog(
                         text = "Capture Keyboard Shortcut",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = BossDarkTextPrimary
+                        color = BossTheme.colors.textPrimary
                     )
                     IconButton(onClick = onDismiss) {
                         Icon(
                             Icons.Default.Close,
                             contentDescription = "Close",
-                            tint = BossDarkTextSecondary
+                            tint = BossTheme.colors.textSecondary
                         )
                     }
                 }
@@ -94,21 +88,21 @@ fun KeyCaptureDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(6.dp))
-                        .background(BossDarkContentBackground)
-                        .border(1.dp, BossDarkBorder, RoundedCornerShape(6.dp))
+                        .background(BossTheme.colors.ink)
+                        .border(1.dp, BossTheme.colors.line, RoundedCornerShape(6.dp))
                         .padding(12.dp)
                 ) {
                     Text(
                         text = actionDescription,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
-                        color = BossDarkTextPrimary
+                        color = BossTheme.colors.textPrimary
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = "Context: ${context.displayName}",
                         fontSize = 12.sp,
-                        color = BossDarkTextSecondary
+                        color = BossTheme.colors.textSecondary
                     )
                 }
 
@@ -120,8 +114,8 @@ fun KeyCaptureDialog(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(6.dp))
-                            .background(BossDarkContentBackground)
-                            .border(1.dp, BossDarkBorder, RoundedCornerShape(6.dp))
+                            .background(BossTheme.colors.ink)
+                            .border(1.dp, BossTheme.colors.line, RoundedCornerShape(6.dp))
                             .padding(12.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
@@ -129,7 +123,7 @@ fun KeyCaptureDialog(
                         Text(
                             text = "Current shortcut",
                             fontSize = 13.sp,
-                            color = BossDarkTextSecondary
+                            color = BossTheme.colors.textSecondary
                         )
                         KeyDisplay(currentBinding.displayString())
                     }
@@ -142,10 +136,10 @@ fun KeyCaptureDialog(
                         .fillMaxWidth()
                         .height(120.dp)
                         .clip(RoundedCornerShape(8.dp))
-                        .background(BossDarkContentBackground)
+                        .background(BossTheme.colors.ink)
                         .border(
                             width = 2.dp,
-                            color = if (hasCapture) BossDarkAccent else BossDarkBorder,
+                            color = if (hasCapture) BossTheme.colors.signal else BossTheme.colors.line,
                             shape = RoundedCornerShape(8.dp)
                         )
                         .focusRequester(focusRequester)
@@ -184,13 +178,13 @@ fun KeyCaptureDialog(
                                 text = "Press any key combination...",
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.Medium,
-                                color = BossDarkTextSecondary
+                                color = BossTheme.colors.textSecondary
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
                                 text = "The dialog is focused and ready to capture",
                                 fontSize = 12.sp,
-                                color = BossDarkTextSecondary.copy(alpha = 0.7f)
+                                color = BossTheme.colors.textSecondary.copy(alpha = 0.7f)
                             )
                         }
                     }
@@ -204,7 +198,7 @@ fun KeyCaptureDialog(
                     horizontalArrangement = Arrangement.End
                 ) {
                     TextButton(onClick = onDismiss) {
-                        Text("Cancel", color = BossDarkTextSecondary)
+                        Text("Cancel", color = BossTheme.colors.textSecondary)
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
@@ -224,11 +218,11 @@ fun KeyCaptureDialog(
                         },
                         enabled = hasCapture && capturedKey != null,
                         colors = ButtonDefaults.buttonColors(
-                            backgroundColor = BossDarkAccent,
-                            disabledBackgroundColor = BossDarkBorder
+                            backgroundColor = BossTheme.colors.signal,
+                            disabledBackgroundColor = BossTheme.colors.line
                         )
                     ) {
-                        Text("Apply", color = BossDarkTextPrimary)
+                        Text("Apply", color = BossTheme.colors.textPrimary)
                     }
                 }
             }
@@ -244,14 +238,14 @@ private fun KeyDisplay(shortcutText: String, large: Boolean = false) {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(4.dp))
-            .background(BossDarkAccent.copy(alpha = 0.2f))
+            .background(BossTheme.colors.signal.copy(alpha = 0.2f))
             .padding(horizontal = if (large) 16.dp else 8.dp, vertical = if (large) 8.dp else 4.dp)
     ) {
         Text(
             text = shortcutText,
             fontSize = if (large) 24.sp else 13.sp,
             fontWeight = FontWeight.Bold,
-            color = BossDarkAccent
+            color = BossTheme.colors.signal
         )
     }
 }

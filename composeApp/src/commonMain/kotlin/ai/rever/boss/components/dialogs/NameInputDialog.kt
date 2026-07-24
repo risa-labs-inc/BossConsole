@@ -1,10 +1,6 @@
 package ai.rever.boss.components.dialogs
 
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkBorder
-import BossDarkTextPrimary
-import BossDarkTextSecondary
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
@@ -37,7 +33,7 @@ fun NewCollectionDialog(
         Surface(
             modifier = Modifier.width(400.dp),
             shape = RoundedCornerShape(8.dp),
-            color = BossDarkBackground
+            color = BossTheme.colors.panel
         ) {
             Column(
                 modifier = Modifier.padding(20.dp)
@@ -47,7 +43,7 @@ fun NewCollectionDialog(
                     text = "New Collection",
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
-                    color = BossDarkTextPrimary
+                    color = BossTheme.colors.textPrimary
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -56,13 +52,13 @@ fun NewCollectionDialog(
                 OutlinedTextField(
                     value = collectionName,
                     onValueChange = { collectionName = it },
-                    label = { Text("Collection Name", color = BossDarkTextSecondary) },
+                    label = { Text("Collection Name", color = BossTheme.colors.textSecondary) },
                     modifier = Modifier.fillMaxWidth(),
                     colors = TextFieldDefaults.outlinedTextFieldColors(
-                        textColor = BossDarkTextPrimary,
-                        cursorColor = BossDarkAccent,
-                        focusedBorderColor = BossDarkAccent,
-                        unfocusedBorderColor = BossDarkBorder
+                        textColor = BossTheme.colors.textPrimary,
+                        cursorColor = BossTheme.colors.signal,
+                        focusedBorderColor = BossTheme.colors.signal,
+                        unfocusedBorderColor = BossTheme.colors.line
                     ),
                     singleLine = true
                 )
@@ -77,7 +73,7 @@ fun NewCollectionDialog(
                     TextButton(
                         onClick = onDismiss,
                         colors = ButtonDefaults.textButtonColors(
-                            contentColor = BossDarkTextSecondary
+                            contentColor = BossTheme.colors.textSecondary
                         )
                     ) {
                         Text("Cancel")
@@ -89,10 +85,10 @@ fun NewCollectionDialog(
                         onClick = { onCreate(collectionName.trim()) },
                         enabled = collectionName.trim().isNotEmpty(),
                         colors = ButtonDefaults.buttonColors(
-                            backgroundColor = BossDarkAccent,
+                            backgroundColor = BossTheme.colors.signal,
                             contentColor = Color.Black,
-                            disabledBackgroundColor = BossDarkBorder,
-                            disabledContentColor = BossDarkTextSecondary
+                            disabledBackgroundColor = BossTheme.colors.line,
+                            disabledContentColor = BossTheme.colors.textSecondary
                         ),
                         shape = RoundedCornerShape(6.dp)
                     ) {
@@ -124,7 +120,7 @@ fun NewWorkspaceDialog(
         Surface(
             modifier = Modifier.width(400.dp),
             shape = RoundedCornerShape(8.dp),
-            color = BossDarkBackground
+            color = BossTheme.colors.panel
         ) {
             Column(
                 modifier = Modifier.padding(20.dp)
@@ -134,7 +130,7 @@ fun NewWorkspaceDialog(
                     text = "New Workspace",
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
-                    color = BossDarkTextPrimary
+                    color = BossTheme.colors.textPrimary
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -143,13 +139,13 @@ fun NewWorkspaceDialog(
                 OutlinedTextField(
                     value = workspaceName,
                     onValueChange = { workspaceName = it },
-                    label = { Text("Workspace Name", color = BossDarkTextSecondary) },
+                    label = { Text("Workspace Name", color = BossTheme.colors.textSecondary) },
                     modifier = Modifier.fillMaxWidth(),
                     colors = TextFieldDefaults.outlinedTextFieldColors(
-                        textColor = BossDarkTextPrimary,
-                        cursorColor = BossDarkAccent,
-                        focusedBorderColor = BossDarkAccent,
-                        unfocusedBorderColor = BossDarkBorder
+                        textColor = BossTheme.colors.textPrimary,
+                        cursorColor = BossTheme.colors.signal,
+                        focusedBorderColor = BossTheme.colors.signal,
+                        unfocusedBorderColor = BossTheme.colors.line
                     ),
                     singleLine = true
                 )
@@ -164,7 +160,7 @@ fun NewWorkspaceDialog(
                     TextButton(
                         onClick = onDismiss,
                         colors = ButtonDefaults.textButtonColors(
-                            contentColor = BossDarkTextSecondary
+                            contentColor = BossTheme.colors.textSecondary
                         )
                     ) {
                         Text("Cancel")
@@ -176,10 +172,10 @@ fun NewWorkspaceDialog(
                         onClick = { onCreate(workspaceName.trim()) },
                         enabled = workspaceName.trim().isNotEmpty(),
                         colors = ButtonDefaults.buttonColors(
-                            backgroundColor = BossDarkAccent,
+                            backgroundColor = BossTheme.colors.signal,
                             contentColor = Color.Black,
-                            disabledBackgroundColor = BossDarkBorder,
-                            disabledContentColor = BossDarkTextSecondary
+                            disabledBackgroundColor = BossTheme.colors.line,
+                            disabledContentColor = BossTheme.colors.textSecondary
                         ),
                         shape = RoundedCornerShape(6.dp)
                     ) {

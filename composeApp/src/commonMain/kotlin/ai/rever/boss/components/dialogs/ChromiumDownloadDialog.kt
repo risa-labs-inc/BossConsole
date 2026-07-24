@@ -1,11 +1,6 @@
 package ai.rever.boss.components.dialogs
 
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkError
-import BossDarkSurface
-import BossDarkTextPrimary
-import BossDarkTextSecondary
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -36,7 +31,7 @@ private fun DownloadSurface(
             .width(450.dp)
             .wrapContentHeight(),
         shape = RoundedCornerShape(8.dp),
-        color = BossDarkBackground
+        color = BossTheme.colors.panel
     ) {
         Column(
             modifier = Modifier.padding(24.dp)
@@ -46,7 +41,7 @@ private fun DownloadSurface(
                 text = "Downloading Browser Engine",
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
-                color = BossDarkTextPrimary
+                color = BossTheme.colors.textPrimary
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -56,7 +51,7 @@ private fun DownloadSurface(
                 Text(
                     text = "Download failed",
                     fontSize = 14.sp,
-                    color = BossDarkError, // Red
+                    color = BossTheme.colors.alert, // Red
                     fontWeight = FontWeight.Medium
                 )
                 Spacer(modifier = Modifier.height(8.dp))
@@ -65,7 +60,7 @@ private fun DownloadSurface(
                 Text(
                     text = error,
                     fontSize = 13.sp,
-                    color = BossDarkTextSecondary,
+                    color = BossTheme.colors.textSecondary,
                     modifier = Modifier
                         .heightIn(max = 120.dp)
                         .verticalScroll(rememberScrollState())
@@ -75,7 +70,7 @@ private fun DownloadSurface(
                 Text(
                     text = status,
                     fontSize = 14.sp,
-                    color = BossDarkTextSecondary
+                    color = BossTheme.colors.textSecondary
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -84,8 +79,8 @@ private fun DownloadSurface(
                 LinearProgressIndicator(
                     progress = progress.coerceIn(0f, 1f),
                     modifier = Modifier.fillMaxWidth().height(6.dp),
-                    color = BossDarkAccent, // Blue
-                    backgroundColor = BossDarkSurface // Dark gray
+                    color = BossTheme.colors.signal, // Blue
+                    backgroundColor = BossTheme.colors.raised // Dark gray
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -98,12 +93,12 @@ private fun DownloadSurface(
                     Text(
                         text = if (totalMB > 0) "${downloadedMB}MB / ${totalMB}MB" else "Connecting...",
                         fontSize = 12.sp,
-                        color = BossDarkTextSecondary
+                        color = BossTheme.colors.textSecondary
                     )
                     Text(
                         text = "${(progress * 100).toInt()}%",
                         fontSize = 12.sp,
-                        color = BossDarkTextSecondary
+                        color = BossTheme.colors.textSecondary
                     )
                 }
             }
@@ -120,7 +115,7 @@ private fun DownloadSurface(
                     TextButton(
                         onClick = onRetry,
                         colors = ButtonDefaults.textButtonColors(
-                            contentColor = BossDarkAccent
+                            contentColor = BossTheme.colors.signal
                         )
                     ) {
                         Text("Retry", fontWeight = FontWeight.Medium)
@@ -131,7 +126,7 @@ private fun DownloadSurface(
                 TextButton(
                     onClick = onCancel,
                     colors = ButtonDefaults.textButtonColors(
-                        contentColor = BossDarkTextSecondary
+                        contentColor = BossTheme.colors.textSecondary
                     )
                 ) {
                     Text(if (error != null) "Exit" else "Cancel", fontWeight = FontWeight.Medium)

@@ -1,6 +1,5 @@
 package ai.rever.boss.components.windows
 
-import BossDarkError
 import ai.rever.boss.components.settings.sections.*
 import ai.rever.boss.components.settings.keymap.EditableKeymapSettings
 import ai.rever.boss.components.plugin.registries.SettingsPageRegistryImpl
@@ -14,6 +13,7 @@ import ai.rever.boss.components.settings.shared.SettingsTheme.TextMuted
 import ai.rever.boss.components.settings.shared.SettingsTheme.TextPrimary
 import ai.rever.boss.components.settings.shared.SettingsTheme.TextSecondary
 import ai.rever.boss.config.BrowserEngineSettingsManager
+import ai.rever.boss.plugin.ui.BossThemeController
 import ai.rever.boss.updater.UpdateSettingsSection
 import ai.rever.boss.utils.DisplayUtils
 import ai.rever.boss.performance.PerformanceSettingsManager
@@ -197,10 +197,11 @@ private fun SettingsContent(initialSection: String? = null) {
                         showResetConfirmation = false
                     },
                     colors = ButtonDefaults.buttonColors(
-                        backgroundColor = BossDarkError
+                        backgroundColor = BossThemeController.current.colors.alert
                     )
                 ) {
-                    Text("Reset", color = TextPrimary)
+                    // On an alert fill, use the on-fill ink token, not TextPrimary.
+                    Text("Reset", color = BossThemeController.current.colors.onSignal)
                 }
             },
             dismissButton = {
@@ -262,7 +263,7 @@ private fun PluginSettingsPageArea(
                     Text(
                         text = "This settings page crashed: ${error.message ?: error::class.simpleName}. " +
                             "Reload the plugin to try again.",
-                        color = BossDarkError,
+                        color = BossThemeController.current.colors.alert,
                         fontSize = 13.sp
                     )
                 }

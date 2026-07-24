@@ -1,13 +1,12 @@
 package ai.rever.boss.components.window_panel.components.main_window_panels
 
-import BossDarkTextPrimary
-import BossDarkTextSecondary
 import ContextMenuBackground
 import ContextMenuBorder
 import ContextMenuHover
 import ai.rever.boss.components.common.rememberFaviconLoader
 import ai.rever.boss.plugin.api.TabIcon
 import ai.rever.boss.plugin.api.TabInfo
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -72,7 +71,7 @@ fun TabCycleOverlayHost(data: TabCycleOverlayData?, modifier: Modifier = Modifie
  * Styled to match the app's floating surfaces: the same background/border tokens and
  * 8.dp radius as dialogs (e.g. NewTabDialog), context-menu row metrics (16.dp icon,
  * 13.sp label, 12.dp horizontal padding, ContextMenuHover for the active row), and the
- * BossDarkAccent / FontWeight.Medium selection emphasis used by the tab bar.
+ * BossTheme.colors.signal / FontWeight.Medium selection emphasis used by the tab bar.
  */
 @Composable
 private fun TabCycleOverlay(data: TabCycleOverlayData, modifier: Modifier = Modifier) {
@@ -98,7 +97,7 @@ private fun TabCycleOverlay(data: TabCycleOverlayData, modifier: Modifier = Modi
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = tab.title.ifBlank { "Untitled" },
-                    color = if (highlighted) BossDarkTextPrimary else BossDarkTextSecondary,
+                    color = if (highlighted) BossTheme.colors.textPrimary else BossTheme.colors.textSecondary,
                     fontSize = 13.sp,
                     fontWeight = if (highlighted) FontWeight.Medium else FontWeight.Normal,
                     maxLines = 1,
@@ -142,7 +141,7 @@ private fun TabCycleIcon(tab: TabInfo, highlighted: Boolean) {
         else -> Icon(
             painter = painter,
             contentDescription = null,
-            tint = if (highlighted) BossDarkTextPrimary else BossDarkTextSecondary,
+            tint = if (highlighted) BossTheme.colors.textPrimary else BossTheme.colors.textSecondary,
             modifier = Modifier.size(16.dp)
         )
     }

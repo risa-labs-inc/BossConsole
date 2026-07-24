@@ -1,5 +1,6 @@
 package ai.rever.boss.components.dialogs
 
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -19,13 +20,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import BossDarkBackground
-import BossDarkSurface
-import BossDarkBorder
-import BossDarkTextPrimary
-import BossDarkTextSecondary
-import BossDarkAccent
-import BossDarkError
 import ai.rever.boss.services.supabase.AuthService
 import ai.rever.boss.utils.FluckTabCreator
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
@@ -120,7 +114,7 @@ fun CrossDeviceAuthenticationDialog(
                 .fillMaxWidth()
                 .wrapContentHeight(),
             shape = RoundedCornerShape(12.dp),
-            backgroundColor = BossDarkSurface
+            backgroundColor = BossTheme.colors.raised
         ) {
             Column(
                 modifier = Modifier
@@ -138,7 +132,7 @@ fun CrossDeviceAuthenticationDialog(
                         text = "Cross-Device Authentication",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = BossDarkTextPrimary
+                        color = BossTheme.colors.textPrimary
                     )
                     
                     IconButton(
@@ -148,7 +142,7 @@ fun CrossDeviceAuthenticationDialog(
                         Icon(
                             imageVector = Icons.Default.Close,
                             contentDescription = "Close",
-                            tint = BossDarkTextSecondary
+                            tint = BossTheme.colors.textSecondary
                         )
                     }
                 }
@@ -158,7 +152,7 @@ fun CrossDeviceAuthenticationDialog(
                 // Status indicator
                 if (isPolling) {
                     CircularProgressIndicator(
-                        color = BossDarkAccent,
+                        color = BossTheme.colors.signal,
                         modifier = Modifier.size(64.dp),
                         strokeWidth = 4.dp
                     )
@@ -167,14 +161,14 @@ fun CrossDeviceAuthenticationDialog(
                         imageVector = Icons.Outlined.ErrorOutline,
                         contentDescription = "Error",
                         modifier = Modifier.size(64.dp),
-                        tint = BossDarkError
+                        tint = BossTheme.colors.alert
                     )
                 } else {
                     Icon(
                         imageVector = Icons.AutoMirrored.Outlined.Launch,
                         contentDescription = "Opening in browser",
                         modifier = Modifier.size(64.dp),
-                        tint = BossDarkAccent
+                        tint = BossTheme.colors.signal
                     )
                 }
                 
@@ -190,7 +184,7 @@ fun CrossDeviceAuthenticationDialog(
                     },
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Medium,
-                    color = if (pollError != null) BossDarkError else BossDarkTextPrimary,
+                    color = if (pollError != null) BossTheme.colors.alert else BossTheme.colors.textPrimary,
                     textAlign = TextAlign.Center
                 )
                 
@@ -205,7 +199,7 @@ fun CrossDeviceAuthenticationDialog(
                         else -> "The authentication page is opening in your browser. You'll see a QR code to scan with your iPhone."
                     },
                     fontSize = 14.sp,
-                    color = BossDarkTextSecondary,
+                    color = BossTheme.colors.textSecondary,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -233,7 +227,7 @@ fun CrossDeviceAuthenticationDialog(
                             },
                             modifier = Modifier.weight(1f),
                             colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = BossDarkAccent
+                                contentColor = BossTheme.colors.signal
                             )
                         ) {
                             Text("Retry")
@@ -244,7 +238,7 @@ fun CrossDeviceAuthenticationDialog(
                         onClick = onDismiss,
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(
-                            backgroundColor = if (pollError != null) BossDarkError else BossDarkBorder,
+                            backgroundColor = if (pollError != null) BossTheme.colors.alert else BossTheme.colors.line,
                             contentColor = Color.White
                         )
                     ) {

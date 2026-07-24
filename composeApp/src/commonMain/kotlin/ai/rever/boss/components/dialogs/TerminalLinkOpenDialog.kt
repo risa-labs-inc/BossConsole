@@ -1,11 +1,6 @@
 package ai.rever.boss.components.dialogs
 
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkSurface
-import BossDarkTextMuted
-import BossDarkTextPrimary
-import BossDarkTextSecondary
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.terminal.TerminalLinkOpenMode
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -72,7 +67,7 @@ fun TerminalLinkOpenDialog(
                     }
                 },
             shape = RoundedCornerShape(8.dp),
-            backgroundColor = BossDarkBackground,
+            backgroundColor = BossTheme.colors.panel,
             elevation = 8.dp
         ) {
             Column(
@@ -83,7 +78,7 @@ fun TerminalLinkOpenDialog(
                     text = "Open Link",
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
-                    color = BossDarkTextPrimary
+                    color = BossTheme.colors.textPrimary
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -92,7 +87,7 @@ fun TerminalLinkOpenDialog(
                 Text(
                     text = url,
                     fontSize = 12.sp,
-                    color = BossDarkTextSecondary,
+                    color = BossTheme.colors.textSecondary,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -162,8 +157,8 @@ fun TerminalLinkOpenDialog(
                         checked = rememberChoice,
                         onCheckedChange = null, // Row handles click
                         colors = CheckboxDefaults.colors(
-                            checkedColor = BossDarkAccent,
-                            uncheckedColor = BossDarkTextMuted,
+                            checkedColor = BossTheme.colors.signal,
+                            uncheckedColor = BossTheme.colors.textMuted,
                             checkmarkColor = Color.White
                         )
                     )
@@ -171,7 +166,7 @@ fun TerminalLinkOpenDialog(
                     Text(
                         text = "Remember my choice",
                         fontSize = 14.sp,
-                        color = BossDarkTextPrimary
+                        color = BossTheme.colors.textPrimary
                     )
                 }
 
@@ -185,7 +180,7 @@ fun TerminalLinkOpenDialog(
                     TextButton(
                         onClick = onDismiss,
                         colors = ButtonDefaults.textButtonColors(
-                            contentColor = BossDarkTextSecondary
+                            contentColor = BossTheme.colors.textSecondary
                         )
                     ) {
                         Text("Cancel")
@@ -210,7 +205,7 @@ private fun LinkOpenOption(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onClick() },
-        backgroundColor = BossDarkSurface,
+        backgroundColor = BossTheme.colors.raised,
         shape = RoundedCornerShape(6.dp),
         elevation = 0.dp
     ) {
@@ -223,7 +218,7 @@ private fun LinkOpenOption(
             Icon(
                 imageVector = icon,
                 contentDescription = title,
-                tint = BossDarkAccent,
+                tint = BossTheme.colors.signal,
                 modifier = Modifier.size(24.dp)
             )
             Spacer(modifier = Modifier.width(16.dp))
@@ -232,12 +227,12 @@ private fun LinkOpenOption(
                     text = title,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
-                    color = BossDarkTextPrimary
+                    color = BossTheme.colors.textPrimary
                 )
                 Text(
                     text = description,
                     fontSize = 12.sp,
-                    color = BossDarkTextSecondary
+                    color = BossTheme.colors.textSecondary
                 )
             }
         }

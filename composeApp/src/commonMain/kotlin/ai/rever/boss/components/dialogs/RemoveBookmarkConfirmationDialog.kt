@@ -1,11 +1,6 @@
 package ai.rever.boss.components.dialogs
 
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkBorder
-import BossDarkError
-import BossDarkTextPrimary
-import BossDarkTextSecondary
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
@@ -38,7 +33,7 @@ fun RemoveBookmarkConfirmationDialog(
                 .width(400.dp)
                 .wrapContentHeight(),
             shape = RoundedCornerShape(8.dp),
-            color = BossDarkBackground
+            color = BossTheme.colors.panel
         ) {
             Column(
                 modifier = Modifier.padding(24.dp)
@@ -51,7 +46,7 @@ fun RemoveBookmarkConfirmationDialog(
                     Icon(
                         imageVector = Icons.Outlined.Star,
                         contentDescription = "Remove Bookmark",
-                        tint = BossDarkAccent,
+                        tint = BossTheme.colors.signal,
                         modifier = Modifier.size(24.dp)
                     )
                     Spacer(modifier = Modifier.width(12.dp))
@@ -59,7 +54,7 @@ fun RemoveBookmarkConfirmationDialog(
                         text = "Remove Bookmark?",
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold,
-                        color = BossDarkTextPrimary
+                        color = BossTheme.colors.textPrimary
                     )
                 }
 
@@ -69,7 +64,7 @@ fun RemoveBookmarkConfirmationDialog(
                 Text(
                     text = "'$bookmarkTitle' will be removed from your bookmarks.",
                     fontSize = 14.sp,
-                    color = BossDarkTextSecondary,
+                    color = BossTheme.colors.textSecondary,
                     modifier = Modifier.fillMaxWidth()
                 )
 
@@ -83,7 +78,7 @@ fun RemoveBookmarkConfirmationDialog(
                     TextButton(
                         onClick = onDismiss,
                         colors = ButtonDefaults.textButtonColors(
-                            contentColor = BossDarkTextSecondary
+                            contentColor = BossTheme.colors.textSecondary
                         )
                     ) {
                         Text("Cancel")
@@ -97,8 +92,8 @@ fun RemoveBookmarkConfirmationDialog(
                             onDismiss()
                         },
                         colors = ButtonDefaults.buttonColors(
-                            backgroundColor = BossDarkError, // Red color for destructive action
-                            contentColor = BossDarkTextPrimary
+                            backgroundColor = BossTheme.colors.alert, // Red color for destructive action
+                            contentColor = BossTheme.colors.onSignal
                         ),
                         shape = RoundedCornerShape(6.dp)
                     ) {

@@ -1,7 +1,7 @@
 package ai.rever.boss.components.overlays
 
-import BossDarkTextPrimary
 import ai.rever.boss.components.model.BossDraggableComponent
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
@@ -42,7 +42,7 @@ fun BossDraggableComponent.DraggingItemOverlay() {
                 imageVector = item.icon,
                 contentDescription = null, // Decorative
                 modifier = Modifier.size(22.dp), // Match icon size
-                tint = BossDarkTextPrimary
+                tint = BossTheme.colors.textPrimary
             )
         }
     }

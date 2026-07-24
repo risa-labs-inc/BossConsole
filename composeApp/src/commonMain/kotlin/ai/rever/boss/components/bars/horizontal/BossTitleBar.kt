@@ -1,7 +1,6 @@
 package ai.rever.boss.components.bars.horizontal
 
-import BossDarkBorder
-import BossDarkTextPrimary
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material.Divider
@@ -34,7 +33,7 @@ fun BossTitleBar(
     ) {
         Text(
             text = title,
-            color = BossDarkTextPrimary,
+            color = BossTheme.colors.textPrimary,
             fontSize = 13.sp,
             fontWeight = FontWeight.Medium,
             textAlign = TextAlign.Center,
@@ -43,5 +42,5 @@ fun BossTitleBar(
                 .align(Alignment.Center)
         )
     }
-    Divider(color = BossDarkBorder)
+    Divider(color = BossTheme.colors.line)
 }

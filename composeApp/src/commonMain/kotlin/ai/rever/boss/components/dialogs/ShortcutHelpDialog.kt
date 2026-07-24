@@ -1,13 +1,9 @@
 package ai.rever.boss.components.dialogs
 
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkSurface
-import BossDarkTextPrimary
-import BossDarkTextSecondary
 import ai.rever.boss.keymap.model.KeyBinding
 import ai.rever.boss.keymap.model.KeymapActions
 import ai.rever.boss.keymap.model.KeymapSettings
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -77,7 +73,7 @@ fun ShortcutHelpDialog(
                 .width(600.dp)
                 .heightIn(max = 700.dp),
             shape = RoundedCornerShape(12.dp),
-            color = BossDarkBackground
+            color = BossTheme.colors.panel
         ) {
             Column(
                 modifier = Modifier.padding(24.dp)
@@ -92,14 +88,14 @@ fun ShortcutHelpDialog(
                         text = "Keyboard Shortcuts",
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold,
-                        color = BossDarkTextPrimary
+                        color = BossTheme.colors.textPrimary
                     )
 
                     IconButton(onClick = onDismiss) {
                         Icon(
                             imageVector = Icons.Default.Close,
                             contentDescription = "Close",
-                            tint = BossDarkTextSecondary
+                            tint = BossTheme.colors.textSecondary
                         )
                     }
                 }
@@ -127,7 +123,7 @@ fun ShortcutHelpDialog(
                             Text(
                                 text = if (searchQuery.isNotBlank()) "No shortcuts match \"$searchQuery\"" else "No shortcuts configured",
                                 fontSize = 14.sp,
-                                color = BossDarkTextSecondary,
+                                color = BossTheme.colors.textSecondary,
                                 modifier = Modifier.padding(vertical = 16.dp)
                             )
                         }
@@ -162,7 +158,7 @@ fun ShortcutHelpDialog(
                     Text(
                         text = "Press ? to show this dialog",
                         fontSize = 12.sp,
-                        color = BossDarkTextSecondary
+                        color = BossTheme.colors.textSecondary
                     )
 
                     TextButton(
@@ -171,7 +167,7 @@ fun ShortcutHelpDialog(
                             onOpenSettings()
                         },
                         colors = ButtonDefaults.textButtonColors(
-                            contentColor = BossDarkAccent
+                            contentColor = BossTheme.colors.signal
                         )
                     ) {
                         Icon(
@@ -197,7 +193,7 @@ private fun SearchBar(
     Row(
         modifier = modifier
             .background(
-                color = BossDarkSurface,
+                color = BossTheme.colors.raised,
                 shape = RoundedCornerShape(8.dp)
             )
             .padding(horizontal = 12.dp, vertical = 8.dp),
@@ -206,7 +202,7 @@ private fun SearchBar(
         Icon(
             imageVector = Icons.Default.Search,
             contentDescription = "Search",
-            tint = BossDarkTextSecondary,
+            tint = BossTheme.colors.textSecondary,
             modifier = Modifier.size(18.dp)
         )
 
@@ -216,10 +212,10 @@ private fun SearchBar(
             value = query,
             onValueChange = onQueryChange,
             textStyle = TextStyle(
-                color = BossDarkTextPrimary,
+                color = BossTheme.colors.textPrimary,
                 fontSize = 14.sp
             ),
-            cursorBrush = SolidColor(BossDarkTextPrimary),
+            cursorBrush = SolidColor(BossTheme.colors.textPrimary),
             singleLine = true,
             modifier = Modifier.weight(1f),
             decorationBox = { innerTextField ->
@@ -227,7 +223,7 @@ private fun SearchBar(
                     if (query.isEmpty()) {
                         Text(
                             text = "Search shortcuts...",
-                            color = BossDarkTextSecondary,
+                            color = BossTheme.colors.textSecondary,
                             fontSize = 14.sp
                         )
                     }
@@ -244,7 +240,7 @@ private fun SearchBar(
                 Icon(
                     imageVector = Icons.Default.Close,
                     contentDescription = "Clear search",
-                    tint = BossDarkTextSecondary,
+                    tint = BossTheme.colors.textSecondary,
                     modifier = Modifier.size(14.dp)
                 )
             }
@@ -258,7 +254,7 @@ private fun CategoryHeader(category: String) {
         text = category,
         fontSize = 13.sp,
         fontWeight = FontWeight.SemiBold,
-        color = BossDarkAccent,
+        color = BossTheme.colors.signal,
         modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
     )
 }
@@ -269,7 +265,7 @@ private fun ShortcutRow(binding: KeyBinding) {
         modifier = Modifier
             .fillMaxWidth()
             .background(
-                color = BossDarkSurface.copy(alpha = 0.5f),
+                color = BossTheme.colors.raised.copy(alpha = 0.5f),
                 shape = RoundedCornerShape(6.dp)
             )
             .padding(horizontal = 12.dp, vertical = 8.dp),
@@ -280,13 +276,13 @@ private fun ShortcutRow(binding: KeyBinding) {
             Text(
                 text = binding.description.ifEmpty { binding.actionId },
                 fontSize = 14.sp,
-                color = BossDarkTextPrimary
+                color = BossTheme.colors.textPrimary
             )
             if (binding.context.displayName != "Global") {
                 Text(
                     text = "Context: ${binding.context.displayName}",
                     fontSize = 11.sp,
-                    color = BossDarkTextSecondary
+                    color = BossTheme.colors.textSecondary
                 )
             }
         }
@@ -301,14 +297,14 @@ private fun ShortcutRow(binding: KeyBinding) {
 @Composable
 private fun ShortcutBadge(shortcut: String) {
     Surface(
-        color = BossDarkBackground,
+        color = BossTheme.colors.panel,
         shape = RoundedCornerShape(4.dp)
     ) {
         Text(
             text = shortcut,
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
-            color = BossDarkTextPrimary,
+            color = BossTheme.colors.textPrimary,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
         )
     }

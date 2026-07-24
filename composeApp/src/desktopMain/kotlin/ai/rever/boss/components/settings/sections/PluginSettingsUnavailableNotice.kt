@@ -1,6 +1,6 @@
 package ai.rever.boss.components.settings.sections
 
-import BossDarkTextMuted
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
@@ -17,7 +17,7 @@ import androidx.compose.ui.unit.sp
 internal fun PluginSettingsUnavailableNotice(message: String) {
     Text(
         text = message,
-        color = BossDarkTextMuted,
+        color = BossTheme.colors.textMuted,
         fontSize = 13.sp,
         modifier = Modifier
             .fillMaxWidth()

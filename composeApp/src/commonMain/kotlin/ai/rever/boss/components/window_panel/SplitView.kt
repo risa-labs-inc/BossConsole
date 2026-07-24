@@ -1,8 +1,8 @@
 package ai.rever.boss.components.window_panel
 
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
-import BossDarkAccent
 import ai.rever.boss.plugin.api.Panel
 import ai.rever.boss.components.plugin.disposePluginBrowsers
 import ai.rever.boss.components.model.PanelDropZones
@@ -1580,7 +1580,7 @@ private fun PanelDropZoneOverlay(
                     .width(60.dp)
                     .fillMaxHeight()
                     .alpha(0.3f)
-                    .background(BossDarkAccent)
+                    .background(BossTheme.colors.signal)
             )
         }
 
@@ -1592,7 +1592,7 @@ private fun PanelDropZoneOverlay(
                     .width(60.dp)
                     .fillMaxHeight()
                     .alpha(0.3f)
-                    .background(BossDarkAccent)
+                    .background(BossTheme.colors.signal)
             )
         }
 
@@ -1604,7 +1604,7 @@ private fun PanelDropZoneOverlay(
                     .fillMaxWidth()
                     .height(60.dp)
                     .alpha(0.3f)
-                    .background(BossDarkAccent)
+                    .background(BossTheme.colors.signal)
             )
         }
 
@@ -1616,7 +1616,7 @@ private fun PanelDropZoneOverlay(
                     .fillMaxWidth()
                     .height(60.dp)
                     .alpha(0.3f)
-                    .background(BossDarkAccent)
+                    .background(BossTheme.colors.signal)
             )
         }
 
@@ -1626,7 +1626,7 @@ private fun PanelDropZoneOverlay(
                 modifier = Modifier
                     .fillMaxSize()
                     .alpha(0.15f)
-                    .background(BossDarkAccent)
+                    .background(BossTheme.colors.signal)
             )
         }
     }

@@ -1,6 +1,6 @@
 package ai.rever.boss.components.bars.vertical
 
-import BossDarkSurface
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -17,7 +17,7 @@ fun VerticalBar(width: Dp, content: @Composable BoxScope.() -> Unit) {
         modifier = Modifier
             .fillMaxHeight()
             .width(width)
-            .background(BossDarkSurface)
+            .background(BossTheme.colors.raised)
     ) {
         content()
     }

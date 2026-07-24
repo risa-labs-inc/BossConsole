@@ -1,14 +1,10 @@
 package ai.rever.boss.components.window_panel.components.main_window_panels
 
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.keymap.KeymapSettingsManager
 import ai.rever.boss.keymap.model.TabSwitchMode
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkBorder
-import BossDarkSurface
-import BossDarkTextSecondary
 import ai.rever.boss.components.bars.ScrollbarConfig
 import ai.rever.boss.components.bars.horizontal.HorizontalBar
 import ai.rever.boss.components.bars.horizontal.HorizontalBarRow
@@ -181,7 +177,7 @@ private fun NewTabButton(
             .width(32.dp)
             .padding(4.dp)
             .background(
-                color = BossDarkSurface,
+                color = BossTheme.colors.raised,
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp)
             )
             .clickable(onClick = onClick),
@@ -190,7 +186,7 @@ private fun NewTabButton(
         Icon(
             imageVector = Icons.Default.Add,
             contentDescription = "New Tab",
-            tint = BossDarkTextSecondary,
+            tint = BossTheme.colors.textSecondary,
             modifier = Modifier.size(16.dp)
         )
     }
@@ -311,7 +307,7 @@ fun BossTabsComponent.BossMainTabBar(
 
     HorizontalBar(
         height = 42.dp,
-        backgroundColor = BossDarkBackground
+        backgroundColor = BossTheme.colors.panel
     ) {
         HorizontalBarRow(
             modifier = Modifier.onGloballyPositioned { coordinates ->
@@ -339,7 +335,7 @@ fun BossTabsComponent.BossMainTabBar(
                                 .width(3.dp)
                                 .fillMaxHeight()
                                 .padding(vertical = 8.dp)
-                                .background(BossDarkAccent)
+                                .background(BossTheme.colors.signal)
                         )
                     }
 
@@ -527,7 +523,7 @@ fun BossTabsComponent.BossMainTabBar(
                                 .width(3.dp)
                                 .fillMaxHeight()
                                 .padding(vertical = 8.dp)
-                                .background(BossDarkAccent)
+                                .background(BossTheme.colors.signal)
                         )
                     }
                 }
@@ -809,7 +805,7 @@ fun BossTabsComponent.BossMainPanel(
             tabDragComponent = tabDragComponent,
             onTabDropResult = onTabDropResult
         )
-        Divider(color = BossDarkBorder)
+        Divider(color = BossTheme.colors.line)
         // Expose `isActivePanel` to nested plugin composables via a
         // CompositionLocal. Plugins that embed widgets sensitive to
         // host focus transitions (e.g. the BossTerm-backed terminal-tab

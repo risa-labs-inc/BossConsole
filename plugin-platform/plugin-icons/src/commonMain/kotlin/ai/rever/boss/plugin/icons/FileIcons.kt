@@ -1,7 +1,7 @@
 package ai.rever.boss.plugin.icons
 
 import ai.rever.boss.plugin.pathutils.extractFileName
-import ai.rever.boss.plugin.ui.BossDarkTextSecondary
+import ai.rever.boss.plugin.ui.BossThemeController
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
 import androidx.compose.material.icons.outlined.*
@@ -68,7 +68,9 @@ object FileIcons {
         val audio = Color(0xFFAB47BC)        // Audio purple
         val video = Color(0xFFEF5350)        // Video red
         val font = Color(0xFF5C6BC0)         // Font indigo
-        val unknown = BossDarkTextSecondary  // Default gray
+        // Getter (not a stored val) so the fallback re-resolves when the
+        // active host theme changes instead of freezing at object init.
+        val unknown: Color get() = BossThemeController.current.colors.textSecondary
     }
 
     /**

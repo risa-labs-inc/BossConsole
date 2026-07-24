@@ -1,7 +1,7 @@
 package ai.rever.boss.components.window_panel.components
 
-import BossDarkSurface
 import ai.rever.boss.plugin.api.PanelId
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.ui.BossThemeColors
 import ai.rever.boss.components.buttons.BossActionButton
 import ai.rever.boss.components.overlays.ContextMenu
@@ -98,7 +98,7 @@ fun BossPanelTopBar(
         modifier = Modifier
             .fillMaxWidth()
             .height(28.dp)
-            .background(BossDarkSurface)
+            .background(BossTheme.colors.raised)
             .then(dragModifier)
             .contextMenu(items = menuItems),
         verticalAlignment = Alignment.CenterVertically,

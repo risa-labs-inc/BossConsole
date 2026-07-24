@@ -1,7 +1,6 @@
 package ai.rever.boss.components.workspaces
 
-import BossDarkError
-import BossDarkTextSecondary
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -124,7 +123,7 @@ fun DeleteWorkspaceDialog(
                 if (workspaces.isEmpty()) {
                     androidx.compose.material.Text(
                         "No custom workspaces to delete.",
-                        color = BossDarkTextSecondary
+                        color = BossTheme.colors.textSecondary
                     )
                 }
             }
@@ -136,7 +135,7 @@ fun DeleteWorkspaceDialog(
                 },
                 enabled = selectedWorkspace != null
             ) {
-                androidx.compose.material.Text("Delete", color = BossDarkError)
+                androidx.compose.material.Text("Delete", color = BossTheme.colors.alert)
             }
         },
         dismissButton = {

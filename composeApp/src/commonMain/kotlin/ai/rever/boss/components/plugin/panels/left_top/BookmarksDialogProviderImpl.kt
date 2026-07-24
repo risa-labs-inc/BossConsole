@@ -1,6 +1,5 @@
 package ai.rever.boss.components.plugin.panels.left_top
 
-import BossDarkError
 import ai.rever.boss.components.dialogs.BookmarkDialog
 import ai.rever.boss.components.dialogs.CollectionSelectionDialog
 import ai.rever.boss.components.dialogs.CollectionSelectionMode
@@ -12,6 +11,7 @@ import ai.rever.boss.components.dialogs.RenameDialog
 import ai.rever.boss.components.dialogs.WorkspaceSelectionDialog
 import ai.rever.boss.plugin.bookmark.BookmarkCollection
 import ai.rever.boss.plugin.api.BookmarksDialogProvider
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.workspace.LayoutWorkspace
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Delete
@@ -54,7 +54,7 @@ object BookmarksDialogProviderImpl : BookmarksDialogProvider {
             title = title,
             message = message,
             icon = Icons.Outlined.DeleteSweep,
-            iconTint = BossDarkError,
+            iconTint = BossTheme.colors.alert,
             confirmText = confirmText,
             onDismiss = onDismiss,
             onConfirm = onConfirm

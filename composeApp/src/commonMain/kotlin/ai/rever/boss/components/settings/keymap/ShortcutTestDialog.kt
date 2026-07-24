@@ -1,5 +1,6 @@
 package ai.rever.boss.components.settings.keymap
 
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -8,8 +9,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
-import BossDarkSuccess
-import BossDarkWarning
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -162,7 +161,7 @@ fun ShortcutTestDialog(
                         label = "Success (${stats.success})",
                         selected = selectedFilter == TestStatusFilter.SUCCESS,
                         onClick = { selectedFilter = TestStatusFilter.SUCCESS },
-                        color = BossDarkSuccess
+                        color = BossTheme.colors.ok
                     )
                     FilterChip(
                         label = "Failed (${stats.failed})",
@@ -174,7 +173,7 @@ fun ShortcutTestDialog(
                         label = "Skipped (${stats.skipped})",
                         selected = selectedFilter == TestStatusFilter.SKIPPED,
                         onClick = { selectedFilter = TestStatusFilter.SKIPPED },
-                        color = BossDarkWarning
+                        color = BossTheme.colors.warn
                     )
                 }
 
@@ -237,9 +236,9 @@ private fun TestResultItem(result: ShortcutTestResult) {
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
         color = when (result.status) {
-            TestStatus.SUCCESS -> BossDarkSuccess.copy(alpha = 0.05f)
+            TestStatus.SUCCESS -> BossTheme.colors.ok.copy(alpha = 0.05f)
             TestStatus.FAILED -> MaterialTheme.colors.error.copy(alpha = 0.05f)
-            TestStatus.SKIPPED -> BossDarkWarning.copy(alpha = 0.05f)
+            TestStatus.SKIPPED -> BossTheme.colors.warn.copy(alpha = 0.05f)
             TestStatus.TESTING -> MaterialTheme.colors.primary.copy(alpha = 0.05f)
             TestStatus.NOT_TESTED -> MaterialTheme.colors.surface
         },
@@ -263,9 +262,9 @@ private fun TestResultItem(result: ShortcutTestResult) {
                 },
                 contentDescription = result.status.name,
                 tint = when (result.status) {
-                    TestStatus.SUCCESS -> BossDarkSuccess
+                    TestStatus.SUCCESS -> BossTheme.colors.ok
                     TestStatus.FAILED -> MaterialTheme.colors.error
-                    TestStatus.SKIPPED -> BossDarkWarning
+                    TestStatus.SKIPPED -> BossTheme.colors.warn
                     TestStatus.TESTING -> MaterialTheme.colors.primary
                     TestStatus.NOT_TESTED -> MaterialTheme.colors.onSurface.copy(alpha = 0.3f)
                 },

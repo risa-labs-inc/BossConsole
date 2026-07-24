@@ -1,11 +1,10 @@
 package ai.rever.boss.components.bars.horizontal
 
-import BossDarkAccent
-import BossDarkBorder
 import ai.rever.boss.components.buttons.BossActionButton
 import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.contextMenu
 import ai.rever.boss.components.plugin.panels.left_top.ProjectState
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.window.Project
 import ai.rever.boss.plugin.git.GitOperationResult.Success as GitSuccess
 import ai.rever.boss.plugin.git.GitOperationResult.Error as GitError
@@ -94,7 +93,7 @@ fun BossDraggableComponent.BossTopBar(
             BossTopRightBar(onShowSettings = onShowSettings, onShowSearch = onShowSearch)
         }
     }
-    Divider(color = BossDarkBorder)
+    Divider(color = BossTheme.colors.line)
 }
 
 @Composable
@@ -106,7 +105,7 @@ fun Logo(name: String) {
             .width(22.dp)
         ,
         shape = RoundedCornerShape(4.dp),
-        color = BossDarkAccent,
+        color = BossTheme.colors.signal,
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             // Handle names with < 2 characters gracefully

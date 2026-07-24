@@ -1,12 +1,7 @@
 package ai.rever.boss.components.dialogs
 
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkBorder
-import BossDarkSurface
-import BossDarkTextPrimary
-import BossDarkTextSecondary
 import ai.rever.boss.components.workspaces.extractPanels
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -62,7 +57,7 @@ fun WorkspaceSelectionDialog(
                 .width(600.dp)
                 .heightIn(max = 600.dp),
             shape = RoundedCornerShape(8.dp),
-            color = BossDarkBackground
+            color = BossTheme.colors.panel
         ) {
             Column(
                 modifier = Modifier.padding(20.dp)
@@ -72,7 +67,7 @@ fun WorkspaceSelectionDialog(
                     text = title,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
-                    color = BossDarkTextPrimary
+                    color = BossTheme.colors.textPrimary
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -81,7 +76,7 @@ fun WorkspaceSelectionDialog(
                 Text(
                     text = "Select workspaces and panels where this bookmark should open",
                     fontSize = 13.sp,
-                    color = BossDarkTextSecondary
+                    color = BossTheme.colors.textSecondary
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -103,7 +98,7 @@ fun WorkspaceSelectionDialog(
                                 Text(
                                     text = "No workspaces available",
                                     fontSize = 13.sp,
-                                    color = BossDarkTextSecondary,
+                                    color = BossTheme.colors.textSecondary,
                                     fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
                                 )
                             }
@@ -135,7 +130,7 @@ fun WorkspaceSelectionDialog(
                 Text(
                     text = "Leave empty to open bookmark in current workspace",
                     fontSize = 11.sp,
-                    color = BossDarkTextSecondary
+                    color = BossTheme.colors.textSecondary
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -148,7 +143,7 @@ fun WorkspaceSelectionDialog(
                     TextButton(
                         onClick = onDismiss,
                         colors = ButtonDefaults.textButtonColors(
-                            contentColor = BossDarkTextSecondary
+                            contentColor = BossTheme.colors.textSecondary
                         )
                     ) {
                         Text("Cancel")
@@ -162,7 +157,7 @@ fun WorkspaceSelectionDialog(
                             onDismiss()
                         },
                         colors = ButtonDefaults.buttonColors(
-                            backgroundColor = BossDarkAccent,
+                            backgroundColor = BossTheme.colors.signal,
                             contentColor = Color.Black
                         ),
                         shape = RoundedCornerShape(6.dp)
@@ -202,11 +197,11 @@ private fun WorkspaceSelectionItem(
                 .fillMaxWidth()
                 .clickable(onClick = onToggle),
             shape = RoundedCornerShape(8.dp),
-            color = if (isSelected) BossDarkSurface else Color.Transparent,
+            color = if (isSelected) BossTheme.colors.raised else Color.Transparent,
             border = if (isSelected) {
-                androidx.compose.foundation.BorderStroke(1.dp, BossDarkAccent)
+                androidx.compose.foundation.BorderStroke(1.dp, BossTheme.colors.signal)
             } else {
-                androidx.compose.foundation.BorderStroke(1.dp, BossDarkBorder)
+                androidx.compose.foundation.BorderStroke(1.dp, BossTheme.colors.line)
             }
         ) {
             Row(
@@ -217,7 +212,7 @@ private fun WorkspaceSelectionItem(
                 Icon(
                     imageVector = if (isSelected) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
                     contentDescription = if (isSelected) "Selected" else "Not selected",
-                    tint = if (isSelected) BossDarkAccent else BossDarkTextSecondary,
+                    tint = if (isSelected) BossTheme.colors.signal else BossTheme.colors.textSecondary,
                     modifier = Modifier.size(20.dp)
                 )
 
@@ -227,7 +222,7 @@ private fun WorkspaceSelectionItem(
                 Icon(
                     imageVector = Icons.Outlined.Folder,
                     contentDescription = null,
-                    tint = BossDarkTextSecondary,
+                    tint = BossTheme.colors.textSecondary,
                     modifier = Modifier.size(18.dp)
                 )
 
@@ -242,7 +237,7 @@ private fun WorkspaceSelectionItem(
                     },
                     fontSize = 14.sp,
                     fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal,
-                    color = BossDarkTextPrimary,
+                    color = BossTheme.colors.textPrimary,
                     modifier = Modifier.weight(1f)
                 )
 
@@ -256,7 +251,7 @@ private fun WorkspaceSelectionItem(
                         Icon(
                             imageVector = Icons.Filled.ArrowDropDown,
                             contentDescription = "Select Panel",
-                            tint = BossDarkTextSecondary
+                            tint = BossTheme.colors.textSecondary
                         )
                     }
                 }
@@ -270,8 +265,8 @@ private fun WorkspaceSelectionItem(
                     .fillMaxWidth()
                     .padding(start = 32.dp, top = 4.dp),
                 shape = RoundedCornerShape(8.dp),
-                color = BossDarkSurface,
-                border = androidx.compose.foundation.BorderStroke(1.dp, BossDarkBorder)
+                color = BossTheme.colors.raised,
+                border = androidx.compose.foundation.BorderStroke(1.dp, BossTheme.colors.line)
             ) {
                 Column(modifier = Modifier.padding(8.dp)) {
                     // Auto option
@@ -315,7 +310,7 @@ private fun PanelOption(
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .background(
-                color = if (isSelected) BossDarkSurface.copy(alpha = 0.6f) else Color.Transparent,
+                color = if (isSelected) BossTheme.colors.raised.copy(alpha = 0.6f) else Color.Transparent,
                 shape = RoundedCornerShape(4.dp)
             )
             .padding(horizontal = 8.dp, vertical = 6.dp),
@@ -325,7 +320,7 @@ private fun PanelOption(
             text = displayName,
             fontSize = 12.sp,
             fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal,
-            color = if (isSelected) BossDarkAccent else BossDarkTextPrimary
+            color = if (isSelected) BossTheme.colors.signal else BossTheme.colors.textPrimary
         )
     }
 }

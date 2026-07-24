@@ -1,19 +1,11 @@
 package ai.rever.boss.components.settings.sections
 
-import BossDarkAccent
-import BossDarkBackground
-import BossDarkBorder
-import BossDarkContentBackground
-import BossDarkError
-import BossDarkSuccess
-import BossDarkSurface
-import BossDarkTextPrimary
-import BossDarkTextSecondary
 import ai.rever.boss.components.overlays.ContextMenu
 import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.plugin.panels.right_top.*
 import ai.rever.boss.components.settings.shared.DropdownSelector
 import ai.rever.boss.components.settings.shared.SettingsSection
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -79,10 +71,10 @@ fun LLMProvidersSettings() {
         SettingsSection(title = "Provider Selection", description = "Choose your preferred AI provider") {
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                backgroundColor = BossDarkContentBackground,
+                backgroundColor = BossTheme.colors.ink,
                 shape = RoundedCornerShape(8.dp),
                 elevation = 0.dp,
-                border = BorderStroke(1.dp, BossDarkBorder)
+                border = BorderStroke(1.dp, BossTheme.colors.line)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     // Provider dropdown
@@ -95,12 +87,12 @@ fun LLMProvidersSettings() {
                             Text(
                                 text = "AI Provider",
                                 fontSize = 13.sp,
-                                color = BossDarkTextPrimary
+                                color = BossTheme.colors.textPrimary
                             )
                             Text(
                                 text = "Select which AI service to use",
                                 fontSize = 11.sp,
-                                color = BossDarkTextSecondary,
+                                color = BossTheme.colors.textSecondary,
                                 modifier = Modifier.padding(top = 2.dp)
                             )
                         }
@@ -112,8 +104,8 @@ fun LLMProvidersSettings() {
                             Row(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(6.dp))
-                                    .background(BossDarkBackground)
-                                    .border(1.dp, BossDarkBorder, RoundedCornerShape(6.dp))
+                                    .background(BossTheme.colors.panel)
+                                    .border(1.dp, BossTheme.colors.line, RoundedCornerShape(6.dp))
                                     .clickable { providerDropdownExpanded = true }
                                     .padding(horizontal = 12.dp, vertical = 8.dp)
                                     .onGloballyPositioned { coordinates ->
@@ -131,26 +123,26 @@ fun LLMProvidersSettings() {
                                     },
                                     contentDescription = null,
                                     modifier = Modifier.size(16.dp),
-                                    tint = BossDarkAccent
+                                    tint = BossTheme.colors.signal
                                 )
                                 Text(
                                     text = selectedProvider.displayName,
                                     fontSize = 13.sp,
-                                    color = BossDarkTextPrimary
+                                    color = BossTheme.colors.textPrimary
                                 )
                                 if (apiKeys[selectedProvider]?.isNotBlank() == true) {
                                     Icon(
                                         Icons.Outlined.CheckCircle,
                                         contentDescription = "API Key Set",
                                         modifier = Modifier.size(14.dp),
-                                        tint = BossDarkSuccess
+                                        tint = BossTheme.colors.ok
                                     )
                                 }
                                 Icon(
                                     Icons.Outlined.ArrowDropDown,
                                     contentDescription = "Expand",
                                     modifier = Modifier.size(18.dp),
-                                    tint = BossDarkTextSecondary
+                                    tint = BossTheme.colors.textSecondary
                                 )
                             }
 
@@ -167,7 +159,7 @@ fun LLMProvidersSettings() {
                                             },
                                             trailingIcon = if (apiKeys[provider]?.isNotBlank() == true)
                                                 Icons.Outlined.CheckCircle else null,
-                                            trailingIconColor = BossDarkSuccess,
+                                            trailingIconColor = BossTheme.colors.ok,
                                             onClick = {
                                                 selectedProvider = provider
                                                 // Update selected model to first available for this provider
@@ -199,7 +191,7 @@ fun LLMProvidersSettings() {
                                     text = "${selectedProvider.displayName} API Key",
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Medium,
-                                    color = BossDarkTextPrimary
+                                    color = BossTheme.colors.textPrimary
                                 )
                                 
                                 // Show if key is from environment
@@ -213,8 +205,8 @@ fun LLMProvidersSettings() {
                                 if (!envKey.isNullOrBlank()) {
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Card(
-                                        backgroundColor = BossDarkSuccess.copy(alpha = 0.1f),
-                                        contentColor = BossDarkSuccess,
+                                        backgroundColor = BossTheme.colors.ok.copy(alpha = 0.1f),
+                                        contentColor = BossTheme.colors.ok,
                                         shape = RoundedCornerShape(4.dp),
                                         elevation = 0.dp
                                     ) {
@@ -268,7 +260,7 @@ fun LLMProvidersSettings() {
                                             LLMProvider.CUSTOM -> "Your API key"
                                         }
                                     },
-                                    color = BossDarkTextSecondary.copy(alpha = 0.5f)
+                                    color = BossTheme.colors.textSecondary.copy(alpha = 0.5f)
                                 )
                             },
                             visualTransformation = if (showApiKey) VisualTransformation.None else PasswordVisualTransformation(),
@@ -280,18 +272,18 @@ fun LLMProvidersSettings() {
                                         if (showApiKey) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
                                         contentDescription = if (showApiKey) "Hide" else "Show",
                                         modifier = Modifier.size(20.dp),
-                                        tint = BossDarkTextSecondary
+                                        tint = BossTheme.colors.textSecondary
                                     )
                                 }
                             },
                             singleLine = true,
                             colors = TextFieldDefaults.outlinedTextFieldColors(
-                                textColor = BossDarkTextPrimary,
-                                focusedBorderColor = BossDarkAccent,
-                                unfocusedBorderColor = BossDarkBorder,
-                                focusedLabelColor = BossDarkAccent,
-                                unfocusedLabelColor = BossDarkTextSecondary,
-                                placeholderColor = BossDarkTextSecondary.copy(alpha = 0.5f)
+                                textColor = BossTheme.colors.textPrimary,
+                                focusedBorderColor = BossTheme.colors.signal,
+                                unfocusedBorderColor = BossTheme.colors.line,
+                                focusedLabelColor = BossTheme.colors.signal,
+                                unfocusedLabelColor = BossTheme.colors.textSecondary,
+                                placeholderColor = BossTheme.colors.textSecondary.copy(alpha = 0.5f)
                             )
                         )
                         
@@ -310,7 +302,7 @@ fun LLMProvidersSettings() {
                                 "You can also set the $envVarName environment variable"
                             },
                             fontSize = 12.sp,
-                            color = BossDarkTextSecondary.copy(alpha = 0.7f),
+                            color = BossTheme.colors.textSecondary.copy(alpha = 0.7f),
                             modifier = Modifier.padding(start = 4.dp)
                         )
                         
@@ -320,15 +312,20 @@ fun LLMProvidersSettings() {
                                 value = customEndpoint,
                                 onValueChange = { customEndpoint = it },
                                 label = { Text("API Endpoint") },
-                                placeholder = { Text("https://api.example.com/v1/chat", color = BossDarkTextSecondary.copy(alpha = 0.5f)) },
+                                placeholder = {
+                                    Text(
+                                        "https://api.example.com/v1/chat",
+                                        color = BossTheme.colors.textSecondary.copy(alpha = 0.5f)
+                                    )
+                                },
                                 modifier = Modifier.fillMaxWidth(),
                                 singleLine = true,
                                 colors = TextFieldDefaults.outlinedTextFieldColors(
-                                    textColor = BossDarkTextPrimary,
-                                    focusedBorderColor = BossDarkAccent,
-                                    unfocusedBorderColor = BossDarkBorder,
-                                    focusedLabelColor = BossDarkAccent,
-                                    unfocusedLabelColor = BossDarkTextSecondary
+                                    textColor = BossTheme.colors.textPrimary,
+                                    focusedBorderColor = BossTheme.colors.signal,
+                                    unfocusedBorderColor = BossTheme.colors.line,
+                                    focusedLabelColor = BossTheme.colors.signal,
+                                    unfocusedLabelColor = BossTheme.colors.textSecondary
                                 )
                             )
                         }
@@ -351,10 +348,10 @@ fun LLMProvidersSettings() {
                     ) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(24.dp),
-                            color = BossDarkAccent
+                            color = BossTheme.colors.signal
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Loading models...", color = BossDarkTextSecondary)
+                        Text("Loading models...", color = BossTheme.colors.textSecondary)
                     }
                 } else {
                     val currentModel = providerModels.find { it.id == selectedModelId }
@@ -375,31 +372,31 @@ fun LLMProvidersSettings() {
                         Spacer(modifier = Modifier.height(8.dp))
                         Card(
                             modifier = Modifier.fillMaxWidth(),
-                            backgroundColor = BossDarkContentBackground,
+                            backgroundColor = BossTheme.colors.ink,
                             shape = RoundedCornerShape(6.dp),
                             elevation = 0.dp,
-                            border = BorderStroke(1.dp, BossDarkBorder)
+                            border = BorderStroke(1.dp, BossTheme.colors.line)
                         ) {
                             Column(modifier = Modifier.padding(12.dp)) {
                                 model.description?.let {
                                     Text(
                                         text = it,
                                         fontSize = 12.sp,
-                                        color = BossDarkTextSecondary
+                                        color = BossTheme.colors.textSecondary
                                     )
                                 }
                                 model.contextLength?.let {
                                     Text(
                                         text = "Context: ${it.toString().reversed().chunked(3).reversed().joinToString(",")} tokens",
                                         fontSize = 11.sp,
-                                        color = BossDarkTextSecondary.copy(alpha = 0.7f)
+                                        color = BossTheme.colors.textSecondary.copy(alpha = 0.7f)
                                     )
                                 }
                                 if (model.capabilities.isNotEmpty()) {
                                     Text(
                                         text = "Capabilities: ${model.capabilities.joinToString(", ")}",
                                         fontSize = 11.sp,
-                                        color = BossDarkTextSecondary.copy(alpha = 0.7f)
+                                        color = BossTheme.colors.textSecondary.copy(alpha = 0.7f)
                                     )
                                 }
                             }
@@ -414,7 +411,7 @@ fun LLMProvidersSettings() {
                         Text(
                             text = error,
                             fontSize = 12.sp,
-                            color = BossDarkError
+                            color = BossTheme.colors.alert
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         TextButton(
@@ -434,13 +431,13 @@ fun LLMProvidersSettings() {
                 Text(
                     text = "Custom models can be set via BOSS_LLM_MODELS_${selectedProvider.name} environment variable",
                     fontSize = 11.sp,
-                    color = BossDarkTextSecondary.copy(alpha = 0.5f),
+                    color = BossTheme.colors.textSecondary.copy(alpha = 0.5f),
                     modifier = Modifier.padding(horizontal = 4.dp)
                 )
                 Text(
                     text = "Format: model1:name1:context1;model2:name2:context2",
                     fontSize = 10.sp,
-                    color = BossDarkTextSecondary.copy(alpha = 0.4f),
+                    color = BossTheme.colors.textSecondary.copy(alpha = 0.4f),
                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
                 )
             }
@@ -461,19 +458,19 @@ fun LLMProvidersSettings() {
                             text = "Temperature",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Medium,
-                            color = BossDarkTextPrimary
+                            color = BossTheme.colors.textPrimary
                         )
                         Text(
                             text = "Controls randomness (0 = focused, 2 = creative)",
                             fontSize = 12.sp,
-                            color = BossDarkTextSecondary
+                            color = BossTheme.colors.textSecondary
                         )
                     }
 
                     Text(
                         text = String.format("%.1f", temperature),
                         fontSize = 14.sp,
-                        color = BossDarkAccent,
+                        color = BossTheme.colors.signal,
                         modifier = Modifier.width(40.dp)
                     )
 
@@ -483,9 +480,9 @@ fun LLMProvidersSettings() {
                         valueRange = 0f..2f,
                         modifier = Modifier.width(200.dp),
                         colors = SliderDefaults.colors(
-                            thumbColor = BossDarkAccent,
-                            activeTrackColor = BossDarkAccent,
-                            inactiveTrackColor = BossDarkBorder
+                            thumbColor = BossTheme.colors.signal,
+                            activeTrackColor = BossTheme.colors.signal,
+                            inactiveTrackColor = BossTheme.colors.line
                         )
                     )
                 }
@@ -502,12 +499,12 @@ fun LLMProvidersSettings() {
                             text = "Max Tokens",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Medium,
-                            color = BossDarkTextPrimary
+                            color = BossTheme.colors.textPrimary
                         )
                         Text(
                             text = "Maximum response length",
                             fontSize = 12.sp,
-                            color = BossDarkTextSecondary
+                            color = BossTheme.colors.textSecondary
                         )
                     }
 
@@ -521,9 +518,9 @@ fun LLMProvidersSettings() {
                         modifier = Modifier.width(150.dp),
                         singleLine = true,
                         colors = TextFieldDefaults.outlinedTextFieldColors(
-                            textColor = BossDarkTextPrimary,
-                            focusedBorderColor = BossDarkAccent,
-                            unfocusedBorderColor = BossDarkBorder
+                            textColor = BossTheme.colors.textPrimary,
+                            focusedBorderColor = BossTheme.colors.signal,
+                            unfocusedBorderColor = BossTheme.colors.line
                         )
                     )
                 }
@@ -542,15 +539,15 @@ fun LLMProvidersSettings() {
                             checked = enableStreaming,
                             onCheckedChange = { enableStreaming = it },
                             colors = CheckboxDefaults.colors(
-                                checkedColor = BossDarkAccent,
-                                uncheckedColor = BossDarkBorder
+                                checkedColor = BossTheme.colors.signal,
+                                uncheckedColor = BossTheme.colors.line
                             )
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = "Enable Streaming",
                             fontSize = 14.sp,
-                            color = BossDarkTextPrimary
+                            color = BossTheme.colors.textPrimary
                         )
                     }
 
@@ -561,15 +558,15 @@ fun LLMProvidersSettings() {
                             checked = enableCaching,
                             onCheckedChange = { enableCaching = it },
                             colors = CheckboxDefaults.colors(
-                                checkedColor = BossDarkAccent,
-                                uncheckedColor = BossDarkBorder
+                                checkedColor = BossTheme.colors.signal,
+                                uncheckedColor = BossTheme.colors.line
                             )
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = "Enable Response Caching",
                             fontSize = 14.sp,
-                            color = BossDarkTextPrimary
+                            color = BossTheme.colors.textPrimary
                         )
                     }
                 }
@@ -614,8 +611,8 @@ fun LLMProvidersSettings() {
                     }
                 },
                 colors = ButtonDefaults.buttonColors(
-                    backgroundColor = BossDarkAccent,
-                    contentColor = BossDarkTextPrimary
+                    backgroundColor = BossTheme.colors.signal,
+                    contentColor = BossTheme.colors.onSignal
                 ),
                 shape = RoundedCornerShape(6.dp)
             ) {
@@ -631,7 +628,7 @@ fun LLMProvidersSettings() {
             title = {
                 Text(
                     "Sign in to ${provider.displayName}",
-                    color = BossDarkTextPrimary,
+                    color = BossTheme.colors.textPrimary,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -640,13 +637,13 @@ fun LLMProvidersSettings() {
                 Column {
                     Text(
                         "OAuth authentication for ${provider.displayName} is not yet implemented.",
-                        color = BossDarkTextSecondary,
+                        color = BossTheme.colors.textSecondary,
                         fontSize = 14.sp
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
                         "Please manually enter your API key for now. You can obtain it from:",
-                        color = BossDarkTextSecondary,
+                        color = BossTheme.colors.textSecondary,
                         fontSize = 14.sp
                     )
                     Spacer(modifier = Modifier.height(8.dp))
@@ -657,7 +654,7 @@ fun LLMProvidersSettings() {
                             LLMProvider.TOGETHER -> "https://api.together.xyz/settings/api-keys"
                             else -> ""
                         },
-                        color = BossDarkAccent,
+                        color = BossTheme.colors.signal,
                         fontSize = 12.sp,
                         fontFamily = FontFamily.Monospace
                     )
@@ -667,11 +664,11 @@ fun LLMProvidersSettings() {
                 TextButton(
                     onClick = { showOAuthDialog = null }
                 ) {
-                    Text("OK", color = BossDarkAccent)
+                    Text("OK", color = BossTheme.colors.signal)
                 }
             },
-            backgroundColor = BossDarkBackground,
-            contentColor = BossDarkTextPrimary
+            backgroundColor = BossTheme.colors.panel,
+            contentColor = BossTheme.colors.textPrimary
         )
     }
     
@@ -683,14 +680,14 @@ fun LLMProvidersSettings() {
         ) {
             Surface(
                 modifier = Modifier.padding(top = 16.dp),
-                color = if (message.contains("Error")) BossDarkError else BossDarkAccent,
+                color = if (message.contains("Error")) BossTheme.colors.alert else BossTheme.colors.signal,
                 shape = RoundedCornerShape(6.dp),
                 elevation = 4.dp
             ) {
                 Text(
                     text = message,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    color = BossDarkTextPrimary,
+                    color = BossTheme.colors.textPrimary,
                     style = MaterialTheme.typography.body2
                 )
             }

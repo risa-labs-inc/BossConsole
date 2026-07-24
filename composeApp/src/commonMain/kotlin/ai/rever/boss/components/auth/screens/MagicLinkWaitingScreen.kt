@@ -1,5 +1,6 @@
 package ai.rever.boss.components.auth.screens
 
+import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.foundation.BorderStroke
@@ -29,14 +30,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import BossDarkBackground
-import BossDarkBorder
-import BossDarkTextPrimary
 import ai.rever.boss.services.supabase.AuthService
-import BossDarkTextSecondary
-import BossDarkAccent
-import BossDarkError
-import BossDarkSuccess
 import ai.rever.boss.components.auth.forms.*
 import ai.rever.boss.viewmodels.LoginViewModel
 import kotlinx.coroutines.delay
@@ -101,7 +95,7 @@ fun MagicLinkWaitingScreen(
             Text(
                 text = "We've sent a magic link to:",
                 fontSize = 14.sp,
-                color = BossDarkTextSecondary,
+                color = BossTheme.colors.textSecondary,
                 textAlign = TextAlign.Center
             )
             
@@ -112,7 +106,7 @@ fun MagicLinkWaitingScreen(
                 text = email,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Medium,
-                color = BossDarkAccent,
+                color = BossTheme.colors.signal,
                 textAlign = TextAlign.Center
             )
             
@@ -122,9 +116,9 @@ fun MagicLinkWaitingScreen(
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(6.dp),
-                backgroundColor = BossDarkBackground,
+                backgroundColor = BossTheme.colors.panel,
                 elevation = 0.dp,
-                border = BorderStroke(1.dp, BossDarkBorder)
+                border = BorderStroke(1.dp, BossTheme.colors.line)
             ) {
                 Column(
                     modifier = Modifier.padding(16.dp),
@@ -133,7 +127,7 @@ fun MagicLinkWaitingScreen(
                     Icon(
                         imageVector = Icons.Default.Email,
                         contentDescription = "Email",
-                        tint = BossDarkAccent,
+                        tint = BossTheme.colors.signal,
                         modifier = Modifier.size(24.dp)
                     )
                     
@@ -142,7 +136,7 @@ fun MagicLinkWaitingScreen(
                     Text(
                         text = "Click the link in your email to sign in automatically",
                         fontSize = 13.sp,
-                        color = BossDarkTextSecondary,
+                        color = BossTheme.colors.textSecondary,
                         textAlign = TextAlign.Center,
                         lineHeight = 18.sp
                     )
@@ -161,7 +155,7 @@ fun MagicLinkWaitingScreen(
                     Icon(
                         imageVector = Icons.Default.CheckCircle,
                         contentDescription = "Success",
-                        tint = BossDarkSuccess,
+                        tint = BossTheme.colors.ok,
                         modifier = Modifier.size(16.dp)
                     )
                     
@@ -170,7 +164,7 @@ fun MagicLinkWaitingScreen(
                     Text(
                         text = "Magic link sent successfully!",
                         fontSize = 13.sp,
-                        color = BossDarkSuccess
+                        color = BossTheme.colors.ok
                     )
                 }
                 
@@ -217,14 +211,15 @@ fun MagicLinkWaitingScreen(
                 enabled = !isLoading && resendCooldown == 0,
                 shape = RoundedCornerShape(4.dp),
                 colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = if (resendCooldown == 0) BossDarkTextPrimary else BossDarkTextSecondary
+                    contentColor = if (resendCooldown == 0) BossTheme.colors.textPrimary
+                    else BossTheme.colors.textSecondary
                 ),
-                border = BorderStroke(1.dp, BossDarkBorder)
+                border = BorderStroke(1.dp, BossTheme.colors.line)
             ) {
                 if (isLoading) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(18.dp),
-                        color = BossDarkTextSecondary,
+                        color = BossTheme.colors.textSecondary,
                         strokeWidth = 2.dp
                     )
                 } else {
@@ -232,7 +227,7 @@ fun MagicLinkWaitingScreen(
                         imageVector = Icons.Default.Refresh,
                         contentDescription = "Resend",
                         modifier = Modifier.size(20.dp),
-                        tint = if (resendCooldown == 0) BossDarkTextPrimary else BossDarkTextSecondary
+                        tint = if (resendCooldown == 0) BossTheme.colors.textPrimary else BossTheme.colors.textSecondary
                     )
                     
                     Spacer(modifier = Modifier.width(8.dp))
@@ -258,7 +253,7 @@ fun MagicLinkWaitingScreen(
                 Text(
                     text = if (showManualInput) "Hide Manual Input" else "Having trouble? Paste magic link manually",
                     fontSize = 12.sp,
-                    color = BossDarkTextSecondary,
+                    color = BossTheme.colors.textSecondary,
                     textDecoration = TextDecoration.Underline
                 )
             }
@@ -270,12 +265,12 @@ fun MagicLinkWaitingScreen(
                 OutlinedTextField(
                     value = magicLinkInput,
                     onValueChange = { magicLinkInput = it },
-                    label = { Text("Magic Link URL", color = BossDarkTextSecondary, fontSize = 12.sp) },
+                    label = { Text("Magic Link URL", color = BossTheme.colors.textSecondary, fontSize = 12.sp) },
                     leadingIcon = {
                         Icon(
                             Icons.Default.Link,
                             contentDescription = "Link",
-                            tint = BossDarkTextSecondary,
+                            tint = BossTheme.colors.textSecondary,
                             modifier = Modifier.size(20.dp)
                         )
                     },
@@ -295,13 +290,13 @@ fun MagicLinkWaitingScreen(
                         }
                     ),
                     colors = TextFieldDefaults.outlinedTextFieldColors(
-                        textColor = BossDarkTextPrimary,
-                        backgroundColor = BossDarkBackground,
-                        focusedBorderColor = BossDarkAccent,
-                        unfocusedBorderColor = BossDarkBorder,
-                        cursorColor = BossDarkAccent,
-                        focusedLabelColor = BossDarkAccent,
-                        unfocusedLabelColor = BossDarkTextSecondary
+                        textColor = BossTheme.colors.textPrimary,
+                        backgroundColor = BossTheme.colors.panel,
+                        focusedBorderColor = BossTheme.colors.signal,
+                        unfocusedBorderColor = BossTheme.colors.line,
+                        cursorColor = BossTheme.colors.signal,
+                        focusedLabelColor = BossTheme.colors.signal,
+                        unfocusedLabelColor = BossTheme.colors.textSecondary
                     )
                 )
                 
@@ -317,7 +312,7 @@ fun MagicLinkWaitingScreen(
                     enabled = magicLinkInput.isNotBlank() && !isLoading,
                     shape = RoundedCornerShape(4.dp),
                     colors = ButtonDefaults.buttonColors(
-                        backgroundColor = BossDarkAccent,
+                        backgroundColor = BossTheme.colors.signal,
                         contentColor = Color.White
                     )
                 ) {
@@ -338,7 +333,7 @@ fun MagicLinkWaitingScreen(
                 Text(
                     text = "Back to Sign In",
                     fontSize = 14.sp,
-                    color = BossDarkAccent,
+                    color = BossTheme.colors.signal,
                     textDecoration = TextDecoration.Underline
                 )
             }
