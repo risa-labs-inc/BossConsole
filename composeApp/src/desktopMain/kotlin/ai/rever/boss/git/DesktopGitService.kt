@@ -347,7 +347,7 @@ actual object GitService {
      * Format: XY PATH or XY ORIG_PATH -> PATH (for renames)
      * X = index status, Y = worktree status
      */
-    private fun parseStatusLine(line: String): GitFileStatus? {
+    internal fun parseStatusLine(line: String): GitFileStatus? {
         if (line.length < 3) return null
 
         val indexChar = line[0]
@@ -380,7 +380,7 @@ actual object GitService {
         )
     }
 
-    private fun parseStatusChar(c: Char): GitFileStatusType? {
+    internal fun parseStatusChar(c: Char): GitFileStatusType? {
         return when (c) {
             'M' -> GitFileStatusType.MODIFIED
             'A' -> GitFileStatusType.ADDED
@@ -544,7 +544,7 @@ actual object GitService {
         }
     }
 
-    private fun parseCommitLine(line: String): GitCommitInfo? {
+    internal fun parseCommitLine(line: String): GitCommitInfo? {
         val parts = line.split("\u0000")
         if (parts.size < 6) return null
 
@@ -721,7 +721,7 @@ actual object GitService {
         }
     }
 
-    private fun parseStashLine(index: Int, line: String): GitStashInfo? {
+    internal fun parseStashLine(index: Int, line: String): GitStashInfo? {
         // Format: stash@{0}: On branch_name: message
         // or: stash@{0}: WIP on branch_name: hash message
         val regex = Regex("""stash@\{(\d+)\}:\s*(?:(?:WIP on|On)\s+(\S+?):\s*)?(.*)""")
@@ -932,7 +932,7 @@ actual object GitService {
      * - https://github.com/owner/repo.git -> https://github.com/owner/repo
      * - ssh://git@github.com/owner/repo.git -> https://github.com/owner/repo
      */
-    private fun parseRemoteUrl(remoteUrl: String): String? {
+    internal fun parseRemoteUrl(remoteUrl: String): String? {
         return try {
             when {
                 // SSH format: git@github.com:owner/repo.git
