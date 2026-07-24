@@ -100,8 +100,8 @@
     <ID>CyclomaticComplexMethod:FluckBrowserSettings.kt$@Composable fun FluckBrowserSettings()</ID>
     <ID>CyclomaticComplexMethod:FluckEngine.kt$FluckEngine$fun setupKeyboardInterceptor( browser: com.teamdev.jxbrowser.browser.Browser, ownerWindowId: String? = null )</ID>
     <ID>CyclomaticComplexMethod:FluckEngine.kt$FluckEngine$private fun classifyError(e: Throwable): EngineInitError</ID>
-    <ID>CyclomaticComplexMethod:FluckEngine.kt$FluckEngine$private fun createEngineInstance(chromiumDir: java.nio.file.Path, profileDirPath: java.nio.file.Path, profileName: String): Engine</ID>
-    <ID>CyclomaticComplexMethod:FluckEngine.kt$FluckEngine$private fun killStaleChromiumProcesses(userHome: String)</ID>
+    <ID>CyclomaticComplexMethod:FluckEngine.kt$FluckEngine$private fun createEngineInstance(chromiumDir: java.nio.file.Path, profileDirPath: java.nio.file.Path): Engine</ID>
+    <ID>CyclomaticComplexMethod:FluckEngine.kt$FluckEngine$private fun killStaleChromiumProcesses()</ID>
     <ID>CyclomaticComplexMethod:FocusModeReveal.kt$@Composable internal fun rememberFocusModeReveal( isFocusModeEnabled: Boolean, revealDelayMs: Long, ): FocusModeRevealState</ID>
     <ID>CyclomaticComplexMethod:FormFieldDetector.kt$FormFieldDetector$private fun determineFieldType( inputType: String, fieldName: String, fieldId: String, placeholder: String, autocomplete: String, className: String, ariaLabel: String ): FieldType</ID>
     <ID>CyclomaticComplexMethod:FormFieldInjector.kt$FormFieldInjector$suspend fun fillCredentials( browser: LockedBrowser, username: String, password: String, mode: FillMode = FillMode.BOTH ): FillResult</ID>
@@ -116,7 +116,6 @@
     <ID>CyclomaticComplexMethod:MacOSGestureHandler.kt$MacOSGestureHandler$fun addMagnificationListener( component: Component, onZoomIn: () -&gt; Unit, onZoomOut: () -&gt; Unit ): Any?</ID>
     <ID>CyclomaticComplexMethod:MagicLinkWaitingScreen.kt$@OptIn(ExperimentalComposeUiApi::class) @Composable fun MagicLinkWaitingScreen( email: String, viewModel: LoginViewModel, onBack: () -&gt; Unit, onSuccess: () -&gt; Unit, isLoading: Boolean = false, errorMessage: String? = null )</ID>
     <ID>CyclomaticComplexMethod:MenuShortcutBridge.kt$MenuShortcutBridge$private fun keyNameToComposeKey(keyName: String): Key?</ID>
-    <ID>CyclomaticComplexMethod:NewProjectWizardDialog.kt$@Composable private fun TemplateCard( template: ProjectTemplate, isSelected: Boolean, onClick: () -&gt; Unit )</ID>
     <ID>CyclomaticComplexMethod:NewTabDialog.kt$@Composable fun NewTabDialog( onDismiss: () -&gt; Unit, onCreateTab: (type: TabType, path: String) -&gt; Unit, tabRegistry: TabRegistry, initialTabType: TabType? = null, /** * Opens a [TabInfo] built by a plugin tab type's [TabTypeInfo.createTabInfo]. * When null, plugin-registered tab types are not offered (legacy callers). */ onCreateTabInfo: ((TabInfo) -&gt; Unit)? = null, projectPath: String? = null, windowId: String? = null )</ID>
     <ID>CyclomaticComplexMethod:PasskeyAuthService.kt$PasskeyAuthService$suspend fun authenticateWithPasskey(email: String? = null, credentialId: String? = null): Result&lt;Unit&gt;</ID>
     <ID>CyclomaticComplexMethod:PasskeyWaitingScreen.kt$@Composable fun PasskeyWaitingScreen( email: String, viewModel: LoginViewModel, onBack: () -&gt; Unit, onSuccess: () -&gt; Unit )</ID>
@@ -159,37 +158,23 @@
     <ID>CyclomaticComplexMethod:main.kt$fun main(args: Array&lt;String&gt;)</ID>
     <ID>CyclomaticComplexMethod:main.kt$private fun extractPty4jNatives(targetDir: File)</ID>
     <ID>EmptyCatchBlock:FluckEngine.kt$FluckEngine${ }</ID>
-    <ID>EmptyCatchBlock:WasmWorkspaceFileManager.kt$WorkspaceFileManager${ }</ID>
-    <ID>EmptyCatchBlock:WorkspaceButton.android.kt${ }</ID>
     <ID>EmptyCatchBlock:WorkspaceButton.desktop.kt${ }</ID>
-    <ID>EmptyCatchBlock:WorkspaceButton.ios.kt${ }</ID>
     <ID>EmptyClassBlock:PasskeySessionEventHandler.kt$PasskeySessionEventHandler.SessionType${ }</ID>
     <ID>EmptyElseBlock:FluckEngine.kt$FluckEngine${ }</ID>
     <ID>EmptyFunctionBlock:BossTabsComponentMoveTest.kt$BossTabsComponentMoveTest.TestTabComponent${ }</ID>
-    <ID>EmptyFunctionBlock:BrowserServiceProvider.kt${}</ID>
     <ID>EmptyFunctionBlock:PanelComponentStoreResetTest.kt$PanelComponentStoreResetTest.FakePanelComponent${ }</ID>
     <ID>EmptyFunctionBlock:TabDropResultHandlingTest.kt$TabDropResultHandlingTest.DropTestComponent${ }</ID>
     <ID>EmptyIfBlock:FluckEngine.kt$FluckEngine${ }</ID>
     <ID>ExplicitGarbageCollectionCall:PerformanceMonitor.kt$PerformanceMonitor$gc()</ID>
-    <ID>ForbiddenComment:AndroidFilePicker.kt$// TODO: Implement Android directory picker using Intent.ACTION_OPEN_DOCUMENT_TREE</ID>
     <ID>ForbiddenComment:BossTopBar.kt$// TODO: #91 - BossTopRunBar function (currently disabled)</ID>
     <ID>ForbiddenComment:BossTopBar.kt$// TODO: #93 - Lanager functionality (currently disabled - plugin removed)</ID>
     <ID>ForbiddenComment:CodeEditor.kt$CodeEditorTabComponent$/* TODO: Update EditorTabInfo.isModified */</ID>
-    <ID>ForbiddenComment:FilePicker.kt$// TODO: Implement Android file picker using ActivityResultContracts</ID>
-    <ID>ForbiddenComment:FilePicker.kt$// TODO: Implement Web file picker using HTML5 File API</ID>
-    <ID>ForbiddenComment:FilePicker.kt$// TODO: Implement iOS file picker using UIDocumentPickerViewController</ID>
     <ID>ForbiddenComment:FluckEngine.kt$FluckEngine$// TODO: Implement if needed</ID>
     <ID>ForbiddenComment:FluckEngine.kt$FluckEngine$// TODO: Show user warning dialog (for now, just proceed)</ID>
-    <ID>ForbiddenComment:IosCodeEditor.kt$// TODO: Implement iOS file reading</ID>
-    <ID>ForbiddenComment:IosCodeEditor.kt$// TODO: Implement iOS file writing</ID>
-    <ID>ForbiddenComment:IosFilePicker.kt$// TODO: Implement iOS directory picker using UIDocumentPickerViewController</ID>
     <ID>ForbiddenComment:PluginStateBridge.kt$PluginStateBridge$// TODO: Implement actual JSON Merge Patch for delta state.</ID>
     <ID>ForbiddenComment:VersionVerifier.kt$VersionVerifier$// TODO: Consider adding analytics/crash reporting here</ID>
-    <ID>ForbiddenComment:WasmCodeEditor.kt$// TODO: Implement browser-based file reading</ID>
-    <ID>ForbiddenComment:WasmCodeEditor.kt$// TODO: Implement browser-based file writing</ID>
     <ID>FunctionNaming:MacOSScreenCapture.kt$CoreGraphics$fun CGPreflightScreenCaptureAccess(): Boolean</ID>
     <ID>FunctionNaming:MacOSScreenCapture.kt$CoreGraphics$fun CGRequestScreenCaptureAccess(): Boolean</ID>
-    <ID>FunctionNaming:MainViewController.kt$fun MainViewControllerV4()</ID>
     <ID>FunctionOnlyReturningConstant:CLIInstaller.kt$CLIInstaller$private fun getHomebrewBinPath(): String</ID>
     <ID>FunctionOnlyReturningConstant:CLIInstaller.kt$CLIInstaller$private fun getHomebrewCLISourcePath(): String</ID>
     <ID>FunctionOnlyReturningConstant:FluckEngine.kt$FluckEngine$private fun isShiftPressed(): Boolean</ID>
@@ -292,7 +277,7 @@
     <ID>LongMethod:FluckBrowserSettings.kt$@Composable fun FluckBrowserSettings()</ID>
     <ID>LongMethod:FluckEngine.kt$FluckEngine$fun setupBrowserDownloadHandler(browser: com.teamdev.jxbrowser.browser.Browser)</ID>
     <ID>LongMethod:FluckEngine.kt$FluckEngine$fun setupKeyboardInterceptor( browser: com.teamdev.jxbrowser.browser.Browser, ownerWindowId: String? = null )</ID>
-    <ID>LongMethod:FluckEngine.kt$FluckEngine$private fun killStaleChromiumProcesses(userHome: String)</ID>
+    <ID>LongMethod:FluckEngine.kt$FluckEngine$private fun killStaleChromiumProcesses()</ID>
     <ID>LongMethod:FluckEngine.kt$FluckEngine$suspend fun resetBrowserProfile(): ResetResult</ID>
     <ID>LongMethod:FluckEngine.kt$FluckEngine.BrowserFindBar$private fun createDialog(owner: java.awt.Window)</ID>
     <ID>LongMethod:FocusModeReveal.kt$@Composable internal fun rememberFocusModeReveal( isFocusModeEnabled: Boolean, revealDelayMs: Long, ): FocusModeRevealState</ID>
@@ -400,7 +385,6 @@
     <ID>LongMethod:UserExistenceService.kt$UserExistenceService$suspend fun checkUserExists(email: String): Result&lt;UserExistence&gt;</ID>
     <ID>LongMethod:VersionSelectionDialog.kt$@Composable fun VersionSelectionDialog( currentVersion: Version, versions: List&lt;VersionInfo&gt;, isLoading: Boolean, error: String? = null, onVersionSelected: (VersionInfo) -&gt; Unit, onDismiss: () -&gt; Unit )</ID>
     <ID>LongMethod:VersionSelectionDialog.kt$@Composable private fun VersionItem( versionInfo: VersionInfo, isCurrent: Boolean, isLatest: Boolean = false, onClick: () -&gt; Unit )</ID>
-    <ID>LongMethod:WasmFluckView.kt$@Composable actual fun FluckView( fileId: String, content: String, browser: Any?, browserViewState: Any?, browserLock: Any?, onContentChange: (String) -&gt; Unit, onTitleChange: (String) -&gt; Unit, onIconChange: (ImageVector) -&gt; Unit, onTabIconUpdate: (TabIcon) -&gt; Unit, onOpenInNewTab: (String) -&gt; Unit, onNavigationUpdate: ((String, String) -&gt; Unit)?, onNavigationStateChange: ((isBack: Boolean) -&gt; Unit)?, onFaviconCached: ((String?) -&gt; Unit)?, onCloseTab: (() -&gt; Unit)? )</ID>
     <ID>LongMethod:WizardComponents.kt$@Composable fun CheckboxCard( title: String, description: String, icon: ImageVector? = null, isChecked: Boolean, onCheckedChange: (Boolean) -&gt; Unit, enabled: Boolean = true, modifier: Modifier = Modifier )</ID>
     <ID>LongMethod:WizardComponents.kt$@Composable fun SelectionCard( title: String, description: String, icon: ImageVector? = null, isSelected: Boolean, onClick: () -&gt; Unit, modifier: Modifier = Modifier )</ID>
     <ID>LongMethod:WizardComponents.kt$@Composable fun WizardStepIndicator( currentStep: Int, totalSteps: Int, modifier: Modifier = Modifier )</ID>
@@ -410,9 +394,6 @@
     <ID>LongMethod:WorkspaceSelectionDialog.kt$@Composable private fun WorkspaceSelectionItem( workspace: ai.rever.boss.components.workspaces.LayoutWorkspace, isSelected: Boolean, selectedPanelId: String?, onToggle: () -&gt; Unit, onPanelSelected: (String?) -&gt; Unit )</ID>
     <ID>LongMethod:main.kt$fun main(args: Array&lt;String&gt;)</ID>
     <ID>LongMethod:main.kt$private fun extractPty4jNatives(targetDir: File)</ID>
-    <ID>LongParameterList:AndroidCodeEditor.kt$( content: String, onContentChange: (String) -&gt; Unit, language: String, filePath: String, projectPath: String, modifier: Modifier, onModifiedStateChange: (Boolean) -&gt; Unit, onSaveRequested: suspend () -&gt; Boolean )</ID>
-    <ID>LongParameterList:AndroidFluckTabComponent.kt$( config: TabInfo, componentContext: ComponentContext, onTitleUpdate: (String) -&gt; Unit, onIconUpdate: (ImageVector) -&gt; Unit, onTabIconUpdate: (TabIcon) -&gt; Unit, onOpenInNewTab: (String) -&gt; Unit, onNavigationUpdate: ((String, String) -&gt; Unit)? )</ID>
-    <ID>LongParameterList:AndroidFluckView.kt$( fileId: String, content: String, browser: Any?, browserViewState: Any?, browserLock: Any?, onContentChange: (String) -&gt; Unit, onTitleChange: (String) -&gt; Unit, onIconChange: (ImageVector) -&gt; Unit, onTabIconUpdate: (TabIcon) -&gt; Unit, onOpenInNewTab: (String) -&gt; Unit, onNavigationUpdate: ((String, String) -&gt; Unit)?, onNavigationStateChange: ((isBack: Boolean) -&gt; Unit)?, onFaviconCached: ((String?) -&gt; Unit)?, onCloseTab: (() -&gt; Unit)? )</ID>
     <ID>LongParameterList:BossActionButton.kt$( imageVector: ImageVector, text: String, isSelected: Boolean, modifier: Modifier, hintDirection: Panel = bottom, onClick: () -&gt; Unit )</ID>
     <ID>LongParameterList:BossActionButton.kt$( imageVector: ImageVector? = null, leftLogo: (@Composable () -&gt; Unit)? = null, leftIcon: ImageVector? = null, text: String, fontSize: TextUnit = 13.sp, color: Color = BossTheme.colors.textPrimary, iconColor: Color? = null, // Optional separate icon color (defaults to color if null) iconSize: Dp = 20.dp, // Icon size for imageVector mode maxTextWidth: Dp? = null, // Optional max width for text (truncates with ellipsis) modifier: Modifier = Modifier, contentPadding: PaddingValues = PaddingValues(2.dp), isSelected: Boolean = false, contextMenuItems: List&lt;ContextMenuItem&gt;? = null, contextDirection: Panel = bottom, hintText: String? = null, showHintWithDelay: Boolean = true, hintDirection: Panel = bottom, onClick: () -&gt; Unit = {} )</ID>
     <ID>LongParameterList:BossAppScaffold.kt$( state: BossAppState, reveal: FocusModeRevealState, isFocusModeEnabled: Boolean, isAutoRevealEnabled: Boolean, revealOffsetDp: Dp, showTitleBar: Boolean, onToggleMaximize: (() -&gt; Unit)?, )</ID>
@@ -462,9 +443,6 @@
     <ID>LongParameterList:GlobalSearchDialog.kt$( result: SearchResult.FileResult, isSelected: Boolean, isHovered: Boolean, scale: Float, backgroundColor: Color, interactionSource: MutableInteractionSource, onClick: () -&gt; Unit )</ID>
     <ID>LongParameterList:GlobalSearchDialog.kt$( result: SearchResult.RunConfigResult, isSelected: Boolean, isHovered: Boolean, scale: Float, backgroundColor: Color, interactionSource: MutableInteractionSource, onClick: () -&gt; Unit )</ID>
     <ID>LongParameterList:GlobalSearchDialog.kt$( result: SearchResult.TabResult, isSelected: Boolean, isHovered: Boolean, scale: Float, backgroundColor: Color, interactionSource: MutableInteractionSource, onClick: () -&gt; Unit )</ID>
-    <ID>LongParameterList:IosCodeEditor.kt$( content: String, onContentChange: (String) -&gt; Unit, language: String, filePath: String, projectPath: String, modifier: Modifier, onModifiedStateChange: (Boolean) -&gt; Unit, onSaveRequested: suspend () -&gt; Boolean )</ID>
-    <ID>LongParameterList:IosFluckTabComponent.kt$( config: TabInfo, componentContext: ComponentContext, onTitleUpdate: (String) -&gt; Unit, onIconUpdate: (ImageVector) -&gt; Unit, onTabIconUpdate: (TabIcon) -&gt; Unit, onOpenInNewTab: (String) -&gt; Unit, onNavigationUpdate: ((String, String) -&gt; Unit)? )</ID>
-    <ID>LongParameterList:IosFluckView.kt$( fileId: String, content: String, browser: Any?, browserViewState: Any?, browserLock: Any?, onContentChange: (String) -&gt; Unit, onTitleChange: (String) -&gt; Unit, onIconChange: (ImageVector) -&gt; Unit, onTabIconUpdate: (TabIcon) -&gt; Unit, onOpenInNewTab: (String) -&gt; Unit, onNavigationUpdate: ((String, String) -&gt; Unit)?, onNavigationStateChange: ((isBack: Boolean) -&gt; Unit)?, onFaviconCached: ((String?) -&gt; Unit)?, onCloseTab: (() -&gt; Unit)? )</ID>
     <ID>LongParameterList:KernelBootstrap.kt$KernelBootstrap$( performanceDataProvider: PerformanceDataProvider? = null, downloadDataProvider: DownloadDataProvider? = null, gitDataProvider: GitDataProvider? = null, logDataProvider: LogDataProvider? = null, activeTabsProvider: ActiveTabsProvider? = null, secretDataProvider: SecretDataProvider? = null, supabaseDataProvider: SupabaseDataProvider? = null, splitViewOperations: SplitViewOperations? = null, contextMenuProvider: ContextMenuProvider? = null, runConfigurationDataProvider: RunConfigurationDataProvider? = null, panelEventProvider: PanelEventProvider? = null, roleManagementProvider: RoleManagementProvider? = null, directoryPickerProvider: DirectoryPickerProvider? = null, projectDataProvider: ProjectDataProvider? = null, notificationProvider: NotificationProvider? = null, )</ID>
     <ID>LongParameterList:KeyBinding.kt$KeyBinding.Companion$( actionId: String, key: Key, isMetaPressed: Boolean, isCtrlPressed: Boolean, isShiftPressed: Boolean, isAltPressed: Boolean, context: ShortcutContext = ShortcutContext.GLOBAL, category: String = "Other", description: String = "" )</ID>
     <ID>LongParameterList:KeyBinding.kt$KeyBinding.Companion$( actionId: String, key: String, vararg additionalModifiers: String, context: ShortcutContext = ShortcutContext.GLOBAL, category: String = "Other", description: String = "" )</ID>
@@ -496,9 +474,6 @@
     <ID>LongParameterList:TerminalLinkOpener.kt$( url: String, mode: TerminalLinkOpenMode, splitViewState: SplitViewState, sourceTerminalId: String? = null, scope: CoroutineScope, windowId: String? = null )</ID>
     <ID>LongParameterList:TerminalLinkOpener.kt$( url: String, mode: TerminalLinkOpenMode, splitViewState: SplitViewState, validSourcePanelId: String, isFile: Boolean, fileLine: Int = 0, fileColumn: Int = 0, scope: CoroutineScope, windowId: String? = null )</ID>
     <ID>LongParameterList:VersionSelectionDialog.kt$( currentVersion: Version, versions: List&lt;VersionInfo&gt;, isLoading: Boolean, error: String? = null, onVersionSelected: (VersionInfo) -&gt; Unit, onDismiss: () -&gt; Unit )</ID>
-    <ID>LongParameterList:WasmCodeEditor.kt$( content: String, onContentChange: (String) -&gt; Unit, language: String, filePath: String, projectPath: String, modifier: Modifier, onModifiedStateChange: (Boolean) -&gt; Unit, onSaveRequested: suspend () -&gt; Boolean )</ID>
-    <ID>LongParameterList:WasmFluckTabComponent.kt$( config: TabInfo, componentContext: ComponentContext, onTitleUpdate: (String) -&gt; Unit, onIconUpdate: (ImageVector) -&gt; Unit, onTabIconUpdate: (TabIcon) -&gt; Unit, onOpenInNewTab: (String) -&gt; Unit, onNavigationUpdate: ((String, String) -&gt; Unit)? )</ID>
-    <ID>LongParameterList:WasmFluckView.kt$( fileId: String, content: String, browser: Any?, browserViewState: Any?, browserLock: Any?, onContentChange: (String) -&gt; Unit, onTitleChange: (String) -&gt; Unit, onIconChange: (ImageVector) -&gt; Unit, onTabIconUpdate: (TabIcon) -&gt; Unit, onOpenInNewTab: (String) -&gt; Unit, onNavigationUpdate: ((String, String) -&gt; Unit)?, onNavigationStateChange: ((isBack: Boolean) -&gt; Unit)?, onFaviconCached: ((String?) -&gt; Unit)?, onCloseTab: (() -&gt; Unit)? )</ID>
     <ID>LongParameterList:WizardComponents.kt$( title: String, description: String, icon: ImageVector? = null, isChecked: Boolean, onCheckedChange: (Boolean) -&gt; Unit, enabled: Boolean = true, modifier: Modifier = Modifier )</ID>
     <ID>LongParameterList:WizardComponents.kt$( title: String, description: String, icon: ImageVector? = null, isSelected: Boolean, onClick: () -&gt; Unit, modifier: Modifier = Modifier )</ID>
     <ID>LongParameterList:WizardDialog.kt$( title: String, subtitle: String? = null, onDismiss: () -&gt; Unit, currentStep: Int, totalSteps: Int, onBack: (() -&gt; Unit)?, onNext: () -&gt; Unit, isLastStep: Boolean, nextButtonText: String = if (isLastStep) "Finish" else "Next", nextButtonEnabled: Boolean = true, showCloseButton: Boolean = true, dismissOnClickOutside: Boolean = true, width: Dp = 650.dp, minHeight: Dp = 500.dp, maxHeight: Dp = 600.dp, content: @Composable () -&gt; Unit )</ID>
@@ -513,10 +488,6 @@
     <ID>LoopWithTooManyJumpStatements:PluginInstallService.kt$PluginInstallService$for</ID>
     <ID>LoopWithTooManyJumpStatements:PluginStoreSetup.kt$PluginStoreSetup$for</ID>
     <ID>LoopWithTooManyJumpStatements:ReleaseNotesMarkdown.kt$while</ID>
-    <ID>MatchingDeclarationName:AndroidBrowserAccessor.kt$BrowserAccessor</ID>
-    <ID>MatchingDeclarationName:AndroidDirectoryPickerProviderImpl.kt$DirectoryPickerProviderImpl : DirectoryPickerProvider</ID>
-    <ID>MatchingDeclarationName:AndroidUpdateService.kt$UpdateService</ID>
-    <ID>MatchingDeclarationName:AndroidWorkspaceFileManager.kt$WorkspaceFileManager</ID>
     <ID>MatchingDeclarationName:BrowserSettingsConfig.kt$BrowserSettings</ID>
     <ID>MatchingDeclarationName:CodeBase.kt$ProjectState</ID>
     <ID>MatchingDeclarationName:CollectionSelectionDialog.kt$CollectionSelectionMode</ID>
@@ -538,31 +509,16 @@
     <ID>MatchingDeclarationName:DesktopWorkspaceSettingsManager.kt$WorkspaceSettingsManager</ID>
     <ID>MatchingDeclarationName:FluckPanelProviders.kt$FluckPanelContentProviderImpl : FluckPanelContentProvider</ID>
     <ID>MatchingDeclarationName:FocusModeReveal.kt$FocusModeRevealState</ID>
-    <ID>MatchingDeclarationName:IOSUpdateService.kt$UpdateService</ID>
-    <ID>MatchingDeclarationName:IosBrowserAccessor.kt$BrowserAccessor</ID>
-    <ID>MatchingDeclarationName:IosDirectoryPickerProviderImpl.kt$DirectoryPickerProviderImpl : DirectoryPickerProvider</ID>
-    <ID>MatchingDeclarationName:IosWorkspaceFileManager.kt$WorkspaceFileManager</ID>
-    <ID>MatchingDeclarationName:NewTabDialog.android.kt$UrlHistoryProvider</ID>
     <ID>MatchingDeclarationName:NewTabDialog.desktop.kt$UrlHistoryProvider</ID>
-    <ID>MatchingDeclarationName:NewTabDialog.ios.kt$UrlHistoryProvider</ID>
-    <ID>MatchingDeclarationName:NewTabDialog.wasm.kt$UrlHistoryProvider</ID>
     <ID>MatchingDeclarationName:PluginCrashFallbackUI.kt$PluginProcessState</ID>
     <ID>MatchingDeclarationName:PresetDefinitions.kt$EmacsPresetDefinition</ID>
     <ID>MatchingDeclarationName:ReleaseNotesMarkdown.kt$NotesBlock</ID>
     <ID>MatchingDeclarationName:SettingsSidebar.kt$SettingsSection</ID>
     <ID>MatchingDeclarationName:SidebarIconLimits.kt$SidebarIconRail</ID>
     <ID>MatchingDeclarationName:SupabaseModels.kt$User</ID>
-    <ID>MatchingDeclarationName:WasmBrowserAccessor.kt$BrowserAccessor</ID>
-    <ID>MatchingDeclarationName:WasmDirectoryPickerProviderImpl.kt$DirectoryPickerProviderImpl : DirectoryPickerProvider</ID>
-    <ID>MatchingDeclarationName:WasmUpdateService.kt$UpdateService</ID>
-    <ID>MatchingDeclarationName:WasmWorkspaceFileManager.kt$WorkspaceFileManager</ID>
     <ID>MaxLineLength:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$if</ID>
     <ID>MaxLineLength:AdvancedSettings.kt$"Max plugin allocation: ${"%.1f".format(totalPluginMb / 1024f)} GB (16 plugins × ${pluginHeap.toInt()} MB)"</ID>
     <ID>MaxLineLength:AdvancedSettings.kt$var pluginInitHeap by remember(perfSettings) { mutableStateOf(perfSettings.pluginJvmInitialHeapMb.toFloat()) }</ID>
-    <ID>MaxLineLength:AndroidFileScanner.kt$actual suspend</ID>
-    <ID>MaxLineLength:AndroidFileScanner.kt$hasChildren = if (isDirectory) children.isNotEmpty() || directoryHasChildren(file.absolutePath, showHidden) else false</ID>
-    <ID>MaxLineLength:AndroidFileScanner.kt$private</ID>
-    <ID>MaxLineLength:AndroidWorkspaceFileManager.kt$WorkspaceFileManager$get() = appContext ?: throw IllegalStateException("WorkspaceFileManager not initialized. Call WorkspaceFileManager.init() in your Application or Activity.")</ID>
     <ID>MaxLineLength:AuthOptionsManager.kt$AuthOptionsManager$logger.debug(LogCategory.AUTH, "Stored available credentials", mapOf("count" to userExistence.availableCredentials.size))</ID>
     <ID>MaxLineLength:AuthScreenContainer.kt$logger.debug(LogCategory.AUTH, "AuthState changed", mapOf("state" to authState.toString(), "currentScreen" to currentScreen.toString()))</ID>
     <ID>MaxLineLength:AuthScreenContainer.kt$logger.debug(LogCategory.PASSKEY, "Passkey state changed to ShowEmbeddedBrowser, navigating to browser screen")</ID>
@@ -839,9 +795,6 @@
     <ID>MaxLineLength:GlobalSearchDialog.kt$is SearchResult.RunConfigResult -&gt; RunConfigResultItem(result, isSelected, isHovered, scale, backgroundColor, interactionSource, onClick)</ID>
     <ID>MaxLineLength:GlobalSearchDialog.kt$is SearchResult.TabResult -&gt; TabResultItem(result, isSelected, isHovered, scale, backgroundColor, interactionSource, onClick)</ID>
     <ID>MaxLineLength:GlobalSearchDialog.kt$val textColor = if (isHighlighted) BossThemeController.current.colors.textPrimary else BossThemeController.current.colors.textSecondary</ID>
-    <ID>MaxLineLength:IosFileScanner.kt$actual suspend</ID>
-    <ID>MaxLineLength:IosWorkspaceFileManager.kt$WorkspaceFileManager$lastModified = (attributes?.get(NSFileModificationDate) as? NSDate)?.timeIntervalSince1970?.toLong() ?: 0L</ID>
-    <ID>MaxLineLength:IosWorkspaceFileManager.kt$WorkspaceFileManager$val nsString = NSString.stringWithContentsOfFile(filePath, encoding = NSUTF8StringEncoding, error = null) ?: return@withContext null</ID>
     <ID>MaxLineLength:JsDialogNotifier.kt$JsDialogNotifier.JsDialogEvent.Confirm$data</ID>
     <ID>MaxLineLength:JsDialogNotifier.kt$JsDialogNotifier.JsDialogEvent.Prompt$data</ID>
     <ID>MaxLineLength:KeyboardEventBus.kt$KeyboardEventBus$logger.debug(LogCategory.UI, "Registered handler", mapOf("handler" to handlerName, "windowId" to targetWindowId, "priority" to priority.name))</ID>
@@ -1061,8 +1014,6 @@
     <ID>MaxLineLength:VersionVerifier.kt$VersionVerifier$logger</ID>
     <ID>MaxLineLength:VersionVerifier.kt$VersionVerifier$logger.debug(LogCategory.SYSTEM, "Version verification passed", mapOf("version" to runtimeVersion.toString()))</ID>
     <ID>MaxLineLength:VersionVerifier.kt$VersionVerifier$logger.debug(LogCategory.SYSTEM, "Version verification skipped (production build)", mapOf("version" to runtimeVersion.toString()))</ID>
-    <ID>MaxLineLength:WasmFileScanner.kt$actual suspend</ID>
-    <ID>MaxLineLength:WasmFluckView.kt$text = "Browser implementation for WASM/JS platform is pending.\nThis could use an iframe or other web-based solution."</ID>
     <ID>MaxLineLength:WebsiteMatchingUtil.kt$WebsiteMatchingUtil$val commonSubdomains = listOf("login", "accounts", "auth", "signin", "signup", "sso", "id", "portal", "app", "my")</ID>
     <ID>MaxLineLength:WindowAppearanceSettingsManager.kt$WindowAppearanceSettingsManager$logger.debug(LogCategory.SYSTEM, "Created default settings", mapOf("path" to settingsFile.absolutePath))</ID>
     <ID>MaxLineLength:WindowFitMathTest.kt$WindowFitMathTest$val r = computeFitSize(current, -1000f, -1000f, scaleX = 1f, scaleY = 1f, maxWidthDp = noClamp, maxHeightDp = noClamp)</ID>
@@ -1100,9 +1051,6 @@
     <ID>MaxLineLength:main.kt$logger</ID>
     <ID>MaxLineLength:main.kt$logger.debug(LogCategory.SYSTEM, "API key availability", apiKeyStatus.mapValues { if (it.value) "set" else "not set" })</ID>
     <ID>MaxLineLength:main.kt$val screenBounds = awtWindow.graphicsConfiguration?.device?.defaultConfiguration?.bounds</ID>
-    <ID>MayBeConst:AndroidLLMSettingsManager.kt$LLMSettingsManager$private val prefsName = "llm_settings"</ID>
-    <ID>MayBeConst:AndroidLLMSettingsManager.kt$LLMSettingsManager$private val settingsKey = "settings_json"</ID>
-    <ID>MayBeConst:IosLLMSettingsManager.kt$LLMSettingsManager$private val settingsKey = "llm_settings_json"</ID>
     <ID>NestedBlockDepth:BossDraggableComponent.kt$BossDraggableComponent$fun activatePlugin(pluginId: String)</ID>
     <ID>NestedBlockDepth:BossDraggableComponent.kt$BossDraggableComponent$fun stopDragging()</ID>
     <ID>NestedBlockDepth:BossDraggableComponent.kt$BossDraggableComponent$private fun updateHoverTarget()</ID>
@@ -1129,7 +1077,7 @@
     <ID>NestedBlockDepth:DynamicPluginManager.kt$DynamicPluginManager.Companion$private suspend fun hotSwapApiLayerOrchestration(pluginDir: java.io.File): Result&lt;Int&gt;</ID>
     <ID>NestedBlockDepth:FileIndexer.kt$FileIndexer$private fun scanDirectory( dir: File, rootCanonicalPath: String, rootPathLength: Int, files: MutableList&lt;IndexedFile&gt;, depth: Int = 0 )</ID>
     <ID>NestedBlockDepth:FluckEngine.kt$FluckEngine$private fun cleanupStaleLockFiles(profileDir: java.nio.file.Path): Boolean</ID>
-    <ID>NestedBlockDepth:FluckEngine.kt$FluckEngine$private fun killStaleChromiumProcesses(userHome: String)</ID>
+    <ID>NestedBlockDepth:FluckEngine.kt$FluckEngine$private fun killStaleChromiumProcesses()</ID>
     <ID>NestedBlockDepth:FontManager.kt$FontManager$private fun discoverAndCategorizeFonts(): Map&lt;String, List&lt;String&gt;&gt;</ID>
     <ID>NestedBlockDepth:GitHubUpdateSource.kt$GitHubUpdateSource$override suspend fun listReleases(): List&lt;GitHubRelease&gt;</ID>
     <ID>NestedBlockDepth:GlobalSearchService.kt$GlobalSearchService$private suspend fun searchPluginProviders(query: String): List&lt;SearchResult&gt;</ID>
@@ -1149,16 +1097,8 @@
     <ID>NestedBlockDepth:main.kt$fun main(args: Array&lt;String&gt;)</ID>
     <ID>NestedBlockDepth:main.kt$private fun extractPty4jNatives(targetDir: File)</ID>
     <ID>NewLineAtEndOfFile:PluginStoreSetup.kt$ai.rever.boss.plugin.PluginStoreSetup.kt</ID>
-    <ID>NewLineAtEndOfFile:WorkspaceButton.wasm.kt$ai.rever.boss.components.workspaces.WorkspaceButton.wasm.kt</ID>
     <ID>NewLineAtEndOfFile:WorkspaceFileManager.kt$ai.rever.boss.components.workspaces.WorkspaceFileManager.kt</ID>
     <ID>NewLineAtEndOfFile:WorkspaceManager.kt$ai.rever.boss.components.workspaces.WorkspaceManager.kt</ID>
-    <ID>PackageNaming:AndroidBrowserAccessor.kt$package ai.rever.boss.components.plugin.panels.right_top</ID>
-    <ID>PackageNaming:AndroidBrowserFunctions.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
-    <ID>PackageNaming:AndroidCodeEditor.kt$package ai.rever.boss.components.plugin.tab_types</ID>
-    <ID>PackageNaming:AndroidFileScanner.kt$package ai.rever.boss.components.plugin.panels.left_top</ID>
-    <ID>PackageNaming:AndroidFluckTabComponent.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
-    <ID>PackageNaming:AndroidFluckView.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
-    <ID>PackageNaming:AndroidLLMSettingsManager.kt$package ai.rever.boss.components.plugin.panels.right_top</ID>
     <ID>PackageNaming:BookmarksDialogProviderImpl.kt$package ai.rever.boss.components.plugin.panels.left_top</ID>
     <ID>PackageNaming:BossMainWindowPanel.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:BossPanelTopBar.kt$package ai.rever.boss.components.window_panel.components</ID>
@@ -1190,13 +1130,6 @@
     <ID>PackageNaming:Fluck.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
     <ID>PackageNaming:FluckView.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
     <ID>PackageNaming:GutterRunIcon.kt$package ai.rever.boss.components.plugin.tab_types</ID>
-    <ID>PackageNaming:IosBrowserAccessor.kt$package ai.rever.boss.components.plugin.panels.right_top</ID>
-    <ID>PackageNaming:IosBrowserFunctions.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
-    <ID>PackageNaming:IosCodeEditor.kt$package ai.rever.boss.components.plugin.tab_types</ID>
-    <ID>PackageNaming:IosFileScanner.kt$package ai.rever.boss.components.plugin.panels.left_top</ID>
-    <ID>PackageNaming:IosFluckTabComponent.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
-    <ID>PackageNaming:IosFluckView.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
-    <ID>PackageNaming:IosLLMSettingsManager.kt$package ai.rever.boss.components.plugin.panels.right_top</ID>
     <ID>PackageNaming:JsDialogNotifier.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
     <ID>PackageNaming:LLMModelFetcher.kt$package ai.rever.boss.components.plugin.panels.right_top</ID>
     <ID>PackageNaming:LLMSettings.kt$package ai.rever.boss.components.plugin.panels.right_top</ID>
@@ -1210,18 +1143,10 @@
     <ID>PackageNaming:TabCycleOverlay.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:TabsNavigation.kt$package ai.rever.boss.components.tabs_navigation</ID>
     <ID>PackageNaming:TopOfMindProvider.kt$package ai.rever.boss.components.plugin.panels.left_bottom.TopOfMind</ID>
-    <ID>PackageNaming:WasmBrowserAccessor.kt$package ai.rever.boss.components.plugin.panels.right_top</ID>
-    <ID>PackageNaming:WasmBrowserFunctions.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
-    <ID>PackageNaming:WasmCodeEditor.kt$package ai.rever.boss.components.plugin.tab_types</ID>
-    <ID>PackageNaming:WasmFileScanner.kt$package ai.rever.boss.components.plugin.panels.left_top</ID>
-    <ID>PackageNaming:WasmFluckTabComponent.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
-    <ID>PackageNaming:WasmFluckView.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
-    <ID>PackageNaming:WasmLLMSettingsManager.kt$package ai.rever.boss.components.plugin.panels.right_top</ID>
     <ID>PrintStackTrace:CrashHandler.kt$CrashHandler$e</ID>
     <ID>RethrowCaughtException:FluckEngine.kt$FluckEngine$throw e2</ID>
     <ID>ReturnCount:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$private fun detectContextFromAwtComponent(component: java.awt.Component?): ShortcutContext</ID>
     <ID>ReturnCount:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$private fun findMatchingPluginDefault(event: KeyEvent): String?</ID>
-    <ID>ReturnCount:AndroidFileScanner.kt$actual fun directoryHasChildren(path: String, showHidden: Boolean): Boolean</ID>
     <ID>ReturnCount:ApplicationRestarter.kt$ApplicationRestarter$private fun buildRelaunchCommand(): List&lt;String&gt;</ID>
     <ID>ReturnCount:ApplicationRestarter.kt$ApplicationRestarter$private fun detectMacAppBundle(launcher: String?): String?</ID>
     <ID>ReturnCount:BossDraggableComponent.kt$BossDraggableComponent$fun getItemsForSlot(slot: Panel, hidden: Set&lt;String&gt;): List&lt;SidebarItem&gt;</ID>
@@ -1238,7 +1163,7 @@
     <ID>ReturnCount:CLICommandHandler.kt$CLICommandHandler$private suspend fun handleOpenFile(filePath: String)</ID>
     <ID>ReturnCount:CLICommandHandler.kt$CLICommandHandler$private suspend fun handleOpenFolder(folderPath: String)</ID>
     <ID>ReturnCount:CLIInstaller.kt$CLIInstaller$private fun installHomebrewStyle(): CLIInstallResult</ID>
-    <ID>ReturnCount:CLIInstaller.kt$CLIInstaller$private fun updateShellConfig(binPath: String): ShellConfigResult</ID>
+    <ID>ReturnCount:CLIInstaller.kt$CLIInstaller$private fun updateShellConfig(): ShellConfigResult</ID>
     <ID>ReturnCount:CLISecurityValidator.kt$CLISecurityValidator$fun isValidPath(path: String): Boolean</ID>
     <ID>ReturnCount:CLISecurityValidator.kt$CLISecurityValidator$fun normalizeAndValidateUrl(url: String): String?</ID>
     <ID>ReturnCount:ChromiumAutoDownloader.kt$ChromiumAutoDownloader$fun isChromiumInstalled(): Boolean</ID>
@@ -1342,8 +1267,6 @@
     <ID>SpreadOperator:CrashHandler.kt$CrashHandler$(javaBin, *getRestartArgs())</ID>
     <ID>SpreadOperator:DesktopGitService.kt$GitService$(projectPath, *args.toTypedArray())</ID>
     <ID>SpreadOperator:FilePickerProviderFactory.kt$DesktopFilePickerProvider$( filters.joinToString(", ") { "*.$it" }, *filters.toTypedArray() )</ID>
-    <ID>SwallowedException:AndroidCodeEditor.kt$e: Exception</ID>
-    <ID>SwallowedException:AndroidWorkspaceFileManager.kt$WorkspaceFileManager$e: Exception</ID>
     <ID>SwallowedException:BossWindow.kt$e: Exception</ID>
     <ID>SwallowedException:BrowserFunctions.kt$e: Exception</ID>
     <ID>SwallowedException:BrowserHandleImpl.kt$BrowserHandleImpl$e: Exception</ID>
@@ -1351,7 +1274,6 @@
     <ID>SwallowedException:BrowserZoomSettingsManager.kt$BrowserZoomSettingsManager$e: Exception</ID>
     <ID>SwallowedException:ChromiumAutoDownloader.kt$ChromiumAutoDownloader$e: Exception</ID>
     <ID>SwallowedException:CloneProjectDialog.kt$e: Exception</ID>
-    <ID>SwallowedException:ContextMenuHandler.kt$ContextMenuHandler$e: Throwable</ID>
     <ID>SwallowedException:DefaultPlugin.kt$ApiActiveTabsProviderAdapter$e: Exception</ID>
     <ID>SwallowedException:DefaultPlugin.kt$DefaultBackgroundTaskProvider$e: Exception</ID>
     <ID>SwallowedException:DefaultPlugin.kt$DefaultCacheProvider$e: Exception</ID>
@@ -1379,7 +1301,6 @@
     <ID>SwallowedException:FormFieldInjector.kt$FormFieldInjector$e: Exception</ID>
     <ID>SwallowedException:GitHubConfig.kt$GitHubConfig$e: Exception</ID>
     <ID>SwallowedException:HighQualityFaviconService.kt$HighQualityFaviconService$e: Exception</ID>
-    <ID>SwallowedException:IosWorkspaceFileManager.kt$WorkspaceFileManager$e: Exception</ID>
     <ID>SwallowedException:IpcEventBridgeImpl.kt$IpcEventBridgeImpl$e: Exception</ID>
     <ID>SwallowedException:LLMSettings.kt$LLMSettings$e: Exception</ID>
     <ID>SwallowedException:LinuxDefaultBrowserHandler.kt$LinuxDefaultBrowserHandler$e: Exception</ID>
@@ -1411,23 +1332,16 @@
     <ID>SwallowedException:UserDataStorage.kt$UserDataStorage$e: Exception</ID>
     <ID>SwallowedException:VersionSelectionDialog.kt$e: Exception</ID>
     <ID>SwallowedException:VersionVerifier.kt$VersionVerifier$e: Exception</ID>
-    <ID>SwallowedException:WasmWorkspaceFileManager.kt$WorkspaceFileManager$e: Exception</ID>
     <ID>SwallowedException:WebsiteMatchingUtil.kt$WebsiteMatchingUtil$e: Exception</ID>
     <ID>SwallowedException:WindowsDefaultBrowserHandler.kt$WindowsDefaultBrowserHandler$e: Exception</ID>
     <ID>SwallowedException:WindowsProtocolHandler.kt$WindowsProtocolHandler$e: Exception</ID>
-    <ID>SwallowedException:WorkspaceButton.android.kt$e: Exception</ID>
     <ID>SwallowedException:WorkspaceButton.desktop.kt$e: Exception</ID>
-    <ID>SwallowedException:WorkspaceButton.ios.kt$e: Exception</ID>
     <ID>SwallowedException:WorkspaceManager.kt$WorkspaceManager$e: Exception</ID>
     <ID>SwallowedException:main.kt$e: Exception</ID>
     <ID>ThrowsCount:PowerShellExecutor.kt$PowerShellExecutor$fun executePowerShellScript(scriptName: String, vararg args: String): String</ID>
     <ID>ThrowsCount:UpdateInstaller.kt$UpdateInstaller$private fun validateDownloadFile(downloadFile: File, expectedExtension: String)</ID>
     <ID>ThrowsCount:UpdateScriptGenerator.kt$UpdateScriptGenerator$private fun validatePath(path: String, description: String)</ID>
     <ID>TooGenericExceptionCaught:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$e: Exception</ID>
-    <ID>TooGenericExceptionCaught:AndroidCodeEditor.kt$e: Exception</ID>
-    <ID>TooGenericExceptionCaught:AndroidLLMSettingsManager.kt$LLMSettingsManager$e: Exception</ID>
-    <ID>TooGenericExceptionCaught:AndroidUrlOpener.kt$e: Exception</ID>
-    <ID>TooGenericExceptionCaught:AndroidWorkspaceFileManager.kt$WorkspaceFileManager$e: Exception</ID>
     <ID>TooGenericExceptionCaught:AppThemeSettingsManager.kt$AppThemeSettingsManager$e: Exception</ID>
     <ID>TooGenericExceptionCaught:AppUpdateRealtimeService.kt$AppUpdateRealtimeService$e: Exception</ID>
     <ID>TooGenericExceptionCaught:ApplicationRestarter.kt$ApplicationRestarter$e: Exception</ID>
@@ -1467,7 +1381,6 @@
     <ID>TooGenericExceptionCaught:CodeBase.kt$ProjectState$e: Exception</ID>
     <ID>TooGenericExceptionCaught:CodeEditor.kt$e: Exception</ID>
     <ID>TooGenericExceptionCaught:ConfigLoader.kt$ConfigLoader$e: Exception</ID>
-    <ID>TooGenericExceptionCaught:ContextMenuHandler.kt$ContextMenuHandler$e: Throwable</ID>
     <ID>TooGenericExceptionCaught:CoreAuthService.kt$CoreAuthService$e: Exception</ID>
     <ID>TooGenericExceptionCaught:CrashHandler.kt$CrashHandler$e: Exception</ID>
     <ID>TooGenericExceptionCaught:CrashHandler.kt$CrashHandler$e: Throwable</ID>
@@ -1539,9 +1452,6 @@
     <ID>TooGenericExceptionCaught:GitHubConfig.kt$GitHubConfig$e: Exception</ID>
     <ID>TooGenericExceptionCaught:GlobalSearchService.kt$GlobalSearchService$e: Exception</ID>
     <ID>TooGenericExceptionCaught:HighQualityFaviconService.kt$HighQualityFaviconService$e: Exception</ID>
-    <ID>TooGenericExceptionCaught:IosLLMSettingsManager.kt$LLMSettingsManager$e: Exception</ID>
-    <ID>TooGenericExceptionCaught:IosUrlOpener.kt$e: Exception</ID>
-    <ID>TooGenericExceptionCaught:IosWorkspaceFileManager.kt$WorkspaceFileManager$e: Exception</ID>
     <ID>TooGenericExceptionCaught:IpcEventBridgeImpl.kt$IpcEventBridgeImpl$e: Exception</ID>
     <ID>TooGenericExceptionCaught:KernelBootstrap.kt$KernelBootstrap$e: Exception</ID>
     <ID>TooGenericExceptionCaught:KeyboardEventBus.kt$KeyboardEventBus$e: Exception</ID>
@@ -1626,18 +1536,12 @@
     <ID>TooGenericExceptionCaught:VersionListManager.kt$VersionListManager$e: Exception</ID>
     <ID>TooGenericExceptionCaught:VersionSelectionDialog.kt$e: Exception</ID>
     <ID>TooGenericExceptionCaught:VersionVerifier.kt$VersionVerifier$e: Exception</ID>
-    <ID>TooGenericExceptionCaught:WasmLLMSettingsManager.kt$LLMSettingsManager$e: Exception</ID>
-    <ID>TooGenericExceptionCaught:WasmUrlOpener.kt$e: Exception</ID>
-    <ID>TooGenericExceptionCaught:WasmWorkspaceFileManager.kt$WorkspaceFileManager$e: Exception</ID>
     <ID>TooGenericExceptionCaught:WebsiteMatchingUtil.kt$WebsiteMatchingUtil$e: Exception</ID>
     <ID>TooGenericExceptionCaught:WindowAppearanceSettingsManager.kt$WindowAppearanceSettingsManager$e: Exception</ID>
     <ID>TooGenericExceptionCaught:WindowsDefaultBrowserHandler.kt$WindowsDefaultBrowserHandler$e: Exception</ID>
     <ID>TooGenericExceptionCaught:WindowsHelloAuth.kt$WindowsHelloAuth$e: Exception</ID>
     <ID>TooGenericExceptionCaught:WindowsProtocolHandler.kt$WindowsProtocolHandler$e: Exception</ID>
-    <ID>TooGenericExceptionCaught:WorkspaceButton.android.kt$e: Exception</ID>
     <ID>TooGenericExceptionCaught:WorkspaceButton.desktop.kt$e: Exception</ID>
-    <ID>TooGenericExceptionCaught:WorkspaceButton.ios.kt$e: Exception</ID>
-    <ID>TooGenericExceptionCaught:WorkspaceButton.wasm.kt$e: Exception</ID>
     <ID>TooGenericExceptionCaught:WorkspaceManager.kt$WorkspaceManager$e: Exception</ID>
     <ID>TooGenericExceptionCaught:main.kt$e: Exception</ID>
     <ID>TooGenericExceptionThrown:CrashHandler.kt$CrashHandler$throw RuntimeException("Test crash triggered via CrashHandler.triggerTestCrash()")</ID>
@@ -1647,8 +1551,6 @@
     <ID>TooGenericExceptionThrown:PowerShellExecutor.kt$PowerShellExecutor$throw RuntimeException("PowerShell script failed with exit code: ${process.exitValue()}, output: $output")</ID>
     <ID>TooGenericExceptionThrown:ShortcutLifecycleManagerTest.kt$ShortcutLifecycleManagerTest.&lt;no name provided&gt;$throw RuntimeException("Test error")</ID>
     <ID>TooManyFunctions:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor</ID>
-    <ID>TooManyFunctions:AndroidBrowserFunctions.kt$ai.rever.boss.components.plugin.tab_types.fluck.AndroidBrowserFunctions.kt</ID>
-    <ID>TooManyFunctions:AndroidCodeEditor.kt$ai.rever.boss.components.plugin.tab_types.AndroidCodeEditor.kt</ID>
     <ID>TooManyFunctions:AuthService.kt$AuthService</ID>
     <ID>TooManyFunctions:BookmarkAPIAccess.kt$BookmarkAPIAccess</ID>
     <ID>TooManyFunctions:BossDraggableComponent.kt$BossDraggableComponent</ID>
@@ -1686,8 +1588,6 @@
     <ID>TooManyFunctions:GitServiceBridge.kt$GitServiceBridge : GitServiceCoroutineImplBase</ID>
     <ID>TooManyFunctions:GlobalSearchDialog.kt$ai.rever.boss.components.dialogs.GlobalSearchDialog.kt</ID>
     <ID>TooManyFunctions:GlobalSearchService.kt$GlobalSearchService</ID>
-    <ID>TooManyFunctions:IosBrowserFunctions.kt$ai.rever.boss.components.plugin.tab_types.fluck.IosBrowserFunctions.kt</ID>
-    <ID>TooManyFunctions:IosCodeEditor.kt$ai.rever.boss.components.plugin.tab_types.IosCodeEditor.kt</ID>
     <ID>TooManyFunctions:LLMModelFetcher.kt$LLMModelFetcher</ID>
     <ID>TooManyFunctions:LogSanitizer.kt$LogSanitizer</ID>
     <ID>TooManyFunctions:McpToolRegistryImpl.kt$McpToolRegistryCore</ID>
@@ -1716,25 +1616,16 @@
     <ID>TooManyFunctions:TrackingPluginContext.kt$TrackingPluginContext : PluginContext</ID>
     <ID>TooManyFunctions:UpdateInstaller.kt$UpdateInstaller</ID>
     <ID>TooManyFunctions:UpdateManager.kt$UpdateManager</ID>
-    <ID>TooManyFunctions:WasmBrowserFunctions.kt$ai.rever.boss.components.plugin.tab_types.fluck.WasmBrowserFunctions.kt</ID>
-    <ID>TooManyFunctions:WasmCodeEditor.kt$ai.rever.boss.components.plugin.tab_types.WasmCodeEditor.kt</ID>
     <ID>TooManyFunctions:WindowManager.kt$WindowManager</ID>
     <ID>TooManyFunctions:WorkspaceManager.kt$WorkspaceManager</ID>
     <ID>UnusedParameter:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$matcher: KeymapMatcher</ID>
-    <ID>UnusedParameter:CLIInstaller.kt$CLIInstaller$binPath: String</ID>
     <ID>UnusedParameter:CodeEditor.kt$projectPath: String</ID>
     <ID>UnusedParameter:Dashboard.kt$onActivatePlugin: (String) -&gt; Unit</ID>
     <ID>UnusedParameter:Dashboard.kt$onNewTerminal: () -&gt; Unit</ID>
-    <ID>UnusedParameter:DesktopMainFunctionDetector.kt$DesktopMainFunctionDetector$content: String</ID>
-    <ID>UnusedParameter:FluckEngine.kt$FluckEngine$fileName: String</ID>
-    <ID>UnusedParameter:FluckEngine.kt$FluckEngine$profileName: String</ID>
-    <ID>UnusedParameter:FluckEngine.kt$FluckEngine$userHome: String</ID>
     <ID>UnusedParameter:FormFieldInjector.kt$FormFieldInjector$fieldIdentifier: String = "activeElement"</ID>
     <ID>UnusedParameter:FormFieldInjector.kt$FormFieldInjector$fieldInfo: FormFieldDetector.FormFieldInfo</ID>
     <ID>UnusedParameter:KeymapValidator.kt$KeymapValidator$settings: KeymapSettings</ID>
     <ID>UnusedParameter:LoginFormScreen.kt$onLoginSuccess: () -&gt; Unit</ID>
-    <ID>UnusedParameter:OutOfProcessPluginSpawnerImpl.kt$OutOfProcessPluginSpawnerImpl$manifest: PluginManifest</ID>
-    <ID>UnusedParameter:OutOfProcessPluginSpawnerImpl.kt$OutOfProcessPluginSpawnerImpl$pluginId: String</ID>
     <ID>UnusedParameter:PasskeyAuthViewModel.kt$PasskeyAuthViewModel$email: String</ID>
     <ID>UnusedParameter:PasskeyBrowserScreen.kt$sessionId: String</ID>
     <ID>UnusedParameter:PluginCrashFallbackUI.kt$pluginId: String</ID>
@@ -1751,49 +1642,10 @@
     <ID>UnusedPrivateMember:FormFieldInjector.kt$FormFieldInjector$private suspend fun logFieldDebugInfo( browser: LockedBrowser, phase: String, fieldIdentifier: String = "activeElement" ): String</ID>
     <ID>UnusedPrivateMember:PluginPersistence.kt$PluginPersistence$private fun saveConfig()</ID>
     <ID>UnusedPrivateMember:SplitView.kt$SplitViewState$private fun findPanelWithFile(filePath: String): Pair&lt;String, BossTabsComponent&gt;?</ID>
-    <ID>UnusedPrivateProperty:BossWindow.kt$val currentWindow = window</ID>
-    <ID>UnusedPrivateProperty:BridgedPanelComponent.kt$BridgedPanelComponent$private val logger = LoggerFactory.getLogger(BridgedPanelComponent::class.java)</ID>
-    <ID>UnusedPrivateProperty:BrowserHandleImpl.kt$BrowserHandleImpl$val className = extractValue("className")</ID>
-    <ID>UnusedPrivateProperty:CLIInstaller.kt$CLIInstaller$private val isLinux = System.getProperty("os.name").lowercase().contains("linux")</ID>
-    <ID>UnusedPrivateProperty:ContextMenuServiceBridge.kt$ContextMenuServiceBridge$private val provider: ContextMenuProvider</ID>
-    <ID>UnusedPrivateProperty:Dashboard.kt$val dialogScope = rememberCoroutineScope()</ID>
-    <ID>UnusedPrivateProperty:DashboardContentProviderImpl.kt$DashboardContentProviderImpl$val scope = rememberCoroutineScope()</ID>
-    <ID>UnusedPrivateProperty:DashboardContentProviderImpl.kt$DashboardContentProviderImpl$val windowId = LocalWindowId.current</ID>
     <ID>UnusedPrivateProperty:DefaultPlugin.kt$DefaultPlugin$private val notificationListener = PluginSandboxNotificationListener(notificationService).also { (sandboxManager as? PluginSandboxManagerImpl)?.addListener(it) }</ID>
-    <ID>UnusedPrivateProperty:DefaultPlugin.kt$DefaultPlugin.Companion$// Plugin IDs for sandboxing - using consistent naming private const val PLUGIN_ID_BOOKMARKS = "panel-bookmarks"</ID>
-    <ID>UnusedPrivateProperty:DefaultPlugin.kt$DefaultPlugin.Companion$// Tab plugin IDs private const val PLUGIN_ID_TAB_FLUCK = "tab-fluck"</ID>
-    <ID>UnusedPrivateProperty:DefaultPlugin.kt$DefaultPlugin.Companion$private const val PLUGIN_ID_ADMIN_ROLE_MGMT = "panel-admin-role-management"</ID>
-    <ID>UnusedPrivateProperty:DefaultPlugin.kt$DefaultPlugin.Companion$private const val PLUGIN_ID_CODEBASE = "panel-codebase"</ID>
-    <ID>UnusedPrivateProperty:DefaultPlugin.kt$DefaultPlugin.Companion$private const val PLUGIN_ID_CONSOLE = "panel-console"</ID>
-    <ID>UnusedPrivateProperty:DefaultPlugin.kt$DefaultPlugin.Companion$private const val PLUGIN_ID_DOWNLOADS = "panel-downloads"</ID>
-    <ID>UnusedPrivateProperty:DefaultPlugin.kt$DefaultPlugin.Companion$private const val PLUGIN_ID_FLUCK = "panel-fluck"</ID>
-    <ID>UnusedPrivateProperty:DefaultPlugin.kt$DefaultPlugin.Companion$private const val PLUGIN_ID_GIT_LOG = "panel-git-log"</ID>
-    <ID>UnusedPrivateProperty:DefaultPlugin.kt$DefaultPlugin.Companion$private const val PLUGIN_ID_GIT_STATUS = "panel-git-status"</ID>
-    <ID>UnusedPrivateProperty:DefaultPlugin.kt$DefaultPlugin.Companion$private const val PLUGIN_ID_LLM_RPA = "panel-llm-rpa"</ID>
-    <ID>UnusedPrivateProperty:DefaultPlugin.kt$DefaultPlugin.Companion$private const val PLUGIN_ID_PERFORMANCE = "panel-performance"</ID>
-    <ID>UnusedPrivateProperty:DefaultPlugin.kt$DefaultPlugin.Companion$private const val PLUGIN_ID_PLUGIN_MANAGER = "panel-plugin-manager"</ID>
-    <ID>UnusedPrivateProperty:DefaultPlugin.kt$DefaultPlugin.Companion$private const val PLUGIN_ID_ROLE_CREATION = "panel-role-creation"</ID>
-    <ID>UnusedPrivateProperty:DefaultPlugin.kt$DefaultPlugin.Companion$private const val PLUGIN_ID_RPA_ENGINE = "panel-rpa-engine"</ID>
-    <ID>UnusedPrivateProperty:DefaultPlugin.kt$DefaultPlugin.Companion$private const val PLUGIN_ID_RPA_RECORDER = "panel-rpa-recorder"</ID>
-    <ID>UnusedPrivateProperty:DefaultPlugin.kt$DefaultPlugin.Companion$private const val PLUGIN_ID_RUN_CONFIGS = "panel-run-configurations"</ID>
-    <ID>UnusedPrivateProperty:DefaultPlugin.kt$DefaultPlugin.Companion$private const val PLUGIN_ID_SECRET_MANAGER = "panel-secret-manager"</ID>
-    <ID>UnusedPrivateProperty:DefaultPlugin.kt$DefaultPlugin.Companion$private const val PLUGIN_ID_TAB_CODE_EDITOR = "tab-code-editor"</ID>
-    <ID>UnusedPrivateProperty:DefaultPlugin.kt$DefaultPlugin.Companion$private const val PLUGIN_ID_TAB_TERMINAL = "tab-terminal"</ID>
-    <ID>UnusedPrivateProperty:DefaultPlugin.kt$DefaultPlugin.Companion$private const val PLUGIN_ID_TERMINAL = "panel-terminal"</ID>
-    <ID>UnusedPrivateProperty:DefaultPlugin.kt$DefaultPlugin.Companion$private const val PLUGIN_ID_TOP_OF_MIND = "panel-top-of-mind"</ID>
-    <ID>UnusedPrivateProperty:DefaultPlugin.kt$DefaultPlugin.Companion$private const val PLUGIN_ID_USER_SECRET_LIST = "panel-user-secret-list"</ID>
-    <ID>UnusedPrivateProperty:DesktopLogCapture.kt$DesktopLogCapture$private val maxSize = 10000</ID>
-    <ID>UnusedPrivateProperty:DisplayUtils.kt$DisplayUtils$private val isMac = System.getProperty("os.name").startsWith("Mac", ignoreCase = true)</ID>
     <ID>UnusedPrivateProperty:DynamicPluginManager.kt$DynamicPluginManager$private val panelRegistry: PanelRegistry</ID>
     <ID>UnusedPrivateProperty:DynamicPluginManager.kt$DynamicPluginManager$private val tabRegistry: TabRegistry</ID>
-    <ID>UnusedPrivateProperty:FluckBrowserSettings.kt$val originalProfile = remember { BrowserSettings.currentProfile }</ID>
-    <ID>UnusedPrivateProperty:FluckBrowserSettings.kt$val originalUserAgent = remember { BrowserSettings.userAgent }</ID>
-    <ID>UnusedPrivateProperty:FluckEngine.kt$FluckEngine$val deleted = file.delete()</ID>
-    <ID>UnusedPrivateProperty:FormFieldDetector.kt$FormFieldDetector$val jsResult = frame.executeJavaScript&lt;Any&gt;(script)</ID>
     <ID>UnusedPrivateProperty:KeymapMatcherTest.kt$KeymapMatcherTest$val matcher = KeymapMatcher.from(settings)</ID>
-    <ID>UnusedPrivateProperty:NewProjectWizardDialog.kt$val borderColor = when { isSelected -&gt; Accent isHovered -&gt; BossTheme.colors.line.copy(alpha = 0.8f) else -&gt; Color.Transparent }</ID>
-    <ID>UnusedPrivateProperty:PluginInstallWizardWindow.kt$val scope = rememberCoroutineScope()</ID>
-    <ID>UseCheckOrError:AndroidWorkspaceFileManager.kt$WorkspaceFileManager$throw IllegalStateException("WorkspaceFileManager not initialized. Call WorkspaceFileManager.init() in your Application or Activity.")</ID>
     <ID>UseCheckOrError:ChromiumAutoDownloader.kt$ChromiumAutoDownloader$throw IllegalStateException("HTTP error: $responseCode ${connection.responseMessage}")</ID>
     <ID>UseCheckOrError:ChromiumAutoDownloaderTest.kt$ChromiumAutoDownloaderTest$throw IllegalStateException("supabase down")</ID>
     <ID>UseCheckOrError:CommonConditions.kt$ConditionBuilder$throw IllegalStateException("Condition check not set. Call whenTrue() or whenTrueSync() first.")</ID>
@@ -1810,9 +1662,6 @@
     <ID>WildcardImport:ActiveTabsServiceBridge.kt$import ai.rever.boss.ipc.proto.services.*</ID>
     <ID>WildcardImport:AdvancedSettings.kt$import androidx.compose.foundation.layout.*</ID>
     <ID>WildcardImport:AdvancedSettings.kt$import androidx.compose.runtime.*</ID>
-    <ID>WildcardImport:AndroidFluckView.kt$import androidx.compose.foundation.layout.*</ID>
-    <ID>WildcardImport:AndroidFluckView.kt$import androidx.compose.material.*</ID>
-    <ID>WildcardImport:AndroidFluckView.kt$import androidx.compose.runtime.*</ID>
     <ID>WildcardImport:AuthFormComponents.kt$import androidx.compose.foundation.layout.*</ID>
     <ID>WildcardImport:AuthFormComponents.kt$import androidx.compose.material.*</ID>
     <ID>WildcardImport:AuthFormComponents.kt$import androidx.compose.runtime.*</ID>
@@ -1878,7 +1727,6 @@
     <ID>WildcardImport:ConflictWarningBadge.kt$import androidx.compose.runtime.*</ID>
     <ID>WildcardImport:ContextMenu.kt$import androidx.compose.foundation.layout.*</ID>
     <ID>WildcardImport:ContextMenu.kt$import androidx.compose.runtime.*</ID>
-    <ID>WildcardImport:ContextMenuHandler.kt$import androidx.compose.ui.input.pointer.*</ID>
     <ID>WildcardImport:ContextMenuServiceBridge.kt$import ai.rever.boss.ipc.proto.services.*</ID>
     <ID>WildcardImport:CrashReportDialog.kt$import androidx.compose.foundation.layout.*</ID>
     <ID>WildcardImport:CrashReportDialog.kt$import androidx.compose.material.*</ID>
@@ -1958,11 +1806,6 @@
     <ID>WildcardImport:HighQualityFaviconService.kt$import io.ktor.client.statement.*</ID>
     <ID>WildcardImport:HighQualityFaviconService.kt$import io.ktor.http.*</ID>
     <ID>WildcardImport:HorizontalBar.kt$import androidx.compose.foundation.layout.*</ID>
-    <ID>WildcardImport:IosFluckView.kt$import androidx.compose.foundation.layout.*</ID>
-    <ID>WildcardImport:IosFluckView.kt$import androidx.compose.material.*</ID>
-    <ID>WildcardImport:IosFluckView.kt$import androidx.compose.runtime.*</ID>
-    <ID>WildcardImport:IosLLMSettingsManager.kt$import platform.Foundation.*</ID>
-    <ID>WildcardImport:IosWorkspaceFileManager.kt$import platform.Foundation.*</ID>
     <ID>WildcardImport:KernelBootstrap.kt$import ai.rever.boss.kernel.services.*</ID>
     <ID>WildcardImport:KernelBootstrap.kt$import ai.rever.boss.plugin.api.*</ID>
     <ID>WildcardImport:KeyCaptureDialog.kt$import androidx.compose.foundation.layout.*</ID>
@@ -2139,9 +1982,6 @@
     <ID>WildcardImport:VersionSelectionDialog.kt$import androidx.compose.material.*</ID>
     <ID>WildcardImport:VersionSelectionDialog.kt$import androidx.compose.material.icons.filled.*</ID>
     <ID>WildcardImport:VersionSelectionDialog.kt$import androidx.compose.runtime.*</ID>
-    <ID>WildcardImport:WasmFluckView.kt$import androidx.compose.foundation.layout.*</ID>
-    <ID>WildcardImport:WasmFluckView.kt$import androidx.compose.material.*</ID>
-    <ID>WildcardImport:WasmFluckView.kt$import androidx.compose.runtime.*</ID>
     <ID>WildcardImport:WindowAppearanceSettings.kt$import androidx.compose.foundation.layout.*</ID>
     <ID>WildcardImport:WindowAppearanceSettings.kt$import androidx.compose.runtime.*</ID>
     <ID>WildcardImport:WorkspaceSelectionDialog.kt$import androidx.compose.foundation.layout.*</ID>
