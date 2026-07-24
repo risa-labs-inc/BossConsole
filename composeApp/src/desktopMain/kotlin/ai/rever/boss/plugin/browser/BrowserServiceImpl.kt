@@ -301,7 +301,12 @@ object BrowserServiceImpl : BrowserService {
                 config
             }
 
-            val handle = BrowserHandleImpl(browser, effectiveConfig, generation)
+            val handle = BrowserHandleImpl(
+                browser = browser,
+                config = effectiveConfig,
+                engineGeneration = generation,
+                ownerWindowId = ownerWindowId
+            )
             handleId = handle.id
             activeBrowsers[handle.id] = handle
             m?.let {

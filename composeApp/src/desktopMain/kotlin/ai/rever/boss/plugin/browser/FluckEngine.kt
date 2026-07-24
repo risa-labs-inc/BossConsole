@@ -1565,16 +1565,40 @@ object FluckEngine {
     }
 
     /**
+     * Browser handles created outside the window-scoped service retain their legacy behavior.
+     * Window-owned handles accept input only while their owning AWT window is focused.
+     */
+    internal fun shouldAcceptBrowserKeyEvent(
+        ownerWindowId: String?,
+        ownerWindowIsFocused: Boolean
+    ): Boolean = ownerWindowId == null || ownerWindowIsFocused
+
+    /**
      * Sets up keyboard interceptor for a browser to forward menu shortcuts to the native menu bar.
      * This intercepts Cmd+R, Cmd+N, Cmd+T, Cmd+W, etc. (on macOS) or Ctrl+R, Ctrl+N, etc. (on Windows/Linux)
      * before JxBrowser consumes them, and manually triggers the corresponding MenuActionsHandler methods.
+     * Window-owned browsers suppress every key event while their AWT window is inactive.
+     *
+     * @param ownerWindowId stable owner used for focus gating and shortcut dispatch; null preserves
+     * legacy behavior for the old unscoped browser helper.
      */
-    fun setupKeyboardInterceptor(browser: com.teamdev.jxbrowser.browser.Browser) {
+    fun setupKeyboardInterceptor(
+        browser: com.teamdev.jxbrowser.browser.Browser,
+        ownerWindowId: String? = null
+    ) {
         browser.set(com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback::class.java,
             com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback { params ->
                 val event = params.event()
                 val modifiers = event.keyModifiers()
                 val keyCode = event.keyCode()
+
+                val ownerWindowIsFocused = ownerWindowId
+                    ?.let(WindowFocusManager::isWindowFocused)
+                    ?: false
+                if (!shouldAcceptBrowserKeyEvent(ownerWindowId, ownerWindowIsFocused)) {
+                    return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response.suppress()
+                }
+                val shortcutWindowId = ownerWindowId ?: WindowFocusManager.focusedWindowFlow.value
 
                 // Platform-aware main modifier: Cmd on macOS, Ctrl on Windows/Linux
                 val isMainModifierDown = if (SystemUtils.isMacOS) {
@@ -1586,24 +1610,22 @@ object FluckEngine {
 
                 // Intercept main modifier + key shortcuts
                 if (isMainModifierDown && !modifiers.isShiftDown && !modifiers.isAltDown) {
-                    // Read focusedWindowId here to minimize race window between read and use
-                    val focusedWindowId = WindowFocusManager.focusedWindowFlow.value
-                    if (focusedWindowId != null) {
+                    if (shortcutWindowId != null) {
                         when (keyCode) {
                             com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_R -> {
-                                ai.rever.boss.window.MenuActionsHandler.triggerReloadBrowser(focusedWindowId)
+                                ai.rever.boss.window.MenuActionsHandler.triggerReloadBrowser(shortcutWindowId)
                                 return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response.suppress()
                             }
                             com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_N -> {
-                                ai.rever.boss.window.MenuActionsHandler.triggerNewTab(focusedWindowId)
+                                ai.rever.boss.window.MenuActionsHandler.triggerNewTab(shortcutWindowId)
                                 return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response.suppress()
                             }
                             com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_T -> {
-                                ai.rever.boss.window.MenuActionsHandler.triggerNewTab(focusedWindowId)
+                                ai.rever.boss.window.MenuActionsHandler.triggerNewTab(shortcutWindowId)
                                 return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response.suppress()
                             }
                             com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_W -> {
-                                ai.rever.boss.window.MenuActionsHandler.triggerCloseTab(focusedWindowId)
+                                ai.rever.boss.window.MenuActionsHandler.triggerCloseTab(shortcutWindowId)
                                 return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response.suppress()
                             }
                             com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_F -> {
@@ -1633,16 +1655,14 @@ object FluckEngine {
 
                 // Intercept main modifier + Shift + key shortcuts
                 if (isMainModifierDown && modifiers.isShiftDown && !modifiers.isAltDown) {
-                    // Read focusedWindowId here to minimize race window between read and use
-                    val focusedWindowId = WindowFocusManager.focusedWindowFlow.value
-                    if (focusedWindowId != null) {
+                    if (shortcutWindowId != null) {
                         when (keyCode) {
                             com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_F -> {
-                                ai.rever.boss.window.MenuActionsHandler.triggerToggleFocusMode(focusedWindowId)
+                                ai.rever.boss.window.MenuActionsHandler.triggerToggleFocusMode(shortcutWindowId)
                                 return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response.suppress()
                             }
                             com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_S -> {
-                                ai.rever.boss.window.MenuActionsHandler.triggerSaveWorkspace(focusedWindowId)
+                                ai.rever.boss.window.MenuActionsHandler.triggerSaveWorkspace(shortcutWindowId)
                                 return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response.suppress()
                             }
                             com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_V -> {

@@ -97,13 +97,11 @@ actual object WindowFocusManager {
     }
 
     /**
-     * Check if a specific window is currently focused
-     *
-     * @param windowId The window ID to check
-     * @return true if the window is focused, false otherwise
+     * Returns the AWT focus state of the registered window rather than the last
+     * window observed by the process-wide focus listener.
      */
     actual fun isWindowFocused(windowId: String): Boolean {
-        return focusedWindowId == windowId
+        return windows[windowId]?.isFocused == true
     }
 
     /**
