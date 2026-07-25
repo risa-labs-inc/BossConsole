@@ -46,6 +46,19 @@ internal val INTER_TAB_DIVIDER_PADDING = 4.dp
 private val INTER_TAB_DIVIDER_WIDTH = INTER_TAB_DIVIDER_PADDING * 2 + 1.dp
 
 /**
+ * The strip's fixed sizing constants in pixel space: [INTER_TAB_DIVIDER_WIDTH]
+ * and the [MIN_TAB_WIDTH]/[MAX_TAB_WIDTH] clamp. Converted from Dp at the call
+ * site because that needs a density, and bundled rather than passed loose so
+ * [computeTabWidthPx] keeps a signature that reads at a glance (and stays
+ * under detekt's parameter-count threshold).
+ */
+internal data class TabStripMetrics(
+    val dividerPx: Int,
+    val minTabPx: Int,
+    val maxTabPx: Int,
+)
+
+/**
  * Per-tab width in INTEGER PIXELS, not Dp. A Dp-space division produces a
  * fractional Dp that Compose rounds to the nearest pixel when it measures
  * each tab. With N tabs the rounding can go up, making total content >
@@ -60,10 +73,11 @@ private val INTER_TAB_DIVIDER_WIDTH = INTER_TAB_DIVIDER_PADDING * 2 + 1.dp
  *
  * Two distinct fallbacks:
  * - Not yet measured ([rowWidthPx] ≤ 0) or nothing to lay out
- *   ([tabCount] ≤ 0) → [maxTabPx], the first-paint fallback.
+ *   ([tabCount] ≤ 0) → [TabStripMetrics.maxTabPx], the first-paint fallback.
  * - Over-cramped (so many tabs that the dividers alone exceed the row and
- *   the division goes ≤ 0) → the coercion clamps to [minTabPx] and the row
- *   scrolls, same as any other below-floor result.
+ *   the division goes ≤ 0) → the coercion clamps to
+ *   [TabStripMetrics.minTabPx] and the row scrolls, same as any other
+ *   below-floor result.
  *
  * [trailingPx] is the width of the trailing slot (the "+" button) that shares
  * the strip with the tabs. It is subtracted up front so tabs shrink to fit
@@ -78,14 +92,13 @@ private val INTER_TAB_DIVIDER_WIDTH = INTER_TAB_DIVIDER_PADDING * 2 + 1.dp
 internal fun computeTabWidthPx(
     rowWidthPx: Int,
     tabCount: Int,
-    dividerPx: Int,
-    minTabPx: Int,
-    maxTabPx: Int,
-    trailingPx: Int = 0,
+    trailingPx: Int,
+    metrics: TabStripMetrics,
 ): Int {
-    if (rowWidthPx <= 0 || tabCount <= 0) return maxTabPx
-    val totalDividersPx = dividerPx * (tabCount - 1)
-    return ((rowWidthPx - trailingPx - totalDividersPx) / tabCount).coerceIn(minTabPx, maxTabPx)
+    if (rowWidthPx <= 0 || tabCount <= 0) return metrics.maxTabPx
+    val totalDividersPx = metrics.dividerPx * (tabCount - 1)
+    return ((rowWidthPx - trailingPx - totalDividersPx) / tabCount)
+        .coerceIn(metrics.minTabPx, metrics.maxTabPx)
 }
 
 /**
@@ -153,10 +166,13 @@ fun RowScope.BossLeftTabBar(
                 computeTabWidthPx(
                     rowWidthPx = rowWidthPx,
                     tabCount = tabCount,
-                    dividerPx = INTER_TAB_DIVIDER_WIDTH.toPx().toInt(),
-                    minTabPx = MIN_TAB_WIDTH.roundToPx(),
-                    maxTabPx = MAX_TAB_WIDTH.roundToPx(),
                     trailingPx = trailingWidthPx,
+                    metrics =
+                        TabStripMetrics(
+                            dividerPx = INTER_TAB_DIVIDER_WIDTH.toPx().toInt(),
+                            minTabPx = MIN_TAB_WIDTH.roundToPx(),
+                            maxTabPx = MAX_TAB_WIDTH.roundToPx(),
+                        ),
                 ).toDp()
             }
 

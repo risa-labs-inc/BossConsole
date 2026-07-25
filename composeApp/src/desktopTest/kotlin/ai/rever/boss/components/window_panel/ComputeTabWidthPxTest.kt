@@ -1,5 +1,6 @@
 package ai.rever.boss.components.window_panel
 
+import ai.rever.boss.components.window_panel.components.main_window_panels.TabStripMetrics
 import ai.rever.boss.components.window_panel.components.main_window_panels.computeTabWidthPx
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -15,11 +16,13 @@ class ComputeTabWidthPxTest {
     private val min = 36
     private val max = 240
 
+    private val metrics = TabStripMetrics(dividerPx = divider, minTabPx = min, maxTabPx = max)
+
     private fun compute(
         rowWidthPx: Int,
         tabCount: Int,
         trailingPx: Int = 0,
-    ) = computeTabWidthPx(rowWidthPx, tabCount, divider, min, max, trailingPx)
+    ) = computeTabWidthPx(rowWidthPx, tabCount, trailingPx, metrics)
 
     @Test
     fun `single tab gets max width`() {
