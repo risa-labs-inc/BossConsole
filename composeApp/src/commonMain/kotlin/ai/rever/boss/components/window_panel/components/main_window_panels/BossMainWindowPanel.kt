@@ -175,8 +175,7 @@ private fun NewTabButton(
     Box(
         modifier =
             modifier
-                .height(32.dp)
-                .width(32.dp)
+                .size(NEW_TAB_BUTTON_SIZE)
                 .padding(4.dp)
                 .background(
                     color = BossTheme.colors.raised,
@@ -334,13 +333,15 @@ fun BossTabsComponent.BossMainTabBar(
                 // scroll away). Once the tabs fill the strip this lands
                 // flush right, same as before.
                 //
-                // `padding(start = 4.dp)` keeps it off the last tab's edge;
-                // the trailing `end` padding is what separates it from
-                // whatever follows in the bar when the strip is full.
+                // Both gaps belong to the slot, not to the strip Row — see the
+                // reserve rule in BossLeftTabBar's KDoc. NEW_TAB_BUTTON_GAP on
+                // the end side plus the strip's own 8.dp inset reproduces the
+                // 12.dp right margin the pinned-right button used to have.
+                trailingReserve = if (shrinkTabsToFit || isScrollable) NEW_TAB_SLOT_WIDTH else 0.dp,
                 trailing = {
                     if (shrinkTabsToFit || isScrollable) {
                         NewTabButton(
-                            modifier = Modifier.padding(start = 4.dp, end = 12.dp),
+                            modifier = Modifier.padding(horizontal = NEW_TAB_BUTTON_GAP),
                             onClick = {
                                 showNewTabDialog = true
                                 // Track panel interaction when plus button is clicked
