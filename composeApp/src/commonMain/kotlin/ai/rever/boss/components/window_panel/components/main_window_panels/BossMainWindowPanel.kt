@@ -163,8 +163,9 @@ private fun BossTabButtonWithFavicon(
 
 /**
  * The "+" (new tab) button. Rendered either as a LazyRow item hugging the
- * last tab (legacy FIXED sizing while everything fits) or as a fixed sibling
- * at the right edge of the tab strip — see the call sites in BossMainTabBar.
+ * last tab (legacy FIXED sizing while everything fits) or as the tab strip's
+ * non-scrolling trailing slot, which also sits directly after the last tab —
+ * see the call sites in BossMainTabBar.
  */
 @Composable
 private fun NewTabButton(
@@ -323,7 +324,34 @@ fun BossTabsComponent.BossMainTabBar(
                     }
                 },
         ) {
-            BossLeftTabBar(listState, tabCount = tabsState.value.tabs.size) { tabWidth ->
+            BossLeftTabBar(
+                listState,
+                tabCount = tabsState.value.tabs.size,
+                // Plus button outside the LazyRow but still inside the strip,
+                // sitting directly after the last tab: always in
+                // SHRINK_TO_FIT (immune to the isScrollable race), and in
+                // FIXED mode once the row scrolls (so the button can't
+                // scroll away). Once the tabs fill the strip this lands
+                // flush right, same as before.
+                //
+                // `padding(start = 4.dp)` keeps it off the last tab's edge;
+                // the trailing `end` padding is what separates it from
+                // whatever follows in the bar when the strip is full.
+                trailing = {
+                    if (shrinkTabsToFit || isScrollable) {
+                        NewTabButton(
+                            modifier = Modifier.padding(start = 4.dp, end = 12.dp),
+                            onClick = {
+                                showNewTabDialog = true
+                                // Track panel interaction when plus button is clicked
+                                if (splitViewState != null && currentPanelId != null) {
+                                    splitViewState.setActivePanel(currentPanelId)
+                                }
+                            },
+                        )
+                    }
+                },
+            ) { tabWidth ->
                 // Render tab buttons as lazy items
                 itemsIndexed(tabsState.value.tabs) { index, config ->
                     val isSelected = index == tabsState.value.activeIndex
@@ -593,27 +621,6 @@ fun BossTabsComponent.BossMainTabBar(
                         )
                     }
                 }
-            }
-
-            // Plus button outside the LazyRow, fixed at the right edge of the
-            // strip: always in SHRINK_TO_FIT (tabs fill the bar, so this is
-            // both natural and immune to the isScrollable race), and in FIXED
-            // mode once the row scrolls (so the button can't scroll away).
-            //
-            // `padding(end = 12.dp)` reserves extra breathing room on the right
-            // edge so the icon doesn't feel jammed against the next bar
-            // element (the right tab-bar section / window-control area).
-            if (shrinkTabsToFit || isScrollable) {
-                NewTabButton(
-                    modifier = Modifier.padding(end = 12.dp),
-                    onClick = {
-                        showNewTabDialog = true
-                        // Track panel interaction when plus button is clicked
-                        if (splitViewState != null && currentPanelId != null) {
-                            splitViewState.setActivePanel(currentPanelId)
-                        }
-                    },
-                )
             }
 
             Spacer(

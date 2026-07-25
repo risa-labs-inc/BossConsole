@@ -18,7 +18,8 @@ class ComputeTabWidthPxTest {
     private fun compute(
         rowWidthPx: Int,
         tabCount: Int,
-    ) = computeTabWidthPx(rowWidthPx, tabCount, divider, min, max)
+        trailingPx: Int = 0,
+    ) = computeTabWidthPx(rowWidthPx, tabCount, divider, min, max, trailingPx)
 
     @Test
     fun `single tab gets max width`() {
@@ -60,6 +61,39 @@ class ComputeTabWidthPxTest {
     fun `exact fit divides evenly with no slack`() {
         // 5 tabs at 100px + 4 dividers at 9px = 536px row
         assertEquals(100, compute(rowWidthPx = 536, tabCount = 5))
+    }
+
+    @Test
+    fun `trailing slot is reserved before the tabs divide the row`() {
+        // The "+" button shares the strip with the tabs, so its 48px slot
+        // comes off the top: (1000 - 48 - 9*9) / 10 = 87.1 → 87.
+        assertEquals(87, compute(rowWidthPx = 1000, tabCount = 10, trailingPx = 48))
+    }
+
+    @Test
+    fun `tabs plus trailing slot never exceed the row`() {
+        // The scrollbar-flicker invariant again, this time with the button
+        // in the budget: it must still fit beside a full strip of tabs.
+        val row = 1234
+        val trailing = 48
+        for (tabCount in 1..20) {
+            val width = compute(row, tabCount, trailing)
+            if (width in (min + 1) until max) {
+                val total = width * tabCount + divider * (tabCount - 1) + trailing
+                assertTrue(
+                    total <= row,
+                    "tabCount=$tabCount: total ${total}px exceeds row ${row}px",
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `trailing slot wider than the row clamps to min not max`() {
+        // Degenerate window (narrower than the button slot itself): the
+        // division goes negative, which must read as over-cramped → floor,
+        // never as "not measured yet" → max.
+        assertEquals(36, compute(rowWidthPx = 40, tabCount = 3, trailingPx = 48))
     }
 
     @Test

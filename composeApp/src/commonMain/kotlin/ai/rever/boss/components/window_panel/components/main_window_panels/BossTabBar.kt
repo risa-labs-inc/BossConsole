@@ -65,6 +65,11 @@ private val INTER_TAB_DIVIDER_WIDTH = INTER_TAB_DIVIDER_PADDING * 2 + 1.dp
  *   the division goes ≤ 0) → the coercion clamps to [minTabPx] and the row
  *   scrolls, same as any other below-floor result.
  *
+ * [trailingPx] is the width of the trailing slot (the "+" button) that shares
+ * the strip with the tabs. It is subtracted up front so tabs shrink to fit
+ * *beside* the button; without it the last tab would slide under the button
+ * and the row would scroll a fraction of a tab early.
+ *
  * Deliberately NOT budgeted: the 3.dp reorder indicator injected into the
  * row during a tab drag. Including it would resize every tab the moment a
  * drag starts; a transient 3px overflow near the fit boundary mid-drag is
@@ -76,10 +81,11 @@ internal fun computeTabWidthPx(
     dividerPx: Int,
     minTabPx: Int,
     maxTabPx: Int,
+    trailingPx: Int = 0,
 ): Int {
     if (rowWidthPx <= 0 || tabCount <= 0) return maxTabPx
     val totalDividersPx = dividerPx * (tabCount - 1)
-    return ((rowWidthPx - totalDividersPx) / tabCount).coerceIn(minTabPx, maxTabPx)
+    return ((rowWidthPx - trailingPx - totalDividersPx) / tabCount).coerceIn(minTabPx, maxTabPx)
 }
 
 /**
@@ -89,7 +95,7 @@ internal fun computeTabWidthPx(
  * would shrink below [MIN_TAB_WIDTH], the width is clamped and the row scrolls.
  *
  * Implementation note: the available width is captured via [onSizeChanged]
- * on the [LazyRow] itself, rather than wrapping the row in
+ * on the plain [Row] wrapping the strip, rather than with
  * [BoxWithConstraints]. Both `BoxWithConstraints` and `LazyRow` are
  * `SubcomposeLayout`s; nesting them caused every `tabCount` change to thrash
  * the inner `LazyRow` through `disposeOrReuseStartingFromIndex` and resize
@@ -99,8 +105,25 @@ internal fun computeTabWidthPx(
  * [MAX_TAB_WIDTH], then re-measure once); after that, only tab additions
  * trigger a re-measure and there is no nested subcomposition.
  *
+ * The [trailing] slot (the "+" button) is laid out immediately after the last
+ * tab rather than pinned to the far right of the bar: the strip container
+ * takes the full width (so the shrink math sees the real budget) while the
+ * [LazyRow] inside it wraps its content, leaving the empty remainder to the
+ * *right* of the trailing slot. Once the tabs fill the strip the button ends
+ * up flush right anyway, so both regimes read the same.
+ *
+ * The [LazyRow] must therefore NOT be the node that reports the available
+ * width — a wrapping row reports its content width, and feeding that back
+ * into the shrink math latches the tabs at their current size (they could
+ * never grow again when the window widens). The width is measured on the
+ * filling container instead, and the trailing slot's own measured width is
+ * subtracted from the budget.
+ *
  * @param listState The LazyListState for controlling scroll position
  * @param tabCount Number of tabs being rendered; needed to divide the available width
+ * @param trailing Rendered directly after the last tab, outside the scrollable
+ *   row so it can never scroll away. Its measured width is reserved from the
+ *   per-tab budget.
  * @param content Receives the computed per-tab width and renders the tab buttons.
  *   Each [content] body should size its tab to the supplied `tabWidth`.
  */
@@ -108,12 +131,21 @@ internal fun computeTabWidthPx(
 fun RowScope.BossLeftTabBar(
     listState: LazyListState,
     tabCount: Int,
+    trailing: @Composable () -> Unit = {},
     content: LazyListScope.(tabWidth: Dp) -> Unit,
 ) {
     var rowWidthPx by remember { mutableStateOf(0) }
+    var trailingWidthPx by remember { mutableStateOf(0) }
     val density = LocalDensity.current
 
-    Column(modifier = Modifier.weight(1f).padding(horizontal = 8.dp)) {
+    Row(
+        modifier =
+            Modifier
+                .weight(1f)
+                .padding(horizontal = 8.dp)
+                .onSizeChanged { size -> rowWidthPx = size.width },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         // All arithmetic lives in computeTabWidthPx (pure, unit-tested);
         // here we only convert the Dp constants to pixels and back.
         val tabWidth =
@@ -124,15 +156,18 @@ fun RowScope.BossLeftTabBar(
                     dividerPx = INTER_TAB_DIVIDER_WIDTH.toPx().toInt(),
                     minTabPx = MIN_TAB_WIDTH.roundToPx(),
                     maxTabPx = MAX_TAB_WIDTH.roundToPx(),
+                    trailingPx = trailingWidthPx,
                 ).toDp()
             }
 
         LazyRow(
             state = listState,
+            // fill = false lets the row wrap its tabs so [trailing] hugs the
+            // last one; the weight still caps it at everything the trailing
+            // slot doesn't need, so a full strip scrolls exactly as before.
             modifier =
                 Modifier
-                    .fillMaxWidth()
-                    .onSizeChanged { size -> rowWidthPx = size.width }
+                    .weight(1f, fill = false)
                     .horizontalLazyListScrollbar(
                         listState = listState,
                         scrollbarConfig = getBarScrollbarConfig(),
@@ -140,6 +175,10 @@ fun RowScope.BossLeftTabBar(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             content(tabWidth)
+        }
+
+        Box(modifier = Modifier.onSizeChanged { size -> trailingWidthPx = size.width }) {
+            trailing()
         }
     }
 }
