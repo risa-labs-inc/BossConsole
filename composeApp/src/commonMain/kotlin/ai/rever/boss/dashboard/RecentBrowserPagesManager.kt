@@ -1,5 +1,7 @@
 package ai.rever.boss.dashboard
 
+import ai.rever.boss.plugin.browser.NavigationOutcomeTracker
+import ai.rever.boss.plugin.browser.canonicalUrlKey
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -61,6 +63,9 @@ object RecentBrowserPagesManager {
     private val logger = BossLogger.forComponent("RecentBrowserPagesManager")
     private const val MAX_PAGES = 30
     private const val SAVE_DEBOUNCE_MS = 5000L // Debounce saves to max once per 5 seconds
+
+    /** Schemes that address the browser itself rather than a page someone visited. */
+    private val INTERNAL_URL_PREFIXES = listOf("about:", "chrome:", "data:")
     private val settingsFile = BossDirectories.resolve("recent-browser-pages.json")
     private val json =
         Json {
@@ -313,9 +318,13 @@ object RecentBrowserPagesManager {
         title: String,
         faviconCacheKey: String? = null,
     ) {
-        // Skip internal URLs and empty titles
-        if (url.isBlank() || title.isBlank()) return
-        if (url.startsWith("about:") || url.startsWith("chrome:") || url.startsWith("data:")) return
+        // Internal URLs have no page behind them, and a navigation that ended on an error
+        // page never showed the user anything — it still reports a title and a finished
+        // load, so without the outcome check a mistyped host would sit in the recent pages
+        // (and come back as a suggestion) as if it had loaded.
+        val isInternal = INTERNAL_URL_PREFIXES.any { url.startsWith(it) }
+        val describesAPage = url.isNotBlank() && title.isNotBlank() && !isInternal
+        if (!describesAPage || NavigationOutcomeTracker.didFail(url)) return
 
         scope.launch {
             val currentPages = _recentPages.value.toMutableList()
@@ -358,6 +367,27 @@ object RecentBrowserPagesManager {
         scope.launch {
             _recentPages.value = _recentPages.value.filter { it.url != url }
             scheduleSave()
+        }
+    }
+
+    /**
+     * Remove every page that points at the same place as [url].
+     *
+     * Matching is by [canonicalUrlKey] rather than string equality, so a page recorded
+     * under the URL the user typed is still found when the browser reports the URL it
+     * actually tried to load. Used to retire entries for addresses that turn out not to
+     * exist.
+     */
+    fun removeMatchingPages(url: String) {
+        val key = canonicalUrlKey(url)
+        if (key.isEmpty()) return
+
+        scope.launch {
+            val remaining = _recentPages.value.filter { canonicalUrlKey(it.url) != key }
+            if (remaining.size != _recentPages.value.size) {
+                _recentPages.value = remaining
+                scheduleSave()
+            }
         }
     }
 

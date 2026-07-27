@@ -3,7 +3,10 @@ package ai.rever.boss.plugin.browser
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -23,6 +26,7 @@ object UrlHistoryManager {
     private val logger = BossLogger.forComponent("UrlHistoryManager")
     private val historyFile = BossDirectories.resolve("browser-history.json")
     private val history = ConcurrentHashMap<String, UrlHistoryEntry>()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val json =
         Json {
             prettyPrint = true
@@ -68,41 +72,54 @@ object UrlHistoryManager {
         url: String,
         title: String,
     ) {
-        if (url.isBlank() || url == "about:blank" || url.startsWith("data:")) return
+        val domain = suggestableHostOrNull(url)
 
+        // A page the browser never managed to load is not somewhere the user has been —
+        // suggesting it back to them is how a typo like `youtube.como` became permanent.
+        if (domain == null || NavigationOutcomeTracker.didFail(url)) return
+
+        val existing = history[url]
+
+        history[url] =
+            if (existing != null) {
+                existing.copy(
+                    title = title.ifBlank { existing.title },
+                    visitCount = existing.visitCount + 1,
+                    lastVisited = System.currentTimeMillis(),
+                )
+            } else {
+                UrlHistoryEntry(
+                    url = url,
+                    title = title,
+                    domain = domain,
+                    visitCount = 1,
+                    lastVisited = System.currentTimeMillis(),
+                )
+            }
+    }
+
+    /**
+     * The host of [url] when it is an address worth offering back as a suggestion, else
+     * null.
+     *
+     * Suggestions are matched and displayed by domain, so anything without one —
+     * `about:blank`, `data:`, `blob:`, `chrome://`, `file://` — has nothing to contribute
+     * to the list, and an unparsable URL has no business in it either.
+     */
+    private fun suggestableHostOrNull(url: String): String? =
         try {
-            val domain =
-                java.net
-                    .URL(url)
-                    .host
-                    .lowercase()
-            val existing = history[url]
-
-            history[url] =
-                if (existing != null) {
-                    existing.copy(
-                        title = title.ifBlank { existing.title },
-                        visitCount = existing.visitCount + 1,
-                        lastVisited = System.currentTimeMillis(),
-                    )
-                } else {
-                    UrlHistoryEntry(
-                        url = url,
-                        title = title,
-                        domain = domain,
-                        visitCount = 1,
-                        lastVisited = System.currentTimeMillis(),
-                    )
-                }
+            val parsed = java.net.URL(url)
+            val scheme = parsed.protocol?.lowercase()
+            val host = parsed.host?.lowercase().orEmpty()
+            if ((scheme == "http" || scheme == "https") && host.isNotBlank()) host else null
         } catch (e: Exception) {
-            // Invalid URL - not worth recording in history
             logger.debug(
                 LogCategory.BROWSER,
                 "Ignoring history entry with unparsable URL",
                 mapOf("error" to e.toString()),
             )
+            null
         }
-    }
 
     fun getSuggestions(
         query: String,
@@ -136,5 +153,30 @@ object UrlHistoryManager {
 
     fun deleteUrl(url: String) {
         history.remove(url)
+    }
+
+    /**
+     * Remove every entry that points at the same place as [url].
+     *
+     * Matching is by [canonicalUrlKey] rather than string equality: an entry recorded
+     * before this gating existed may be stored as whatever the user typed
+     * (`youtube.como`), while the engine reports the URL it tried to load
+     * (`https://youtube.como/`).
+     *
+     * @return the number of entries removed
+     */
+    fun removeMatchingUrls(url: String): Int {
+        val key = canonicalUrlKey(url)
+        val matches =
+            if (key.isEmpty()) emptyList() else history.keys.filter { canonicalUrlKey(it) == key }
+
+        if (matches.isNotEmpty()) {
+            matches.forEach { history.remove(it) }
+            // Persist here rather than waiting for the next saveHistory() — an evicted
+            // entry that survives in the file is exactly the stale suggestion we just
+            // removed.
+            scope.launch { saveHistory() }
+        }
+        return matches.size
     }
 }

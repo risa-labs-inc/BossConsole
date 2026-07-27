@@ -1,6 +1,7 @@
 package ai.rever.boss.plugin.browser
 
 import ai.rever.boss.cache.FaviconCache
+import ai.rever.boss.dashboard.RecentBrowserPagesManager
 import ai.rever.boss.plugin.window.LocalWindowId
 import ai.rever.boss.tabfullscreen.FullscreenBrowserWindow
 import ai.rever.boss.utils.MacOSGestureHandler
@@ -38,6 +39,7 @@ import com.teamdev.jxbrowser.navigation.event.NavigationFinished
 import com.teamdev.jxbrowser.navigation.event.NavigationStarted
 import com.teamdev.jxbrowser.net.ByteData
 import com.teamdev.jxbrowser.net.HttpHeader
+import com.teamdev.jxbrowser.net.NetError
 import com.teamdev.jxbrowser.net.callback.BeforeSendUploadDataCallback
 import com.teamdev.jxbrowser.ui.KeyCode
 import com.teamdev.jxbrowser.ui.KeyModifiers
@@ -240,6 +242,13 @@ internal class BrowserHandleImpl(
         // Navigation finished - track loading state, notify URL change, and inject trackers
         subscriptions +=
             browser.navigation().on(NavigationFinished::class.java) { event ->
+                // Record the outcome BEFORE notifying anyone: the loading, navigation and
+                // title callbacks below are what feed the URL history and the dashboard's
+                // recent pages, and they must see whether this navigation actually landed
+                // on a page. A mistyped host (youtube.como) commits an error page and still
+                // fires all three, so without this it gets recorded as a visited page.
+                recordNavigationOutcome(event)
+
                 _isLoading = false
                 loadingListeners.forEach { listener ->
                     try {
@@ -349,6 +358,52 @@ internal class BrowserHandleImpl(
                 coBrowseSink = null
                 coBrowseBridge.onEvent = null
             }
+    }
+
+    /**
+     * Publish whether a finished main-frame navigation actually loaded a page, so the URL
+     * history and the dashboard's recent pages can skip the ones that didn't.
+     *
+     * A navigation counts as failed when Chromium swapped in its error page, when nothing
+     * committed at all (a download or a cancelled load), or when the engine reported a
+     * network error. Sub-frames are ignored: an iframe that fails says nothing about the
+     * page the user is on.
+     *
+     * Failures that mean "this address does not exist" also evict any entry a previous
+     * visit left behind, so a host that was recorded before this gating existed stops
+     * coming back as a suggestion the next time it's tried. Failures that are about the
+     * connection rather than the address (offline, timeout, aborted) leave history alone —
+     * a site you can't reach right now is still a site you visited.
+     */
+    private fun recordNavigationOutcome(event: NavigationFinished) {
+        try {
+            val url = if (event.isInMainFrame) event.url() else ""
+            if (url.isBlank()) return
+
+            val error =
+                try {
+                    event.error()
+                } catch (e: Exception) {
+                    logger.debug(
+                        LogCategory.BROWSER,
+                        "Navigation error state unavailable",
+                        mapOf("error" to e.toString()),
+                    )
+                    NetError.OK
+                }
+
+            if (!event.isErrorPage && event.hasCommitted() && error == NetError.OK) {
+                NavigationOutcomeTracker.recordSuccess(url)
+            } else {
+                NavigationOutcomeTracker.recordFailure(url)
+                if (error in ADDRESS_DOES_NOT_EXIST_ERRORS) {
+                    UrlHistoryManager.removeMatchingUrls(url)
+                    RecentBrowserPagesManager.removeMatchingPages(url)
+                }
+            }
+        } catch (e: Exception) {
+            logger.warn(LogCategory.BROWSER, "Failed to record navigation outcome", error = e)
+        }
     }
 
     private fun setupBrowserHandlers() {
@@ -1662,6 +1717,22 @@ internal class BrowserHandleImpl(
 
         /** Best-effort cap on [loadUrlAndWait]; returns (no throw) if a load runs long. */
         private const val LOAD_TIMEOUT_MS = 30_000L
+
+        /**
+         * Network errors that mean the address itself is wrong rather than temporarily
+         * unreachable — a typo like `youtube.como` resolves to nothing, and no retry will
+         * change that. Only these evict existing history entries; see
+         * [recordNavigationOutcome].
+         */
+        private val ADDRESS_DOES_NOT_EXIST_ERRORS =
+            setOf(
+                NetError.NAME_NOT_RESOLVED,
+                NetError.NAME_RESOLUTION_FAILED,
+                NetError.ADDRESS_INVALID,
+                NetError.INVALID_URL,
+                NetError.UNKNOWN_URL_SCHEME,
+                NetError.DISALLOWED_URL_SCHEME,
+            )
 
         /**
          * Install an engine-wide [BeforeSendUploadDataCallback] that captures

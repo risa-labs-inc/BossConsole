@@ -3,6 +3,7 @@ package ai.rever.boss.components.plugin.tab_types.fluck
 import ai.rever.boss.components.registery.*
 import ai.rever.boss.dashboard.DashboardStatsManager
 import ai.rever.boss.dashboard.RecentBrowserPagesManager
+import ai.rever.boss.plugin.browser.NavigationOutcomeTracker
 import ai.rever.boss.plugin.tab.fluck.FluckTabType
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.tabfullscreen.TabFullscreenStateManager
@@ -167,9 +168,13 @@ class FluckTabInfo(
             newIndex = newHistory.size - 1
         }
 
-        // Track page visit
-        RecentBrowserPagesManager.recordPageVisit(url, title, faviconCacheKey)
-        DashboardStatsManager.recordPageVisit()
+        // Track page visit. The back/forward list above still gets the entry — the tab is
+        // sitting on that URL either way — but a navigation that ended on an error page
+        // isn't a page the user visited, so it stays out of the dashboard and its counter.
+        if (!NavigationOutcomeTracker.didFail(url)) {
+            RecentBrowserPagesManager.recordPageVisit(url, title, faviconCacheKey)
+            DashboardStatsManager.recordPageVisit()
+        }
 
         // Return NEW instance with updated values (no mutation!)
         // Note: We DON'T update _title here because onTitleUpdate handles that separately
@@ -213,9 +218,11 @@ class FluckTabInfo(
             historyIndex = navigationHistory.size - 1
         }
 
-        // Track page visit in dashboard
-        RecentBrowserPagesManager.recordPageVisit(url, title, faviconCacheKey)
-        DashboardStatsManager.recordPageVisit()
+        // Track page visit in dashboard (skipping navigations that never loaded a page)
+        if (!NavigationOutcomeTracker.didFail(url)) {
+            RecentBrowserPagesManager.recordPageVisit(url, title, faviconCacheKey)
+            DashboardStatsManager.recordPageVisit()
+        }
     }
 
     @Synchronized
