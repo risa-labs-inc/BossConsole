@@ -5,6 +5,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 /**
@@ -99,5 +100,32 @@ class NavigationOutcomeTrackerTest {
     @Test
     fun `a host reached over both schemes is the same place`() {
         assertEquals(canonicalUrlKey("http://example.com"), canonicalUrlKey("https://example.com"))
+    }
+
+    @Test
+    fun `page identity normalizes the same spellings as the outcome key`() {
+        assertEquals(
+            distinctPageKey("https://www.youtube.com/"),
+            distinctPageKey("https://youtube.com"),
+        )
+    }
+
+    @Test
+    fun `page identity keeps hash-routed views apart`() {
+        // Gmail serves #inbox and #sent from one path. Merging history entries on the
+        // outcome key would collapse every view of it into a single suggestion.
+        val inbox = "https://mail.google.com/mail/u/0/#inbox"
+        val sent = "https://mail.google.com/mail/u/0/#sent"
+
+        assertEquals(canonicalUrlKey(inbox), canonicalUrlKey(sent))
+        assertNotEquals(distinctPageKey(inbox), distinctPageKey(sent))
+    }
+
+    @Test
+    fun `a fragment does not change whether a navigation failed`() {
+        NavigationOutcomeTracker.recordFailure("https://youtube.como/")
+
+        // The address doesn't resolve, so no #section of it resolves either.
+        assertTrue(NavigationOutcomeTracker.didFail("https://youtube.como/#watch"))
     }
 }

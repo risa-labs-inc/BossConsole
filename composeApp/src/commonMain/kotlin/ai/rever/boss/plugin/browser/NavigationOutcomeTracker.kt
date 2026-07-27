@@ -59,6 +59,21 @@ object NavigationOutcomeTracker {
 }
 
 /**
+ * Like [canonicalUrlKey], but two URLs are only the same page if their fragments agree.
+ *
+ * Use this to decide whether two history entries describe one page. [canonicalUrlKey]
+ * ignores the fragment, which is right for navigation outcomes — an address that doesn't
+ * resolve doesn't resolve for any `#section` of it — but wrong for identity: a
+ * hash-routed app serves genuinely different pages from one path, so treating them as
+ * one would fold every Gmail view (`#inbox`, `#sent`, `#search/…`) into a single entry.
+ */
+fun distinctPageKey(url: String): String {
+    val base = canonicalUrlKey(url)
+    val fragment = url.trim().substringAfter('#', "")
+    return if (base.isEmpty() || fragment.isEmpty()) base else "$base#$fragment"
+}
+
+/**
  * Normalize [url] into a key that survives the cosmetic differences between the URL a
  * user typed, the URL a plugin reports, and the URL the engine committed: scheme and
  * host casing, a `http(s)://` prefix, a `www.` prefix, a trailing slash, and a fragment.

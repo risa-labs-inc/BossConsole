@@ -43,7 +43,7 @@ object UrlHistoryManager {
                 val content = historyFile.readText()
                 if (content.isNotEmpty()) {
                     val entries = json.decodeFromString<List<UrlHistoryEntry>>(content)
-                    entries.forEach { entry ->
+                    mergeDuplicates(entries).forEach { entry ->
                         history[entry.url] = entry
                     }
                 }
@@ -52,6 +52,40 @@ object UrlHistoryManager {
             logger.warn(LogCategory.BROWSER, "Failed to load browser history", error = e)
         }
     }
+
+    /**
+     * Collapse entries that are the same page under different spellings.
+     *
+     * History recorded before the browser plugin reported committed URLs holds both what
+     * the user typed (`https://youtube.com`, no title) and what the browser loaded
+     * (`https://www.youtube.com/`, "YouTube") — two suggestions for one site, one of them
+     * titleless. Merging keeps the entry that knows the page's title, sums the visit
+     * counts so ranking isn't split between the two, and takes the later visit.
+     *
+     * Grouping is by [distinctPageKey], NOT the fragment-insensitive [canonicalUrlKey]:
+     * hash-routed apps put genuinely different pages behind one path, so merging on the
+     * looser key would fold every Gmail view (`#inbox`, `#sent`, `#search/…`) into one.
+     */
+    internal fun mergeDuplicates(entries: List<UrlHistoryEntry>): List<UrlHistoryEntry> =
+        entries
+            .groupBy { distinctPageKey(it.url) }
+            .map { (_, group) ->
+                if (group.size == 1) {
+                    group.first()
+                } else {
+                    val primary =
+                        group
+                            .sortedWith(
+                                compareByDescending<UrlHistoryEntry> { it.title.isNotBlank() }
+                                    .thenByDescending { it.visitCount }
+                                    .thenByDescending { it.lastVisited },
+                            ).first()
+                    primary.copy(
+                        visitCount = group.sumOf { it.visitCount },
+                        lastVisited = group.maxOf { it.lastVisited },
+                    )
+                }
+            }
 
     suspend fun saveHistory() =
         withContext(Dispatchers.IO) {
@@ -151,8 +185,16 @@ object UrlHistoryManager {
             ).take(limit)
     }
 
+    /**
+     * Forget a single entry — the URL bar's "don't suggest this again".
+     *
+     * Persists immediately: a deletion the user has to repeat after a restart isn't a
+     * deletion.
+     */
     fun deleteUrl(url: String) {
-        history.remove(url)
+        if (history.remove(url) != null) {
+            scope.launch { saveHistory() }
+        }
     }
 
     /**
