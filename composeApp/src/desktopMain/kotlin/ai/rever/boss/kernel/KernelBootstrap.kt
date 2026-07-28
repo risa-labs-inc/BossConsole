@@ -323,10 +323,15 @@ class KernelBootstrap(
         // Start process monitor
         processMonitor!!.startGlobalMonitor()
 
-        // Listen for failures: ask the orchestrator what to do, else auto-respawn (C2+M7 fix)
+        // Listen for failures: ask the orchestrator what to do, else auto-respawn (C2+M7 fix).
+        //
+        // Each failure is handled in its own coroutine. Handling them inline would serialize the
+        // advice deadline: a bad build taking several services down at once would make the last of
+        // N crashes wait N×2s, with the monitor's suspending emit blocked behind it. Per-process
+        // recovery is independent, and the monitor emits once per detection.
         scope.launch {
             processMonitor!!.failures.collect { failure ->
-                handleFailure(registry, spawner, failure)
+                launch { handleFailure(registry, spawner, failure) }
             }
         }
 
@@ -521,8 +526,10 @@ class KernelBootstrap(
         // default that may not match this process's.
         val serviceEnvironment = mapOf("BOSS_DATA_DIR" to bossDataDir)
 
-        // The model choice — and the API key that goes with it — is the orchestrator's alone. The
-        // other eight services have no use for a credential, so they are not given one.
+        // The model choice — and the key the operator entered for it — goes to the orchestrator
+        // alone; the other eight have no use for a credential. (A key exported into BOSS's own
+        // environment is still inherited by every child via ProcessSpawner — see
+        // SelfHealingSettingsManager.orchestratorEnvironment.)
         val repairEnvironment = SelfHealingSettingsManager.orchestratorEnvironment()
         logger.info(
             "AI repair for the orchestrator is {}",
@@ -769,6 +776,12 @@ class KernelBootstrap(
         // 6b. Close remote UI surfaces. The registry is process-wide and outlives this bootstrap, so a
         // restart would otherwise come up still holding claims from processes that are now dead.
         RemoteUiSurfaceRegistry.shared.clear()
+
+        // 6c. Close the orchestrator channel. Nothing else owns it, so a mode switch or in-process
+        // restart would otherwise leak the channel and its threads.
+        orchestratorClient?.second?.shutdown()
+        orchestratorClient = null
+        serviceAddresses.clear()
 
         // 7. Cancel scope
         scope.cancel()

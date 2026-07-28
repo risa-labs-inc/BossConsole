@@ -95,11 +95,17 @@ fun aiRepairConfig(
  * `AI_REPAIR_API_KEY` falls back to `OPENAI_API_KEY` for operators who configured this before there
  * was a settings screen.
  */
-fun aiRepairConfigFromEnvironment(getenv: (String) -> String? = { System.getenv(it) }): AiRepairConfig =
-    aiRepairConfig(
-        provider = getenv("AI_REPAIR_PROVIDER"),
+fun aiRepairConfigFromEnvironment(getenv: (String) -> String? = { System.getenv(it) }): AiRepairConfig {
+    val provider = getenv("AI_REPAIR_PROVIDER")
+    // The legacy fallback only makes sense for the wire it was written for: sending an OpenAI key
+    // as `x-api-key` to Anthropic is a credential going somewhere it cannot work and should not go.
+    val speaksOpenAi = provider?.trim()?.equals("anthropic", ignoreCase = true) != true
+    val legacyKey = getenv("OPENAI_API_KEY").takeIf { speaksOpenAi }
+    return aiRepairConfig(
+        provider = provider,
         endpoint = getenv("AI_REPAIR_API_URL"),
-        apiKey = getenv("AI_REPAIR_API_KEY") ?: getenv("OPENAI_API_KEY"),
+        apiKey = getenv("AI_REPAIR_API_KEY") ?: legacyKey,
         model = getenv("AI_REPAIR_MODEL"),
         systemPrompt = getenv("AI_REPAIR_SYSTEM_PROMPT"),
     )
+}

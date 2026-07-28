@@ -131,15 +131,29 @@ class SelfHealingEnvironmentTest {
     }
 
     @Test
-    fun `a provider name this build does not know falls back to Anthropic rather than misrouting`() {
-        // Downgrade, or a settings file written by a newer version. Sending a key to whatever URL
-        // happened to be stored would be worse than using the house default.
+    fun `a provider name this build does not know is treated as unconfigured`() {
+        // Downgrade, or a settings file written by a newer version.
         val stored = SelfHealingSettingsData(aiRepairEnabled = true, provider = "GEMINI", projectRoot = "/work/boss")
+
+        assertEquals(emptyMap(), repairEnvironment(stored, apiKey = "sk-live"))
+    }
+
+    @Test
+    fun `an unknown provider does not send the key to the endpoint stored beside it`() {
+        // The dangerous half: defaulting the wire while keeping the stored URL would post a key
+        // resolved under the defaulted provider's name to a host the operator never chose for it.
+        val stored =
+            SelfHealingSettingsData(
+                aiRepairEnabled = true,
+                provider = "GEMINI",
+                model = "gemini-3-pro",
+                endpoint = "https://generativelanguage.googleapis.com/v1/models:generateContent",
+                projectRoot = "/work/boss",
+            )
 
         val env = repairEnvironment(stored, apiKey = "sk-live")
 
-        assertEquals("anthropic", env["AI_REPAIR_PROVIDER"])
-        assertEquals("https://api.anthropic.com/v1/messages", env["AI_REPAIR_API_URL"])
+        assertTrue(env.isEmpty(), "nothing should be sent for a provider this build cannot speak to")
     }
 
     @Test

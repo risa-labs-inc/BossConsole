@@ -23,12 +23,15 @@ import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * The instruction the orchestrator uses when this field is left empty.
@@ -55,9 +58,14 @@ fun SelfHealingSettings(kernelMode: Boolean) {
     val settings by SelfHealingSettingsManager.currentSettings.collectAsState()
     val provider = remember(settings.provider) { SelfHealingProvider.of(settings.provider) }
 
-    // Recomputed whenever the provider changes: the key may come from the environment or from LLM
-    // Providers settings, and either can differ per provider.
-    val hasKey = remember(settings.provider) { SelfHealingSettingsManager.hasApiKey(provider) }
+    // Off the composition thread: resolving a key reads llm_settings.json (see docs/THREADING.md).
+    // Re-run on every settings change as well as on provider change, so the card stops saying "no
+    // API key" as soon as the operator comes back from LLM Providers having entered one — that is
+    // the one thing this card exists to get right, and keying it on the provider alone left it
+    // stale until the screen was recreated.
+    val hasKey by produceState(initialValue = true, settings) {
+        value = withContext(Dispatchers.IO) { SelfHealingSettingsManager.hasApiKey(provider) }
+    }
 
     fun update(change: (SelfHealingSettingsData) -> SelfHealingSettingsData) {
         scope.launch { SelfHealingSettingsManager.updateSettings(change(settings)) }

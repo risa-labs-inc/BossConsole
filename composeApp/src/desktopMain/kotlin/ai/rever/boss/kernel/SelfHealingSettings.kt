@@ -62,8 +62,11 @@ enum class SelfHealingProvider(
     ;
 
     companion object {
-        /** The stored provider, or [ANTHROPIC] if the file names one this build doesn't have. */
-        fun of(name: String): SelfHealingProvider = entries.firstOrNull { it.name == name } ?: ANTHROPIC
+        /** The stored provider, or null if the file names one this build doesn't have. */
+        fun parse(name: String): SelfHealingProvider? = entries.firstOrNull { it.name == name }
+
+        /** The stored provider, or [ANTHROPIC] as a display default. For the UI, not for routing. */
+        fun of(name: String): SelfHealingProvider = parse(name) ?: ANTHROPIC
     }
 }
 
@@ -127,6 +130,12 @@ object SelfHealingSettingsManager {
      * usable key. A half-configured environment is worse than none: it would start the client and
      * fail per crash, and emitting the key while the feature is off would put a secret in a child
      * process for no reason.
+     *
+     * Note what this does *not* do. `ProcessSpawner` starts each child from a copy of BOSS's own
+     * environment, so an `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` exported into the app's process is
+     * inherited by all nine children whatever this returns. What is withheld here is the key the
+     * operator entered in settings, and — the part that actually gates anything — `BOSS_AI_REPAIR`
+     * and the source root, without which the orchestrator constructs no client at all.
      */
     fun orchestratorEnvironment(): Map<String, String> =
         repairEnvironment(
@@ -235,23 +244,31 @@ internal fun repairEnvironment(
     settings: SelfHealingSettingsData,
     apiKey: String?,
 ): Map<String, String> {
-    val provider = SelfHealingProvider.of(settings.provider)
+    // A name this build doesn't know means the file was written by a newer version, so the endpoint
+    // beside it belongs to a provider this build cannot speak to. Defaulting the *wire* while
+    // keeping that *endpoint* would post the key — resolved under the defaulted provider's name — to
+    // a host the operator never chose for it. Unknown provider is unconfigured.
+    val provider = SelfHealingProvider.parse(settings.provider)
 
     // Each of these has to be present for AI repair to do anything, so they are gathered first and
     // checked as a set — a configuration missing any one of them yields no environment at all.
     val required =
         mapOf(
             "BOSS_REPAIR_PROJECT_ROOT" to settings.projectRoot.trim(),
-            "AI_REPAIR_API_URL" to settings.endpoint.trim().ifBlank { provider.defaultEndpoint },
-            "AI_REPAIR_MODEL" to settings.model.trim().ifBlank { provider.defaultModel },
+            "AI_REPAIR_API_URL" to settings.endpoint.trim().ifBlank { provider?.defaultEndpoint.orEmpty() },
+            "AI_REPAIR_MODEL" to settings.model.trim().ifBlank { provider?.defaultModel.orEmpty() },
             "AI_REPAIR_API_KEY" to apiKey.orEmpty().trim(),
         )
-    if (!settings.aiRepairEnabled || required.values.any { it.isBlank() }) return emptyMap()
+    val configured = settings.aiRepairEnabled && required.values.none { it.isBlank() }
 
-    return required +
-        buildMap {
-            put("BOSS_AI_REPAIR", "true")
-            put("AI_REPAIR_PROVIDER", provider.wireProtocol)
-            settings.systemPrompt.ifBlank { null }?.let { put("AI_REPAIR_SYSTEM_PROMPT", it) }
-        }
+    return if (provider == null || !configured) {
+        emptyMap()
+    } else {
+        required +
+            buildMap {
+                put("BOSS_AI_REPAIR", "true")
+                put("AI_REPAIR_PROVIDER", provider.wireProtocol)
+                settings.systemPrompt.ifBlank { null }?.let { put("AI_REPAIR_SYSTEM_PROMPT", it) }
+            }
+    }
 }

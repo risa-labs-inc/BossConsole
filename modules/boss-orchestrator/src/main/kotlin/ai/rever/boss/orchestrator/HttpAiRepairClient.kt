@@ -38,6 +38,97 @@ private fun stripCodeFences(text: String): String {
 }
 
 /**
+ * Why the model declined, or null if it didn't.
+ *
+ * A refusal is a successful HTTP 200 carrying no answer, so it has to be recognised before the
+ * response is read as a proposal.
+ */
+private fun refusalReason(
+    json: Json,
+    rawResponse: String,
+): String? {
+    val root = json.parseToJsonElement(rawResponse).jsonObject
+    if (root["stop_reason"]?.jsonPrimitive?.contentOrNull != "refusal") return null
+    val details = root["stop_details"]?.jsonObject
+    val category = details?.get("category")?.jsonPrimitive?.contentOrNull ?: "unspecified"
+    val explanation = details?.get("explanation")?.jsonPrimitive?.contentOrNull ?: "no explanation given"
+    return "category=$category, $explanation"
+}
+
+/**
+ * The first `text` block of an Anthropic response.
+ *
+ * Indexing `content[0]` is wrong here: thinking is on by default on current models, so the answer is
+ * preceded by one or more thinking blocks. Refusals are handled before this is reached.
+ */
+private fun extractAnthropicText(
+    json: Json,
+    rawResponse: String,
+): String? =
+    json
+        .parseToJsonElement(rawResponse)
+        .jsonObject["content"]
+        ?.jsonArray
+        ?.firstOrNull { it.jsonObject["type"]?.jsonPrimitive?.contentOrNull == "text" }
+        ?.jsonObject
+        ?.get("text")
+        ?.jsonPrimitive
+        ?.contentOrNull
+
+/** The assistant message out of an OpenAI-compatible chat-completions response. */
+private fun extractOpenAiText(
+    json: Json,
+    rawResponse: String,
+): String? =
+    json
+        .parseToJsonElement(rawResponse)
+        .jsonObject["choices"]
+        ?.jsonArray
+        ?.firstOrNull()
+        ?.jsonObject
+        ?.get("message")
+        ?.jsonObject
+        ?.get("content")
+        ?.jsonPrimitive
+        ?.contentOrNull
+
+/**
+ * One proposed patch, resolved against the file it applies to.
+ *
+ * The model is asked for a snippet swap; falling back to the whole patched body, and then to the
+ * original, keeps a partial answer from being reported as a rewrite of the file to nothing.
+ */
+private fun filePatch(
+    obj: JsonObject,
+    sourceFiles: Map<String, String>,
+): FilePatch? {
+    val filePath = obj["filePath"]?.jsonPrimitive?.contentOrNull ?: return null
+    val originalSnippet = obj["originalSnippet"]?.jsonPrimitive?.contentOrNull ?: ""
+    val patchedSnippet = obj["patchedSnippet"]?.jsonPrimitive?.contentOrNull ?: ""
+    val originalContent = sourceFiles[filePath] ?: ""
+    val patchedContent =
+        when {
+            originalSnippet.isNotBlank() && originalContent.contains(originalSnippet) -> {
+                originalContent.replace(originalSnippet, patchedSnippet)
+            }
+
+            patchedSnippet.isNotBlank() -> {
+                patchedSnippet
+            }
+
+            else -> {
+                originalContent
+            }
+        }
+    return FilePatch(
+        filePath = filePath,
+        originalContent = originalContent,
+        patchedContent = patchedContent,
+        description = obj["description"]?.jsonPrimitive?.contentOrNull ?: "",
+    )
+}
+
+/**
  * Calls the operator's chosen model to generate repair proposals.
  *
  * Two wire shapes are supported — Anthropic's Messages API and the OpenAI chat-completions shape
@@ -237,123 +328,96 @@ class HttpAiRepairClient(
 
     // ---- Response parsers ----
 
+    /**
+     * The proposal object out of a response, or null when there isn't one.
+     *
+     * "Parsed some JSON" is not "got a proposal": a refusal, an error body or a bare envelope all
+     * parse fine and carry none of [keys], and reporting one as a repair hands the operator an
+     * empty diff described as a successful fix.
+     */
+    private fun proposalRoot(
+        rawResponse: String,
+        vararg keys: String,
+    ): JsonObject? {
+        val root = extractContent(rawResponse)?.let(::parseObject)
+        return when {
+            root == null -> {
+                null
+            }
+
+            keys.any { root[it] != null } -> {
+                root
+            }
+
+            else -> {
+                logger.warn("AI response carried no proposal (looked for {})", keys.joinToString())
+                null
+            }
+        }
+    }
+
+    private fun parseObject(content: String): JsonObject? =
+        try {
+            json.parseToJsonElement(content).jsonObject
+        } catch (e: Exception) {
+            logger.error("Failed to parse AI response: {}", e.message)
+            null
+        }
+
     private fun parseSourceFixResponse(
         rawResponse: String,
         sourceFiles: Map<String, String>,
     ): SourceFixProposal? {
-        return try {
-            val root = json.parseToJsonElement(extractContent(rawResponse)).jsonObject
-            val explanation = root["explanation"]?.jsonPrimitive?.contentOrNull ?: ""
-            val patches =
-                root["patches"]?.jsonArray?.mapNotNull { el ->
-                    val obj = el.jsonObject
-                    val filePath = obj["filePath"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-                    val description = obj["description"]?.jsonPrimitive?.contentOrNull ?: ""
-                    val originalSnippet = obj["originalSnippet"]?.jsonPrimitive?.contentOrNull ?: ""
-                    val patchedSnippet = obj["patchedSnippet"]?.jsonPrimitive?.contentOrNull ?: ""
-                    val originalContent = sourceFiles[filePath] ?: ""
-                    val patchedContent =
-                        when {
-                            originalSnippet.isNotBlank() && originalContent.contains(originalSnippet) -> {
-                                originalContent.replace(originalSnippet, patchedSnippet)
-                            }
-
-                            patchedSnippet.isNotBlank() -> {
-                                patchedSnippet
-                            }
-
-                            else -> {
-                                originalContent
-                            }
-                        }
-                    FilePatch(
-                        filePath = filePath,
-                        originalContent = originalContent,
-                        patchedContent = patchedContent,
-                        description = description,
-                    )
-                } ?: emptyList()
-            SourceFixProposal(explanation = explanation, patches = patches)
-        } catch (e: Exception) {
-            logger.error("Failed to parse AI source-fix response: {}", e.message)
-            null
-        }
+        val root = proposalRoot(rawResponse, "explanation", "patches") ?: return null
+        return SourceFixProposal(
+            explanation = root["explanation"]?.jsonPrimitive?.contentOrNull ?: "",
+            patches =
+                root["patches"]
+                    ?.jsonArray
+                    ?.mapNotNull { filePatch(it.jsonObject, sourceFiles) }
+                    ?: emptyList(),
+        )
     }
 
-    private fun parseConfigFixResponse(rawResponse: String): ConfigFixProposal? =
-        try {
-            val root = json.parseToJsonElement(extractContent(rawResponse)).jsonObject
-            val explanation = root["explanation"]?.jsonPrimitive?.contentOrNull ?: ""
-            val configChanges =
-                root["configChanges"]
-                    ?.let { it as? JsonObject }
+    private fun parseConfigFixResponse(rawResponse: String): ConfigFixProposal? {
+        val root = proposalRoot(rawResponse, "explanation", "configChanges") ?: return null
+        return ConfigFixProposal(
+            explanation = root["explanation"]?.jsonPrimitive?.contentOrNull ?: "",
+            configChanges =
+                (root["configChanges"] as? JsonObject)
                     ?.entries
                     ?.associate { (k, v) -> k to (v.jsonPrimitive.contentOrNull ?: "") }
-                    ?: emptyMap()
-            ConfigFixProposal(explanation = explanation, configChanges = configChanges)
-        } catch (e: Exception) {
-            logger.error("Failed to parse AI config-fix response: {}", e.message)
-            null
-        }
+                    ?: emptyMap(),
+        )
+    }
 
     /**
-     * Extracts the assistant's text from a response in the configured wire's shape.
+     * The assistant's text out of a response in the configured wire's shape, or null when the model
+     * did not give one.
      *
-     * Falls back to returning the raw string if parsing fails (e.g. some gateways return the JSON
-     * payload directly), which the callers then try to parse as a proposal.
+     * Null is load-bearing. A refusal must NOT fall through to the raw envelope the way an
+     * unrecognised shape does: that envelope is itself valid JSON, so the parsers would read it as
+     * a proposal with no explanation and no patches — and an empty proposal reaches the operator as
+     * a *successful* repair carrying an empty diff, which is worse than no answer.
      */
-    private fun extractContent(rawResponse: String): String =
+    private fun extractContent(rawResponse: String): String? =
         try {
-            val text =
-                when (config.wire) {
-                    AiRepairWire.ANTHROPIC -> extractAnthropicText(rawResponse)
-                    AiRepairWire.OPENAI -> extractOpenAiText(rawResponse)
-                }
-            stripCodeFences(text ?: rawResponse)
+            val refusal = if (config.wire == AiRepairWire.ANTHROPIC) refusalReason(json, rawResponse) else null
+            if (refusal != null) {
+                logger.warn("Model declined the repair request: {}", refusal)
+                null
+            } else {
+                val text =
+                    when (config.wire) {
+                        AiRepairWire.ANTHROPIC -> extractAnthropicText(json, rawResponse)
+                        AiRepairWire.OPENAI -> extractOpenAiText(json, rawResponse)
+                    }
+                // Falling back to the raw string covers gateways that return the payload directly.
+                stripCodeFences(text ?: rawResponse)
+            }
         } catch (_: Exception) {
             rawResponse
         }
-
-    private fun extractOpenAiText(rawResponse: String): String? =
-        json
-            .parseToJsonElement(rawResponse)
-            .jsonObject["choices"]
-            ?.jsonArray
-            ?.firstOrNull()
-            ?.jsonObject
-            ?.get("message")
-            ?.jsonObject
-            ?.get("content")
-            ?.jsonPrimitive
-            ?.contentOrNull
-
-    /**
-     * The first `text` block of an Anthropic response.
-     *
-     * Indexing `content[0]` is wrong here: thinking is on by default on current models, so the
-     * answer is preceded by one or more thinking blocks. A refusal carries no text block at all,
-     * which is reported rather than left to surface as an unhelpful JSON parse failure.
-     */
-    private fun extractAnthropicText(rawResponse: String): String? {
-        val root = json.parseToJsonElement(rawResponse).jsonObject
-        if (root["stop_reason"]?.jsonPrimitive?.contentOrNull == "refusal") {
-            val category =
-                root["stop_details"]
-                    ?.jsonObject
-                    ?.get("category")
-                    ?.jsonPrimitive
-                    ?.contentOrNull
-            logger.warn("Model declined the repair request (category={})", category ?: "unspecified")
-            return null
-        }
-        return root["content"]
-            ?.jsonArray
-            ?.firstOrNull { it.jsonObject["type"]?.jsonPrimitive?.contentOrNull == "text" }
-            ?.jsonObject
-            ?.get("text")
-            ?.jsonPrimitive
-            ?.contentOrNull
-    }
 
     private companion object {
         /** Pinned per Anthropic's API contract; unrelated to the model in [AiRepairConfig]. */

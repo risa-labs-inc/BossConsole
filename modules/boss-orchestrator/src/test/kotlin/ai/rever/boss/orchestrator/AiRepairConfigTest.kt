@@ -118,6 +118,15 @@ class AiRepairConfigTest {
     }
 
     @Test
+    fun `the legacy OpenAI key is not offered to Anthropic`() {
+        // It would be sent as x-api-key: a credential going somewhere it cannot work and should not
+        // go. AI_REPAIR_API_KEY is the way to configure the Anthropic wire.
+        val env = mapOf("AI_REPAIR_PROVIDER" to "anthropic", "OPENAI_API_KEY" to "sk-openai")
+
+        assertEquals("", aiRepairConfigFromEnvironment { env[it] }.apiKey)
+    }
+
+    @Test
     fun `a dedicated repair key wins over the general one`() {
         val env = mapOf("AI_REPAIR_API_KEY" to "sk-narrow", "OPENAI_API_KEY" to "sk-broad")
 
