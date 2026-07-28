@@ -63,4 +63,75 @@ class EditorLanguageDetectionTest {
         assertEquals("text", provider.detectLanguage("/a/notes.unknownext"))
         assertEquals("text", provider.detectLanguage("/a/plain"))
     }
+
+    @Test
+    fun `newly named languages are identified`() {
+        listOf(
+            "/a/build.mk" to "makefile",
+            "/a/app.properties" to "properties",
+            "/a/settings.ini" to "properties",
+            "/a/change.diff" to "diff",
+            "/a/change.patch" to "diff",
+            "/a/run.bat" to "batch",
+            "/a/core.clj" to "clojure",
+            "/a/paper.tex" to "latex",
+            "/a/init.el" to "lisp",
+            "/a/script.tcl" to "tcl",
+            "/a/solver.f90" to "fortran",
+            "/a/mod.d" to "d",
+            "/a/unit.pas" to "delphi",
+            "/a/Form.vb" to "visualbasic",
+            "/a/Main.as" to "actionscript",
+            "/a/index.jsp" to "jsp",
+        ).forEach { (path, expected) ->
+            assertEquals(expected, provider.detectLanguage(path), path)
+        }
+    }
+
+    @Test
+    fun `name patterns are case-insensitive`() {
+        assertEquals("dockerfile", provider.detectLanguage("/a/DOCKERFILE"))
+        assertEquals("makefile", provider.detectLanguage("/a/MAKEFILE"))
+        assertEquals("dockerfile", provider.detectLanguage("/a/Containerfile.dev"))
+    }
+
+    @Test
+    fun `bare Gemfile is ruby but its lockfile is not`() {
+        assertEquals("ruby", provider.detectLanguage("/a/Gemfile"))
+        assertEquals("ruby", provider.detectLanguage("/a/Rakefile"))
+        // A lockfile is generated data, not Ruby source.
+        assertEquals("text", provider.detectLanguage("/a/Gemfile.lock"))
+    }
+
+    /**
+     * CMake is not Make. Mapping it to the Make lexer would hunt for tab-indented
+     * recipes that do not exist, so it stays unhighlighted on purpose.
+     */
+    @Test
+    fun `CMakeLists is deliberately not claimed as makefile`() {
+        assertEquals("text", provider.detectLanguage("/a/CMakeLists.txt"))
+    }
+
+    /**
+     * The built-in editor tab used to carry its own smaller copy of this map. Both
+     * now call [ai.rever.boss.components.plugin.language.EditorLanguages], so a
+     * file cannot be reported as one language and highlighted as another.
+     */
+    @Test
+    fun `the provider agrees with the shared implementation`() {
+        listOf(
+            "/a/Dockerfile",
+            "/a/Makefile",
+            "/a/Main.kt",
+            "/a/Chart.yaml",
+            "/a/plain",
+        ).forEach { path ->
+            assertEquals(
+                ai.rever.boss.components.plugin.language.EditorLanguages
+                    .detect(path),
+                provider.detectLanguage(path),
+                path,
+            )
+        }
+    }
 }

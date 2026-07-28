@@ -2,6 +2,7 @@ package ai.rever.boss.components.plugin.tab_types
 
 import ai.rever.boss.components.events.RunEventBus
 import ai.rever.boss.components.plugin.DefaultPlugin
+import ai.rever.boss.components.plugin.language.EditorLanguages
 import ai.rever.boss.components.plugin.providers.publishSystemEvent
 import ai.rever.boss.plugin.api.FileChangeEvent
 import ai.rever.boss.plugin.api.FileChangeType
@@ -593,23 +594,10 @@ class CodeEditorTabComponent(
     }
 
     private fun updateLanguageFromPath(path: String) {
-        val extension = path.substringAfterLast('.', "")
-        _language.value =
-            when (extension) {
-                "kt", "kts" -> "kotlin"
-                "java" -> "java"
-                "js", "jsx" -> "javascript"
-                "ts", "tsx" -> "typescript"
-                "py" -> "python"
-                "json" -> "json"
-                "xml" -> "xml"
-                "html", "htm" -> "html"
-                "css" -> "css"
-                "md" -> "markdown"
-                "toml" -> "toml"
-                "gradle" -> "groovy"
-                else -> "text"
-            }
+        // Was a third, smaller copy of the language map here: 12 extensions, no
+        // lowercase(), and the extension read from the whole path. It is the copy a
+        // user actually sees, so it now shares one implementation with the rest.
+        _language.value = EditorLanguages.detect(path)
     }
 
     @Composable
