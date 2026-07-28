@@ -8,6 +8,7 @@ import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.LogSanitizer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -419,9 +420,16 @@ object RecentBrowserPagesManager {
                 logger.info(
                     LogCategory.BROWSER,
                     "Removed recent pages for an address that failed to load",
-                    mapOf("removed" to removed.toString()),
+                    mapOf(
+                        "url" to LogSanitizer.maskUriParams(url),
+                        "removed" to removed.toString(),
+                    ),
                 )
-                scheduleSave()
+                // Immediately, not on the 5s debounce the additive path uses: the whole
+                // scenario here is mistype, see the error page, close the app — which
+                // lands inside that window and would leave the typo in the file to come
+                // back as a dashboard recent on the next launch.
+                saveImmediately()
             }
         }
     }

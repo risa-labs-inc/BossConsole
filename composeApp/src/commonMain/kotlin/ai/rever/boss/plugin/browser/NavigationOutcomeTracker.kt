@@ -34,6 +34,41 @@ fun classifyNavigation(
         else -> NavigationVerdict.LOADED
     }
 
+/** How much stored history a failed navigation is allowed to take with it. */
+enum class RetractionScope {
+    /** The address does not exist: every entry for it goes, whatever its age or count. */
+    EVICT_ALL,
+
+    /** Undo only a visit a racing callback recorded moments ago. */
+    RETRACT_RECENT,
+
+    /** Touch nothing. */
+    LEAVE_ALONE,
+}
+
+/**
+ * How far a failed navigation may reach into stored history.
+ *
+ * Only an error page can have raced a visit into the stores: Chromium titles the error
+ * document, and that title is what reaches the history before the navigation verdict
+ * does. A navigation that never committed — stop pressed, a link clicked while a reload
+ * was in flight, a load that turned into a download — produces no title and therefore no
+ * visit to undo, so treating it as a failure worth retracting would delete the entry for a
+ * page the user is happily looking at.
+ *
+ * @param addressIsGone the caller's judgement that this address does not exist, which
+ *   needs more than a name-resolution error: see [NavigationOutcomeTracker.hasLoadedRecently].
+ */
+fun retractionScopeFor(
+    isErrorPage: Boolean,
+    addressIsGone: Boolean,
+): RetractionScope =
+    when {
+        addressIsGone -> RetractionScope.EVICT_ALL
+        isErrorPage -> RetractionScope.RETRACT_RECENT
+        else -> RetractionScope.LEAVE_ALONE
+    }
+
 /**
  * Remembers which addresses just failed to load, so the stores that record visits can
  * skip them.

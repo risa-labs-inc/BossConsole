@@ -414,32 +414,31 @@ internal class BrowserHandleImpl(
 
                 NavigationVerdict.LOADED -> {
                     NavigationOutcomeTracker.recordSuccess(url)
+                    // This host can serve pages, so it is never a candidate for the
+                    // "address does not exist" eviction below, however it fails later.
+                    suggestableHost(url)?.let(ResolvedHostsStore::recordLoaded)
                 }
 
                 NavigationVerdict.FAILED -> {
                     NavigationOutcomeTracker.recordFailure(url)
 
-                    // Only treat "the address does not exist" as permanent while name
-                    // resolution is demonstrably working — otherwise a DNS outage would
-                    // read as every site the user tried having ceased to exist, and take
-                    // their history with it.
+                    // "The address does not exist" needs more than a name error. Two
+                    // things have to hold: something else resolved recently, so this isn't
+                    // a total DNS outage; and this host has never served a page, so it
+                    // isn't an address the user relies on that happens to be unreachable
+                    // from where they are — the split-horizon case, where a developer off
+                    // the VPN watches `jira.internal.corp` fail while public DNS is fine.
+                    val host = suggestableHost(url)
                     val addressIsGone =
                         error in ADDRESS_DOES_NOT_EXIST_ERRORS &&
-                            NavigationOutcomeTracker.hasLoadedRecently()
+                            NavigationOutcomeTracker.hasLoadedRecently() &&
+                            (host == null || !ResolvedHostsStore.hasEverLoaded(host))
 
-                    // Retraction is only for the callback that raced this verdict, and
-                    // only an error page races it: Chromium titles the error document,
-                    // which is what can reach the history before this handler runs. A
-                    // navigation that never committed (stop pressed, a link clicked while
-                    // a reload was in flight, a load that became a download) produces no
-                    // title and no visit, so there is nothing to undo — and treating it as
-                    // failure here would delete the entry for a page the user is happily
-                    // looking at.
                     val window =
-                        when {
-                            addressIsGone -> null
-                            event.isErrorPage -> RACE_RETRACTION_MS
-                            else -> return
+                        when (retractionScopeFor(event.isErrorPage, addressIsGone)) {
+                            RetractionScope.EVICT_ALL -> null
+                            RetractionScope.RETRACT_RECENT -> RACE_RETRACTION_MS
+                            RetractionScope.LEAVE_ALONE -> return
                         }
                     // Off the engine's event thread: this walks the whole history.
                     retractionScope.launch {

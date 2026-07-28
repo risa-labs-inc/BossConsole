@@ -1,5 +1,6 @@
 package ai.rever.boss.plugin.browser
 
+import java.io.File
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -116,6 +117,57 @@ class HistoryEvictionTest {
 
         NavigationOutcomeTracker.recordSuccess("https://github.com/", now = now)
         assertTrue(NavigationOutcomeTracker.hasLoadedRecently(now))
+    }
+
+    @Test
+    fun `only an error page reaches into stored history`() {
+        // An uncommitted navigation — stop pressed, a link clicked mid-reload, a load that
+        // became a download — produced no title and so no visit to undo. Retracting for it
+        // would delete the entry for the page the user is still looking at.
+        assertEquals(
+            RetractionScope.LEAVE_ALONE,
+            retractionScopeFor(isErrorPage = false, addressIsGone = false),
+        )
+        assertEquals(
+            RetractionScope.RETRACT_RECENT,
+            retractionScopeFor(isErrorPage = true, addressIsGone = false),
+        )
+        assertEquals(
+            RetractionScope.EVICT_ALL,
+            retractionScopeFor(isErrorPage = true, addressIsGone = true),
+        )
+    }
+
+    @Test
+    fun `an address known to exist is never evicted wholesale`() {
+        // Split horizon: off the VPN, jira.internal.corp stops resolving while public DNS
+        // is healthy, so the resolver-health check alone would approve deleting it.
+        withTemporaryResolvedHostsStore {
+            ResolvedHostsStore.recordLoaded("jira.internal.corp")
+
+            assertTrue(ResolvedHostsStore.hasEverLoaded("jira.internal.corp"))
+            assertTrue(ResolvedHostsStore.hasEverLoaded("JIRA.Internal.Corp"))
+            // A typo has never served a page to anyone — that is what makes it safe to
+            // forget, and what a title heuristic can't tell you, since Chromium titles its
+            // error document with the failed host.
+            assertFalse(ResolvedHostsStore.hasEverLoaded("youtube.como"))
+        }
+    }
+
+    /** Points the store at a scratch file so the developer's own profile is untouched. */
+    private fun withTemporaryResolvedHostsStore(block: () -> Unit) {
+        val original = ResolvedHostsStore.storeFile
+        val temp = File.createTempFile("resolved-hosts", ".json")
+        temp.delete()
+        try {
+            ResolvedHostsStore.storeFile = temp
+            ResolvedHostsStore.clear()
+            block()
+        } finally {
+            temp.delete()
+            ResolvedHostsStore.storeFile = original
+            ResolvedHostsStore.clear()
+        }
     }
 
     @Test
