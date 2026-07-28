@@ -19,26 +19,41 @@ import java.net.URL
 import java.nio.charset.StandardCharsets
 
 /**
- * Calls any OpenAI-compatible chat-completions API to generate repair proposals.
+ * Drop a ```` ``` ````-fenced wrapper if the model added one.
  *
- * Configuration via environment variables:
- *   AI_REPAIR_API_URL  — defaults to https://api.openai.com/v1/chat/completions
- *   AI_REPAIR_API_KEY  — required; falls back to OPENAI_API_KEY if not set
- *   AI_REPAIR_MODEL    — defaults to gpt-5.4
- *
- * Uses [java.net.HttpURLConnection] — no additional runtime dependencies required.
+ * The default system prompt forbids fences, but that prompt is operator-editable now, and a
+ * replacement that omits the rule shouldn't turn every proposal into a parse failure.
  */
-class HttpAiRepairClient : AiRepairClient {
+private fun stripCodeFences(text: String): String {
+    val trimmed = text.trim()
+    return if (!trimmed.startsWith("```")) {
+        trimmed
+    } else {
+        trimmed
+            .removePrefix("```")
+            .substringAfter('\n', "")
+            .substringBeforeLast("```")
+            .trim()
+    }
+}
+
+/**
+ * Calls the operator's chosen model to generate repair proposals.
+ *
+ * Two wire shapes are supported — Anthropic's Messages API and the OpenAI chat-completions shape
+ * that OpenAI, Together and most gateways implement — because provider, model and system prompt are
+ * an operator choice (Settings → Advanced → Self-Healing), forwarded here as the environment
+ * variables [aiRepairConfigFromEnvironment] reads.
+ *
+ * Uses [java.net.HttpURLConnection] — no additional runtime dependencies required, which matters for
+ * a service that ships as a fat JAR spawned by the kernel.
+ */
+class HttpAiRepairClient(
+    private val config: AiRepairConfig = aiRepairConfigFromEnvironment(),
+) : AiRepairClient {
     private val logger = LoggerFactory.getLogger(HttpAiRepairClient::class.java)
 
-    private val apiUrl =
-        System.getenv("AI_REPAIR_API_URL")
-            ?: "https://api.openai.com/v1/chat/completions"
-    private val apiKey =
-        System.getenv("AI_REPAIR_API_KEY")
-            ?: System.getenv("OPENAI_API_KEY")
-            ?: ""
-    private val model = System.getenv("AI_REPAIR_MODEL") ?: "gpt-5.4"
+    private val apiKey = config.apiKey
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -131,33 +146,15 @@ class HttpAiRepairClient : AiRepairClient {
 
     private suspend fun callApi(userPrompt: String): String =
         withContext(Dispatchers.IO) {
-            val requestBody =
-                buildJsonObject {
-                    put("model", model)
-                    put("max_tokens", 2048)
-                    put("temperature", 0.2)
-                    putJsonArray("messages") {
-                        addJsonObject {
-                            put("role", "system")
-                            put(
-                                "content",
-                                "You are a precise code repair assistant. Always respond with valid JSON only. Do not include markdown code fences.",
-                            )
-                        }
-                        addJsonObject {
-                            put("role", "user")
-                            put("content", userPrompt)
-                        }
-                    }
-                }.toString()
+            val requestBody = buildRequestBody(userPrompt)
 
-            val url = URL(apiUrl)
+            val url = URL(config.endpoint)
             val connection =
                 (url.openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
                     setRequestProperty("Content-Type", "application/json")
-                    setRequestProperty("Authorization", "Bearer $apiKey")
                     setRequestProperty("Accept", "application/json")
+                    applyAuth(this)
                     connectTimeout = 30_000
                     readTimeout = 60_000
                     doOutput = true
@@ -181,6 +178,62 @@ class HttpAiRepairClient : AiRepairClient {
                 connection.disconnect()
             }
         }
+
+    /**
+     * The request body for the configured wire.
+     *
+     * Anthropic takes the system prompt as a top-level field rather than a message, and rejects
+     * `temperature` outright on current models — so the two shapes differ by more than field names
+     * and are built separately instead of patched from a common object.
+     */
+    private fun buildRequestBody(userPrompt: String): String =
+        when (config.wire) {
+            AiRepairWire.ANTHROPIC -> {
+                buildJsonObject {
+                    put("model", config.model)
+                    put("max_tokens", config.wire.maxTokens)
+                    put("system", config.systemPrompt)
+                    putJsonArray("messages") {
+                        addJsonObject {
+                            put("role", "user")
+                            put("content", userPrompt)
+                        }
+                    }
+                }.toString()
+            }
+
+            AiRepairWire.OPENAI -> {
+                buildJsonObject {
+                    put("model", config.model)
+                    put("max_tokens", config.wire.maxTokens)
+                    put("temperature", 0.2)
+                    putJsonArray("messages") {
+                        addJsonObject {
+                            put("role", "system")
+                            put("content", config.systemPrompt)
+                        }
+                        addJsonObject {
+                            put("role", "user")
+                            put("content", userPrompt)
+                        }
+                    }
+                }.toString()
+            }
+        }
+
+    /** Anthropic authenticates with `x-api-key` plus a version header; everyone else with a bearer token. */
+    private fun applyAuth(connection: HttpURLConnection) {
+        when (config.wire) {
+            AiRepairWire.ANTHROPIC -> {
+                connection.setRequestProperty("x-api-key", apiKey)
+                connection.setRequestProperty("anthropic-version", ANTHROPIC_VERSION)
+            }
+
+            AiRepairWire.OPENAI -> {
+                connection.setRequestProperty("Authorization", "Bearer $apiKey")
+            }
+        }
+    }
 
     // ---- Response parsers ----
 
@@ -244,25 +297,66 @@ class HttpAiRepairClient : AiRepairClient {
         }
 
     /**
-     * Extracts the assistant message content from an OpenAI-compatible response JSON.
-     * Falls back to returning the raw string if parsing fails (e.g. some providers
-     * return the JSON payload directly).
+     * Extracts the assistant's text from a response in the configured wire's shape.
+     *
+     * Falls back to returning the raw string if parsing fails (e.g. some gateways return the JSON
+     * payload directly), which the callers then try to parse as a proposal.
      */
     private fun extractContent(rawResponse: String): String =
         try {
-            json
-                .parseToJsonElement(rawResponse)
-                .jsonObject["choices"]
-                ?.jsonArray
-                ?.firstOrNull()
-                ?.jsonObject
-                ?.get("message")
-                ?.jsonObject
-                ?.get("content")
-                ?.jsonPrimitive
-                ?.contentOrNull
-                ?: rawResponse
+            val text =
+                when (config.wire) {
+                    AiRepairWire.ANTHROPIC -> extractAnthropicText(rawResponse)
+                    AiRepairWire.OPENAI -> extractOpenAiText(rawResponse)
+                }
+            stripCodeFences(text ?: rawResponse)
         } catch (_: Exception) {
             rawResponse
         }
+
+    private fun extractOpenAiText(rawResponse: String): String? =
+        json
+            .parseToJsonElement(rawResponse)
+            .jsonObject["choices"]
+            ?.jsonArray
+            ?.firstOrNull()
+            ?.jsonObject
+            ?.get("message")
+            ?.jsonObject
+            ?.get("content")
+            ?.jsonPrimitive
+            ?.contentOrNull
+
+    /**
+     * The first `text` block of an Anthropic response.
+     *
+     * Indexing `content[0]` is wrong here: thinking is on by default on current models, so the
+     * answer is preceded by one or more thinking blocks. A refusal carries no text block at all,
+     * which is reported rather than left to surface as an unhelpful JSON parse failure.
+     */
+    private fun extractAnthropicText(rawResponse: String): String? {
+        val root = json.parseToJsonElement(rawResponse).jsonObject
+        if (root["stop_reason"]?.jsonPrimitive?.contentOrNull == "refusal") {
+            val category =
+                root["stop_details"]
+                    ?.jsonObject
+                    ?.get("category")
+                    ?.jsonPrimitive
+                    ?.contentOrNull
+            logger.warn("Model declined the repair request (category={})", category ?: "unspecified")
+            return null
+        }
+        return root["content"]
+            ?.jsonArray
+            ?.firstOrNull { it.jsonObject["type"]?.jsonPrimitive?.contentOrNull == "text" }
+            ?.jsonObject
+            ?.get("text")
+            ?.jsonPrimitive
+            ?.contentOrNull
+    }
+
+    private companion object {
+        /** Pinned per Anthropic's API contract; unrelated to the model in [AiRepairConfig]. */
+        const val ANTHROPIC_VERSION = "2023-06-01"
+    }
 }

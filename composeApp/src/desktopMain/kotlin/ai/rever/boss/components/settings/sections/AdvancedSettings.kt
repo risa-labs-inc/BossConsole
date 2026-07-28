@@ -73,6 +73,11 @@ fun AdvancedSettings() {
             }
         }
 
+        // Always shown, including with Microkernel Mode off: this is where source egress is turned
+        // on, and an operator should be able to read and set it before enabling the mode that runs
+        // it. The readiness card says when the mode is what's holding it back.
+        SelfHealingSettings(kernelMode = kernelMode)
+
         // Plugin JVM Settings (only visible in KERNEL mode)
         if (kernelMode) {
             val perfSettings by PerformanceSettingsManager.currentSettings.collectAsState()
@@ -171,8 +176,9 @@ fun AdvancedSettings() {
                     Text(
                         text =
                             "When enabled, plugins and services run in isolated child processes " +
-                                "with gRPC-based IPC. The RepairEngine provides AI-powered self-healing " +
-                                "using the OpenAI API key from LLM Providers settings. " +
+                                "with gRPC-based IPC, and a crashed process is diagnosed and recovered " +
+                                "by the orchestrator rather than simply restarted. Asking a model to " +
+                                "propose a source patch is a separate opt-in, configured above. " +
                                 "When disabled, everything runs in a single JVM process (default).",
                         fontSize = 11.sp,
                         color = TextSecondary,

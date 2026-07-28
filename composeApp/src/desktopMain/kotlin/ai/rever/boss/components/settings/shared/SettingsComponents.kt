@@ -421,6 +421,70 @@ fun SettingsTextField(
 }
 
 /**
+ * A multi-line text field, for free text that wraps — a prompt, a note, a template.
+ *
+ * Separate from [SettingsTextField] rather than a flag on it: the two differ in how they are sized
+ * and scrolled, and a one-line field is the right default for a setting.
+ */
+@Composable
+fun SettingsTextArea(
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    placeholder: String = "",
+    description: String? = null,
+    enabled: Boolean = true,
+    minLines: Int = 4,
+) {
+    Column(
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
+                .background(SurfaceColor)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        Text(text = label, color = if (enabled) TextPrimary else TextMuted, fontSize = 13.sp)
+        if (description != null) {
+            Text(
+                text = description,
+                color = TextMuted,
+                fontSize = 11.sp,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            enabled = enabled,
+            minLines = minLines,
+            textStyle = TextStyle(color = TextPrimary, fontSize = 13.sp),
+            cursorBrush = SolidColor(AccentColor),
+            decorationBox = { innerTextField ->
+                Box(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .background(BackgroundColor, RoundedCornerShape(4.dp))
+                            .border(1.dp, BorderColor, RoundedCornerShape(4.dp))
+                            .padding(horizontal = 8.dp, vertical = 8.dp),
+                ) {
+                    if (value.isEmpty()) {
+                        Text(text = placeholder, color = TextMuted, fontSize = 13.sp)
+                    }
+                    innerTextField()
+                }
+            },
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+        )
+    }
+}
+
+/**
  * A dropdown selector.
  */
 @Composable

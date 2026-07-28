@@ -18,6 +18,7 @@ import java.io.File
  * to restart processes via KernelService.RequestShutdown, and the kernel's auto-respawn
  * handles the actual re-spawn.
  */
+
 fun main() {
     val logger = LoggerFactory.getLogger("OrchestratorMain")
     logger.info("Orchestrator starting...")
@@ -64,16 +65,38 @@ fun main() {
         val snapshotManager = SnapshotManager(dataDir)
         val analyzer = CrashAnalyzer()
 
-        // Use AI-powered repairs when AI_REPAIR_API_KEY or OPENAI_API_KEY is configured
+        // AI repair sends the crashing process's source to a third-party model. That is a
+        // data-egress decision, so it takes an explicit opt-in AND a named root to read from —
+        // an API key sitting in the environment for some other purpose must never be enough to
+        // start uploading source, which is exactly what keying off the key alone did.
         val repairApiKey =
             System.getenv("AI_REPAIR_API_KEY")
                 ?: System.getenv("OPENAI_API_KEY")
+        val aiRepair =
+            aiRepairSettings(
+                optIn = System.getenv("BOSS_AI_REPAIR"),
+                projectRoot = System.getenv("BOSS_REPAIR_PROJECT_ROOT"),
+                apiKey = repairApiKey,
+            )
+
         val aiClient: AiRepairClient? =
-            if (!repairApiKey.isNullOrBlank()) {
-                logger.info("AI repair client enabled (model={})", System.getenv("AI_REPAIR_MODEL") ?: "gpt-5.4")
-                HttpAiRepairClient()
+            if (aiRepair.enabled) {
+                val repairConfig = aiRepairConfigFromEnvironment()
+                logger.warn(
+                    "AI repair ENABLED (endpoint={}, model={}, source root={}) — " +
+                        "crash source files will be sent off this machine",
+                    repairConfig.endpoint,
+                    repairConfig.model,
+                    aiRepair.projectRoot,
+                )
+                HttpAiRepairClient(repairConfig)
             } else {
-                logger.info("AI_REPAIR_API_KEY / OPENAI_API_KEY not set — AI repair proposals disabled")
+                logger.info(
+                    "AI repair disabled (opt-in={}, root named={}, key present={}) — no source leaves this machine",
+                    System.getenv("BOSS_AI_REPAIR") ?: "unset",
+                    System.getenv("BOSS_REPAIR_PROJECT_ROOT") != null,
+                    !repairApiKey.isNullOrBlank(),
+                )
                 null
             }
 
@@ -87,8 +110,9 @@ fun main() {
                 // Stated rather than defaulted: this process has no project directory to
                 // offer — its working directory is whatever the kernel spawned it with —
                 // and manifest source files go to a third-party model, so nothing is read
-                // until a host names a directory it is willing to send.
-                projectRoot = null,
+                // until a host names a directory it is willing to send. Only honoured when
+                // AI repair is switched on; a root without a client reads files nothing uses.
+                projectRoot = aiRepair.projectRoot,
                 onRequestRestart = { processId, _ ->
                     kernelStub.requestShutdown(
                         ShutdownRequest
