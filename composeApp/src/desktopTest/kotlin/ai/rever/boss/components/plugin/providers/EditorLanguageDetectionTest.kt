@@ -18,7 +18,6 @@ import kotlin.test.assertEquals
  * language while the editor highlights another.
  */
 class EditorLanguageDetectionTest {
-
     private val provider = EditorContentProviderImpl()
 
     @Test

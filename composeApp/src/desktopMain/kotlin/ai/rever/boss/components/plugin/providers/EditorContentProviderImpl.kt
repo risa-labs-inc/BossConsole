@@ -105,63 +105,85 @@ class EditorContentProviderImpl : EditorContentProvider {
         val extension = fileName.substringAfterLast('.', "").lowercase()
         return when (extension) {
             "kt", "kts" -> "kotlin"
+
             "java" -> "java"
+
             "js", "jsx" -> "javascript"
+
             "ts", "tsx" -> "typescript"
+
             "py" -> "python"
+
             "json" -> "json"
+
             "xml" -> "xml"
+
             "html", "htm" -> "html"
+
             "css" -> "css"
+
             "md" -> "markdown"
+
             "toml" -> "toml"
+
             "gradle" -> "groovy"
+
             "swift" -> "swift"
+
             "c", "h" -> "c"
+
             "cpp", "cc", "cxx", "hpp" -> "cpp"
+
             "rs" -> "rust"
+
             "go" -> "go"
+
             "rb" -> "ruby"
+
             "php" -> "php"
+
             "sh", "bash" -> "bash"
+
             "yml", "yaml" -> "yaml"
+
             "sql" -> "sql"
+
             "r" -> "r"
+
             "scala" -> "scala"
+
             // Languages the editor has lexers for but this map never named.
             "dockerfile" -> "dockerfile"
-            "mk", "mak" -> "makefile"
-            "properties", "ini", "cfg", "env" -> "properties"
-            "diff", "patch" -> "diff"
-            "bat", "cmd" -> "batch"
-            "clj", "cljs", "cljc", "edn" -> "clojure"
-            "tex", "sty", "cls", "bib" -> "latex"
-            "lisp", "lsp", "el", "scm" -> "lisp"
-            "tcl" -> "tcl"
-            "f", "f90", "f95", "f03", "for" -> "fortran"
-            "d" -> "d"
-            "pas", "dpr", "dfm" -> "delphi"
-            "vb", "vbs" -> "visualbasic"
-            "as" -> "actionscript"
-            "jsp", "jspx" -> "jsp"
-            else -> "text"
-        }
-    }
 
-    /**
-     * Languages identified by file name rather than extension, so that
-     * `Dockerfile.dev` is a Dockerfile rather than whatever `.dev` might suggest.
-     */
-    private fun languageForFileName(fileName: String): String? {
-        val lower = fileName.lowercase()
-        return when {
-            lower == "dockerfile" || lower.startsWith("dockerfile.") -> "dockerfile"
-            lower == "containerfile" || lower.startsWith("containerfile.") -> "dockerfile"
-            lower == "makefile" || lower == "gnumakefile" || lower.startsWith("makefile.") -> "makefile"
-            lower == "cmakelists.txt" -> "makefile"
-            lower == ".env" || lower.startsWith(".env.") -> "properties"
-            lower == "gemfile" || lower == "rakefile" -> "ruby"
-            else -> null
+            "mk", "mak" -> "makefile"
+
+            "properties", "ini", "cfg", "env" -> "properties"
+
+            "diff", "patch" -> "diff"
+
+            "bat", "cmd" -> "batch"
+
+            "clj", "cljs", "cljc", "edn" -> "clojure"
+
+            "tex", "sty", "cls", "bib" -> "latex"
+
+            "lisp", "lsp", "el", "scm" -> "lisp"
+
+            "tcl" -> "tcl"
+
+            "f", "f90", "f95", "f03", "for" -> "fortran"
+
+            "d" -> "d"
+
+            "pas", "dpr", "dfm" -> "delphi"
+
+            "vb", "vbs" -> "visualbasic"
+
+            "as" -> "actionscript"
+
+            "jsp", "jspx" -> "jsp"
+
+            else -> "text"
         }
     }
 
@@ -292,3 +314,23 @@ private fun DetectedMainFunction.toMainFunctionInfo(): MainFunctionInfo =
                 "packageName" to (this.packageName ?: ""),
             ),
     )
+
+/**
+ * Languages identified by file name rather than extension, so that `Dockerfile.dev`
+ * is a Dockerfile rather than whatever `.dev` might otherwise suggest.
+ *
+ * A top-level function rather than a member: it needs nothing from the provider, and
+ * as a method it pushed the class past detekt's TooManyFunctions threshold.
+ */
+private fun languageForFileName(fileName: String): String? {
+    val lower = fileName.lowercase()
+    return when {
+        lower == "dockerfile" || lower.startsWith("dockerfile.") -> "dockerfile"
+        lower == "containerfile" || lower.startsWith("containerfile.") -> "dockerfile"
+        lower == "makefile" || lower == "gnumakefile" || lower.startsWith("makefile.") -> "makefile"
+        lower == "cmakelists.txt" -> "makefile"
+        lower == ".env" || lower.startsWith(".env.") -> "properties"
+        lower == "gemfile" || lower == "rakefile" -> "ruby"
+        else -> null
+    }
+}
