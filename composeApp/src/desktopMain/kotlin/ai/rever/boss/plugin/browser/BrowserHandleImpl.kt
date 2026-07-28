@@ -364,22 +364,21 @@ internal class BrowserHandleImpl(
      * Publish whether a finished main-frame navigation actually loaded a page, so the URL
      * history and the dashboard's recent pages can skip the ones that didn't.
      *
-     * A navigation counts as failed when Chromium swapped in its error page, when nothing
-     * committed at all (a download or a cancelled load), or when the engine reported a
-     * network error. Sub-frames are ignored: an iframe that fails says nothing about the
-     * page the user is on.
+     * Two kinds of eviction follow a failure, because publishing a verdict is not enough
+     * on its own. The loading and navigation callbacks below run inside this handler and
+     * are guaranteed to see it, but **title callbacks are a separate event stream**
+     * (`TitleChanged`, wired in [setupEventListeners]) and Chromium sets an error page's
+     * title around commit time — so a visit can already have been recorded by the time
+     * this runs. Retracting anything recorded in the last few seconds closes that race
+     * for every failure class, not just the ones that evict unconditionally.
      *
-     * Failures that mean "this address does not exist" also evict any entry a previous
-     * visit left behind, so a host that was recorded before this gating existed stops
-     * coming back as a suggestion the next time it's tried. Failures that are about the
-     * connection rather than the address (offline, timeout, aborted) leave history alone —
-     * a site you can't reach right now is still a site you visited.
+     * Failures that mean "this address does not exist" evict regardless of age, which is
+     * what retires a typo recorded before this gating existed. Failures about the
+     * connection rather than the address (offline, timeout, aborted) only ever retract the
+     * racing entry — a site you can't reach right now is still a site you visited.
      */
     private fun recordNavigationOutcome(event: NavigationFinished) {
         try {
-            val url = if (event.isInMainFrame) event.url() else ""
-            if (url.isBlank()) return
-
             val error =
                 try {
                     event.error()
@@ -391,14 +390,31 @@ internal class BrowserHandleImpl(
                     )
                     NetError.OK
                 }
+            val url = event.url()
+            val verdict =
+                classifyNavigation(
+                    isMainFrame = event.isInMainFrame,
+                    hasUrl = url.isNotBlank(),
+                    isErrorPage = event.isErrorPage,
+                    hasCommitted = event.hasCommitted(),
+                    hasNetworkError = error != NetError.OK,
+                )
 
-            if (!event.isErrorPage && event.hasCommitted() && error == NetError.OK) {
-                NavigationOutcomeTracker.recordSuccess(url)
-            } else {
-                NavigationOutcomeTracker.recordFailure(url)
-                if (error in ADDRESS_DOES_NOT_EXIST_ERRORS) {
-                    UrlHistoryManager.removeMatchingUrls(url)
-                    RecentBrowserPagesManager.removeMatchingPages(url)
+            when (verdict) {
+                NavigationVerdict.IGNORED -> {
+                    return
+                }
+
+                NavigationVerdict.LOADED -> {
+                    NavigationOutcomeTracker.recordSuccess(url)
+                }
+
+                NavigationVerdict.FAILED -> {
+                    NavigationOutcomeTracker.recordFailure(url)
+                    val window =
+                        if (error in ADDRESS_DOES_NOT_EXIST_ERRORS) null else RACE_RETRACTION_MS
+                    UrlHistoryManager.removeMatchingUrls(url, window)
+                    RecentBrowserPagesManager.removeMatchingPages(url, window)
                 }
             }
         } catch (e: Exception) {
@@ -1724,6 +1740,15 @@ internal class BrowserHandleImpl(
          * change that. Only these evict existing history entries; see
          * [recordNavigationOutcome].
          */
+
+        /**
+         * How far back a failure retracts visits recorded by a callback that raced ahead
+         * of it. Long enough to cover the title/load callbacks for the navigation that
+         * just failed, short enough that a genuine earlier visit to the same address is
+         * never mistaken for one.
+         */
+        private const val RACE_RETRACTION_MS = 5_000L
+
         private val ADDRESS_DOES_NOT_EXIST_ERRORS =
             setOf(
                 NetError.NAME_NOT_RESOLVED,

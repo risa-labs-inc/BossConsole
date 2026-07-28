@@ -6,6 +6,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -127,5 +128,132 @@ class NavigationOutcomeTrackerTest {
 
         // The address doesn't resolve, so no #section of it resolves either.
         assertTrue(NavigationOutcomeTracker.didFail("https://youtube.como/#watch"))
+    }
+
+    @Test
+    fun `a failure stops counting once it is stale`() {
+        val failedAt = 1_000_000L
+        NavigationOutcomeTracker.recordFailure("https://example.com/", now = failedAt)
+
+        val ttl = NavigationOutcomeTracker.FAILURE_TTL_MS
+        assertTrue(NavigationOutcomeTracker.didFail("https://example.com/", now = failedAt + ttl))
+        // Past the window the verdict is dropped: a redirect commits a different URL, so
+        // nothing would ever clear the address the user actually asked for.
+        assertFalse(
+            NavigationOutcomeTracker.didFail("https://example.com/", now = failedAt + ttl + 1),
+        )
+    }
+
+    @Test
+    fun `a host with a port normalizes like any other host`() {
+        // The typed form and the committed form differ in scheme, www and path casing;
+        // all three have to land on one key or the gate silently misses.
+        assertEquals(
+            canonicalUrlKey("https://www.Example.com:8443/App"),
+            canonicalUrlKey("example.com:8443/App"),
+        )
+    }
+
+    @Test
+    fun `paths keep their case`() {
+        // Servers distinguish /Doc from /doc, and a file:// path may sit on a
+        // case-sensitive filesystem — these keys drive deletion, so they must not merge.
+        assertNotEquals(canonicalUrlKey("https://example.com/Doc"), canonicalUrlKey("https://example.com/doc"))
+        assertNotEquals(
+            canonicalUrlKey("file:///Users/me/Doc.html"),
+            canonicalUrlKey("file:///users/me/doc.html"),
+        )
+    }
+
+    @Test
+    fun `an opaque body is preserved exactly`() {
+        // data: payloads are base64 — lowercasing one changes what it decodes to.
+        assertEquals("data:text/plain;base64,SGVsbG8", canonicalUrlKey("data:text/plain;base64,SGVsbG8"))
+        assertEquals("about:blank", canonicalUrlKey("ABOUT:blank"))
+    }
+
+    @Test
+    fun `a scheme is normalized but its authority still is too`() {
+        assertEquals(canonicalUrlKey("CHROME://Settings"), canonicalUrlKey("chrome://settings"))
+    }
+
+    @Test
+    fun `only http and https addresses are worth suggesting`() {
+        assertEquals("example.com", suggestableHost("https://example.com/path"))
+        assertEquals("example.com", suggestableHost("HTTP://Example.com"))
+        assertNull(suggestableHost("file:///Users/me/notes.html"))
+        assertNull(suggestableHost("about:blank"))
+        assertNull(suggestableHost("data:text/plain,hi"))
+        assertNull(suggestableHost("not a url at all"))
+    }
+
+    @Test
+    fun `a navigation that loaded a page is the only kind worth recording`() {
+        assertEquals(
+            NavigationVerdict.LOADED,
+            classifyNavigation(
+                isMainFrame = true,
+                hasUrl = true,
+                isErrorPage = false,
+                hasCommitted = true,
+                hasNetworkError = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `error pages, uncommitted loads and network errors all count as failure`() {
+        val errorPage =
+            classifyNavigation(
+                isMainFrame = true,
+                hasUrl = true,
+                isErrorPage = true,
+                hasCommitted = true,
+                hasNetworkError = false,
+            )
+        val neverCommitted =
+            classifyNavigation(
+                isMainFrame = true,
+                hasUrl = true,
+                isErrorPage = false,
+                hasCommitted = false,
+                hasNetworkError = false,
+            )
+        val netError =
+            classifyNavigation(
+                isMainFrame = true,
+                hasUrl = true,
+                isErrorPage = false,
+                hasCommitted = true,
+                hasNetworkError = true,
+            )
+
+        assertEquals(NavigationVerdict.FAILED, errorPage)
+        assertEquals(NavigationVerdict.FAILED, neverCommitted)
+        assertEquals(NavigationVerdict.FAILED, netError)
+    }
+
+    @Test
+    fun `sub-frames and blank urls say nothing about the page`() {
+        // An iframe that fails to load is not the page the user is on.
+        val subFrame =
+            classifyNavigation(
+                isMainFrame = false,
+                hasUrl = true,
+                isErrorPage = true,
+                hasCommitted = false,
+                hasNetworkError = true,
+            )
+        val noUrl =
+            classifyNavigation(
+                isMainFrame = true,
+                hasUrl = false,
+                isErrorPage = false,
+                hasCommitted = true,
+                hasNetworkError = false,
+            )
+
+        assertEquals(NavigationVerdict.IGNORED, subFrame)
+        assertEquals(NavigationVerdict.IGNORED, noUrl)
     }
 }

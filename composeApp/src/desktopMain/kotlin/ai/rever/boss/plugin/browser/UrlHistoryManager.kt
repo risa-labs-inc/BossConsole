@@ -1,12 +1,16 @@
 package ai.rever.boss.plugin.browser
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.LogSanitizer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -22,11 +26,58 @@ data class UrlHistoryEntry(
     val lastVisited: Long = System.currentTimeMillis(),
 )
 
+/**
+ * Collapse entries that are the same page under different spellings.
+ *
+ * History recorded before the browser plugin reported committed URLs holds both what the
+ * user typed (`https://youtube.com`, no title) and what the browser loaded
+ * (`https://www.youtube.com/`, "YouTube") — two suggestions for one site, one of them
+ * titleless. Merging keeps the entry that knows the page's title, sums the visit counts so
+ * ranking isn't split between the two, and takes the later visit. An `https` spelling wins
+ * over its plaintext twin regardless of counts: the merged URL is one we will navigate to.
+ *
+ * Grouping is by [distinctPageKey], NOT the fragment-insensitive [canonicalUrlKey]:
+ * hash-routed apps put genuinely different pages behind one path, so merging on the looser
+ * key would fold every Gmail view (`#inbox`, `#sent`, `#search/…`) into one.
+ *
+ * Top-level rather than a member so it can be tested without [UrlHistoryManager]'s `init`
+ * reading the developer's real history file.
+ */
+internal fun mergeDuplicateHistoryEntries(entries: List<UrlHistoryEntry>): List<UrlHistoryEntry> =
+    entries
+        .groupBy { distinctPageKey(it.url) }
+        .map { (_, group) ->
+            if (group.size == 1) {
+                group.first()
+            } else {
+                val primary =
+                    group
+                        .sortedWith(
+                            compareByDescending<UrlHistoryEntry> { it.title.isNotBlank() }
+                                .thenByDescending { it.url.startsWith("https", ignoreCase = true) }
+                                .thenByDescending { it.visitCount }
+                                .thenByDescending { it.lastVisited },
+                        ).first()
+                primary.copy(
+                    visitCount = group.sumOf { it.visitCount },
+                    lastVisited = group.maxOf { it.lastVisited },
+                )
+            }
+        }
+
 object UrlHistoryManager {
     private val logger = BossLogger.forComponent("UrlHistoryManager")
     private val historyFile = BossDirectories.resolve("browser-history.json")
     private val history = ConcurrentHashMap<String, UrlHistoryEntry>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * One writer at a time. [saveHistory] is public and fires from several directions —
+     * the browser plugin on every page load, a deletion, an eviction — and two overlapping
+     * writes would interleave into a file that no longer parses, which [loadHistory]
+     * reports as "no history" and silently starts empty.
+     */
+    private val saveLock = Mutex()
     private val json =
         Json {
             prettyPrint = true
@@ -43,7 +94,7 @@ object UrlHistoryManager {
                 val content = historyFile.readText()
                 if (content.isNotEmpty()) {
                     val entries = json.decodeFromString<List<UrlHistoryEntry>>(content)
-                    mergeDuplicates(entries).forEach { entry ->
+                    mergeDuplicateHistoryEntries(entries).forEach { entry ->
                         history[entry.url] = entry
                     }
                 }
@@ -53,52 +104,21 @@ object UrlHistoryManager {
         }
     }
 
-    /**
-     * Collapse entries that are the same page under different spellings.
-     *
-     * History recorded before the browser plugin reported committed URLs holds both what
-     * the user typed (`https://youtube.com`, no title) and what the browser loaded
-     * (`https://www.youtube.com/`, "YouTube") — two suggestions for one site, one of them
-     * titleless. Merging keeps the entry that knows the page's title, sums the visit
-     * counts so ranking isn't split between the two, and takes the later visit.
-     *
-     * Grouping is by [distinctPageKey], NOT the fragment-insensitive [canonicalUrlKey]:
-     * hash-routed apps put genuinely different pages behind one path, so merging on the
-     * looser key would fold every Gmail view (`#inbox`, `#sent`, `#search/…`) into one.
-     */
-    internal fun mergeDuplicates(entries: List<UrlHistoryEntry>): List<UrlHistoryEntry> =
-        entries
-            .groupBy { distinctPageKey(it.url) }
-            .map { (_, group) ->
-                if (group.size == 1) {
-                    group.first()
-                } else {
-                    val primary =
-                        group
-                            .sortedWith(
-                                compareByDescending<UrlHistoryEntry> { it.title.isNotBlank() }
-                                    .thenByDescending { it.visitCount }
-                                    .thenByDescending { it.lastVisited },
-                            ).first()
-                    primary.copy(
-                        visitCount = group.sumOf { it.visitCount },
-                        lastVisited = group.maxOf { it.lastVisited },
-                    )
-                }
-            }
-
     suspend fun saveHistory() =
         withContext(Dispatchers.IO) {
-            try {
-                historyFile.parentFile?.mkdirs()
-                val entries =
-                    history.values
-                        .toList()
-                        .sortedByDescending { it.visitCount * 1000 + (it.lastVisited / 1000000) }
-                        .take(1000) // Keep only top 1000 entries
-                historyFile.writeText(json.encodeToString(entries))
-            } catch (e: Exception) {
-                logger.warn(LogCategory.BROWSER, "Failed to save browser history", error = e)
+            saveLock.withLock {
+                try {
+                    val entries =
+                        history.values
+                            .toList()
+                            .sortedByDescending { it.visitCount * 1000 + (it.lastVisited / 1000000) }
+                            .take(1000) // Keep only top 1000 entries
+                    // Atomic: a crash or a concurrent writer leaves the previous file
+                    // intact rather than a half-written one.
+                    historyFile.atomicWriteText(json.encodeToString(entries))
+                } catch (e: Exception) {
+                    logger.warn(LogCategory.BROWSER, "Failed to save browser history", error = e)
+                }
             }
         }
 
@@ -106,7 +126,14 @@ object UrlHistoryManager {
         url: String,
         title: String,
     ) {
-        val domain = suggestableHostOrNull(url)
+        val domain = suggestableHost(url)
+        if (domain == null) {
+            logger.debug(
+                LogCategory.BROWSER,
+                "Ignoring history entry without a suggestable host",
+                mapOf("url" to LogSanitizer.maskUriParams(url)),
+            )
+        }
 
         // A page the browser never managed to load is not somewhere the user has been —
         // suggesting it back to them is how a typo like `youtube.como` became permanent.
@@ -131,29 +158,6 @@ object UrlHistoryManager {
                 )
             }
     }
-
-    /**
-     * The host of [url] when it is an address worth offering back as a suggestion, else
-     * null.
-     *
-     * Suggestions are matched and displayed by domain, so anything without one —
-     * `about:blank`, `data:`, `blob:`, `chrome://`, `file://` — has nothing to contribute
-     * to the list, and an unparsable URL has no business in it either.
-     */
-    private fun suggestableHostOrNull(url: String): String? =
-        try {
-            val parsed = java.net.URL(url)
-            val scheme = parsed.protocol?.lowercase()
-            val host = parsed.host?.lowercase().orEmpty()
-            if ((scheme == "http" || scheme == "https") && host.isNotBlank()) host else null
-        } catch (e: Exception) {
-            logger.debug(
-                LogCategory.BROWSER,
-                "Ignoring history entry with unparsable URL",
-                mapOf("error" to e.toString()),
-            )
-            null
-        }
 
     fun getSuggestions(
         query: String,
@@ -205,15 +209,38 @@ object UrlHistoryManager {
      * (`youtube.como`), while the engine reports the URL it tried to load
      * (`https://youtube.como/`).
      *
+     * @param recordedWithinMs when set, only removes entries last visited that recently.
+     *   This is the narrow case: a title callback that raced ahead of the navigation
+     *   verdict and recorded a visit the browser was about to report as failed. Entries
+     *   older than the window are real history — a site that is down today was still
+     *   visited last week — and are left alone. Pass null to evict regardless of age,
+     *   for failures that mean the address does not exist at all.
      * @return the number of entries removed
      */
-    fun removeMatchingUrls(url: String): Int {
+    fun removeMatchingUrls(
+        url: String,
+        recordedWithinMs: Long? = null,
+    ): Int {
         val key = canonicalUrlKey(url)
+        if (key.isEmpty()) return 0
+
+        val cutoff = recordedWithinMs?.let { System.currentTimeMillis() - it }
         val matches =
-            if (key.isEmpty()) emptyList() else history.keys.filter { canonicalUrlKey(it) == key }
+            history.values.filter { entry ->
+                canonicalUrlKey(entry.url) == key && (cutoff == null || entry.lastVisited >= cutoff)
+            }
 
         if (matches.isNotEmpty()) {
-            matches.forEach { history.remove(it) }
+            matches.forEach { history.remove(it.url) }
+            logger.info(
+                LogCategory.BROWSER,
+                "Removed history entries for an address that failed to load",
+                mapOf(
+                    "url" to LogSanitizer.maskUriParams(url),
+                    "removed" to matches.size.toString(),
+                    "scope" to if (cutoff == null) "all" else "recent",
+                ),
+            )
             // Persist here rather than waiting for the next saveHistory() — an evicted
             // entry that survives in the file is exactly the stale suggestion we just
             // removed.

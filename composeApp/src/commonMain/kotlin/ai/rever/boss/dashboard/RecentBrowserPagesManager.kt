@@ -2,7 +2,9 @@ package ai.rever.boss.dashboard
 
 import ai.rever.boss.plugin.browser.NavigationOutcomeTracker
 import ai.rever.boss.plugin.browser.canonicalUrlKey
+import ai.rever.boss.plugin.browser.suggestableHost
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CoroutineScope
@@ -63,9 +65,6 @@ object RecentBrowserPagesManager {
     private val logger = BossLogger.forComponent("RecentBrowserPagesManager")
     private const val MAX_PAGES = 30
     private const val SAVE_DEBOUNCE_MS = 5000L // Debounce saves to max once per 5 seconds
-
-    /** Schemes that address the browser itself rather than a page someone visited. */
-    private val INTERNAL_URL_PREFIXES = listOf("about:", "chrome:", "data:")
     private val settingsFile = BossDirectories.resolve("recent-browser-pages.json")
     private val json =
         Json {
@@ -298,7 +297,9 @@ object RecentBrowserPagesManager {
                 settingsFile.parentFile?.mkdirs()
                 val data = RecentBrowserPagesData(pages = _recentPages.value)
                 val content = json.encodeToString(RecentBrowserPagesData.serializer(), data)
-                settingsFile.writeText(content)
+                // Atomic: the debounced save and an eviction can land together, and a
+                // half-written file reads back as "no recent pages".
+                settingsFile.atomicWriteText(content)
             } catch (e: Exception) {
                 logger.warn(LogCategory.SYSTEM, "Error saving recent pages", error = e)
             }
@@ -318,12 +319,13 @@ object RecentBrowserPagesManager {
         title: String,
         faviconCacheKey: String? = null,
     ) {
-        // Internal URLs have no page behind them, and a navigation that ended on an error
-        // page never showed the user anything — it still reports a title and a finished
-        // load, so without the outcome check a mistyped host would sit in the recent pages
-        // (and come back as a suggestion) as if it had loaded.
-        val isInternal = INTERNAL_URL_PREFIXES.any { url.startsWith(it) }
-        val describesAPage = url.isNotBlank() && title.isNotBlank() && !isInternal
+        // A navigation that ended on an error page never showed the user anything — it
+        // still reports a title and a finished load, so without the outcome check a
+        // mistyped host would sit in the recent pages (and come back as a suggestion) as
+        // if it had loaded. The host check is shared with the URL history so the two
+        // stores can't drift on what counts as a page: `about:`, `data:`, `blob:`,
+        // `chrome://` and `file://` have no domain to match or display.
+        val describesAPage = title.isNotBlank() && suggestableHost(url) != null
         if (!describesAPage || NavigationOutcomeTracker.didFail(url)) return
 
         scope.launch {
@@ -377,14 +379,31 @@ object RecentBrowserPagesManager {
      * under the URL the user typed is still found when the browser reports the URL it
      * actually tried to load. Used to retire entries for addresses that turn out not to
      * exist.
+     *
+     * @param recordedWithinMs when set, only removes pages visited that recently — the
+     *   race where a title callback recorded a visit just before the browser reported the
+     *   navigation as failed. Older entries are real history and are left alone. Null
+     *   removes regardless of age.
      */
-    fun removeMatchingPages(url: String) {
+    fun removeMatchingPages(
+        url: String,
+        recordedWithinMs: Long? = null,
+    ) {
         val key = canonicalUrlKey(url)
         if (key.isEmpty()) return
 
         scope.launch {
-            val remaining = _recentPages.value.filter { canonicalUrlKey(it.url) != key }
+            val cutoff = recordedWithinMs?.let { System.currentTimeMillis() - it }
+            val remaining =
+                _recentPages.value.filterNot { page ->
+                    canonicalUrlKey(page.url) == key && (cutoff == null || page.lastVisited >= cutoff)
+                }
             if (remaining.size != _recentPages.value.size) {
+                logger.info(
+                    LogCategory.BROWSER,
+                    "Removed recent pages for an address that failed to load",
+                    mapOf("removed" to (_recentPages.value.size - remaining.size).toString()),
+                )
                 _recentPages.value = remaining
                 scheduleSave()
             }

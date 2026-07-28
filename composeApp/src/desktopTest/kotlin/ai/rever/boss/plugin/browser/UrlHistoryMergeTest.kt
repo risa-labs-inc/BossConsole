@@ -27,7 +27,7 @@ class UrlHistoryMergeTest {
     @Test
     fun `the entry that knows the title wins and the counts add up`() {
         val merged =
-            UrlHistoryManager.mergeDuplicates(
+            mergeDuplicateHistoryEntries(
                 listOf(
                     entry("https://youtube.com", visits = 7, lastVisited = 200),
                     entry("https://www.youtube.com/", title = "YouTube", visits = 48, lastVisited = 100),
@@ -52,7 +52,7 @@ class UrlHistoryMergeTest {
                 entry("https://mail.google.com/mail/u/0/#drafts", title = "Drafts"),
             )
 
-        assertEquals(3, UrlHistoryManager.mergeDuplicates(entries).size)
+        assertEquals(3, mergeDuplicateHistoryEntries(entries).size)
     }
 
     @Test
@@ -64,20 +64,36 @@ class UrlHistoryMergeTest {
                 entry("https://example.com/a?q=1", title = "A search"),
             )
 
-        assertEquals(3, UrlHistoryManager.mergeDuplicates(entries).size)
+        assertEquals(3, mergeDuplicateHistoryEntries(entries).size)
     }
 
     @Test
     fun `a history with nothing to merge comes back unchanged`() {
         val entries = listOf(entry("https://example.com/", title = "Example", visits = 3))
 
-        assertEquals(entries, UrlHistoryManager.mergeDuplicates(entries))
+        assertEquals(entries, mergeDuplicateHistoryEntries(entries))
+    }
+
+    @Test
+    fun `the https spelling wins even when the plaintext twin has the visits`() {
+        // The merged URL is one we will navigate to, so it must not downgrade the user
+        // to http just because the old entry was visited more often.
+        val merged =
+            mergeDuplicateHistoryEntries(
+                listOf(
+                    entry("http://example.com/app", title = "App", visits = 40),
+                    entry("https://example.com/app", title = "App", visits = 2),
+                ),
+            )
+
+        assertEquals("https://example.com/app", merged.single().url)
+        assertEquals(42, merged.single().visitCount)
     }
 
     @Test
     fun `when no entry has a title the most visited one represents the group`() {
         val merged =
-            UrlHistoryManager.mergeDuplicates(
+            mergeDuplicateHistoryEntries(
                 listOf(
                     entry("https://example.com", visits = 2),
                     entry("https://www.example.com/", visits = 9),
