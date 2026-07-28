@@ -9,13 +9,24 @@ package ai.rever.boss.components.plugin.language
  * `Makefile`, because every one of them keyed on an extension and those files have
  * none.
  *
- * Everything host-side routes here now, so a fix lands once instead of three times
- * — and `editor_detect_language` cannot report one language while the editor tab
- * highlights another.
+ * Both host-side consumers of the plugin-facing language id route here — this
+ * provider and the built-in editor tab — so `editor_detect_language` cannot report
+ * one language while that tab highlights another.
+ *
+ * It is **not** yet every map in the tree. `EditorServiceImpl` in
+ * `modules/boss-app-editor` keeps its own (`plaintext` for unknown, `shell` rather
+ * than `bash`, and a `proto` this table lacks), and `FileIcons.forSpecialFileName`
+ * in `plugin-platform/plugin-icons` is a third. Neither can depend on
+ * `composeApp/commonMain`, so absorbing them means moving this table into a
+ * `plugin-platform` module — which both of those, and plugins, *can* consume.
+ * Until then those remain hand-maintained.
  *
  * The editor-tab plugin keeps its own `LanguageDetection` (separate artifact, cannot
- * depend on this) and the ids must stay byte-identical to it: `properties` not
- * `ini`, `batch` not `bat`.
+ * depend on this). Measured against it: the 15 ids added here are identical
+ * (`properties` not `ini`, `batch` not `bat`); `sh`/`bash`/`zsh` differ — `bash`
+ * here, `shell` there — but its lexer factory accepts both, so they resolve to the
+ * same lexer; and `r` has no lexer on either side, so `.r` files are named but not
+ * highlighted. Nothing enforces this at build time.
  *
  * The tables are data rather than a `when` chain — a 40-branch `when` is both harder
  * to scan and, at complexity 44, something detekt rightly objects to.
