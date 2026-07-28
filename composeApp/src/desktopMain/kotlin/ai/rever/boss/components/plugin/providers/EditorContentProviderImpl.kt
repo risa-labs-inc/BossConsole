@@ -83,8 +83,26 @@ class EditorContentProviderImpl : EditorContentProvider {
         content: String,
     ): Boolean = writeFileContent(filePath, content)
 
+    /**
+     * Language id for [filePath], as reported to plugins and to the
+     * `editor_detect_language` MCP tool.
+     *
+     * File *name* patterns are checked before the extension: the files that most
+     * need identifying have no extension at all, and an extension-only lookup can
+     * never match `Dockerfile` or `Makefile` (`substringAfterLast('.')` yields `""`).
+     *
+     * The extension is read from the file name rather than the whole path, because
+     * reading it from the path let a dot in a parent directory leak into the answer —
+     * `/srv/v1.2/Makefile` produced the "extension" `2/Makefile`.
+     *
+     * Kept in step with `LanguageDetection` in the editor-tab plugin, which is what
+     * actually selects the lexer; a disagreement between the two shows up as the
+     * tool reporting one language while the editor highlights another.
+     */
     override fun detectLanguage(filePath: String): String {
-        val extension = filePath.substringAfterLast('.', "").lowercase()
+        val fileName = filePath.substringAfterLast('/').substringAfterLast('\\')
+        languageForFileName(fileName)?.let { return it }
+        val extension = fileName.substringAfterLast('.', "").lowercase()
         return when (extension) {
             "kt", "kts" -> "kotlin"
             "java" -> "java"
@@ -110,7 +128,40 @@ class EditorContentProviderImpl : EditorContentProvider {
             "sql" -> "sql"
             "r" -> "r"
             "scala" -> "scala"
+            // Languages the editor has lexers for but this map never named.
+            "dockerfile" -> "dockerfile"
+            "mk", "mak" -> "makefile"
+            "properties", "ini", "cfg", "env" -> "properties"
+            "diff", "patch" -> "diff"
+            "bat", "cmd" -> "batch"
+            "clj", "cljs", "cljc", "edn" -> "clojure"
+            "tex", "sty", "cls", "bib" -> "latex"
+            "lisp", "lsp", "el", "scm" -> "lisp"
+            "tcl" -> "tcl"
+            "f", "f90", "f95", "f03", "for" -> "fortran"
+            "d" -> "d"
+            "pas", "dpr", "dfm" -> "delphi"
+            "vb", "vbs" -> "visualbasic"
+            "as" -> "actionscript"
+            "jsp", "jspx" -> "jsp"
             else -> "text"
+        }
+    }
+
+    /**
+     * Languages identified by file name rather than extension, so that
+     * `Dockerfile.dev` is a Dockerfile rather than whatever `.dev` might suggest.
+     */
+    private fun languageForFileName(fileName: String): String? {
+        val lower = fileName.lowercase()
+        return when {
+            lower == "dockerfile" || lower.startsWith("dockerfile.") -> "dockerfile"
+            lower == "containerfile" || lower.startsWith("containerfile.") -> "dockerfile"
+            lower == "makefile" || lower == "gnumakefile" || lower.startsWith("makefile.") -> "makefile"
+            lower == "cmakelists.txt" -> "makefile"
+            lower == ".env" || lower.startsWith(".env.") -> "properties"
+            lower == "gemfile" || lower == "rakefile" -> "ruby"
+            else -> null
         }
     }
 
