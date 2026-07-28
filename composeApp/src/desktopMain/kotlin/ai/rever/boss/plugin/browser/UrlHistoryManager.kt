@@ -81,10 +81,13 @@ internal fun mergeDuplicateHistoryEntries(entries: List<UrlHistoryEntry>): List<
  *
  * Pure so the destructive decision is testable without touching a real history file.
  *
- * @param recordedWithinMs when set, only entries visited that recently are candidates —
- *   the narrow case of a title callback that recorded a visit just before the browser
- *   reported the navigation as failed. Null means the address itself is gone, and every
- *   spelling of it goes regardless of age.
+ * @param recordedWithinMs when set, this is the **retraction** case: undoing a visit a
+ *   title callback recorded moments before the browser reported the navigation as failed.
+ *   It only takes entries that the racing callback could itself have created — a single
+ *   visit — because `lastVisited` is refreshed on every visit, so "touched in the last 5s"
+ *   would otherwise also describe a site with three hundred visits that was simply open a
+ *   moment ago. Null is the **eviction** case: the address itself is gone, and every
+ *   spelling of it goes regardless of age or visit count.
  */
 internal fun entriesToEvict(
     entries: Collection<UrlHistoryEntry>,
@@ -97,7 +100,7 @@ internal fun entriesToEvict(
 
     val cutoff = recordedWithinMs?.let { now - it }
     return entries.filter { entry ->
-        canonicalUrlKey(entry.url) == key && (cutoff == null || entry.lastVisited >= cutoff)
+        shouldRetireVisit(entry.url, entry.lastVisited, entry.visitCount, key, cutoff)
     }
 }
 

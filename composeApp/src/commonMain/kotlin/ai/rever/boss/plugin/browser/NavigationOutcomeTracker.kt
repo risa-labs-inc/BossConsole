@@ -82,7 +82,12 @@ object NavigationOutcomeTracker {
     ) {
         val key = canonicalUrlKey(url)
         if (key.isEmpty()) return
-        lastLoadedAt = now
+        // Only a page fetched over the network is evidence that name resolution works.
+        // `about:blank` commits as a normal main-frame navigation in this app — it is the
+        // new-tab/dashboard page — and so do file:// pages, so counting them would let
+        // opening a tab during a DNS outage vouch for the resolver and re-arm the
+        // eviction this flag exists to hold back.
+        if (suggestableHost(url) != null) lastLoadedAt = now
         synchronized(failedUrls) {
             failedUrls.remove(key)
         }
@@ -174,6 +179,28 @@ fun suggestableHost(url: String): String? =
         // that want a breadcrumb log the masked URL themselves.
         null
     }
+
+/**
+ * Whether a stored visit should be retired because a navigation to [targetKey] failed.
+ *
+ * Shared by both stores so the *destructive* decision can't drift between them — the same
+ * reason [suggestableHost] is shared for the additive one.
+ *
+ * @param cutoff the earliest `lastVisited` a retraction may touch, or null for eviction of
+ *   an address that no longer exists. A retraction also requires a single visit: it exists
+ *   to undo one racing record, and `lastVisited` alone can't tell that apart from a
+ *   long-standing entry that happens to have been open a moment ago.
+ */
+fun shouldRetireVisit(
+    entryUrl: String,
+    entryLastVisited: Long,
+    entryVisitCount: Int,
+    targetKey: String,
+    cutoff: Long?,
+): Boolean {
+    if (targetKey.isEmpty() || canonicalUrlKey(entryUrl) != targetKey) return false
+    return cutoff == null || (entryLastVisited >= cutoff && entryVisitCount <= 1)
+}
 
 /**
  * Like [canonicalUrlKey], but two URLs are only the same page if their fragments agree.

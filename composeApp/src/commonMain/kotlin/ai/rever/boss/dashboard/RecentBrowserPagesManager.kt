@@ -2,6 +2,7 @@ package ai.rever.boss.dashboard
 
 import ai.rever.boss.plugin.browser.NavigationOutcomeTracker
 import ai.rever.boss.plugin.browser.canonicalUrlKey
+import ai.rever.boss.plugin.browser.shouldRetireVisit
 import ai.rever.boss.plugin.browser.suggestableHost
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.atomicWriteText
@@ -409,8 +410,7 @@ object RecentBrowserPagesManager {
             _recentPages.update { pages ->
                 val remaining =
                     pages.filterNot { page ->
-                        canonicalUrlKey(page.url) == key &&
-                            (cutoff == null || page.lastVisited >= cutoff)
+                        shouldRetireVisit(page.url, page.lastVisited, page.visitCount, key, cutoff)
                     }
                 removed = pages.size - remaining.size
                 remaining

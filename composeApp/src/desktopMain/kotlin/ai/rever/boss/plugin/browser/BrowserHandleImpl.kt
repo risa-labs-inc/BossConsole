@@ -180,6 +180,13 @@ internal class BrowserHandleImpl(
     // Main-thread scope for injection/teardown (rrweb inject + executeJavaScript run on Main).
     private val coBrowseScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
+    /**
+     * Runs history retraction off the engine's event thread. Not tied to this handle's
+     * lifetime on purpose — a retraction triggered by the navigation that closed a tab
+     * still has to complete.
+     */
+    private val retractionScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     // Lock for thread-safe browser operations
     private val browserLock = ReentrantReadWriteLock()
 
@@ -411,6 +418,7 @@ internal class BrowserHandleImpl(
 
                 NavigationVerdict.FAILED -> {
                     NavigationOutcomeTracker.recordFailure(url)
+
                     // Only treat "the address does not exist" as permanent while name
                     // resolution is demonstrably working — otherwise a DNS outage would
                     // read as every site the user tried having ceased to exist, and take
@@ -418,8 +426,25 @@ internal class BrowserHandleImpl(
                     val addressIsGone =
                         error in ADDRESS_DOES_NOT_EXIST_ERRORS &&
                             NavigationOutcomeTracker.hasLoadedRecently()
-                    val window = if (addressIsGone) null else RACE_RETRACTION_MS
-                    UrlHistoryManager.removeMatchingUrls(url, window)
+
+                    // Retraction is only for the callback that raced this verdict, and
+                    // only an error page races it: Chromium titles the error document,
+                    // which is what can reach the history before this handler runs. A
+                    // navigation that never committed (stop pressed, a link clicked while
+                    // a reload was in flight, a load that became a download) produces no
+                    // title and no visit, so there is nothing to undo — and treating it as
+                    // failure here would delete the entry for a page the user is happily
+                    // looking at.
+                    val window =
+                        when {
+                            addressIsGone -> null
+                            event.isErrorPage -> RACE_RETRACTION_MS
+                            else -> return
+                        }
+                    // Off the engine's event thread: this walks the whole history.
+                    retractionScope.launch {
+                        UrlHistoryManager.removeMatchingUrls(url, window)
+                    }
                     RecentBrowserPagesManager.removeMatchingPages(url, window)
                 }
             }

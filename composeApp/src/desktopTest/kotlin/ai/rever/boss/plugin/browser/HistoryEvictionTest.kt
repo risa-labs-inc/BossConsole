@@ -75,6 +75,50 @@ class HistoryEvictionTest {
     }
 
     @Test
+    fun `a retraction spares an entry with visits behind it`() {
+        // lastVisited is refreshed on every visit, so "touched in the last 5s" also
+        // describes a site with hundreds of visits that was simply open a moment ago.
+        // Only an entry the racing callback could have created is a candidate.
+        val established =
+            UrlHistoryEntry(
+                url = "https://github.com/",
+                title = "GitHub",
+                domain = "github.com",
+                visitCount = 300,
+                lastVisited = now - 1_000,
+            )
+        val racing = entry("https://github.com/", lastVisited = now - 1_000).copy(visitCount = 1)
+
+        assertEquals(0, entriesToEvict(listOf(established), "https://github.com/", 5_000, now).size)
+        assertEquals(1, entriesToEvict(listOf(racing), "https://github.com/", 5_000, now).size)
+    }
+
+    @Test
+    fun `an address that is gone takes even a well-visited entry`() {
+        // The other half of the rule: once resolution is known to work and the address
+        // still doesn't exist, visit count says nothing — those visits went to an error
+        // page, which is how the typo accumulated them in the first place.
+        val entries =
+            listOf(entry("https://youtube.como/", lastVisited = now).copy(visitCount = 6))
+
+        assertEquals(1, entriesToEvict(entries, "https://youtube.como/", null, now).size)
+    }
+
+    @Test
+    fun `opening a new tab is not evidence that dns works`() {
+        // about:blank commits as a normal main-frame navigation in this app, so counting
+        // it would let opening a tab during an outage re-arm unconditional eviction.
+        NavigationOutcomeTracker.recordSuccess("about:blank", now = now)
+        assertFalse(NavigationOutcomeTracker.hasLoadedRecently(now))
+
+        NavigationOutcomeTracker.recordSuccess("file:///Users/me/notes.html", now = now)
+        assertFalse(NavigationOutcomeTracker.hasLoadedRecently(now))
+
+        NavigationOutcomeTracker.recordSuccess("https://github.com/", now = now)
+        assertTrue(NavigationOutcomeTracker.hasLoadedRecently(now))
+    }
+
+    @Test
     fun `an unrelated address is never touched`() {
         val entries = listOf(entry("https://github.com/", lastVisited = now))
 
