@@ -411,8 +411,14 @@ internal class BrowserHandleImpl(
 
                 NavigationVerdict.FAILED -> {
                     NavigationOutcomeTracker.recordFailure(url)
-                    val window =
-                        if (error in ADDRESS_DOES_NOT_EXIST_ERRORS) null else RACE_RETRACTION_MS
+                    // Only treat "the address does not exist" as permanent while name
+                    // resolution is demonstrably working — otherwise a DNS outage would
+                    // read as every site the user tried having ceased to exist, and take
+                    // their history with it.
+                    val addressIsGone =
+                        error in ADDRESS_DOES_NOT_EXIST_ERRORS &&
+                            NavigationOutcomeTracker.hasLoadedRecently()
+                    val window = if (addressIsGone) null else RACE_RETRACTION_MS
                     UrlHistoryManager.removeMatchingUrls(url, window)
                     RecentBrowserPagesManager.removeMatchingPages(url, window)
                 }
@@ -1735,13 +1741,6 @@ internal class BrowserHandleImpl(
         private const val LOAD_TIMEOUT_MS = 30_000L
 
         /**
-         * Network errors that mean the address itself is wrong rather than temporarily
-         * unreachable — a typo like `youtube.como` resolves to nothing, and no retry will
-         * change that. Only these evict existing history entries; see
-         * [recordNavigationOutcome].
-         */
-
-        /**
          * How far back a failure retracts visits recorded by a callback that raced ahead
          * of it. Long enough to cover the title/load callbacks for the navigation that
          * just failed, short enough that a genuine earlier visit to the same address is
@@ -1749,6 +1748,12 @@ internal class BrowserHandleImpl(
          */
         private const val RACE_RETRACTION_MS = 5_000L
 
+        /**
+         * Network errors that mean the address itself is wrong rather than temporarily
+         * unreachable — a typo like `youtube.como` resolves to nothing, and no retry will
+         * change that. Only these can evict history entries regardless of age, and only
+         * while name resolution is otherwise working; see [recordNavigationOutcome].
+         */
         private val ADDRESS_DOES_NOT_EXIST_ERRORS =
             setOf(
                 NetError.NAME_NOT_RESOLVED,

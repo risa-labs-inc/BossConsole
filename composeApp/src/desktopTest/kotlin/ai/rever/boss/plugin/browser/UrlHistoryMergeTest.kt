@@ -75,6 +75,37 @@ class UrlHistoryMergeTest {
     }
 
     @Test
+    fun `the https spelling wins even when only the plaintext twin has a title`() {
+        // The case the earlier test missed: both spellings sharing a title let the
+        // comparator's title check decide first, so an http URL could survive as the one
+        // we navigate to. The title still comes across from whichever entry rendered.
+        val merged =
+            mergeDuplicateHistoryEntries(
+                listOf(
+                    entry("http://example.com/app", title = "App", visits = 40, lastVisited = 5),
+                    entry("https://example.com/app", visits = 1, lastVisited = 1),
+                ),
+            )
+
+        assertEquals("https://example.com/app", merged.single().url)
+        assertEquals("App", merged.single().title)
+        assertEquals(41, merged.single().visitCount)
+    }
+
+    @Test
+    fun `the most recent title wins when spellings disagree`() {
+        val merged =
+            mergeDuplicateHistoryEntries(
+                listOf(
+                    entry("https://example.com/", title = "Old name", lastVisited = 100),
+                    entry("https://www.example.com/", title = "New name", lastVisited = 200),
+                ),
+            )
+
+        assertEquals("New name", merged.single().title)
+    }
+
+    @Test
     fun `the https spelling wins even when the plaintext twin has the visits`() {
         // The merged URL is one we will navigate to, so it must not downgrade the user
         // to http just because the old entry was visited more often.

@@ -1,0 +1,104 @@
+package ai.rever.boss.plugin.browser
+
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+
+/**
+ * Pins the destructive half of the history gating: which entries a failed navigation
+ * retires, and — the part with real blast radius — when a name-resolution failure is
+ * allowed to mean "this address does not exist" rather than "DNS is down right now".
+ */
+class HistoryEvictionTest {
+    private val now = 1_000_000L
+
+    private fun entry(
+        url: String,
+        lastVisited: Long,
+        title: String = "A page",
+    ) = UrlHistoryEntry(
+        url = url,
+        title = title,
+        domain = url.substringAfter("://").substringBefore('/'),
+        visitCount = 1,
+        lastVisited = lastVisited,
+    )
+
+    @BeforeTest
+    @AfterTest
+    fun resetTracker() {
+        NavigationOutcomeTracker.clear()
+    }
+
+    @Test
+    fun `an address that is gone takes every spelling of itself with it`() {
+        val entries =
+            listOf(
+                entry("https://youtube.como/", lastVisited = now - 500_000),
+                entry("youtube.como", lastVisited = now - 900_000),
+                entry("http://www.youtube.como", lastVisited = now - 100),
+                entry("https://youtube.com/", lastVisited = now - 500_000),
+            )
+
+        val evicted = entriesToEvict(entries, "https://youtube.como/", recordedWithinMs = null, now = now)
+
+        assertEquals(
+            listOf("https://youtube.como/", "youtube.como", "http://www.youtube.como"),
+            evicted.map { it.url },
+        )
+    }
+
+    @Test
+    fun `a windowed retraction only reaches what was just recorded`() {
+        val entries =
+            listOf(
+                // The racing entry: recorded a moment ago by a title callback.
+                entry("https://example.com/", lastVisited = now - 1_000),
+                // Real history for the same address, from last week.
+                entry("https://www.example.com/", lastVisited = now - 604_800_000),
+            )
+
+        val evicted = entriesToEvict(entries, "https://example.com/", recordedWithinMs = 5_000, now = now)
+
+        assertEquals(listOf("https://example.com/"), evicted.map { it.url })
+    }
+
+    @Test
+    fun `the retraction window includes its own boundary`() {
+        val entries = listOf(entry("https://example.com/", lastVisited = now - 5_000))
+
+        assertEquals(1, entriesToEvict(entries, "https://example.com/", 5_000, now).size)
+        assertEquals(0, entriesToEvict(entries, "https://example.com/", 4_999, now).size)
+    }
+
+    @Test
+    fun `an unrelated address is never touched`() {
+        val entries = listOf(entry("https://github.com/", lastVisited = now))
+
+        assertEquals(0, entriesToEvict(entries, "https://gitlab.com/", null, now).size)
+        assertEquals(0, entriesToEvict(entries, "", null, now).size)
+    }
+
+    @Test
+    fun `a resolution failure is only trusted while something else is loading`() {
+        // The scenario that must not delete history: the resolver stops answering, so
+        // every address the user tries reports NAME_NOT_RESOLVED. Nothing has loaded, so
+        // nothing about those failures says the addresses stopped existing.
+        assertFalse(NavigationOutcomeTracker.hasLoadedRecently(now))
+
+        NavigationOutcomeTracker.recordSuccess("https://github.com/", now = now - 1_000)
+        assertTrue(NavigationOutcomeTracker.hasLoadedRecently(now))
+    }
+
+    @Test
+    fun `evidence that resolution works goes stale`() {
+        val window = NavigationOutcomeTracker.RESOLVER_HEALTH_WINDOW_MS
+        NavigationOutcomeTracker.recordSuccess("https://github.com/", now = now - window)
+
+        assertTrue(NavigationOutcomeTracker.hasLoadedRecently(now))
+        assertFalse(NavigationOutcomeTracker.hasLoadedRecently(now + 1))
+    }
+}

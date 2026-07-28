@@ -15,6 +15,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -75,6 +76,7 @@ object RecentBrowserPagesManager {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var saveJob: Job? = null
+    private val saveJobLock = Any()
 
     private val _recentPages = MutableStateFlow<List<RecentBrowserPage>>(emptyList())
     val recentPages: StateFlow<List<RecentBrowserPage>> = _recentPages.asStateFlow()
@@ -280,12 +282,17 @@ object RecentBrowserPagesManager {
      * Cancels any pending save and schedules a new one after SAVE_DEBOUNCE_MS.
      */
     private fun scheduleSave() {
-        saveJob?.cancel()
-        saveJob =
-            scope.launch {
-                delay(SAVE_DEBOUNCE_MS)
-                saveImmediately()
-            }
+        // Swap the debounce job under a lock: callers now arrive from concurrent
+        // coroutines (a visit and an eviction racing), and an unsynchronized
+        // cancel-then-assign can drop the reference to a job that is still pending.
+        synchronized(saveJobLock) {
+            saveJob?.cancel()
+            saveJob =
+                scope.launch {
+                    delay(SAVE_DEBOUNCE_MS)
+                    saveImmediately()
+                }
+        }
     }
 
     /**
@@ -329,35 +336,39 @@ object RecentBrowserPagesManager {
         if (!describesAPage || NavigationOutcomeTracker.didFail(url)) return
 
         scope.launch {
-            val currentPages = _recentPages.value.toMutableList()
-            val existingIndex = currentPages.indexOfFirst { it.url == url }
+            // update{} rather than read-then-write: this runs on a multi-threaded
+            // dispatcher and is *expected* to race an eviction — that is the whole
+            // TitleChanged-arrived-first case — so a lost update here would put back the
+            // entry that was just retracted.
+            _recentPages.update { pages ->
+                val currentPages = pages.toMutableList()
+                val existingIndex = currentPages.indexOfFirst { it.url == url }
 
-            val newPage =
-                if (existingIndex >= 0) {
-                    // Update existing entry
-                    val existing = currentPages.removeAt(existingIndex)
-                    existing.copy(
-                        title = title,
-                        lastVisited = System.currentTimeMillis(),
-                        faviconCacheKey = faviconCacheKey ?: existing.faviconCacheKey,
-                        visitCount = existing.visitCount + 1,
-                    )
-                } else {
-                    // Create new entry
-                    RecentBrowserPage(
-                        url = url,
-                        title = title,
-                        lastVisited = System.currentTimeMillis(),
-                        faviconCacheKey = faviconCacheKey,
-                        visitCount = 1,
-                    )
-                }
+                val newPage =
+                    if (existingIndex >= 0) {
+                        // Update existing entry
+                        val existing = currentPages.removeAt(existingIndex)
+                        existing.copy(
+                            title = title,
+                            lastVisited = System.currentTimeMillis(),
+                            faviconCacheKey = faviconCacheKey ?: existing.faviconCacheKey,
+                            visitCount = existing.visitCount + 1,
+                        )
+                    } else {
+                        // Create new entry
+                        RecentBrowserPage(
+                            url = url,
+                            title = title,
+                            lastVisited = System.currentTimeMillis(),
+                            faviconCacheKey = faviconCacheKey,
+                            visitCount = 1,
+                        )
+                    }
 
-            // Add to front (most recent)
-            currentPages.add(0, newPage)
-
-            // Trim to max size
-            _recentPages.value = currentPages.take(MAX_PAGES)
+                // Add to front (most recent), trimmed to max size
+                currentPages.add(0, newPage)
+                currentPages.take(MAX_PAGES)
+            }
             scheduleSave()
         }
     }
@@ -367,7 +378,7 @@ object RecentBrowserPagesManager {
      */
     fun removePage(url: String) {
         scope.launch {
-            _recentPages.value = _recentPages.value.filter { it.url != url }
+            _recentPages.update { pages -> pages.filter { it.url != url } }
             scheduleSave()
         }
     }
@@ -394,17 +405,22 @@ object RecentBrowserPagesManager {
 
         scope.launch {
             val cutoff = recordedWithinMs?.let { System.currentTimeMillis() - it }
-            val remaining =
-                _recentPages.value.filterNot { page ->
-                    canonicalUrlKey(page.url) == key && (cutoff == null || page.lastVisited >= cutoff)
-                }
-            if (remaining.size != _recentPages.value.size) {
+            var removed = 0
+            _recentPages.update { pages ->
+                val remaining =
+                    pages.filterNot { page ->
+                        canonicalUrlKey(page.url) == key &&
+                            (cutoff == null || page.lastVisited >= cutoff)
+                    }
+                removed = pages.size - remaining.size
+                remaining
+            }
+            if (removed > 0) {
                 logger.info(
                     LogCategory.BROWSER,
                     "Removed recent pages for an address that failed to load",
-                    mapOf("removed" to (_recentPages.value.size - remaining.size).toString()),
+                    mapOf("removed" to removed.toString()),
                 )
-                _recentPages.value = remaining
                 scheduleSave()
             }
         }

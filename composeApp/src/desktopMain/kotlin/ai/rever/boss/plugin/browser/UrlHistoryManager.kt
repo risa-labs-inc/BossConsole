@@ -50,20 +50,56 @@ internal fun mergeDuplicateHistoryEntries(entries: List<UrlHistoryEntry>): List<
             if (group.size == 1) {
                 group.first()
             } else {
+                // The URL and the title are chosen independently: the surviving URL is one
+                // we will navigate to, so https wins outright, but the title comes from
+                // whichever spelling actually rendered the page. Picking one entry whole
+                // would force a choice between a safe URL and a known title.
                 val primary =
                     group
                         .sortedWith(
-                            compareByDescending<UrlHistoryEntry> { it.title.isNotBlank() }
-                                .thenByDescending { it.url.startsWith("https", ignoreCase = true) }
+                            compareByDescending<UrlHistoryEntry> {
+                                it.url.startsWith("https", ignoreCase = true)
+                            }.thenByDescending { it.title.isNotBlank() }
                                 .thenByDescending { it.visitCount }
                                 .thenByDescending { it.lastVisited },
                         ).first()
+                val bestTitle =
+                    group
+                        .filter { it.title.isNotBlank() }
+                        .maxByOrNull { it.lastVisited }
+                        ?.title
                 primary.copy(
+                    title = bestTitle ?: primary.title,
                     visitCount = group.sumOf { it.visitCount },
                     lastVisited = group.maxOf { it.lastVisited },
                 )
             }
         }
+
+/**
+ * The entries that a failed navigation to [url] should retire.
+ *
+ * Pure so the destructive decision is testable without touching a real history file.
+ *
+ * @param recordedWithinMs when set, only entries visited that recently are candidates —
+ *   the narrow case of a title callback that recorded a visit just before the browser
+ *   reported the navigation as failed. Null means the address itself is gone, and every
+ *   spelling of it goes regardless of age.
+ */
+internal fun entriesToEvict(
+    entries: Collection<UrlHistoryEntry>,
+    url: String,
+    recordedWithinMs: Long?,
+    now: Long = System.currentTimeMillis(),
+): List<UrlHistoryEntry> {
+    val key = canonicalUrlKey(url)
+    if (key.isEmpty()) return emptyList()
+
+    val cutoff = recordedWithinMs?.let { now - it }
+    return entries.filter { entry ->
+        canonicalUrlKey(entry.url) == key && (cutoff == null || entry.lastVisited >= cutoff)
+    }
+}
 
 object UrlHistoryManager {
     private val logger = BossLogger.forComponent("UrlHistoryManager")
@@ -126,18 +162,10 @@ object UrlHistoryManager {
         url: String,
         title: String,
     ) {
-        val domain = suggestableHost(url)
-        if (domain == null) {
-            logger.debug(
-                LogCategory.BROWSER,
-                "Ignoring history entry without a suggestable host",
-                mapOf("url" to LogSanitizer.maskUriParams(url)),
-            )
-        }
-
         // A page the browser never managed to load is not somewhere the user has been —
         // suggesting it back to them is how a typo like `youtube.como` became permanent.
-        if (domain == null || NavigationOutcomeTracker.didFail(url)) return
+        val domain = suggestableHost(url) ?: return
+        if (NavigationOutcomeTracker.didFail(url)) return
 
         val existing = history[url]
 
@@ -221,14 +249,7 @@ object UrlHistoryManager {
         url: String,
         recordedWithinMs: Long? = null,
     ): Int {
-        val key = canonicalUrlKey(url)
-        if (key.isEmpty()) return 0
-
-        val cutoff = recordedWithinMs?.let { System.currentTimeMillis() - it }
-        val matches =
-            history.values.filter { entry ->
-                canonicalUrlKey(entry.url) == key && (cutoff == null || entry.lastVisited >= cutoff)
-            }
+        val matches = entriesToEvict(history.values, url, recordedWithinMs)
 
         if (matches.isNotEmpty()) {
             matches.forEach { history.remove(it.url) }
@@ -238,7 +259,7 @@ object UrlHistoryManager {
                 mapOf(
                     "url" to LogSanitizer.maskUriParams(url),
                     "removed" to matches.size.toString(),
-                    "scope" to if (cutoff == null) "all" else "recent",
+                    "scope" to if (recordedWithinMs == null) "all" else "recent",
                 ),
             )
             // Persist here rather than waiting for the next saveHistory() — an evicted

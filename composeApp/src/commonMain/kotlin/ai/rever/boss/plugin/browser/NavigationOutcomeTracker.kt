@@ -61,18 +61,47 @@ object NavigationOutcomeTracker {
      */
     const val FAILURE_TTL_MS = 30_000L
 
+    /**
+     * How recently something must have loaded for name-resolution failures to be read as
+     * "this address does not exist" rather than "DNS is broken right now".
+     */
+    const val RESOLVER_HEALTH_WINDOW_MS = 60_000L
+
     /** Bounds memory if a page redirect-loops through failures; oldest keys go first. */
     private const val MAX_TRACKED_FAILURES = 256
 
     private val failedUrls = LinkedHashMap<String, Long>()
 
+    @Volatile
+    private var lastLoadedAt: Long? = null
+
     /** Record that a main-frame navigation to [url] committed a real page. */
-    fun recordSuccess(url: String) {
+    fun recordSuccess(
+        url: String,
+        now: Long = System.currentTimeMillis(),
+    ) {
         val key = canonicalUrlKey(url)
         if (key.isEmpty()) return
+        lastLoadedAt = now
         synchronized(failedUrls) {
             failedUrls.remove(key)
         }
+    }
+
+    /**
+     * Whether some page has loaded recently enough to trust that name resolution works.
+     *
+     * `ERR_NAME_NOT_RESOLVED` is not a typo signal on its own — it is also the everyday
+     * symptom of a resolver that has stopped answering: captive-portal Wi-Fi, a VPN that
+     * dropped its DNS, a flaky router. (`ERR_INTERNET_DISCONNECTED` only fires when the OS
+     * itself reports no route, so it doesn't cover this.) Treating an outage as proof that
+     * an address doesn't exist would delete a real, heavily-visited entry for every site
+     * tried while DNS was down. A page that loaded moments ago is the evidence that
+     * resolution is working and this one address really is the odd one out.
+     */
+    fun hasLoadedRecently(now: Long = System.currentTimeMillis()): Boolean {
+        val loadedAt = lastLoadedAt ?: return false
+        return now - loadedAt <= RESOLVER_HEALTH_WINDOW_MS
     }
 
     /** Record that a main-frame navigation to [url] ended on an error page (or never committed). */
@@ -120,6 +149,7 @@ object NavigationOutcomeTracker {
 
     /** Drop all tracked outcomes. */
     internal fun clear() {
+        lastLoadedAt = null
         synchronized(failedUrls) { failedUrls.clear() }
     }
 }
