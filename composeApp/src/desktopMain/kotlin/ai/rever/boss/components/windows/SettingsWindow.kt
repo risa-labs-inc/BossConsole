@@ -309,6 +309,7 @@ private fun SettingsContentArea(
             SettingsSection.TERMINAL,
             SettingsSection.BOSS_EDITOR,
             SettingsSection.KEYMAP, // Uses LazyColumn for shortcuts list
+            SettingsSection.LLM_PROVIDERS, // Panel served by the secret-manager plugin; scrolls itself
         )
     val isEmbeddedPanel = section in embeddedPanelSections
 
@@ -345,6 +346,10 @@ private fun SettingsContentArea(
 
                     SettingsSection.KEYMAP -> {
                         EditableKeymapSettings()
+                    }
+
+                    SettingsSection.LLM_PROVIDERS -> {
+                        LLMProvidersSettings()
                     }
 
                     else -> {}
@@ -389,10 +394,6 @@ private fun SettingsContentArea(
 
                 SettingsSection.WORKSPACE -> {
                     WorkspaceSettings()
-                }
-
-                SettingsSection.LLM_PROVIDERS -> {
-                    LLMProvidersSettings()
                 }
 
                 SettingsSection.UPDATES -> {

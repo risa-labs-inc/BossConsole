@@ -104,6 +104,13 @@ data class SelfHealingSettingsData(
 object SelfHealingSettingsManager {
     private val logger = BossLogger.forComponent("SelfHealingSettings")
     private val settingsFile: File = BossDirectories.resolve("self-healing-settings.json")
+
+    /**
+     * Legacy key files, in priority order. The `.migrated` name is what the
+     * secret-manager plugin renames the original to once it has imported the keys into
+     * the secret store, so both must be tried.
+     */
+    private val LEGACY_KEY_FILE_NAMES = listOf("llm_settings.json", "llm_settings.json.migrated")
     private val json =
         Json {
             prettyPrint = true
@@ -152,36 +159,50 @@ object SelfHealingSettingsManager {
     fun hasApiKey(provider: SelfHealingProvider): Boolean = !resolveApiKey(provider).isNullOrBlank()
 
     /**
-     * The key for [provider], from the same places the LLM Providers screen looks.
+     * The key for [provider]: `AI_REPAIR_API_KEY`, then the provider's own environment
+     * variable, then the legacy `llm_settings.json`.
      *
      * `AI_REPAIR_API_KEY` wins so an operator can point self-healing at a separate, narrower key
-     * than the one their assistant chat uses. Then the provider's own environment variable, then
-     * `llm_settings.json`.
+     * than the one their assistant chat uses.
      *
-     * The file is read directly rather than through `LLMSettings`: that singleton is populated by a
-     * startup effect that runs after the window opens, and the kernel spawns services before then.
+     * **An environment variable is the supported way to key self-healing.** AI provider
+     * configuration now lives in the secret-manager plugin, and the kernel cannot read it: it
+     * spawns services before the window opens and long before any plugin registers, and the
+     * store needs a signed-in session the kernel does not have. The legacy file is still read
+     * so existing installs keep working, including after the file has been renamed by the
+     * plugin's one-shot import — but a key rotated in Settings → AI Providers will *not* be
+     * reflected there, so treat it as a fallback, not a source of truth.
      */
     private fun resolveApiKey(provider: SelfHealingProvider): String? =
         System.getenv("AI_REPAIR_API_KEY")?.ifBlank { null }
             ?: System.getenv(provider.apiKeyEnvVar)?.ifBlank { null }
             ?: storedLlmApiKey(provider)
 
-    private fun storedLlmApiKey(provider: SelfHealingProvider): String? {
-        val file = BossDirectories.resolve("llm_settings.json")
-        if (!file.exists()) return null
-        return try {
-            json
-                .decodeFromString(StoredLlmKeys.serializer(), file.readText())
-                .apiKeys[provider.name]
-                ?.ifBlank { null }
-        } catch (e: SerializationException) {
-            reportUnreadableKeys(e)
-            null
-        } catch (e: IOException) {
-            reportUnreadableKeys(e)
-            null
+    /**
+     * Reads the legacy key file, including the `.migrated` copy the secret-manager plugin
+     * leaves behind after importing. Without the second name, enabling self-healing would
+     * appear to break the moment those keys were imported.
+     */
+    private fun storedLlmApiKey(provider: SelfHealingProvider): String? =
+        LEGACY_KEY_FILE_NAMES.firstNotNullOfOrNull { fileName ->
+            val file = BossDirectories.resolve(fileName)
+            if (!file.exists()) {
+                null
+            } else {
+                try {
+                    json
+                        .decodeFromString(StoredLlmKeys.serializer(), file.readText())
+                        .apiKeys[provider.name]
+                        ?.ifBlank { null }
+                } catch (e: SerializationException) {
+                    reportUnreadableKeys(e)
+                    null
+                } catch (e: IOException) {
+                    reportUnreadableKeys(e)
+                    null
+                }
+            }
         }
-    }
 
     /**
      * Says the key file could not be read, without saying what was in it.

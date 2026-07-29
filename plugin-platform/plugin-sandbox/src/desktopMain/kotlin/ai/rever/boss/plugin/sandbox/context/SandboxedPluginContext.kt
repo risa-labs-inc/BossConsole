@@ -17,6 +17,7 @@ import ai.rever.boss.plugin.api.FileSystemDataProvider
 import ai.rever.boss.plugin.api.GenericDialogProvider
 import ai.rever.boss.plugin.api.GitDataProvider
 import ai.rever.boss.plugin.api.KeyboardShortcutProvider
+import ai.rever.boss.plugin.api.LlmProvider
 import ai.rever.boss.plugin.api.LogDataProvider
 import ai.rever.boss.plugin.api.McpToolProvider
 import ai.rever.boss.plugin.api.McpToolRegistry
@@ -117,6 +118,9 @@ class SandboxedPluginContext(
 
     override val secretDataProvider: SecretDataProvider?
         get() = delegate.secretDataProvider
+
+    override val llmProvider: LlmProvider?
+        get() = delegate.llmProvider
 
     override val runConfigurationDataProvider: RunConfigurationDataProvider?
         get() = delegate.runConfigurationDataProvider

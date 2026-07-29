@@ -3,7 +3,6 @@ package ai.rever.boss.app
 import ai.rever.boss.components.events.PanelEventBus
 import ai.rever.boss.components.plugin.DefaultPlugin
 import ai.rever.boss.components.plugin.PanelIds
-import ai.rever.boss.components.plugin.panels.right_top.LLMSettingsManager
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
 import ai.rever.boss.components.plugin.tab_types.registerPanelHostTab
 import ai.rever.boss.components.registery.PanelComponentStoreRegistry
@@ -375,6 +374,11 @@ internal fun BossAppStartupEffects(state: BossAppState) {
         ai.rever.boss.services.editor.EditorAPIAccess
             .initialize(plugin)
 
+        // Initialize LlmProviderAPIAccess so Settings → AI Providers and
+        // PluginContext.llmProvider can reach the plugin that owns provider config
+        ai.rever.boss.services.llm.LlmProviderAPIAccess
+            .initialize(plugin)
+
         onDispose {
             // NOTE: Browser disposal moved to main.kt onCloseRequest handler
             // Browsers must be disposed BEFORE Compose disposal begins, not during it
@@ -402,15 +406,8 @@ internal fun BossAppStartupEffects(state: BossAppState) {
         }
     }
 
-    // Load LLM settings on startup
-    LaunchedEffect(Unit) {
-        try {
-            LLMSettingsManager.loadSettings()
-        } catch (e: Exception) {
-            // Non-fatal: app runs with default LLM settings
-            logger.warn(LogCategory.SYSTEM, "LLM settings load failed - using defaults", error = e)
-        }
-    }
+    // AI provider settings are owned by the secret-manager plugin and loaded when its
+    // panel is first rendered, so there is nothing to read at startup here.
 
     // Check if plugin install wizard should be shown (only for first window)
     // Depend on pluginWizardRetryCount to prevent race conditions - retry logic is explicit

@@ -17,6 +17,7 @@ import ai.rever.boss.plugin.api.FileSystemDataProvider
 import ai.rever.boss.plugin.api.GenericDialogProvider
 import ai.rever.boss.plugin.api.GitDataProvider
 import ai.rever.boss.plugin.api.KeyboardShortcutProvider
+import ai.rever.boss.plugin.api.LlmProvider
 import ai.rever.boss.plugin.api.LogDataProvider
 import ai.rever.boss.plugin.api.McpToolProvider
 import ai.rever.boss.plugin.api.McpToolRegistry
@@ -316,6 +317,7 @@ class TrackingPluginContext(
     override val gitDataProvider: GitDataProvider? get() = delegate.gitDataProvider
     override val fileSystemDataProvider: FileSystemDataProvider? get() = delegate.fileSystemDataProvider
     override val secretDataProvider: SecretDataProvider? get() = delegate.secretDataProvider
+    override val llmProvider: LlmProvider? get() = delegate.llmProvider
     override val runConfigurationDataProvider: RunConfigurationDataProvider? get() = delegate.runConfigurationDataProvider
     override val activeTabsProvider: ActiveTabsProvider? get() = delegate.activeTabsProvider
     override val windowId: String? get() = delegate.windowId

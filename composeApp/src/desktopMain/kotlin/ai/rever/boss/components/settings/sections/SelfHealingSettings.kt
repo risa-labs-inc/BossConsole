@@ -58,11 +58,14 @@ fun SelfHealingSettings(kernelMode: Boolean) {
     val settings by SelfHealingSettingsManager.currentSettings.collectAsState()
     val provider = remember(settings.provider) { SelfHealingProvider.of(settings.provider) }
 
-    // Off the composition thread: resolving a key reads llm_settings.json (see docs/THREADING.md).
+    // Off the composition thread: resolving a key reads the legacy key file (see docs/THREADING.md).
     // Re-run on every settings change as well as on provider change, so the card stops saying "no
-    // API key" as soon as the operator comes back from LLM Providers having entered one — that is
-    // the one thing this card exists to get right, and keying it on the provider alone left it
-    // stale until the screen was recreated.
+    // API key" as soon as one becomes resolvable — that is the one thing this card exists to get
+    // right, and keying it on the provider alone left it stale until the screen was recreated.
+    //
+    // Note the key does NOT come from Settings → AI Providers: that store belongs to a plugin and
+    // the kernel spawns repair services before plugins load. An environment variable is the
+    // supported path — see SelfHealingSettingsManager.resolveApiKey.
     val hasKey by produceState(initialValue = true, settings) {
         value = withContext(Dispatchers.IO) { SelfHealingSettingsManager.hasApiKey(provider) }
     }
@@ -113,7 +116,9 @@ private fun RepairModelFields(
             // provider at another one's URL. Clearing restores that provider's defaults.
             onChange { it.copy(provider = picked.name, model = "", endpoint = "") }
         },
-        description = "Where repair proposals are generated. The API key comes from LLM Providers settings.",
+        description =
+            "Where repair proposals are generated. The API key comes from the environment " +
+                "(AI_REPAIR_API_KEY, or the provider's own variable).",
     )
 
     Spacer(modifier = Modifier.height(8.dp))
@@ -183,7 +188,7 @@ private fun RepairReadinessCard(
     val blockers =
         buildList {
             if (!hasKey) {
-                add("no API key for ${provider.displayName} (set one in LLM Providers, or ${provider.apiKeyEnvVar})")
+                add("no API key for ${provider.displayName} (set ${provider.apiKeyEnvVar} or AI_REPAIR_API_KEY)")
             }
             if (settings.projectRoot.isBlank()) add("no source root named")
             if (settings.endpoint.isBlank() && provider.defaultEndpoint.isBlank()) add("no endpoint")

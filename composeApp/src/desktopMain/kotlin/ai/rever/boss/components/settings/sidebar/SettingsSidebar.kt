@@ -68,8 +68,8 @@ enum class SettingsSection(
         icon = Icons.Outlined.GridView,
     ),
     LLM_PROVIDERS(
-        displayName = "LLM Providers",
-        description = "API keys, models, and AI assistant settings",
+        displayName = "AI Providers",
+        description = "API keys and model selection for AI providers",
         icon = Icons.Outlined.AutoAwesome,
     ),
     UPDATES(

@@ -629,6 +629,20 @@ class DefaultPlugin(
             .SecretDataProviderImpl()
     }
 
+    /**
+     * AI provider configuration for plugins that offer AI features.
+     *
+     * The host holds none of this itself — it relays the API registered by the plugin
+     * that owns provider configuration, so this is null until that plugin registers
+     * (and stays null if it isn't installed). Consumers already have to handle null,
+     * and [ai.rever.boss.plugin.api.LlmProvider.activeConfig] is null again when no
+     * provider is fully set up.
+     */
+    override val llmProvider: ai.rever.boss.plugin.api.LlmProvider?
+        get() =
+            ai.rever.boss.services.llm.LlmProviderAPIAccess
+                .getProvider()
+
     // Panel event provider for plugins that need to trigger panel events
     override val panelEventProvider: ai.rever.boss.plugin.api.PanelEventProvider by lazy {
         ai.rever.boss.components.plugin.providers
