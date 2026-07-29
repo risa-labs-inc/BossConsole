@@ -21,7 +21,10 @@ import androidx.compose.ui.Modifier
 @Composable
 fun LLMProvidersSettings() {
     val provider = LlmProviderAPIAccess.rememberProvider()
-    if (provider != null) {
+    // supportsSettingsPanel distinguishes "no panel" from "blank panel": the API's panel
+    // member has a default no-op, so a plugin that registers without overriding it would
+    // otherwise render an empty section with no explanation.
+    if (provider != null && provider.supportsSettingsPanel) {
         provider.LlmProviderSettingsPanel(modifier = Modifier.fillMaxSize())
     } else {
         PluginSettingsUnavailableNotice(

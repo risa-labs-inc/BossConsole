@@ -18,10 +18,17 @@ import java.io.IOException
 /**
  * A model provider the self-healing orchestrator can be pointed at.
  *
- * Names deliberately match [ai.rever.boss.components.plugin.panels.right_top.LLMProvider], because
- * the API key is looked up under the provider's name in the same `llm_settings.json` the LLM
- * Providers screen writes — self-healing chooses a model, it does not ask for a second copy of a
- * key the operator has already entered.
+ * **These names cannot be renamed.** They match the host's historical `LLMProvider` enum
+ * because `llm_settings.json` is a legacy on-disk format keyed by those names, and
+ * [SelfHealingSettingsManager] still reads it as a fallback. That enum is gone — provider
+ * configuration now lives in the secret-manager plugin — so nothing checks this coupling
+ * for us any more, which is precisely what makes the constraint load-bearing rather than
+ * incidental.
+ *
+ * Self-healing does need its own key: it resolves one before the window opens and long
+ * before any plugin registers, so it cannot read the plugin's store. `AI_REPAIR_API_KEY`
+ * or the provider's own environment variable is the supported path — see
+ * [SelfHealingSettingsManager.hasApiKey].
  */
 enum class SelfHealingProvider(
     val displayName: String,
@@ -178,31 +185,53 @@ object SelfHealingSettingsManager {
             ?: System.getenv(provider.apiKeyEnvVar)?.ifBlank { null }
             ?: storedLlmApiKey(provider)
 
-    /**
-     * Reads the legacy key file, including the `.migrated` copy the secret-manager plugin
-     * leaves behind after importing. Without the second name, enabling self-healing would
-     * appear to break the moment those keys were imported.
-     */
     private fun storedLlmApiKey(provider: SelfHealingProvider): String? =
-        LEGACY_KEY_FILE_NAMES.firstNotNullOfOrNull { fileName ->
-            val file = BossDirectories.resolve(fileName)
+        legacyKeyFrom(LEGACY_KEY_FILE_NAMES.map { BossDirectories.resolve(it) }, provider.name)
+
+    /**
+     * First key for [providerName] found across [files], in order.
+     *
+     * Takes the file list rather than resolving it so this is reachable from a test:
+     * it is the riskiest logic in this file and fails quietly. The `.migrated` name
+     * exists because the secret-manager plugin renames the original after importing
+     * keys, and without it enabling self-healing would appear to break exactly on
+     * upgraded installs.
+     *
+     * A file that exists but has no entry for *this* provider falls through to the next
+     * rather than short-circuiting, and an unreadable file is skipped rather than
+     * aborting the search. Warns at most once per call, since [hasApiKey] re-runs on
+     * every settings change and a corrupt file would otherwise log per candidate.
+     */
+    internal fun legacyKeyFrom(
+        files: List<File>,
+        providerName: String,
+    ): String? {
+        var reported = false
+        return files.firstNotNullOfOrNull { file ->
             if (!file.exists()) {
                 null
             } else {
                 try {
                     json
                         .decodeFromString(StoredLlmKeys.serializer(), file.readText())
-                        .apiKeys[provider.name]
+                        .apiKeys[providerName]
                         ?.ifBlank { null }
                 } catch (e: SerializationException) {
-                    reportUnreadableKeys(e)
+                    if (!reported) {
+                        reportUnreadableKeys(e)
+                        reported = true
+                    }
                     null
                 } catch (e: IOException) {
-                    reportUnreadableKeys(e)
+                    if (!reported) {
+                        reportUnreadableKeys(e)
+                        reported = true
+                    }
                     null
                 }
             }
         }
+    }
 
     /**
      * Says the key file could not be read, without saying what was in it.

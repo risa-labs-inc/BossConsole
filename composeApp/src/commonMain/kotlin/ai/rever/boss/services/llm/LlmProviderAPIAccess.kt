@@ -68,8 +68,19 @@ object LlmProviderAPIAccess {
 
     // ==================== Composable Bridges (Settings) ====================
 
+    /**
+     * Render the plugin's panel, or nothing when it isn't available.
+     *
+     * Delegates to [rememberProvider], not [getProvider]: a bridge built on the latter
+     * would resolve once and never recompose, so a panel would stay invisible when the
+     * owning plugin registers late — the exact failure [rememberProvider] exists to
+     * prevent.
+     */
     @Composable
     fun LlmProviderSettingsPanel(modifier: Modifier) {
-        getProvider()?.LlmProviderSettingsPanel(modifier)
+        val provider = rememberProvider() ?: return
+        if (provider.supportsSettingsPanel) {
+            provider.LlmProviderSettingsPanel(modifier)
+        }
     }
 }

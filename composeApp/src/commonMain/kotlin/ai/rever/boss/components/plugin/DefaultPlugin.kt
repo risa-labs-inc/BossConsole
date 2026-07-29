@@ -637,11 +637,20 @@ class DefaultPlugin(
      * (and stays null if it isn't installed). Consumers already have to handle null,
      * and [ai.rever.boss.plugin.api.LlmProvider.activeConfig] is null again when no
      * provider is fully set up.
+     *
+     * Resolved against **this** instance's registry, not through LlmProviderAPIAccess.
+     * DefaultPlugin is created per window and [apiRegistry] is per instance, while that
+     * object's cached reference is a singleton overwritten by each window's
+     * `initialize()` — routing through it would hand window 1's plugins whatever window
+     * 2 registered, or null if window 2 hasn't registered yet, which is the exact
+     * failure this relay exists to avoid. The settings UI still needs the singleton
+     * because host composables have no plugin handle; this member already has `this`.
+     *
+     * A `get()` rather than `by lazy` on purpose: registration is asynchronous, so a
+     * lazy would cache null forever.
      */
     override val llmProvider: ai.rever.boss.plugin.api.LlmProvider?
-        get() =
-            ai.rever.boss.services.llm.LlmProviderAPIAccess
-                .getProvider()
+        get() = getPluginAPI(ai.rever.boss.plugin.api.LlmProviderSettingsAPI::class.java)
 
     // Panel event provider for plugins that need to trigger panel events
     override val panelEventProvider: ai.rever.boss.plugin.api.PanelEventProvider by lazy {
