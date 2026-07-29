@@ -37,6 +37,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.awt.Toolkit
 import java.nio.file.Files
 import java.nio.file.Paths
@@ -848,6 +850,18 @@ object FluckEngine {
     // Lock object for thread-safe engine access
     private val engineLock = Any()
 
+    /** How long [recycleWedgedEngine] waits for a wedged engine to close before force-killing it. */
+    private const val ENGINE_CLOSE_TIMEOUT_MS = 5_000L
+
+    // Set by BrowserServiceImpl once its wedge detector has spent its recycle budget: the
+    // engine still refuses to create browsers and we have stopped trying to repair it.
+    // Read by isEngineHealthy(), which otherwise cannot see a wedge (isClosed stays false).
+    @Volatile private var wedgeUnrecoverable = false
+
+    internal fun reportWedgeUnrecoverable(unrecoverable: Boolean) {
+        wedgeUnrecoverable = unrecoverable
+    }
+
     val engine: Engine
         get() =
             synchronized(engineLock) {
@@ -874,6 +888,75 @@ object FluckEngine {
                 // Try to initialize
                 initializeEngine()
             }
+
+    /**
+     * Force-replace an engine that is alive but can no longer create browsers.
+     *
+     * The [engine] getter above self-heals only when JxBrowser reports the engine closed. A
+     * *wedged* engine — Chromium process alive, IPC dead — never trips that check, so every
+     * `newBrowser()` keeps failing against the same cached instance until the process happens
+     * to die on its own. This performs the identical swap deliberately, on demand.
+     *
+     * Deliberately does NOT touch the profile directory; that is [resetBrowserProfile], a
+     * destructive user-initiated action. Here we only replace the engine.
+     *
+     * @return true if an engine was dropped, false if there was nothing cached to recycle.
+     */
+    suspend fun recycleWedgedEngine(reason: String): Boolean {
+        val doomed =
+            synchronized(engineLock) {
+                // Exactly the mutations the getter performs when it finds a closed engine:
+                // drop the cached instance, clear the retry budget, and bump the generation
+                // so every live BrowserHandle reports itself invalid and its tab reloads onto
+                // the replacement (BrowserHandleImpl.isValid / Fluck.kt's generation effect).
+                _engine?.also {
+                    _engine = null
+                    initializationError = null
+                    attemptCount = 0
+                    _engineGeneration++
+                    _engineGenerationFlow.value = _engineGeneration
+                }
+            } ?: return false
+
+        logger.warn(
+            LogCategory.BROWSER,
+            "Recycling wedged browser engine",
+            mapOf(
+                "reason" to reason,
+                "newGeneration" to _engineGeneration,
+            ),
+        )
+
+        // close() runs OUTSIDE engineLock and on its own scope, for three reasons: a wedged
+        // engine can block in there for as long as its dead IPC takes to give up; the getter
+        // needs the lock to boot the replacement; and join() gives the timeout a real
+        // suspension point to fire on — wrapping the blocking close() directly in
+        // withTimeoutOrNull would never interrupt it.
+        val closeJob = CoroutineScope(Dispatchers.IO).launch { runCatching { doomed.close() } }
+        val closedInTime = withTimeoutOrNull(ENGINE_CLOSE_TIMEOUT_MS) { closeJob.join() } != null
+
+        if (!closedInTime) {
+            // Chromium holds an exclusive lock on --user-data-dir, so the replacement cannot
+            // boot while the old process lingers. destroyForcibly() inside the cleanup below
+            // is what actually frees it — a stopped or wedged process ignores SIGTERM.
+            logger.warn(
+                LogCategory.BROWSER,
+                "Wedged engine did not close in time - force-killing its Chromium processes",
+                mapOf("timeoutMs" to ENGINE_CLOSE_TIMEOUT_MS),
+            )
+            withContext(Dispatchers.IO) {
+                runCatching { killStaleChromiumProcesses() }
+                    .onFailure {
+                        logger.warn(
+                            LogCategory.BROWSER,
+                            "Force-kill of wedged Chromium processes failed - engine boot may fail",
+                            error = it,
+                        )
+                    }
+            }
+        }
+        return true
+    }
 
     // ---- RPA profile helpers (used by BrowserServiceImpl's managed profiles) ----
     // JxBrowser profiles are isolated cookie/storage/network contexts inside
@@ -2416,6 +2499,10 @@ object FluckEngine {
      * Used to determine if reset might be needed.
      */
     fun isEngineHealthy(): Boolean {
+        // isClosed alone cannot see a wedged engine: its Chromium process is still alive, so
+        // JxBrowser reports it open while every newBrowser() fails. BrowserServiceImpl's
+        // detector supplies that signal once auto-recycling has given up on repairing it.
+        if (wedgeUnrecoverable) return false
         return _engine?.let { !it.isClosed } ?: true // null engine is "healthy" (will initialize on demand)
     }
 }

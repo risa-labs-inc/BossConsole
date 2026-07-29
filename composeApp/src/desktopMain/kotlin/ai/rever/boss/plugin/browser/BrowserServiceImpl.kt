@@ -12,11 +12,15 @@ import com.teamdev.jxbrowser.net.HttpHeader
 import com.teamdev.jxbrowser.net.callback.BeforeStartTransactionCallback
 import com.teamdev.jxbrowser.profile.Profile
 import com.teamdev.jxbrowser.time.Timestamp
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -26,6 +30,8 @@ import java.util.Base64
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedDeque
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Tracks which application window owns each plugin-created browser handle.
@@ -119,6 +125,100 @@ internal class BrowserWindowOwnershipRegistry {
         synchronized(lock) {
             creationStateByWindowId.size
         }
+}
+
+/**
+ * Outcome of a single browser-creation attempt. [EngineFailure] is kept distinct because only a
+ * failure inside the engine's own `newBrowser()` says anything about engine health — that call
+ * takes no URL, so nothing about the caller's request can cause one. A failure while
+ * constructing the handle, by contrast, is routinely just a bad URL.
+ */
+private sealed interface CreationOutcome {
+    data class Created(
+        val handle: BrowserHandle,
+    ) : CreationOutcome
+
+    object EngineFailure : CreationOutcome
+
+    object OtherFailure : CreationOutcome
+}
+
+// Cap on the engine's own newBrowser() call. A wedged engine can hang there rather than
+// throwing, and JxBrowser's internal main-frame timeout is 45s — long enough to read as an app
+// freeze. Comfortably above a healthy cold boot, which is well under a second.
+private const val NEW_BROWSER_TIMEOUT_MS = 20_000L
+
+/**
+ * Run the engine's own browser-creation call, time-boxed.
+ *
+ * [create] runs on a standalone scope and is consumed via `await()`, because
+ * [withTimeoutOrNull] can only abandon a blocking call if the thing it awaits is itself
+ * cancellable. `await()` is; a `withContext` block is not — it waits for its body to finish, so
+ * wrapping the blocking call directly would defeat the timeout entirely. An abandoned thread
+ * therefore drains on its own, and a browser that lands after the timeout is closed via the
+ * handoff below. [runCatching] inside keeps the deferred from ever completing exceptionally, so
+ * an abandoned failure has no one left to report to.
+ */
+private suspend fun newBrowserTimeBoxed(create: () -> Browser): Browser {
+    // Ownership handoff for the abandoned case. A browser that arrives after the timeout has
+    // nobody holding it — it never reaches activeBrowsers, so no dispose path can ever find it
+    // and its renderer process would leak until the engine is replaced. The producer parks it in
+    // [box]; whichever side observes the other having given up drains the box and closes it.
+    // getAndSet makes that exactly one side, so there is no double-close either.
+    val box = AtomicReference<Browser?>(null)
+    val abandoned = AtomicBoolean(false)
+    val creation =
+        CoroutineScope(Dispatchers.IO + SupervisorJob()).async {
+            val result = runCatching(create)
+            result.getOrNull()?.let { box.set(it) }
+            if (abandoned.get()) closeAbandoned(box)
+            result
+        }
+    val outcome = withTimeoutOrNull(NEW_BROWSER_TIMEOUT_MS) { creation.await() }
+    if (outcome == null) {
+        abandoned.set(true)
+        // Covers the interleaving where the producer stored its browser and read `abandoned`
+        // before this line ran: it saw false and left the browser parked, so we drain it.
+        closeAbandoned(box)
+        error("Engine did not return a browser within ${NEW_BROWSER_TIMEOUT_MS}ms")
+    }
+    return outcome.getOrThrow()
+}
+
+private fun closeAbandoned(box: AtomicReference<Browser?>) {
+    box.getAndSet(null)?.let { browser -> runCatching { browser.close() } }
+}
+
+/**
+ * Repairs an engine that is alive but can no longer create browsers.
+ *
+ * Kept out of [BrowserServiceImpl] because it is a self-contained concern: the policy lives in
+ * [EngineWedgeDetector], the repair lives in [FluckEngine.recycleWedgedEngine], and this object
+ * is only the wiring between them and the [FluckEngine.isEngineHealthy] signal.
+ */
+private object WedgeRecovery {
+    private val detector = EngineWedgeDetector()
+
+    /** A browser was created, so the engine is demonstrably fine. */
+    fun recordSuccess() {
+        detector.recordSuccess()
+        FluckEngine.reportWedgeUnrecoverable(false)
+    }
+
+    /**
+     * Feed an engine-level failure to the detector and, if it trips, replace the engine.
+     *
+     * @return true when a fresh engine is in place and the creation is worth retrying.
+     */
+    suspend fun recycleIfWedged(): Boolean {
+        val generation = FluckEngine.currentEngineGeneration
+        val shouldRecycle = detector.recordFailure(System.currentTimeMillis(), generation)
+        FluckEngine.reportWedgeUnrecoverable(detector.isExhausted)
+        if (!shouldRecycle) return false
+        return FluckEngine.recycleWedgedEngine(
+            "newBrowser() failed repeatedly (auto-recycle #${detector.recycleAttempts})",
+        )
+    }
 }
 
 /**
@@ -289,11 +389,37 @@ object BrowserServiceImpl : BrowserService {
         config: BrowserConfig,
         ownerWindowId: String,
     ): BrowserHandle? {
+        // At most two attempts. When the first fails inside the engine's own newBrowser() and
+        // that trips the wedge detector, the engine is recycled and the creation is retried
+        // once on the replacement — so the tab opens after a ~1s blip instead of failing, which
+        // is what used to persist until the Chromium process happened to die on its own.
+        var attemptsLeft = 2
+        while (attemptsLeft-- > 0) {
+            val outcome = attemptCreateBrowser(config, ownerWindowId)
+            if (outcome is CreationOutcome.Created) {
+                WedgeRecovery.recordSuccess()
+                return outcome.handle
+            }
+            // Only an engine-level failure is worth recycling for, and only while the detector
+            // agrees; anything else is this request's own problem and fails as it always did.
+            if (outcome !is CreationOutcome.EngineFailure || !WedgeRecovery.recycleIfWedged()) break
+        }
+        return null
+    }
+
+    private suspend fun attemptCreateBrowser(
+        config: BrowserConfig,
+        ownerWindowId: String,
+    ): CreationOutcome {
         // Declared outside the try so the outer catch can release the managed profile
         // if anything after newBrowser() throws (see the catch below).
         var managed: ManagedRef? = null
         var handleId: String? = null
         var tracked = false
+        // Set only when the engine's creation call is what threw, so the caller can tell an
+        // engine-level failure from a handle-construction one. Profile seeding below sits
+        // inside the same outer try but must NOT be attributed to the engine.
+        var engineCallFailed = false
         return try {
             val engine = FluckEngine.engine
 
@@ -310,7 +436,12 @@ object BrowserServiceImpl : BrowserService {
                             installHeaderCallback(p, emptyMap()) // clear stale on named
                         }
                     }
-                    if (m != null) m.profile.newBrowser() else engine.newBrowser()
+                    try {
+                        newBrowserTimeBoxed { if (m != null) m.profile.newBrowser() else engine.newBrowser() }
+                    } catch (e: Throwable) {
+                        engineCallFailed = true
+                        throw e
+                    }
                 } catch (e: Throwable) {
                     m?.let { releaseManaged(it) }
                     managed = null // released here — don't double-release in the outer catch
@@ -371,7 +502,7 @@ object BrowserServiceImpl : BrowserService {
                         "windowId" to ownerWindowId,
                     ),
                 )
-                return null
+                return CreationOutcome.OtherFailure
             }
 
             logger.info(
@@ -385,7 +516,7 @@ object BrowserServiceImpl : BrowserService {
                 ),
             )
 
-            handle
+            CreationOutcome.Created(handle)
         } catch (e: Exception) {
             logger.error(LogCategory.BROWSER, "Failed to create browser", error = e)
             // A throw after newBrowser() (overscroll / popup-replay / handle ctor / meta
@@ -400,7 +531,7 @@ object BrowserServiceImpl : BrowserService {
                 }
                 managed?.let { releaseManaged(it) }
             }
-            null
+            if (engineCallFailed) CreationOutcome.EngineFailure else CreationOutcome.OtherFailure
         }
     }
 

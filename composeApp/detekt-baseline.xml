@@ -68,7 +68,7 @@
     <ID>CyclomaticComplexMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun setupEventListeners()</ID>
     <ID>CyclomaticComplexMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun setupPopupHandler()</ID>
     <ID>CyclomaticComplexMethod:BrowserServiceImpl.kt$BrowserServiceImpl$private fun seedCookiesAndHeaders( profile: Profile, auth: BrowserAuthSpec, )</ID>
-    <ID>CyclomaticComplexMethod:BrowserServiceImpl.kt$BrowserServiceImpl$private suspend fun createBrowser( config: BrowserConfig, ownerWindowId: String, ): BrowserHandle?</ID>
+    <ID>CyclomaticComplexMethod:BrowserServiceImpl.kt$BrowserServiceImpl$private suspend fun attemptCreateBrowser( config: BrowserConfig, ownerWindowId: String, ): CreationOutcome</ID>
     <ID>CyclomaticComplexMethod:ChromiumDownloader.kt$fun main(args: Array&lt;String&gt;)</ID>
     <ID>CyclomaticComplexMethod:CloneProjectDialog.kt$@Composable private fun ConfigurationStep( onDismiss: () -&gt; Unit, onClone: (url: String, directory: String) -&gt; Unit, )</ID>
     <ID>CyclomaticComplexMethod:CommitDialog.kt$@Composable fun CommitDialog( onDismiss: () -&gt; Unit, onCommitSuccess: (String) -&gt; Unit = {}, )</ID>
@@ -190,6 +190,7 @@
     <ID>InstanceOfCheckForException:PasskeyCredentialManager.kt$PasskeyCredentialManager$e is java.util.concurrent.CancellationException</ID>
     <ID>InstanceOfCheckForException:SupabasePasskeyService.kt$SupabasePasskeyService$e is java.util.concurrent.CancellationException</ID>
     <ID>LargeClass:BrowserHandleImpl.kt$BrowserHandleImpl : BrowserHandle</ID>
+    <ID>LargeClass:BrowserServiceImpl.kt$BrowserServiceImpl : BrowserService</ID>
     <ID>LargeClass:DefaultPlugin.kt$DefaultPlugin : PluginContext</ID>
     <ID>LargeClass:DesktopGitService.kt$GitService</ID>
     <ID>LargeClass:DynamicPluginManager.kt$DynamicPluginManager</ID>
@@ -234,7 +235,7 @@
     <ID>LongMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun setupEventListeners()</ID>
     <ID>LongMethod:BrowserHandleImpl.kt$BrowserHandleImpl$private fun setupPopupHandler()</ID>
     <ID>LongMethod:BrowserPageCard.kt$@Composable fun BrowserPageCard( page: RecentBrowserPage, onClick: () -&gt; Unit, onRemove: () -&gt; Unit, modifier: Modifier = Modifier, )</ID>
-    <ID>LongMethod:BrowserServiceImpl.kt$BrowserServiceImpl$private suspend fun createBrowser( config: BrowserConfig, ownerWindowId: String, ): BrowserHandle?</ID>
+    <ID>LongMethod:BrowserServiceImpl.kt$BrowserServiceImpl$private suspend fun attemptCreateBrowser( config: BrowserConfig, ownerWindowId: String, ): CreationOutcome</ID>
     <ID>LongMethod:CLIInstallationDialog.kt$@Composable fun CLIInstallationDialog(onDismiss: () -&gt; Unit)</ID>
     <ID>LongMethod:CLIInstallationDialog.kt$@Composable private fun ErrorContent( message: String, onRetry: () -&gt; Unit, onClose: () -&gt; Unit, )</ID>
     <ID>LongMethod:ChromiumAutoDownloader.kt$ChromiumAutoDownloader$internal suspend fun installFromCandidates( candidates: List&lt;EngineDownloadCandidate&gt;, version: String, targetDir: Path, staged: Boolean, onProgress: (DownloadProgress) -&gt; Unit, fetch: (String, Path) -&gt; Unit = { url, dest -&gt; downloadWithProgress(url, dest, onProgress) }, extract: (Path, Path) -&gt; Unit = { zip, dest -&gt; extractZip(zip, dest) }, ): Result&lt;Path&gt;</ID>
@@ -934,7 +935,7 @@
     <ID>NestedBlockDepth:BossDraggableComponent.kt$BossDraggableComponent$fun stopDragging()</ID>
     <ID>NestedBlockDepth:BossDraggableComponent.kt$BossDraggableComponent$private fun updateHoverTarget()</ID>
     <ID>NestedBlockDepth:BrowserServiceImpl.kt$BrowserServiceImpl$override suspend fun disposeBrowser(handle: BrowserHandle)</ID>
-    <ID>NestedBlockDepth:BrowserServiceImpl.kt$BrowserServiceImpl$private suspend fun createBrowser( config: BrowserConfig, ownerWindowId: String, ): BrowserHandle?</ID>
+    <ID>NestedBlockDepth:BrowserServiceImpl.kt$BrowserServiceImpl$private suspend fun attemptCreateBrowser( config: BrowserConfig, ownerWindowId: String, ): CreationOutcome</ID>
     <ID>NestedBlockDepth:CLICommandHandler.kt$CLICommandHandler$private suspend fun executeCommand(command: CLICommand)</ID>
     <ID>NestedBlockDepth:CLIInstaller.kt$CLIInstaller$private fun installHomebrewStyle(): CLIInstallResult</ID>
     <ID>NestedBlockDepth:ChromiumAutoDownloader.kt$ChromiumAutoDownloader$internal suspend fun installFromCandidates( candidates: List&lt;EngineDownloadCandidate&gt;, version: String, targetDir: Path, staged: Boolean, onProgress: (DownloadProgress) -&gt; Unit, fetch: (String, Path) -&gt; Unit = { url, dest -&gt; downloadWithProgress(url, dest, onProgress) }, extract: (Path, Path) -&gt; Unit = { zip, dest -&gt; extractZip(zip, dest) }, ): Result&lt;Path&gt;</ID>
