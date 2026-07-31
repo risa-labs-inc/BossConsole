@@ -1,8 +1,5 @@
-package ai.rever.boss.plugin.loader
+package ai.rever.boss.plugin.logging
 
-import ai.rever.boss.plugin.logging.BossLogger
-import ai.rever.boss.plugin.logging.ComponentLogger
-import ai.rever.boss.plugin.logging.LogCategory
 import java.lang.reflect.Modifier
 import kotlin.test.Test
 import kotlin.test.assertTrue
@@ -35,14 +32,26 @@ import kotlin.test.assertTrue
  */
 class LoggingStableFieldTest {
     /**
-     * The classes the api jar emits `$stable` on. Enums are excluded deliberately — the Compose
-     * compiler treats them as inherently stable and emits no field, so `LogCategory`/`LogLevel`
-     * have none in *either* copy. Verified against boss-plugin-api-1.0.71.jar class by class.
+     * Public non-enum types in this package: the Compose compiler emits `$stable` on all of them,
+     * and boss-plugin-api emits it on its copies too. A plugin holding *any* of these as a
+     * property would have broken the same way `ComponentLogger` did, so the list is not just the
+     * class that happened to bite us.
+     *
+     * Enums are excluded deliberately — Compose treats them as inherently stable and emits no
+     * field, so `LogCategory`/`LogLevel` have none in *either* copy.
+     *
+     * Only presence is asserted, not the `$stable` *value*: the bitmask is computed independently
+     * by each repo's Compose version. A mismatch cannot break linking (which is what takes a
+     * plugin down); at worst it changes recomposition skipping for a `@Composable` taking one of
+     * these as a parameter.
      */
     private val typesNeedingStable =
         listOf(
             ComponentLogger::class.java,
             BossLogger::class.java,
+            LogEntry::class.java,
+            BossLoggerConfig::class.java,
+            LogSanitizer::class.java,
         )
 
     @Test
@@ -88,9 +97,11 @@ class LoggingStableFieldTest {
 
     @Test
     fun `logging still works without the Compose runtime on the classpath`() {
-        // The Compose runtime is compileOnly, so it is absent here exactly as it is in a
-        // packaged host. If anything Compose-generated needed it at runtime, this would throw
-        // NoClassDefFoundError rather than log a line.
+        // Meaningful only because this test lives in plugin-logging, where the Compose runtime is
+        // compileOnly and therefore genuinely absent from the test runtime classpath — as it is in
+        // a packaged host. (It was previously in plugin-loader, which gets the Compose runtime
+        // transitively through plugin-api-core, so it asserted nothing.) If anything
+        // Compose-generated needed the runtime, this throws NoClassDefFoundError instead of logging.
         val logger = BossLogger.forComponent("LoggingStableFieldTest")
         logger.info(LogCategory.SYSTEM, "stable-field test probe", mapOf("ok" to true))
     }

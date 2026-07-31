@@ -230,7 +230,10 @@ object BinaryCompatibilityValidator {
 
             ConstantPoolParser.RefType.FIELD -> {
                 if (!hasField(ownerClass, ref.name)) {
-                    errors.add("$sourceClass -> ${ref.ownerClassName}.${ref.name}: field not found")
+                    errors.add(
+                        "$sourceClass -> ${ref.ownerClassName}.${ref.name}: field not found" +
+                            hintFor(ref.name),
+                    )
                 }
             }
         }
@@ -300,6 +303,30 @@ object BinaryCompatibilityValidator {
     }
 
     /** Check the class and its superclasses for the field. */
+
+    /**
+     * Extra context for field names whose absence has a known, non-obvious cause.
+     *
+     * `$stable` is Compose-synthetic. It is present on a class only when that class was compiled
+     * by the Compose compiler, so a missing one almost always means two copies of the owning type
+     * exist — one built with Compose and one without — and the non-Compose copy is the one winning
+     * at runtime. That is exactly what happened when the host's bundled `plugin-logging` lacked
+     * the field that `boss-plugin-api`'s copy of the same FQCN had: it disabled whole plugins with
+     * `ComponentLogger.$stable: field not found` as the only clue, and cost hours to identify.
+     *
+     * Deliberately a message change and not a soft-fail: the plugin's `getstatic` sits in its own
+     * `<clinit>`, so a genuinely missing field is a hard `NoSuchFieldError` at first touch.
+     * Rejecting up front with a clear reason beats crashing later with an opaque one.
+     */
+    private fun hintFor(fieldName: String): String =
+        if (fieldName == "\u0024stable") {
+            " (Compose stability field — the host and boss-plugin-api copies of this class have " +
+                "diverged: one was compiled with the Compose compiler and one was not. Fix the " +
+                "duplicated class, not the plugin.)"
+        } else {
+            ""
+        }
+
     private fun hasField(
         clazz: Class<*>,
         name: String,

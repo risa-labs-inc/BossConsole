@@ -44,12 +44,6 @@ kotlin {
         commonMain {
             dependencies {
                 implementation(libs.kotlinx.coroutines.core)
-                // compileOnly, NOT implementation: the Compose compiler refuses to run without
-                // the runtime on the compile classpath, but the only thing it generates here is
-                // the `$stable` int field — the api's copy has an empty static initialiser and
-                // references no Compose class. So nothing is needed at runtime and the published
-                // POM stays free of a Compose dependency for a logging library.
-                compileOnly(libs.compose.mp.runtime)
             }
         }
 
@@ -57,6 +51,21 @@ kotlin {
             dependencies {
                 implementation(libs.slf4j.api)
                 implementation(libs.kotlinx.coroutines.core)
+                // compileOnly, NOT implementation: the Compose compiler refuses to run without the
+                // runtime on the compile classpath, but the only thing it generates here is the
+                // `$stable` int field — the api's copy has an empty static initialiser and
+                // references no Compose class. So nothing is needed at runtime and the published
+                // POM stays free of a Compose dependency for a logging library.
+                //
+                // Declared here rather than in commonMain because every class the Compose compiler
+                // processes lives in desktopMain; commonMain has no Kotlin sources at all.
+                compileOnly(libs.compose.mp.runtime)
+            }
+        }
+
+        named("desktopTest") {
+            dependencies {
+                implementation(kotlin("test"))
             }
         }
     }
