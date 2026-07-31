@@ -38,8 +38,14 @@ kotlin {
             dependencies {
                 implementation(libs.kotlinx.serialization.json)
                 implementation(projects.pluginPlatform.pluginWorkspaceTypes)
-                // Compose runtime for @Immutable — and now also required by the Compose compiler
-                // plugin applied above, which the compiler refuses to run without.
+                // Compose runtime for @Immutable, and the Compose compiler plugin applied above
+                // also refuses to run without a runtime on the compile classpath.
+                //
+                // Kept as `implementation` rather than narrowed to `compileOnly` (which would
+                // satisfy both, since @Immutable is BINARY-retention and the generated $stable is a
+                // plain int) because this artifact is already published: dropping a transitive
+                // runtime dependency is consumer-visible. plugin-logging uses compileOnly because it
+                // had no Compose dependency to preserve.
                 implementation(libs.compose.mp.runtime)
             }
         }

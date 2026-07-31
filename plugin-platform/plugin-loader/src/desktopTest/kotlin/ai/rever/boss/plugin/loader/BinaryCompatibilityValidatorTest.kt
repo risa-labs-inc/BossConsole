@@ -30,7 +30,7 @@ class BinaryCompatibilityValidatorTest {
         // diverged from boss-plugin-api's, and it cost hours. The field is Compose-synthetic, so
         // its absence nearly always means two copies of the owning class exist — one compiled with
         // the Compose compiler and one without.
-        val hint = BinaryCompatibilityValidator.hintFor("\u0024stable")
+        val hint = BinaryCompatibilityValidator.hintFor("\$stable")
 
         assertTrue(hint.contains("Compose"), "no mention of Compose: $hint")
         assertTrue(hint.contains("diverged"), "does not name the actual cause: $hint")

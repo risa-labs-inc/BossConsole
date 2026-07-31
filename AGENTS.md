@@ -144,7 +144,19 @@ generated field does not, so the published POM stays clean). The other two alrea
 
 `LoggingStableFieldTest`, `BookmarkStableFieldTest` and `WorkspaceStableFieldTest` pin this, and
 each module's publish task depends on its own `desktopTest` — co-location alone does *not* put a
-test on the publish path. Do not delete them to make a build pass. BossConsole#81 tracks the
+test on the publish path. Do not delete them to make a build pass.
+
+The guard is **not** universal: `release.yml` runs only `createDistributable`/`packageDmg`/
+`packageMsi`/`packageDeb`, so app **packaging** never runs these tests. Merges are gated (PR CI
+runs `./gradlew build` → `check` → `allTests`; note a bare `./gradlew test` does *not* cover them,
+because a `jvm("desktop")` target registers `desktopTest`, not `test`), and the Maven publish path
+is now gated — packaging relies on those.
+
+**Publish `plugin-bookmark-types` and `plugin-workspace-types` together.** bookmark-types has
+`implementation(projects.pluginPlatform.pluginWorkspaceTypes)`, so its POM pins the sibling at the
+current project version. `publish-maven-central.yml` takes a free-form `packages` input, and
+dispatching bookmark-types alone would ship a POM requiring a `plugin-workspace-types` version that
+does not exist on Central. `all` is safe — workspace-types publishes first. BossConsole#81 tracks the
 durable guard: diffing public members against the api jar `plugin-api-core` already downloads,
 covering all eight duplicated packages rather than this one field.
 
