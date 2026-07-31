@@ -119,6 +119,19 @@ logger.error(LogCategory.NETWORK, "Request failed", error = exception)
 
 **Config**: Set `BOSS_LOG_LEVEL` env var or `boss.log.level` system property (TRACE/DEBUG/INFO/WARN/ERROR)
 
+**`plugin-logging` applies the Compose compiler on purpose, with no Compose code.**
+`boss-plugin-api` ships this same `ai.rever.boss.plugin.logging` package and *is* a Compose
+project, so its `ComponentLogger` carries the synthetic `$stable` field. This module's copy
+shadows it parent-first inside plugin classloaders, so a plugin that merely holds a
+`ComponentLogger` **property** emits `getstatic ComponentLogger.$stable` — which links against
+the api jar at build time and is missing at runtime. `BinaryCompatibilityValidator` then rejects
+the *entire* plugin and the host disables it as binary incompatible. That made secret-manager
+1.2.6 and 1.2.7 unloadable on every host. `$stable` was verified (javap, member by member) to be
+the only public difference between the two copies, so emitting it here makes them interchangeable
+and repairs already-built plugins with no api release. The Compose runtime is `compileOnly` —
+the compiler needs it, the generated field does not, and the published POM stays clean.
+`LoggingStableFieldTest` pins this; do not delete it to make a build pass.
+
 ## Build and Deployment
 
 **GitHub Actions**: `build.yml` (multi-platform tests), `release.yml` (signed builds)
