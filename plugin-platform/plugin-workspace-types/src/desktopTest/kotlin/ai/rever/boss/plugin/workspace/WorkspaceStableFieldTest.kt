@@ -1,5 +1,6 @@
 package ai.rever.boss.plugin.workspace
 
+import java.lang.reflect.Modifier
 import kotlin.test.Test
 import kotlin.test.assertTrue
 
@@ -15,24 +16,29 @@ import kotlin.test.assertTrue
  * This module was found broken by diffing every api package the host also bundles: 15 classes
  * across three modules had the field in the api and not here. `ComponentLogger` is the one that
  * actually bit us — it made secret-manager 1.2.6 and 1.2.7 unloadable on every host — but these
- * types are more exposed, since plugins hold workspace/tab/panel config routinely.
+ * types are more exposed, since plugins hold workspace, tab and panel config routinely.
  *
  * If this fails, the Compose compiler plugin has been dropped from this module's
- * `build.gradle.kts`. Restore it rather than deleting the test. See BossConsole#81 for the
- * durable guard (diffing public members against the api jar `plugin-api-core` already downloads).
+ * `build.gradle.kts`. Restore it rather than deleting the test. See BossConsole#81 for the durable
+ * guard (diffing public members against the api jar `plugin-api-core` already downloads).
  */
 class WorkspaceStableFieldTest {
+    private val typesNeedingStable =
+        listOf(
+            LayoutWorkspace::class.java,
+            TabConfig::class.java,
+            PanelConfig::class.java,
+            SplitConfig::class.java,
+            BreadcrumbConfig::class.java,
+            WorkspaceSerializer::class.java,
+        )
+
     @Test
     fun `public workspace types expose the Compose stable field`() {
         val missing =
-            listOf(
-                LayoutWorkspace::class.java,
-                TabConfig::class.java,
-                PanelConfig::class.java,
-                SplitConfig::class.java,
-                BreadcrumbConfig::class.java,
-                WorkspaceSerializer::class.java,
-            ).filter { type -> type.declaredFields.none { it.name == "\$stable" } }
+            typesNeedingStable.filter { type ->
+                type.declaredFields.none { it.name == "\$stable" }
+            }
 
         assertTrue(
             missing.isEmpty(),
@@ -40,5 +46,17 @@ class WorkspaceStableFieldTest {
                 ". Any plugin holding one of these as a property will be rejected as binary " +
                 "incompatible. The Compose compiler plugin was probably removed from this module.",
         )
+    }
+
+    @Test
+    fun `the field is public static int, which is what a plugin's getstatic needs`() {
+        // Presence alone is not sufficient — a non-public or instance field still fails to link.
+        // Asserted in all three affected modules rather than only in plugin-logging.
+        typesNeedingStable.forEach { type ->
+            val field = type.getDeclaredField("\$stable")
+            assertTrue(Modifier.isPublic(field.modifiers), "not public: ${type.name}")
+            assertTrue(Modifier.isStatic(field.modifiers), "not static: ${type.name}")
+            assertTrue(field.type == Int::class.javaPrimitiveType, "not an int: ${type.name}")
+        }
     }
 }

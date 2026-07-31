@@ -50,6 +50,20 @@ kotlin {
     }
 }
 
+// Publishing must not bypass the $stable guard.
+//
+// Co-locating the test in this module does NOT put it on the publish path:
+// publishAndReleaseToMavenCentral has no dependency on check/allTests/desktopTest, and
+// publish-maven-central.yml invokes the publish task directly with no test step ahead of it. So
+// without this a release could ship without the field and nothing on that path would object —
+// which is the hole that let the divergence reach users in the first place.
+//
+// (PR CI does cover it, but via `./gradlew build` -> check -> allTests. A bare `./gradlew test`
+// does not: a KMP jvm target registers desktopTest, not test.)
+tasks.withType<AbstractPublishToMaven>().configureEach {
+    dependsOn(tasks.named("desktopTest"))
+}
+
 mavenPublishing {
     publishToMavenCentral()
     signAllPublications()

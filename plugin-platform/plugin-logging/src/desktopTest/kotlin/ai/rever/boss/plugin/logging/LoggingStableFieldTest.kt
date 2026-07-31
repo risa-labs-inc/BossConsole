@@ -75,7 +75,7 @@ class LoggingStableFieldTest {
         // Pinned in both directions: if a future Compose version starts emitting $stable on
         // enums, the api jar and this jar would diverge again — in the opposite direction —
         // and a plugin holding a LogCategory property would break the same way.
-        listOf(LogCategory::class.java).forEach { enumType ->
+        listOf(LogCategory::class.java, LogLevel::class.java).forEach { enumType ->
             assertTrue(
                 enumType.declaredFields.none { it.name == "\$stable" },
                 "$enumType unexpectedly has \$stable; check whether boss-plugin-api now emits " +
@@ -102,6 +102,11 @@ class LoggingStableFieldTest {
         // a packaged host. (It was previously in plugin-loader, which gets the Compose runtime
         // transitively through plugin-api-core, so it asserted nothing.) If anything
         // Compose-generated needed the runtime, this throws NoClassDefFoundError instead of logging.
+        // Class-initialise every one of them: reflection over declaredFields does NOT trigger
+        // <clinit>, so without this only BossLogger/ComponentLogger were ever initialised and the
+        // other three were never actually exercised for a missing-Compose-runtime failure.
+        typesNeedingStable.forEach { Class.forName(it.name, true, it.classLoader) }
+
         val logger = BossLogger.forComponent("LoggingStableFieldTest")
         logger.info(LogCategory.SYSTEM, "stable-field test probe", mapOf("ok" to true))
     }

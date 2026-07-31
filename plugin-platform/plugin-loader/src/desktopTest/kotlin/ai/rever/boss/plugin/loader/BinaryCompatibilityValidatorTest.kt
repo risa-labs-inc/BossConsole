@@ -1,6 +1,7 @@
 package ai.rever.boss.plugin.loader
 
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -21,6 +22,26 @@ import kotlin.test.assertTrue
  * carry the only behavioural deltas of the recent pivot.
  */
 class BinaryCompatibilityValidatorTest {
+    // ─── hintFor ───────────────────────────────────────────────────────
+
+    @Test
+    fun `a missing stable field explains itself`() {
+        // "$stable: field not found" was the ONLY clue when the host's plugin-logging copy
+        // diverged from boss-plugin-api's, and it cost hours. The field is Compose-synthetic, so
+        // its absence nearly always means two copies of the owning class exist — one compiled with
+        // the Compose compiler and one without.
+        val hint = BinaryCompatibilityValidator.hintFor("\u0024stable")
+
+        assertTrue(hint.contains("Compose"), "no mention of Compose: $hint")
+        assertTrue(hint.contains("diverged"), "does not name the actual cause: $hint")
+    }
+
+    @Test
+    fun `an ordinary missing field gets no hint`() {
+        // The hint must not dilute unrelated failures.
+        assertEquals("", BinaryCompatibilityValidator.hintFor("someOrdinaryField"))
+    }
+
     // ─── isSoftFailReference ───────────────────────────────────────────
 
     @Test
