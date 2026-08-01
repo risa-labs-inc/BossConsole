@@ -1,0 +1,24 @@
+{
+    "id": "last-session",
+    "name": "Last Session",
+    "description": "Manual overlay check - two browser tabs on real pages, so overlays have content to layer over and tab-switching can be exercised",
+    "layout": {
+        "type": "ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel",
+        "panel": {
+            "id": "main",
+            "tabs": [
+                {
+                    "type": "browser",
+                    "title": "Wikipedia",
+                    "url": "https://en.wikipedia.org/wiki/Compositing_window_manager"
+                },
+                {
+                    "type": "browser",
+                    "title": "Speedometer",
+                    "url": "https://browserbench.org/Speedometer3.1/"
+                }
+            ]
+        }
+    },
+    "timestamp": 1785546236948
+}

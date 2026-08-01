@@ -1988,6 +1988,56 @@ object FluckEngine {
         }
 
     /**
+     * Dismiss any open Swing popup menu when the user clicks inside the web page.
+     *
+     * A heavyweight [javax.swing.JPopupMenu] normally closes itself on a click elsewhere: Swing's
+     * [javax.swing.MenuSelectionManager] watches the AWT event queue and clears the selection when
+     * a press lands outside the menu. A click on the browser never reaches that queue — Chromium
+     * owns a native child window and consumes the event itself — so the menu stays on screen.
+     * Observed on Windows with the fluck browser's right-click menu: clicking BOSS's own chrome
+     * (tab bar, sidebar) dismissed it, clicking the page did not, and right-clicking again merely
+     * relocated the same popup.
+     *
+     * This closes the loop by turning an in-page press into the clearSelectedPath() call Swing
+     * would have made itself. Deliberately placed in the host rather than in the browser plugin:
+     * the plugin owns the menu but has no mouse-press signal (BrowserHandle exposes only
+     * executeJavaScript and a context-menu callback), whereas the host already holds the
+     * JxBrowser Browser and installs input callbacks on it. Fixing it here needs no plugin
+     * release and no plugin-api change, and covers every Swing popup any plugin opens over a page.
+     *
+     * Always [proceed]s — the click must still reach the page. Registered for every browser on
+     * every platform: an unnecessary clearSelectedPath() when no menu is open is a no-op, which is
+     * cheaper than reasoning about which rendering mode can strand a popup.
+     */
+    private fun setupSwingPopupDismissOnPageClick(browser: com.teamdev.jxbrowser.browser.Browser) {
+        try {
+            browser.set(
+                com.teamdev.jxbrowser.browser.callback.input.PressMouseCallback::class.java,
+                com.teamdev.jxbrowser.browser.callback.input.PressMouseCallback {
+                    // The callback arrives on a JxBrowser thread; MenuSelectionManager is
+                    // Swing state and must only be touched on the EDT.
+                    javax.swing.SwingUtilities.invokeLater {
+                        val manager = javax.swing.MenuSelectionManager.defaultManager()
+                        if (manager.selectedPath.isNotEmpty()) {
+                            manager.clearSelectedPath()
+                        }
+                    }
+                    com.teamdev.jxbrowser.browser.callback.input.PressMouseCallback.Response
+                        .proceed()
+                },
+            )
+        } catch (e: Exception) {
+            // A browser that rejects the callback still works; it just keeps the old
+            // stuck-menu behaviour, which is not worth failing browser setup over.
+            logger.debug(
+                LogCategory.BROWSER,
+                "Could not install page-click popup dismissal",
+                mapOf("error" to e.toString()),
+            )
+        }
+    }
+
+    /**
      * Sets up keyboard interceptor for a browser to forward menu shortcuts to the native menu bar.
      * This intercepts Cmd+R, Cmd+N, Cmd+T, Cmd+W, etc. (on macOS) or Ctrl+R, Ctrl+N, etc. (on Windows/Linux)
      * before JxBrowser consumes them, and manually triggers the corresponding MenuActionsHandler methods.
@@ -2000,6 +2050,7 @@ object FluckEngine {
         browser: com.teamdev.jxbrowser.browser.Browser,
         ownerWindowId: String? = null,
     ) {
+        setupSwingPopupDismissOnPageClick(browser)
         val suppressionLogged = AtomicBoolean(false)
         browser.set(
             com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback::class.java,
