@@ -101,7 +101,7 @@ jobs:
         run: chmod +x tools/chromium_branding_macos_arm64
 
       - name: Set up JDK
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v5.6.0
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -397,7 +397,7 @@ jobs:
         run: chmod +x tools/chromium_branding_macos_x64
 
       - name: Set up JDK
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v5.6.0
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -672,7 +672,7 @@ jobs:
           path: tools
 
       - name: Set up JDK
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v5.6.0
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -799,7 +799,7 @@ jobs:
           }
 
       - name: Set up JDK
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v5.6.0
         with:
           distribution: 'microsoft'  # Microsoft OpenJDK has ARM64 builds
           java-version: '17'
@@ -899,7 +899,7 @@ jobs:
         run: chmod +x tools/chromium_branding_linux
 
       - name: Set up JDK
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v5.6.0
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -1007,7 +1007,7 @@ jobs:
           chmod +x tools/chromium_branding_linux_arm64
 
       - name: Set up JDK
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v5.6.0
         with:
           distribution: 'temurin'
           java-version: '17'

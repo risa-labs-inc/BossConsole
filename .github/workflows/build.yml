@@ -47,7 +47,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: ☕ Setup JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5.6.0
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: ${{ env.JAVA_DISTRIBUTION }}
@@ -80,7 +80,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: ☕ Setup JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5.6.0
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: ${{ env.JAVA_DISTRIBUTION }}
@@ -155,7 +155,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: ☕ Setup JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5.6.0
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: ${{ env.JAVA_DISTRIBUTION }}
@@ -209,7 +209,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: ☕ Setup JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5.6.0
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: ${{ env.JAVA_DISTRIBUTION }}

@@ -215,7 +215,7 @@ jobs:
           ref: ${{ needs.prepare-version.outputs.updated-sha }}
 
       - name: ☕ Setup JDK
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v5.6.0
         with:
           java-version: '17'
           distribution: 'temurin'
@@ -370,7 +370,7 @@ jobs:
           ref: ${{ needs.prepare-version.outputs.updated-sha }}
 
       - name: ☕ Setup JDK
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v5.6.0
         with:
           java-version: '17'
           distribution: 'temurin'
@@ -499,7 +499,7 @@ jobs:
           ref: ${{ needs.prepare-version.outputs.updated-sha }}
 
       - name: ☕ Setup JDK
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v5.6.0
         with:
           java-version: '17'
           distribution: 'temurin'
