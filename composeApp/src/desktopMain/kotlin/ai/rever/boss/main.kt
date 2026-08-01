@@ -68,6 +68,19 @@ fun main(args: Array<String>) {
     // Set up proper temp directories for native libraries
     setupNativeLibraryPaths()
 
+    // Opt-in override for the Compose UI's own rendering backend (Skiko) - separate from the
+    // BROWSER's rendering mode in JxBrowserConfig. Lets a backend be A/B'd on a real machine
+    // without a rebuild: pin DIRECT3D, or confirm the GPU-less Windows RDP/VM cohort that falls
+    // back to software. UNSET by default so Skiko keeps its own auto-detection - forcing a
+    // backend that cannot initialize would break exactly the machines a pin is meant to help.
+    // Must run before any AWT/Skiko init, hence its position here.
+    //   BOSS_SKIKO_RENDER_API = DIRECT3D | OPENGL | METAL | SOFTWARE_FAST | SOFTWARE
+    ai.rever.boss.config.ConfigLoader
+        .getConfig("BOSS_SKIKO_RENDER_API")
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+        ?.let { System.setProperty("skiko.renderApi", it) }
+
     // Disable lightweight popups for HARDWARE_ACCELERATED rendering mode (#258)
     // This ensures Swing popup menus (context menus) appear above the browser view
     JPopupMenu.setDefaultLightWeightPopupEnabled(false)

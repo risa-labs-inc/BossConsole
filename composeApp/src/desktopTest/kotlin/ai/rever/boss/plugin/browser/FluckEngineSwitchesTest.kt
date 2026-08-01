@@ -74,9 +74,39 @@ class FluckEngineSwitchesTest {
         extras: List<String> = emptyList(),
     ) = FluckEngine.performanceSwitchesFor(os, arch, graphiteOptIn, inContainer, extras)
 
+    /**
+     * Switches that are not platform-specific, so a per-platform assertion can say what that
+     * platform adds ON TOP of the common set without restating it. Kept as a helper rather than
+     * inlined so adding another universal switch updates every test at once.
+     */
+    private fun platformSpecific(switches: List<String>) = switches - setOf("--no-pings", "--disable-domain-reliability")
+
     @Test
     fun `windows disables the native-window occlusion tracker`() {
-        assertEquals(listOf("--disable-features=CalculateNativeWinOcclusion"), switchesFor("windows 11"))
+        assertTrue("--disable-features=CalculateNativeWinOcclusion" in switchesFor("windows 11"))
+    }
+
+    @Test
+    fun `background network chatter is trimmed on every platform`() {
+        // Hyperlink-auditing pings and Chrome's Domain Reliability uploads are dead weight for an
+        // embedded browser. Asserted per-platform because it is easy to accidentally nest these
+        // inside one branch of the platform `when`.
+        for (os in listOf("windows 11", "mac os x", "linux", "freebsd")) {
+            val switches = switchesFor(os)
+            assertTrue("--no-pings" in switches, "expected --no-pings on '$os'")
+            assertTrue("--disable-domain-reliability" in switches, "expected --disable-domain-reliability on '$os'")
+        }
+    }
+
+    @Test
+    fun `renderer process cap is opt-in and rejects meaningless values`() {
+        assertEquals("--renderer-process-limit=4", FluckEngine.renderCapSwitch("4"))
+        assertEquals("--renderer-process-limit=1", FluckEngine.renderCapSwitch(" 1 "))
+        // Unset is the normal case. 0 and negatives are not caps, and must not be passed
+        // through as if they were.
+        for (raw in listOf(null, "", "   ", "0", "-1", "many", "4.5")) {
+            assertEquals(null, FluckEngine.renderCapSwitch(raw), "expected no cap for '$raw'")
+        }
     }
 
     @Test
@@ -84,19 +114,22 @@ class FluckEngineSwitchesTest {
         // Verified live 2026-07-13: Graphite-on produced blank browser content on
         // Apple Silicon (frames never reached the Compose surface); Graphite-off
         // rendered normally. Default must therefore be OFF.
-        assertEquals(emptyList(), switchesFor("mac os x", arch = "aarch64"))
+        assertEquals(emptyList(), platformSpecific(switchesFor("mac os x", arch = "aarch64")))
         assertEquals(
             listOf("--enable-features=SkiaGraphite"),
-            switchesFor("mac os x", arch = "aarch64", graphiteOptIn = true),
+            platformSpecific(switchesFor("mac os x", arch = "aarch64", graphiteOptIn = true)),
         )
         // Intel macs never get Graphite, even opted in.
-        assertEquals(emptyList(), switchesFor("mac os x", arch = "x86_64", graphiteOptIn = true))
+        assertEquals(emptyList(), platformSpecific(switchesFor("mac os x", arch = "x86_64", graphiteOptIn = true)))
     }
 
     @Test
     fun `linux enables VA-API and adds container-only switches inside containers`() {
         val desktop = switchesFor("linux")
-        assertEquals(listOf("--enable-features=VaapiVideoDecoder,VaapiVideoDecodeLinuxGL,VaapiVideoEncoder"), desktop)
+        assertEquals(
+            listOf("--enable-features=VaapiVideoDecoder,VaapiVideoDecodeLinuxGL,VaapiVideoEncoder"),
+            platformSpecific(desktop),
+        )
         assertFalse("--no-sandbox" in desktop)
         val container = switchesFor("linux", inContainer = true)
         assertTrue("--disable-dev-shm-usage" in container)
@@ -123,8 +156,8 @@ class FluckEngineSwitchesTest {
 
     @Test
     fun `unknown platforms get no platform-specific switches`() {
-        assertEquals(emptyList(), switchesFor("freebsd"))
-        assertEquals(emptyList(), switchesFor("sunos", inContainer = true))
+        assertEquals(emptyList(), platformSpecific(switchesFor("freebsd")))
+        assertEquals(emptyList(), platformSpecific(switchesFor("sunos", inContainer = true)))
     }
 
     @Test

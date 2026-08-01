@@ -193,6 +193,44 @@ Honest status per fix, on this machine, with HARDWARE as the default:
 If anything still regresses: `BOSS_RENDERING_MODE=OFF_SCREEN` restores the old
 behaviour with no rebuild.
 
+### Full audit of Lite's `perf/windows-efficiency` branch
+
+The branch is ~16 commits, not one. What was taken, and what was deliberately left:
+
+**Ported.**
+
+| From Lite | Why |
+|---|---|
+| `OverlayConfig` + `HeavyweightPopup`/`HeavyweightModal`/`SwingTooltip` (`539fbb48`) | Overlay z-order under a heavyweight browser |
+| Retain `BrowserViewState` across tab switches (`651cdfb0`) | The "fast-switch blank": HARDWARE tore down and rebuilt the GPU surface on every tab switch, so A→B→A painted blank |
+| `NewTabDialog` → `OverlayModal` (`651cdfb0`) | The dialog otherwise renders under the page |
+| Ctrl/Cmd+R reloads the focused browser directly (`539fbb48`) | Window-routed reload does not reach a page holding native focus |
+| Browser-surface top inset (`539fbb48`) | Kept as a tunable, default changed — see above |
+| `--no-pings`, `--disable-domain-reliability` (`e42b1926`) | Background network chatter with no feature depending on it |
+| Opt-in `BOSS_RENDERER_PROCESS_LIMIT` (`e42b1926`) | RAM cap for many-tab sessions; off by default |
+| Opt-in `BOSS_SKIKO_RENDER_API` (`e3f96d73`) | A/B the *Compose host's* backend without a rebuild; unset by default |
+
+**Not ported — Lite's engine switch set predates BossConsole's flag audit.** Taking it
+wholesale would have regressed both security and Linux:
+
+| Lite carries | Why it is not taken here |
+|---|---|
+| `--no-sandbox`, unconditionally | BossConsole removed it to restore Chromium process isolation; the container opt-out goes through `EngineOptions.disableSandbox()` |
+| `--disable-dev-shm-usage`, unconditionally | Container-only here: on desktop Linux it moves shared memory to disk, and shared memory *is* the OSR frame transport |
+| `--enable-gpu-rasterization`, `--enable-zero-copy`, `--ignore-gpu-blocklist` | Default-on in Chromium 150; the only residual effect is forcing GPU paths on driver-blocklisted machines |
+| `--disk-cache-size` as a switch | BossConsole sets it through `diskCacheSize()`; precedence between the two is unspecified |
+
+Lite also does **not** have `--disable-features=CalculateNativeWinOcclusion`, which
+BossConsole needs on Windows — so the flag debt runs in both directions.
+
+**Also on Lite's branch, not adopted:** tab hibernation, battery-aware throttling,
+AppCDS startup tuning and memory-pressure work. All real, all out of scope for a
+browser-throughput change, and Lite gates each behind its own flag.
+
+**Open in Lite, unresolved anywhere:** macOS two-finger swipe-back is broken in
+HARDWARE mode, possibly a JxBrowser limitation. Another reason BossConsole's macOS
+stays on OFF_SCREEN.
+
 ### Lite's independent corroboration
 
 Lite reached the same conclusion by a different measurement — power and memory rather

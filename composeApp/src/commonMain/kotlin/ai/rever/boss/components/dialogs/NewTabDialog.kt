@@ -4,6 +4,7 @@ import ContextMenuBackground
 import ContextMenuBorder
 import ai.rever.boss.components.overlays.ContextMenu
 import ai.rever.boss.components.overlays.ContextMenuItem
+import ai.rever.boss.components.overlays.OverlayModal
 import ai.rever.boss.components.plugin.panels.left_top.ProjectState
 import ai.rever.boss.components.plugin.panels.left_top.directoryHasChildren
 import ai.rever.boss.components.plugin.panels.left_top.scanDirectory
@@ -71,8 +72,6 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupProperties
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -292,12 +291,12 @@ fun NewTabDialog(
         }
     }
 
-    // Full-screen overlay with scrim
-    Popup(
-        alignment = Alignment.Center,
-        onDismissRequest = onDismiss,
-        properties = PopupProperties(focusable = true),
-    ) {
+    // Full-screen overlay with scrim. OverlayModal renders this in a separate always-on-top
+    // window when the browser is a heavyweight GPU surface (HARDWARE_ACCELERATED), because a
+    // plain Popup would be drawn UNDER the page; it falls back to exactly the centered Popup
+    // below on OFF_SCREEN. Routed here rather than at the three call sites so every one of them
+    // gets it.
+    OverlayModal(onDismissRequest = onDismiss) {
         Box(
             modifier =
                 Modifier

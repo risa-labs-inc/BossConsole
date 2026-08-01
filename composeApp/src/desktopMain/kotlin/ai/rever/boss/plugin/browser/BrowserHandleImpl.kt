@@ -1730,7 +1730,24 @@ internal class BrowserHandleImpl(
         }
 
         // Create BrowserViewState on first composition
-        var viewState by remember { mutableStateOf<BrowserViewState?>(null) }
+        // Retain the browser surface across tab switches in HARDWARE_ACCELERATED mode.
+        //
+        // The default lifecycle closes the surface whenever this composable leaves composition
+        // (switching to another tab) and rebuilds it on return. For an off-screen bitmap that is
+        // cheap; for a heavyweight GPU surface it tears down and re-initialises native resources,
+        // and the tab paints BLANK on the way back (A->B->A). BossConsoleLite hit this on its
+        // Windows fleet and calls it the "fast-switch blank".
+        //
+        // Retaining is gated on the rendering mode, NOT applied unconditionally as Lite does:
+        // Lite defaults HARDWARE everywhere so the two are the same thing there, but here
+        // OFF_SCREEN is still the macOS/Linux default and they must keep the exact lifecycle they
+        // have today. Safe because the surface is still closed for real in dispose(), which runs
+        // when the tab is actually closed rather than merely hidden.
+        val retainSurfaceAcrossTabSwitches =
+            JxBrowserConfig.renderingMode == com.teamdev.jxbrowser.engine.RenderingMode.HARDWARE_ACCELERATED
+
+        // Seeded from the retained surface so re-entry paints immediately instead of blank.
+        var viewState by remember { mutableStateOf(if (retainSurfaceAcrossTabSwitches) currentViewState else null) }
 
         // Track last navigation time for debouncing mouse button navigation
         var lastNavigationTime by remember { mutableStateOf(0L) }
@@ -1761,7 +1778,12 @@ internal class BrowserHandleImpl(
                         }
                     }
 
-            if (awtWindow != null) {
+            val retained = currentViewState.takeIf { retainSurfaceAcrossTabSwitches }
+            if (retained != null) {
+                // Coming back to a tab whose surface was kept alive - reuse it rather than
+                // building a second one, which is the whole point of retaining.
+                viewState = retained
+            } else if (awtWindow != null) {
                 try {
                     val newState = BrowserViewState(browser, MainScope(), awtWindow)
                     viewState = newState
@@ -1811,9 +1833,15 @@ internal class BrowserHandleImpl(
                 if (pane != null && token != null) {
                     MacOSGestureHandler.removeMagnificationListener(pane, token)
                 }
-                viewState?.close()
-                viewState = null
-                currentViewState = null
+                // When retaining, leaving composition means "this tab was hidden", not "this tab
+                // was closed" - so the surface stays alive and dispose() owns closing it. Compose
+                // still detaches the heavyweight AWT component, so a hidden tab's surface is not
+                // visible and cannot bleed through.
+                if (!retainSurfaceAcrossTabSwitches) {
+                    viewState?.close()
+                    viewState = null
+                    currentViewState = null
+                }
             }
         }
 

@@ -1597,6 +1597,16 @@ object FluckEngine {
         extraSwitches: List<String> = emptyList(),
     ): List<String> {
         val switches = mutableListOf<String>()
+
+        // Background network chatter an embedded browser has no use for, on every platform.
+        // --no-pings drops hyperlink-auditing pings; --disable-domain-reliability stops
+        // Chrome's Domain Reliability error-reporting uploads to Google. Neither is load-bearing
+        // for anything BOSS does, so this is pure reduction. Ported from BossConsoleLite, which
+        // deliberately stopped short of --disable-background-networking and the component
+        // updater pending proof they don't break the update/DRM paths — that caution is kept.
+        switches += "--no-pings"
+        switches += "--disable-domain-reliability"
+
         when {
             os.contains("win") -> {
                 // Chromium's native-window occlusion tracker can conclude the
@@ -1640,11 +1650,26 @@ object FluckEngine {
             }
             // Unknown platform strings get no platform-specific switches.
         }
+        // Opt-in RAM cap for many-tab sessions, OFF by default. Bounding the renderer process
+        // count trades cross-tab isolation and stability for memory, which is not a trade to make
+        // for everyone by default — Lite exposes it as a tunable for exactly that reason, pending
+        // real-world tab-count data. Values <= 0 are ignored rather than passed through, since
+        // --renderer-process-limit=0 is not a meaningful cap.
+        renderCapSwitch(System.getenv("BOSS_RENDERER_PROCESS_LIMIT"))?.let { switches += it }
+
         // Operator escape hatch, appended last (see the --enable-features caveat
         // in the KDoc above).
         switches += extraSwitches
         return switches
     }
+
+    /** Pure part of the renderer-process cap, split out so the guard is unit-testable. */
+    internal fun renderCapSwitch(raw: String?): String? =
+        raw
+            ?.trim()
+            ?.toIntOrNull()
+            ?.takeIf { it > 0 }
+            ?.let { "--renderer-process-limit=$it" }
 
     /**
      * Opt-in DevTools endpoint on the embedded engine, for measuring the fluck
