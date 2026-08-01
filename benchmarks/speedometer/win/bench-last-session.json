@@ -1,0 +1,19 @@
+{
+    "id": "last-session",
+    "name": "Last Session",
+    "description": "Speedometer benchmark layout - single full-width browser tab",
+    "layout": {
+        "type": "ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel",
+        "panel": {
+            "id": "main",
+            "tabs": [
+                {
+                    "type": "browser",
+                    "title": "Benchmark",
+                    "url": "about:blank"
+                }
+            ]
+        }
+    },
+    "timestamp": 1785546236948
+}

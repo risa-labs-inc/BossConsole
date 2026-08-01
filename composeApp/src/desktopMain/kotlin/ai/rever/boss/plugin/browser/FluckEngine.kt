@@ -1646,6 +1646,47 @@ object FluckEngine {
         return switches
     }
 
+    /**
+     * Opt-in DevTools endpoint on the embedded engine, for measuring the fluck
+     * browser with the same CDP harness that drives Chrome/Edge — otherwise the
+     * one browser we most want to profile is the one that can only be read off a
+     * screenshot (see benchmarks/speedometer/win/SpeedometerCdp.java).
+     *
+     * OFF unless BOSS_BROWSER_REMOTE_DEBUGGING_PORT names a valid port, because
+     * an open DevTools port is full control of the browser profile: any local
+     * process can read cookies and session tokens and drive navigation through
+     * it, with no prompt. That is why this is an env var and not a setting — it
+     * should be a deliberate act for one session, not something that can be left
+     * on. Chromium binds the endpoint to loopback only, which bounds the exposure
+     * to this machine but not to this app.
+     *
+     * [parseRemoteDebuggingPort] rejects anything outside the unprivileged range
+     * so a typo cannot silently mean "port 0" — which Chromium reads as
+     * "pick any free port", i.e. a debugging endpoint nobody knows is open.
+     */
+    private fun applyRemoteDebuggingPort(builder: EngineOptions.Builder) {
+        val raw = System.getenv("BOSS_BROWSER_REMOTE_DEBUGGING_PORT") ?: return
+        val port = parseRemoteDebuggingPort(raw)
+        if (port == null) {
+            logger.warn(
+                LogCategory.BROWSER,
+                "Ignoring BOSS_BROWSER_REMOTE_DEBUGGING_PORT - not a port in 1024..65535",
+                mapOf("value" to raw),
+            )
+            return
+        }
+        builder.remoteDebuggingPort(port)
+        logger.warn(
+            LogCategory.BROWSER,
+            "DevTools remote debugging ENABLED on this engine - any local process can drive the browser " +
+                "and read its cookies. Unset BOSS_BROWSER_REMOTE_DEBUGGING_PORT when you are done.",
+            mapOf("port" to port),
+        )
+    }
+
+    /** Pure part of [applyRemoteDebuggingPort], split out so the guard is unit-testable. */
+    internal fun parseRemoteDebuggingPort(raw: String?): Int? = raw?.trim()?.toIntOrNull()?.takeIf { it in 1024..65535 }
+
     private fun createEngineInstance(
         chromiumDir: java.nio.file.Path,
         profileDirPath: java.nio.file.Path,
@@ -1673,7 +1714,7 @@ object FluckEngine {
                 // container boundary provides the isolation instead.
                 .apply {
                     if (envIsTrue("BOSS_CHROMIUM_DISABLE_SANDBOX") || inContainer) disableSandbox()
-                }
+                }.apply { applyRemoteDebuggingPort(this) }
 
         // Add user agent if configured
         BrowserSettings.userAgent?.let { ua ->
@@ -1983,15 +2024,20 @@ object FluckEngine {
 
                 // Intercept main modifier + key shortcuts
                 if (isMainModifierDown && !modifiers.isShiftDown && !modifiers.isAltDown) {
+                    // Reload is BROWSER-scoped, and this callback already fires for the focused
+                    // browser — so reload it directly rather than routing through the focused
+                    // WINDOW. Handled before the window branch because in HARDWARE_ACCELERATED mode
+                    // the heavyweight surface holds native focus when the user clicks inside the
+                    // page, WindowFocusManager then reports no focused window, and the window-routed
+                    // reload silently did nothing. Direct reload works in both rendering modes, so
+                    // this is not gated on the mode.
+                    if (keyCode == com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_R) {
+                        browser.navigation().reload()
+                        return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response
+                            .suppress()
+                    }
                     if (shortcutWindowId != null) {
                         when (keyCode) {
-                            com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_R -> {
-                                ai.rever.boss.window.MenuActionsHandler
-                                    .triggerReloadBrowser(shortcutWindowId)
-                                return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response
-                                    .suppress()
-                            }
-
                             com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_N -> {
                                 ai.rever.boss.window.MenuActionsHandler
                                     .triggerNewTab(shortcutWindowId)
@@ -2026,14 +2072,24 @@ object FluckEngine {
                             }
                         }
                     } else {
-                        // Log only for shortcuts we handle to avoid spam
+                        // No BOSS window is registered as focused. Under HARDWARE_ACCELERATED this
+                        // is the COMMON case rather than an edge case: the heavyweight browser
+                        // surface holds native focus, so WindowFocusManager sees no focused
+                        // Compose/AWT window. This callback is browser-scoped, so anything that
+                        // needs only the browser is served directly instead of being dropped.
                         when (keyCode) {
-                            com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_R,
+                            com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_F -> {
+                                val findBar = activeFindBars.getOrPut(browser) { BrowserFindBar(browser) }
+                                findBar.toggle()
+                                return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response
+                                    .suppress()
+                            }
+
                             com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_N,
                             com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_T,
                             com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_W,
-                            com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_F,
                             -> {
+                                // New/close tab need a window we cannot resolve from here.
                                 logger.debug(
                                     LogCategory.BROWSER,
                                     "No window focused, cannot dispatch shortcut",

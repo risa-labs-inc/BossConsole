@@ -1,6 +1,7 @@
 package ai.rever.boss.plugin.browser
 
 import ai.rever.boss.cache.FaviconCache
+import ai.rever.boss.config.JxBrowserConfig
 import ai.rever.boss.dashboard.RecentBrowserPagesManager
 import ai.rever.boss.plugin.window.LocalWindowId
 import ai.rever.boss.tabfullscreen.FullscreenBrowserWindow
@@ -9,6 +10,7 @@ import ai.rever.boss.utils.WindowFocusManager
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -20,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
+import androidx.compose.ui.unit.dp
 import com.teamdev.jxbrowser.browser.Browser
 import com.teamdev.jxbrowser.browser.callback.CreatePopupCallback
 import com.teamdev.jxbrowser.browser.callback.InjectJsCallback
@@ -1814,6 +1817,32 @@ internal class BrowserHandleImpl(
             }
         }
 
+        // HARDWARE_ACCELERATED browser-surface vertical correction, tunable per install.
+        //
+        // In HARDWARE mode the heavyweight GPU surface can land higher than its Compose slot,
+        // overlapping the chrome above it (the URL bar in a browser tab, the header in a plugin
+        // panel) and leaving a matching gap at the bottom. offset(y) shifts the surface DOWN
+        // without shrinking it — BossConsoleLite tried padding first and it shrank the surface,
+        // leaving the bottom gap. This composable is the single chokepoint for every
+        // BrowserHandle surface, so correcting it here fixes the browser tab and every
+        // browser-hosting plugin at once.
+        //
+        // DEFAULT IS 0, deliberately different from Lite's 24. The misalignment is not universal:
+        // measured on BossConsole on Windows 11 / 150% scaling (2026-07-31) with a marker page,
+        // the surface is correctly flush under the URL bar at 0, and 24 introduces a visible gap
+        // and pushes the page's bottom edge off-screen. Lite's fleet needed 24 — it is a
+        // browser-only build with different chrome heights — so the amount belongs to the install,
+        // not to the platform. Set BOSS_BROWSER_TOP_INSET_DP if a given machine shows the overlap.
+        // OFF_SCREEN composites correctly and is always 0, so macOS and Linux are untouched.
+        val hardwareTopInsetDp =
+            remember {
+                if (JxBrowserConfig.renderingMode == com.teamdev.jxbrowser.engine.RenderingMode.HARDWARE_ACCELERATED) {
+                    System.getenv("BOSS_BROWSER_TOP_INSET_DP")?.trim()?.toIntOrNull() ?: 0
+                } else {
+                    0
+                }
+            }
+
         // Render the browser view if available with mouse button handling
         viewState?.let { state ->
             BrowserView(
@@ -1821,6 +1850,7 @@ internal class BrowserHandleImpl(
                 modifier =
                     Modifier
                         .fillMaxSize()
+                        .offset(y = hardwareTopInsetDp.dp)
                         // Hover tracking that gates the window-wide pinch gesture
                         // listener to this view (see the DisposableEffect above)
                         .onPointerEvent(PointerEventType.Enter) { pointerOverBrowserView = true }

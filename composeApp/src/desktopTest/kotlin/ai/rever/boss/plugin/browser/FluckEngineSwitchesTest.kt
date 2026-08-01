@@ -139,6 +139,25 @@ class FluckEngineSwitchesTest {
         assertFalse(FluckEngine.cgroupIndicatesContainer("12:pids:/user.slice/user-501.slice"))
     }
 
+    // --- BOSS_BROWSER_REMOTE_DEBUGGING_PORT ---
+
+    @Test
+    fun `remote debugging port accepts only unprivileged ports`() {
+        assertEquals(9222, FluckEngine.parseRemoteDebuggingPort("9222"))
+        assertEquals(1024, FluckEngine.parseRemoteDebuggingPort(" 1024 "))
+        assertEquals(65535, FluckEngine.parseRemoteDebuggingPort("65535"))
+    }
+
+    @Test
+    fun `remote debugging port rejects anything that is not a usable port`() {
+        // "0" matters most: Chromium reads port 0 as "pick any free port", which
+        // would open a DevTools endpoint — full control of the browser profile —
+        // on a port nobody knows about. A typo must never land there.
+        for (raw in listOf(null, "", "  ", "0", "80", "1023", "65536", "-1", "9222x", "nine")) {
+            assertEquals(null, FluckEngine.parseRemoteDebuggingPort(raw), "expected rejection of '$raw'")
+        }
+    }
+
     @Test
     fun `window-owned browser input routes only to its focused owner`() {
         val focusedRoute =

@@ -1,0 +1,11 @@
+<!doctype html><html><body style="margin:0;font:16px sans-serif;background:#eee">
+<div style="height:20px;background:#ff0000;color:#fff">TOP-EDGE</div>
+<h2 style="margin:8px">Key input test</h2>
+<input id="i" style="font-size:28px;width:600px;margin:8px" placeholder="click here and type">
+<div id="log" style="margin:8px;font-size:14px;color:#333"></div>
+<script>
+  var keys = [];
+  document.addEventListener('keydown', function (e) { keys.push(e.key); document.getElementById('log').textContent = 'keydown: ' + keys.join(','); });
+  window.__keys = keys;
+</script>
+</body></html>

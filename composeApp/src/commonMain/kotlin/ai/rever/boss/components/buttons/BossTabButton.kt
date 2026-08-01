@@ -4,6 +4,7 @@ import ai.rever.boss.components.model.TabDraggableComponent
 import ai.rever.boss.components.model.TabDropResult
 import ai.rever.boss.components.overlays.ContextMenu
 import ai.rever.boss.components.overlays.ContextMenuItem
+import ai.rever.boss.components.overlays.OverlayConfig
 import ai.rever.boss.plugin.api.TabIcon
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.ui.BossTheme
@@ -132,31 +133,43 @@ fun BossTabButton(
 
     // Show tooltip popup if hovering
     if (showTooltip) {
-        Popup(
-            alignment = Alignment.TopStart,
-            offset = computeTooltipPosition(),
-            properties =
-                PopupProperties(
-                    focusable = false,
-                    dismissOnClickOutside = false,
-                ),
-        ) {
-            Surface(
-                modifier =
-                    Modifier
-                        .onGloballyPositioned { coordinates ->
-                            tooltipSizeRef[0] = coordinates.size.width
-                            tooltipSizeRef[1] = coordinates.size.height
-                        },
-                color = colors.raised,
-                shape = RoundedCornerShape(radii.input),
+        val heavyweightTooltip = OverlayConfig.heavyweightTooltip
+        if (OverlayConfig.useHeavyweightPopups && heavyweightTooltip != null) {
+            // HARDWARE_ACCELERATED: a lightweight Compose Popup renders BEHIND the
+            // browser's heavyweight surface, so a tab tooltip over a browser tab would
+            // be hidden by the page. Show it in a small native window instead.
+            // OFF_SCREEN keeps the Compose path below unchanged.
+            DisposableEffect(fileName) {
+                heavyweightTooltip(fileName)
+                onDispose { OverlayConfig.hideHeavyweightTooltip?.invoke() }
+            }
+        } else {
+            Popup(
+                alignment = Alignment.TopStart,
+                offset = computeTooltipPosition(),
+                properties =
+                    PopupProperties(
+                        focusable = false,
+                        dismissOnClickOutside = false,
+                    ),
             ) {
-                Text(
-                    text = fileName,
-                    color = colors.textPrimary,
-                    fontSize = 12.sp,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                )
+                Surface(
+                    modifier =
+                        Modifier
+                            .onGloballyPositioned { coordinates ->
+                                tooltipSizeRef[0] = coordinates.size.width
+                                tooltipSizeRef[1] = coordinates.size.height
+                            },
+                    color = colors.raised,
+                    shape = RoundedCornerShape(radii.input),
+                ) {
+                    Text(
+                        text = fileName,
+                        color = colors.textPrimary,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    )
+                }
             }
         }
     }

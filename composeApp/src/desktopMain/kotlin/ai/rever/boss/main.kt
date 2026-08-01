@@ -294,6 +294,32 @@ fun main(args: Array<String>) {
 
     logger.info(LogCategory.SYSTEM, "Successfully acquired single-instance lock")
 
+    // Route app overlays (context menus, dropdowns, tooltips) through heavyweight windows when the
+    // browser is GPU-composited. In HARDWARE_ACCELERATED mode the JxBrowser view is a heavyweight
+    // native surface that paints above lightweight Compose, so an ordinary Compose Popup renders
+    // BEHIND the page. Dormant - a no-op - wherever OFF_SCREEN is the mode (macOS, Linux), so the
+    // unchanged platforms cannot regress. See JxBrowserConfig.renderingMode and
+    // benchmarks/speedometer/win/WINDOWS.md.
+    ai.rever.boss.components.overlays.OverlayConfig.heavyweightPopup = { onDismiss, popupOffset, focusable, popupContent ->
+        ai.rever.boss.components.overlays
+            .HeavyweightPopup(onDismiss, popupOffset, focusable, popupContent)
+    }
+    ai.rever.boss.components.overlays.OverlayConfig.heavyweightModal = { onDismiss, modalContent ->
+        ai.rever.boss.components.overlays
+            .HeavyweightModal(onDismiss, modalContent)
+    }
+    ai.rever.boss.components.overlays.OverlayConfig.heavyweightTooltip = { text ->
+        ai.rever.boss.components.overlays.SwingTooltip
+            .show(text)
+    }
+    ai.rever.boss.components.overlays.OverlayConfig.hideHeavyweightTooltip = {
+        ai.rever.boss.components.overlays.SwingTooltip
+            .hide()
+    }
+    ai.rever.boss.components.overlays.OverlayConfig.useHeavyweightPopups =
+        ai.rever.boss.config.JxBrowserConfig.renderingMode ==
+        com.teamdev.jxbrowser.engine.RenderingMode.HARDWARE_ACCELERATED
+
     // Proactively clean up stale JxBrowser lock files from previous sessions
     // This is especially important for debug mode where shutdown hooks may not run
     try {

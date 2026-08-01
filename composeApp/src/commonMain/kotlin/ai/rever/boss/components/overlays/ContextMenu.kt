@@ -77,17 +77,33 @@ fun ContextMenu(
     modifier: Modifier = Modifier,
     onDismissRequest: () -> Unit,
 ) {
-    Popup(
-        onDismissRequest = onDismissRequest,
-        alignment = alignment,
-        offset = offset,
-        properties = PopupProperties(focusable = true),
-    ) {
-        ContextMenuContent(
-            items = items,
-            modifier = modifier,
+    val heavyweight = OverlayConfig.heavyweightPopup
+    if (OverlayConfig.useHeavyweightPopups && heavyweight != null) {
+        // HARDWARE_ACCELERATED browser: a lightweight Compose Popup renders BEHIND the
+        // browser's native surface, so a right-click menu over a page would be hidden by
+        // the page it belongs to. Route it through a heavyweight window instead. Dormant
+        // wherever OFF_SCREEN is the mode (macOS, Linux) - the flag is false there, so
+        // this branch is never taken and those platforms keep the exact Popup below.
+        heavyweight(onDismissRequest, offset, true) {
+            ContextMenuContent(
+                items = items,
+                modifier = modifier,
+                onDismissRequest = onDismissRequest,
+            )
+        }
+    } else {
+        Popup(
             onDismissRequest = onDismissRequest,
-        )
+            alignment = alignment,
+            offset = offset,
+            properties = PopupProperties(focusable = true),
+        ) {
+            ContextMenuContent(
+                items = items,
+                modifier = modifier,
+                onDismissRequest = onDismissRequest,
+            )
+        }
     }
 }
 

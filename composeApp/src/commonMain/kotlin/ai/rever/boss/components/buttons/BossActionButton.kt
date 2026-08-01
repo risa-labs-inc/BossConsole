@@ -2,6 +2,7 @@ package ai.rever.boss.components.buttons
 
 import ai.rever.boss.components.overlays.ContextMenu
 import ai.rever.boss.components.overlays.ContextMenuItem
+import ai.rever.boss.components.overlays.OverlayConfig
 import ai.rever.boss.plugin.api.Panel
 import ai.rever.boss.plugin.api.Panel.Companion.bottom
 import ai.rever.boss.plugin.api.Panel.Companion.left
@@ -185,35 +186,47 @@ fun BossActionButton(
     // Use hoverState.capturedText to prevent flickering when content updates during hover
     val displayHintText = hoverState.capturedText ?: hintText
     if (hoverState.isShowing && displayHintText != null) {
-        Popup(
-            alignment = Alignment.TopStart,
-            offset = computeHoverPopupPosition(),
-            properties = PopupProperties(focusable = false),
-        ) {
-            Surface(
-                modifier =
-                    Modifier
-                        .onGloballyPositioned { coordinates ->
-                            hintPopupSizeRef[0] = coordinates.size.width
-                            hintPopupSizeRef[1] = coordinates.size.height
-                        },
-                color = colors.raised,
-                shape = RoundedCornerShape(radii.input),
+        val heavyweightTooltip = OverlayConfig.heavyweightTooltip
+        if (OverlayConfig.useHeavyweightPopups && heavyweightTooltip != null) {
+            // HARDWARE_ACCELERATED: a lightweight Compose Popup renders BEHIND the
+            // browser's heavyweight surface, so this hover hint would be hidden by the
+            // page. Show it in a small native window instead, and take it down when the
+            // hover ends. OFF_SCREEN keeps the Compose path below unchanged.
+            DisposableEffect(displayHintText) {
+                heavyweightTooltip(displayHintText)
+                onDispose { OverlayConfig.hideHeavyweightTooltip?.invoke() }
+            }
+        } else {
+            Popup(
+                alignment = Alignment.TopStart,
+                offset = computeHoverPopupPosition(),
+                properties = PopupProperties(focusable = false),
             ) {
-                Row(
+                Surface(
                     modifier =
                         Modifier
-                            .defaultMinSize(2.dp)
-                            .padding(vertical = 0.dp, horizontal = 12.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
+                            .onGloballyPositioned { coordinates ->
+                                hintPopupSizeRef[0] = coordinates.size.width
+                                hintPopupSizeRef[1] = coordinates.size.height
+                            },
+                    color = colors.raised,
+                    shape = RoundedCornerShape(radii.input),
                 ) {
-                    Text(
-                        text = displayHintText,
-                        color = colors.textPrimary,
-                        fontSize = 12.sp,
-                        modifier = Modifier.padding(bottom = 4.dp),
-                    )
+                    Row(
+                        modifier =
+                            Modifier
+                                .defaultMinSize(2.dp)
+                                .padding(vertical = 0.dp, horizontal = 12.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = displayHintText,
+                            color = colors.textPrimary,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(bottom = 4.dp),
+                        )
+                    }
                 }
             }
         }
