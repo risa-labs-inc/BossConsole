@@ -2,10 +2,12 @@ package ai.rever.boss.plugin
 
 import ai.rever.boss.config.GitHubConfig
 import ai.rever.boss.config.SupabaseClientConfig
+import ai.rever.boss.plugin.loader.PluginSignatureSidecar
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.plugin.repository.LocalPluginRepository
 import ai.rever.boss.plugin.repository.PluginRepositoryManager
 import ai.rever.boss.plugin.repository.remote.PluginDownloadCache
+import ai.rever.boss.plugin.repository.remote.PluginStoreClient
 import ai.rever.boss.plugin.repository.remote.PluginStoreConfig
 import ai.rever.boss.plugin.repository.remote.PluginStoreRealtimeService
 import ai.rever.boss.plugin.repository.remote.RemotePluginRepository
@@ -15,6 +17,7 @@ import ai.rever.boss.services.supabase.SupabaseConfig
 import ai.rever.boss.utils.AppVersion
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.sha256Of
 import io.github.jan.supabase.auth.status.SessionStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -747,6 +750,66 @@ object PluginStoreSetup {
     }
 
     /**
+     * Bind the store's signature to a JAR fetched from GitHub releases, or clear
+     * any stale sidecar when it can't be bound.
+     *
+     * System plugins come straight from GitHub, not from the store, so the store's
+     * signature has to be fetched separately and matched to these exact bytes. The
+     * sha256 comparison is load-bearing, not defensive: the anchor is
+     * `pluginId|version|sha256` (see PluginStoreTrust.versionAnchor), and a
+     * present-but-invalid sidecar hard-fails at load time **regardless** of the
+     * enforcement flag. `POST /github` re-hosts JARs through Supabase Storage, so
+     * the store artifact and the GitHub asset are not guaranteed to be the same
+     * bytes — pairing the store's signature with GitHub's bytes would convert a
+     * working plugin into a permanent load failure. Writing no sidecar is strictly
+     * safer than writing a wrong one, so every failure path clears instead.
+     *
+     * [version] must be the bare version (no `v` prefix) to match the anchor.
+     */
+    private suspend fun persistStoreSignatureSidecar(
+        pluginId: String,
+        version: String,
+        jarFile: File,
+    ) {
+        val signature =
+            try {
+                val info = PluginStoreClient.getDownloadUrl(pluginId, version)
+                val localSha = sha256Of(jarFile)
+                if (info.sha256.equals(localSha, ignoreCase = true)) {
+                    info.signature
+                } else {
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "GitHub asset differs from the store artifact — leaving plugin unsigned",
+                        mapOf(
+                            "pluginId" to pluginId,
+                            "version" to version,
+                            "storeSha256" to info.sha256,
+                            "localSha256" to localSha,
+                        ),
+                    )
+                    null
+                }
+            } catch (e: Exception) {
+                // Store unreachable, no row for this version, or a version published
+                // before store signing. Unsigned is the pre-existing state and is
+                // still warn-and-allow; a wrong signature would not be.
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "No store signature available for system plugin",
+                    mapOf(
+                        "pluginId" to pluginId,
+                        "version" to version,
+                        "error" to e.toString(),
+                    ),
+                )
+                null
+            }
+
+        PluginSignatureSidecar.persist(jarFile.absolutePath, signature)
+    }
+
+    /**
      * Download a system plugin from GitHub releases.
      *
      * @param plugin The system plugin info
@@ -956,6 +1019,20 @@ object PluginStoreSetup {
                     )
                 }
 
+                // Bind the store signature to these bytes. Every OTHER install path
+                // writes a `<jar>.sig` sidecar; this one never did, so system
+                // plugins — api, Toolbox, the microkernel runtime, terminal-tab,
+                // editor-tab, fluck-browser — all sit on disk unsigned. That is
+                // invisible only while PluginSignatureEnforcement defaults to
+                // warn-and-allow; the moment it flips (BossConsole#872) every one
+                // of them stops loading. Written before persistence so a JAR is
+                // never registered as installed without its sidecar settled.
+                persistStoreSignatureSidecar(
+                    pluginId = plugin.pluginId,
+                    version = tagName.removePrefix("v"),
+                    jarFile = destFile,
+                )
+
                 // Register in persistence (skip for download-only plugins like microkernel runtime).
                 // Preserve the user's existing `enabled` choice and `sourceUrl` —
                 // `addInstalledPlugin` does removeIf+add, so passing the defaults
@@ -1003,6 +1080,11 @@ object PluginStoreSetup {
                             readPluginManifest(it)?.pluginId == plugin.pluginId
                     }?.forEach { oldFile ->
                         val deleted = oldFile.delete()
+                        // Drop the sidecar with its JAR so it can't outlive it as an
+                        // orphan. Unconditional: if the JAR delete failed (Windows
+                        // lock), a signed JAR that lingers without its sidecar is
+                        // merely unsigned, not invalid.
+                        PluginSignatureSidecar.delete(oldFile.absolutePath)
                         logger.debug(
                             LogCategory.SYSTEM,
                             "Removed old version",
@@ -1365,6 +1447,9 @@ object PluginStoreSetup {
                         ),
                     )
                     oldJar.delete()
+                    // A sidecar outlives the JAR it describes unless it's removed
+                    // with it, leaving orphaned `.sig` files in the plugin dir.
+                    PluginSignatureSidecar.delete(oldJar.absolutePath)
                 }
 
                 // Copy to plugin directory
@@ -1379,6 +1464,13 @@ object PluginStoreSetup {
                 )
 
                 jarFile.copyTo(destFile, overwrite = true)
+
+                // Bundled JARs ship inside the signed, notarized app image and carry
+                // no store signature. Clear rather than leave: this overwrites by
+                // filename, so a store-downloaded JAR of the same name may have left
+                // a sidecar behind — and a sidecar that doesn't match the bytes beside
+                // it is a hard load failure, unlike no sidecar at all.
+                PluginSignatureSidecar.persist(destFile.absolutePath, null)
 
                 logger.info(
                     LogCategory.SYSTEM,
