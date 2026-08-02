@@ -1553,6 +1553,9 @@ object FluckEngine {
             graphiteOptIn = envIsTrue("BOSS_ENABLE_SKIA_GRAPHITE"),
             inContainer = inContainer,
             extraSwitches = extras,
+            rendererProcessLimit =
+                ai.rever.boss.config.ConfigLoader
+                    .getConfig("BOSS_RENDERER_PROCESS_LIMIT"),
         ).forEach { builder.addSwitch(it) }
     }
 
@@ -1588,6 +1591,11 @@ object FluckEngine {
     /**
      * The per-platform switch decision as a pure function so the flag audit is
      * unit-testable without an [EngineOptions.Builder].
+     *
+     * Genuinely pure: every input is a parameter. [rendererProcessLimit] is passed in rather than
+     * read from config here, because reading it inside would both hide an input from the audit
+     * and make the tests depend on the developer's own environment — anyone with
+     * BOSS_RENDERER_PROCESS_LIMIT set would see a different switch set than CI.
      */
     internal fun performanceSwitchesFor(
         os: String,
@@ -1595,6 +1603,7 @@ object FluckEngine {
         graphiteOptIn: Boolean,
         inContainer: Boolean,
         extraSwitches: List<String> = emptyList(),
+        rendererProcessLimit: String? = null,
     ): List<String> {
         val switches = mutableListOf<String>()
 
@@ -1655,10 +1664,7 @@ object FluckEngine {
         // for everyone by default — Lite exposes it as a tunable for exactly that reason, pending
         // real-world tab-count data. Values <= 0 are ignored rather than passed through, since
         // --renderer-process-limit=0 is not a meaningful cap.
-        renderCapSwitch(
-            ai.rever.boss.config.ConfigLoader
-                .getConfig("BOSS_RENDERER_PROCESS_LIMIT"),
-        )?.let { switches += it }
+        renderCapSwitch(rendererProcessLimit)?.let { switches += it }
 
         // Operator escape hatch, appended last (see the --enable-features caveat
         // in the KDoc above).

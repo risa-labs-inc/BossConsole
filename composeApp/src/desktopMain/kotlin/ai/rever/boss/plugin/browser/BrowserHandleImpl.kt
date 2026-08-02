@@ -1791,9 +1791,16 @@ internal class BrowserHandleImpl(
             // comment above); reusing unconditionally would short-circuit that rebind and leave
             // the surface — and the pinch-gesture listener — attached to the window the tab came
             // from. Retention is meant to survive hiding, not relocation.
+            // hostWindowId != null is load-bearing, not defensive: with a null id the equality
+            // check below is `null == null` for every window, so a surface would be reused after
+            // the "first showing window" fallback had resolved a DIFFERENT window than it was
+            // built against — exactly the case the hostWindowId key exists to catch. Without an
+            // id we cannot prove the window is the same, so we rebuild rather than assume.
             val retained =
                 currentViewState?.takeIf {
-                    retainSurfaceAcrossTabSwitches && currentViewStateWindowId == hostWindowId
+                    retainSurfaceAcrossTabSwitches &&
+                        hostWindowId != null &&
+                        currentViewStateWindowId == hostWindowId
                 }
             if (retained != null) {
                 // Coming back to a tab whose surface was kept alive - reuse it rather than

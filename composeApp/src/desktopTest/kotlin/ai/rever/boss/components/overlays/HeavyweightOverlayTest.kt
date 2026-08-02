@@ -20,18 +20,22 @@ class HeavyweightOverlayTest {
     // --- contentOffsetFor: the coordinate-space trap ---
 
     @Test
-    fun `a caller-supplied anchor is used as-is, because it is already window-local`() {
-        // BossTabButton and BossActionButton compute an anchor from the widget's own position so
-        // the menu opens UNDER the widget. Subtracting the window origin from it - as the cursor
-        // branch must - would throw it off-screen on any window not at x=0.
-        val anchor = IntOffset(120, 48)
-        assertEquals(anchor, contentOffsetFor(cursorX = 900, cursorY = 700, anchor = anchor, windowX = 1200, windowY = 300))
-        assertEquals(anchor, contentOffsetFor(cursorX = null, cursorY = null, anchor = anchor, windowX = 1200, windowY = 300))
+    fun `the cursor wins over the caller's anchor, and is converted from screen space`() {
+        // The anchor must NOT be preferred. Callers compute it for the lightweight Popup branch,
+        // which positions relative to the parent LAYOUT NODE: BossTabButton and BossActionButton
+        // pass positionInParent(), and the Modifier.contextMenu path passes the pointer's
+        // element-local position. Treating any of those as window-local displaces the menu by the
+        // distance from the widget's parent to the window origin. Only the cursor is in a space
+        // this function can convert, so only the cursor is trusted.
+        val parentRelativeAnchor = IntOffset(120, 48)
+        assertEquals(
+            IntOffset(100, 200),
+            contentOffsetFor(cursorX = 1300, cursorY = 500, anchor = parentRelativeAnchor, windowX = 1200, windowY = 300),
+        )
     }
 
     @Test
-    fun `with no anchor the cursor is converted from screen space to window-local`() {
-        // A right-click context menu passes IntOffset.Zero: there the pointer IS the location.
+    fun `a zero anchor is no different from any other - the cursor still wins`() {
         assertEquals(
             IntOffset(100, 200),
             contentOffsetFor(cursorX = 1300, cursorY = 500, anchor = IntOffset.Zero, windowX = 1200, windowY = 300),
@@ -47,9 +51,15 @@ class HeavyweightOverlayTest {
     }
 
     @Test
-    fun `no anchor and no cursor yields no offset instead of a negative one`() {
-        // The regression this pins: subtracting the window origin from a zero anchor put the menu
-        // at -windowX,-windowY, i.e. off-screen for any window not at the origin.
+    fun `with no cursor the anchor is used unconverted, as an approximate fallback`() {
+        // Keyboard-invoked menu: there is no pointer to read. The anchor is in the wrong space,
+        // but it is small and near the widget, so it beats not appearing. Critically it must NOT
+        // have the window origin subtracted - that put the menu at -windowX,-windowY, off-screen
+        // for any window not at the origin, which is the regression this pins.
+        assertEquals(
+            IntOffset(120, 48),
+            contentOffsetFor(cursorX = null, cursorY = null, anchor = IntOffset(120, 48), windowX = 1200, windowY = 300),
+        )
         assertEquals(
             IntOffset.Zero,
             contentOffsetFor(cursorX = null, cursorY = null, anchor = IntOffset.Zero, windowX = 1200, windowY = 300),

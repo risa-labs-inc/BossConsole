@@ -40,7 +40,9 @@ class JxBrowserRenderingModeTest {
 
     @Test
     fun `mac and linux keep OFF_SCREEN — the Windows finding must not leak`() {
-        for (os in listOf(mac, linux, "freebsd", "sunos")) {
+        // "darwin" is here on purpose: it contains the substring "win", so a platform check
+        // written as contains("win") would hand macOS the Windows default.
+        for (os in listOf(mac, linux, "darwin", "freebsd", "sunos")) {
             assertEquals(
                 RenderingMode.OFF_SCREEN,
                 JxBrowserConfig.resolveRenderingMode(null, os),

@@ -31,11 +31,13 @@ object SwingTooltip {
     /**
      * One window is created and then REUSED, rather than built and disposed per hover.
      *
-     * Disposing per hover also made the tooltip order-dependent: moving the pointer straight from
-     * one hinted button to another enqueues the first one's hide() and the second one's show() on
-     * the EDT, and if they land in that order the new tooltip is destroyed immediately after being
-     * shown. Reusing one window turns hide-then-show into setVisible(false) followed by
-     * setVisible(true) on the same object, which ends visible whichever way round they run.
+     * Disposing per hover also made the tooltip fragile when moving the pointer straight from one
+     * hinted button to another: the first one's hide() and the second one's show() both land on
+     * the EDT, and a disposed window cannot be revived by the show() that follows. Reusing one
+     * window reduces that to setVisible(false)/setVisible(true) on the same object, so the pair
+     * settles on whichever ran last instead of leaving a destroyed window behind. Compose orders
+     * these correctly anyway — the leaving composable's onDispose runs before the entering one's
+     * DisposableEffect — so this is about not depending on that.
      */
     fun show(text: String) {
         SwingUtilities.invokeLater {

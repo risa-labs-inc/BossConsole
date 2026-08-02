@@ -72,7 +72,8 @@ class FluckEngineSwitchesTest {
         graphiteOptIn: Boolean = false,
         inContainer: Boolean = false,
         extras: List<String> = emptyList(),
-    ) = FluckEngine.performanceSwitchesFor(os, arch, graphiteOptIn, inContainer, extras)
+        rendererProcessLimit: String? = null,
+    ) = FluckEngine.performanceSwitchesFor(os, arch, graphiteOptIn, inContainer, extras, rendererProcessLimit)
 
     /**
      * Switches that are not platform-specific, so a per-platform assertion can say what that
@@ -107,6 +108,17 @@ class FluckEngineSwitchesTest {
         for (raw in listOf(null, "", "   ", "0", "-1", "many", "4.5")) {
             assertEquals(null, FluckEngine.renderCapSwitch(raw), "expected no cap for '$raw'")
         }
+    }
+
+    @Test
+    fun `the renderer cap reaches the switch list only when passed in`() {
+        // The cap is a PARAMETER, not read from config inside performanceSwitchesFor. If it were
+        // read inside, every assertion in this class would depend on whether the developer
+        // happens to have BOSS_RENDERER_PROCESS_LIMIT set - and would pass locally, fail in CI,
+        // or the reverse.
+        assertTrue("--renderer-process-limit=3" in switchesFor("windows 11", rendererProcessLimit = "3"))
+        assertTrue(switchesFor("windows 11").none { it.startsWith("--renderer-process-limit") })
+        assertTrue(switchesFor("windows 11", rendererProcessLimit = "0").none { it.startsWith("--renderer-process-limit") })
     }
 
     @Test

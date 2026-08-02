@@ -142,7 +142,10 @@ object JxBrowserConfig {
             // HARDWARE costs it the two-finger swipe-back gesture), and Linux is
             // unmeasured here, so neither inherits the Windows finding.
             else -> {
-                if (os.contains("win")) {
+                // "windows", not "win" — "darwin" contains "win". Unreachable with a HotSpot
+                // os.name of "Mac OS X", but it is a trap worth not leaving in a platform switch,
+                // and the rest of the repo matches on "windows".
+                if (os.contains("windows")) {
                     com.teamdev.jxbrowser.engine.RenderingMode.HARDWARE_ACCELERATED
                 } else {
                     com.teamdev.jxbrowser.engine.RenderingMode.OFF_SCREEN

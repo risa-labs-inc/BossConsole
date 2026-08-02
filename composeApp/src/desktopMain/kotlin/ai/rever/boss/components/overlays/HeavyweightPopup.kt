@@ -8,14 +8,20 @@ import androidx.compose.foundation.layout.absoluteOffset
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPlacement
@@ -47,9 +53,9 @@ import androidx.compose.ui.window.rememberWindowState
  * The focus-loss listener is kept as a secondary path (it still fires when another application is
  * activated), and Escape still dismisses.
  *
- * Positioning: see [contentOffsetFor]. A caller-supplied anchor is honoured when there is one
- * (widget-anchored dropdowns open under their widget), and the cursor is used otherwise, which is
- * what a right-click context menu wants.
+ * Positioning: see [contentOffsetFor]. The cursor wins; the caller's offset is a fallback, because
+ * callers compute it for the lightweight `Popup` branch and it is parent-layout-relative rather
+ * than window-relative.
  *
  * See benchmarks/speedometer/win/WINDOWS.md for why HARDWARE is the Windows default.
  */
@@ -143,10 +149,50 @@ fun HeavyweightPopup(
                         indication = null,
                     ) { onDismissRequest() },
         ) {
+            // Clamp the menu inside the overlay window once its size is known.
+            //
+            // The window is exactly parent-sized and the content is placed at a raw offset, so a
+            // right-click near the bottom or right edge would draw the menu partly outside and it
+            // would be clipped - a tall submenu near the bottom could be mostly invisible. A
+            // lightweight Popup does this for you; this path has to do it itself. Same shape as
+            // SwingTooltip's monitor clamp: measure, then coerce.
+            //
+            // Measured rather than assumed because menu height varies with item count. The first
+            // frame draws at the unclamped offset and corrects on the next, which is invisible at
+            // menu-open latency and beats guessing a size.
+            // NOTE the unit conversion: onGloballyPositioned reports PIXELS, while `bounds` and
+            // the offsets are AWT logical units (== dp). On this 150%-scaled display those differ
+            // by 1.5x, so clamping raw px against dp would be wrong by half a menu.
+            var contentSize by remember { mutableStateOf(IntSize.Zero) }
+            val density = LocalDensity.current
+            val contentWidthDp =
+                with(density) {
+                    contentSize.width
+                        .toDp()
+                        .value
+                        .toInt()
+                }
+            val contentHeightDp =
+                with(density) {
+                    contentSize.height
+                        .toDp()
+                        .value
+                        .toInt()
+                }
+            val maxX = ((bounds?.get(2) ?: 0) - contentWidthDp).coerceAtLeast(0)
+            val maxY = ((bounds?.get(3) ?: 0) - contentHeightDp).coerceAtLeast(0)
+            val clamped =
+                if (bounds == null || contentSize == IntSize.Zero) {
+                    contentOffset
+                } else {
+                    IntOffset(contentOffset.x.coerceIn(0, maxX), contentOffset.y.coerceIn(0, maxY))
+                }
+
             Box(
                 modifier =
                     Modifier
-                        .absoluteOffset(x = contentOffset.x.dp, y = contentOffset.y.dp)
+                        .absoluteOffset(x = clamped.x.dp, y = clamped.y.dp)
+                        .onGloballyPositioned { contentSize = it.size }
                         // Swallow clicks that land on the menu's own background or padding.
                         // Without this they fall through to the scrim above and dismiss the menu
                         // out from under a user who was aiming at an item.
@@ -164,19 +210,27 @@ fun HeavyweightPopup(
 /**
  * Where [HeavyweightPopup]'s content sits inside its parent-sized overlay window.
  *
- * Pure and separated out because the two inputs live in DIFFERENT coordinate spaces, which is easy
- * to get wrong and invisible in a screenshot until it lands off-screen:
+ * **The cursor is preferred, and the caller's [anchor] is only a fallback.** That is the opposite
+ * of what a `Popup` does, and it is deliberate — the two are in different coordinate spaces:
  *
- *  - [anchor] (the caller's `offset`) is already **window-local** — callers compute it from a
- *    widget's position, e.g. BossTabButton passes the button's position plus its height so the
- *    menu opens *under the button*. It must be used as-is.
- *  - [cursorX]/[cursorY] are **screen** coordinates from `MouseInfo`, so they need the window
- *    origin subtracted.
+ *  - [cursorX]/[cursorY] are **screen** coordinates. The overlay window is positioned at the parent
+ *    window's `locationOnScreen` and is undecorated, so its content origin IS that point, and
+ *    screen-minus-window-origin lands exactly right.
+ *  - [anchor] is whatever the caller computed for the lightweight `Popup` branch, which positions
+ *    relative to its **parent layout node** — not to the window. Every caller today reflects that:
+ *    `BossTabButton` and `BossActionButton` pass `positionInParent()`, and the
+ *    `Modifier.contextMenu` path passes the pointer's *element-local* position. Treating any of
+ *    those as window-local displaces the menu by however far the widget's parent sits from the
+ *    window origin — which is why an earlier revision of this function, which preferred the
+ *    anchor, was wrong.
  *
- * A caller-supplied anchor wins when it is non-zero: a widget-anchored dropdown should open under
- * its widget, not at the pointer (the pointer is on the widget, but not at its corner). The cursor
- * is used for [IntOffset.Zero], which is what a right-click context menu passes — there the
- * pointer IS the intended location.
+ * So the anchor is used only when there is no cursor (a keyboard-invoked menu), where being
+ * approximately near the widget beats not appearing.
+ *
+ * KNOWN GAP: because the cursor wins, a widget-anchored dropdown opens at the pointer rather than
+ * flush under its button. Usually close enough — the pointer is on the button — but visibly off for
+ * down-arrow dropdowns. Fixing it properly means callers passing window-space coordinates
+ * (`positionInWindow()`, `localToWindow()`), not reinterpreting what they pass today.
  */
 internal fun contentOffsetFor(
     cursorX: Int?,
@@ -185,7 +239,8 @@ internal fun contentOffsetFor(
     windowX: Int?,
     windowY: Int?,
 ): IntOffset {
-    if (anchor != IntOffset.Zero) return anchor
-    if (cursorX == null || cursorY == null) return anchor
-    return IntOffset(cursorX - (windowX ?: 0), cursorY - (windowY ?: 0))
+    if (cursorX != null && cursorY != null) {
+        return IntOffset(cursorX - (windowX ?: 0), cursorY - (windowY ?: 0))
+    }
+    return anchor
 }
