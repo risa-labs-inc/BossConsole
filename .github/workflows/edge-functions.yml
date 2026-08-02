@@ -58,3 +58,36 @@ jobs:
         # the checks UI instead of disappearing into a green step.
         continue-on-error: true
         run: deno lint
+
+  plugin-store:
+    name: 🧩 Plugin Store function — check & test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: supabase/functions/plugin-store
+    # The passkey job's working-directory means `find . -name '*.ts'` and
+    # `deno test` never leave supabase/functions/passkey, so nothing was running
+    # this function's suite. That matters most for tests/auth-permissions.test.ts:
+    # its wiring guards exist because deleting `requiredPermission` from one of
+    # the five publish handlers leaves every behavioural test green AND
+    # type-checking, so a guard that only runs on a laptop guards nothing.
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: 🦕 Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: 🔎 Type check
+        run: find . -name '*.ts' -print0 | sort -z | xargs -0 -r deno check
+
+      - name: 🧪 Tests
+        # --allow-read: the wiring guards read routes/*.ts to assert every publish
+        # handler still passes requiredPermission and renders auth.status.
+        run: deno test --allow-all
+
+      - name: 🧹 Lint (advisory)
+        continue-on-error: true
+        run: deno lint
