@@ -179,10 +179,19 @@ object PluginCrashRegistry {
      * This flips the observable crash state only, so the panel swaps to its error
      * fallback and stops rendering plugin content, which is what actually stops
      * the exception recurring, while the tab and its contents stay put.
+     *
+     * @param notify whether to fire [onCrashNotify]. Pass false when the caller
+     *   shows its own message. [PluginRenderRecovery] does: its quarantine toast
+     *   names the plugin *and* says how to bring it back, and because this hop
+     *   goes through `invokeLater` while recovery messages on the EDT directly,
+     *   the generic "Plugin X crashed" landed second and overwrote it —
+     *   StatusMessageManager holds one message. The tailored wording was lost
+     *   exactly when it mattered.
      */
     fun recordRenderFault(
         pluginId: String,
         error: Throwable,
+        notify: Boolean = true,
     ) {
         _crashedPluginsMap[pluginId] =
             CrashInfo(
@@ -191,7 +200,7 @@ object PluginCrashRegistry {
             )
         javax.swing.SwingUtilities.invokeLater {
             _crashedPluginsState.value = _crashedPluginsMap.toMap()
-            onCrashNotify?.invoke(pluginId, error)
+            if (notify) onCrashNotify?.invoke(pluginId, error)
         }
     }
 

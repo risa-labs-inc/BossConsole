@@ -241,6 +241,54 @@ class PluginRenderRecoveryTest {
     }
 
     @Test
+    fun `quarantine does not fire the generic crash notification`() {
+        // The registry's "Plugin X crashed" goes out through invokeLater, while the
+        // caller's tailored "Paused X — restart it from the panel menu" is posted
+        // straight from the EDT. StatusMessageManager holds one message, so the
+        // generic one landed second and overwrote the useful one. Suppressing it
+        // here is what lets the tailored wording survive.
+        val notified = mutableListOf<String>()
+        val previous = PluginCrashRegistry.onCrashNotify
+        PluginCrashRegistry.onCrashNotify = { pluginId, _ -> notified += pluginId }
+        try {
+            PluginRenderRecovery.registerMounted("plugin.a")
+            PluginRenderRecovery.onUnattributedRenderException(error, now = 1_000)
+            val outcome = PluginRenderRecovery.onUnattributedRenderException(error, now = 2_000)
+            assertIs<PluginRenderRecovery.Outcome.Quarantined>(outcome)
+            javax.swing.SwingUtilities.invokeAndWait { }
+
+            assertTrue(
+                notified.isEmpty(),
+                "quarantine must leave the messaging to its caller, saw $notified",
+            )
+        } finally {
+            PluginCrashRegistry.onCrashNotify = previous
+        }
+    }
+
+    @Test
+    fun `a plugin already showing its own crash is never suspected`() {
+        // Releasing a suspect clears its registry entry, so quarantining a plugin
+        // that was already broken would wipe its genuine crash state and put a
+        // known-broken plugin back on screen. It also cannot be the culprit: it is
+        // rendering its fallback, not plugin content.
+        PluginRenderRecovery.registerMounted("plugin.a")
+        PluginRenderRecovery.registerMounted("plugin.b")
+        PluginCrashRegistry.recordRenderFault("plugin.b", RuntimeException("its own bug"), notify = false)
+        javax.swing.SwingUtilities.invokeAndWait { }
+
+        PluginRenderRecovery.onUnattributedRenderException(error, now = 1_000)
+        val outcome = PluginRenderRecovery.onUnattributedRenderException(error, now = 2_000)
+
+        assertIs<PluginRenderRecovery.Outcome.Quarantined>(outcome)
+        assertEquals(
+            setOf("plugin.a"),
+            outcome.plugins,
+            "the already-crashed plugin must be skipped as a suspect",
+        )
+    }
+
+    @Test
     fun `once an incident is resolved the next fault starts a fresh cycle`() {
         // Guards against a restarted plugin being instantly re-suspected: the
         // bookkeeping from a finished incident must not carry into the next one.

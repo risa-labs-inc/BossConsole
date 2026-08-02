@@ -139,11 +139,21 @@ object PluginRenderRecovery {
         }
     }
 
-    /** Candidates, most recently mounted first, skipping any already ruled out. */
+    /**
+     * Candidates, most recently mounted first, skipping any already ruled out.
+     *
+     * A plugin that already has a crash recorded is skipped too. It is showing its
+     * error fallback rather than plugin content, so it cannot be producing the
+     * fault — and quarantining it would be actively harmful: [releaseSuspect]
+     * clears the registry entry on release, so ruling out an already-broken plugin
+     * would wipe its *genuine* crash state and put a known-broken plugin back on
+     * screen. Mount registration lives in the branch that renders content, so this
+     * only ever catches the window before that recomposition lands.
+     */
     private fun nextSuspect(): String? =
         mountedPlugins()
             .asReversed()
-            .firstOrNull { it !in cleared && it != suspect }
+            .firstOrNull { it !in cleared && it != suspect && !PluginCrashRegistry.hasCrashed(it) }
 
     /** Plugins currently rendering content, first-appearance order. */
     fun mountedPlugins(): List<String> = synchronized(mountCounts) { mountCounts.keys.toList() }
@@ -274,7 +284,12 @@ object PluginRenderRecovery {
         suspect = next
         // recordRenderFault, not recordCrash: this is a guess, and a guess must
         // never close somebody's terminal tab.
-        PluginCrashRegistry.recordRenderFault(next, error)
+        //
+        // notify = false because the caller toasts this itself, with wording that
+        // names the plugin and says how to restart it. The registry's generic
+        // "Plugin X crashed" goes through invokeLater and so landed *after* the
+        // tailored message, overwriting it in a single-slot status bar.
+        PluginCrashRegistry.recordRenderFault(next, error, notify = false)
         lastRebuildAt = now
         _generation.value += 1
         return Outcome.Quarantined(setOf(next))

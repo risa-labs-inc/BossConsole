@@ -215,7 +215,14 @@ object CrashHandler {
                 return
             }
             // Building the report is part of the off-thread work now.
-            containedWriter.execute { writeContainedReport(signature, throwable) }
+            //
+            // The directory is resolved *here*, not on the writer thread: a test that
+            // sets containedReportDirOverride clears it as soon as its body returns,
+            // so a task that had not drained yet would resolve the real
+            // ~/.boss/crash-reports and sweepOldReports would delete the developer's
+            // actual reports — the exact hazard the override exists to prevent.
+            val dir = containedReportDir()
+            containedWriter.execute { writeContainedReport(dir, signature, throwable) }
         } catch (e: Exception) {
             // Reporting a contained fault must never itself become a fault.
             logger.warn(
@@ -227,23 +234,19 @@ object CrashHandler {
         }
     }
 
-    /** Off the EDT — see [containedWriter]. */
+    /** Off the EDT — see [containedWriter]. [dir] is resolved by the caller. */
     private fun writeContainedReport(
+        dir: File,
         signature: String,
         throwable: Throwable,
     ) {
         try {
             val report = createCrashReport(throwable)
-            val dir = containedReportDir()
-            dir.mkdirs()
+            // Owner-only on the directory *and* the file. Directory perms alone are
+            // not enough — 0711 still lets others traverse to a predictable path.
+            makeOwnerOnlyDir(dir)
             val file = File(dir, "contained-${report.timestamp}-$signature.txt")
-            // Owner-only on both, and on the file too — writeText alone leaves it at
-            // the umask, typically 0644, holding sanitized traces and host details.
-            // Directory perms are not enough: 0711 still lets others traverse to a
-            // known path.
-            restrictToOwner(dir, directory = true)
-            file.writeText(renderContainedReport(report))
-            restrictToOwner(file, directory = false)
+            writeOwnerOnly(file, renderContainedReport(report))
             sweepOldReports(dir)
             logger.warn(
                 LogCategory.SYSTEM,
@@ -268,10 +271,16 @@ object CrashHandler {
      * Keep the newest [CONTAINED_REPORT_RETENTION] reports and delete the rest.
      *
      * The session dedupe bounds writes *within* one run; nothing bounded them
-     * across runs, and this directory has no other janitor. Sorted by name rather
-     * than mtime: the filename carries the report timestamp, so it survives a copy
-     * that resets modification times, and one distinct-signature write per sweep
-     * makes the cost trivial.
+     * across runs, and this directory has no other janitor.
+     *
+     * Ordered on the timestamp *parsed* out of the name rather than on the name
+     * itself. Plain name order looks equivalent but is not: the name is
+     * `contained-<millis>-<signature>.txt`, so when several distinct signatures land
+     * in the same millisecond the tiebreak becomes the signature hash and the sweep
+     * can keep older reports while deleting newer ones. Timestamps are preferred
+     * over `lastModified` because they survive a copy that resets mtimes;
+     * `lastModified` is only the tiebreak. Anything unparseable sorts oldest so a
+     * stray file cannot outlive real reports.
      *
      * Best effort — a failed sweep must not fail the write that triggered it.
      */
@@ -280,9 +289,73 @@ object CrashHandler {
             val reports =
                 dir
                     .listFiles { f -> f.isFile && f.name.startsWith("contained-") && f.name.endsWith(".txt") }
-                    ?.sortedByDescending { it.name }
                     ?: return
-            reports.drop(CONTAINED_REPORT_RETENTION).forEach { it.delete() }
+            reports
+                .sortedWith(compareByDescending<File> { reportTimestamp(it) }.thenByDescending { it.lastModified() })
+                .drop(CONTAINED_REPORT_RETENTION)
+                .forEach { it.delete() }
+        }
+    }
+
+    /** The millis embedded in `contained-<millis>-<signature>.txt`, or 0 if absent. */
+    private fun reportTimestamp(file: File): Long =
+        file.name
+            .removePrefix("contained-")
+            .substringBefore('-')
+            .toLongOrNull() ?: 0L
+
+    /**
+     * Create [file] owner-only and *then* write [text] into it.
+     *
+     * `writeText` creates at the umask — typically 0644 — and fills the file before
+     * any chmod can run, so tightening afterwards leaves a window in which the
+     * whole report is world-readable at a predictable path. The permissions have to
+     * be attached at creation instead. Falls back to create-then-restrict where
+     * POSIX attributes are unavailable.
+     */
+    private fun writeOwnerOnly(
+        file: File,
+        text: String,
+    ) {
+        val createdWithPerms =
+            runCatching {
+                java.nio.file.Files
+                    .deleteIfExists(file.toPath())
+                java.nio.file.Files
+                    .createFile(file.toPath(), posixAttribute("rw-------"))
+            }.isSuccess
+        file.writeText(text)
+        // Only needed where creation could not carry the permissions; that path keeps
+        // the narrow exposure window, and is best effort by nature.
+        if (!createdWithPerms) restrictToOwner(file, directory = false)
+    }
+
+    private fun posixAttribute(mode: String) =
+        java.nio.file.attribute.PosixFilePermissions
+            .asFileAttribute(
+                java.nio.file.attribute.PosixFilePermissions
+                    .fromString(mode),
+            )
+
+    /**
+     * Create the report directory owner-only from the outset.
+     *
+     * `mkdirs()` then chmod has the same exposure window as the file did, so the
+     * directory is created with its permissions attached where POSIX allows it.
+     */
+    private fun makeOwnerOnlyDir(dir: File) {
+        if (dir.isDirectory) {
+            restrictToOwner(dir, directory = true)
+            return
+        }
+        val created =
+            runCatching {
+                java.nio.file.Files
+                    .createDirectories(dir.toPath(), posixAttribute("rwx------"))
+            }.isSuccess
+        if (!created) {
+            dir.mkdirs()
+            restrictToOwner(dir, directory = true)
         }
     }
 

@@ -7,7 +7,9 @@ import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.components.dialogs.ChromiumDownloadContent
 import ai.rever.boss.config.ChromiumAutoDownloader
 import ai.rever.boss.crash.CrashHandler
+import ai.rever.boss.crash.RENDER_RECOVERY_TOAST_MILLIS
 import ai.rever.boss.crash.RenderCrashPolicy
+import ai.rever.boss.crash.RenderRecoveryToaster
 import ai.rever.boss.crash.WindowExceptionRoute
 import ai.rever.boss.crash.decideWindowExceptionRoute
 import ai.rever.boss.crash.noteRecoveryOutcome
@@ -61,38 +63,11 @@ import kotlin.system.exitProcess
 private val logger = BossLogger.forComponent("Main")
 
 /**
- * Last render-recovery message shown, so repeats of the same verdict are not
- * re-toasted every frame. EDT-confined: the window exception handler is the only
- * writer.
+ * Decides the render-recovery toast and rate-limits it. EDT-confined: the window
+ * exception handler is the only caller. See [RenderRecoveryToaster] for why this
+ * is not just a `!=` against the last message.
  */
-private var lastRenderRecoveryMessage: String? = null
-
-/**
- * What to tell the user after an unattributed render exception.
- *
- * Named rather than inlined so the wording is reviewable in one place: the whole
- * point of recovery is that the user finds out something happened, since the
- * failure it handles previously left a silently broken window.
- */
-private fun renderRecoveryMessage(outcome: PluginRenderRecovery.Outcome): String =
-    when (outcome) {
-        is PluginRenderRecovery.Outcome.Quarantined -> {
-            "Paused ${outcome.plugins.joinToString()} — it kept failing to render. " +
-                "Restart it from the panel menu."
-        }
-
-        is PluginRenderRecovery.Outcome.Rebuilt -> {
-            "A plugin panel failed to render and was reloaded."
-        }
-
-        PluginRenderRecovery.Outcome.Unexplained -> {
-            "A UI component keeps failing to render. No plugin accounts for it; the window is still usable."
-        }
-
-        PluginRenderRecovery.Outcome.NotPluginRelated -> {
-            "A UI component failed to render and was recovered."
-        }
-    }
+private val renderRecoveryToaster = RenderRecoveryToaster()
 
 /**
  * Keep the window, recover the plugin panels, and tell the user.
@@ -127,18 +102,11 @@ private fun containRenderFault(
     // noteRecoveryOutcome.
     val madeProgress = noteRecoveryOutcome(policy, outcome)
 
-    // Two separate decisions, and conflating them regressed the user-visible
-    // half. Gating the toast on madeProgress meant Unexplained and
-    // NotPluginRelated — the two outcomes that leave the window *broken* — never
-    // said anything at all, which is exactly the silent broken window this whole
-    // path exists to prevent.
-    //
-    // So: tell the user whenever the verdict changes, including the ones recovery
-    // could not act on, and suppress only exact repeats.
-    val message = renderRecoveryMessage(outcome)
-    if (message != lastRenderRecoveryMessage) {
-        lastRenderRecoveryMessage = message
-        StatusMessageManager.showMessage(message, durationMs = 8000)
+    // Telling the user and un-counting the fault are separate decisions; every
+    // attempt to derive one from the other has regressed the other. The toaster
+    // owns this one, and is tested — see RenderRecoveryToaster.
+    renderRecoveryToaster.toastFor(outcome, now = System.nanoTime() / 1_000_000)?.let { message ->
+        StatusMessageManager.showMessage(message, durationMs = RENDER_RECOVERY_TOAST_MILLIS)
     }
     // The repaint stays on progress only: it is a full sweep of every window, and
     // during a storm it arguably feeds the fault it is responding to. Nothing to

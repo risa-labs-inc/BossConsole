@@ -21,6 +21,12 @@ import kotlin.test.assertTrue
  * Runs against a temp directory, never the real data root: the write path now
  * sweeps old reports, so a test pointed at `~/.boss/crash-reports` would delete
  * the user's actual crash reports.
+ *
+ * Note this swaps a global on a shared singleton and deletes files, so it relies
+ * on this module running tests in one fork — a future `maxParallelForks > 1` would
+ * let a parallel class see this class's override, or lose its own. The directory
+ * is captured when a write is *enqueued* rather than when it runs, which is what
+ * stops a task that outlives `tearDown` from resolving the real data root.
  */
 class ContainedCrashReportTest {
     /** Mirrors CrashHandler.CONTAINED_REPORT_RETENTION, which is private. */
