@@ -8,6 +8,8 @@ import com.teamdev.jxbrowser.frame.EditorCommand
 import com.teamdev.jxbrowser.frame.Frame
 import com.teamdev.jxbrowser.menu.ContextMenuContentType
 import java.awt.Component
+import java.awt.Toolkit
+import java.awt.datatransfer.DataFlavor
 import javax.swing.JMenuItem
 import javax.swing.JPopupMenu
 import javax.swing.SwingUtilities
@@ -25,6 +27,27 @@ internal data class PopupMenuEntry(
 }
 
 /**
+ * Whether the system clipboard currently holds text that Paste could insert.
+ *
+ * A local AWT call, not Chromium IPC, so it does not reopen the EDT-blocking concern that moved
+ * enablement off `isCommandEnabled`. Defaults to **enabled** when the clipboard cannot be read: it
+ * is briefly lockable by another process on Windows, and a Paste that turns out to be a no-op is a
+ * far smaller annoyance than Paste greyed out on a login form when the user does have something to
+ * paste.
+ */
+internal fun clipboardHasText(): Boolean =
+    try {
+        Toolkit.getDefaultToolkit().systemClipboard.isDataFlavorAvailable(DataFlavor.stringFlavor)
+    } catch (e: IllegalStateException) {
+        logger.debug(
+            LogCategory.BROWSER,
+            "Clipboard unavailable - assuming paste is possible",
+            mapOf("error" to e.toString()),
+        )
+        true
+    }
+
+/**
  * The menu for a right-click, decided entirely from the click target.
  *
  * Pure and derived from [ShowContextMenuCallback.Params] values rather than from the browser,
@@ -37,19 +60,21 @@ internal data class PopupMenuEntry(
  *    on this exact path because "being slow hurts as much as throwing".
  *  - **It is testable** without an engine.
  *
- * Enablement mirrors what the commands would actually do: Cut and Paste need an editable target,
- * Cut and Copy need a selection, and Select All is always available.
+ * Enablement mirrors what each command would actually do: Cut and Paste need an editable target,
+ * Cut and Copy need a selection, Paste needs something on the clipboard, and Select All is always
+ * available.
  */
 internal fun popupMenuEntriesFor(
     contentTypes: List<ContextMenuContentType>,
     selectedText: String,
+    clipboardHasText: Boolean,
 ): List<PopupMenuEntry> {
     val editable = contentTypes.contains(ContextMenuContentType.EDITABLE)
     val hasSelection = selectedText.isNotEmpty()
     return listOf(
         PopupMenuEntry("Cut", EditorCommand.cut(), editable && hasSelection),
         PopupMenuEntry("Copy", EditorCommand.copy(), hasSelection),
-        PopupMenuEntry("Paste", EditorCommand.paste(), editable),
+        PopupMenuEntry("Paste", EditorCommand.paste(), editable && clipboardHasText),
         PopupMenuEntry("", null, false),
         PopupMenuEntry("Select All", EditorCommand.selectAll(), true),
     )
@@ -58,10 +83,10 @@ internal fun popupMenuEntriesFor(
 /**
  * True when the menu would be nothing but greyed-out items, which is worse than no menu.
  *
- * Note this buys nothing today: `Select All` is unconditionally enabled, so
- * [popupMenuEntriesFor] cannot currently produce a list this rejects. It is a guard against a
- * future entry set, not live behaviour — what a right-click on a plain page actually shows is a
- * one-usable-item menu (`Select All`, under three greyed entries).
+ * Note this buys nothing today: `Select All` is unconditionally enabled, so [popupMenuEntriesFor]
+ * cannot currently produce a list this rejects. It is a guard against a future entry set, not live
+ * behaviour — what a right-click on a plain page actually shows is a one-usable-item menu
+ * (`Select All`, under three greyed entries).
  */
 internal fun hasAnyEnabledEntry(entries: List<PopupMenuEntry>): Boolean = entries.any { it.enabled }
 
@@ -97,20 +122,30 @@ internal fun shouldShowPopupMenu(
  *
  * Installing any [ShowContextMenuCallback] suppresses the built-in menu, which is what removes the
  * crash. This substitutes a small editing menu rather than leaving popup windows with nothing —
- * right-click paste into a login form is a reasonable thing to want. It differs from the built-in
- * menu deliberately: it renders only while the view is showing, positions relative to the component
- * instead of from screen coordinates, and offers no spell-check suggestions.
+ * right-click paste into a login form is a reasonable thing to want.
  *
- * Prefer [installPopupWindowChrome] over calling this directly: the menu is only correct when
- * paired with the page-click dismissal, and that pairing should not be something a call site can
- * forget.
+ * Known differences from the menu it replaces, all accepted:
  *
- * One piece of blocking IPC remains on the EDT by choice: `Frame.execute` in the item's action
- * listener. Deciding the menu is now free, but running the chosen command is a synchronous
- * round-trip into the renderer, so a wedged page can still stall the UI thread on Cut/Copy/Paste.
- * Accepted because it happens after an explicit user action rather than on every right-click, and
- * it is what JxBrowser's own Swing sample does.
+ *  - **No spell-check suggestions** — that is what `SuggestionsPopup` was, and it is not worth
+ *    re-implementing for a transient OAuth window.
+ *  - **No Back / Forward / Reload / Print / View source.** Reload in a stuck OAuth window is the
+ *    one worth revisiting if anyone asks.
+ *  - **Mouse-dismiss only.** Escape does not close it and arrows do not navigate it, for the same
+ *    reason the page-click dismissal is needed at all: the popup browser owns the focused native
+ *    surface and has no `PressKeyCallback`, so those keys never reach Swing's
+ *    `MenuSelectionManager`.
+ *  - **One blocking IPC call remains on the EDT** — `Frame.execute` in the action listener.
+ *    Deciding the menu is free, but running the chosen command is a synchronous round-trip, so a
+ *    wedged page can stall the UI thread on Cut/Copy/Paste. Accepted: it follows an explicit user
+ *    action rather than every right-click, and matches JxBrowser's own Swing sample.
+ *
+ * Prefer [installPopupWindowChrome] over calling this directly — the menu is only correct when
+ * paired with the page-click dismissal.
  */
+// Exception, not Throwable, at a callback boundary: a fatal Error (OOM, StackOverflow) is not
+// this code's to swallow, which is exactly what runCatching here would do. detekt keeps this rule
+// on deliberately, so this is an argued exemption rather than a baseline entry.
+@Suppress("TooGenericExceptionCaught")
 internal fun installPopupWindowContextMenu(
     popupBrowser: Browser,
     view: Component,
@@ -125,56 +160,101 @@ internal fun installPopupWindowContextMenu(
             // browser.focusedFrame() instead would answer for the wrong frame inside an iframe -
             // a lesson already recorded in BrowserHandleImpl - and OAuth and payment pages are
             // frequently iframed, which is exactly what this menu serves.
-            val target =
-                runCatching {
-                    Triple(
-                        params.location(),
-                        params.frame().orElse(null),
-                        popupMenuEntriesFor(params.contentTypes(), params.selectedText()),
-                    )
-                }.onFailure {
-                    logger.debug(
-                        LogCategory.BROWSER,
-                        "Could not read the popup context-menu target",
-                        mapOf("error" to it.toString()),
-                    )
-                }.getOrNull()
+            //
+            // Exception rather than Throwable: a genuinely fatal Error is not this boundary's to
+            // swallow, matching the policy BrowserHandleImpl.deliverContextMenu states for the
+            // same callback path.
+            var frame: Frame? = null
+            var entries: List<PopupMenuEntry> = emptyList()
+            var x = 0
+            var y = 0
+            try {
+                val location = params.location()
+                x = location.x()
+                y = location.y()
+                frame = params.frame().orElse(null)
+                entries = popupMenuEntriesFor(params.contentTypes(), params.selectedText(), clipboardHasText())
+            } catch (e: Exception) {
+                logger.debug(
+                    LogCategory.BROWSER,
+                    "Could not read the popup context-menu target",
+                    mapOf("error" to e.toString()),
+                )
+            } finally {
+                // Answer on every path: an un-responded callback leaves Chromium waiting and shows
+                // nothing at all. This close() is also what suppresses the built-in menu.
+                tell.close()
+            }
 
-            // Answer unconditionally, including on the failure path: an un-responded callback
-            // leaves Chromium waiting and shows nothing at all. This close() is also what
-            // suppresses JxBrowser's built-in menu.
-            tell.close()
-            if (target == null) return@ShowContextMenuCallback
-            val (location, frame, entries) = target
-            if (frame == null || !hasAnyEnabledEntry(entries)) return@ShowContextMenuCallback
-
-            val x = location.x()
-            val y = location.y()
+            val target = frame ?: return@ShowContextMenuCallback
             SwingUtilities.invokeLater {
                 // Check-then-act, and safe today only because both frame.dispose() call sites go
                 // through invokeLater, so a disposal cannot land between this check and show().
-                // The runCatching below is what keeps that robust rather than merely lucky: a
-                // disposal added off the EDT later would otherwise reduce this to the very race
-                // being fixed.
+                // The catch below keeps that robust rather than merely lucky: a disposal added off
+                // the EDT later would otherwise reduce this to the very race being fixed.
                 if (!shouldShowPopupMenu(view.isShowing, popupBrowser.isClosed, entries)) {
                     logger.debug(LogCategory.BROWSER, "Skipping popup context menu - view is gone")
                     return@invokeLater
                 }
-                runCatching { buildMenu(frame, entries).show(view, x, y) }
-                    .onFailure {
-                        logger.warn(LogCategory.BROWSER, "Popup context menu failed to show", error = it)
-                    }
+                try {
+                    buildMenu(target, entries).show(view, x, y)
+                } catch (e: Exception) {
+                    logger.warn(LogCategory.BROWSER, "Popup context menu failed to show", error = e)
+                }
             }
         },
     )
 }
 
+/**
+ * Everything a popup window's browser needs before it is shown.
+ *
+ * **Call this after `BrowserView.newInstance(popupBrowser)`.** The view anchors the menu, and
+ * installing before it exists also risks the view's own construction registering a default
+ * `ShowContextMenuCallback` over this one — JxBrowser allows a single callback per type, and a
+ * second registration replaces the first silently, with no compile error.
+ *
+ * The two installs are a pair, not a sequence: a Swing menu over a heavyweight browser surface does
+ * not close when the user clicks back into the page — Chromium consumes that press before AWT sees
+ * it — so the menu without the dismissal is a menu that sticks. Bundling them makes that impossible
+ * to get wrong at a call site.
+ *
+ * Neither install may fail the caller. Both call sites run inside a `try/catch` that closes the
+ * popup browser, and this runs before the window is made visible, so an escaping exception would
+ * mean the OAuth window never opens at all — strictly worse than the crash being fixed. Same
+ * reasoning `FluckEngine.setupSwingPopupDismissOnPageClick` already applies to itself: a browser
+ * that rejects a callback still works, it just keeps the older behaviour.
+ */
+@Suppress("TooGenericExceptionCaught") // See installPopupWindowContextMenu - Error must propagate.
+internal fun installPopupWindowChrome(
+    popupBrowser: Browser,
+    view: Component,
+) {
+    try {
+        installPopupWindowContextMenu(popupBrowser, view)
+    } catch (e: Exception) {
+        logger.debug(
+            LogCategory.BROWSER,
+            "Could not install the popup context menu - keeping JxBrowser's built-in one",
+            mapOf("error" to e.toString()),
+        )
+    }
+    // Deliberately outside the catch above: if the menu failed to install, the built-in menu is
+    // still there and still needs dismissing on an in-page click.
+    FluckEngine.setupSwingPopupDismissOnPageClick(popupBrowser)
+}
+
 /** Renders [entries] against the frame the click resolved to. */
+@Suppress("TooGenericExceptionCaught") // See installPopupWindowContextMenu - Error must propagate.
 internal fun buildMenu(
     frame: Frame,
     entries: List<PopupMenuEntry>,
 ): JPopupMenu {
     val menu = JPopupMenu()
+    // main.kt sets this globally, but state it here too: a lightweight popup paints into the Swing
+    // layer, which sits behind a heavyweight browser surface, and a menu that silently fails to
+    // appear reads as a regression rather than as a bug.
+    menu.isLightWeightPopupEnabled = false
     entries.forEach { entry ->
         val command = entry.command
         if (command == null) {
@@ -185,36 +265,18 @@ internal fun buildMenu(
             JMenuItem(entry.label).apply {
                 isEnabled = entry.enabled
                 addActionListener {
-                    runCatching { frame.execute(command) }
-                        .onFailure {
-                            logger.debug(
-                                LogCategory.BROWSER,
-                                "Popup editor command failed",
-                                mapOf("command" to entry.label, "error" to it.toString()),
-                            )
-                        }
+                    try {
+                        frame.execute(command)
+                    } catch (e: Exception) {
+                        logger.debug(
+                            LogCategory.BROWSER,
+                            "Popup editor command failed",
+                            mapOf("command" to entry.label, "error" to e.toString()),
+                        )
+                    }
                 }
             },
         )
     }
     return menu
-}
-
-/**
- * Everything a popup window's browser needs before it is shown.
- *
- * The two calls below are a pair, not a sequence: a Swing menu over a heavyweight browser surface
- * does not close when the user clicks back into the page — Chromium consumes that press before AWT
- * sees it — so installing the menu without the dismissal produces a menu that sticks. Bundling them
- * makes that impossible to get wrong at a call site, instead of relying on a comment at each one.
- *
- * A popup browser arrives from `params.popupBrowser()` and receives none of the setup a
- * BOSS-created browser gets, which is why this has to be explicit at all.
- */
-internal fun installPopupWindowChrome(
-    popupBrowser: Browser,
-    view: Component,
-) {
-    installPopupWindowContextMenu(popupBrowser, view)
-    FluckEngine.setupSwingPopupDismissOnPageClick(popupBrowser)
 }
