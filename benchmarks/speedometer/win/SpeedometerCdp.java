@@ -95,10 +95,10 @@ public class SpeedometerCdp {
         private final Map<Integer, CompletableFuture<Map<String, Object>>> pending = new ConcurrentHashMap<>();
 
         private Cdp(String webSocketDebuggerUrl) {
+            // CDP replies carrying per-suite metrics are hundreds of KB and arrive split across
+            // many onText fragments, so they are accumulated here and dispatched on the final one.
             StringBuilder buffer = new StringBuilder();
             this.socket = HTTP.newWebSocketBuilder()
-                    // CDP replies carrying per-suite metrics are hundreds of KB; the
-                    // default 1 KB read buffer would otherwise force many fragments.
                     .buildAsync(URI.create(webSocketDebuggerUrl), new WebSocket.Listener() {
                         @Override
                         public CompletionStage<?> onText(WebSocket ws, CharSequence data, boolean last) {

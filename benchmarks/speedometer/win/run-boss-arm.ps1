@@ -58,7 +58,7 @@ if ((Test-Path $LastSessionPath) -and -not (Test-Path $backup)) {
 # minus tab bar, toolbar and sidebar, and at this display's 150% scaling an
 # un-maximized window lands well under Speedometer's 850x650 minimum. Every arm
 # must also get the SAME viewport, or the flag comparison measures window size.
-if (-not ("Win32Window" -as [type])) {
+if (-not ("Native.Win32Window" -as [type])) {
     Add-Type -Namespace Native -Name Win32Window -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
@@ -176,6 +176,14 @@ for ($i = 1; $i -le $Repeats; $i++) {
         }
     } finally {
         Stop-DevBoss
+        # Put the operator's own layout back as soon as this arm is done, rather than leaving it
+        # replaced until someone remembers restore-last-session.ps1. An interrupted sweep is the
+        # normal case here (Ctrl+C, a failed run), so restoring in `finally` is what makes this
+        # self-healing. The backup is taken once at the top and re-copied per launch, so putting
+        # it back between arms costs nothing.
+        if (Test-Path $backup) {
+            Copy-Item $backup $LastSessionPath -Force
+        }
         Remove-Item Env:BOSS_CHROMIUM_EXTRA_SWITCHES -ErrorAction SilentlyContinue
         Remove-Item Env:BOSS_RENDERING_MODE -ErrorAction SilentlyContinue
         Remove-Item Env:BOSS_BROWSER_REMOTE_DEBUGGING_PORT -ErrorAction SilentlyContinue

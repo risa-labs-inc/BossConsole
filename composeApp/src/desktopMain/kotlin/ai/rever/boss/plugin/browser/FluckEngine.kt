@@ -1655,7 +1655,10 @@ object FluckEngine {
         // for everyone by default — Lite exposes it as a tunable for exactly that reason, pending
         // real-world tab-count data. Values <= 0 are ignored rather than passed through, since
         // --renderer-process-limit=0 is not a meaningful cap.
-        renderCapSwitch(System.getenv("BOSS_RENDERER_PROCESS_LIMIT"))?.let { switches += it }
+        renderCapSwitch(
+            ai.rever.boss.config.ConfigLoader
+                .getConfig("BOSS_RENDERER_PROCESS_LIMIT"),
+        )?.let { switches += it }
 
         // Operator escape hatch, appended last (see the --enable-features caveat
         // in the KDoc above).
@@ -1688,6 +1691,12 @@ object FluckEngine {
      * [parseRemoteDebuggingPort] rejects anything outside the unprivileged range
      * so a typo cannot silently mean "port 0" — which Chromium reads as
      * "pick any free port", i.e. a debugging endpoint nobody knows is open.
+     *
+     * Read with getenv rather than ConfigLoader ON PURPOSE, unlike the other tunables here: a
+     * value in local.properties persists across every future run of that checkout, and this one
+     * should not be possible to leave on by accident. It also applies to the SHARED engine, so
+     * without BOSS_DEV_MODE it exposes the operator's real profile and cookies — hence the
+     * per-session env var and the warning below.
      */
     private fun applyRemoteDebuggingPort(builder: EngineOptions.Builder) {
         val raw = System.getenv("BOSS_BROWSER_REMOTE_DEBUGGING_PORT") ?: return
@@ -2005,11 +2014,16 @@ object FluckEngine {
      * JxBrowser Browser and installs input callbacks on it. Fixing it here needs no plugin
      * release and no plugin-api change, and covers every Swing popup any plugin opens over a page.
      *
-     * Always [proceed]s — the click must still reach the page. Registered for every browser on
+     * Always proceeds — the click must still reach the page. Registered for every browser on
      * every platform: an unnecessary clearSelectedPath() when no menu is open is a no-op, which is
      * cheaper than reasoning about which rendering mode can strand a popup.
+     *
+     * NOTE for future input work: JxBrowser allows ONE callback per type, so this owns the
+     * browser's only `PressMouseCallback` slot. Anything else that needs mouse presses (an RPA
+     * recorder, a gesture feature) must extend this callback rather than call `browser.set(...)`
+     * again — a second registration replaces this one silently, with no compile error.
      */
-    private fun setupSwingPopupDismissOnPageClick(browser: com.teamdev.jxbrowser.browser.Browser) {
+    fun setupSwingPopupDismissOnPageClick(browser: com.teamdev.jxbrowser.browser.Browser) {
         try {
             browser.set(
                 com.teamdev.jxbrowser.browser.callback.input.PressMouseCallback::class.java,
@@ -2050,7 +2064,6 @@ object FluckEngine {
         browser: com.teamdev.jxbrowser.browser.Browser,
         ownerWindowId: String? = null,
     ) {
-        setupSwingPopupDismissOnPageClick(browser)
         val suppressionLogged = AtomicBoolean(false)
         browser.set(
             com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback::class.java,

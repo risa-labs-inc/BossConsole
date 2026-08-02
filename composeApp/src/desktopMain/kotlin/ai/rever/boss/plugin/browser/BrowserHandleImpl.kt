@@ -223,6 +223,12 @@ internal class BrowserHandleImpl(
     // BrowserViewState for Compose rendering - managed per Content() call
     private var currentViewState: BrowserViewState? = null
 
+    /**
+     * Which window [currentViewState] was built against, so a retained surface is only reused
+     * while the tab is still in that window. Null when no surface exists.
+     */
+    private var currentViewStateWindowId: String? = null
+
     // True while the pointer hovers this handle's rendered BrowserView. Gates the
     // window-wide macOS pinch listener so a pinch only zooms the browser under the
     // cursor, not one sitting in a background tab or another split.
@@ -573,6 +579,9 @@ internal class BrowserHandleImpl(
 
         // Setup keyboard interceptor for menu shortcuts
         FluckEngine.setupKeyboardInterceptor(browser, ownerWindowId)
+
+        // Let a click in the page close any Swing popup menu open over it
+        FluckEngine.setupSwingPopupDismissOnPageClick(browser)
 
         // Setup screen capture handler
         FluckEngine.setupCaptureSessionHandler(browser)
@@ -1743,8 +1752,7 @@ internal class BrowserHandleImpl(
         // OFF_SCREEN is still the macOS/Linux default and they must keep the exact lifecycle they
         // have today. Safe because the surface is still closed for real in dispose(), which runs
         // when the tab is actually closed rather than merely hidden.
-        val retainSurfaceAcrossTabSwitches =
-            JxBrowserConfig.renderingMode == com.teamdev.jxbrowser.engine.RenderingMode.HARDWARE_ACCELERATED
+        val retainSurfaceAcrossTabSwitches = shouldRetainSurface(JxBrowserConfig.renderingMode)
 
         // Seeded from the retained surface so re-entry paints immediately instead of blank.
         var viewState by remember { mutableStateOf(if (retainSurfaceAcrossTabSwitches) currentViewState else null) }
@@ -1778,16 +1786,38 @@ internal class BrowserHandleImpl(
                         }
                     }
 
-            val retained = currentViewState.takeIf { retainSurfaceAcrossTabSwitches }
+            // Reuse a retained surface ONLY while it still belongs to this window. This effect is
+            // keyed on hostWindowId precisely so a tab moved to another window rebinds (see the
+            // comment above); reusing unconditionally would short-circuit that rebind and leave
+            // the surface — and the pinch-gesture listener — attached to the window the tab came
+            // from. Retention is meant to survive hiding, not relocation.
+            val retained =
+                currentViewState?.takeIf {
+                    retainSurfaceAcrossTabSwitches && currentViewStateWindowId == hostWindowId
+                }
             if (retained != null) {
                 // Coming back to a tab whose surface was kept alive - reuse it rather than
                 // building a second one, which is the whole point of retaining.
                 viewState = retained
             } else if (awtWindow != null) {
+                // A retained surface bound to a different window must be closed, not orphaned:
+                // nothing else will, since onDispose no longer closes while retaining.
+                currentViewState?.let { stale ->
+                    runCatching { stale.close() }
+                        .onFailure {
+                            logger.debug(
+                                LogCategory.BROWSER,
+                                "Closing a browser surface bound to a previous window failed",
+                                mapOf("error" to it.toString()),
+                            )
+                        }
+                    currentViewState = null
+                }
                 try {
                     val newState = BrowserViewState(browser, MainScope(), awtWindow)
                     viewState = newState
                     currentViewState = newState
+                    currentViewStateWindowId = hostWindowId
                 } catch (e: Exception) {
                     logger.warn(LogCategory.BROWSER, "Failed to create BrowserViewState", error = e)
                 }
@@ -1841,6 +1871,7 @@ internal class BrowserHandleImpl(
                     viewState?.close()
                     viewState = null
                     currentViewState = null
+                    currentViewStateWindowId = null
                 }
             }
         }
@@ -1865,7 +1896,13 @@ internal class BrowserHandleImpl(
         val hardwareTopInsetDp =
             remember {
                 if (JxBrowserConfig.renderingMode == com.teamdev.jxbrowser.engine.RenderingMode.HARDWARE_ACCELERATED) {
-                    System.getenv("BOSS_BROWSER_TOP_INSET_DP")?.trim()?.toIntOrNull() ?: 0
+                    // ConfigLoader, not getenv: this is the per-INSTALL tuning knob (the amount
+                    // depends on the machine's chrome heights and scaling), so it belongs in
+                    // local.properties as much as in the environment.
+                    ai.rever.boss.config.ConfigLoader
+                        .getConfig("BOSS_BROWSER_TOP_INSET_DP")
+                        ?.trim()
+                        ?.toIntOrNull() ?: 0
                 } else {
                     0
                 }
@@ -1954,6 +1991,7 @@ internal class BrowserHandleImpl(
         // Close browser view state
         currentViewState?.close()
         currentViewState = null
+        currentViewStateWindowId = null
 
         // Clean up find bar resources before closing browser
         FluckEngine.disposeBrowserFindBar(browser)
@@ -2073,3 +2111,17 @@ internal class BrowserHandleImpl(
         }
     }
 }
+
+/**
+ * Whether a browser surface should survive its composable leaving composition.
+ *
+ * Only under HARDWARE_ACCELERATED. There, leaving composition means "this tab was hidden", and
+ * closing the heavyweight GPU surface would make the tab paint blank when the user comes back
+ * (A->B->A). Under OFF_SCREEN the surface is a cheap CPU bitmap and the original close-on-hide
+ * lifecycle is kept, so macOS and Linux behave exactly as they did.
+ *
+ * Split out as a pure function so the platform decision is pinned by a test rather than by
+ * reading an inline expression buried in a composable.
+ */
+internal fun shouldRetainSurface(mode: com.teamdev.jxbrowser.engine.RenderingMode): Boolean =
+    mode == com.teamdev.jxbrowser.engine.RenderingMode.HARDWARE_ACCELERATED

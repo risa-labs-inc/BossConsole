@@ -26,30 +26,48 @@ import java.awt.Color as AwtColor
  */
 object SwingTooltip {
     private var window: JWindow? = null
+    private var label: JLabel? = null
 
+    /**
+     * One window is created and then REUSED, rather than built and disposed per hover.
+     *
+     * Disposing per hover also made the tooltip order-dependent: moving the pointer straight from
+     * one hinted button to another enqueues the first one's hide() and the second one's show() on
+     * the EDT, and if they land in that order the new tooltip is destroyed immediately after being
+     * shown. Reusing one window turns hide-then-show into setVisible(false) followed by
+     * setVisible(true) on the same object, which ends visible whichever way round they run.
+     */
     fun show(text: String) {
         SwingUtilities.invokeLater {
-            hideInternal()
-            val label =
-                JLabel(text).apply {
-                    isOpaque = true
-                    background = AwtColor(0x2B, 0x2B, 0x2B)
-                    foreground = AwtColor.WHITE
-                    font = Font(Font.SANS_SERIF, Font.PLAIN, 12)
-                    border =
-                        BorderFactory.createCompoundBorder(
-                            BorderFactory.createLineBorder(AwtColor(0x3C, 0x3F, 0x41), 1),
-                            BorderFactory.createEmptyBorder(4, 8, 4, 8),
-                        )
-                }
-            val w =
-                JWindow().apply {
-                    // A JWindow is non-focusable by default; make it explicit so it can never steal
-                    // focus from the browser when it appears.
-                    focusableWindowState = false
-                    contentPane.add(label)
-                    pack() // size to the label
-                }
+            val existing = label
+            val w: JWindow
+            if (existing != null && window != null) {
+                existing.text = text
+                w = window!!
+                w.pack() // re-fit to the new text
+            } else {
+                val fresh =
+                    JLabel(text).apply {
+                        isOpaque = true
+                        background = AwtColor(0x2B, 0x2B, 0x2B)
+                        foreground = AwtColor.WHITE
+                        font = Font(Font.SANS_SERIF, Font.PLAIN, 12)
+                        border =
+                            BorderFactory.createCompoundBorder(
+                                BorderFactory.createLineBorder(AwtColor(0x3C, 0x3F, 0x41), 1),
+                                BorderFactory.createEmptyBorder(4, 8, 4, 8),
+                            )
+                    }
+                w =
+                    JWindow().apply {
+                        // A JWindow is non-focusable by default; make it explicit so it can never
+                        // steal focus from the browser when it appears.
+                        focusableWindowState = false
+                        contentPane.add(fresh)
+                        pack() // size to the label
+                    }
+                label = fresh
+            }
             // Position just below-right of the cursor (screen coords from MouseInfo — exact), then
             // CLAMP fully inside the working area of whichever monitor the cursor is on, so the
             // tooltip never spills off the right/bottom edge (or onto the taskbar).
@@ -80,12 +98,12 @@ object SwingTooltip {
         }
     }
 
+    /**
+     * Hides the tooltip without destroying it, so the next [show] can reuse the window. The window
+     * is intentionally never disposed: it is one small non-focusable window for the life of the
+     * app, and keeping it is what makes an interleaved hide/show pair order-independent.
+     */
     fun hide() {
-        SwingUtilities.invokeLater { hideInternal() }
-    }
-
-    private fun hideInternal() {
-        window?.dispose()
-        window = null
+        SwingUtilities.invokeLater { window?.isVisible = false }
     }
 }

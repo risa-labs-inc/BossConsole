@@ -22,7 +22,14 @@ import androidx.compose.ui.window.PopupProperties
  * benchmarks/speedometer/win/WINDOWS.md.
  */
 object OverlayConfig {
-    /** True when overlays must escape into heavyweight windows (HARDWARE_ACCELERATED browser). */
+    /**
+     * True when overlays must escape into heavyweight windows (HARDWARE_ACCELERATED browser).
+     *
+     * WRITE-ONCE at startup, before any composition, which is why a plain `@Volatile var` is
+     * enough. Composables read it directly, and it is NOT snapshot state — flipping it at runtime
+     * would not recompose anything that is already on screen. If a runtime toggle is ever wanted,
+     * this has to become a `mutableStateOf` first.
+     */
     @Volatile
     var useHeavyweightPopups: Boolean = false
 

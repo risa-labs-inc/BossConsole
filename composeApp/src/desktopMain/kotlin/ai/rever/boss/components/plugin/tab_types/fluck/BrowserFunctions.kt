@@ -322,6 +322,7 @@ actual fun createBrowser(): Any {
     FluckEngine.setupBrowserDownloadHandler(browser as com.teamdev.jxbrowser.browser.Browser)
     FluckEngine.setupCaptureSessionHandler(browser)
     FluckEngine.setupKeyboardInterceptor(browser)
+    FluckEngine.setupSwingPopupDismissOnPageClick(browser)
     return browser
 }
 

@@ -47,8 +47,9 @@ import androidx.compose.ui.window.rememberWindowState
  * The focus-loss listener is kept as a secondary path (it still fires when another application is
  * activated), and Escape still dismisses.
  *
- * Positioning is cursor-based, which is correct for right-click menus. Widget-anchored dropdowns
- * would want anchor→screen conversion instead; that is a known remaining gap.
+ * Positioning: see [contentOffsetFor]. A caller-supplied anchor is honoured when there is one
+ * (widget-anchored dropdowns open under their widget), and the cursor is used otherwise, which is
+ * what a right-click context menu wants.
  *
  * See benchmarks/speedometer/win/WINDOWS.md for why HARDWARE is the Windows default.
  */
@@ -95,10 +96,8 @@ fun HeavyweightPopup(
             rememberWindowState(placement = WindowPlacement.Maximized)
         }
 
-    // Where the content sits INSIDE the overlay window: cursor position relative to the window
-    // origin. Falls back to the caller's offset when there is no cursor (keyboard-invoked menu).
-    val contentX = (cursor?.x ?: offset.x) - (bounds?.get(0) ?: 0)
-    val contentY = (cursor?.y ?: offset.y) - (bounds?.get(1) ?: 0)
+    // Where the content sits INSIDE the overlay window.
+    val contentOffset = contentOffsetFor(cursor?.x, cursor?.y, offset, bounds?.get(0), bounds?.get(1))
 
     Window(
         onCloseRequest = onDismissRequest,
@@ -147,7 +146,7 @@ fun HeavyweightPopup(
             Box(
                 modifier =
                     Modifier
-                        .absoluteOffset(x = contentX.dp, y = contentY.dp)
+                        .absoluteOffset(x = contentOffset.x.dp, y = contentOffset.y.dp)
                         // Swallow clicks that land on the menu's own background or padding.
                         // Without this they fall through to the scrim above and dismiss the menu
                         // out from under a user who was aiming at an item.
@@ -160,4 +159,33 @@ fun HeavyweightPopup(
             }
         }
     }
+}
+
+/**
+ * Where [HeavyweightPopup]'s content sits inside its parent-sized overlay window.
+ *
+ * Pure and separated out because the two inputs live in DIFFERENT coordinate spaces, which is easy
+ * to get wrong and invisible in a screenshot until it lands off-screen:
+ *
+ *  - [anchor] (the caller's `offset`) is already **window-local** — callers compute it from a
+ *    widget's position, e.g. BossTabButton passes the button's position plus its height so the
+ *    menu opens *under the button*. It must be used as-is.
+ *  - [cursorX]/[cursorY] are **screen** coordinates from `MouseInfo`, so they need the window
+ *    origin subtracted.
+ *
+ * A caller-supplied anchor wins when it is non-zero: a widget-anchored dropdown should open under
+ * its widget, not at the pointer (the pointer is on the widget, but not at its corner). The cursor
+ * is used for [IntOffset.Zero], which is what a right-click context menu passes — there the
+ * pointer IS the intended location.
+ */
+internal fun contentOffsetFor(
+    cursorX: Int?,
+    cursorY: Int?,
+    anchor: IntOffset,
+    windowX: Int?,
+    windowY: Int?,
+): IntOffset {
+    if (anchor != IntOffset.Zero) return anchor
+    if (cursorX == null || cursorY == null) return anchor
+    return IntOffset(cursorX - (windowX ?: 0), cursorY - (windowY ?: 0))
 }
