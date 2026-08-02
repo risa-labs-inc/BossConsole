@@ -1,5 +1,6 @@
 package ai.rever.boss.crash
 
+import ai.rever.boss.plugin.sandbox.ui.PluginRenderRecovery
 import ai.rever.boss.plugin.sandbox.ui.isUncontainable
 
 /**
@@ -50,3 +51,32 @@ fun decideWindowExceptionRoute(
         !policy.recordFailureAndShouldContain() -> WindowExceptionRoute.Escalate
         else -> WindowExceptionRoute.Contain
     }
+
+/**
+ * Tell [policy] whether the fault it just recorded was one recovery could act on.
+ *
+ * The pairing lives here rather than inline in the handler so that production and
+ * tests exercise the *same* decision. They did not: the seam test re-implemented
+ * this `Rebuilt || Quarantined` condition, so deleting the call from the handler
+ * left every test green — the wiring the test was named for was never asserted.
+ *
+ * [PluginRenderRecovery.Outcome.Rebuilt] and
+ * [PluginRenderRecovery.Outcome.Quarantined] mean the narrowing loop advanced, so
+ * that fault should not count toward escalation.
+ * [PluginRenderRecovery.Outcome.Unexplained] and
+ * [PluginRenderRecovery.Outcome.NotPluginRelated] mean it did not, and those must
+ * keep accumulating or a corrupt scene never escalates.
+ *
+ * @return true when the fault was un-counted, which is also the signal that
+ *   something visible changed and is worth telling the user about.
+ */
+internal fun noteRecoveryOutcome(
+    policy: RenderCrashPolicy,
+    outcome: PluginRenderRecovery.Outcome,
+): Boolean {
+    val madeProgress =
+        outcome is PluginRenderRecovery.Outcome.Rebuilt ||
+            outcome is PluginRenderRecovery.Outcome.Quarantined
+    if (madeProgress) policy.noteRecoveryProgress()
+    return madeProgress
+}

@@ -272,11 +272,18 @@ object PluginRenderRecovery {
      * Tests use it for the same reason.
      */
     fun reset() {
+        // Through releaseSuspect, not `suspect = null`: setting the field alone
+        // left whoever was held still recorded in PluginCrashRegistry, so a
+        // "clean slate" kept rendering their error fallback. Both test classes
+        // were papering over that with manual clearCrash calls in teardown,
+        // which was the tell.
+        releaseSuspect()
         lastRebuildAt = 0L
         synchronized(mountCounts) { mountCounts.clear() }
         cleared.clear()
-        suspect = null
-        _generation.value = 0
+        // Deliberately not resetting the generation. It only ever needs to
+        // *change* to force a rebuild, and winding it back while panels are still
+        // keyed on it would collide with a value they have already seen.
     }
 
     /** What [onUnattributedRenderException] decided. */

@@ -439,10 +439,22 @@ fun PluginErrorBoundary(
                         // plugin's registered tab, and activeTabMappings is keyed by
                         // plugin id alone — so a render fault in a plugin's *side
                         // panel* would close that plugin's unrelated main tab and
-                        // whatever was live in it. The `error = e` above already
-                        // swaps this panel to its fallback and stops the content
-                        // rendering, which is what ends the fault; destroying a
-                        // session on top of that buys nothing.
+                        // whatever was live in it.
+                        //
+                        // The registry write is still needed and is not merely a
+                        // duplicate of `error = e` above: if the parent tears this
+                        // boundary down, the remembered local state goes with it and
+                        // only the registry survives to show the fallback on the
+                        // rebuild.
+                        //
+                        // Be clear about the blast radius, because it is wider than
+                        // this panel: registryCrash is keyed by plugin id, so every
+                        // surface of this plugin flips to the fallback, and unlike
+                        // recordCrash — which removed its own entry after closing the
+                        // tab — nothing clears this until the user hits Restart or
+                        // Dismiss. A transient fault in one surface therefore degrades
+                        // all of that plugin's surfaces for the session. That is the
+                        // deliberate trade against destroying a live tab.
                         PluginCrashRegistry.recordRenderFault(pluginId, e)
                     },
                 ) {

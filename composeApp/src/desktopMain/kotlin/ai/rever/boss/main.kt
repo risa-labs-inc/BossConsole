@@ -3,11 +3,14 @@ package ai.rever.boss
 import BossTheme
 import ai.rever.boss.cli.CLICommandHandler
 import ai.rever.boss.cli.createBossCLI
+import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.components.dialogs.ChromiumDownloadContent
 import ai.rever.boss.config.ChromiumAutoDownloader
+import ai.rever.boss.crash.CrashHandler
 import ai.rever.boss.crash.RenderCrashPolicy
 import ai.rever.boss.crash.WindowExceptionRoute
 import ai.rever.boss.crash.decideWindowExceptionRoute
+import ai.rever.boss.crash.noteRecoveryOutcome
 import ai.rever.boss.logging.GlobalLogCapture
 import ai.rever.boss.performance.PerformanceDataProviderImpl
 import ai.rever.boss.plugin.PluginStoreSetup
@@ -50,6 +53,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import java.awt.Window
 import java.io.File
 import javax.swing.JPopupMenu
 import kotlin.system.exitProcess
@@ -112,18 +116,17 @@ private fun containRenderFault(
     // Keeping the window alive is not enough on its own: a repaint over a subtree
     // that still reproduces the fault leaves a broken window and no explanation.
     val outcome = PluginRenderRecovery.onUnattributedRenderException(throwable)
-    // Recovery is converging, so this fault should not count against escalation —
-    // otherwise the budget expires mid-narrowing and disposes the window.
-    if (outcome is PluginRenderRecovery.Outcome.Rebuilt ||
-        outcome is PluginRenderRecovery.Outcome.Quarantined
-    ) {
-        policy.noteRecoveryProgress()
+    // Shared with the seam test so both exercise the same pairing — see
+    // noteRecoveryOutcome.
+    val madeProgress = noteRecoveryOutcome(policy, outcome)
+    // Only on a change of state. Deferring escalation lengthens the storm, and
+    // firing a toast and repainting every window on each repeat of the same
+    // verdict is both noise and work — the repaint arguably feeding the very
+    // fault it responds to.
+    if (madeProgress) {
+        StatusMessageManager.showMessage(renderRecoveryMessage(outcome), durationMs = 8000)
+        Window.getWindows().forEach { it.repaint() }
     }
-    ai.rever.boss.components.bars.horizontal.StatusMessageManager
-        .showMessage(renderRecoveryMessage(outcome), durationMs = 8000)
-    java.awt.Window
-        .getWindows()
-        .forEach { it.repaint() }
 }
 
 /**

@@ -16,6 +16,7 @@ import java.io.PrintWriter
 import java.io.StringWriter
 import java.lang.management.ManagementFactory
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
 import javax.swing.JFrame
 import javax.swing.SwingUtilities
 import javax.swing.WindowConstants
@@ -64,7 +65,7 @@ object CrashHandler {
      * full disk. Daemon so it never holds shutdown open.
      */
     private val containedWriter =
-        java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Executors.newSingleThreadExecutor { r ->
             Thread(r, "boss-contained-crash-writer").apply { isDaemon = true }
         }
 
@@ -163,17 +164,21 @@ object CrashHandler {
             val report = createCrashReport(throwable)
             val seen = containedSignatures.merge(report.signature, 1, Int::plus) ?: 1
             if (seen > 1) {
-                // Same fault again — the file already exists and says everything a
-                // second copy would.
-                logger.warn(
-                    LogCategory.SYSTEM,
-                    "Contained render fault recurred",
-                    mapOf(
-                        "signature" to report.signature,
-                        "errorType" to report.exceptionType,
-                        "occurrences" to seen.toString(),
-                    ),
-                )
+                // Log on a curve, not every frame. The file dedupe protects the
+                // disk; this protects the log buffers, which back recentLogs on
+                // the next real crash report — a per-frame warn would evict the
+                // very context that explains the fault.
+                if (seen == 2 || seen == 10 || seen % 100 == 0) {
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Contained render fault recurring",
+                        mapOf(
+                            "signature" to report.signature,
+                            "errorType" to report.exceptionType,
+                            "occurrences" to seen.toString(),
+                        ),
+                    )
+                }
                 return
             }
             logger.warn(
@@ -223,6 +228,7 @@ object CrashHandler {
             appendLine("BOSS contained render fault")
             appendLine("signature:  ${report.signature}")
             appendLine("timestamp:  ${report.timestamp}")
+            appendLine("plugin:     ${report.pluginId ?: "(unattributed)"}")
             appendLine("type:       ${report.exceptionType}")
             appendLine("message:    ${report.exceptionMessage}")
             appendLine("app:        ${report.appInfo}")

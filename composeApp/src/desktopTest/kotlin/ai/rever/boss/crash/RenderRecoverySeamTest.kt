@@ -30,13 +30,33 @@ class RenderRecoverySeamTest {
         plugins.forEach { PluginRenderRecovery.registerMounted(it) }
     }
 
+    // No manual clearCrash here: reset() releases the held suspect itself now.
+    // Needing those calls was the sign that it did not.
     @AfterTest
-    fun tearDown() {
-        PluginRenderRecovery.reset()
-        plugins.forEach { PluginCrashRegistry.clearCrash(it) }
+    fun tearDown() = PluginRenderRecovery.reset()
+
+    @Test
+    fun `an outcome recovery could not act on is left counted`() {
+        // The pairing that production uses, asserted directly: Unexplained and
+        // NotPluginRelated must keep accumulating or escalation never arrives.
+        val policy = RenderCrashPolicy(now = { 0L })
+        policy.recordFailureAndShouldContain()
+
+        val counted = noteRecoveryOutcome(policy, PluginRenderRecovery.Outcome.Unexplained)
+
+        assertTrue(!counted, "Unexplained is not progress")
+        assertTrue(policy.recentFailureCount() == 1, "an unproductive fault must stay counted")
     }
 
-    /** One frame of a scene that throws every repaint, wired as containRenderFault does. */
+    /**
+     * One frame of a scene that throws every repaint.
+     *
+     * Calls the same [noteRecoveryOutcome] the handler does rather than
+     * re-implementing the pairing. The earlier version duplicated the
+     * `Rebuilt || Quarantined` condition, which meant deleting the call from
+     * `containRenderFault` left these tests green — verified, and the reason this
+     * now goes through production code.
+     */
     private fun frame(
         policy: RenderCrashPolicy,
         clockMillis: Long,
@@ -44,11 +64,7 @@ class RenderRecoverySeamTest {
         val route = decideWindowExceptionRoute(error, attributedPluginId = null, policy = policy)
         if (route == WindowExceptionRoute.Contain) {
             val outcome = PluginRenderRecovery.onUnattributedRenderException(error, now = clockMillis)
-            if (outcome is PluginRenderRecovery.Outcome.Rebuilt ||
-                outcome is PluginRenderRecovery.Outcome.Quarantined
-            ) {
-                policy.noteRecoveryProgress()
-            }
+            noteRecoveryOutcome(policy, outcome)
         }
         return route
     }
@@ -89,12 +105,8 @@ class RenderRecoverySeamTest {
             val route = decideWindowExceptionRoute(error, null, policy)
             if (route == WindowExceptionRoute.Escalate) break
             val outcome = PluginRenderRecovery.onUnattributedRenderException(error, now = now)
-            if (outcome is PluginRenderRecovery.Outcome.Quarantined) {
-                quarantined += outcome.plugins
-                policy.noteRecoveryProgress()
-            } else if (outcome is PluginRenderRecovery.Outcome.Rebuilt) {
-                policy.noteRecoveryProgress()
-            }
+            if (outcome is PluginRenderRecovery.Outcome.Quarantined) quarantined += outcome.plugins
+            noteRecoveryOutcome(policy, outcome)
             now += 16
         }
 

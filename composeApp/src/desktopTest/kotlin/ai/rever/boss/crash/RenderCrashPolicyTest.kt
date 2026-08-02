@@ -90,7 +90,7 @@ class RenderCrashPolicyTest {
     }
 
     @Test
-    fun `recovery progress resets the budget so narrowing can finish`() {
+    fun `recovery progress un-counts the fault so narrowing can finish`() {
         // The budget used to race the narrowing loop and win. Faults from a
         // repainting subtree arrive ~16ms apart, so they all land in one window,
         // while narrowing spends one fault per suspect. With three panels the
