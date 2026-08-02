@@ -51,7 +51,7 @@ The distribution package includes launch scripts:
 
 - Java 17 or higher
 - At least 2GB RAM (4GB recommended)
-- macOS 12+ (Monterey — the bundled browser engine is built with a 12.0 minimum),
+- macOS 13+ (Ventura — the bundled browser engine is built with a 13.0 minimum),
   Windows 10+, or Linux
 
 ## Known Limitations

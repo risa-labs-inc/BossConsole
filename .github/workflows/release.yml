@@ -1565,8 +1565,8 @@ jobs:
 
           ## 🔧 System Requirements
 
-          - **macOS**: macOS 12.0+ (Monterey) — matches the bundle's LSMinimumSystemVersion
-            and the browser engine's own 12.0 floor
+          - **macOS**: macOS 13.0+ (Ventura) — matches the bundle's LSMinimumSystemVersion
+            and the browser engine's own 13.0 floor
           - **Windows**: Windows 10+ (64-bit)
           - **Linux**: Any modern distribution (AMD64 or ARM64)
 

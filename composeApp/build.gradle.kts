@@ -1099,16 +1099,17 @@ compose.desktop {
 
                 // Real platform floor, not the app's own floor: the browser-engine
                 // bundle BOSS downloads (~/.boss/boss-chromium/BOSS.app) declares
-                // LSMinimumSystemVersion 12.0 and its framework is built with
-                // LC_BUILD_VERSION minos 12.0. On 10.15/11 the app installed and
+                // LSMinimumSystemVersion 13.0 and its framework is built with
+                // LC_BUILD_VERSION minos 13.0. On an older macOS the app installed and
                 // launched fine and then died in dyld the first time an engine
                 // loaded — a broken browser tab instead of "unsupported OS".
-                // Declaring 12.0 makes Launch Services refuse to *launch* on an older
-                // OS with a clear message ("requires macOS 12.0 or later"); a DMG has
+                // Declaring 13.0 makes Launch Services refuse to *launch* on an older
+                // OS with a clear message ("requires macOS 13.0 or later"); a DMG has
                 // no installer, so nothing gates dragging it to /Applications. The
                 // failure moves to first launch instead of into dyld. Keep in lockstep
-                // with chromium-branding / the engine bundle's LSMinimumSystemVersion.
-                minimumSystemVersion = "12.0"
+                // with chromium-branding / the engine bundle's LSMinimumSystemVersion:
+                // JxBrowser 9.4.0 (Chromium 151) dropped macOS 12, raising this from 12.0.
+                minimumSystemVersion = "13.0"
 
                 // Was jpackage's placeholder "Unknown" (Compose's default when this
                 // is unset), which leaves Launchpad/Finder categorization empty.
