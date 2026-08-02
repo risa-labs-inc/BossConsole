@@ -5,6 +5,7 @@ import ai.rever.boss.cli.CLICommandHandler
 import ai.rever.boss.cli.createBossCLI
 import ai.rever.boss.components.dialogs.ChromiumDownloadContent
 import ai.rever.boss.config.ChromiumAutoDownloader
+import ai.rever.boss.crash.RenderCrashPolicy
 import ai.rever.boss.crash.WindowExceptionRoute
 import ai.rever.boss.crash.decideWindowExceptionRoute
 import ai.rever.boss.logging.GlobalLogCapture
@@ -91,7 +92,7 @@ private fun renderRecoveryMessage(outcome: PluginRenderRecovery.Outcome): String
  */
 private fun containRenderFault(
     throwable: Throwable,
-    policy: ai.rever.boss.crash.RenderCrashPolicy,
+    policy: RenderCrashPolicy,
 ) {
     logger.error(
         LogCategory.UI,

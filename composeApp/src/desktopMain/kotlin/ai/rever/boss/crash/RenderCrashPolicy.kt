@@ -60,20 +60,25 @@ class RenderCrashPolicy(
     fun recentFailureCount(): Int = recentFailures.size
 
     /**
-     * Forget the current burst because recovery made progress.
+     * Un-count the fault just recorded, because recovery made progress on it.
      *
-     * Without this the budget races the narrowing loop and loses. The unattributed
-     * path is exactly the case where the same dirty node throws every frame, so
-     * faults arrive ~16ms apart and always inside one window, while narrowing
-     * costs one fault to rebuild plus one per suspect tried. With three panels
-     * mounted that is rebuild, suspect #1, release #1 and suspect #2 — and the
-     * fourth fault escalates and disposes the window, killing the app before the
-     * culprit was found and after quarantining two innocents.
+     * Narrowing needs room: faults from a repainting subtree arrive ~16ms apart,
+     * all inside one window, while the loop spends one fault to rebuild plus one
+     * per suspect. Counting those would escalate and dispose the window before
+     * the culprit was found.
      *
-     * So only faults where recovery achieved *nothing* count toward escalation. A
-     * rebuild or a fresh quarantine is progress and resets the budget; a fault
-     * that recovery could do nothing with does not, and still escalates.
+     * It removes exactly that one fault rather than clearing the deque, and the
+     * difference matters. Clearing made [Escalate][WindowExceptionRoute.Escalate]
+     * unreachable whenever two or more panels were mounted: the narrowing loop
+     * manufactures progress indefinitely — rebuild, suspect each plugin in turn,
+     * end Unexplained, which resets the incident and re-mounts the released
+     * panels so the next fault rebuilds again — so a full reset every cycle meant
+     * the count never reached the limit and a genuinely corrupt scene span
+     * forever. Removing one keeps the unproductive faults accumulating, so the
+     * loop gets its room and escalation stays reachable.
      */
     @Synchronized
-    fun noteRecoveryProgress() = recentFailures.clear()
+    fun noteRecoveryProgress() {
+        recentFailures.removeLastOrNull()
+    }
 }

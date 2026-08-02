@@ -4,6 +4,7 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
@@ -30,11 +31,11 @@ class PluginRenderRecoveryTest {
     private val error = IllegalArgumentException("""Key "coll-dup" was already used.""")
 
     @BeforeTest
-    fun setUp() = PluginRenderRecovery.resetForTest()
+    fun setUp() = PluginRenderRecovery.reset()
 
     @AfterTest
     fun tearDown() {
-        PluginRenderRecovery.resetForTest()
+        PluginRenderRecovery.reset()
         PluginCrashRegistry.clearCrash("plugin.a")
         PluginCrashRegistry.clearCrash("plugin.b")
     }
@@ -197,7 +198,7 @@ class PluginRenderRecoveryTest {
         closeFirst()
         closeSecond()
 
-        assertTrue(!PluginRenderRecovery.mountedPlugins().contains("plugin.a"))
+        assertFalse(PluginRenderRecovery.mountedPlugins().contains("plugin.a"))
     }
 
     @Test

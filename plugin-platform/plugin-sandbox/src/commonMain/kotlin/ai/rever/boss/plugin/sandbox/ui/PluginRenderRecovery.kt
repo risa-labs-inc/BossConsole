@@ -262,8 +262,16 @@ object PluginRenderRecovery {
         }
     }
 
-    /** Forget the retry window. For tests, and for a clean slate after recovery. */
-    internal fun resetForTest() {
+    /**
+     * Forget every incident: mounted counts, the current suspect, the ruled-out
+     * set and the retry window.
+     *
+     * Public and not named for tests, because it is a real operation — a caller
+     * that has torn down and rebuilt the plugin surfaces wants recovery to start
+     * from a clean slate rather than inherit a half-finished narrowing cycle.
+     * Tests use it for the same reason.
+     */
+    fun reset() {
         lastRebuildAt = 0L
         synchronized(mountCounts) { mountCounts.clear() }
         cleared.clear()

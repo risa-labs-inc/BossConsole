@@ -15,6 +15,7 @@ import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
 import java.lang.management.ManagementFactory
+import java.util.concurrent.ConcurrentHashMap
 import javax.swing.JFrame
 import javax.swing.SwingUtilities
 import javax.swing.WindowConstants
@@ -44,6 +45,28 @@ object CrashHandler {
 
     /** Where contained (non-fatal, recovered) reports are written, under the BOSS data dir. */
     private const val CONTAINED_REPORT_DIR = "crash-reports"
+
+    /**
+     * Signatures already written this session.
+     *
+     * A corrupt scene throws every frame, so without this the render-fault path
+     * would write ~60 files a second of full stack traces until the user noticed
+     * — and nothing in the repo trims that directory. One file per distinct fault
+     * is all the diagnostic value there is; repeats only bump a log counter.
+     */
+    private val containedSignatures = ConcurrentHashMap<String, Int>()
+
+    /**
+     * Single thread for writing contained reports.
+     *
+     * The render-fault path runs on the AWT event thread, in the middle of a
+     * repaint storm; a synchronous writeText there stalls the UI on a slow or
+     * full disk. Daemon so it never holds shutdown open.
+     */
+    private val containedWriter =
+        java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+            Thread(r, "boss-contained-crash-writer").apply { isDaemon = true }
+        }
 
     private val _pendingCrashReport = MutableStateFlow<CrashReport?>(null)
 
@@ -138,24 +161,57 @@ object CrashHandler {
         if (isIgnorable(throwable)) return
         try {
             val report = createCrashReport(throwable)
-            val dir = BossDirectories.resolve(CONTAINED_REPORT_DIR).apply { mkdirs() }
-            File(dir, "contained-${report.timestamp}-${report.signature}.txt")
-                .writeText(renderContainedReport(report))
+            val seen = containedSignatures.merge(report.signature, 1, Int::plus) ?: 1
+            if (seen > 1) {
+                // Same fault again — the file already exists and says everything a
+                // second copy would.
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Contained render fault recurred",
+                    mapOf(
+                        "signature" to report.signature,
+                        "errorType" to report.exceptionType,
+                        "occurrences" to seen.toString(),
+                    ),
+                )
+                return
+            }
             logger.warn(
                 LogCategory.SYSTEM,
                 "Contained render fault recorded",
-                mapOf(
-                    "signature" to report.signature,
-                    "errorType" to report.exceptionType,
-                    "dir" to dir.absolutePath,
-                ),
+                mapOf("signature" to report.signature, "errorType" to report.exceptionType),
             )
+            containedWriter.execute { writeContainedReport(report) }
         } catch (e: Exception) {
             // Reporting a contained fault must never itself become a fault.
             logger.warn(
                 LogCategory.SYSTEM,
                 "Failed to record a contained crash report",
                 mapOf("errorType" to throwable.javaClass.simpleName),
+                e,
+            )
+        }
+    }
+
+    /** Off the EDT — see [containedWriter]. */
+    private fun writeContainedReport(report: CrashReport) {
+        try {
+            val dir = BossDirectories.resolve(CONTAINED_REPORT_DIR).apply { mkdirs() }
+            // Owner-only, matching how ~/.boss/run is treated: these hold
+            // sanitized stack traces and host details.
+            runCatching {
+                dir.setReadable(false, false)
+                dir.setReadable(true, true)
+                dir.setWritable(false, false)
+                dir.setWritable(true, true)
+            }
+            File(dir, "contained-${report.timestamp}-${report.signature}.txt")
+                .writeText(renderContainedReport(report))
+        } catch (e: Exception) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Failed to write a contained crash report",
+                mapOf("signature" to report.signature),
                 e,
             )
         }
