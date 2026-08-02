@@ -87,10 +87,11 @@ object PluginRenderRecovery {
      * Unexplained, leaving a permanently broken window — the exact outcome this
      * class exists to prevent.
      *
-     * A LinkedHashMap for recency: iteration order is first-appearance order, and
-     * a re-mount after the count drops to zero moves the plugin to the end, which
-     * plain `LinkedHashSet.add` would not have done for an element already
-     * present. Guarded by its own monitor since it is both mutated and iterated.
+     * A LinkedHashMap for recency: every mount moves the plugin to the end — see
+     * [registerMounted], which removes and re-puts rather than incrementing in
+     * place, because neither `LinkedHashMap.put` nor `LinkedHashSet.add` reorders
+     * a key that is already present. Guarded by its own monitor since it is both
+     * mutated and iterated.
      */
     private val mountCounts = LinkedHashMap<String, Int>()
 
@@ -210,6 +211,25 @@ object PluginRenderRecovery {
         return Outcome.Rebuilt(affected)
     }
 
+    /**
+     * Rule out the plugin we were holding, because the fault outlived it.
+     *
+     * **Known limitation: there is no settle window.** A suspect is judged on the
+     * very next fault, and quarantine only takes effect once the panel recomposes
+     * and stops rendering plugin content. A fault thrown from a measure pass that
+     * was already in flight would therefore convict-then-release the *actual*
+     * culprit, after which narrowing exhausts the remaining plugins and ends
+     * [Outcome.Unexplained] — the broken-window outcome this class exists to
+     * avoid.
+     *
+     * Left as-is deliberately. The generation bump that accompanies a quarantine
+     * discards the offending subtree synchronously, so in the live repro the next
+     * fault was always a genuinely new one, and the cycle converged on the right
+     * plugin. Adding a delay here is not free either: faults inside the settle
+     * window would still reach the host's `RenderCrashPolicy` as unproductive and could
+     * escalate *sooner*. That interaction needs testing on its own rather than a
+     * timing constant tacked onto this change.
+     */
     private fun releaseSuspectAsInnocent() {
         suspect?.let { wronglyHeld ->
             logger.info(
