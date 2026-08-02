@@ -268,6 +268,12 @@ private fun configureBrowserPopupHandler(
                         val browserView = BrowserView.newInstance(popupBrowser)
                         frame.contentPane.add(browserView)
 
+                        // Same crash as the BrowserHandleImpl popup path: JxBrowser's built-in
+                        // Swing menu resolves its position from a component that the popup may
+                        // already have disposed (BossConsole-Releases#17).
+                        ai.rever.boss.plugin.browser
+                            .installPopupWindowContextMenu(popupBrowser, browserView)
+
                         subscriptions +=
                             popupBrowser.on(com.teamdev.jxbrowser.browser.event.TitleChanged::class.java) { event ->
                                 SwingUtilities.invokeLater {

@@ -1504,6 +1504,13 @@ internal class BrowserHandleImpl(
                                     .newInstance(popupBrowser)
                             frame.contentPane.add(browserView)
 
+                            // Replace JxBrowser's built-in Swing context menu, which crashes the
+                            // EDT here: it positions itself from getLocationOnScreen() inside an
+                            // invokeLater, and an OAuth popup closes itself the moment the flow
+                            // completes, so a right-click landing on that boundary asks a disposed
+                            // component where it is (BossConsole-Releases#17).
+                            installPopupWindowContextMenu(popupBrowser, browserView)
+
                             // Update frame title when page title changes
                             subscriptions +=
                                 popupBrowser.on(TitleChanged::class.java) { event ->
