@@ -1,9 +1,11 @@
 package ai.rever.boss.plugin.browser
 
+import com.teamdev.jxbrowser.browser.Browser
 import com.teamdev.jxbrowser.frame.Frame
 import com.teamdev.jxbrowser.menu.ContextMenuContentType
 import java.lang.reflect.Proxy
 import javax.swing.JMenuItem
+import javax.swing.JPanel
 import javax.swing.JPopupMenu
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -177,6 +179,73 @@ class PopupWindowContextMenuTest {
                 .filter { it.isEnabled }
                 .map { it.text }
         assertEquals(listOf("Select All"), enabledLabels)
+    }
+
+    // --- install contract ---
+
+    @Test
+    fun `a menu-install failure neither propagates nor skips the dismiss handler`() {
+        // The most consequential bug this change produced: installPopupWindowChrome runs before
+        // the popup window is made visible, inside a caller try/catch that closes the browser, so
+        // a throwing set() meant the OAuth window never opened at all - worse than the crash.
+        // Both halves are asserted: the call is swallowed, AND PressMouseCallback still lands.
+        val installed = mutableListOf<String>()
+        val browser =
+            Proxy.newProxyInstance(
+                Browser::class.java.classLoader,
+                arrayOf(Browser::class.java),
+            ) { proxy, method, args ->
+                when {
+                    method.name == "hashCode" -> {
+                        System.identityHashCode(proxy)
+                    }
+
+                    method.name == "equals" -> {
+                        proxy === args?.getOrNull(0)
+                    }
+
+                    method.name == "toString" -> {
+                        "stubBrowser"
+                    }
+
+                    method.name == "set" -> {
+                        val type = (args?.getOrNull(0) as? Class<*>)?.simpleName.orEmpty()
+                        installed += type
+                        if (type == "ShowContextMenuCallback") error("simulated set() failure")
+                        null
+                    }
+
+                    method.returnType == Boolean::class.javaPrimitiveType -> {
+                        false
+                    }
+
+                    else -> {
+                        null
+                    }
+                }
+            } as Browser
+
+        // Must not throw.
+        installPopupWindowChrome(browser, JPanel())
+
+        assertTrue("ShowContextMenuCallback" in installed, "the menu install should have been attempted")
+        assertTrue(
+            "PressMouseCallback" in installed,
+            "the dismiss handler must still be installed after a menu-install failure",
+        )
+    }
+
+    // --- clipboard ---
+
+    @Test
+    fun `clipboard probe defaults to enabled when the clipboard cannot be read`() {
+        // On a headless CI agent this exercises the HeadlessException branch - an
+        // UnsupportedOperationException, not an IllegalStateException, which is the case round 5
+        // added. On a desktop it just asserts the call is safe. Either way it must not throw.
+        assertTrue(clipboardHasText() || !clipboardHasText())
+        if (java.awt.GraphicsEnvironment.isHeadless()) {
+            assertTrue(clipboardHasText(), "headless must default to enabled, not throw or disable")
+        }
     }
 
     @Test

@@ -171,39 +171,29 @@ internal fun installPopupWindowContextMenu(
     popupBrowser.set(
         ShowContextMenuCallback::class.java,
         ShowContextMenuCallback { params, tell ->
-            // Everything needed is read here, while params is still valid, and NOT re-read later:
-            // params belongs to this call only.
-            //
-            // params.frame() is the frame Chromium resolved for the actual click. Using
-            // browser.focusedFrame() instead would answer for the wrong frame inside an iframe -
-            // a lesson already recorded in BrowserHandleImpl - and OAuth and payment pages are
-            // frequently iframed, which is exactly what this menu serves.
-            //
-            // Exception rather than Throwable: a genuinely fatal Error is not this boundary's to
-            // swallow, matching the policy BrowserHandleImpl.deliverContextMenu states for the
-            // same callback path.
-            // Read outside the try on purpose. clipboardHasText() is documented not to throw, but
-            // if it ever did from in there, the catch below would leave `entries` empty while
-            // `frame` was already set - and an empty list means shouldShowPopupMenu suppresses the
-            // menu entirely. Keeping it out here makes "no menu at all" unreachable from this call.
-            val clipboardText = clipboardHasText()
-
+            // Only params reads go in here - params is valid for this call only - and nothing is
+            // derived from them yet. A partial read then degrades to a MINIMAL menu rather than to
+            // none: the list is built below from whatever was captured, and Select All stays
+            // enabled regardless, so a failure costs some greyed items instead of a right-click
+            // that silently does nothing. WARN, not debug: "the menu is wrong" should be
+            // diagnosable from a user's log, unlike the routine teardown races.
             var frame: Frame? = null
-            var entries: List<PopupMenuEntry> = emptyList()
             var x = 0
             var y = 0
+            var contentTypes: List<ContextMenuContentType> = emptyList()
+            var selectedText = ""
             try {
                 val location = params.location()
                 x = location.x()
                 y = location.y()
+                // The frame Chromium resolved for the ACTUAL click. browser.focusedFrame() would
+                // answer for the wrong frame inside an iframe - a lesson already recorded in
+                // BrowserHandleImpl - and iframed OAuth/payment pages are the main case here.
                 frame = params.frame().orElse(null)
-                entries = popupMenuEntriesFor(params.contentTypes(), params.selectedText(), clipboardText)
+                contentTypes = params.contentTypes()
+                selectedText = params.selectedText()
             } catch (e: Exception) {
-                logger.debug(
-                    LogCategory.BROWSER,
-                    "Could not read the popup context-menu target",
-                    mapOf("error" to e.toString()),
-                )
+                logger.warn(LogCategory.BROWSER, "Could not fully read the popup context-menu target", error = e)
             } finally {
                 // Answer on every path: an un-responded callback leaves Chromium waiting and shows
                 // nothing at all. This close() is also what suppresses the built-in menu.
@@ -211,6 +201,13 @@ internal fun installPopupWindowContextMenu(
             }
 
             val target = frame ?: return@ShowContextMenuCallback
+
+            // Built AFTER tell.close(), so Chromium is already released. That matters for the
+            // clipboard read in particular: the JDK's Windows clipboard open is a retry-with-sleep
+            // loop, so on the one platform this crash was reported on it can take tens of
+            // milliseconds while another process holds the clipboard. Being outside the try also
+            // keeps a throw here from emptying the list, which would suppress the menu entirely.
+            val entries = popupMenuEntriesFor(contentTypes, selectedText, clipboardHasText())
             SwingUtilities.invokeLater {
                 // Check-then-act, and safe today only because both frame.dispose() call sites go
                 // through invokeLater, so a disposal cannot land between this check and show().
