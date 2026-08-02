@@ -1510,6 +1510,12 @@ internal class BrowserHandleImpl(
                             // completes, so a right-click landing on that boundary asks a disposed
                             // component where it is (BossConsole-Releases#17).
                             installPopupWindowContextMenu(popupBrowser, browserView)
+                            // Must be paired with the menu: a Swing popup over a heavyweight
+                            // browser surface does not close when the user clicks back into the
+                            // page, because Chromium consumes that press before AWT sees it. The
+                            // popup browser comes from params.popupBrowser() and gets none of the
+                            // setup a BOSS-created browser does, so this has to be explicit.
+                            FluckEngine.setupSwingPopupDismissOnPageClick(popupBrowser)
 
                             // Update frame title when page title changes
                             subscriptions +=

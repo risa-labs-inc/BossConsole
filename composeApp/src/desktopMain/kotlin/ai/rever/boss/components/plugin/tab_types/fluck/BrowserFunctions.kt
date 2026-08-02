@@ -4,6 +4,7 @@ import ai.rever.boss.plugin.browser.BrowserSettings
 import ai.rever.boss.plugin.browser.EngineInitError
 import ai.rever.boss.plugin.browser.FluckEngine
 import ai.rever.boss.plugin.browser.LocalAwtWindow
+import ai.rever.boss.plugin.browser.installPopupWindowContextMenu
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.runtime.Composable
@@ -270,9 +271,10 @@ private fun configureBrowserPopupHandler(
 
                         // Same crash as the BrowserHandleImpl popup path: JxBrowser's built-in
                         // Swing menu resolves its position from a component that the popup may
-                        // already have disposed (BossConsole-Releases#17).
-                        ai.rever.boss.plugin.browser
-                            .installPopupWindowContextMenu(popupBrowser, browserView)
+                        // already have disposed (BossConsole-Releases#17). The dismiss handler is
+                        // paired with the menu - see installPopupWindowContextMenu.
+                        installPopupWindowContextMenu(popupBrowser, browserView)
+                        FluckEngine.setupSwingPopupDismissOnPageClick(popupBrowser)
 
                         subscriptions +=
                             popupBrowser.on(com.teamdev.jxbrowser.browser.event.TitleChanged::class.java) { event ->
