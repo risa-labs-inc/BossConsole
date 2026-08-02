@@ -134,12 +134,17 @@ object FluckEngine {
         }
 
         fun show() {
-            visible = true
+            // `visible` is committed only once a window is resolved. Setting it first left the bar
+            // marked visible while show() bailed out, so the NEXT Ctrl+F called hide() and the
+            // shortcut degraded into a dead every-other-press toggle. That is reachable now that
+            // Ctrl+F is served on the no-focused-window path, which is exactly the state where
+            // AWT's focusedWindow is most likely to be null too.
             val window =
                 java.awt.KeyboardFocusManager
                     .getCurrentKeyboardFocusManager()
                     .focusedWindow
                     ?: return
+            visible = true
             ownerWindow = window
             javax.swing.SwingUtilities.invokeLater {
                 if (dialog == null) {
@@ -2127,15 +2132,22 @@ object FluckEngine {
 
                 // Intercept main modifier + key shortcuts
                 if (isMainModifierDown && !modifiers.isShiftDown && !modifiers.isAltDown) {
-                    // Reload is BROWSER-scoped, and this callback already fires for the focused
-                    // browser — so reload it directly rather than routing through the focused
-                    // WINDOW. Handled before the window branch because in HARDWARE_ACCELERATED mode
-                    // the heavyweight surface holds native focus when the user clicks inside the
-                    // page, WindowFocusManager then reports no focused window, and the window-routed
-                    // reload silently did nothing. Direct reload works in both rendering modes, so
-                    // this is not gated on the mode.
+                    // Reload is BROWSER-scoped and this callback already fires for the browser that
+                    // received the key, so reload it directly instead of routing through the
+                    // focused WINDOW. MenuActionsHandler.triggerReloadBrowser only emits an event
+                    // that ends in the same reload, so nothing host-side is skipped — this is the
+                    // same action, aimed at the browser we already have rather than at whichever
+                    // window is focused.
+                    //
+                    // Deliberately NOT justified by "HARDWARE has no focused window": an owned
+                    // browser whose window is not focused is suppressed by the acceptsInput gate
+                    // above, well before this point, so that claim cannot be what makes this
+                    // necessary. Applies on every platform and both rendering modes.
+                    //
+                    // isClosed-guarded like every other browser call in this file: this runs on a
+                    // JxBrowser callback thread and can race a tab close.
                     if (keyCode == com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_R) {
-                        browser.navigation().reload()
+                        if (!browser.isClosed) browser.navigation().reload()
                         return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response
                             .suppress()
                     }
@@ -2175,11 +2187,11 @@ object FluckEngine {
                             }
                         }
                     } else {
-                        // No BOSS window is registered as focused. Under HARDWARE_ACCELERATED this
-                        // is the COMMON case rather than an edge case: the heavyweight browser
-                        // surface holds native focus, so WindowFocusManager sees no focused
-                        // Compose/AWT window. This callback is browser-scoped, so anything that
-                        // needs only the browser is served directly instead of being dropped.
+                        // No window to route through. For a WINDOW-OWNED browser this is
+                        // unreachable — an unfocused owner is suppressed by the acceptsInput gate
+                        // above — so this is the legacy unowned path (BrowserFunctions.createBrowser
+                        // passes no ownerWindowId). This callback is browser-scoped either way, so
+                        // anything needing only the browser is served directly rather than dropped.
                         when (keyCode) {
                             com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_F -> {
                                 val findBar = activeFindBars.getOrPut(browser) { BrowserFindBar(browser) }

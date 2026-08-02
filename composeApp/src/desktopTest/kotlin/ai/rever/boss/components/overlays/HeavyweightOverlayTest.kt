@@ -1,8 +1,10 @@
 package ai.rever.boss.components.overlays
 
+import ai.rever.boss.plugin.browser.parseTopInsetDp
 import ai.rever.boss.plugin.browser.shouldRetainSurface
 import androidx.compose.ui.unit.IntOffset
 import com.teamdev.jxbrowser.engine.RenderingMode
+import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -78,6 +80,23 @@ class HeavyweightOverlayTest {
         )
     }
 
+    // --- browser surface top inset ---
+
+    @Test
+    fun `top inset clamps out values that would silently misplace the surface`() {
+        // This offset moves a heavyweight native surface inside its slot with no error reporting,
+        // so a stray negative shifts the page up under the toolbar and a huge one pushes it off
+        // the bottom - both look like a rendering bug, not a mistyped setting.
+        assertEquals(24, parseTopInsetDp("24"))
+        assertEquals(0, parseTopInsetDp("0"))
+        assertEquals(0, parseTopInsetDp("-200"))
+        assertEquals(200, parseTopInsetDp("9999"))
+        // Unset or unparseable means 0, the correct default on the measured machine.
+        for (raw in listOf(null, "", "   ", "24px", "abc")) {
+            assertEquals(0, parseTopInsetDp(raw), "expected 0 for '$raw'")
+        }
+    }
+
     // --- surface retention ---
 
     @Test
@@ -90,6 +109,20 @@ class HeavyweightOverlayTest {
 
     // --- overlay routing ---
 
+    /**
+     * [OverlayConfig] is a process-wide singleton, so a test that injects into it would leak into
+     * every later test in this module. Reset after each one rather than relying on ordering.
+     */
+    @AfterTest
+    fun resetOverlayConfig() {
+        OverlayConfig.useHeavyweightPopups = false
+        OverlayConfig.heavyweightPopup = null
+        OverlayConfig.heavyweightModal = null
+        OverlayConfig.heavyweightTooltip = null
+        OverlayConfig.hideHeavyweightTooltip = null
+        OverlayConfig.openHeavyweightPopups = 0
+    }
+
     @Test
     fun `overlay renderers default to null so callers fall back to Compose popups`() {
         // useHeavyweightPopups can be true while the renderers are null: any entry point that does
@@ -101,5 +134,24 @@ class HeavyweightOverlayTest {
         assertNull(OverlayConfig.heavyweightModal)
         assertNull(OverlayConfig.heavyweightTooltip)
         assertNull(OverlayConfig.hideHeavyweightTooltip)
+        assertEquals(0, OverlayConfig.openHeavyweightPopups)
+    }
+
+    // --- modal dismissal ---
+
+    @Test
+    fun `a modal does not dismiss while one of its own popups holds focus`() {
+        // The reported dead end: NewTabDialog's folder dropdown is a ContextMenu, which under
+        // HARDWARE is its own always-on-top window. Opening it fires the modal's windowLostFocus,
+        // and dismissing there closed the entire dialog the dropdown belongs to.
+        assertFalse(shouldDismissOnFocusLoss(openHeavyweightPopups = 1, oppositeWindow = null))
+        assertFalse(shouldDismissOnFocusLoss(openHeavyweightPopups = 2, oppositeWindow = null))
+    }
+
+    @Test
+    fun `a modal dismisses when focus leaves the application entirely`() {
+        // A null opposite window means focus went somewhere AWT does not own - another app. That
+        // is the case the focus-loss dismissal actually exists for.
+        assertTrue(shouldDismissOnFocusLoss(openHeavyweightPopups = 0, oppositeWindow = null))
     }
 }

@@ -72,6 +72,23 @@ object OverlayConfig {
 
     /** Hide the tooltip shown by [heavyweightTooltip]. */
     var hideHeavyweightTooltip: (() -> Unit)? = null
+
+    /**
+     * How many heavyweight POPUP windows are currently open.
+     *
+     * Exists so a heavyweight MODAL can tell "the user clicked away" from "a child overlay of mine
+     * took focus". Both are separate always-on-top windows, so a dropdown opening inside a modal
+     * fires the modal's `windowLostFocus` and would dismiss the whole dialog underneath it —
+     * concretely, expanding the folder dropdown in `NewTabDialog` closed the dialog, and so did
+     * the native directory picker behind "Browse…".
+     *
+     * Maintained by [ai.rever.boss.components.overlays.HeavyweightPopup] for its own lifetime and
+     * read by the modal before it acts on focus loss. Only ever touched on the UI thread, so a
+     * plain Int is enough; it is @Volatile for the same safe-publication reason as
+     * [useHeavyweightPopups].
+     */
+    @Volatile
+    var openHeavyweightPopups: Int = 0
 }
 
 /**

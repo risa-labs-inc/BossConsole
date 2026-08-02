@@ -122,6 +122,8 @@ fun HeavyweightPopup(
             }
         },
     ) {
+        RegisterOpenPopup()
+
         if (focusable) {
             DismissOnFocusLoss(window, onDismissRequest)
         }
@@ -133,6 +135,22 @@ fun HeavyweightPopup(
             onDismissRequest = onDismissRequest,
             content = content,
         )
+    }
+}
+
+/**
+ * Count this popup as open for as long as it is composed.
+ *
+ * A [HeavyweightModal] underneath needs to tell "the user clicked away" from "a child overlay of
+ * mine took focus" — a dropdown inside a modal is its own always-on-top window, so opening it fires
+ * the modal's `windowLostFocus` and would otherwise dismiss the dialog the dropdown belongs to.
+ * See `shouldDismissOnFocusLoss`.
+ */
+@Composable
+private fun RegisterOpenPopup() {
+    DisposableEffect(Unit) {
+        OverlayConfig.openHeavyweightPopups++
+        onDispose { OverlayConfig.openHeavyweightPopups-- }
     }
 }
 

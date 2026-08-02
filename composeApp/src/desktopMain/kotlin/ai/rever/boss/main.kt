@@ -75,11 +75,27 @@ fun main(args: Array<String>) {
     // backend that cannot initialize would break exactly the machines a pin is meant to help.
     // Must run before any AWT/Skiko init, hence its position here.
     //   BOSS_SKIKO_RENDER_API = DIRECT3D | OPENGL | METAL | SOFTWARE_FAST | SOFTWARE
+    // Validated against an allowlist, not forwarded raw: this runs before AWT/Skiko init, so an
+    // unrecognised value surfaces as a startup crash with no BOSS log line to explain it - on
+    // exactly the GPU-less RDP/VM machines the pin exists to help. Unknown values are ignored with
+    // a warning, matching how the other tunables added alongside this behave.
     ai.rever.boss.config.ConfigLoader
         .getConfig("BOSS_SKIKO_RENDER_API")
         ?.trim()
         ?.takeIf { it.isNotEmpty() }
-        ?.let { System.setProperty("skiko.renderApi", it) }
+        ?.let { requested ->
+            val known = setOf("DIRECT3D", "OPENGL", "METAL", "SOFTWARE_FAST", "SOFTWARE")
+            val normalized = requested.uppercase()
+            if (normalized in known) {
+                System.setProperty("skiko.renderApi", normalized)
+            } else {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Ignoring unrecognized BOSS_SKIKO_RENDER_API - letting Skiko auto-detect",
+                    mapOf("value" to requested, "known" to known.joinToString("|")),
+                )
+            }
+        }
 
     // Disable lightweight popups for HARDWARE_ACCELERATED rendering mode (#258)
     // This ensures Swing popup menus (context menus) appear above the browser view

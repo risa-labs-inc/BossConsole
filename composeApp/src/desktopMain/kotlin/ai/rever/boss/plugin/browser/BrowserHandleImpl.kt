@@ -1754,19 +1754,31 @@ internal class BrowserHandleImpl(
         // when the tab is actually closed rather than merely hidden.
         val retainSurfaceAcrossTabSwitches = shouldRetainSurface(JxBrowserConfig.renderingMode)
 
-        // Seeded from the retained surface so re-entry paints immediately instead of blank.
-        var viewState by remember { mutableStateOf(if (retainSurfaceAcrossTabSwitches) currentViewState else null) }
+        // The window actually hosting this composition, resolved through the app's window
+        // registry. In a multi-window setup the "first showing window" fallback can resolve a
+        // different window than the one this view renders in, which would bind the view state and
+        // the pinch gesture listener where the browser isn't (gesture events are delivered per
+        // window). Keying the effect on the id also rebinds both when a tab moves across windows.
+        //
+        // Read HERE, above the seed, and not only inside the effect: the seed needs the same
+        // window-identity guard, or the first frame renders a surface bound to the window the tab
+        // came from and the effect then closes that very object while it is composed.
+        val hostWindowId = LocalWindowId.current
+
+        // Seeded from the retained surface so re-entry paints immediately instead of blank - but
+        // only when it belongs to THIS window, matching the reuse condition in the effect below.
+        var viewState by remember {
+            mutableStateOf(
+                currentViewState?.takeIf {
+                    retainSurfaceAcrossTabSwitches &&
+                        hostWindowId != null &&
+                        currentViewStateWindowId == hostWindowId
+                },
+            )
+        }
 
         // Track last navigation time for debouncing mouse button navigation
         var lastNavigationTime by remember { mutableStateOf(0L) }
-
-        // The window actually hosting this composition, resolved through the app's
-        // window registry. In a multi-window setup the "first showing window"
-        // fallback can resolve a different window than the one this view renders
-        // in, which would bind the view state and the pinch gesture listener where
-        // the browser isn't (gesture events are delivered per window). Keying the
-        // effect on the id also rebinds both when a tab moves across windows.
-        val hostWindowId = LocalWindowId.current
 
         DisposableEffect(browser, hostWindowId) {
             // Find a valid window to associate with the BrowserView
@@ -1906,10 +1918,10 @@ internal class BrowserHandleImpl(
                     // ConfigLoader, not getenv: this is the per-INSTALL tuning knob (the amount
                     // depends on the machine's chrome heights and scaling), so it belongs in
                     // local.properties as much as in the environment.
-                    ai.rever.boss.config.ConfigLoader
-                        .getConfig("BOSS_BROWSER_TOP_INSET_DP")
-                        ?.trim()
-                        ?.toIntOrNull() ?: 0
+                    parseTopInsetDp(
+                        ai.rever.boss.config.ConfigLoader
+                            .getConfig("BOSS_BROWSER_TOP_INSET_DP"),
+                    )
                 } else {
                     0
                 }
@@ -2132,3 +2144,19 @@ internal class BrowserHandleImpl(
  */
 internal fun shouldRetainSurface(mode: com.teamdev.jxbrowser.engine.RenderingMode): Boolean =
     mode == com.teamdev.jxbrowser.engine.RenderingMode.HARDWARE_ACCELERATED
+
+/**
+ * Parse BOSS_BROWSER_TOP_INSET_DP into a usable vertical correction for the browser surface.
+ *
+ * Clamped to 0..200 rather than taken at face value. This offset moves a heavyweight native
+ * surface inside its slot with no visible error reporting, so a stray negative would shift the page
+ * up under the toolbar and a stray large value would push it off the bottom — in both cases looking
+ * like a rendering bug rather than a mistyped setting. 200dp is far beyond any real chrome height,
+ * so the ceiling only ever catches nonsense.
+ *
+ * Unparseable or unset means 0, which is the correct default on the machine this was measured on
+ * (see benchmarks/speedometer/win/WINDOWS.md — Lite's 24 over-corrects here).
+ *
+ * Restart-scoped: read once per browser view, not live-tunable.
+ */
+internal fun parseTopInsetDp(raw: String?): Int = raw?.trim()?.toIntOrNull()?.coerceIn(0, 200) ?: 0
