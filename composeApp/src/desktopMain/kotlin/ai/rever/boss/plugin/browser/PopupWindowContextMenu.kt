@@ -29,7 +29,10 @@ internal data class PopupMenuEntry(
 /**
  * Whether the system clipboard currently holds text that Paste could insert.
  *
- * A local AWT call, not Chromium IPC, so it adds no round-trip to the right-click path.
+ * A local AWT call, not Chromium IPC, but not free either: the JDK's Windows clipboard open is a
+ * retry-with-sleep loop, so on the one platform this crash was reported on it can take tens of
+ * milliseconds while another process holds the clipboard. Hence it runs after `tell.close()`, and
+ * only when the target is editable.
  *
  * **Must not throw.** Callers use it while assembling the menu, and an escaping exception there is
  * caught by an outer handler that leaves the entry list empty — which suppresses the whole menu,
@@ -81,18 +84,22 @@ private fun clipboardUnavailable(e: Exception): Boolean {
  * Enablement mirrors what each command would actually do: Cut and Paste need an editable target,
  * Cut and Copy need a selection, Paste needs something on the clipboard, and Select All is always
  * available.
+ *
+ * [clipboardHasText] is a lambda, not a value, so the probe is skipped on a non-editable target —
+ * the majority of right-clicks in an OAuth window, and the case where its answer is discarded
+ * anyway. It is not free: see [clipboardHasText] on what a Windows clipboard read can cost.
  */
 internal fun popupMenuEntriesFor(
     contentTypes: List<ContextMenuContentType>,
     selectedText: String,
-    clipboardHasText: Boolean,
+    clipboardHasText: () -> Boolean,
 ): List<PopupMenuEntry> {
     val editable = contentTypes.contains(ContextMenuContentType.EDITABLE)
     val hasSelection = selectedText.isNotEmpty()
     return listOf(
         PopupMenuEntry("Cut", EditorCommand.cut(), editable && hasSelection),
         PopupMenuEntry("Copy", EditorCommand.copy(), hasSelection),
-        PopupMenuEntry("Paste", EditorCommand.paste(), editable && clipboardHasText),
+        PopupMenuEntry("Paste", EditorCommand.paste(), editable && clipboardHasText()),
         PopupMenuEntry("", null, false),
         PopupMenuEntry("Select All", EditorCommand.selectAll(), true),
     )
@@ -202,23 +209,25 @@ internal fun installPopupWindowContextMenu(
 
             val target = frame ?: return@ShowContextMenuCallback
 
-            // Built AFTER tell.close(), so Chromium is already released. That matters for the
-            // clipboard read in particular: the JDK's Windows clipboard open is a retry-with-sleep
-            // loop, so on the one platform this crash was reported on it can take tens of
-            // milliseconds while another process holds the clipboard. Being outside the try also
-            // keeps a throw here from emptying the list, which would suppress the menu entirely.
-            val entries = popupMenuEntriesFor(contentTypes, selectedText, clipboardHasText())
+            // Built AFTER tell.close(), so Chromium is already released before the clipboard read.
+            // Being outside the try also keeps a throw here from emptying the list, which would
+            // suppress the menu entirely.
+            val entries = popupMenuEntriesFor(contentTypes, selectedText, ::clipboardHasText)
             SwingUtilities.invokeLater {
-                // Check-then-act, and safe today only because both frame.dispose() call sites go
-                // through invokeLater, so a disposal cannot land between this check and show().
-                // The catch below keeps that robust rather than merely lucky: a disposal added off
-                // the EDT later would otherwise reduce this to the very race being fixed.
-                if (!shouldShowPopupMenu(view.isShowing, popupBrowser.isClosed, entries)) {
-                    logger.debug(LogCategory.BROWSER, "Skipping popup context menu - view is gone")
-                    return@invokeLater
-                }
+                // The try wraps the guard as well as the show. `popupBrowser.isClosed` is a call
+                // into JxBrowser on the EDT during teardown - the exact window in which things are
+                // being disposed - so an exception from the check itself would land uncaught on the
+                // EDT, which is the failure class this whole file exists to remove.
                 try {
-                    buildMenu(target, entries).show(view, x, y)
+                    // Check-then-act, and safe today only because both frame.dispose() call sites
+                    // go through invokeLater, so a disposal cannot land between this check and
+                    // show(). The catch keeps that robust rather than merely lucky: a disposal
+                    // added off the EDT later would otherwise reduce this to the race being fixed.
+                    if (!shouldShowPopupMenu(view.isShowing, popupBrowser.isClosed, entries)) {
+                        logger.debug(LogCategory.BROWSER, "Skipping popup context menu - view is gone")
+                        return@invokeLater
+                    }
+                    buildPopupWindowMenu(target, entries).show(view, x, y)
                 } catch (e: Exception) {
                     logger.warn(LogCategory.BROWSER, "Popup context menu failed to show", error = e)
                 }
@@ -254,10 +263,14 @@ internal fun installPopupWindowChrome(
     try {
         installPopupWindowContextMenu(popupBrowser, view)
     } catch (e: Exception) {
-        logger.debug(
+        // WARN, not debug: if this install fails the built-in menu stays, and with it the EDT crash
+        // this file exists to remove - live for that popup, for the rest of its life. That is a
+        // different order of failure from the dismissal handler's (a menu that sticks) and needs to
+        // be visible in a log a user would actually send.
+        logger.warn(
             LogCategory.BROWSER,
             "Could not install the popup context menu - keeping JxBrowser's built-in one",
-            mapOf("error" to e.toString()),
+            error = e,
         )
     }
     // Deliberately outside the catch above: if the menu failed to install, the built-in menu is
@@ -267,7 +280,7 @@ internal fun installPopupWindowChrome(
 
 /** Renders [entries] against the frame the click resolved to. */
 @Suppress("TooGenericExceptionCaught") // See installPopupWindowContextMenu - Error must propagate.
-internal fun buildMenu(
+internal fun buildPopupWindowMenu(
     frame: Frame,
     entries: List<PopupMenuEntry>,
 ): JPopupMenu {

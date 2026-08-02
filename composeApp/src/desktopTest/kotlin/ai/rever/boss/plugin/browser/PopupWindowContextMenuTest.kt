@@ -1,8 +1,10 @@
 package ai.rever.boss.plugin.browser
 
 import com.teamdev.jxbrowser.browser.Browser
+import com.teamdev.jxbrowser.browser.callback.ShowContextMenuCallback
 import com.teamdev.jxbrowser.frame.Frame
 import com.teamdev.jxbrowser.menu.ContextMenuContentType
+import java.awt.GraphicsEnvironment
 import java.lang.reflect.Proxy
 import javax.swing.JMenuItem
 import javax.swing.JPanel
@@ -28,7 +30,7 @@ class PopupWindowContextMenuTest {
     ) = popupMenuEntriesFor(
         contentTypes = if (editable) listOf(ContextMenuContentType.EDITABLE) else listOf(ContextMenuContentType.PAGE),
         selectedText = selection,
-        clipboardHasText = clipboard,
+        clipboardHasText = { clipboard },
     )
 
     /**
@@ -39,12 +41,13 @@ class PopupWindowContextMenuTest {
      * unboxing the moment the stub landed in a hash collection or an assertion message. Nothing
      * here does that today, but stubs get copied.
      */
-    private fun stubFrame(): Frame =
+    private fun stubFrame(executed: MutableList<Any?> = mutableListOf()): Frame =
         Proxy.newProxyInstance(Frame::class.java.classLoader, arrayOf(Frame::class.java)) { proxy, method, args ->
             when {
                 method.name == "hashCode" -> System.identityHashCode(proxy)
                 method.name == "equals" -> proxy === args?.getOrNull(0)
                 method.name == "toString" -> "stubFrame"
+                method.name == "execute" -> executed.add(args?.getOrNull(0)).let { null }
                 method.returnType == Boolean::class.javaPrimitiveType -> false
                 else -> null
             }
@@ -88,6 +91,33 @@ class PopupWindowContextMenuTest {
         // claim the code did not honour: Paste was offered on any editable target.
         assertFalse(entries(editable = true, selection = "", clipboard = false).single { it.label == "Paste" }.enabled)
         assertTrue(entries(editable = true, selection = "", clipboard = true).single { it.label == "Paste" }.enabled)
+    }
+
+    @Test
+    fun `the clipboard is not probed on a non-editable target`() {
+        // Paste is disabled on a read-only page whatever the clipboard says, so probing it there is
+        // pure latency on the right-click path - and a Windows clipboard read is a retry-with-sleep
+        // loop, not a free call. That is why the parameter is a lambda.
+        var probes = 0
+        popupMenuEntriesFor(
+            contentTypes = listOf(ContextMenuContentType.PAGE),
+            selectedText = "abc",
+            clipboardHasText = {
+                probes++
+                true
+            },
+        )
+        assertEquals(0, probes, "a read-only target should not read the clipboard")
+
+        popupMenuEntriesFor(
+            contentTypes = listOf(ContextMenuContentType.EDITABLE),
+            selectedText = "abc",
+            clipboardHasText = {
+                probes++
+                true
+            },
+        )
+        assertEquals(1, probes, "an editable target must read the clipboard to decide Paste")
     }
 
     @Test
@@ -164,7 +194,7 @@ class PopupWindowContextMenuTest {
 
     @Test
     fun `entries render in order with the separator between Paste and Select All`() {
-        val menu: JPopupMenu = buildMenu(stubFrame(), entries(editable = true, selection = "x"))
+        val menu: JPopupMenu = buildPopupWindowMenu(stubFrame(), entries(editable = true, selection = "x"))
         val rendered = menu.components.map { (it as? JMenuItem)?.text ?: "<separator>" }
         assertEquals(listOf("Cut", "Copy", "Paste", "<separator>", "Select All"), rendered)
     }
@@ -172,7 +202,7 @@ class PopupWindowContextMenuTest {
     @Test
     fun `disabled entries render disabled`() {
         // Read-only page with no selection: only Select All should be clickable.
-        val menu = buildMenu(stubFrame(), entries(editable = false, selection = ""))
+        val menu = buildPopupWindowMenu(stubFrame(), entries(editable = false, selection = ""))
         val enabledLabels =
             menu.components
                 .filterIsInstance<JMenuItem>()
@@ -181,7 +211,76 @@ class PopupWindowContextMenuTest {
         assertEquals(listOf("Select All"), enabledLabels)
     }
 
+    @Test
+    fun `clicking an item runs its command on the frame the click resolved to`() {
+        // The menu renders correctly per the tests above, but rendering a Paste item that is wired
+        // to nothing would pass all of them. This is the one assertion that the menu does anything.
+        val executed = mutableListOf<Any?>()
+        val entries = entries(editable = true, selection = "x")
+        val menu = buildPopupWindowMenu(stubFrame(executed), entries)
+        menu.components
+            .filterIsInstance<JMenuItem>()
+            .single { it.text == "Paste" }
+            .doClick(0)
+        assertEquals<Any?>(entries.single { it.label == "Paste" }.command, executed.singleOrNull())
+    }
+
     // --- install contract ---
+
+    @Test
+    fun `the callback answers Chromium even when reading the click target throws`() {
+        // tell.close() in the finally is the only thing between a params read that throws and a
+        // request nobody answers - not a menu that fails to appear, a renderer left waiting on one.
+        // It is also what suppresses the built-in (crashing) menu, so it has to run on every path.
+        var callback: ShowContextMenuCallback? = null
+        val browser =
+            Proxy.newProxyInstance(
+                Browser::class.java.classLoader,
+                arrayOf(Browser::class.java),
+            ) { proxy, method, args ->
+                when {
+                    method.name == "hashCode" -> {
+                        System.identityHashCode(proxy)
+                    }
+
+                    method.name == "equals" -> {
+                        proxy === args?.getOrNull(0)
+                    }
+
+                    method.name == "toString" -> {
+                        "stubBrowser"
+                    }
+
+                    method.name == "set" -> {
+                        (args?.getOrNull(1) as? ShowContextMenuCallback)?.let { callback = it }
+                        null
+                    }
+
+                    method.returnType == Boolean::class.javaPrimitiveType -> {
+                        false
+                    }
+
+                    else -> {
+                        null
+                    }
+                }
+            } as Browser
+        installPopupWindowContextMenu(browser, JPanel())
+        val installed = requireNotNull(callback) { "no ShowContextMenuCallback was installed" }
+
+        val params =
+            Proxy.newProxyInstance(
+                ShowContextMenuCallback.Params::class.java.classLoader,
+                arrayOf(ShowContextMenuCallback.Params::class.java),
+            ) { _, method, _ ->
+                if (method.name == "location") error("simulated params failure") else null
+            } as ShowContextMenuCallback.Params
+
+        val tell = ShowContextMenuCallback.Action { }
+        installed.on(params, tell)
+
+        assertTrue(tell.isClosed, "Chromium must be answered on the params-failure path too")
+    }
 
     @Test
     fun `a menu-install failure neither propagates nor skips the dismiss handler`() {
@@ -241,9 +340,9 @@ class PopupWindowContextMenuTest {
     fun `clipboard probe defaults to enabled when the clipboard cannot be read`() {
         // On a headless CI agent this exercises the HeadlessException branch - an
         // UnsupportedOperationException, not an IllegalStateException, which is the case round 5
-        // added. On a desktop it just asserts the call is safe. Either way it must not throw.
-        assertTrue(clipboardHasText() || !clipboardHasText())
-        if (java.awt.GraphicsEnvironment.isHeadless()) {
+        // added. On a desktop it only asserts the call is safe: it must not throw.
+        clipboardHasText()
+        if (GraphicsEnvironment.isHeadless()) {
             assertTrue(clipboardHasText(), "headless must default to enabled, not throw or disable")
         }
     }
@@ -252,6 +351,7 @@ class PopupWindowContextMenuTest {
     fun `the rendered menu is heavyweight so it can paint over the browser surface`() {
         // A lightweight popup draws into the Swing layer, which sits behind the heavyweight browser
         // surface - the menu would silently not appear.
-        assertFalse(buildMenu(stubFrame(), entries(editable = true, selection = "x")).isLightWeightPopupEnabled)
+        val menu = buildPopupWindowMenu(stubFrame(), entries(editable = true, selection = "x"))
+        assertFalse(menu.isLightWeightPopupEnabled)
     }
 }
