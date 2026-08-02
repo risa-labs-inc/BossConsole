@@ -22,10 +22,13 @@ import kotlin.test.assertTrue
  * Unit tests for [McpToolRegistryCore] — the testable core behind the
  * process-wide [McpToolRegistryImpl] singleton. Covers the pure logic that 19
  * downstream plugins depend on: RBAC gating ([McpToolRegistryImpl] KDoc
- * "Security posture"), first-wins dedup across providers, disabled-set
- * persistence (including the fail-open-to-emptySet path), argument scalar
- * coercion, and [McpToolRegistryCore.invoke]'s timeout/cancellation/rejection
- * contract.
+ * "Security posture"), first-wins dedup across providers, the happy path of
+ * disabled-set persistence, argument scalar coercion, and
+ * [McpToolRegistryCore.invoke]'s timeout/cancellation/rejection contract.
+ *
+ * The kill-switch's *failure* behaviour — what happens when the persisted set
+ * cannot be read or written (BossConsole#85) — lives in
+ * [McpKillSwitchPersistenceTest].
  */
 class McpToolRegistryCoreTest {
     private val tempFiles = mutableListOf<File>()
@@ -293,70 +296,6 @@ class McpToolRegistryCoreTest {
         val tmp = File(file.parentFile, file.name + ".tmp")
         assertFalse(tmp.exists(), "temp file must be renamed away, not left behind")
         assertTrue(file.exists())
-    }
-
-    @Test
-    fun `corrupt disabled-tools file fails open to emptySet rather than crashing`() {
-        val file = tempDisabledFile()
-        file.parentFile.mkdirs()
-        file.writeText("{ not valid json list ]")
-
-        val core = McpToolRegistryCore(disabledFile = file)
-        assertEquals(emptySet(), core.disabledToolNames.value)
-    }
-
-    @Test
-    fun `missing disabled-tools file starts with an empty disabled set`() {
-        val file = tempDisabledFile()
-        assertFalse(file.exists())
-
-        val core = McpToolRegistryCore(disabledFile = file)
-        assertEquals(emptySet(), core.disabledToolNames.value)
-    }
-
-    /**
-     * The write side fails open too, and the README documents it: `saveDisabled`
-     * logs and swallows, while `setToolEnabled` has already updated `_disabled` and
-     * goes on to call `applyExposed()`. So a toggle survives the session but is
-     * never persisted, and the tool returns on the next launch with no signal that
-     * the decision did not stick.
-     *
-     * Pinned because the disabled set is the only control that holds for an admin
-     * user, so both halves of "fails open on both sides" deserve a test. This
-     * asserts today's behaviour, not desired behaviour — BossConsole#85 tracks the
-     * fix, and landing it should flip the final assertion here.
-     */
-    @Test
-    fun `unwritable disabled-tools file still toggles in memory but does not persist`() {
-        // A regular file used as a parent directory: the write cannot succeed.
-        val blocker = tempDisabledFile()
-        blocker.parentFile.mkdirs()
-        blocker.writeText("not a directory")
-        val unwritable = File(blocker, "mcp-disabled-tools.json")
-
-        val core = McpToolRegistryCore(disabledFile = unwritable)
-        core.registerProvider(provider("p1", echoTool("doomed_toggle")))
-
-        // Must not throw, even though persisting is impossible.
-        core.setToolEnabled("doomed_toggle", enabled = false)
-
-        assertEquals(
-            setOf("doomed_toggle"),
-            core.disabledToolNames.value,
-            "the in-memory toggle must still apply for this session",
-        )
-        assertFalse(
-            core.tools.value.any { it.definition.name == "doomed_toggle" },
-            "the tool must be hidden for this session",
-        )
-        // Assert the write genuinely failed rather than landing somewhere else --
-        // otherwise the reload assertion below could pass for the wrong reason.
-        assertFalse(unwritable.exists(), "the unwritable path must not have been created")
-        assertEquals(
-            emptySet(),
-            McpToolRegistryCore(disabledFile = unwritable).disabledToolNames.value,
-            "current behaviour: the toggle is lost on the next launch (see BossConsole#85)",
-        )
     }
 
     @Test

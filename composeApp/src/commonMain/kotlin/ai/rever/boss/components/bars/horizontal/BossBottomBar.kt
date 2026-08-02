@@ -8,6 +8,7 @@ import ai.rever.boss.components.plugin.registries.StatusBarRegistryImpl
 import ai.rever.boss.components.plugin.registries.owningPluginId
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
 import ai.rever.boss.components.window_panel.components.main_window_panels.BossTabsComponent
+import ai.rever.boss.mcp.McpToolRegistryImpl
 import ai.rever.boss.performance.PerformanceState
 import ai.rever.boss.plugin.api.PanelId
 import ai.rever.boss.plugin.api.StatusBarAlignment
@@ -198,6 +199,23 @@ fun RowScope.BossLeftBottomBar(tabsComponent: BossTabsComponent? = null) {
 fun BossRightBottomBar() {
     val windowId = LocalWindowId.current
     val scope = rememberCoroutineScope()
+
+    // MCP kill-switch degraded state. Persistent on purpose: this is the only
+    // access control an admin user does not bypass, and while it is showing, some
+    // or all agent tools are being withheld. A transient status message cannot
+    // carry that — the next message cancels it, and one raised during startup is
+    // gone before the window is up (BossConsole#85).
+    val killSwitchFault by McpToolRegistryImpl.killSwitchFault.collectAsState()
+    killSwitchFault?.let { fault ->
+        Text(
+            text = "⚠ ${fault.message}",
+            color = BossTheme.colors.alert,
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.widthIn(max = 560.dp).padding(horizontal = 8.dp),
+        )
+    }
 
     // Status message (temporary messages like "Workspace Saved")
     val statusMessage by StatusMessageManager.currentMessage.collectAsState()
