@@ -228,6 +228,11 @@ class PluginRenderRecoveryTest {
             val outcome = PluginRenderRecovery.onUnattributedRenderException(error, now = 2_000)
 
             assertIs<PluginRenderRecovery.Outcome.Quarantined>(outcome)
+            // Drain the EDT first. recordCrash's destructive branch closes the tab
+            // from inside invokeLater, so without this the assertion below wins a
+            // race instead of checking a behaviour — it would pass against the old
+            // recordCrash too. Verified: with recordCrash restored, this goes red.
+            javax.swing.SwingUtilities.invokeAndWait { }
             assertTrue(PluginCrashRegistry.hasCrashed("plugin.a"), "the fallback must still be shown")
             assertTrue(!tabClosed, "quarantining a suspect must not close its tab")
         } finally {

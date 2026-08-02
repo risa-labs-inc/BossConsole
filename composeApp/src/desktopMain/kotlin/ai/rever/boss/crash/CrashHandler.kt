@@ -47,15 +47,41 @@ object CrashHandler {
     /** Where contained (non-fatal, recovered) reports are written, under the BOSS data dir. */
     private const val CONTAINED_REPORT_DIR = "crash-reports"
 
+    /** Contained reports kept on disk; older ones are swept after each write. */
+    private const val CONTAINED_REPORT_RETENTION = 20
+
+    /**
+     * Ceiling on [containedSignatures]. Past this the dedupe is dropped and starts
+     * over rather than growing without bound: a session that has produced this many
+     * *distinct* render faults has bigger problems than a duplicate report, and the
+     * retention sweep bounds the disk cost either way.
+     */
+    private const val MAX_CONTAINED_SIGNATURES = 200
+
     /**
      * Signatures already written this session.
      *
      * A corrupt scene throws every frame, so without this the render-fault path
-     * would write ~60 files a second of full stack traces until the user noticed
-     * — and nothing in the repo trims that directory. One file per distinct fault
-     * is all the diagnostic value there is; repeats only bump a log counter.
+     * would write ~60 files a second of full stack traces until the user noticed.
+     * One file per distinct fault is all the diagnostic value there is; repeats
+     * only bump a log counter.
      */
     private val containedSignatures = ConcurrentHashMap<String, Int>()
+
+    /**
+     * Report directory override for tests; the same shape as
+     * `SingleInstanceFiles.runtimeDirOverride`.
+     *
+     * Not a convenience: [sweepOldReports] deletes files, so a test running against
+     * the real data root would destroy the user's actual crash reports.
+     */
+    @Volatile
+    internal var containedReportDirOverride: File? = null
+
+    private fun containedReportDir(): File = containedReportDirOverride ?: BossDirectories.resolve(CONTAINED_REPORT_DIR)
+
+    /** Lets a test start from a clean dedupe. */
+    internal fun resetContainedStateForTest() = containedSignatures.clear()
 
     /**
      * Single thread for writing contained reports.
@@ -161,32 +187,35 @@ object CrashHandler {
     fun recordContained(throwable: Throwable) {
         if (isIgnorable(throwable)) return
         try {
-            val report = createCrashReport(throwable)
-            val seen = containedSignatures.merge(report.signature, 1, Int::plus) ?: 1
+            // Signature first, report second. createCrashReport sanitizes the whole
+            // stack with a regex sweep, walks up to twelve causes asking the plugin
+            // classloaders about every frame, and reads two JMX beans — all on the
+            // AWT event thread, and previously once per fault during exactly the
+            // repaint storm this exists to survive. The signature is the cheap part
+            // and the only thing the dedupe needs.
+            val signature = CrashSignature.generate(throwable)
+            if (containedSignatures.size >= MAX_CONTAINED_SIGNATURES) containedSignatures.clear()
+            val seen = containedSignatures.merge(signature, 1, Int::plus) ?: 1
             if (seen > 1) {
                 // Log on a curve, not every frame. The file dedupe protects the
-                // disk; this protects the log buffers, which back recentLogs on
-                // the next real crash report — a per-frame warn would evict the
-                // very context that explains the fault.
+                // disk; this protects the log buffers, which back recentLogs on the
+                // next real crash report — a per-frame warn would evict the very
+                // context that explains the fault.
                 if (seen == 2 || seen == 10 || seen % 100 == 0) {
                     logger.warn(
                         LogCategory.SYSTEM,
                         "Contained render fault recurring",
                         mapOf(
-                            "signature" to report.signature,
-                            "errorType" to report.exceptionType,
+                            "signature" to signature,
+                            "errorType" to throwable.javaClass.simpleName,
                             "occurrences" to seen.toString(),
                         ),
                     )
                 }
                 return
             }
-            logger.warn(
-                LogCategory.SYSTEM,
-                "Contained render fault recorded",
-                mapOf("signature" to report.signature, "errorType" to report.exceptionType),
-            )
-            containedWriter.execute { writeContainedReport(report) }
+            // Building the report is part of the off-thread work now.
+            containedWriter.execute { writeContainedReport(signature, throwable) }
         } catch (e: Exception) {
             // Reporting a contained fault must never itself become a fault.
             logger.warn(
@@ -199,26 +228,94 @@ object CrashHandler {
     }
 
     /** Off the EDT — see [containedWriter]. */
-    private fun writeContainedReport(report: CrashReport) {
+    private fun writeContainedReport(
+        signature: String,
+        throwable: Throwable,
+    ) {
         try {
-            val dir = BossDirectories.resolve(CONTAINED_REPORT_DIR).apply { mkdirs() }
-            // Owner-only, matching how ~/.boss/run is treated: these hold
-            // sanitized stack traces and host details.
-            runCatching {
-                dir.setReadable(false, false)
-                dir.setReadable(true, true)
-                dir.setWritable(false, false)
-                dir.setWritable(true, true)
-            }
-            File(dir, "contained-${report.timestamp}-${report.signature}.txt")
-                .writeText(renderContainedReport(report))
+            val report = createCrashReport(throwable)
+            val dir = containedReportDir()
+            dir.mkdirs()
+            val file = File(dir, "contained-${report.timestamp}-$signature.txt")
+            // Owner-only on both, and on the file too — writeText alone leaves it at
+            // the umask, typically 0644, holding sanitized traces and host details.
+            // Directory perms are not enough: 0711 still lets others traverse to a
+            // known path.
+            restrictToOwner(dir, directory = true)
+            file.writeText(renderContainedReport(report))
+            restrictToOwner(file, directory = false)
+            sweepOldReports(dir)
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Contained render fault recorded",
+                mapOf("signature" to signature, "path" to file.absolutePath),
+            )
         } catch (e: Exception) {
+            // The signature was claimed before this ran, so a failed write would
+            // otherwise suppress the fault for the rest of the session. Release it
+            // so the next occurrence can retry.
+            containedSignatures.remove(signature)
             logger.warn(
                 LogCategory.SYSTEM,
                 "Failed to write a contained crash report",
-                mapOf("signature" to report.signature),
+                mapOf("signature" to signature),
                 e,
             )
+        }
+    }
+
+    /**
+     * Keep the newest [CONTAINED_REPORT_RETENTION] reports and delete the rest.
+     *
+     * The session dedupe bounds writes *within* one run; nothing bounded them
+     * across runs, and this directory has no other janitor. Sorted by name rather
+     * than mtime: the filename carries the report timestamp, so it survives a copy
+     * that resets modification times, and one distinct-signature write per sweep
+     * makes the cost trivial.
+     *
+     * Best effort — a failed sweep must not fail the write that triggered it.
+     */
+    private fun sweepOldReports(dir: File) {
+        runCatching {
+            val reports =
+                dir
+                    .listFiles { f -> f.isFile && f.name.startsWith("contained-") && f.name.endsWith(".txt") }
+                    ?.sortedByDescending { it.name }
+                    ?: return
+            reports.drop(CONTAINED_REPORT_RETENTION).forEach { it.delete() }
+        }
+    }
+
+    /** POSIX first, File flags as fallback — the same shape SingleInstanceFiles uses. */
+    private fun restrictToOwner(
+        target: File,
+        directory: Boolean,
+    ) {
+        val posix =
+            runCatching {
+                val perms =
+                    if (directory) {
+                        java.nio.file.attribute.PosixFilePermissions
+                            .fromString("rwx------")
+                    } else {
+                        java.nio.file.attribute.PosixFilePermissions
+                            .fromString("rw-------")
+                    }
+                java.nio.file.Files
+                    .setPosixFilePermissions(target.toPath(), perms)
+            }
+        if (posix.isSuccess) return
+        // Non-POSIX filesystem: best effort, and note the execute bit matters for a
+        // directory or others can still traverse into it.
+        runCatching {
+            target.setReadable(false, false)
+            target.setReadable(true, true)
+            target.setWritable(false, false)
+            target.setWritable(true, true)
+            if (directory) {
+                target.setExecutable(false, false)
+                target.setExecutable(true, true)
+            }
         }
     }
 

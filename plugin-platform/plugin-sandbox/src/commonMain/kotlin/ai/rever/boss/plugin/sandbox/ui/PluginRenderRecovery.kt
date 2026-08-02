@@ -116,7 +116,13 @@ object PluginRenderRecovery {
      */
     fun registerMounted(pluginId: String): () -> Unit {
         synchronized(mountCounts) {
-            mountCounts[pluginId] = (mountCounts[pluginId] ?: 0) + 1
+            // Removed and re-put, not incremented in place. LinkedHashMap is
+            // insertion-ordered and does NOT reorder a key that is already
+            // present, so a plain increment left "most recently mounted last"
+            // false for exactly the case ref-counting was added for — opening a
+            // second terminal tab would not make terminal the freshest suspect.
+            val next = (mountCounts.remove(pluginId) ?: 0) + 1
+            mountCounts[pluginId] = next
         }
         // One unregister per register; the plugin stays mounted while any other
         // boundary still holds a count.

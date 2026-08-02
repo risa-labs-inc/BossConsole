@@ -61,6 +61,13 @@ import kotlin.system.exitProcess
 private val logger = BossLogger.forComponent("Main")
 
 /**
+ * Last render-recovery message shown, so repeats of the same verdict are not
+ * re-toasted every frame. EDT-confined: the window exception handler is the only
+ * writer.
+ */
+private var lastRenderRecoveryMessage: String? = null
+
+/**
  * What to tell the user after an unattributed render exception.
  *
  * Named rather than inlined so the wording is reviewable in one place: the whole
@@ -119,12 +126,24 @@ private fun containRenderFault(
     // Shared with the seam test so both exercise the same pairing — see
     // noteRecoveryOutcome.
     val madeProgress = noteRecoveryOutcome(policy, outcome)
-    // Only on a change of state. Deferring escalation lengthens the storm, and
-    // firing a toast and repainting every window on each repeat of the same
-    // verdict is both noise and work — the repaint arguably feeding the very
-    // fault it responds to.
+
+    // Two separate decisions, and conflating them regressed the user-visible
+    // half. Gating the toast on madeProgress meant Unexplained and
+    // NotPluginRelated — the two outcomes that leave the window *broken* — never
+    // said anything at all, which is exactly the silent broken window this whole
+    // path exists to prevent.
+    //
+    // So: tell the user whenever the verdict changes, including the ones recovery
+    // could not act on, and suppress only exact repeats.
+    val message = renderRecoveryMessage(outcome)
+    if (message != lastRenderRecoveryMessage) {
+        lastRenderRecoveryMessage = message
+        StatusMessageManager.showMessage(message, durationMs = 8000)
+    }
+    // The repaint stays on progress only: it is a full sweep of every window, and
+    // during a storm it arguably feeds the fault it is responding to. Nothing to
+    // repaint for a verdict that changed nothing.
     if (madeProgress) {
-        StatusMessageManager.showMessage(renderRecoveryMessage(outcome), durationMs = 8000)
         Window.getWindows().forEach { it.repaint() }
     }
 }
@@ -193,8 +212,7 @@ fun main(args: Array<String>) {
     }
 
     // Install crash handler after logger is ready
-    ai.rever.boss.crash.CrashHandler
-        .install()
+    CrashHandler.install()
 
     // Install plugin crash interceptor (chains after CrashHandler to catch plugin-specific crashes)
     ai.rever.boss.plugin.sandbox.ui
