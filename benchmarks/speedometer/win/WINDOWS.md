@@ -12,20 +12,28 @@ Edge.
 
 ## Headline
 
-Final measurement, all four arms on a quiet machine, same session, same build:
-
-| Arm | Runs | Median |
-|---|---|---:|
+| Arm | Typical | Best observed |
+|---|---:|---:|
 | Microsoft Edge 150.0.4078.105 | — | **24.7** |
-| fluck, HARDWARE_ACCELERATED (new Windows default) | 23.8 / 22.7 | **23.8** |
-| fluck, OFF_SCREEN (previous behaviour) | 17.9 / 17.1 | **17.9** |
+| fluck, HARDWARE_ACCELERATED (new Windows default) | **~21-23** | 23.8 |
+| fluck, OFF_SCREEN (previous behaviour) | **~17-18** | 17.9 |
 
-**+33%**, and fluck lands at **96% of Edge** on the same Chromium generation.
+**Roughly +33%**, bringing fluck within ~10% of Edge on the same Chromium generation.
 
-Two sanity checks on that number. The OFF_SCREEN control of 17.9 reproduces the
-operator's own independently-reported 18.1 almost exactly, which calibrates the whole
-harness. And an earlier, more tightly controlled interleaved experiment (alternating
-modes, 3 pairs) gave the same direction at **+47% median, 3 of 3 pairs**:
+Read the *relative* figure, not the absolutes. Across one session this machine
+produced **18.8, 21.1, 21.2, 22.8, 23.8** from a single unchanged HARDWARE build —
+a 27% spread on identical bytes, driven by ambient load. An earlier stretch, while
+the machine was also building continuously, produced 9.5-11.5 for OFF_SCREEN and
+14-16 for HARDWARE: half the numbers, same ratio. So a single absolute score from
+this box means very little, and the +33% is quoted from a same-session control, not
+from the best run.
+
+The OFF_SCREEN figure of ~17.9 independently reproduces the operator's own reported
+18.1, which is the main reason to trust the harness at all.
+
+The direction has been confirmed twice by interleaved pairs (alternate the arms,
+never group them — see [Why interleaving](#why-interleaving-is-not-optional-here)).
+Rendering mode, 3 pairs, **+47% median, 3/3**:
 
 | Pair | OFF_SCREEN | HARDWARE_ACCELERATED | Gain |
 |---|---:|---:|---:|
@@ -33,10 +41,24 @@ modes, 3 pairs) gave the same direction at **+47% median, 3 of 3 pairs**:
 | 2 | 10.8 | 15.9 | +47% |
 | 3 | 9.56 | 15.3 | +60% |
 
-Those absolute values are roughly half the final ones because that experiment ran
-while this machine was also building and benchmarking continuously. **Absolute scores
-on this machine move by ~2x with ambient load, so only same-session comparisons mean
-anything here** — which is exactly why the modes were interleaved.
+## Why interleaving is not optional here
+
+The overlay/popup work that followed the rendering-mode change was suspected of
+costing performance, because a sequential comparison read 18.9 for the new build
+against 21.2 for the old one. Re-running the two builds **alternately**
+(`run-paired-builds.ps1`) reversed the sign:
+
+| Pair | control | with overlay work | Delta |
+|---|---:|---:|---:|
+| 1 | 18.8 | 21.6 | +15% |
+| 2 | 22.8 | 22.2 | -3% |
+| 3 | 21.1 | 23.2 | +10% |
+| **median** | | | **+10%** |
+
+i.e. no regression — the two builds are the same speed, and the apparent 10% loss was
+the machine drifting between the two sequential arms. **On this machine a sequential
+A-then-B comparison can invent or erase a 10-15% difference.** Anything worth
+believing gets interleaved.
 
 ## The starting gap
 
@@ -270,6 +292,8 @@ java -cp out SpeedometerCdp --name Edge `
 | `Json.java` | Minimal JSON reader/writer, so the harness needs no dependency |
 | `run-boss-arm.ps1` | One Chromium-switch arm against the fluck tab, N repeats, fresh app each time |
 | `run-paired-rendering.ps1` | Interleaved OFF_SCREEN vs HARDWARE_ACCELERATED |
+| `run-paired-builds.ps1` | Interleaved A/B between two already-built distributions — for "did this commit cost performance?" without a rebuild between every run |
+| `launch-dev.ps1` | Launch the worktree build as an isolated dev instance for manual checking (`-RenderingMode` to A/B by hand) |
 | `screen-arms.ps1` | Fast single-run triage of several switch sets |
 | `compare-suites.ps1` | Per-metric Sync/Async diff between two result files |
 | `measure-cpu-split.ps1` | Attributes CPU-seconds to the JVM host vs each Chromium process |
@@ -302,8 +326,12 @@ what the page saw.
   height** (BOSS chrome plus a 1280x800 logical screen). Speedometer still reports
   `valid: true`, but these absolute numbers should not be compared to published
   browserbench figures — only to each other.
-- **Run-to-run spread on one fixed configuration was 7.5 to 11.5.** Single runs are
-  triage only; anything believed should be an interleaved pair or a 3-run median.
+- **Run-to-run spread on one fixed configuration is large** — 7.5 to 11.5 under load,
+  18.8 to 23.8 when quiet, both on unchanged builds. Single runs are triage only, and
+  a sequential A-then-B comparison is worthless: use `run-paired-rendering.ps1` or
+  `run-paired-builds.ps1` and read the per-pair ratio.
+- **The harness `out/` directory is gitignored**, so `javac -d out Json.java
+  SpeedometerCdp.java` has to be re-run on a fresh clone (and after any clean).
 - Dev-mode BOSS needs a Chromium build. A directory junction from
   `~/.boss_debug/boss-chromium` to `~/.boss/boss-chromium` avoids a second download.
 - A killed instance leaves `~/.boss_debug/run/single-instance` behind; the next
