@@ -337,10 +337,11 @@ Deno.test("every publish handler passes requiredPermission to getAuthenticatedUs
   )
 
   // Each handler must also surface the outcome's own status rather than a
-  // hardcoded 401, or a 403 would be reported as "who are you?".
-  const rendered = src.match(/if \(!auth\.ok\) \{\s*\n\s*return ctx\.json\(\{ success: false, error: auth\.error \}, auth\.status\)/g)
-    ?.length ?? 0
-  assertEquals(rendered, authCalls, "every handler renders auth.status, not a literal")
+  // hardcoded 401, or a 403 would be reported as "who are you?". Matched on the
+  // render call alone rather than the whole `if (!auth.ok) { ... }` block, so a
+  // reformat cannot fail this with a message about permissions.
+  const rendered = src.match(/error:\s*auth\.error\s*\},\s*auth\.status\s*\)/g)?.length ?? 0
+  assertEquals(rendered, authCalls, "every handler renders auth.status, not a hardcoded 401")
 })
 
 Deno.test("only api-key CREATION is gated on api_key.create", () => {
