@@ -620,6 +620,22 @@ internal class BrowserHandleImpl(
         }
     }
 
+    /**
+     * Answers Chromium, and never throws while doing it.
+     *
+     * `close()` can fail — already answered, or the browser torn down mid-callback — and both call
+     * sites reach it from a JxBrowser thread, one of them from a `finally`. An escaping exception
+     * there is uncaught and off the EDT, which is the failure class this handler is built around.
+     */
+    @Suppress("TooGenericExceptionCaught") // Error must propagate; see deliverContextMenu.
+    private fun closeQuietly(tell: ShowContextMenuCallback.Action) {
+        try {
+            tell.close()
+        } catch (e: Exception) {
+            logger.warn(LogCategory.BROWSER, "Could not answer the context-menu callback", error = e)
+        }
+    }
+
     private fun setupContextMenuHandler() {
         browser.set(
             ShowContextMenuCallback::class.java,
@@ -629,7 +645,7 @@ internal class BrowserHandleImpl(
                     // Nobody is going to draw a menu, so hand the request back rather than
                     // leaving it unanswered — an un-responded async callback shows nothing
                     // at all, and Chromium keeps waiting on it.
-                    tell.close()
+                    closeQuietly(tell)
                     return@ShowContextMenuCallback
                 }
 
@@ -671,7 +687,7 @@ internal class BrowserHandleImpl(
                         null
                     } finally {
                         // Suppresses JxBrowser's native menu and releases the request.
-                        tell.close()
+                        closeQuietly(tell)
                     }
 
                 if (read == null) return@ShowContextMenuCallback

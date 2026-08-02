@@ -5,6 +5,7 @@ import com.teamdev.jxbrowser.browser.callback.ShowContextMenuCallback
 import com.teamdev.jxbrowser.frame.Frame
 import com.teamdev.jxbrowser.menu.ContextMenuContentType
 import java.awt.GraphicsEnvironment
+import java.awt.Point
 import java.lang.reflect.Proxy
 import javax.swing.JMenuItem
 import javax.swing.JPanel
@@ -52,6 +53,50 @@ class PopupWindowContextMenuTest {
                 else -> null
             }
         } as Frame
+
+    /**
+     * A [Browser] that records the callback types installed on it, optionally failing one of them.
+     *
+     * Same reflection-proxy technique as [stubFrame], for the same reason: no mocking library.
+     */
+    private fun recordingBrowser(
+        installed: MutableList<String>,
+        failOn: String? = null,
+        captureMenuCallback: ((ShowContextMenuCallback) -> Unit)? = null,
+    ): Browser =
+        Proxy.newProxyInstance(
+            Browser::class.java.classLoader,
+            arrayOf(Browser::class.java),
+        ) { proxy, method, args ->
+            when {
+                method.name == "hashCode" -> {
+                    System.identityHashCode(proxy)
+                }
+
+                method.name == "equals" -> {
+                    proxy === args?.getOrNull(0)
+                }
+
+                method.name == "toString" -> {
+                    "stubBrowser"
+                }
+
+                method.name == "set" -> {
+                    installed += (args?.getOrNull(0) as? Class<*>)?.simpleName.orEmpty()
+                    (args?.getOrNull(1) as? ShowContextMenuCallback)?.let { captureMenuCallback?.invoke(it) }
+                    if (installed.last() == failOn) error("simulated set() failure")
+                    null
+                }
+
+                method.returnType == Boolean::class.javaPrimitiveType -> {
+                    false
+                }
+
+                else -> {
+                    null
+                }
+            }
+        } as Browser
 
     // --- menu contents ---
 
@@ -225,7 +270,48 @@ class PopupWindowContextMenuTest {
         assertEquals<Any?>(entries.single { it.label == "Paste" }.command, executed.singleOrNull())
     }
 
+    @Test
+    fun `nothing is shown against a view that is not showing`() {
+        // The guard was previously only tested as a pure function, so deleting its call site left
+        // every test passing. This drives the real show path: a JPanel that was never realised is
+        // the disposed popup's situation, and rendering into it is what threw in the report.
+        val shown =
+            showPopupMenuIfPossible(
+                view = JPanel(),
+                browserClosed = { false },
+                target = stubFrame(),
+                entries = entries(editable = true, selection = "x"),
+                at = Point(10, 10),
+            )
+        assertFalse(shown, "a view that is not showing must not host a menu")
+    }
+
+    @Test
+    fun `a browser-closed check that throws does not escape onto the EDT`() {
+        // popupBrowser.isClosed is a call into JxBrowser during teardown. An uncaught throw from
+        // the guard itself would be the same failure class this file removes.
+        val shown =
+            showPopupMenuIfPossible(
+                view = JPanel(),
+                browserClosed = { error("simulated teardown") },
+                target = stubFrame(),
+                entries = entries(editable = true, selection = "x"),
+                at = Point(0, 0),
+            )
+        assertFalse(shown)
+    }
+
     // --- install contract ---
+
+    @Test
+    fun `the menu and the dismiss handler are both installed, menu first`() {
+        // They are a pair: a Swing menu over a heavyweight browser surface does not close when the
+        // user clicks back into the page. The failure-path test below covers a throwing install;
+        // this covers the ordinary one, so dropping the dismissal on success would be caught too.
+        val installed = mutableListOf<String>()
+        installPopupWindowChrome(recordingBrowser(installed), JPanel())
+        assertEquals(listOf("ShowContextMenuCallback", "PressMouseCallback"), installed)
+    }
 
     @Test
     fun `the callback answers Chromium even when reading the click target throws`() {
@@ -233,39 +319,10 @@ class PopupWindowContextMenuTest {
         // request nobody answers - not a menu that fails to appear, a renderer left waiting on one.
         // It is also what suppresses the built-in (crashing) menu, so it has to run on every path.
         var callback: ShowContextMenuCallback? = null
-        val browser =
-            Proxy.newProxyInstance(
-                Browser::class.java.classLoader,
-                arrayOf(Browser::class.java),
-            ) { proxy, method, args ->
-                when {
-                    method.name == "hashCode" -> {
-                        System.identityHashCode(proxy)
-                    }
-
-                    method.name == "equals" -> {
-                        proxy === args?.getOrNull(0)
-                    }
-
-                    method.name == "toString" -> {
-                        "stubBrowser"
-                    }
-
-                    method.name == "set" -> {
-                        (args?.getOrNull(1) as? ShowContextMenuCallback)?.let { callback = it }
-                        null
-                    }
-
-                    method.returnType == Boolean::class.javaPrimitiveType -> {
-                        false
-                    }
-
-                    else -> {
-                        null
-                    }
-                }
-            } as Browser
-        installPopupWindowContextMenu(browser, JPanel())
+        installPopupWindowContextMenu(
+            recordingBrowser(mutableListOf(), captureMenuCallback = { callback = it }),
+            JPanel(),
+        )
         val installed = requireNotNull(callback) { "no ShowContextMenuCallback was installed" }
 
         val params =
@@ -289,43 +346,9 @@ class PopupWindowContextMenuTest {
         // a throwing set() meant the OAuth window never opened at all - worse than the crash.
         // Both halves are asserted: the call is swallowed, AND PressMouseCallback still lands.
         val installed = mutableListOf<String>()
-        val browser =
-            Proxy.newProxyInstance(
-                Browser::class.java.classLoader,
-                arrayOf(Browser::class.java),
-            ) { proxy, method, args ->
-                when {
-                    method.name == "hashCode" -> {
-                        System.identityHashCode(proxy)
-                    }
-
-                    method.name == "equals" -> {
-                        proxy === args?.getOrNull(0)
-                    }
-
-                    method.name == "toString" -> {
-                        "stubBrowser"
-                    }
-
-                    method.name == "set" -> {
-                        val type = (args?.getOrNull(0) as? Class<*>)?.simpleName.orEmpty()
-                        installed += type
-                        if (type == "ShowContextMenuCallback") error("simulated set() failure")
-                        null
-                    }
-
-                    method.returnType == Boolean::class.javaPrimitiveType -> {
-                        false
-                    }
-
-                    else -> {
-                        null
-                    }
-                }
-            } as Browser
 
         // Must not throw.
-        installPopupWindowChrome(browser, JPanel())
+        installPopupWindowChrome(recordingBrowser(installed, failOn = "ShowContextMenuCallback"), JPanel())
 
         assertTrue("ShowContextMenuCallback" in installed, "the menu install should have been attempted")
         assertTrue(

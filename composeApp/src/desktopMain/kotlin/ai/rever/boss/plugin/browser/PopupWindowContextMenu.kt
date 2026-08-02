@@ -8,6 +8,7 @@ import com.teamdev.jxbrowser.frame.EditorCommand
 import com.teamdev.jxbrowser.frame.Frame
 import com.teamdev.jxbrowser.menu.ContextMenuContentType
 import java.awt.Component
+import java.awt.Point
 import java.awt.Toolkit
 import java.awt.datatransfer.DataFlavor
 import javax.swing.JMenuItem
@@ -58,12 +59,29 @@ internal fun clipboardHasText(): Boolean =
     }
 
 private fun clipboardUnavailable(e: Exception): Boolean {
+    // `data` rather than `error = e`, unlike the rest of this file: debug() takes no throwable.
     logger.debug(
         LogCategory.BROWSER,
         "Clipboard unavailable - assuming paste is possible",
         mapOf("error" to e.toString()),
     )
     return true
+}
+
+/**
+ * Answers Chromium, and never throws while doing it.
+ *
+ * `close()` can fail — the request already answered, or the browser torn down mid-callback — and it
+ * is called from a `finally` on a JxBrowser thread, so an escaping exception there would be exactly
+ * the kind of uncaught, off-EDT throw this file exists to remove.
+ */
+@Suppress("TooGenericExceptionCaught") // See installPopupWindowContextMenu - Error must propagate.
+private fun closeQuietly(tell: ShowContextMenuCallback.Action) {
+    try {
+        tell.close()
+    } catch (e: Exception) {
+        logger.warn(LogCategory.BROWSER, "Could not answer the context-menu callback", error = e)
+    }
 }
 
 /**
@@ -108,10 +126,8 @@ internal fun popupMenuEntriesFor(
 /**
  * True when the menu would be nothing but greyed-out items, which is worse than no menu.
  *
- * Note this buys nothing today: `Select All` is unconditionally enabled, so [popupMenuEntriesFor]
- * cannot currently produce a list this rejects. It is a guard against a future entry set, not live
- * behaviour — what a right-click on a plain page actually shows is a one-usable-item menu
- * (`Select All`, under three greyed entries).
+ * Guards a future entry set rather than live behaviour: `Select All` is unconditionally enabled, so
+ * [popupMenuEntriesFor] cannot currently produce a list this rejects.
  */
 internal fun hasAnyEnabledEntry(entries: List<PopupMenuEntry>): Boolean = entries.any { it.enabled }
 
@@ -126,6 +142,46 @@ internal fun shouldShowPopupMenu(
     browserClosed: Boolean,
     entries: List<PopupMenuEntry>,
 ): Boolean = viewShowing && !browserClosed && hasAnyEnabledEntry(entries)
+
+/**
+ * Shows the menu if the view is still able to host one. Returns whether it was shown.
+ *
+ * **Must run on the EDT.** Both the guard and `show()` touch Swing state.
+ *
+ * The guard and the `catch` are a pair, and **neither is dead code**:
+ *
+ *  - `JPopupMenu.show(invoker, x, y)` resolves its position via `invoker.getLocationOnScreen()`
+ *    internally — the very call that threw in `SuggestionsPopup`, reached through a friendlier API.
+ *    Passing component-relative coordinates is therefore not itself protection. Refusing to render
+ *    against a view that has stopped showing is.
+ *  - That check-then-act is safe today only because both `frame.dispose()` call sites go through
+ *    `invokeLater`, so a disposal cannot land between the check and `show()`. The `catch` keeps it
+ *    robust rather than merely lucky — a disposal added off the EDT later would otherwise reduce
+ *    this to the exact race being fixed.
+ *
+ * [browserClosed] is a lambda because reading it is a call into JxBrowser during teardown, and a
+ * throw from the *check* would land uncaught on the EDT — the failure class this file removes.
+ */
+@Suppress("TooGenericExceptionCaught") // See installPopupWindowContextMenu - Error must propagate.
+internal fun showPopupMenuIfPossible(
+    view: Component,
+    browserClosed: () -> Boolean,
+    target: Frame,
+    entries: List<PopupMenuEntry>,
+    at: Point,
+): Boolean =
+    try {
+        if (shouldShowPopupMenu(view.isShowing, browserClosed(), entries)) {
+            buildPopupWindowMenu(target, entries).show(view, at.x, at.y)
+            true
+        } else {
+            logger.debug(LogCategory.BROWSER, "Skipping popup context menu - view is gone")
+            false
+        }
+    } catch (e: Exception) {
+        logger.warn(LogCategory.BROWSER, "Popup context menu failed to show", error = e)
+        false
+    }
 
 /**
  * Context menu for the Swing popup windows BOSS opens for `window.open` popups (OAuth, payment).
@@ -203,34 +259,29 @@ internal fun installPopupWindowContextMenu(
                 logger.warn(LogCategory.BROWSER, "Could not fully read the popup context-menu target", error = e)
             } finally {
                 // Answer on every path: an un-responded callback leaves Chromium waiting and shows
-                // nothing at all. This close() is also what suppresses the built-in menu.
-                tell.close()
+                // nothing at all. This close() is also what suppresses the built-in menu. Guarded
+                // in turn because close() can itself throw - already answered, or the browser torn
+                // down mid-callback - and this runs on a JxBrowser thread, where an escaping
+                // exception is the same failure class the whole file exists to remove.
+                closeQuietly(tell)
             }
 
-            val target = frame ?: return@ShowContextMenuCallback
+            val target = frame
+            if (target == null) {
+                // Distinct from the WARN above: this is a params read that SUCCEEDED and reported
+                // no frame. Without a line here that case is a right-click that does nothing, with
+                // no trace at all - indistinguishable in a user's log from the fix not shipping.
+                logger.debug(LogCategory.BROWSER, "No frame resolved for the popup right-click")
+                return@ShowContextMenuCallback
+            }
 
-            // Built AFTER tell.close(), so Chromium is already released before the clipboard read.
-            // Being outside the try also keeps a throw here from emptying the list, which would
-            // suppress the menu entirely.
+            // Built AFTER tell.close(), so Chromium is already released before the clipboard read,
+            // and on this JxBrowser thread rather than the EDT - a slow Windows clipboard read can
+            // then stall neither. Do not hoist this into the invokeLater. Being outside the try
+            // also keeps a throw here from emptying the list, which would suppress the menu.
             val entries = popupMenuEntriesFor(contentTypes, selectedText, ::clipboardHasText)
             SwingUtilities.invokeLater {
-                // The try wraps the guard as well as the show. `popupBrowser.isClosed` is a call
-                // into JxBrowser on the EDT during teardown - the exact window in which things are
-                // being disposed - so an exception from the check itself would land uncaught on the
-                // EDT, which is the failure class this whole file exists to remove.
-                try {
-                    // Check-then-act, and safe today only because both frame.dispose() call sites
-                    // go through invokeLater, so a disposal cannot land between this check and
-                    // show(). The catch keeps that robust rather than merely lucky: a disposal
-                    // added off the EDT later would otherwise reduce this to the race being fixed.
-                    if (!shouldShowPopupMenu(view.isShowing, popupBrowser.isClosed, entries)) {
-                        logger.debug(LogCategory.BROWSER, "Skipping popup context menu - view is gone")
-                        return@invokeLater
-                    }
-                    buildPopupWindowMenu(target, entries).show(view, x, y)
-                } catch (e: Exception) {
-                    logger.warn(LogCategory.BROWSER, "Popup context menu failed to show", error = e)
-                }
+                showPopupMenuIfPossible(view, { popupBrowser.isClosed }, target, entries, Point(x, y))
             }
         },
     )
@@ -302,10 +353,11 @@ internal fun buildPopupWindowMenu(
                     try {
                         frame.execute(command)
                     } catch (e: Exception) {
-                        logger.debug(
+                        // WARN: the user picked this item and nothing happened.
+                        logger.warn(
                             LogCategory.BROWSER,
-                            "Popup editor command failed",
-                            mapOf("command" to entry.label, "error" to e.toString()),
+                            "Popup editor command failed: ${entry.label}",
+                            error = e,
                         )
                     }
                 }
