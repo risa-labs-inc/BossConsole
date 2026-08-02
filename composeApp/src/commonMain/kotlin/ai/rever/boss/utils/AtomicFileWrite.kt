@@ -17,9 +17,11 @@ import java.nio.file.StandardCopyOption
  * had an entry — see [ai.rever.boss.cache.FaviconCache].
  *
  * `Files.move` with `REPLACE_EXISTING` is the portable form: on Windows it maps to `MoveFileEx`
- * with `MOVEFILE_REPLACE_EXISTING`. `ATOMIC_MOVE` is requested first because it additionally
- * rules out a torn destination, and is dropped when the filesystem cannot honour it (a cross-volume
- * temp dir, some network shares) rather than failing the write.
+ * with `MOVEFILE_REPLACE_EXISTING`. `ATOMIC_MOVE` is requested first because it additionally rules
+ * out a torn destination, and is retried without when the move would cross a volume — the only
+ * case that raises `AtomicMoveNotSupportedException`. Both callers create their temp file as a
+ * sibling of the target, so that fallback should never fire; it is there for a caller that does
+ * not. Any other refusal is a plain `IOException` and propagates.
  *
  * @throws IOException if the file could not be replaced.
  */
@@ -43,9 +45,11 @@ fun File.atomicMoveFrom(temp: File) {
  * concurrent writers each use their own temp file so bytes can't interleave —
  * last move wins.
  *
- * Shared by the persisted-registry writers (MCP disabled-tools list,
- * system-plugins manifest cache); previously each open-coded this dance
- * with a FIXED temp name, which concurrent writers could clobber.
+ * Shared by everything that persists small state files, including the workspace
+ * layout written on shutdown; `grep atomicWriteText` for the current set rather
+ * than trusting a list here, which has gone stale once already. Callers
+ * previously open-coded this dance with a FIXED temp name, which concurrent
+ * writers could clobber.
  */
 fun File.atomicWriteText(text: String) {
     parentFile?.mkdirs()
