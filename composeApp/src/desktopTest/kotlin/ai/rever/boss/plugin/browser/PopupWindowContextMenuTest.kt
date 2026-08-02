@@ -90,4 +90,32 @@ class PopupWindowContextMenuTest {
         assertTrue(separator.isSeparator)
         assertFalse(entries(editable = true, selection = "x").single { it.label == "Copy" }.isSeparator)
     }
+
+    // --- the guard that actually prevents the reported crash ---
+
+    @Test
+    fun `the menu is not shown once the view has stopped showing`() {
+        // This is the crash. JxBrowser's built-in menu asked a disposed component for its location
+        // on screen; this path refuses to render at all instead.
+        val usable = entries(editable = true, selection = "x")
+        assertFalse(shouldShowPopupMenu(viewShowing = false, browserClosed = false, entries = usable))
+    }
+
+    @Test
+    fun `the menu is not shown once the popup browser has closed`() {
+        // An OAuth popup closes itself when the flow completes, which is the race in the report.
+        val usable = entries(editable = true, selection = "x")
+        assertFalse(shouldShowPopupMenu(viewShowing = true, browserClosed = true, entries = usable))
+    }
+
+    @Test
+    fun `the menu is shown when the view is live and something is enabled`() {
+        assertTrue(
+            shouldShowPopupMenu(
+                viewShowing = true,
+                browserClosed = false,
+                entries = entries(editable = true, selection = "x"),
+            ),
+        )
+    }
 }

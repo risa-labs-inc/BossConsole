@@ -55,8 +55,27 @@ internal fun popupMenuEntriesFor(
     )
 }
 
-/** True when the menu would be nothing but greyed-out items, which is worse than no menu. */
+/**
+ * True when the menu would be nothing but greyed-out items, which is worse than no menu.
+ *
+ * Note this buys nothing today: `Select All` is unconditionally enabled, so
+ * [popupMenuEntriesFor] cannot currently produce a list this rejects. It is a guard against a
+ * future entry set, not live behaviour — what a right-click on a plain page actually shows is a
+ * one-usable-item menu (`Select All`, under three greyed entries).
+ */
 internal fun hasAnyEnabledEntry(entries: List<PopupMenuEntry>): Boolean = entries.any { it.enabled }
+
+/**
+ * Whether the menu should still be shown by the time the EDT gets to it.
+ *
+ * Separated from the callback so the guard that actually prevents the reported crash is testable:
+ * a disposed or hidden view has no location on screen, and asking for one is what threw.
+ */
+internal fun shouldShowPopupMenu(
+    viewShowing: Boolean,
+    browserClosed: Boolean,
+    entries: List<PopupMenuEntry>,
+): Boolean = viewShowing && !browserClosed && hasAnyEnabledEntry(entries)
 
 /**
  * Context menu for the Swing popup windows BOSS opens for `window.open` popups (OAuth, payment).
@@ -82,9 +101,15 @@ internal fun hasAnyEnabledEntry(entries: List<PopupMenuEntry>): Boolean = entrie
  * menu deliberately: it renders only while the view is showing, positions relative to the component
  * instead of from screen coordinates, and offers no spell-check suggestions.
  *
- * Pairs with [FluckEngine.setupSwingPopupDismissOnPageClick], which the caller must also install on
- * the popup browser — without it a Swing menu over a heavyweight browser surface does not close
- * when the user clicks back into the page, because Chromium consumes that press before AWT sees it.
+ * Prefer [installPopupWindowChrome] over calling this directly: the menu is only correct when
+ * paired with the page-click dismissal, and that pairing should not be something a call site can
+ * forget.
+ *
+ * One piece of blocking IPC remains on the EDT by choice: `Frame.execute` in the item's action
+ * listener. Deciding the menu is now free, but running the chosen command is a synchronous
+ * round-trip into the renderer, so a wedged page can still stall the UI thread on Cut/Copy/Paste.
+ * Accepted because it happens after an explicit user action rather than on every right-click, and
+ * it is what JxBrowser's own Swing sample does.
  */
 internal fun installPopupWindowContextMenu(
     popupBrowser: Browser,
@@ -131,7 +156,7 @@ internal fun installPopupWindowContextMenu(
                 // The runCatching below is what keeps that robust rather than merely lucky: a
                 // disposal added off the EDT later would otherwise reduce this to the very race
                 // being fixed.
-                if (!view.isShowing || popupBrowser.isClosed) {
+                if (!shouldShowPopupMenu(view.isShowing, popupBrowser.isClosed, entries)) {
                     logger.debug(LogCategory.BROWSER, "Skipping popup context menu - view is gone")
                     return@invokeLater
                 }
@@ -145,7 +170,7 @@ internal fun installPopupWindowContextMenu(
 }
 
 /** Renders [entries] against the frame the click resolved to. */
-private fun buildMenu(
+internal fun buildMenu(
     frame: Frame,
     entries: List<PopupMenuEntry>,
 ): JPopupMenu {
@@ -173,4 +198,23 @@ private fun buildMenu(
         )
     }
     return menu
+}
+
+/**
+ * Everything a popup window's browser needs before it is shown.
+ *
+ * The two calls below are a pair, not a sequence: a Swing menu over a heavyweight browser surface
+ * does not close when the user clicks back into the page — Chromium consumes that press before AWT
+ * sees it — so installing the menu without the dismissal produces a menu that sticks. Bundling them
+ * makes that impossible to get wrong at a call site, instead of relying on a comment at each one.
+ *
+ * A popup browser arrives from `params.popupBrowser()` and receives none of the setup a
+ * BOSS-created browser gets, which is why this has to be explicit at all.
+ */
+internal fun installPopupWindowChrome(
+    popupBrowser: Browser,
+    view: Component,
+) {
+    installPopupWindowContextMenu(popupBrowser, view)
+    FluckEngine.setupSwingPopupDismissOnPageClick(popupBrowser)
 }

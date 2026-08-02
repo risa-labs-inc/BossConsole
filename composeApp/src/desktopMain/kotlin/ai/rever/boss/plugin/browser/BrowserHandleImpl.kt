@@ -1504,18 +1504,12 @@ internal class BrowserHandleImpl(
                                     .newInstance(popupBrowser)
                             frame.contentPane.add(browserView)
 
-                            // Replace JxBrowser's built-in Swing context menu, which crashes the
+                            // Replaces JxBrowser's built-in Swing context menu, which crashes the
                             // EDT here: it positions itself from getLocationOnScreen() inside an
                             // invokeLater, and an OAuth popup closes itself the moment the flow
                             // completes, so a right-click landing on that boundary asks a disposed
                             // component where it is (BossConsole-Releases#17).
-                            installPopupWindowContextMenu(popupBrowser, browserView)
-                            // Must be paired with the menu: a Swing popup over a heavyweight
-                            // browser surface does not close when the user clicks back into the
-                            // page, because Chromium consumes that press before AWT sees it. The
-                            // popup browser comes from params.popupBrowser() and gets none of the
-                            // setup a BOSS-created browser does, so this has to be explicit.
-                            FluckEngine.setupSwingPopupDismissOnPageClick(popupBrowser)
+                            installPopupWindowChrome(popupBrowser, browserView)
 
                             // Update frame title when page title changes
                             subscriptions +=
