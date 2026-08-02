@@ -86,7 +86,7 @@ fun HeavyweightModal(
         DisposableEffect(window) {
             val listener =
                 object : java.awt.event.WindowFocusListener {
-                    override fun windowGainedFocus(e: java.awt.event.WindowEvent?) {}
+                    override fun windowGainedFocus(e: java.awt.event.WindowEvent?) = Unit
 
                     override fun windowLostFocus(e: java.awt.event.WindowEvent?) {
                         onDismissRequest()

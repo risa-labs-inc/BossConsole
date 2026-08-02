@@ -122,87 +122,126 @@ fun HeavyweightPopup(
             }
         },
     ) {
-        // Secondary dismissal: covers switching to another application, which the scrim cannot
-        // see because the click never reaches this process.
         if (focusable) {
-            DisposableEffect(window) {
-                val listener =
-                    object : java.awt.event.WindowFocusListener {
-                        override fun windowGainedFocus(e: java.awt.event.WindowEvent?) {}
-
-                        override fun windowLostFocus(e: java.awt.event.WindowEvent?) {
-                            onDismissRequest()
-                        }
-                    }
-                window.addWindowFocusListener(listener)
-                onDispose { window.removeWindowFocusListener(listener) }
-            }
+            DismissOnFocusLoss(window, onDismissRequest)
         }
 
-        // The scrim. Transparent, but it receives the click — which is the whole point.
+        ScrimmedContent(
+            contentOffset = contentOffset,
+            windowWidth = bounds?.get(2),
+            windowHeight = bounds?.get(3),
+            onDismissRequest = onDismissRequest,
+            content = content,
+        )
+    }
+}
+
+/**
+ * Dismiss when [window] loses focus.
+ *
+ * SECONDARY to the scrim, not the primary mechanism: it covers switching to another application,
+ * which the scrim cannot see because that click never reaches this process. It does NOT fire for a
+ * click on the browser — Chromium's native child window takes focus without producing an AWT focus
+ * transition — which is exactly why the scrim exists.
+ */
+@Composable
+private fun DismissOnFocusLoss(
+    window: java.awt.Window,
+    onDismissRequest: () -> Unit,
+) {
+    DisposableEffect(window) {
+        val listener =
+            object : java.awt.event.WindowFocusListener {
+                // Only the loss matters here; gaining focus needs no action.
+                override fun windowGainedFocus(e: java.awt.event.WindowEvent?) = Unit
+
+                override fun windowLostFocus(e: java.awt.event.WindowEvent?) {
+                    onDismissRequest()
+                }
+            }
+        window.addWindowFocusListener(listener)
+        onDispose { window.removeWindowFocusListener(listener) }
+    }
+}
+
+/**
+ * The scrim plus the positioned menu, split out of [HeavyweightPopup] to keep that composable
+ * readable — it is otherwise window setup and content placement interleaved.
+ *
+ * The scrim is transparent but *receives the click*, which is the whole reason the overlay window
+ * is parent-sized rather than content-sized.
+ */
+@Composable
+private fun ScrimmedContent(
+    contentOffset: IntOffset,
+    windowWidth: Int?,
+    windowHeight: Int?,
+    onDismissRequest: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    // Clamp the menu inside the overlay window once its size is known.
+    //
+    // The window is exactly parent-sized and the content is placed at a raw offset, so a
+    // right-click near the bottom or right edge would draw the menu partly outside it and get
+    // clipped — worst for a tall submenu near the bottom. A lightweight Popup does this for you;
+    // this path has to do it itself. Same shape as SwingTooltip's monitor clamp: measure, coerce.
+    //
+    // Measured rather than assumed because menu height varies with item count. The first frame
+    // draws unclamped and corrects on the next, which is invisible at menu-open latency and beats
+    // guessing a size.
+    //
+    // NOTE the unit conversion: onGloballyPositioned reports PIXELS, while the window bounds and
+    // the offsets are AWT logical units (== dp). Those differ by 1.5x on a 150%-scaled display, so
+    // clamping raw px against dp would be wrong by half a menu.
+    var contentSize by remember { mutableStateOf(IntSize.Zero) }
+    val density = LocalDensity.current
+    val contentWidthDp =
+        with(density) {
+            contentSize.width
+                .toDp()
+                .value
+                .toInt()
+        }
+    val contentHeightDp =
+        with(density) {
+            contentSize.height
+                .toDp()
+                .value
+                .toInt()
+        }
+    val clamped =
+        if (windowWidth == null || windowHeight == null || contentSize == IntSize.Zero) {
+            contentOffset
+        } else {
+            IntOffset(
+                contentOffset.x.coerceIn(0, (windowWidth - contentWidthDp).coerceAtLeast(0)),
+                contentOffset.y.coerceIn(0, (windowHeight - contentHeightDp).coerceAtLeast(0)),
+            )
+        }
+
+    Box(
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                ) { onDismissRequest() },
+    ) {
         Box(
             modifier =
                 Modifier
-                    .fillMaxSize()
+                    .absoluteOffset(x = clamped.x.dp, y = clamped.y.dp)
+                    .onGloballyPositioned { contentSize = it.size }
+                    // Swallow clicks that land on the menu's own background or padding. Without
+                    // this they fall through to the scrim and dismiss the menu out from under a
+                    // user who was aiming at an item.
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
-                    ) { onDismissRequest() },
+                    ) {},
         ) {
-            // Clamp the menu inside the overlay window once its size is known.
-            //
-            // The window is exactly parent-sized and the content is placed at a raw offset, so a
-            // right-click near the bottom or right edge would draw the menu partly outside and it
-            // would be clipped - a tall submenu near the bottom could be mostly invisible. A
-            // lightweight Popup does this for you; this path has to do it itself. Same shape as
-            // SwingTooltip's monitor clamp: measure, then coerce.
-            //
-            // Measured rather than assumed because menu height varies with item count. The first
-            // frame draws at the unclamped offset and corrects on the next, which is invisible at
-            // menu-open latency and beats guessing a size.
-            // NOTE the unit conversion: onGloballyPositioned reports PIXELS, while `bounds` and
-            // the offsets are AWT logical units (== dp). On this 150%-scaled display those differ
-            // by 1.5x, so clamping raw px against dp would be wrong by half a menu.
-            var contentSize by remember { mutableStateOf(IntSize.Zero) }
-            val density = LocalDensity.current
-            val contentWidthDp =
-                with(density) {
-                    contentSize.width
-                        .toDp()
-                        .value
-                        .toInt()
-                }
-            val contentHeightDp =
-                with(density) {
-                    contentSize.height
-                        .toDp()
-                        .value
-                        .toInt()
-                }
-            val maxX = ((bounds?.get(2) ?: 0) - contentWidthDp).coerceAtLeast(0)
-            val maxY = ((bounds?.get(3) ?: 0) - contentHeightDp).coerceAtLeast(0)
-            val clamped =
-                if (bounds == null || contentSize == IntSize.Zero) {
-                    contentOffset
-                } else {
-                    IntOffset(contentOffset.x.coerceIn(0, maxX), contentOffset.y.coerceIn(0, maxY))
-                }
-
-            Box(
-                modifier =
-                    Modifier
-                        .absoluteOffset(x = clamped.x.dp, y = clamped.y.dp)
-                        .onGloballyPositioned { contentSize = it.size }
-                        // Swallow clicks that land on the menu's own background or padding.
-                        // Without this they fall through to the scrim above and dismiss the menu
-                        // out from under a user who was aiming at an item.
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                        ) { },
-            ) {
-                content()
-            }
+            content()
         }
     }
 }
@@ -238,9 +277,9 @@ internal fun contentOffsetFor(
     anchor: IntOffset,
     windowX: Int?,
     windowY: Int?,
-): IntOffset {
+): IntOffset =
     if (cursorX != null && cursorY != null) {
-        return IntOffset(cursorX - (windowX ?: 0), cursorY - (windowY ?: 0))
+        IntOffset(cursorX - (windowX ?: 0), cursorY - (windowY ?: 0))
+    } else {
+        anchor
     }
-    return anchor
-}

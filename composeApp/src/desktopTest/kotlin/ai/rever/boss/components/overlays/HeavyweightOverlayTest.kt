@@ -30,7 +30,13 @@ class HeavyweightOverlayTest {
         val parentRelativeAnchor = IntOffset(120, 48)
         assertEquals(
             IntOffset(100, 200),
-            contentOffsetFor(cursorX = 1300, cursorY = 500, anchor = parentRelativeAnchor, windowX = 1200, windowY = 300),
+            contentOffsetFor(
+                cursorX = 1300,
+                cursorY = 500,
+                anchor = parentRelativeAnchor,
+                windowX = 1200,
+                windowY = 300,
+            ),
         )
     }
 
@@ -58,7 +64,13 @@ class HeavyweightOverlayTest {
         // for any window not at the origin, which is the regression this pins.
         assertEquals(
             IntOffset(120, 48),
-            contentOffsetFor(cursorX = null, cursorY = null, anchor = IntOffset(120, 48), windowX = 1200, windowY = 300),
+            contentOffsetFor(
+                cursorX = null,
+                cursorY = null,
+                anchor = IntOffset(120, 48),
+                windowX = 1200,
+                windowY = 300,
+            ),
         )
         assertEquals(
             IntOffset.Zero,

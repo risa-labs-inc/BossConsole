@@ -1547,16 +1547,30 @@ object FluckEngine {
             )
         }
 
-        performanceSwitchesFor(
-            os = System.getProperty("os.name").lowercase(),
-            arch = System.getProperty("os.arch").lowercase(),
-            graphiteOptIn = envIsTrue("BOSS_ENABLE_SKIA_GRAPHITE"),
-            inContainer = inContainer,
-            extraSwitches = extras,
-            rendererProcessLimit =
+        // Opt-in RAM cap for many-tab sessions, OFF by default. Bounding the renderer process
+        // count trades cross-tab isolation and stability for memory, which is not a trade to make
+        // for everyone — Lite exposes it as a tunable for exactly that reason, pending real-world
+        // tab-count data. Values <= 0 are ignored rather than passed through, since
+        // --renderer-process-limit=0 is not a meaningful cap.
+        //
+        // Resolved HERE rather than inside performanceSwitchesFor so that function stays pure and
+        // its tests stay independent of the developer's environment. Inserted BEFORE the operator's
+        // extras so the documented "extras are appended last, so operator flags win ties" holds.
+        val rendererCap =
+            renderCapSwitch(
                 ai.rever.boss.config.ConfigLoader
                     .getConfig("BOSS_RENDERER_PROCESS_LIMIT"),
-        ).forEach { builder.addSwitch(it) }
+            )
+
+        val platformSwitches =
+            performanceSwitchesFor(
+                os = System.getProperty("os.name").lowercase(),
+                arch = System.getProperty("os.arch").lowercase(),
+                graphiteOptIn = envIsTrue("BOSS_ENABLE_SKIA_GRAPHITE"),
+                inContainer = inContainer,
+                extraSwitches = listOfNotNull(rendererCap) + extras,
+            )
+        platformSwitches.forEach { builder.addSwitch(it) }
     }
 
     /**
@@ -1592,10 +1606,12 @@ object FluckEngine {
      * The per-platform switch decision as a pure function so the flag audit is
      * unit-testable without an [EngineOptions.Builder].
      *
-     * Genuinely pure: every input is a parameter. [rendererProcessLimit] is passed in rather than
-     * read from config here, because reading it inside would both hide an input from the audit
-     * and make the tests depend on the developer's own environment — anyone with
-     * BOSS_RENDERER_PROCESS_LIMIT set would see a different switch set than CI.
+     * Genuinely pure: every input is a parameter. Notably the opt-in renderer cap is NOT read
+     * here — it is resolved by the caller and appended around this result (see
+     * [applyPerformanceSwitches]). Reading config inside would hide an input from a function whose
+     * whole point is an auditable decision, and would make these tests depend on the developer's
+     * own environment: anyone with BOSS_RENDERER_PROCESS_LIMIT set would get a different switch
+     * set than CI.
      */
     internal fun performanceSwitchesFor(
         os: String,
@@ -1603,7 +1619,6 @@ object FluckEngine {
         graphiteOptIn: Boolean,
         inContainer: Boolean,
         extraSwitches: List<String> = emptyList(),
-        rendererProcessLimit: String? = null,
     ): List<String> {
         val switches = mutableListOf<String>()
 
@@ -1659,13 +1674,6 @@ object FluckEngine {
             }
             // Unknown platform strings get no platform-specific switches.
         }
-        // Opt-in RAM cap for many-tab sessions, OFF by default. Bounding the renderer process
-        // count trades cross-tab isolation and stability for memory, which is not a trade to make
-        // for everyone by default — Lite exposes it as a tunable for exactly that reason, pending
-        // real-world tab-count data. Values <= 0 are ignored rather than passed through, since
-        // --renderer-process-limit=0 is not a meaningful cap.
-        renderCapSwitch(rendererProcessLimit)?.let { switches += it }
-
         // Operator escape hatch, appended last (see the --enable-features caveat
         // in the KDoc above).
         switches += extraSwitches

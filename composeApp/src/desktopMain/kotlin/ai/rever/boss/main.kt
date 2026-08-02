@@ -313,10 +313,11 @@ fun main(args: Array<String>) {
     // BEHIND the page. Dormant - a no-op - wherever OFF_SCREEN is the mode (macOS, Linux), so the
     // unchanged platforms cannot regress. See JxBrowserConfig.renderingMode and
     // benchmarks/speedometer/win/WINDOWS.md.
-    ai.rever.boss.components.overlays.OverlayConfig.heavyweightPopup = { onDismiss, popupOffset, focusable, popupContent ->
-        ai.rever.boss.components.overlays
-            .HeavyweightPopup(onDismiss, popupOffset, focusable, popupContent)
-    }
+    ai.rever.boss.components.overlays.OverlayConfig.heavyweightPopup =
+        { onDismiss, popupOffset, focusable, popupContent ->
+            ai.rever.boss.components.overlays
+                .HeavyweightPopup(onDismiss, popupOffset, focusable, popupContent)
+        }
     ai.rever.boss.components.overlays.OverlayConfig.heavyweightModal = { onDismiss, modalContent ->
         ai.rever.boss.components.overlays
             .HeavyweightModal(onDismiss, modalContent)

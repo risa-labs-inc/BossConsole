@@ -72,15 +72,16 @@ class FluckEngineSwitchesTest {
         graphiteOptIn: Boolean = false,
         inContainer: Boolean = false,
         extras: List<String> = emptyList(),
-        rendererProcessLimit: String? = null,
-    ) = FluckEngine.performanceSwitchesFor(os, arch, graphiteOptIn, inContainer, extras, rendererProcessLimit)
+    ) = FluckEngine.performanceSwitchesFor(os, arch, graphiteOptIn, inContainer, extras)
 
     /**
      * Switches that are not platform-specific, so a per-platform assertion can say what that
      * platform adds ON TOP of the common set without restating it. Kept as a helper rather than
      * inlined so adding another universal switch updates every test at once.
      */
-    private fun platformSpecific(switches: List<String>) = switches - setOf("--no-pings", "--disable-domain-reliability")
+    private val universalSwitches = setOf("--no-pings", "--disable-domain-reliability")
+
+    private fun platformSpecific(switches: List<String>) = switches - universalSwitches
 
     @Test
     fun `windows disables the native-window occlusion tracker`() {
@@ -111,14 +112,16 @@ class FluckEngineSwitchesTest {
     }
 
     @Test
-    fun `the renderer cap reaches the switch list only when passed in`() {
-        // The cap is a PARAMETER, not read from config inside performanceSwitchesFor. If it were
-        // read inside, every assertion in this class would depend on whether the developer
-        // happens to have BOSS_RENDERER_PROCESS_LIMIT set - and would pass locally, fail in CI,
-        // or the reverse.
-        assertTrue("--renderer-process-limit=3" in switchesFor("windows 11", rendererProcessLimit = "3"))
+    fun `the renderer cap never leaks into the platform switch decision`() {
+        // The cap is resolved by the CALLER and handed in as an extra, never read inside
+        // performanceSwitchesFor. If it were read inside, every assertion in this class would
+        // depend on whether the developer happens to have BOSS_RENDERER_PROCESS_LIMIT set - it
+        // would pass locally and fail in CI, or the reverse.
         assertTrue(switchesFor("windows 11").none { it.startsWith("--renderer-process-limit") })
-        assertTrue(switchesFor("windows 11", rendererProcessLimit = "0").none { it.startsWith("--renderer-process-limit") })
+        // And when the caller does pass it, it still lands before the operator's own extras.
+        val withCap = switchesFor("windows 11", extras = listOf("--renderer-process-limit=3", "--custom"))
+        assertEquals("--custom", withCap.last())
+        assertTrue("--renderer-process-limit=3" in withCap)
     }
 
     @Test
