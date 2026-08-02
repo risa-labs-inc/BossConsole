@@ -430,23 +430,20 @@ fun PluginErrorBoundary(
                         // latched — so if anything below threw, `error` would never
                         // be set and the panel would stay blank forever with nothing
                         // further logged. That is the exact failure this line exists
-                        // to prevent, so it cannot run last.
-                        error = e
-                        sandbox.recordError(e)
-                        // The same recovery a composition crash gets: close the tab,
-                        // notify, flip the observable crash state.
-                        PluginCrashRegistry.recordCrash(pluginId, e)
-                        // Set locally as well, and not redundantly. recordCrash has
-                        // two branches: with a tab registered it closes the tab and
-                        // *removes* the registry entry again, so registryCrash reads
-                        // back null and this boundary would never render its
-                        // fallback. If closeAction then fails, the panel is left
-                        // blank with nothing shown and nothing logged — the boundary
-                        // reports only once. Local state guarantees the user sees an
-                        // error rather than an empty panel. Safe to write here
+                        // to prevent, so it cannot run last. Safe to write here
                         // because PluginRenderBoundary hands this callback to the
                         // EDT rather than calling it mid-render.
                         error = e
+                        sandbox.recordError(e)
+                        // recordRenderFault, not recordCrash. recordCrash closes the
+                        // plugin's registered tab, and activeTabMappings is keyed by
+                        // plugin id alone — so a render fault in a plugin's *side
+                        // panel* would close that plugin's unrelated main tab and
+                        // whatever was live in it. The `error = e` above already
+                        // swaps this panel to its fallback and stops the content
+                        // rendering, which is what ends the fault; destroying a
+                        // session on top of that buys nothing.
+                        PluginCrashRegistry.recordRenderFault(pluginId, e)
                     },
                 ) {
                     content()

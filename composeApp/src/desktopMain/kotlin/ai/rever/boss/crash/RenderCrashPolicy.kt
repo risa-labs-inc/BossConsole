@@ -58,4 +58,22 @@ class RenderCrashPolicy(
     /** Failures currently inside the window. Exposed for logging and tests. */
     @Synchronized
     fun recentFailureCount(): Int = recentFailures.size
+
+    /**
+     * Forget the current burst because recovery made progress.
+     *
+     * Without this the budget races the narrowing loop and loses. The unattributed
+     * path is exactly the case where the same dirty node throws every frame, so
+     * faults arrive ~16ms apart and always inside one window, while narrowing
+     * costs one fault to rebuild plus one per suspect tried. With three panels
+     * mounted that is rebuild, suspect #1, release #1 and suspect #2 — and the
+     * fourth fault escalates and disposes the window, killing the app before the
+     * culprit was found and after quarantining two innocents.
+     *
+     * So only faults where recovery achieved *nothing* count toward escalation. A
+     * rebuild or a fresh quarantine is progress and resets the budget; a fault
+     * that recovery could do nothing with does not, and still escalates.
+     */
+    @Synchronized
+    fun noteRecoveryProgress() = recentFailures.clear()
 }

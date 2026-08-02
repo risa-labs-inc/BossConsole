@@ -10,6 +10,11 @@ import kotlin.test.assertTrue
 /**
  * Covers recovery from a render exception nobody could attribute from the stack.
  *
+ * Note this mutates process-global state in [PluginRenderRecovery] and
+ * [PluginCrashRegistry], and relies on the resets below. That holds only while
+ * this module runs tests in one fork; a future `maxParallelForks > 1` would turn
+ * it into a mystery flake.
+ *
  * This is the half [PluginRenderBoundary] cannot reach. A real crash arrived via
  * `MeasureAndLayoutDelegate.remeasureIfNeeded` — Compose re-measuring the
  * plugin's node straight from its dirty list, with neither the boundary nor the
@@ -157,13 +162,76 @@ class PluginRenderRecoveryTest {
         PluginRenderRecovery.registerMounted("plugin.b")
         unregister()
 
-        assertEquals(setOf("plugin.b"), PluginRenderRecovery.mountedPlugins())
+        assertEquals(listOf("plugin.b"), PluginRenderRecovery.mountedPlugins())
 
         PluginRenderRecovery.onUnattributedRenderException(error, now = 1_000)
         val outcome = PluginRenderRecovery.onUnattributedRenderException(error, now = 2_000)
 
         assertIs<PluginRenderRecovery.Outcome.Quarantined>(outcome)
         assertEquals(setOf("plugin.b"), outcome.plugins, "a closed panel must not be quarantined")
+    }
+
+    @Test
+    fun `a plugin with two live boundaries stays mounted when one closes`() {
+        // PluginErrorBoundary is per surface — a tab and a side panel, or two
+        // tabs — so one plugin routinely has several. With a plain set, closing
+        // one dropped the plugin while it was still rendering, after which it
+        // could never be suspected: the culprit was ruled out by omission and the
+        // window stayed broken.
+        val closeFirst = PluginRenderRecovery.registerMounted("plugin.a")
+        PluginRenderRecovery.registerMounted("plugin.a")
+
+        closeFirst()
+
+        assertTrue(
+            PluginRenderRecovery.mountedPlugins().contains("plugin.a"),
+            "a plugin still rendering in another surface must remain a candidate",
+        )
+    }
+
+    @Test
+    fun `a plugin is unmounted once its last boundary closes`() {
+        val closeFirst = PluginRenderRecovery.registerMounted("plugin.a")
+        val closeSecond = PluginRenderRecovery.registerMounted("plugin.a")
+
+        closeFirst()
+        closeSecond()
+
+        assertTrue(!PluginRenderRecovery.mountedPlugins().contains("plugin.a"))
+    }
+
+    @Test
+    fun `unregistering twice does not drop a plugin another surface still holds`() {
+        val close = PluginRenderRecovery.registerMounted("plugin.a")
+        PluginRenderRecovery.registerMounted("plugin.a")
+
+        close()
+        close() // a double dispose must not decrement someone else's count
+
+        assertTrue(
+            PluginRenderRecovery.mountedPlugins().contains("plugin.a"),
+            "one unregister must release exactly one count",
+        )
+    }
+
+    @Test
+    fun `quarantine does not close the plugin's tab`() {
+        // The whole reason recordRenderFault exists: quarantine is a positional
+        // guess, and a guess must never destroy a live session. Mass quarantine
+        // through recordCrash closed the user's terminal and browser tabs.
+        var tabClosed = false
+        PluginCrashRegistry.registerActiveTab("plugin.a", "tab-1") { tabClosed = true }
+        try {
+            PluginRenderRecovery.registerMounted("plugin.a")
+            PluginRenderRecovery.onUnattributedRenderException(error, now = 1_000)
+            val outcome = PluginRenderRecovery.onUnattributedRenderException(error, now = 2_000)
+
+            assertIs<PluginRenderRecovery.Outcome.Quarantined>(outcome)
+            assertTrue(PluginCrashRegistry.hasCrashed("plugin.a"), "the fallback must still be shown")
+            assertTrue(!tabClosed, "quarantining a suspect must not close its tab")
+        } finally {
+            PluginCrashRegistry.unregisterActiveTab("plugin.a", "tab-1")
+        }
     }
 
     @Test

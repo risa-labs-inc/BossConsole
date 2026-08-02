@@ -83,6 +83,49 @@ private fun renderRecoveryMessage(outcome: PluginRenderRecovery.Outcome): String
     }
 
 /**
+ * Keep the window, recover the plugin panels, and tell the user.
+ *
+ * Extracted from the handler rather than inlined: the block was long enough to
+ * push `exceptionHandler` past the length limit, and the ordering here matters
+ * enough to read on its own.
+ */
+private fun containRenderFault(
+    throwable: Throwable,
+    policy: ai.rever.boss.crash.RenderCrashPolicy,
+) {
+    logger.error(
+        LogCategory.UI,
+        "Unattributed render exception — contained, window kept alive",
+        mapOf(
+            "errorType" to throwable.javaClass.simpleName,
+            "recentFailures" to policy.recentFailureCount().toString(),
+        ),
+        throwable,
+    )
+    // Reported, but not through CrashHandler.handleCrash: that dialog is terminal
+    // on every exit, so a recovered fault would end the session on Escape.
+    // recordContained writes the report to disk instead, so a host-side render bug
+    // stays visible rather than costing one log line and a toast.
+    ai.rever.boss.crash.CrashHandler
+        .recordContained(throwable)
+    // Keeping the window alive is not enough on its own: a repaint over a subtree
+    // that still reproduces the fault leaves a broken window and no explanation.
+    val outcome = PluginRenderRecovery.onUnattributedRenderException(throwable)
+    // Recovery is converging, so this fault should not count against escalation —
+    // otherwise the budget expires mid-narrowing and disposes the window.
+    if (outcome is PluginRenderRecovery.Outcome.Rebuilt ||
+        outcome is PluginRenderRecovery.Outcome.Quarantined
+    ) {
+        policy.noteRecoveryProgress()
+    }
+    ai.rever.boss.components.bars.horizontal.StatusMessageManager
+        .showMessage(renderRecoveryMessage(outcome), durationMs = 8000)
+    java.awt.Window
+        .getWindows()
+        .forEach { it.repaint() }
+}
+
+/**
  * Scope for fire-and-forget startup work (PSI warm-up, update-Realtime start).
  * Deliberately process-lifetime — main() has no teardown point; long-lived
  * services manage their own scopes and are disposed via the shutdown hook.
@@ -559,39 +602,7 @@ fun main(args: Array<String>) {
                                 }
 
                                 WindowExceptionRoute.Contain -> {
-                                    logger.error(
-                                        LogCategory.UI,
-                                        "Unattributed render exception — contained, window kept alive",
-                                        mapOf(
-                                            "errorType" to throwable.javaClass.simpleName,
-                                            "recentFailures" to renderCrashPolicy.recentFailureCount().toString(),
-                                        ),
-                                        throwable,
-                                    )
-                                    // Reported, but not through CrashHandler.handleCrash: that
-                                    // dialog is terminal on every exit — dismiss, submit and
-                                    // Escape all reach terminateAfterCrash(), and
-                                    // clean-and-restart deletes ~/.boss first. A recovered
-                                    // fault must not end the session on Escape. recordContained
-                                    // keeps the report and drops the dialog, so a host-side
-                                    // render bug is still visible instead of costing one log
-                                    // line and a toast.
-                                    ai.rever.boss.crash.CrashHandler
-                                        .recordContained(throwable)
-                                    // Keeping the window alive is not enough on its own: a
-                                    // repaint over a subtree that still reproduces the fault
-                                    // leaves a broken window and no explanation. Recovery
-                                    // rebuilds the plugin panels, then narrows to one suspect.
-                                    val outcome =
-                                        PluginRenderRecovery.onUnattributedRenderException(throwable)
-                                    ai.rever.boss.components.bars.horizontal.StatusMessageManager
-                                        .showMessage(
-                                            renderRecoveryMessage(outcome),
-                                            durationMs = 8000,
-                                        )
-                                    java.awt.Window
-                                        .getWindows()
-                                        .forEach { it.repaint() }
+                                    containRenderFault(throwable, renderCrashPolicy)
                                 }
 
                                 WindowExceptionRoute.Escalate -> {

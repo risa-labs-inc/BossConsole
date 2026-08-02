@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.awt.Dimension
+import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
 import java.lang.management.ManagementFactory
@@ -40,6 +41,9 @@ import javax.swing.WindowConstants
  */
 object CrashHandler {
     private val logger = BossLogger.forComponent("CrashHandler")
+
+    /** Where contained (non-fatal, recovered) reports are written, under the BOSS data dir. */
+    private const val CONTAINED_REPORT_DIR = "crash-reports"
 
     private val _pendingCrashReport = MutableStateFlow<CrashReport?>(null)
 
@@ -110,26 +114,42 @@ object CrashHandler {
     }
 
     /**
-     * Record a crash report for something already contained and recovered from,
-     * without the dialog.
+     * Record a crash report for something already contained and recovered from.
      *
      * The window exception handler cannot use [handleCrash]: that shows a dialog
      * whose every exit terminates — dismiss, submit and Escape all reach
      * [terminateAfterCrash], and clean-and-restart deletes the data directory
      * first — so a recovered fault would end the session on Escape.
      *
-     * It cannot skip reporting either. That handler sees *all* unattributed
-     * Compose exceptions, not just plugin ones, so a host-side layout or
-     * composition bug used to produce a full crash report and now would produce
-     * one log line and a toast. That is telemetry quietly disappearing: the bugs
-     * stop being reported, which reads as the bugs stopping.
+     * It must not skip reporting either. That handler sees *all* unattributed
+     * Compose exceptions, so a host-side layout bug would otherwise produce a log
+     * line and a toast where it used to produce a full report.
      *
-     * So: build and publish the report, skip the dialog, do not terminate.
+     * The report is written to disk. It is deliberately **not** put in
+     * [pendingCrashReport]: that slot belongs to the interactive dialog, is
+     * single-valued, and nothing else reads it. Writing there achieved nothing —
+     * no consumer persists or uploads it — and could actively corrupt a
+     * submission in progress: a fatal crash on a background thread opens the
+     * dialog while the EDT keeps running, so a contained fault landing mid-typing
+     * would replace the report and Submit would send the wrong crash, losing the
+     * fatal one.
      */
     fun recordContained(throwable: Throwable) {
         if (isIgnorable(throwable)) return
         try {
-            _pendingCrashReport.value = createCrashReport(throwable)
+            val report = createCrashReport(throwable)
+            val dir = BossDirectories.resolve(CONTAINED_REPORT_DIR).apply { mkdirs() }
+            File(dir, "contained-${report.timestamp}-${report.signature}.txt")
+                .writeText(renderContainedReport(report))
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Contained render fault recorded",
+                mapOf(
+                    "signature" to report.signature,
+                    "errorType" to report.exceptionType,
+                    "dir" to dir.absolutePath,
+                ),
+            )
         } catch (e: Exception) {
             // Reporting a contained fault must never itself become a fault.
             logger.warn(
@@ -140,6 +160,22 @@ object CrashHandler {
             )
         }
     }
+
+    /** Plain text, so the file is useful without any tooling to read it. */
+    private fun renderContainedReport(report: CrashReport): String =
+        buildString {
+            appendLine("BOSS contained render fault")
+            appendLine("signature:  ${report.signature}")
+            appendLine("timestamp:  ${report.timestamp}")
+            appendLine("type:       ${report.exceptionType}")
+            appendLine("message:    ${report.exceptionMessage}")
+            appendLine("app:        ${report.appInfo}")
+            appendLine("system:     ${report.systemInfo}")
+            appendLine()
+            appendLine("This fault was contained and recovered from; the app kept running.")
+            appendLine()
+            appendLine(report.stackTrace)
+        }
 
     /**
      * Handle an uncaught exception.

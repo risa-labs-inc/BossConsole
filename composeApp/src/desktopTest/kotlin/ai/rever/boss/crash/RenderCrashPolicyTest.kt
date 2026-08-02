@@ -90,6 +90,43 @@ class RenderCrashPolicyTest {
     }
 
     @Test
+    fun `recovery progress resets the budget so narrowing can finish`() {
+        // The budget used to race the narrowing loop and win. Faults from a
+        // repainting subtree arrive ~16ms apart, so they all land in one window,
+        // while narrowing spends one fault per suspect. With three panels the
+        // fourth fault escalated and disposed the window — killing the app before
+        // the culprit was found.
+        val clock = FakeClock()
+        val policy = policy(clock)
+
+        repeat(10) {
+            assertTrue(
+                policy.recordFailureAndShouldContain(),
+                "a fault that recovery is making progress on must not escalate",
+            )
+            policy.noteRecoveryProgress()
+            clock.advance(16)
+        }
+    }
+
+    @Test
+    fun `faults recovery cannot help with still escalate`() {
+        // The other half: progress resets the budget, so no progress must not.
+        val clock = FakeClock()
+        val policy = policy(clock)
+
+        repeat(RenderCrashPolicy.DEFAULT_MAX_FAILURES) {
+            assertTrue(policy.recordFailureAndShouldContain())
+            clock.advance(16)
+        }
+
+        assertFalse(
+            policy.recordFailureAndShouldContain(),
+            "without progress the breaker must still give up",
+        )
+    }
+
+    @Test
     fun `the no-arg constructor uses the documented defaults`() {
         // main.kt constructs it with no arguments, so the defaults are the values
         // that actually ship.

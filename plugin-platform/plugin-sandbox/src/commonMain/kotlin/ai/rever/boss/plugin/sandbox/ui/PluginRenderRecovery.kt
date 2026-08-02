@@ -75,11 +75,24 @@ object PluginRenderRecovery {
     const val REBUILD_GRACE_MILLIS = 4_000L
 
     /**
-     * Plugins whose panels are currently rendering content, most recently mounted
-     * last. Insertion-ordered because the panel a user just opened or interacted
-     * with is the better first suspect, and a wrong guess only costs one cycle.
+     * How many live boundaries each plugin currently has, and in what order they
+     * first appeared.
+     *
+     * Reference-counted, not a set. PluginErrorBoundary is instantiated per
+     * surface — per tab and per side panel, across windows — so one plugin
+     * routinely has several live boundaries at once. With a plain set, closing one
+     * of two terminal tabs removed the terminal plugin from the mounted list while
+     * it was still rendering, after which it could never be suspected: the real
+     * culprit would be ruled out by omission and the incident would end
+     * Unexplained, leaving a permanently broken window — the exact outcome this
+     * class exists to prevent.
+     *
+     * A LinkedHashMap for recency: iteration order is first-appearance order, and
+     * a re-mount after the count drops to zero moves the plugin to the end, which
+     * plain `LinkedHashSet.add` would not have done for an element already
+     * present. Guarded by its own monitor since it is both mutated and iterated.
      */
-    private val mounted = java.util.Collections.synchronizedSet(LinkedHashSet<String>())
+    private val mountCounts = LinkedHashMap<String, Int>()
 
     /** The single plugin currently held responsible, if any. */
     @Volatile
@@ -102,18 +115,31 @@ object PluginRenderRecovery {
      * function that clears it when the panel goes away.
      */
     fun registerMounted(pluginId: String): () -> Unit {
-        mounted.add(pluginId)
-        return { mounted.remove(pluginId) }
+        synchronized(mountCounts) {
+            mountCounts[pluginId] = (mountCounts[pluginId] ?: 0) + 1
+        }
+        // One unregister per register; the plugin stays mounted while any other
+        // boundary still holds a count.
+        var released = false
+        return {
+            synchronized(mountCounts) {
+                if (!released) {
+                    released = true
+                    val remaining = (mountCounts[pluginId] ?: 1) - 1
+                    if (remaining <= 0) mountCounts.remove(pluginId) else mountCounts[pluginId] = remaining
+                }
+            }
+        }
     }
 
     /** Candidates, most recently mounted first, skipping any already ruled out. */
     private fun nextSuspect(): String? =
-        synchronized(mounted) { mounted.toList() }
+        mountedPlugins()
             .asReversed()
             .firstOrNull { it !in cleared && it != suspect }
 
-    /** Plugins currently rendering content. Exposed for logging and tests. */
-    fun mountedPlugins(): Set<String> = mounted.toSet()
+    /** Plugins currently rendering content, first-appearance order. */
+    fun mountedPlugins(): List<String> = synchronized(mountCounts) { mountCounts.keys.toList() }
 
     /**
      * Handle a render exception nobody could attribute.
@@ -124,9 +150,9 @@ object PluginRenderRecovery {
      */
     fun onUnattributedRenderException(
         error: Throwable,
-        now: Long = System.currentTimeMillis(),
+        now: Long = System.nanoTime() / 1_000_000,
     ): Outcome {
-        val affected = mounted.toSet()
+        val affected = mountedPlugins().toSet()
         val recentlyRebuilt = lastRebuildAt != 0L && now - lastRebuildAt <= REBUILD_GRACE_MILLIS
         return when {
             affected.isEmpty() -> {
@@ -237,9 +263,9 @@ object PluginRenderRecovery {
     }
 
     /** Forget the retry window. For tests, and for a clean slate after recovery. */
-    fun resetForTest() {
+    internal fun resetForTest() {
         lastRebuildAt = 0L
-        mounted.clear()
+        synchronized(mountCounts) { mountCounts.clear() }
         cleared.clear()
         suspect = null
         _generation.value = 0
