@@ -2,6 +2,54 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import type { PluginManifest } from "../types/plugin.ts"
 
 /**
+ * Permission required to create a plugin or publish a version of one you own.
+ *
+ * Deliberately NOT `plugins.admin.publish`: that permission's RLS policy has no
+ * author scoping, so it authorizes updates to ANY plugin, and it stays reserved
+ * for store-wide moderation (verify / delete / enable / disable).
+ *
+ * Held by the `boss_plugin_admin` role and inherited by `boss_admin` and `admin`
+ * (migration 20260731000000_plugin_create_permission.sql).
+ */
+export const PLUGIN_CREATE_PERMISSION = "plugins.create"
+
+/**
+ * Permission required to create, list or revoke Plugin Store API keys.
+ */
+export const API_KEY_CREATE_PERMISSION = "api_key.create"
+
+/**
+ * The one wording for "you are authenticated, but not allowed to do this".
+ *
+ * Shared so the JWT-only gate below and the combined gate in utils/auth.ts
+ * cannot drift — they denied with different sentences for the same condition.
+ * `installGateError` in routes/download.ts is deliberately separate: it names a
+ * *plugin's* requirements, not an action's, and can list several at once.
+ */
+export function permissionDeniedMessage(permission: string): string {
+  return `This action requires the "${permission}" permission. Ask an admin to grant it.`
+}
+
+/**
+ * Permission gate for routes that authenticate by JWT only (so the caller's
+ * effective permissions are already in the `user_permissions` claim and need no
+ * database round trip). Admins bypass.
+ *
+ * Mirrors `installGateError` in routes/download.ts: returns a human-readable
+ * error string to deny with (403), or null if the caller is allowed.
+ *
+ * For routes that also accept API keys, pass `requiredPermission` to
+ * `getAuthenticatedUser` instead — an API-key caller has no claim to read.
+ */
+export function permissionGateError(
+  user: { isAdmin: boolean; permissions: string[] },
+  permission: string,
+): string | null {
+  if (user.isAdmin || user.permissions.includes(permission)) return null
+  return permissionDeniedMessage(permission)
+}
+
+/**
  * Validate a publishing plugin's declared permissions.
  *
  * Rejects a "dangling" requirement: a `requiredPermissions` entry that is neither

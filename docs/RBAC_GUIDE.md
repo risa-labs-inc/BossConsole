@@ -9,12 +9,24 @@ BOSS implements a comprehensive Role-Based Access Control (RBAC) system using Su
 Roles form a hierarchy (a DAG) where **a parent role inherits the effective permissions of its children**. Inheritance, permission-based plugin gating, and grant delegation are all derived from this single tree.
 
 ```
-        admin              ← inherits everything below (full access)
-       /     \
- boss_admin  finance_admin ← each inherits user
-       \     /
-        user               ← baseline (legacy plugins assume this)
+             admin                    ← inherits everything below (full access)
+            /     \
+    boss_admin    finance_admin       ← each inherits user
+       |    \          |
+boss_plugin_admin \    |               ← plugin authoring only
+       |           \   |
+       +------------ user             ← baseline (legacy plugins assume this)
 ```
+
+`boss_admin --> user` is kept alongside `boss_admin --> boss_plugin_admin --> user`;
+the duplicate path is harmless because `get_role_descendants` uses `UNION`.
+
+**`boss_plugin_admin`** is the least-privilege plugin author: `plugins.create` +
+`api_key.create`, plus the inherited `user.*` baseline. It deliberately holds no
+`plugins.admin.*` moderation permission, no role/finance/RPA verb, and no
+`secret.read`. Note it cannot assign any role despite `user` being a strict
+descendant — `assign_role_to_user` requires `role.assign` first, which this role
+does not have. See migration `20260731000000_plugin_create_permission.sql`.
 
 - **Effective permissions** — a user's permissions = the union of permissions on each assigned role plus all of that role's descendants. Computed by `get_role_descendants(role_id)` (recursive, cycle-safe) and `get_effective_permissions(user_id)`. `authorize(permission)` walks this closure, so a permission granted to `user` is automatically held by `boss_admin`, `finance_admin`, and `admin`.
 - **JWT claim** — `custom_access_token_hook` injects the effective set as the `user_permissions` claim (for both magic-link and passkey logins). The client parses it into `RoleClaims.permissions` / `UserInfo.permissions` (UI/visibility only — server still enforces).

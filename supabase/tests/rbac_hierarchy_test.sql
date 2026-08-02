@@ -32,13 +32,13 @@ on conflict do nothing;
 -- ---------------------------------------------------------------------------
 select set_eq(
     $$ select name from public.roles where id in (select public.get_role_descendants((select id from public.roles where name='admin'))) $$,
-    $$ values ('admin'),('boss_admin'),('finance_admin'),('user') $$,
-    'descendants(admin) = all four roles'
+    $$ values ('admin'),('boss_admin'),('boss_plugin_admin'),('finance_admin'),('user') $$,
+    'descendants(admin) = all five roles'
 );
 select set_eq(
     $$ select name from public.roles where id in (select public.get_role_descendants((select id from public.roles where name='boss_admin'))) $$,
-    $$ values ('boss_admin'),('user') $$,
-    'descendants(boss_admin) = {boss_admin, user}'
+    $$ values ('boss_admin'),('boss_plugin_admin'),('user') $$,
+    'descendants(boss_admin) = {boss_admin, boss_plugin_admin, user}'
 );
 select set_eq(
     $$ select name from public.roles where id in (select public.get_role_descendants((select id from public.roles where name='finance_admin'))) $$,
@@ -57,7 +57,7 @@ insert into public.role_hierarchy (parent_role_id, child_role_id)
 values ((select id from public.roles where name='user'), (select id from public.roles where name='admin'));
 select set_eq(
     $$ select name from public.roles where id in (select public.get_role_descendants((select id from public.roles where name='admin'))) $$,
-    $$ values ('admin'),('boss_admin'),('finance_admin'),('user') $$,
+    $$ values ('admin'),('boss_admin'),('boss_plugin_admin'),('finance_admin'),('user') $$,
     'descendants(admin) terminates and is unchanged under a cycle'
 );
 delete from public.role_hierarchy
@@ -93,8 +93,8 @@ select ok(
 -- ---------------------------------------------------------------------------
 select set_eq(
     $$ select name from public.roles where id in (select public.get_grantable_role_ids('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')) $$,
-    $$ values ('user') $$,
-    'boss_admin may grant only user (its strict descendant)'
+    $$ values ('boss_plugin_admin'),('user') $$,
+    'boss_admin may grant its strict descendants (boss_plugin_admin, user)'
 );
 select set_eq(
     $$ select name from public.roles where id in (select public.get_grantable_role_ids('cccccccc-cccc-cccc-cccc-cccccccccccc')) $$,
@@ -103,7 +103,7 @@ select set_eq(
 );
 select set_eq(
     $$ select name from public.roles where id in (select public.get_grantable_role_ids('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')) $$,
-    $$ values ('admin'),('boss_admin'),('finance_admin'),('user') $$,
+    $$ values ('admin'),('boss_admin'),('boss_plugin_admin'),('finance_admin'),('user') $$,
     'admin may grant every role'
 );
 

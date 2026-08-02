@@ -28,7 +28,11 @@ import {
   isAllowedExternalJarUrl,
   JarTooLargeError,
 } from "../services/github.ts"
-import { registerDefinedPermissions, validateDeclaredPermissions } from "../utils/permissions.ts"
+import {
+  PLUGIN_CREATE_PERMISSION,
+  registerDefinedPermissions,
+  validateDeclaredPermissions,
+} from "../utils/permissions.ts"
 
 const publish = new OpenAPIHono<{ Variables: PluginStoreContext }>()
 
@@ -76,6 +80,14 @@ const publishPluginRoute = createRoute({
         }
       }
     },
+    403: {
+      description: 'Caller lacks the plugins.create permission, or the API key lacks the publish scope',
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      }
+    },
     500: {
       description: 'Internal server error',
       content: {
@@ -95,14 +107,16 @@ publish.openapi(publishPluginRoute, async (ctx) => {
     // Verify authentication (JWT or API key with 'publish' scope)
     const authHeader = ctx.req.header('Authorization')
     const apiKeyHeader = ctx.req.header('X-API-Key')
-    const user = await getAuthenticatedUser(supabase, authHeader, apiKeyHeader, {
+    const auth = await getAuthenticatedUser(supabase, authHeader, apiKeyHeader, {
       allowApiKey: true,
       requiredScopes: ['publish'],
+      requiredPermission: PLUGIN_CREATE_PERMISSION,
     })
-    
-    if (!user) {
-      return ctx.json({ success: false, error: 'Authentication required' }, 401)
+
+    if (!auth.ok) {
+      return ctx.json({ success: false, error: auth.error }, auth.status)
     }
+    const user = auth.user
 
     // Reject dangling required permissions before creating any rows.
     const permCheck = await validateDeclaredPermissions(supabase, body)
@@ -251,14 +265,16 @@ publish.openapi(publishVersionRoute, async (ctx) => {
     // Verify authentication (JWT or API key with 'version' scope)
     const authHeader = ctx.req.header('Authorization')
     const apiKeyHeader = ctx.req.header('X-API-Key')
-    const user = await getAuthenticatedUser(supabase, authHeader, apiKeyHeader, {
+    const auth = await getAuthenticatedUser(supabase, authHeader, apiKeyHeader, {
       allowApiKey: true,
       requiredScopes: ['version'],
+      requiredPermission: PLUGIN_CREATE_PERMISSION,
     })
-    
-    if (!user) {
-      return ctx.json({ success: false, error: 'Authentication required' }, 401)
+
+    if (!auth.ok) {
+      return ctx.json({ success: false, error: auth.error }, auth.status)
     }
+    const user = auth.user
 
     // Get plugin
     const plugin = await getPlugin(supabase, pluginId)
@@ -414,14 +430,16 @@ publish.openapi(finalizeVersionRoute, async (ctx) => {
     // Verify authentication (JWT or API key with 'finalize' scope)
     const authHeader = ctx.req.header('Authorization')
     const apiKeyHeader = ctx.req.header('X-API-Key')
-    const user = await getAuthenticatedUser(supabase, authHeader, apiKeyHeader, {
+    const auth = await getAuthenticatedUser(supabase, authHeader, apiKeyHeader, {
       allowApiKey: true,
       requiredScopes: ['finalize'],
+      requiredPermission: PLUGIN_CREATE_PERMISSION,
     })
-    
-    if (!user) {
-      return ctx.json({ success: false, error: 'Authentication required' }, 401)
+
+    if (!auth.ok) {
+      return ctx.json({ success: false, error: auth.error }, auth.status)
     }
+    const user = auth.user
 
     // Get version
     const version = await getVersionById(supabase, body.versionId)
@@ -605,14 +623,16 @@ publish.openapi(publishFromGitHubRoute, async (ctx) => {
     // Verify authentication (JWT or API key with 'publish' scope)
     const authHeader = ctx.req.header('Authorization')
     const apiKeyHeader = ctx.req.header('X-API-Key')
-    const user = await getAuthenticatedUser(supabase, authHeader, apiKeyHeader, {
+    const auth = await getAuthenticatedUser(supabase, authHeader, apiKeyHeader, {
       allowApiKey: true,
       requiredScopes: ['publish'],
+      requiredPermission: PLUGIN_CREATE_PERMISSION,
     })
 
-    if (!user) {
-      return ctx.json({ success: false, error: 'Authentication required' }, 401)
+    if (!auth.ok) {
+      return ctx.json({ success: false, error: auth.error }, auth.status)
     }
+    const user = auth.user
 
     // Fetch plugin from GitHub
     console.log(`Fetching plugin from GitHub: ${body.githubUrl}`)
@@ -816,14 +836,16 @@ publish.openapi(publishFromGitHubMetadataRoute, async (ctx) => {
     // Verify authentication
     const authHeader = ctx.req.header('Authorization')
     const apiKeyHeader = ctx.req.header('X-API-Key')
-    const user = await getAuthenticatedUser(supabase, authHeader, apiKeyHeader, {
+    const auth = await getAuthenticatedUser(supabase, authHeader, apiKeyHeader, {
       allowApiKey: true,
       requiredScopes: ['publish'],
+      requiredPermission: PLUGIN_CREATE_PERMISSION,
     })
 
-    if (!user) {
-      return ctx.json({ success: false, error: 'Authentication required' }, 401)
+    if (!auth.ok) {
+      return ctx.json({ success: false, error: auth.error }, auth.status)
     }
+    const user = auth.user
 
     // Resolve the GitHub download URL for the JAR
     const parsed = parseGitHubUrl(body.githubUrl)

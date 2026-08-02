@@ -2,6 +2,7 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { PluginStoreContext } from "../types/context.ts"
 import { ErrorResponseSchema } from "../types/schemas.ts"
 import { getUserFromToken } from "../utils/auth.ts"
+import { API_KEY_CREATE_PERMISSION, permissionGateError } from "../utils/permissions.ts"
 import {
   generateApiKey,
   hashApiKey,
@@ -121,6 +122,14 @@ const createApiKeyRoute = createRoute({
         },
       },
     },
+    403: {
+      description: "Caller lacks the api_key.create permission",
+      content: {
+        "application/json": {
+          schema: ErrorResponseSchema,
+        },
+      },
+    },
     409: {
       description: "A key with this name already exists",
       content: {
@@ -162,6 +171,11 @@ apiKeys.openapi(createApiKeyRoute, async (ctx) => {
         { success: false, error: "JWT authentication required" },
         401
       )
+    }
+
+    const gateError = permissionGateError(user, API_KEY_CREATE_PERMISSION)
+    if (gateError) {
+      return ctx.json({ success: false, error: gateError }, 403)
     }
 
     // Validate scopes
@@ -307,6 +321,10 @@ apiKeys.openapi(listApiKeysRoute, async (ctx) => {
       )
     }
 
+    // Deliberately NOT gated on api_key.create: listing is scoped to the
+    // caller's own keys, and someone whose role was revoked must still be able
+    // to see what is outstanding in order to revoke it.
+
     // Get all non-revoked keys for this user
     const { data, error } = await supabase
       .from("plugin_api_keys")
@@ -414,6 +432,11 @@ apiKeys.openapi(deleteApiKeyRoute, async (ctx) => {
         401
       )
     }
+
+    // Deliberately NOT gated on api_key.create. Revocation is a safety valve:
+    // gating it behind the permission a user has just lost would strand their
+    // keys, and losing a role is exactly when you most want to revoke. Ownership
+    // (checked below) is what protects this route.
 
     // Get the key to verify ownership
     const { data: existingKey, error: fetchError } = await supabase

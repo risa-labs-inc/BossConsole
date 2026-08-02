@@ -11,6 +11,9 @@ import ai.rever.boss.utils.logging.LogCategory
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 
+/** Permission required to create, list or revoke Plugin Store API keys. */
+private const val API_KEY_CREATE_PERMISSION = "api_key.create"
+
 /**
  * Implementation of PluginStoreApiKeyProvider that uses PluginStoreClient.
  *
@@ -126,21 +129,24 @@ class PluginStoreApiKeyProviderImpl : PluginStoreApiKeyProvider {
     }
 
     override suspend fun canManageApiKeys(): Boolean {
-        // Check if user is admin via PluginStoreConfig
-        // or has plugin_admin role via AuthStateManager
+        // Mirrors the store's gate on POST/GET/DELETE /api-keys, which requires
+        // `api_key.create`. This used to test for a literal `plugin_admin` role
+        // that no migration ever created, so the branch was dead and the check
+        // collapsed to admin-only.
         val isAdmin = PluginStoreConfig.isAdmin
-        val hasPluginAdminRole = AuthStateManager.currentUser.value?.hasRole("plugin_admin") == true
+        val hasApiKeyPermission =
+            AuthStateManager.currentUser.value?.hasPermission(API_KEY_CREATE_PERMISSION) == true
 
         logger.debug(
             LogCategory.AUTH,
             "Checking API key management permission",
             mapOf(
                 "isAdmin" to isAdmin,
-                "hasPluginAdminRole" to hasPluginAdminRole,
+                "hasApiKeyPermission" to hasApiKeyPermission,
             ),
         )
 
-        return isAdmin || hasPluginAdminRole
+        return isAdmin || hasApiKeyPermission
     }
 
     /**

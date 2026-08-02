@@ -98,4 +98,84 @@ class PluginAccessGateTest {
             ),
         )
     }
+
+    // -----------------------------------------------------------------------
+    // Least-privilege plugin authoring (boss_plugin_admin / plugins.create).
+    //
+    // The authoring permission and the store-wide moderation permission are one
+    // word apart, and the gate is where a mix-up would surface as "Tool Creator
+    // is invisible" or, worse, "a plugin author can moderate the store". Both
+    // directions are pinned.
+    // -----------------------------------------------------------------------
+
+    /** Effective permissions a `boss_plugin_admin` carries: its two, plus the inherited `user.*` baseline. */
+    private val bossPluginAdmin =
+        setOf(
+            "plugins.create",
+            "api_key.create",
+            "user.read",
+            "user.write",
+            "user.update",
+            "user.delete",
+        )
+
+    @Test
+    fun `boss_plugin_admin sees Tool Creator`() {
+        // tool-creator's manifest: requiredPermissions = ["plugins.create", "api_key.create"]
+        assertTrue(
+            pluginAccessAllowed(
+                isAdmin = false,
+                userPermissions = bossPluginAdmin,
+                requiresAdmin = false,
+                requiredPermissions = listOf("plugins.create", "api_key.create"),
+            ),
+        )
+    }
+
+    @Test
+    fun `boss_plugin_admin is denied a moderation-gated plugin`() {
+        assertFalse(
+            pluginAccessAllowed(
+                isAdmin = false,
+                userPermissions = bossPluginAdmin,
+                requiresAdmin = false,
+                requiredPermissions = listOf("plugins.admin.publish"),
+            ),
+        )
+    }
+
+    @Test
+    fun `boss_plugin_admin is denied the secret vault and role tooling`() {
+        // The whole point of the role: authoring, and nothing else.
+        for (required in listOf(
+            listOf("secret.read"),
+            listOf("role.read", "role.assign"),
+            listOf("role.read", "role.create"),
+        )) {
+            assertFalse(
+                pluginAccessAllowed(
+                    isAdmin = false,
+                    userPermissions = bossPluginAdmin,
+                    requiresAdmin = false,
+                    requiredPermissions = required,
+                ),
+                "boss_plugin_admin must not reach a plugin requiring $required",
+            )
+        }
+    }
+
+    @Test
+    fun `holding only the moderation permission does not admit Tool Creator`() {
+        // A pre-migration boss_admin claim set: plugins.admin.publish is NOT a
+        // substitute for plugins.create, which is why a stale JWT makes Tool
+        // Creator disappear until the token refreshes.
+        assertFalse(
+            pluginAccessAllowed(
+                isAdmin = false,
+                userPermissions = setOf("plugins.admin.publish", "api_key.create", "user.read"),
+                requiresAdmin = false,
+                requiredPermissions = listOf("plugins.create", "api_key.create"),
+            ),
+        )
+    }
 }
