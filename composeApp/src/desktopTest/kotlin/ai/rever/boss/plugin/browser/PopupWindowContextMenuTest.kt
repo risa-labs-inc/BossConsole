@@ -16,7 +16,7 @@ import kotlin.test.assertTrue
  * The menu exists because JxBrowser's built-in one crashes the EDT in popup windows
  * (BossConsole-Releases#17). Its contents are decided entirely from the click target so they can be
  * pinned here, and — the reason that matters beyond testability — so that deciding them costs no
- * blocking IPC on the EDT, where a busy renderer would freeze the whole app.
+ * blocking IPC on the JxBrowser callback thread, which would delay the menu on every right-click.
  */
 class PopupWindowContextMenuTest {
     private fun entries(
@@ -32,11 +32,18 @@ class PopupWindowContextMenuTest {
     /**
      * A do-nothing [Frame]. `buildMenu` only stores it for the action listeners, so a reflection
      * proxy is enough to render the menu headlessly — the build has no mocking library.
+     *
+     * `Object`'s methods are handled explicitly: returning null for `hashCode()` would NPE on
+     * unboxing the moment the stub landed in a hash collection or an assertion message. Nothing
+     * here does that today, but stubs get copied.
      */
     private fun stubFrame(): Frame =
-        Proxy.newProxyInstance(Frame::class.java.classLoader, arrayOf(Frame::class.java)) { _, method, _ ->
-            when (method.returnType) {
-                Boolean::class.javaPrimitiveType -> false
+        Proxy.newProxyInstance(Frame::class.java.classLoader, arrayOf(Frame::class.java)) { proxy, method, args ->
+            when {
+                method.name == "hashCode" -> System.identityHashCode(proxy)
+                method.name == "equals" -> proxy === args?.getOrNull(0)
+                method.name == "toString" -> "stubFrame"
+                method.returnType == Boolean::class.javaPrimitiveType -> false
                 else -> null
             }
         } as Frame

@@ -29,23 +29,39 @@ internal data class PopupMenuEntry(
 /**
  * Whether the system clipboard currently holds text that Paste could insert.
  *
- * A local AWT call, not Chromium IPC, so it does not reopen the EDT-blocking concern that moved
- * enablement off `isCommandEnabled`. Defaults to **enabled** when the clipboard cannot be read: it
- * is briefly lockable by another process on Windows, and a Paste that turns out to be a no-op is a
- * far smaller annoyance than Paste greyed out on a login form when the user does have something to
- * paste.
+ * A local AWT call, not Chromium IPC, so it adds no round-trip to the right-click path.
+ *
+ * **Must not throw.** Callers use it while assembling the menu, and an escaping exception there is
+ * caught by an outer handler that leaves the entry list empty — which suppresses the whole menu,
+ * silently, instead of just mis-enabling one item. All three documented ways this call fails are
+ * therefore handled, and every one of them defaults to *enabled*: a Paste that turns out to be a
+ * no-op is a far smaller annoyance than Paste greyed out on a login form when the user does have
+ * something to paste.
+ *
+ *  - [IllegalStateException] — the clipboard is momentarily locked by another process (Windows).
+ *  - [java.awt.HeadlessException] — no display; an `UnsupportedOperationException`, *not* an
+ *    `IllegalStateException`, so it needs its own branch.
+ *  - [SecurityException] — `AWTPermission("accessClipboard")` denied.
  */
 internal fun clipboardHasText(): Boolean =
     try {
         Toolkit.getDefaultToolkit().systemClipboard.isDataFlavorAvailable(DataFlavor.stringFlavor)
     } catch (e: IllegalStateException) {
-        logger.debug(
-            LogCategory.BROWSER,
-            "Clipboard unavailable - assuming paste is possible",
-            mapOf("error" to e.toString()),
-        )
-        true
+        clipboardUnavailable(e)
+    } catch (e: UnsupportedOperationException) {
+        clipboardUnavailable(e)
+    } catch (e: SecurityException) {
+        clipboardUnavailable(e)
     }
+
+private fun clipboardUnavailable(e: Exception): Boolean {
+    logger.debug(
+        LogCategory.BROWSER,
+        "Clipboard unavailable - assuming paste is possible",
+        mapOf("error" to e.toString()),
+    )
+    return true
+}
 
 /**
  * The menu for a right-click, decided entirely from the click target.
@@ -53,11 +69,13 @@ internal fun clipboardHasText(): Boolean =
  * Pure and derived from [ShowContextMenuCallback.Params] values rather than from the browser,
  * for two reasons:
  *
- *  - **It runs on the EDT.** Asking the browser `isCommandEnabled` per item would be four blocking
- *    IPC round-trips into the Chromium process while the UI thread waits, and Compose Desktop
- *    shares that thread — a busy renderer would freeze the whole app on right-click. This repo
- *    already learned that here: `BrowserHandleImpl` replaced `browser.title()` with a cached value
- *    on this exact path because "being slow hurts as much as throwing".
+ *  - **No blocking IPC on the right-click path.** Asking the browser `isCommandEnabled` per item
+ *    would be four synchronous round-trips into the Chromium process before the menu could be
+ *    built, delaying it on every right-click and stalling on a busy renderer. This callback runs
+ *    on a **JxBrowser thread**, not the EDT — which is why showing the menu needs
+ *    `SwingUtilities.invokeLater` — so the cost lands on menu latency rather than on the UI
+ *    thread. `BrowserHandleImpl` reached the same conclusion for the same callback, replacing
+ *    `browser.title()` with a cached value because "being slow hurts as much as throwing".
  *  - **It is testable** without an engine.
  *
  * Enablement mirrors what each command would actually do: Cut and Paste need an editable target,
@@ -164,6 +182,12 @@ internal fun installPopupWindowContextMenu(
             // Exception rather than Throwable: a genuinely fatal Error is not this boundary's to
             // swallow, matching the policy BrowserHandleImpl.deliverContextMenu states for the
             // same callback path.
+            // Read outside the try on purpose. clipboardHasText() is documented not to throw, but
+            // if it ever did from in there, the catch below would leave `entries` empty while
+            // `frame` was already set - and an empty list means shouldShowPopupMenu suppresses the
+            // menu entirely. Keeping it out here makes "no menu at all" unreachable from this call.
+            val clipboardText = clipboardHasText()
+
             var frame: Frame? = null
             var entries: List<PopupMenuEntry> = emptyList()
             var x = 0
@@ -173,7 +197,7 @@ internal fun installPopupWindowContextMenu(
                 x = location.x()
                 y = location.y()
                 frame = params.frame().orElse(null)
-                entries = popupMenuEntriesFor(params.contentTypes(), params.selectedText(), clipboardHasText())
+                entries = popupMenuEntriesFor(params.contentTypes(), params.selectedText(), clipboardText)
             } catch (e: Exception) {
                 logger.debug(
                     LogCategory.BROWSER,
