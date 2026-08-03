@@ -10,6 +10,7 @@ import ai.rever.boss.plugin.api.LoadedPluginInfo
 import ai.rever.boss.plugin.api.PanelId
 import ai.rever.boss.plugin.api.PluginLoaderDelegate
 import ai.rever.boss.plugin.api.PluginState
+import ai.rever.boss.plugin.loader.PluginSignatureSidecar
 import ai.rever.boss.plugin.repository.remote.PluginStoreConfig
 import ai.rever.boss.plugin.sandbox.TabSandboxRegistry
 import ai.rever.boss.plugin.sandbox.ui.PluginCrashRegistry
@@ -67,8 +68,12 @@ class PluginLoaderDelegateImpl(
         // to be rejected.
         if (isMicrokernelRuntimeJar(jarPath)) {
             // Clean up the JAR that the installer just downloaded so it doesn't
-            // linger in the plugins directory and confuse a future scan.
+            // linger in the plugins directory and confuse a future scan. The
+            // sidecar goes with it: an uninstall→reinstall of the same version
+            // reuses the filename, so a surviving `.sig` would meet fresh bytes
+            // and hard-fail at load — worse than being unsigned.
             runCatching { File(jarPath).delete() }
+            runCatching { PluginSignatureSidecar.delete(jarPath) }
             logger.info(
                 LogCategory.SYSTEM,
                 "Refusing to install microkernel runtime as a plugin",

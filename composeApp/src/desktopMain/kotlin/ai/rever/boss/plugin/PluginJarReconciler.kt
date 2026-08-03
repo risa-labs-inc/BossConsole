@@ -3,6 +3,7 @@ package ai.rever.boss.plugin
 import ai.rever.boss.components.plugin.MicrokernelRuntime
 import ai.rever.boss.plugin.api.PluginManifest
 import ai.rever.boss.plugin.loader.PluginManifestReader
+import ai.rever.boss.plugin.loader.PluginSignatureSidecar
 import ai.rever.boss.utils.Version
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -78,7 +79,13 @@ object PluginJarReconciler {
             for (loser in group) {
                 if (loser.file == winner.file) continue
                 val removed = runCatching { loser.file.delete() }.getOrDefault(false)
-                if (removed) deleted.add(loser.file.name)
+                if (removed) {
+                    deleted.add(loser.file.name)
+                    // A `.sig` must never outlive the JAR it describes: left behind
+                    // it is an orphan now, and a hard load failure later if a JAR of
+                    // the same name lands on the path.
+                    runCatching { PluginSignatureSidecar.delete(loser.file.absolutePath) }
+                }
                 logger.info(
                     LogCategory.SYSTEM,
                     "Removed stale duplicate plugin JAR",
