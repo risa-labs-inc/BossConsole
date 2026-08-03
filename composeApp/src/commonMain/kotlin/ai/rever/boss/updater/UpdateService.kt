@@ -64,6 +64,20 @@ data class VersionInfo(
 )
 
 /**
+ * Result of an install attempt.
+ *
+ * Carries [errorMessage] rather than a bare Boolean because the installer can
+ * refuse for reasons the user needs stated — most importantly a release whose
+ * `LSMinimumSystemVersion` this Mac does not meet. Flattening that to `false`
+ * surfaced a red "Installation failed" with the real explanation only in a log
+ * file, which is indistinguishable from a crash to the person looking at it.
+ */
+data class InstallOutcome(
+    val succeeded: Boolean,
+    val errorMessage: String? = null,
+)
+
+/**
  * Platform-specific update service interface
  */
 expect class UpdateService() {
@@ -74,7 +88,7 @@ expect class UpdateService() {
         onProgress: (progress: Float) -> Unit,
     ): String?
 
-    suspend fun installUpdate(downloadPath: String): Boolean
+    suspend fun installUpdate(downloadPath: String): InstallOutcome
 
     fun getCurrentPlatform(): String
 

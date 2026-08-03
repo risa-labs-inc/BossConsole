@@ -872,7 +872,12 @@ object UpdateInstaller {
                     .bufferedReader()
                     .readText()
                     .trim()
-            process.waitFor()
+            // Bounded like the Spotlight lookup elsewhere in this file: a hung
+            // PlistBuddy must not wedge the install path.
+            if (!process.waitFor(SPOTLIGHT_LOOKUP_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                process.destroyForcibly()
+                return@runCatching null
+            }
             if (process.exitValue() == 0) value.ifBlank { null } else null
         }.getOrNull()
 

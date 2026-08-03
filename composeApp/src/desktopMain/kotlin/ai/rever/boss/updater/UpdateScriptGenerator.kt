@@ -207,7 +207,17 @@ object UpdateScriptGenerator {
             # so it can never drift from the DMG actually being installed and needs
             # no maintenance when the floor moves again. If the key is unreadable we
             # proceed: a plist that can't be parsed must not block every update.
+            # Gate on PlistBuddy's exit status AND the shape of what it printed.
+            # A missing key makes it print `Print: Entry, ":LSMinimumSystemVersion",
+            # Does Not Exist` to STDOUT and exit 1 — so `2>/dev/null` does not
+            # suppress it and a bare -n test would pass that sentence to sort -V,
+            # blocking the update instead of failing open. The pattern match also
+            # keeps DMG-controlled text out of the osascript literal below.
             MIN_OS=${'$'}(/usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "${'$'}APP_BUNDLE/Contents/Info.plist" 2>/dev/null)
+            if [ ${'$'}? -ne 0 ] || ! echo "${'$'}MIN_OS" | grep -Eq '^[0-9]+(\.[0-9]+){0,2}${'$'}'; then
+                echo "No usable LSMinimumSystemVersion in the incoming bundle; proceeding without an OS check"
+                MIN_OS=""
+            fi
             if [ -n "${'$'}MIN_OS" ]; then
                 CUR_OS=${'$'}(sw_vers -productVersion)
                 if [ "${'$'}(printf '%s\n%s\n' "${'$'}MIN_OS" "${'$'}CUR_OS" | sort -V | head -n 1)" != "${'$'}MIN_OS" ]; then

@@ -391,14 +391,14 @@ actual class UpdateService {
         }
     }
 
-    actual suspend fun installUpdate(downloadPath: String): Boolean {
+    actual suspend fun installUpdate(downloadPath: String): InstallOutcome {
         // Delegate to UpdateInstaller
         val result = UpdateInstaller.installUpdate(downloadPath)
 
         return when (result) {
             is InstallResult.Success -> {
                 logger.info(LogCategory.SYSTEM, "Update installed successfully", mapOf("message" to result.message))
-                true
+                InstallOutcome(succeeded = true)
             }
 
             is InstallResult.RequiresRestart -> {
@@ -415,12 +415,15 @@ actual class UpdateService {
                     ApplicationRestarter.quitForUpdate()
                 }
 
-                true
+                InstallOutcome(succeeded = true)
             }
 
             is InstallResult.Error -> {
+                // Carry the message rather than flattening to false: the installer
+                // refuses an OS-incompatible release here, and that reason has to
+                // reach the dialog or it reads as an unexplained failure.
                 logger.error(LogCategory.SYSTEM, "Update installation failed", mapOf("error" to result.message))
-                false
+                InstallOutcome(succeeded = false, errorMessage = result.message)
             }
         }
     }

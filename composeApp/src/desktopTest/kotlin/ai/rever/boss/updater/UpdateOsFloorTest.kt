@@ -1,7 +1,9 @@
 package ai.rever.boss.updater
 
+import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -46,6 +48,22 @@ class UpdateOsFloorTest {
 
     @Test
     fun `a non-numeric component degrades to zero rather than throwing`() {
-        assertTrue(UpdateInstaller.compareVersions("13.0-beta", "13.0") <= 0)
+        // Exactly 0, not merely "<= 0": "13.0-beta" parses its last component as 0
+        // and 13.0 has no third component, so they compare equal. Asserting the
+        // looser bound would still pass if this started returning -1.
+        assertEquals(0, UpdateInstaller.compareVersions("13.0-beta", "13.0"))
+    }
+
+    @Test
+    fun `an app bundle with no Info-plist fails open`() {
+        // Fail-open is the property whose inversion blocks every update, so it is
+        // worth pinning independently of the comparison. A directory with no
+        // Info.plist exercises the same branch as an unreadable one.
+        val bundle = createTempDirectory("no-plist").toFile()
+        try {
+            assertNull(UpdateInstaller.unsupportedOsError(bundle))
+        } finally {
+            bundle.deleteRecursively()
+        }
     }
 }

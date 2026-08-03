@@ -63,7 +63,7 @@ object BrowserEngineSettingsManager {
      * explicit pin. Normalising the loaded state fixes both call sites at once.
      */
     private fun BrowserEngineSettings.withoutRedundantPin(): BrowserEngineSettings =
-        if (selectedVersion == VersionConstants.JXBROWSER_VERSION) BrowserEngineSettings() else this
+        if (selectedVersion == VersionConstants.JXBROWSER_VERSION) copy(selectedVersion = null) else this
 
     private fun loadSync(): BrowserEngineSettings {
         val loaded =
@@ -87,20 +87,33 @@ object BrowserEngineSettingsManager {
             runCatching {
                 settingsFile.parentFile?.mkdirs()
                 settingsFile.writeText(json.encodeToString(BrowserEngineSettings.serializer(), normalized))
+            }.onSuccess {
+                // Only claim the cleanup happened when it actually did — otherwise
+                // this line reads as confirmation during triage while the pin is
+                // still sitting on disk.
+                logger.info(
+                    LogCategory.BROWSER,
+                    "Cleared engine pin equal to the bundled version",
+                    mapOf("version" to VersionConstants.JXBROWSER_VERSION),
+                )
             }.onFailure {
-                logger.warn(LogCategory.BROWSER, "Could not clear redundant engine pin", error = it as? Exception)
+                logger.warn(
+                    LogCategory.BROWSER,
+                    "Could not clear redundant engine pin",
+                    mapOf("error" to it.toString()),
+                )
             }
-            logger.info(
-                LogCategory.BROWSER,
-                "Cleared engine pin equal to the bundled version",
-                mapOf("version" to VersionConstants.JXBROWSER_VERSION),
-            )
         }
         return normalized
     }
 
     suspend fun updateSettings(settings: BrowserEngineSettings) =
         withContext(Dispatchers.IO) {
+            // Normalise here too, so the invariant holds for any future caller
+            // rather than depending on the Settings UI never writing a pin equal
+            // to the bundled version.
+            @Suppress("NAME_SHADOWING")
+            val settings = settings.withoutRedundantPin()
             _currentSettings.value = settings
             try {
                 settingsFile.parentFile?.mkdirs()

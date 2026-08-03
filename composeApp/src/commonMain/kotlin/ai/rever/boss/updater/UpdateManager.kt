@@ -306,13 +306,17 @@ class UpdateManager {
         try {
             _updateState.value = UpdateState.Installing
 
-            val success = updateService.installUpdate(downloadPath)
-            if (success) {
+            val outcome = updateService.installUpdate(downloadPath)
+            if (outcome.succeeded) {
                 _updateState.value = UpdateState.RestartRequired
             } else {
-                _updateState.value = UpdateState.Error("Installation failed")
+                // Prefer the installer's own explanation. It is the only place that
+                // knows *why* — e.g. a release requiring a newer macOS than this
+                // Mac runs — and a generic string there is indistinguishable from
+                // a crash to the user.
+                _updateState.value = UpdateState.Error(outcome.errorMessage ?: "Installation failed")
             }
-            success
+            outcome.succeeded
         } catch (e: Exception) {
             _updateState.value = UpdateState.Error("Installation failed: ${e.message}")
             false
