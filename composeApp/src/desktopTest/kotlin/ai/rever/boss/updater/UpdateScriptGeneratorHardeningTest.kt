@@ -80,6 +80,46 @@ class UpdateScriptGeneratorHardeningTest {
     }
 
     @Test
+    fun `the OS floor guard precedes the destructive delete`() {
+        assumeTrue(!isWindows, "The macOS helper script is only generated on POSIX hosts")
+
+        val scriptFile =
+            UpdateScriptGenerator.generateMacOSUpdateScript(
+                dmgPath = "/tmp/update.dmg",
+                targetAppPath = "/Applications/BOSS.app",
+                appPid = 12345,
+            )
+
+        try {
+            val script = scriptFile.readText()
+            val guardAt = script.indexOf("LSMinimumSystemVersion")
+            // Match the command, not the word: the guard's own comment says
+            // "before an irreversible rm -rf" and sits earlier in the script, so a
+            // bare indexOf("rm -rf") finds the prose and reports a false failure.
+            // The target path is shell-escaped, so the command is `rm -rf '...'`.
+            val deleteAt = script.indexOf("rm -rf '")
+
+            assertTrue(guardAt >= 0, "The macOS floor guard must be present in the generated script")
+            assertTrue(deleteAt >= 0, "Expected the script to remove the old app bundle")
+            // Ordering is the whole property. The guard refuses a build this Mac
+            // cannot launch; after the rm -rf it would refuse it having already
+            // deleted the working install, leaving the user with nothing. Cheap to
+            // break by reordering during an unrelated edit, and nothing else
+            // notices.
+            assertTrue(
+                guardAt < deleteAt,
+                "The OS floor guard must run BEFORE the old app is deleted, not after",
+            )
+            assertTrue(
+                script.contains("sw_vers"),
+                "The guard needs the running macOS version to compare against",
+            )
+        } finally {
+            scriptFile.delete()
+        }
+    }
+
+    @Test
     fun `generated helper script is owner only`() {
         assumeTrue(!isWindows, "POSIX permissions are not applicable on Windows")
 

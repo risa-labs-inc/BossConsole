@@ -50,20 +50,36 @@ object BrowserEngineSettingsManager {
         get() = _currentSettings.value.selectedVersion ?: VersionConstants.JXBROWSER_VERSION
 
     /**
-     * A pin equal to the bundled version carries no information, so drop it.
+     * Drop any pin that is not the bundled version — which is all of them.
      *
-     * The users who hit the `UnsatisfiedLinkError` this release fixes are exactly
-     * those who pinned the then-newer engine in Settings. Once the app catches up,
-     * that pin is redundant — but if it survives, the next bump reproduces the same
-     * crash in mirror image: bundled 9.5.0 wanting Chromium 152 against a pinned
-     * 9.4.0 engine shipping 151.
+     * JxBrowser resolves its native toolkit under
+     * `Versions/<VersionInfo.chromiumVersion()>`, and that value is baked into the
+     * jar. An engine carrying any other Chromium build therefore fails the native
+     * load: 9.4.0 asks for `151.0.7922.72`, a pinned 9.3.0 engine only ships
+     * `150.0.7871.47`. The `UnsatisfiedLinkError` this release fixes is exactly
+     * that shape.
      *
-     * Filtering inside [effectiveVersion] would not be enough: the Settings UI reads
-     * `selectedVersion` directly, so the dropdown would still show a redundant
-     * explicit pin. Normalising the loaded state fixes both call sites at once.
+     * So the "recovery and testing" escape hatch the pin was built for cannot do
+     * the thing it exists to do — a setting that is guaranteed non-functional is
+     * not a preference worth preserving, and honouring it would mean shipping a
+     * known crash to respect a choice the user cannot benefit from. Cleared, with
+     * a warning naming both versions.
+     *
+     * Filtering inside [effectiveVersion] would not be enough: the Settings UI
+     * reads `selectedVersion` directly, so the dropdown would still render a dead
+     * pin as an ordinary selection. Normalising the loaded state fixes both call
+     * sites at once.
+     *
+     * BossConsole#118 tracks the durable fix — refusing a mismatch at engine init
+     * by checking the framework version directory, which also catches skew this
+     * normalisation cannot predict.
      */
-    private fun BrowserEngineSettings.withoutRedundantPin(): BrowserEngineSettings =
-        if (selectedVersion == VersionConstants.JXBROWSER_VERSION) copy(selectedVersion = null) else this
+    private fun BrowserEngineSettings.withoutUnusablePin(): BrowserEngineSettings =
+        if (selectedVersion != null && selectedVersion != VersionConstants.JXBROWSER_VERSION) {
+            copy(selectedVersion = null)
+        } else {
+            this
+        }
 
     private fun loadSync(): BrowserEngineSettings {
         val loaded =
@@ -78,25 +94,16 @@ object BrowserEngineSettingsManager {
                 BrowserEngineSettings()
             }
 
-        // Any pin that is not the bundled version is fatal, not just a newer one:
-        // JxBrowser resolves its native toolkit under
-        // Versions/<VersionInfo.chromiumVersion()>, a value baked into the jar, so
-        // an engine carrying any other Chromium build fails the native load. The
-        // "recovery and testing" escape hatch cannot work by JxBrowser's own
-        // design. Clearing a pin the user deliberately set is not this class's call
-        // — but leaving it silent means the failure arrives as an UnsatisfiedLinkError
-        // naming a path and no cause, which is what made this expensive to diagnose
-        // the first time. BossConsole#118 tracks refusing it outright.
         val stalePin = loaded.selectedVersion
         if (stalePin != null && stalePin != VersionConstants.JXBROWSER_VERSION) {
             logger.warn(
                 LogCategory.BROWSER,
-                "Engine pin does not match this build's JxBrowser version — the browser will likely fail to start",
+                "Ignoring engine pin that cannot work with this build's JxBrowser version",
                 mapOf("pinned" to stalePin, "bundled" to VersionConstants.JXBROWSER_VERSION),
             )
         }
 
-        val normalized = loaded.withoutRedundantPin()
+        val normalized = loaded.withoutUnusablePin()
         if (normalized != loaded) {
             // Write the normalisation back so the file stops carrying the pin at
             // all — otherwise it returns the moment the bundled version moves on.
@@ -111,7 +118,7 @@ object BrowserEngineSettingsManager {
                 // still sitting on disk.
                 logger.info(
                     LogCategory.BROWSER,
-                    "Cleared engine pin equal to the bundled version",
+                    "Cleared an unusable engine pin",
                     mapOf("version" to VersionConstants.JXBROWSER_VERSION),
                 )
             }.onFailure {
@@ -131,7 +138,7 @@ object BrowserEngineSettingsManager {
             // Normalise here too, so the invariant holds for any future caller
             // rather than depending on the Settings UI never writing a pin equal
             // to the bundled version.
-            val normalized = settings.withoutRedundantPin()
+            val normalized = settings.withoutUnusablePin()
             _currentSettings.value = normalized
             try {
                 settingsFile.parentFile?.mkdirs()

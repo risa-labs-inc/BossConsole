@@ -277,8 +277,14 @@ private fun ErrorBanner(
                     "Update error: $message",
                     color = BossTheme.colors.textPrimary,
                     fontSize = 12.sp,
-                    maxLines = 1,
+                    // Two lines, because installer errors now carry the actual
+                    // reason rather than a fixed string. The OS-floor refusal ends
+                    // with "Your current version of BOSS has been kept" — the part
+                    // that stops it reading as a broken install — and at one line
+                    // that reassurance is exactly what gets ellipsized away.
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
                 )
             }
 

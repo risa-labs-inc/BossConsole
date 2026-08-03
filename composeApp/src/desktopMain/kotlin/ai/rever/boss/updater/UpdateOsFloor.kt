@@ -100,8 +100,14 @@ internal fun readMinimumSystemVersion(appBundle: File): String? =
                 .bufferedReader()
                 .readText()
                 .trim()
-        if (process.exitValue() == 0) value.ifBlank { null } else null
+        // Validate the shape, mirroring the shell guard. Both halves read the same
+        // DMG-controlled file; only one validating it left the other interpolating
+        // whatever PlistBuddy printed straight into a user-facing string.
+        if (process.exitValue() == 0 && value.matches(DOTTED_VERSION)) value else null
     }.getOrNull()
+
+/** `13`, `13.0` or `13.0.1` — the only shapes LSMinimumSystemVersion legitimately takes. */
+private val DOTTED_VERSION = Regex("""^\d+(\.\d+){0,2}$""")
 
 /** Numeric dotted-version compare; a non-numeric component sorts as 0. */
 internal fun compareVersions(
