@@ -34,7 +34,7 @@ kotlinx-serialization = "1.11.0"
 # reaches a plugin. NO host-side diagnosis was ever recorded, so there is no
 # known reason this cannot move: treat the next 3.5.x bump as worth trying, and
 # if it fails, write down what broke here.
-ktor = "3.4.3"
+ktor = "3.5.1"
 logback = "1.5.38"
 precompose = "1.6.2"
 slf4j = "2.0.18"
