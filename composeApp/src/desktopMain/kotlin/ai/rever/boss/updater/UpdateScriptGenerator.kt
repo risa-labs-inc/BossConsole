@@ -214,6 +214,13 @@ object UpdateScriptGenerator {
                     echo "This BOSS release requires macOS ${'$'}MIN_OS or later; this Mac runs ${'$'}CUR_OS."
                     echo "Update cancelled — your current installation has been left untouched."
                     hdiutil detach "${'$'}VOLUME" -quiet
+                    # BOSS has already quit by the time this script runs, and these
+                    # echoes only reach the updater log. Aborting silently would look
+                    # exactly like a crash: the user clicks "Install update", the app
+                    # quits, and nothing comes back. Tell them, then restore the app
+                    # they still have.
+                    osascript -e "display dialog \"This BOSS update requires macOS ${'$'}MIN_OS or later.\n\nThis Mac runs macOS ${'$'}CUR_OS, so the update was cancelled and your current version has been kept.\" buttons {\"OK\"} with icon caution with title \"Update cancelled\"" >/dev/null 2>&1 || true
+                    open $escapedTargetAppPath || echo "Relaunch failed - please start BOSS manually"
                     exit 1
                 fi
                 echo "macOS ${'$'}CUR_OS satisfies the required ${'$'}MIN_OS"

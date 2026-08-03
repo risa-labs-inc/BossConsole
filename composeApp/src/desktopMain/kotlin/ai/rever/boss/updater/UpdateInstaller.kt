@@ -471,6 +471,16 @@ object UpdateInstaller {
                         findAppBundleInVolume(mountedVolume)
                             ?: throw IllegalStateException("Could not find BOSS.app in mounted DMG")
 
+                    // Refuse a build this Mac cannot launch, while BOSS is still
+                    // running so the user gets a real dialog. The installer script
+                    // repeats this check as defence-in-depth, but by the time it
+                    // runs the app has already quit — an abort there is invisible
+                    // and reads like a crash. Engine upgrades move this floor
+                    // (JxBrowser 9.4.0 took it 12.0 -> 13.0) and the release
+                    // manifest carries no minimum-OS field, so nothing upstream
+                    // stops the update being offered.
+                    unsupportedOsError(appBundle)?.let { return@withContext InstallResult.Error(it) }
+
                     logger.info(LogCategory.SYSTEM, "DMG verified successfully", mapOf("appBundle" to appBundle.name))
 
                     // DMG is valid - now we can safely unmount it (script will remount it)
@@ -816,6 +826,69 @@ object UpdateInstaller {
         mountedVolume.listFiles()?.find {
             it.name.endsWith(".app") && it.name.contains("BOSS", ignoreCase = true)
         }
+
+    /**
+     * A message explaining why [appBundle] cannot run here, or null if it can.
+     *
+     * The requirement is read from the incoming bundle's `LSMinimumSystemVersion`
+     * rather than a constant, so it tracks whatever DMG is being installed and needs
+     * no maintenance when the floor moves again.
+     *
+     * Fails **open** on anything unreadable — a missing key, an unparseable version,
+     * a PlistBuddy that won't run. Blocking every update because a plist could not be
+     * parsed would be a worse failure than the one being prevented, and the installer
+     * script repeats this check before the destructive step.
+     */
+    internal fun unsupportedOsError(appBundle: File): String? {
+        val isMac =
+            System
+                .getProperty("os.name")
+                .orEmpty()
+                .lowercase()
+                .contains("mac")
+        val required = if (isMac) readMinimumSystemVersion(appBundle) else null
+        val current = System.getProperty("os.version")
+        return if (required != null && current != null && compareVersions(current, required) < 0) {
+            "This update requires macOS $required or later — this Mac runs macOS $current. " +
+                "Your current version of BOSS has been kept."
+        } else {
+            null
+        }
+    }
+
+    private fun readMinimumSystemVersion(appBundle: File): String? =
+        runCatching {
+            val plist = File(appBundle, "Contents/Info.plist")
+            if (!plist.exists()) return@runCatching null
+            val process =
+                ProcessBuilder(
+                    "/usr/libexec/PlistBuddy",
+                    "-c",
+                    "Print :LSMinimumSystemVersion",
+                    plist.absolutePath,
+                ).start()
+            val value =
+                process.inputStream
+                    .bufferedReader()
+                    .readText()
+                    .trim()
+            process.waitFor()
+            if (process.exitValue() == 0) value.ifBlank { null } else null
+        }.getOrNull()
+
+    /** Numeric dotted-version compare; a non-numeric component sorts as 0. */
+    internal fun compareVersions(
+        left: String,
+        right: String,
+    ): Int {
+        val l = left.split('.').map { it.toIntOrNull() ?: 0 }
+        val r = right.split('.').map { it.toIntOrNull() ?: 0 }
+        for (i in 0 until maxOf(l.size, r.size)) {
+            val diff = (l.getOrElse(i) { 0 }).compareTo(r.getOrElse(i) { 0 })
+            if (diff != 0) return diff
+        }
+        return 0
+    }
 
     /**
      * Open DMG for manual installation (fallback for development mode)

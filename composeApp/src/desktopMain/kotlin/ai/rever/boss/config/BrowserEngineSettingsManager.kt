@@ -45,34 +45,59 @@ object BrowserEngineSettingsManager {
     private val _currentSettings = MutableStateFlow(loadSync())
     val currentSettings: StateFlow<BrowserEngineSettings> = _currentSettings.asStateFlow()
 
-    /**
-     * The engine version the app should install and run: user pin, else the bundled
-     * JxBrowser version.
-     *
-     * A pin equal to the bundled version is discarded rather than honoured, so it
-     * cannot survive to bite at the *next* bump. The users who hit the
-     * `UnsatisfiedLinkError` this behaviour was added for are exactly those who
-     * pinned the then-newer engine in Settings; once the app catches up, that pin
-     * is redundant, and leaving it persisted would reproduce the same crash in
-     * mirror image the moment the bundled version moves ahead of it again.
-     */
+    /** The engine version the app should install and run: user pin, else the bundled JxBrowser version. */
     val effectiveVersion: String
-        get() =
-            _currentSettings.value.selectedVersion
-                ?.takeIf { it != VersionConstants.JXBROWSER_VERSION }
-                ?: VersionConstants.JXBROWSER_VERSION
+        get() = _currentSettings.value.selectedVersion ?: VersionConstants.JXBROWSER_VERSION
 
-    private fun loadSync(): BrowserEngineSettings =
-        try {
-            if (settingsFile.exists()) {
-                json.decodeFromString<BrowserEngineSettings>(settingsFile.readText())
-            } else {
+    /**
+     * A pin equal to the bundled version carries no information, so drop it.
+     *
+     * The users who hit the `UnsatisfiedLinkError` this release fixes are exactly
+     * those who pinned the then-newer engine in Settings. Once the app catches up,
+     * that pin is redundant — but if it survives, the next bump reproduces the same
+     * crash in mirror image: bundled 9.5.0 wanting Chromium 152 against a pinned
+     * 9.4.0 engine shipping 151.
+     *
+     * Filtering inside [effectiveVersion] would not be enough: the Settings UI reads
+     * `selectedVersion` directly, so the dropdown would still show a redundant
+     * explicit pin. Normalising the loaded state fixes both call sites at once.
+     */
+    private fun BrowserEngineSettings.withoutRedundantPin(): BrowserEngineSettings =
+        if (selectedVersion == VersionConstants.JXBROWSER_VERSION) BrowserEngineSettings() else this
+
+    private fun loadSync(): BrowserEngineSettings {
+        val loaded =
+            try {
+                if (settingsFile.exists()) {
+                    json.decodeFromString<BrowserEngineSettings>(settingsFile.readText())
+                } else {
+                    BrowserEngineSettings()
+                }
+            } catch (e: Exception) {
+                logger.warn(LogCategory.BROWSER, "Error loading browser engine settings, using defaults", error = e)
                 BrowserEngineSettings()
             }
-        } catch (e: Exception) {
-            logger.warn(LogCategory.BROWSER, "Error loading browser engine settings, using defaults", error = e)
-            BrowserEngineSettings()
+
+        val normalized = loaded.withoutRedundantPin()
+        if (normalized != loaded) {
+            // Write the normalisation back so the file stops carrying the pin at
+            // all — otherwise it returns the moment the bundled version moves on.
+            // Best-effort and synchronous: this runs in init, before anything reads
+            // effectiveVersion, and a failed write only costs us the cleanup.
+            runCatching {
+                settingsFile.parentFile?.mkdirs()
+                settingsFile.writeText(json.encodeToString(BrowserEngineSettings.serializer(), normalized))
+            }.onFailure {
+                logger.warn(LogCategory.BROWSER, "Could not clear redundant engine pin", error = it as? Exception)
+            }
+            logger.info(
+                LogCategory.BROWSER,
+                "Cleared engine pin equal to the bundled version",
+                mapOf("version" to VersionConstants.JXBROWSER_VERSION),
+            )
         }
+        return normalized
+    }
 
     suspend fun updateSettings(settings: BrowserEngineSettings) =
         withContext(Dispatchers.IO) {
