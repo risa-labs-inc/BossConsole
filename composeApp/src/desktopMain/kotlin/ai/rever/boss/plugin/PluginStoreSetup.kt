@@ -1107,7 +1107,7 @@ object PluginStoreSetup {
                 // plugins — api, Toolbox, the microkernel runtime, terminal-tab,
                 // editor-tab, fluck-browser — all sit on disk unsigned. That is
                 // invisible only while PluginSignatureEnforcement defaults to
-                // warn-and-allow; the moment it flips (BossConsole#872) every one
+                // warn-and-allow; the moment it flips (BossConsole#102) every one
                 // of them stops loading. Written before persistence so a JAR is
                 // never registered as installed without its sidecar settled.
                 persistStoreSignatureSidecar(destFile)

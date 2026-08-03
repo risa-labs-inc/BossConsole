@@ -12,7 +12,7 @@ import java.util.concurrent.atomic.AtomicReference
  * versions are warn-and-allow; note that until this flips, an attacker with
  * DB write access can null the signature column to land in the warn path, so
  * the control's full value materializes only with enforcement on (tracked in
- * BossConsole#872).
+ * BossConsole#102).
  *
  * Gated on configuration rather than a source edit so the flip (and a fast
  * rollback, e.g. if the backfill missed rows) doesn't require cutting a host
@@ -23,7 +23,7 @@ object PluginSignatureEnforcement {
     const val PROPERTY = "boss.plugin.signature.enforce"
     const val ENV_VAR = "BOSS_PLUGIN_SIGNATURE_ENFORCE"
 
-    private const val DEFAULT = false // flips to true per BossConsole#872
+    private const val DEFAULT = false // flips to true per BossConsole#102
 
     private val logger = BossLogger.forComponent("PluginSignatureEnforcement")
 

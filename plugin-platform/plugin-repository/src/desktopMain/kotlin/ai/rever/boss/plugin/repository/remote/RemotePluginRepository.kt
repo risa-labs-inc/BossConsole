@@ -64,7 +64,7 @@ class RemotePluginRepository(
      * newest version should be — a DB-write attacker who bumps an older,
      * legitimately signed version's published_at can serve it as latest and
      * its anchor verifies fine. Accepted residual risk under the same
-     * DB-write threat model tracked in BossConsole#872.
+     * DB-write threat model tracked in BossConsole#102.
      *
      * A rejected artifact triggers [onVerificationFailure] (cleanup: delete
      * the downloaded file, purge the cache entry, …) before throwing; a
