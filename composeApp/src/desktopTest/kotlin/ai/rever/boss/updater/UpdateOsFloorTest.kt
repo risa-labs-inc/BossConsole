@@ -3,6 +3,7 @@ package ai.rever.boss.updater
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -19,31 +20,31 @@ import kotlin.test.assertTrue
 class UpdateOsFloorTest {
     @Test
     fun `an older major is less than a newer one`() {
-        assertTrue(UpdateInstaller.compareVersions("12.7.6", "13.0") < 0)
+        assertTrue(compareVersions("12.7.6", "13.0") < 0)
     }
 
     @Test
     fun `a newer major is greater`() {
-        assertTrue(UpdateInstaller.compareVersions("14.2", "13.0") > 0)
+        assertTrue(compareVersions("14.2", "13.0") > 0)
     }
 
     @Test
     fun `equal versions compare equal regardless of trailing components`() {
-        assertEquals(0, UpdateInstaller.compareVersions("13.0", "13.0"))
-        assertEquals(0, UpdateInstaller.compareVersions("13.0.0", "13.0"))
+        assertEquals(0, compareVersions("13.0", "13.0"))
+        assertEquals(0, compareVersions("13.0.0", "13.0"))
     }
 
     @Test
     fun `a trailing patch still satisfies a two-component floor`() {
         // The real shape of the check: macOS reports 13.0.1, the bundle asks 13.0.
-        assertTrue(UpdateInstaller.compareVersions("13.0.1", "13.0") >= 0)
+        assertTrue(compareVersions("13.0.1", "13.0") >= 0)
     }
 
     @Test
     fun `comparison is numeric, not lexicographic`() {
         // "9" > "13" as strings; the whole point is that it must not be.
-        assertTrue(UpdateInstaller.compareVersions("9.0", "13.0") < 0)
-        assertTrue(UpdateInstaller.compareVersions("10.15", "9.0") > 0)
+        assertTrue(compareVersions("9.0", "13.0") < 0)
+        assertTrue(compareVersions("10.15", "9.0") > 0)
     }
 
     @Test
@@ -51,7 +52,36 @@ class UpdateOsFloorTest {
         // Exactly 0, not merely "<= 0": "13.0-beta" parses its last component as 0
         // and 13.0 has no third component, so they compare equal. Asserting the
         // looser bound would still pass if this started returning -1.
-        assertEquals(0, UpdateInstaller.compareVersions("13.0-beta", "13.0"))
+        assertEquals(0, compareVersions("13.0-beta", "13.0"))
+    }
+
+    @Test
+    fun `an unsupported Mac is refused`() {
+        // The load-bearing assertion: this is what stands between a macOS 12 user
+        // and an irreversible rm -rf of their working install.
+        val message = osFloorMessage(required = "13.0", current = "12.7.6")
+        assertNotNull(message)
+        assertTrue(message.contains("13.0") && message.contains("12.7.6"))
+    }
+
+    @Test
+    fun `a supported Mac is allowed`() {
+        // Pinned separately from the case above so an inverted argument order is
+        // caught. Swapping `required` and `current` at the call site keeps every
+        // comparator test green while blocking all supported Macs — this pair is
+        // the only thing that fails.
+        assertNull(osFloorMessage(required = "13.0", current = "13.0.1"))
+        assertNull(osFloorMessage(required = "13.0", current = "14.2"))
+    }
+
+    @Test
+    fun `unknown versions fail open rather than blocking the update`() {
+        // Blank must mean "unknown", not "version zero" — treating it as zero would
+        // sort below any floor and refuse every update.
+        assertNull(osFloorMessage(required = null, current = "12.0"))
+        assertNull(osFloorMessage(required = "13.0", current = null))
+        assertNull(osFloorMessage(required = "13.0", current = ""))
+        assertNull(osFloorMessage(required = "", current = "12.0"))
     }
 
     @Test
@@ -61,7 +91,7 @@ class UpdateOsFloorTest {
         // Info.plist exercises the same branch as an unreadable one.
         val bundle = createTempDirectory("no-plist").toFile()
         try {
-            assertNull(UpdateInstaller.unsupportedOsError(bundle))
+            assertNull(unsupportedOsError(bundle))
         } finally {
             bundle.deleteRecursively()
         }

@@ -219,7 +219,17 @@ object UpdateScriptGenerator {
                 MIN_OS=""
             fi
             if [ -n "${'$'}MIN_OS" ]; then
-                CUR_OS=${'$'}(sw_vers -productVersion)
+                # Same fail-open rule as MIN_OS above: an empty CUR_OS would sort
+                # ahead of any version and refuse the update with a dialog reading
+                # "this Mac runs macOS ." The script runs detached with whatever
+                # environment launchScript gives it, so sw_vers is not guaranteed.
+                CUR_OS=${'$'}(sw_vers -productVersion 2>/dev/null)
+                if [ -z "${'$'}CUR_OS" ]; then
+                    echo "Could not determine the current macOS version; proceeding without an OS check"
+                    MIN_OS=""
+                fi
+            fi
+            if [ -n "${'$'}MIN_OS" ]; then
                 if [ "${'$'}(printf '%s\n%s\n' "${'$'}MIN_OS" "${'$'}CUR_OS" | sort -V | head -n 1)" != "${'$'}MIN_OS" ]; then
                     echo "This BOSS release requires macOS ${'$'}MIN_OS or later; this Mac runs ${'$'}CUR_OS."
                     echo "Update cancelled — your current installation has been left untouched."

@@ -101,6 +101,7 @@ object BrowserEngineSettingsManager {
                     LogCategory.BROWSER,
                     "Could not clear redundant engine pin",
                     mapOf("error" to it.toString()),
+                    error = it as? Exception,
                 )
             }
         }
@@ -112,12 +113,11 @@ object BrowserEngineSettingsManager {
             // Normalise here too, so the invariant holds for any future caller
             // rather than depending on the Settings UI never writing a pin equal
             // to the bundled version.
-            @Suppress("NAME_SHADOWING")
-            val settings = settings.withoutRedundantPin()
-            _currentSettings.value = settings
+            val normalized = settings.withoutRedundantPin()
+            _currentSettings.value = normalized
             try {
                 settingsFile.parentFile?.mkdirs()
-                settingsFile.writeText(json.encodeToString(BrowserEngineSettings.serializer(), settings))
+                settingsFile.writeText(json.encodeToString(BrowserEngineSettings.serializer(), normalized))
                 logger.debug(LogCategory.BROWSER, "Browser engine settings saved")
             } catch (e: Exception) {
                 logger.warn(LogCategory.BROWSER, "Error saving browser engine settings", error = e)
