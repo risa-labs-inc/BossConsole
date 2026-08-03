@@ -1,6 +1,9 @@
 package ai.rever.boss.plugin.loader
 
 import java.io.File
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 /**
  * A plugin's store signature travels to load time as a `<jar>.sig` sidecar —
@@ -33,12 +36,37 @@ object PluginSignatureSidecar {
         if (!signatureBase64.isNullOrBlank()) write(jarPath, signatureBase64) else delete(jarPath)
     }
 
-    /** Persist the base64 store signature beside [jarPath]. Best-effort. */
+    /**
+     * Persist the base64 store signature beside [jarPath]. Best-effort.
+     *
+     * Written to a temp file and moved into place rather than truncate-then-write:
+     * sidecars are now also written on a background scope *while* plugin loading
+     * reads them, and a read landing mid-write would see truncated base64 — which
+     * is a present-but-invalid signature, i.e. a hard load failure for that
+     * session, not the benign "no signature" case. The move is atomic where the
+     * filesystem supports it and falls back to a plain replace where it doesn't.
+     */
     fun write(
         jarPath: String,
         signatureBase64: String,
     ) {
-        File(pathFor(jarPath)).writeText(signatureBase64)
+        val target = File(pathFor(jarPath))
+        val tmp = File("${target.absolutePath}.tmp")
+        try {
+            tmp.writeText(signatureBase64)
+            try {
+                Files.move(
+                    tmp.toPath(),
+                    target.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.ATOMIC_MOVE,
+                )
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(tmp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
+        } finally {
+            tmp.delete()
+        }
     }
 
     /** The stored base64 signature, or null when no sidecar exists. */
