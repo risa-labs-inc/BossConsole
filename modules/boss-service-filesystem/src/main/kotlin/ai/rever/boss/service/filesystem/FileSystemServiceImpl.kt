@@ -3,6 +3,8 @@ package ai.rever.boss.service.filesystem
 import ai.rever.boss.ipc.proto.Empty
 import ai.rever.boss.ipc.proto.services.*
 import com.google.protobuf.ByteString
+import io.grpc.Status
+import io.grpc.StatusException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
@@ -11,7 +13,10 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import java.io.File
+import java.io.IOException
+import java.nio.file.AccessDeniedException
 import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.FileAlreadyExistsException
 import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.nio.file.Path
@@ -213,6 +218,13 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
      * unconditionally, so every failure — a missing source, a permissions error, the Windows
      * overwrite case above — was reported to the caller as success. A silent no-op is worse than
      * the platform bug it was hiding.
+     *
+     * Failures are raised as [StatusException] rather than as the underlying [IOException], because
+     * only the former reaches the caller intact: gRPC deliberately does not leak exception messages,
+     * so an `IOException` out of a handler arrives as a bare `UNKNOWN` with no description, and a
+     * plugin author would see the same opaque failure for a missing source as for a refused
+     * overwrite. `Empty` leaves no response field to put an error in — unlike `readFile`/`writeFile`
+     * here, which hand-roll an `errorMessage` — so the status is the only channel there is.
      */
     override suspend fun renameFile(request: RenameFileRequest): Empty =
         withContext(Dispatchers.IO) {
@@ -221,18 +233,44 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
             validatePath(request.destinationPath)
             val source = Paths.get(request.sourcePath)
             val dest = Paths.get(request.destinationPath)
-            if (request.overwrite) {
-                moveReplacing(source, dest)
-            } else {
-                // The pre-check is kept for the message; the move itself is what enforces it, so a
-                // destination appearing between the two fails rather than being clobbered.
-                if (Files.exists(dest)) {
-                    throw IllegalStateException("Destination already exists: ${request.destinationPath}")
+            try {
+                if (request.overwrite) {
+                    moveReplacing(source, dest)
+                } else {
+                    // The pre-check is kept for the message; the move enforces it again, so the
+                    // clobber window shrinks to the JDK's own stat-then-rename. On Windows MoveFile
+                    // refuses at the syscall; on POSIX rename(2) still replaces, so this narrows
+                    // the race rather than closing it — closing it needs renameat2(RENAME_NOREPLACE),
+                    // which the JDK does not expose.
+                    if (Files.exists(dest)) {
+                        throw alreadyExists(request.destinationPath)
+                    }
+                    Files.move(source, dest)
                 }
-                Files.move(source, dest)
+            } catch (e: FileAlreadyExistsException) {
+                throw alreadyExists(request.destinationPath, e)
+            } catch (e: java.nio.file.NoSuchFileException) {
+                throw StatusException(
+                    Status.NOT_FOUND.withDescription("No such file: ${e.file ?: request.sourcePath}").withCause(e),
+                )
+            } catch (e: AccessDeniedException) {
+                throw StatusException(
+                    Status.PERMISSION_DENIED.withDescription("Access denied: ${e.file ?: request.sourcePath}").withCause(e),
+                )
+            } catch (e: IOException) {
+                throw StatusException(
+                    Status.INTERNAL.withDescription("Rename failed: ${e.message ?: e::class.java.simpleName}").withCause(e),
+                )
             }
             Empty.getDefaultInstance()
         }
+
+    private fun alreadyExists(
+        destinationPath: String,
+        cause: Throwable? = null,
+    ) = StatusException(
+        Status.ALREADY_EXISTS.withDescription("Destination already exists: $destinationPath").withCause(cause),
+    )
 
     override fun watchFileChanges(request: WatchFileChangesRequest): Flow<FileChangeEvent> =
         flow {

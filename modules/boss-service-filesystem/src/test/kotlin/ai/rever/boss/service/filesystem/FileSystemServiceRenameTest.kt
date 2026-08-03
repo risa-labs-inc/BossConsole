@@ -1,9 +1,10 @@
 package ai.rever.boss.service.filesystem
 
 import ai.rever.boss.ipc.proto.services.RenameFileRequest
+import io.grpc.Status
+import io.grpc.StatusException
 import kotlinx.coroutines.runBlocking
 import java.io.File
-import java.nio.file.NoSuchFileException
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -24,6 +25,10 @@ import kotlin.test.assertTrue
  *
  * The overwrite test can therefore only fail on `build-test (windows-latest)`; the rest fail
  * everywhere.
+ *
+ * These call [FileSystemServiceImpl] directly rather than over a channel, so they pin the status
+ * codes and descriptions the handler *raises*, not what a client receives. A real round-trip would
+ * be the stronger test; there is no in-process gRPC harness in this module today.
  */
 class FileSystemServiceRenameTest {
     private val service = FileSystemServiceImpl()
@@ -82,8 +87,9 @@ class FileSystemServiceRenameTest {
         val source = File(dir, "source.txt").apply { writeText("new") }
         val dest = File(dir, "dest.txt").apply { writeText("old") }
 
-        assertFailsWith<IllegalStateException> { rename(source, dest, overwrite = false) }
+        val failure = assertFailsWith<StatusException> { rename(source, dest, overwrite = false) }
 
+        assertEquals(Status.Code.ALREADY_EXISTS, failure.status.code)
         assertEquals("old", dest.readText(), "the destination must survive a refused rename")
         assertTrue(source.exists(), "the source must survive a refused rename")
     }
@@ -95,9 +101,27 @@ class FileSystemServiceRenameTest {
         val source = File(dir, "does-not-exist.txt")
         val dest = File(dir, "dest.txt")
 
-        assertFailsWith<NoSuchFileException> { rename(source, dest, overwrite = true) }
+        val failure = assertFailsWith<StatusException> { rename(source, dest, overwrite = true) }
 
+        assertEquals(Status.Code.NOT_FOUND, failure.status.code)
         assertFalse(dest.exists())
+    }
+
+    @Test
+    fun `failures carry a description, because the status is the only channel there is`() {
+        // gRPC does not leak exception messages: an IOException out of a handler reaches the caller
+        // as a bare UNKNOWN. `Empty` has no errorMessage field to fall back on - unlike readFile and
+        // writeFile here - so without an explicit status the plugin sees the same opaque failure for
+        // a missing source as for a refused overwrite.
+        val source = File(dir, "source.txt").apply { writeText("new") }
+        val dest = File(dir, "dest.txt").apply { writeText("old") }
+
+        val refused = assertFailsWith<StatusException> { rename(source, dest, overwrite = false) }
+        val missing = assertFailsWith<StatusException> { rename(File(dir, "gone.txt"), dest, overwrite = true) }
+
+        assertTrue(refused.status.description.orEmpty().contains("dest.txt"), "got: ${refused.status.description}")
+        assertTrue(missing.status.description.orEmpty().contains("gone.txt"), "got: ${missing.status.description}")
+        assertTrue(refused.status.code != missing.status.code, "distinct failures need distinct codes")
     }
 
     @Test
