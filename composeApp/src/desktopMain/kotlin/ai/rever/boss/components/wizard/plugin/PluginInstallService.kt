@@ -5,6 +5,7 @@ import ai.rever.boss.plugin.PluginPersistence
 import ai.rever.boss.plugin.PluginStoreSetup
 import ai.rever.boss.plugin.api.PluginManifest
 import ai.rever.boss.plugin.repository.PluginWithSource
+import ai.rever.boss.utils.atomicMoveFrom
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.Dispatchers
@@ -164,8 +165,9 @@ class PluginInstallService(
                     val finalFile = File(pluginDir, "${plugin.id}-$actualVersion.jar")
                     val downloadedFile = File(downloadedPath)
                     if (downloadedFile.absolutePath != finalFile.absolutePath) {
-                        if (finalFile.exists()) finalFile.delete()
-                        downloadedFile.renameTo(finalFile)
+                        // Was delete-then-renameTo, which works on Windows but leaves a window in
+                        // which neither file exists — a crash there loses an installed plugin jar.
+                        finalFile.atomicMoveFrom(downloadedFile)
                     }
                     val jarPath = finalFile.absolutePath
 
