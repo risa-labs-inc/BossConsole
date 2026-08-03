@@ -6,19 +6,17 @@ import java.util.concurrent.TimeUnit
 /** Bound on the PlistBuddy read below; a hung helper must not wedge the install path. */
 private const val PLIST_READ_TIMEOUT_SECONDS = 5L
 
-/**
- * Refusing an update this Mac cannot launch.
- *
- * Engine upgrades move the app's minimum macOS (JxBrowser 9.4.0 / Chromium 151
- * took it 12.0 → 13.0) and the release manifest carries no minimum-OS field, so
- * nothing upstream stops an unsupported update being offered. The installer path
- * `rm -rf`s the installed `BOSS.app` before copying the new one, so without a
- * check a user on an older macOS loses a working install and gets one Launch
- * Services refuses to open, with no way back.
- *
- * Kept out of [UpdateInstaller] because none of it touches that object's state and
- * it is the part most worth testing in isolation.
- */
+// Refusing an update this Mac cannot launch.
+//
+// Engine upgrades move the app's minimum macOS (JxBrowser 9.4.0 / Chromium 151
+// took it 12.0 -> 13.0) and the release manifest carries no minimum-OS field, so
+// nothing upstream stops an unsupported update being offered. The installer path
+// `rm -rf`s the installed BOSS.app before copying the new one, so without a check
+// a user on an older macOS loses a working install and gets one Launch Services
+// refuses to open, with no way back.
+//
+// Kept out of UpdateInstaller because none of it touches that object's state and
+// it is the part most worth testing in isolation.
 
 /**
  * A message explaining why [appBundle] cannot run here, or null if it can.
@@ -75,7 +73,7 @@ internal fun osFloorMessage(
  * this check before the destructive step. Note PlistBuddy reports a missing key on
  * *stdout* with a non-zero exit, so the exit status is what has to be trusted.
  */
-private fun readMinimumSystemVersion(appBundle: File): String? =
+internal fun readMinimumSystemVersion(appBundle: File): String? =
     runCatching {
         val plist = File(appBundle, "Contents/Info.plist")
         if (!plist.exists()) return@runCatching null
@@ -85,16 +83,23 @@ private fun readMinimumSystemVersion(appBundle: File): String? =
                 "-c",
                 "Print :LSMinimumSystemVersion",
                 plist.absolutePath,
-            ).start()
+            ).redirectError(ProcessBuilder.Redirect.DISCARD)
+                .start()
+        // waitFor BEFORE readText. readText blocks until stdout hits EOF, so
+        // reading first means a PlistBuddy that hangs with the pipe open never
+        // reaches the timeout at all — the bound would be dead code and the
+        // install path would wedge indefinitely, which is the exact failure this
+        // timeout exists to prevent. The output is a few bytes and cannot fill the
+        // pipe buffer, so nothing is lost by waiting first.
+        if (!process.waitFor(PLIST_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            process.destroyForcibly()
+            return@runCatching null
+        }
         val value =
             process.inputStream
                 .bufferedReader()
                 .readText()
                 .trim()
-        if (!process.waitFor(PLIST_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-            process.destroyForcibly()
-            return@runCatching null
-        }
         if (process.exitValue() == 0) value.ifBlank { null } else null
     }.getOrNull()
 

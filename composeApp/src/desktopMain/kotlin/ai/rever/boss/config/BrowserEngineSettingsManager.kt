@@ -78,6 +78,24 @@ object BrowserEngineSettingsManager {
                 BrowserEngineSettings()
             }
 
+        // Any pin that is not the bundled version is fatal, not just a newer one:
+        // JxBrowser resolves its native toolkit under
+        // Versions/<VersionInfo.chromiumVersion()>, a value baked into the jar, so
+        // an engine carrying any other Chromium build fails the native load. The
+        // "recovery and testing" escape hatch cannot work by JxBrowser's own
+        // design. Clearing a pin the user deliberately set is not this class's call
+        // — but leaving it silent means the failure arrives as an UnsatisfiedLinkError
+        // naming a path and no cause, which is what made this expensive to diagnose
+        // the first time. BossConsole#118 tracks refusing it outright.
+        val stalePin = loaded.selectedVersion
+        if (stalePin != null && stalePin != VersionConstants.JXBROWSER_VERSION) {
+            logger.warn(
+                LogCategory.BROWSER,
+                "Engine pin does not match this build's JxBrowser version — the browser will likely fail to start",
+                mapOf("pinned" to stalePin, "bundled" to VersionConstants.JXBROWSER_VERSION),
+            )
+        }
+
         val normalized = loaded.withoutRedundantPin()
         if (normalized != loaded) {
             // Write the normalisation back so the file stops carrying the pin at

@@ -85,13 +85,15 @@ class UpdateOsFloorTest {
     }
 
     @Test
-    fun `an app bundle with no Info-plist fails open`() {
-        // Fail-open is the property whose inversion blocks every update, so it is
-        // worth pinning independently of the comparison. A directory with no
-        // Info.plist exercises the same branch as an unreadable one.
+    fun `a bundle with no Info-plist reads as unknown rather than blocking`() {
+        // Asserted against readMinimumSystemVersion directly, not unsupportedOsError:
+        // that one short-circuits on os.name before touching the plist, so on the
+        // Linux and Windows legs — two of the three — it asserted nothing and would
+        // sleep through a regression in this branch. The plist.exists() guard
+        // returns before ProcessBuilder, so this stays pure and runs everywhere.
         val bundle = createTempDirectory("no-plist").toFile()
         try {
-            assertNull(unsupportedOsError(bundle))
+            assertNull(readMinimumSystemVersion(bundle))
         } finally {
             bundle.deleteRecursively()
         }
