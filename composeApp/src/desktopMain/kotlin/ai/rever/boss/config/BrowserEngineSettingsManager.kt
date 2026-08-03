@@ -45,9 +45,22 @@ object BrowserEngineSettingsManager {
     private val _currentSettings = MutableStateFlow(loadSync())
     val currentSettings: StateFlow<BrowserEngineSettings> = _currentSettings.asStateFlow()
 
-    /** The engine version the app should install and run: user pin, else the bundled JxBrowser version. */
+    /**
+     * The engine version the app should install and run: user pin, else the bundled
+     * JxBrowser version.
+     *
+     * A pin equal to the bundled version is discarded rather than honoured, so it
+     * cannot survive to bite at the *next* bump. The users who hit the
+     * `UnsatisfiedLinkError` this behaviour was added for are exactly those who
+     * pinned the then-newer engine in Settings; once the app catches up, that pin
+     * is redundant, and leaving it persisted would reproduce the same crash in
+     * mirror image the moment the bundled version moves ahead of it again.
+     */
     val effectiveVersion: String
-        get() = _currentSettings.value.selectedVersion ?: VersionConstants.JXBROWSER_VERSION
+        get() =
+            _currentSettings.value.selectedVersion
+                ?.takeIf { it != VersionConstants.JXBROWSER_VERSION }
+                ?: VersionConstants.JXBROWSER_VERSION
 
     private fun loadSync(): BrowserEngineSettings =
         try {

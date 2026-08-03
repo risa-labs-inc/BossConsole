@@ -197,6 +197,28 @@ object UpdateScriptGenerator {
 
             echo "Found app bundle: ${'$'}APP_BUNDLE"
 
+            # Last line of defence before an irreversible rm -rf: refuse to install
+            # a build this Mac cannot launch. Nothing upstream gates on OS version —
+            # the release manifest carries no minimum — so without this an update
+            # that raises the floor deletes the working app, copies one Launch
+            # Services will refuse to open, and leaves no in-app way back.
+            #
+            # The requirement is read from the INCOMING bundle rather than hardcoded,
+            # so it can never drift from the DMG actually being installed and needs
+            # no maintenance when the floor moves again. If the key is unreadable we
+            # proceed: a plist that can't be parsed must not block every update.
+            MIN_OS=${'$'}(/usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "${'$'}APP_BUNDLE/Contents/Info.plist" 2>/dev/null)
+            if [ -n "${'$'}MIN_OS" ]; then
+                CUR_OS=${'$'}(sw_vers -productVersion)
+                if [ "${'$'}(printf '%s\n%s\n' "${'$'}MIN_OS" "${'$'}CUR_OS" | sort -V | head -n 1)" != "${'$'}MIN_OS" ]; then
+                    echo "This BOSS release requires macOS ${'$'}MIN_OS or later; this Mac runs ${'$'}CUR_OS."
+                    echo "Update cancelled — your current installation has been left untouched."
+                    hdiutil detach "${'$'}VOLUME" -quiet
+                    exit 1
+                fi
+                echo "macOS ${'$'}CUR_OS satisfies the required ${'$'}MIN_OS"
+            fi
+
             # Remove old app (using escaped path for security)
             echo "Removing old BOSS: $escapedTargetAppPath"
             if [ -d $escapedTargetAppPath ]; then
