@@ -119,8 +119,18 @@ class FileSystemServiceRenameTest {
         val refused = assertFailsWith<StatusException> { rename(source, dest, overwrite = false) }
         val missing = assertFailsWith<StatusException> { rename(File(dir, "gone.txt"), dest, overwrite = true) }
 
-        assertTrue(refused.status.description.orEmpty().contains("dest.txt"), "got: ${refused.status.description}")
-        assertTrue(missing.status.description.orEmpty().contains("gone.txt"), "got: ${missing.status.description}")
+        assertTrue(
+            refused.status.description
+                .orEmpty()
+                .contains("dest.txt"),
+            "got: ${refused.status.description}",
+        )
+        assertTrue(
+            missing.status.description
+                .orEmpty()
+                .contains("gone.txt"),
+            "got: ${missing.status.description}",
+        )
         assertTrue(refused.status.code != missing.status.code, "distinct failures need distinct codes")
     }
 

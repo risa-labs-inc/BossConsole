@@ -231,6 +231,7 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
             logger.info("renameFile: from={}, to={}", request.sourcePath, request.destinationPath)
             validatePath(request.sourcePath)
             validatePath(request.destinationPath)
+            val destinationExists = "Destination already exists: ${request.destinationPath}"
             val source = Paths.get(request.sourcePath)
             val dest = Paths.get(request.destinationPath)
             try {
@@ -243,34 +244,27 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
                     // the race rather than closing it — closing it needs renameat2(RENAME_NOREPLACE),
                     // which the JDK does not expose.
                     if (Files.exists(dest)) {
-                        throw alreadyExists(request.destinationPath)
+                        throw status(Status.ALREADY_EXISTS, destinationExists, null)
                     }
                     Files.move(source, dest)
                 }
             } catch (e: FileAlreadyExistsException) {
-                throw alreadyExists(request.destinationPath, e)
+                throw status(Status.ALREADY_EXISTS, destinationExists, e)
             } catch (e: java.nio.file.NoSuchFileException) {
-                throw StatusException(
-                    Status.NOT_FOUND.withDescription("No such file: ${e.file ?: request.sourcePath}").withCause(e),
-                )
+                throw status(Status.NOT_FOUND, "No such file: ${e.file ?: request.sourcePath}", e)
             } catch (e: AccessDeniedException) {
-                throw StatusException(
-                    Status.PERMISSION_DENIED.withDescription("Access denied: ${e.file ?: request.sourcePath}").withCause(e),
-                )
+                throw status(Status.PERMISSION_DENIED, "Access denied: ${e.file ?: request.sourcePath}", e)
             } catch (e: IOException) {
-                throw StatusException(
-                    Status.INTERNAL.withDescription("Rename failed: ${e.message ?: e::class.java.simpleName}").withCause(e),
-                )
+                throw status(Status.INTERNAL, "Rename failed: ${e.message ?: e::class.java.simpleName}", e)
             }
             Empty.getDefaultInstance()
         }
 
-    private fun alreadyExists(
-        destinationPath: String,
-        cause: Throwable? = null,
-    ) = StatusException(
-        Status.ALREADY_EXISTS.withDescription("Destination already exists: $destinationPath").withCause(cause),
-    )
+    private fun status(
+        code: Status,
+        description: String,
+        cause: Throwable?,
+    ) = StatusException(code.withDescription(description).withCause(cause))
 
     override fun watchFileChanges(request: WatchFileChangesRequest): Flow<FileChangeEvent> =
         flow {
