@@ -1168,7 +1168,15 @@ object FluckEngine {
                 "Refusing to start a mismatched browser engine",
                 mapOf("engineDir" to chromiumDir.toString(), "reason" to reason),
             )
-            throw IllegalStateException(reason)
+            // Record before throwing. initializationError is otherwise only set in
+            // createEngineWithProfile's catch, which this throw precedes — so
+            // initError stayed null, getBrowserState swallowed the exception, and
+            // the tab rendered "Could not initialize browser ... window not ready"
+            // instead of the message written here. Assigning it also arms the
+            // attemptCount short-circuit for this failure.
+            val error = IllegalStateException(reason)
+            initializationError = error
+            throw error
         }
 
         // Create directories if they don't exist

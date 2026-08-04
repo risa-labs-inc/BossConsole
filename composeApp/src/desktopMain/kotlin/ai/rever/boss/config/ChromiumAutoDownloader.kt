@@ -200,7 +200,11 @@ object ChromiumAutoDownloader {
         // This catches cached Chromium from older versions that didn't set execute bit correctly
         if (System.getProperty("os.name").lowercase().contains("mac")) {
             val executableName = executableNameFile.readText().trim()
-            val executablePath = dir.resolve("$executableName/Contents/MacOS/BOSS").toFile()
+            // executable.name holds the bundle name without its suffix (the branding
+            // workflow writes `basename "$APP_BUNDLE" .app`), so the directory on
+            // disk is "<name>.app". Without it this resolved to a path that never
+            // exists and the permission check below silently never ran.
+            val executablePath = dir.resolve("$executableName.app/Contents/MacOS/$executableName").toFile()
             if (executablePath.exists() && !executablePath.canExecute()) {
                 logger.info(LogCategory.BROWSER, "Chromium executable missing execute permission, will re-download")
                 return false

@@ -681,6 +681,13 @@ fun main(args: Array<String>) {
                             if (progress.isComplete) {
                                 // Download complete - create window and proceed
                                 WindowManager.createNewWindow()
+                                // The pre-warm was skipped at startup because the engine
+                                // was missing; now that it is installed, warm it so the
+                                // first tab does not pay the full boot.
+                                runCatching {
+                                    ai.rever.boss.plugin.browser.FluckEngine
+                                        .prewarmInBackground()
+                                }
                                 isDownloadingChromium = false
                             }
                         }
@@ -713,6 +720,13 @@ fun main(args: Array<String>) {
                                             downloadProgress = progress
                                             if (progress.isComplete) {
                                                 WindowManager.createNewWindow()
+                                                // The pre-warm was skipped at startup because the engine
+                                                // was missing; now that it is installed, warm it so the
+                                                // first tab does not pay the full boot.
+                                                runCatching {
+                                                    ai.rever.boss.plugin.browser.FluckEngine
+                                                        .prewarmInBackground()
+                                                }
                                                 isDownloadingChromium = false
                                             }
                                         }

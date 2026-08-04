@@ -1,6 +1,7 @@
 package ai.rever.boss.plugin.browser
 
 import com.teamdev.jxbrowser.VersionInfo
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import java.io.File
 import kotlin.io.path.createTempDirectory
 import kotlin.test.AfterTest
@@ -74,6 +75,36 @@ class ChromiumVersionMismatchTest {
         val message = FluckEngine.chromiumMismatchMessage(versionsDir())
         assertNotNull(message)
         assertTrue(message.contains("none"), "Nothing installed should read as 'none', not as a blank")
+    }
+
+    @Test
+    fun `the full bundle layout resolves through the chromiumDir entry point`() {
+        // Splitting the comparison out left frameworkVersionsDir — the layout
+        // composition — untested on every leg. It assumes executable.name holds the
+        // bundle name WITHOUT its suffix and appends ".app"; if that ever drifts the
+        // preflight silently degrades to a no-op (null, no claim made) and the
+        // defence-in-depth disappears with nothing failing. Genuinely macOS-only, so
+        // skipping on the other two legs is honest here.
+        assumeTrue(
+            System
+                .getProperty("os.name")
+                .orEmpty()
+                .lowercase()
+                .contains("mac"),
+            "The Versions/<chromium> bundle layout is macOS-specific",
+        )
+        val engine = createTempDirectory("engine").toFile()
+        temps.add(engine)
+        File(engine, "executable.name").writeText("BOSS")
+        File(
+            engine,
+            "BOSS.app/Contents/Frameworks/Chromium Framework.framework/Versions/150.0.7871.47/Libraries",
+        ).mkdirs()
+
+        val message = FluckEngine.chromiumVersionMismatch(engine.toPath())
+
+        assertNotNull(message, "A stale engine must be refused through the real entry point")
+        assertTrue(message.contains("150.0.7871.47"))
     }
 
     @Test
