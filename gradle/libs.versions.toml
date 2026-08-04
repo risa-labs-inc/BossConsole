@@ -27,13 +27,23 @@ kotlinx-datetime = "0.8.0-0.6.x-compat"
 kotlinx-serialization = "1.11.0"
 # ktor is NOT shared with plugins (no io.ktor prefix in defaultSharedPackages),
 # so a plugin's bundled ktor is unaffected by this pin; it constrains the host's
-# own client stack only.
+# own client stack only. The one mechanism that could change that is a plugin
+# opting in via manifest sharedPackages — checked across boss_plugins, and the
+# only manifest declaring any is boss-plugin-api, for its own package. If a
+# plugin ever declares io.ktor, this pin becomes a cross-repo change.
 #
-# 3.5.0 arrived as an automated bump (#736) and was reverted. The reason on
-# record was plugin compatibility, which cannot be right — the host's ktor never
-# reaches a plugin. NO host-side diagnosis was ever recorded, so there is no
-# known reason this cannot move: treat the next 3.5.x bump as worth trying, and
-# if it fails, write down what broke here.
+# 3.5.0 arrived as an automated bump (#736) and was reverted, citing plugin
+# compatibility with no host-side diagnosis recorded — which the isolation above
+# says cannot have been the reason. 3.5.1 was retried in #113 and landed clean
+# (build-test green on all three OSes); nothing broke, so that revert should not
+# be read as a standing objection to 3.5.x.
+#
+# This pin is COUPLED to `supabase`: supabase-kt depends on ktor directly
+# (3.6.0 -> 3.4.3, 3.7.0 -> 3.5.1). Bump the two together. Taking a supabase
+# bump alone leaves the host's direct ktor deps on the old version while
+# ktor-server-core/cio resolve forward transitively, which is how you end up
+# with mixed ktor artifacts on one classpath. Check what the supabase Gradle
+# module metadata requires before moving either line.
 ktor = "3.5.1"
 logback = "1.5.38"
 precompose = "1.6.2"
