@@ -4,6 +4,7 @@ import ai.rever.boss.components.plugin.tab_types.fluck.DownloadItem
 import ai.rever.boss.components.plugin.tab_types.fluck.DownloadManager
 import ai.rever.boss.components.plugin.tab_types.fluck.DownloadSettings
 import ai.rever.boss.components.plugin.tab_types.fluck.DownloadStatus
+import ai.rever.boss.config.ChromiumAutoDownloader
 import ai.rever.boss.config.JxBrowserConfig
 import ai.rever.boss.platform.FileNameSanitizer
 import ai.rever.boss.platform.FileSystemUtils
@@ -1195,11 +1196,10 @@ object FluckEngine {
      * present, just stale) and names a folder that may not be the offending one.
      */
     private fun noUsableEngineReason(): String {
-        val present =
-            listOfNotNull(
-                getBundledChromiumPath(),
-                BossDirectories.resolve("boss-chromium").toPath(),
-            ).filter { isValidChromiumDir(it) }
+        // Derived from engineCandidates so the reason can never describe a
+        // different set than the one that was searched. cacheHealthy = true so a
+        // cache the resolver skipped can still be named in the diagnosis.
+        val present = engineCandidates(cacheHealthy = true).filter { isValidChromiumDir(it) }
 
         return present.firstNotNullOfOrNull { chromiumVersionMismatch(it) }
             ?: if (present.isNotEmpty()) {
@@ -1229,7 +1229,12 @@ object FluckEngine {
      * "is an engine installed?" by inspecting only the cache is what let a mismatched
      * engine boot with the guard reporting everything fine (BossConsole#121).
      */
-    internal fun resolveEngineDir(): java.nio.file.Path? = firstUsableEngineDir(engineCandidates())
+
+    /** Whether the downloaded cache is well-formed and at the required version. */
+    private fun cacheIsHealthy(): Boolean = ChromiumAutoDownloader.isChromiumInstalled()
+
+    internal fun resolveEngineDir(cacheHealthy: Boolean = cacheIsHealthy()): java.nio.file.Path? =
+        firstUsableEngineDir(engineCandidates(cacheHealthy = cacheHealthy))
 
     /**
      * Engine directories to consider, in priority order.
@@ -1256,9 +1261,7 @@ object FluckEngine {
     internal fun engineCandidates(
         bundled: java.nio.file.Path? = getBundledChromiumPath(),
         cache: java.nio.file.Path = BossDirectories.resolve("boss-chromium").toPath(),
-        cacheHealthy: Boolean =
-            ai.rever.boss.config.ChromiumAutoDownloader
-                .isChromiumInstalled(),
+        cacheHealthy: Boolean = cacheIsHealthy(),
     ): List<java.nio.file.Path> = listOfNotNull(bundled, cache.takeIf { cacheHealthy })
 
     /**
@@ -1271,7 +1274,46 @@ object FluckEngine {
         candidates.firstOrNull { isValidChromiumDir(it) && chromiumVersionMismatch(it) == null }
 
     /** Whether an engine that can actually boot is present. */
-    internal fun hasUsableEngine(): Boolean = resolveEngineDir() != null
+    internal fun hasUsableEngine(cacheHealthy: Boolean): Boolean = resolveEngineDir(cacheHealthy) != null
+
+    /** What startup should do about the engine. */
+    internal enum class EngineStartupAction {
+        /** An engine is present and usable — boot normally. */
+        Boot,
+
+        /** Nothing usable and a fetch can repair it — show the download UI. */
+        Download,
+
+        /**
+         * Nothing usable, but the cache is healthy and already stamped with the
+         * version we would fetch — so the published archive does not carry the
+         * Chromium build this jar needs. Re-fetching would download hundreds of MB
+         * every launch and never converge; start instead and let the browser report
+         * the mismatch.
+         */
+        BootAndReport,
+    }
+
+    /**
+     * The startup decision, as a function of the two things it depends on.
+     *
+     * Extracted from `fun main` because it is the highest-risk logic in this area
+     * and was the only part with no coverage. Keyed on [cacheHealthy] — i.e.
+     * `isChromiumInstalled()` — rather than on version.txt alone: that file still
+     * reads correctly for a cache with a missing `executable.name` or a lost
+     * execute bit, both of which a re-download *does* repair. Suppressing the
+     * download on the version stamp alone turned ordinary local corruption into a
+     * terminal state with no in-app way out.
+     */
+    internal fun engineStartupAction(
+        hasUsableEngine: Boolean,
+        cacheHealthy: Boolean,
+    ): EngineStartupAction =
+        when {
+            hasUsableEngine -> EngineStartupAction.Boot
+            cacheHealthy -> EngineStartupAction.BootAndReport
+            else -> EngineStartupAction.Download
+        }
 
     /**
      * Why the engine at [chromiumDir] cannot serve this build's JxBrowser, or null

@@ -237,6 +237,42 @@ class ChromiumVersionMismatchTest {
     }
 
     @Test
+    fun `a corrupt cache is still downloaded, not written off as archive skew`() {
+        // The regression this PR's second cut shipped. Suppressing the download on
+        // the version stamp alone caught states a re-download DOES repair — a
+        // missing executable.name, or a macOS binary that lost its execute bit —
+        // because version.txt still reads correctly in both. That turned ordinary
+        // local corruption into a terminal state with no in-app way out.
+        assertEquals(
+            FluckEngine.EngineStartupAction.Download,
+            FluckEngine.engineStartupAction(hasUsableEngine = false, cacheHealthy = false),
+        )
+    }
+
+    @Test
+    fun `a healthy cache that is still unusable means archive skew, not a re-download`() {
+        // Healthy and stamped with the version we would fetch, yet unusable: the
+        // published archive does not carry the build this jar needs. Re-fetching
+        // would download hundreds of MB every launch and never converge.
+        assertEquals(
+            FluckEngine.EngineStartupAction.BootAndReport,
+            FluckEngine.engineStartupAction(hasUsableEngine = true.not(), cacheHealthy = true),
+        )
+    }
+
+    @Test
+    fun `a usable engine just boots`() {
+        assertEquals(
+            FluckEngine.EngineStartupAction.Boot,
+            FluckEngine.engineStartupAction(hasUsableEngine = true, cacheHealthy = false),
+        )
+        assertEquals(
+            FluckEngine.EngineStartupAction.Boot,
+            FluckEngine.engineStartupAction(hasUsableEngine = true, cacheHealthy = true),
+        )
+    }
+
+    @Test
     fun `the message carries no filesystem path`() {
         // It reaches classifyError, which substring-matches for "host", "connect",
         // "license" and friends to choose a remedy — so a home directory containing
