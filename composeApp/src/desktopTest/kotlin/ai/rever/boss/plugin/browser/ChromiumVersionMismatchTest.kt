@@ -180,6 +180,63 @@ class ChromiumVersionMismatchTest {
     }
 
     @Test
+    fun `the usability predicate alone cannot police the cache off macOS`() {
+        // Pins WHY resolveEngineDir gates the cache on isChromiumInstalled() rather
+        // than relying on the predicate. frameworkVersionsDir returns null off
+        // macOS by design, so chromiumMismatchMessage makes no claim there and the
+        // predicate collapses to "executable.name exists" — a stale Windows/Linux
+        // cache would sail through, pre-warm against the wrong engine, and bring
+        // back the UnsatisfiedLinkError. version.txt is the only cross-platform
+        // version signal, and isChromiumInstalled is the only thing that reads it.
+        val stale = engineBundle("150.0.7871.47")
+
+        if (isMac) {
+            assertNotNull(
+                FluckEngine.chromiumVersionMismatch(stale),
+                "On macOS the framework layout is readable, so the predicate does catch it",
+            )
+        } else {
+            assertNull(
+                FluckEngine.chromiumVersionMismatch(stale),
+                "Off macOS the predicate cannot tell — which is exactly why the cache " +
+                    "candidate must be gated on isChromiumInstalled() instead",
+            )
+        }
+    }
+
+    @Test
+    fun `an unhealthy cache is not offered as a candidate`() {
+        // The regression this PR's first cut shipped: swapping isChromiumInstalled()
+        // for the usability predicate removed the version check on Windows and Linux
+        // entirely, because frameworkVersionsDir makes no claim off macOS. Runs on
+        // every leg — the point is that the gate is applied at all, not what it
+        // decides.
+        val cache = engineBundle("150.0.7871.47")
+
+        assertEquals(
+            emptyList(),
+            FluckEngine.engineCandidates(bundled = null, cache = cache, cacheHealthy = false),
+            "A cache that isChromiumInstalled() rejects must not be a candidate",
+        )
+        assertEquals(
+            listOf(cache),
+            FluckEngine.engineCandidates(bundled = null, cache = cache, cacheHealthy = true),
+            "A healthy cache must still be offered",
+        )
+    }
+
+    @Test
+    fun `the bundled engine outranks the cache`() {
+        val bundled = engineBundle(VersionInfo.chromiumVersion())
+        val cache = engineBundle(VersionInfo.chromiumVersion())
+
+        assertEquals(
+            listOf(bundled, cache),
+            FluckEngine.engineCandidates(bundled = bundled, cache = cache, cacheHealthy = true),
+        )
+    }
+
+    @Test
     fun `the message carries no filesystem path`() {
         // It reaches classifyError, which substring-matches for "host", "connect",
         // "license" and friends to choose a remedy — so a home directory containing

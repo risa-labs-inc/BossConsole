@@ -451,10 +451,28 @@ fun main(args: Array<String>) {
     // it and skip the pre-warm despite a perfectly good bundled engine
     // (BossConsole#121). resolveEngineDir applies the same priority order and the
     // same version check the boot will.
-    val chromiumNeedsDownload =
-        !ai.rever.boss.plugin.browser.FluckEngine
+    val hasUsableEngine =
+        ai.rever.boss.plugin.browser.FluckEngine
             .hasUsableEngine()
-    if (chromiumNeedsDownload) {
+
+    // Downloading the same version again cannot help. If the cache is already
+    // stamped with the version we would fetch and the engine is still unusable, the
+    // published archive does not carry the Chromium build this jar needs — exactly
+    // the skew behind the 9.3.0/9.4.0 incident. Re-fetching would then re-download
+    // several hundred MB on every launch and never converge, so start instead and
+    // let the browser surface the specific mismatch.
+    val redownloadWouldRepeat =
+        !hasUsableEngine && ChromiumAutoDownloader.installedVersion() == ChromiumAutoDownloader.effectiveVersion
+
+    val chromiumNeedsDownload = !hasUsableEngine && !redownloadWouldRepeat
+    if (redownloadWouldRepeat) {
+        logger.error(
+            LogCategory.SYSTEM,
+            "Installed engine is stamped with the required version but is still unusable - " +
+                "the published archive does not match this build; not re-downloading",
+            mapOf("required" to ChromiumAutoDownloader.effectiveVersion),
+        )
+    } else if (chromiumNeedsDownload) {
         logger.info(
             LogCategory.SYSTEM,
             "No usable browser engine - will prompt for download",

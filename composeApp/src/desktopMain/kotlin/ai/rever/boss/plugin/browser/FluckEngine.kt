@@ -1149,35 +1149,24 @@ object FluckEngine {
         // requested lazily on the first user-initiated screen share, after an in-app
         // rationale dialog (see setupCaptureSessionHandler + ScreenCaptureNotifier).
 
-        val chromiumDir = getChromiumDir()
-
-        // Refuse a mismatched engine with a message that names the cause.
-        //
-        // Left to JxBrowser this surfaces as `UnsatisfiedLinkError: Can't load
-        // library: .../Versions/<x>/Libraries/libtoolkit.dylib` — a path and no
-        // explanation, which cost a full debugging session to trace the first time.
-        // Startup checks the installed version before booting anything, so in the
-        // normal flow this never fires; it exists because that ordering is a
-        // convention a future edit can silently break, and when it does break the
-        // failure should say what is wrong rather than where a file was missing.
-        chromiumVersionMismatch(chromiumDir)?.let { reason ->
-            // The path is logged rather than folded into the message: the message
-            // reaches classifyError, which substring-matches it to choose a remedy.
-            logger.error(
-                LogCategory.BROWSER,
-                "Refusing to start a mismatched browser engine",
-                mapOf("engineDir" to chromiumDir.toString(), "reason" to reason),
-            )
-            // Record before throwing. initializationError is otherwise only set in
-            // createEngineWithProfile's catch, which this throw precedes — so
-            // initError stayed null, getBrowserState swallowed the exception, and
-            // the tab rendered "Could not initialize browser ... window not ready"
-            // instead of the message written here. Assigning it also arms the
-            // attemptCount short-circuit for this failure.
-            val error = IllegalStateException(reason)
-            initializationError = error
-            throw error
-        }
+        // getChromiumDir now returns only a directory that already passed the
+        // version check, so the separate veto that used to sit here can never fire
+        // — resolveEngineDir enforces it structurally instead of by convention.
+        // What remains is making sure its diagnosis reaches the user: this throw
+        // precedes createEngineWithProfile, which is the only other place
+        // initializationError is assigned, so without recording it here initError
+        // stays null, getBrowserState swallows the exception, and the tab renders
+        // "Could not initialize browser ... window not ready" instead of the reason.
+        val chromiumDir =
+            runCatching { getChromiumDir() }.getOrElse { e ->
+                logger.error(
+                    LogCategory.BROWSER,
+                    "No usable browser engine",
+                    mapOf("reason" to (e.message ?: "unknown")),
+                )
+                initializationError = e
+                throw e
+            }
 
         // Create directories if they don't exist
         chromiumDir.toFile().mkdirs()
@@ -1194,12 +1183,33 @@ object FluckEngine {
      * 1. Bundled BOSS-branded Chromium (in app resources)
      * 2. Cached BOSS-branded Chromium (~/.boss/boss-chromium/)
      */
-    private fun getChromiumDir(): java.nio.file.Path =
-        resolveEngineDir()
-            ?: throw IllegalStateException(
+    private fun getChromiumDir(): java.nio.file.Path = resolveEngineDir() ?: throw IllegalStateException(noUsableEngineReason())
+
+    /**
+     * Why no engine could be selected, as specifically as the candidates allow.
+     *
+     * Since [resolveEngineDir] only ever returns a directory that already passed
+     * the version check, the veto inside engine creation can no longer fire — this
+     * is where that diagnosis has to live instead. Without it a stale engine
+     * reports "BOSS-branded Chromium not found", which is both wrong (it is
+     * present, just stale) and names a folder that may not be the offending one.
+     */
+    private fun noUsableEngineReason(): String {
+        val present =
+            listOfNotNull(
+                getBundledChromiumPath(),
+                BossDirectories.resolve("boss-chromium").toPath(),
+            ).filter { isValidChromiumDir(it) }
+
+        return present.firstNotNullOfOrNull { chromiumVersionMismatch(it) }
+            ?: if (present.isNotEmpty()) {
+                "The installed browser engine is not usable with this build of BOSS. " +
+                    "Restart BOSS to download the matching engine."
+            } else {
                 "BOSS-branded Chromium not found. Please restart the app to trigger auto-download, " +
-                    "or manually install to ~/.boss/boss-chromium/",
-            )
+                    "or manually install to ~/.boss/boss-chromium/"
+            }
+    }
 
     /**
      * The engine directory that will actually boot, or null when none can.
@@ -1219,13 +1229,37 @@ object FluckEngine {
      * "is an engine installed?" by inspecting only the cache is what let a mismatched
      * engine boot with the guard reporting everything fine (BossConsole#121).
      */
-    internal fun resolveEngineDir(): java.nio.file.Path? =
-        firstUsableEngineDir(
-            listOfNotNull(
-                getBundledChromiumPath(),
-                BossDirectories.resolve("boss-chromium").toPath(),
-            ),
-        )
+    internal fun resolveEngineDir(): java.nio.file.Path? = firstUsableEngineDir(engineCandidates())
+
+    /**
+     * Engine directories to consider, in priority order.
+     *
+     * The cache is included only when [cacheHealthy] — `isChromiumInstalled()` by
+     * default — because that is the only check that works on EVERY platform: it
+     * compares `version.txt` against `effectiveVersion` unconditionally, and
+     * additionally rejects a macOS binary that has lost its execute bit.
+     *
+     * [chromiumVersionMismatch] cannot stand in for it. `frameworkVersionsDir`
+     * returns null off macOS by design, so the usability predicate collapses to
+     * "executable.name exists" there — a stale Windows/Linux cache would sail
+     * through the guard, pre-warm against the wrong engine, and bring back the
+     * UnsatisfiedLinkError this whole line of work exists to prevent.
+     *
+     * The bundled engine has no `version.txt` to check, but it ships inside the app
+     * image and so is consistent with the jar by construction; on macOS the
+     * framework check covers it anyway.
+     *
+     * Parameters are injectable purely so the rule is testable — the real values
+     * come from `java.home` and the user's home directory, which a test cannot
+     * fabricate.
+     */
+    internal fun engineCandidates(
+        bundled: java.nio.file.Path? = getBundledChromiumPath(),
+        cache: java.nio.file.Path = BossDirectories.resolve("boss-chromium").toPath(),
+        cacheHealthy: Boolean =
+            ai.rever.boss.config.ChromiumAutoDownloader
+                .isChromiumInstalled(),
+    ): List<java.nio.file.Path> = listOfNotNull(bundled, cache.takeIf { cacheHealthy })
 
     /**
      * The first candidate that is well-formed and carries the required Chromium build.
