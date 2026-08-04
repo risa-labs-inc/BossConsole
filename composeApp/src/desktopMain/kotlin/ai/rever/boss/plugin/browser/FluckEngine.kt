@@ -1160,7 +1160,16 @@ object FluckEngine {
         // normal flow this never fires; it exists because that ordering is a
         // convention a future edit can silently break, and when it does break the
         // failure should say what is wrong rather than where a file was missing.
-        chromiumVersionMismatch(chromiumDir)?.let { throw IllegalStateException(it) }
+        chromiumVersionMismatch(chromiumDir)?.let { reason ->
+            // The path is logged rather than folded into the message: the message
+            // reaches classifyError, which substring-matches it to choose a remedy.
+            logger.error(
+                LogCategory.BROWSER,
+                "Refusing to start a mismatched browser engine",
+                mapOf("engineDir" to chromiumDir.toString(), "reason" to reason),
+            )
+            throw IllegalStateException(reason)
+        }
 
         // Create directories if they don't exist
         chromiumDir.toFile().mkdirs()
@@ -1177,29 +1186,62 @@ object FluckEngine {
      * 1. Bundled BOSS-branded Chromium (in app resources)
      * 2. Cached BOSS-branded Chromium (~/.boss/boss-chromium/)
      */
+    private fun getChromiumDir(): java.nio.file.Path {
+        // Priority 1: Bundled BOSS-branded Chromium (in app resources)
+        val bundledDir = getBundledChromiumPath()
+        if (bundledDir != null && isValidChromiumDir(bundledDir)) {
+            return bundledDir
+        }
+
+        // Priority 2: Cached BOSS-branded Chromium
+        val cachedBrandedDir = BossDirectories.resolve("boss-chromium").toPath()
+        if (isValidChromiumDir(cachedBrandedDir)) {
+            return cachedBrandedDir
+        }
+
+        // No fallback - BOSS-branded Chromium is required
+        throw IllegalStateException(
+            "BOSS-branded Chromium not found. Please restart the app to trigger auto-download, " +
+                "or manually install to ~/.boss/boss-chromium/",
+        )
+    }
 
     /**
-     * Why [chromiumDir] cannot serve this build's JxBrowser, or null if it can.
+     * Why the engine at [chromiumDir] cannot serve this build's JxBrowser, or null
+     * if it can.
      *
      * JxBrowser loads its native toolkit from
      * `<executable>.app/Contents/Frameworks/Chromium Framework.framework/Versions/<chromium>/Libraries/`,
-     * where `<chromium>` is [com.teamdev.jxbrowser.VersionInfo.chromiumVersion] —
-     * a value compiled into the jar. So the engine on disk has to carry exactly the
-     * Chromium build this jar was made against; anything else fails at
-     * `System.load` no matter how well-formed the directory is.
+     * where `<chromium>` is [com.teamdev.jxbrowser.VersionInfo.chromiumVersion] — a
+     * value compiled into the jar. So the engine on disk has to carry exactly the
+     * Chromium build this jar was made against; anything else fails at `System.load`
+     * no matter how well-formed the directory is.
      *
-     * macOS only: the Versions/<chromium> layout is specific to the framework
-     * bundle. Other platforms return null (no claim made) rather than guessing.
+     * macOS only: the `Versions/<chromium>` layout is specific to the framework
+     * bundle. Elsewhere this makes no claim rather than guessing.
      */
-    internal fun chromiumVersionMismatch(chromiumDir: java.nio.file.Path): String? {
+    internal fun chromiumVersionMismatch(chromiumDir: java.nio.file.Path): String? =
+        frameworkVersionsDir(chromiumDir)?.let { chromiumMismatchMessage(it) }
+
+    /**
+     * The mismatch message for an already-located `Versions` directory, or null when
+     * it carries the required build.
+     *
+     * Split from the filesystem/OS probing above so the comparison — the part that
+     * decides whether an engine boots — is exercised on every CI leg rather than
+     * only the macOS one.
+     *
+     * Deliberately omits the engine path. This string reaches [classifyError], which
+     * substring-matches the message for "host", "connect", "license" and friends to
+     * pick a remedy; a home directory containing any of those would be classified as
+     * a network or licensing failure and shown the wrong advice. The path is logged
+     * at the throw site instead.
+     */
+    internal fun chromiumMismatchMessage(versionsDir: java.io.File): String? {
         val required =
             com.teamdev.jxbrowser.VersionInfo
                 .chromiumVersion()
-        val versionsDir = frameworkVersionsDir(chromiumDir)
-
-        // Every "can't tell" path yields null: refusing to boot on a guess would be
-        // a worse failure than the cryptic error this exists to replace.
-        return if (versionsDir == null || versionsDir.resolve(required).isDirectory) {
+        return if (versionsDir.resolve(required).isDirectory) {
             null
         } else {
             val present =
@@ -1210,13 +1252,19 @@ object FluckEngine {
                     ?.ifEmpty { "none" }
                     ?: "none"
             "Installed browser engine does not match this build of BOSS. " +
-                "JxBrowser ${com.teamdev.jxbrowser.VersionInfo.version()} requires Chromium $required, " +
-                "but the engine at $chromiumDir provides: $present. " +
-                "Delete ~/.boss/boss-chromium and restart to re-download the matching engine."
+                "JxBrowser ${com.teamdev.jxbrowser.VersionInfo.version()} needs Chromium $required, " +
+                "but the installed engine provides: $present. " +
+                "Delete the boss-chromium folder in your BOSS data directory and restart " +
+                "to re-download the matching engine."
         }
     }
 
-    /** The framework's `Versions` directory, or null when this isn't a layout we model. */
+    /**
+     * The framework's `Versions` directory, or null when this isn't a layout we model.
+     *
+     * Every "can't tell" answer is null: refusing to boot on a guess would be a worse
+     * failure than the cryptic error this exists to replace.
+     */
     private fun frameworkVersionsDir(chromiumDir: java.nio.file.Path): java.io.File? {
         val isMac =
             System
@@ -1243,26 +1291,6 @@ object FluckEngine {
                     .resolve("$it.app/Contents/Frameworks/Chromium Framework.framework/Versions")
                     .toFile()
             }?.takeIf { it.isDirectory }
-    }
-
-    private fun getChromiumDir(): java.nio.file.Path {
-        // Priority 1: Bundled BOSS-branded Chromium (in app resources)
-        val bundledDir = getBundledChromiumPath()
-        if (bundledDir != null && isValidChromiumDir(bundledDir)) {
-            return bundledDir
-        }
-
-        // Priority 2: Cached BOSS-branded Chromium
-        val cachedBrandedDir = BossDirectories.resolve("boss-chromium").toPath()
-        if (isValidChromiumDir(cachedBrandedDir)) {
-            return cachedBrandedDir
-        }
-
-        // No fallback - BOSS-branded Chromium is required
-        throw IllegalStateException(
-            "BOSS-branded Chromium not found. Please restart the app to trigger auto-download, " +
-                "or manually install to ~/.boss/boss-chromium/",
-        )
     }
 
     /**

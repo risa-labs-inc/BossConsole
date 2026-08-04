@@ -15,7 +15,17 @@ import kotlinx.coroutines.withContext
 class CrossDeviceBrowserManager {
     private val logger = BossLogger.forComponent("CrossDeviceBrowserManager")
 
+    // Volatile because initialization moved out of the constructor. These are now
+    // written on whichever thread first calls ensureWebAuthnEngine, while
+    // isExternalAuthenticatorAvailable and showEnhancedCapabilities read them
+    // without holding that lock — so without safe publication a reader could see
+    // webAuthnInitAttempted set but the references still null, or observe a Browser
+    // that isn't fully published. Constructor initialization used to make this a
+    // non-issue.
+    @Volatile
     private var webAuthnEngine: Engine? = null
+
+    @Volatile
     private var webAuthnBrowser: Browser? = null
 
     @Volatile
