@@ -441,11 +441,23 @@ fun main(args: Array<String>) {
     // engine holds files inside it.
     ChromiumAutoDownloader.promotePendingInstall()
 
-    val chromiumNeedsDownload = !ChromiumAutoDownloader.isChromiumInstalled()
+    // Ask the question we are about to act on: will an engine actually boot?
+    //
+    // isChromiumInstalled() answers a narrower one — "does the *cache* hold the
+    // right engine?" — which is the right input for deciding whether to download,
+    // but wrong for deciding whether to boot. FluckEngine prefers a bundled engine
+    // from the app image and only falls back to the cache, so a release that
+    // bundles one could pass the cache check and still boot something else, or fail
+    // it and skip the pre-warm despite a perfectly good bundled engine
+    // (BossConsole#121). resolveEngineDir applies the same priority order and the
+    // same version check the boot will.
+    val chromiumNeedsDownload =
+        !ai.rever.boss.plugin.browser.FluckEngine
+            .hasUsableEngine()
     if (chromiumNeedsDownload) {
         logger.info(
             LogCategory.SYSTEM,
-            "Installed browser engine missing or mismatched - will prompt for download",
+            "No usable browser engine - will prompt for download",
             mapOf("required" to ChromiumAutoDownloader.effectiveVersion),
         )
     }

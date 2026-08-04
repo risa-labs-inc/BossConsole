@@ -6,6 +6,7 @@ import java.io.File
 import kotlin.io.path.createTempDirectory
 import kotlin.test.AfterTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -29,6 +30,12 @@ import kotlin.test.assertTrue
  */
 class ChromiumVersionMismatchTest {
     private val temps = mutableListOf<File>()
+    private val isMac =
+        System
+            .getProperty("os.name")
+            .orEmpty()
+            .lowercase()
+            .contains("mac")
 
     @AfterTest
     fun cleanup() {
@@ -105,6 +112,71 @@ class ChromiumVersionMismatchTest {
 
         assertNotNull(message, "A stale engine must be refused through the real entry point")
         assertTrue(message.contains("150.0.7871.47"))
+    }
+
+    @Test
+    fun `an unusable candidate is skipped so a download can repair it`() {
+        // The reason the version check lives inside the resolver rather than acting
+        // as a veto afterwards. ChromiumAutoDownloader writes only to the cache, so
+        // if a stale BUNDLED engine won first priority unconditionally, every
+        // download would land somewhere the resolver then ignored and the repair
+        // path could never repair anything (BossConsole#121).
+        //
+        // Expressed against the predicate the resolver uses, so it holds on every
+        // leg: a directory carrying the wrong Chromium build must not be treated as
+        // usable, while one carrying the right build must.
+        val stale = versionsDir("150.0.7871.47")
+        val good = versionsDir(VersionInfo.chromiumVersion())
+
+        assertNotNull(
+            FluckEngine.chromiumMismatchMessage(stale),
+            "A stale candidate must be rejected, not chosen and then vetoed",
+        )
+        assertNull(
+            FluckEngine.chromiumMismatchMessage(good),
+            "A matching candidate must remain selectable",
+        )
+    }
+
+    /** A full engine bundle at [chromiumVersion], the shape getChromiumDir returns. */
+    private fun engineBundle(chromiumVersion: String): java.nio.file.Path {
+        val dir = createTempDirectory("candidate").toFile()
+        temps.add(dir)
+        File(dir, "executable.name").writeText("BOSS")
+        File(
+            dir,
+            "BOSS.app/Contents/Frameworks/Chromium Framework.framework/Versions/$chromiumVersion/Libraries",
+        ).mkdirs()
+        return dir.toPath()
+    }
+
+    @Test
+    fun `a stale first candidate is skipped in favour of a usable later one`() {
+        assumeTrue(isMac, "Candidate usability is decided by the macOS-only framework layout")
+        // This is the #121 fix. ChromiumAutoDownloader writes only to the cache, so
+        // if a stale BUNDLED engine won first priority unconditionally, every
+        // download would land somewhere the resolver ignored and the repair path
+        // could never repair anything. Order matters: stale first, good second.
+        val stale = engineBundle("150.0.7871.47")
+        val good = engineBundle(VersionInfo.chromiumVersion())
+
+        assertEquals(good, FluckEngine.firstUsableEngineDir(listOf(stale, good)))
+    }
+
+    @Test
+    fun `priority still holds when the first candidate is usable`() {
+        assumeTrue(isMac, "Candidate usability is decided by the macOS-only framework layout")
+        // Skipping must be driven by usability, not by preferring the last entry.
+        val firstGood = engineBundle(VersionInfo.chromiumVersion())
+        val secondGood = engineBundle(VersionInfo.chromiumVersion())
+
+        assertEquals(firstGood, FluckEngine.firstUsableEngineDir(listOf(firstGood, secondGood)))
+    }
+
+    @Test
+    fun `no usable candidate yields null rather than a stale one`() {
+        assumeTrue(isMac, "Candidate usability is decided by the macOS-only framework layout")
+        assertNull(FluckEngine.firstUsableEngineDir(listOf(engineBundle("150.0.7871.47"))))
     }
 
     @Test

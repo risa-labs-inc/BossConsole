@@ -1194,25 +1194,50 @@ object FluckEngine {
      * 1. Bundled BOSS-branded Chromium (in app resources)
      * 2. Cached BOSS-branded Chromium (~/.boss/boss-chromium/)
      */
-    private fun getChromiumDir(): java.nio.file.Path {
-        // Priority 1: Bundled BOSS-branded Chromium (in app resources)
-        val bundledDir = getBundledChromiumPath()
-        if (bundledDir != null && isValidChromiumDir(bundledDir)) {
-            return bundledDir
-        }
+    private fun getChromiumDir(): java.nio.file.Path =
+        resolveEngineDir()
+            ?: throw IllegalStateException(
+                "BOSS-branded Chromium not found. Please restart the app to trigger auto-download, " +
+                    "or manually install to ~/.boss/boss-chromium/",
+            )
 
-        // Priority 2: Cached BOSS-branded Chromium
-        val cachedBrandedDir = BossDirectories.resolve("boss-chromium").toPath()
-        if (isValidChromiumDir(cachedBrandedDir)) {
-            return cachedBrandedDir
-        }
-
-        // No fallback - BOSS-branded Chromium is required
-        throw IllegalStateException(
-            "BOSS-branded Chromium not found. Please restart the app to trigger auto-download, " +
-                "or manually install to ~/.boss/boss-chromium/",
+    /**
+     * The engine directory that will actually boot, or null when none can.
+     *
+     * Candidates in priority order — bundled in the app image, then the downloaded
+     * cache — and a candidate only wins if it is **usable**: well-formed *and*
+     * carrying the Chromium build this jar needs.
+     *
+     * The version check is part of the choice rather than a later veto because the
+     * bundled engine is not repairable. `ChromiumAutoDownloader` writes only to the
+     * cache, so if a stale bundled engine won an unconditional first-priority match,
+     * every download would land in a directory this resolver then ignored — the
+     * repair path could never repair anything. Skipping an unusable candidate lets
+     * the download take effect.
+     *
+     * Exposed so startup can ask the same question it is about to act on. Answering
+     * "is an engine installed?" by inspecting only the cache is what let a mismatched
+     * engine boot with the guard reporting everything fine (BossConsole#121).
+     */
+    internal fun resolveEngineDir(): java.nio.file.Path? =
+        firstUsableEngineDir(
+            listOfNotNull(
+                getBundledChromiumPath(),
+                BossDirectories.resolve("boss-chromium").toPath(),
+            ),
         )
-    }
+
+    /**
+     * The first candidate that is well-formed and carries the required Chromium build.
+     *
+     * Split from [resolveEngineDir] so the selection rule is testable: the real
+     * candidate list starts from `java.home`, which a test cannot fabricate.
+     */
+    internal fun firstUsableEngineDir(candidates: List<java.nio.file.Path>): java.nio.file.Path? =
+        candidates.firstOrNull { isValidChromiumDir(it) && chromiumVersionMismatch(it) == null }
+
+    /** Whether an engine that can actually boot is present. */
+    internal fun hasUsableEngine(): Boolean = resolveEngineDir() != null
 
     /**
      * Why the engine at [chromiumDir] cannot serve this build's JxBrowser, or null
@@ -1259,11 +1284,14 @@ object FluckEngine {
                     ?.joinToString(", ") { it.name }
                     ?.ifEmpty { "none" }
                     ?: "none"
+            // No remedy naming a specific folder: the mismatched engine may be the
+            // one bundled in the app image, which deleting the cache would not touch.
+            // resolveEngineDir now skips an unusable candidate, so a restart genuinely
+            // repairs both cases on its own.
             "Installed browser engine does not match this build of BOSS. " +
                 "JxBrowser ${com.teamdev.jxbrowser.VersionInfo.version()} needs Chromium $required, " +
                 "but the installed engine provides: $present. " +
-                "Delete the boss-chromium folder in your BOSS data directory and restart " +
-                "to re-download the matching engine."
+                "Restart BOSS to download the matching engine."
         }
     }
 
