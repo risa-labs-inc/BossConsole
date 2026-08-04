@@ -597,15 +597,13 @@ fun main(args: Array<String>) {
         ),
     )
 
-    // Log API key availability (without exposing values)
-    val apiKeyStatus =
-        mapOf(
-            "ANTHROPIC_API_KEY" to (System.getenv("ANTHROPIC_API_KEY") != null),
-            "OPENAI_API_KEY" to (System.getenv("OPENAI_API_KEY") != null),
-            "TOGETHER_API_KEY" to (System.getenv("TOGETHER_API_KEY") != null),
-            "CUSTOM_LLM_API_KEY" to (System.getenv("CUSTOM_LLM_API_KEY") != null),
-        )
-    logger.debug(LogCategory.SYSTEM, "API key availability", apiKeyStatus.mapValues { if (it.value) "set" else "not set" })
+    // NOTE: there used to be an "API key availability" probe here, logging whether four LLM
+    // provider environment variables were set. It is gone because the host no longer owns any
+    // provider list — the secret-manager plugin does, and it knows seven providers plus custom,
+    // resolving each from `-D` properties, `launchctl getenv` and `~/.boss/env_vars` as well as
+    // the environment. A hardcoded four-name probe here could only ever disagree with it. The
+    // one credential the host itself still resolves is the AI-repair key, and
+    // SelfHealingSettings reports its own readiness.
 
     // chromiumNeedsDownload was resolved far earlier, above the first engine boot
     // — see the comment there for why that ordering matters.

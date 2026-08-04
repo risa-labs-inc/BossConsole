@@ -70,11 +70,26 @@ SUPABASE_URL=https://api.risaboss.com
 SUPABASE_ANON_KEY=<anon-key>
 SUPABASE_FUNCTION_URL=https://api.risaboss.com/functions/v1
 GITHUB_TOKEN=ghp_your_token_here  # Optional, 60 req/hr without
-OPENAI_API_KEY=sk-your-key-here  # Optional, enables AI self-healing in RepairEngine
 MACOS_DEVELOPER_ID=Developer ID Application: ...  # Optional, signs local packaging
 ```
 
 **Priority**: Environment variables > System properties > local.properties > Embedded build config
+
+### AI credentials are not configured here
+
+`OPENAI_API_KEY` used to be listed above as a `local.properties` key that enabled AI
+self-healing. Nothing has ever read it from that file - it is an **environment variable**, and
+the priority order above does not apply to it.
+
+- **AI providers** (chat, agents, plugin AI features) are owned entirely by the
+  **secret-manager** plugin: `Settings → AI Providers`. The host has no provider list; it
+  relays the plugin's through `PluginContext.llmProvider`. See that plugin's `AGENTS.md`.
+- **AI self-healing / repair** is the one credential the host still resolves itself, because
+  `SelfHealingSettingsManager` runs before any window or plugin exists and so cannot reach the
+  plugin's store. It reads `AI_REPAIR_API_KEY`, then the provider's own variable
+  (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / …), then the legacy `~/.boss/llm_settings.json` and
+  its `.migrated` sibling - all as **env vars / files, never local.properties**. A key rotated
+  in Settings → AI Providers does not reach it.
 
 There are NO credential fallbacks in source (public repo). Packaged builds get
 the JxBrowser license and Supabase settings baked in by the
