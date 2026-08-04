@@ -18,8 +18,32 @@ class CrossDeviceBrowserManager {
     private var webAuthnEngine: Engine? = null
     private var webAuthnBrowser: Browser? = null
 
-    init {
-        initializeWebAuthnEngine()
+    @Volatile
+    private var webAuthnInitAttempted = false
+
+    /**
+     * Boot the WebAuthn engine on first actual use, not at construction.
+     *
+     * `FluckEngine.engine` is a synchronous, multi-second Chromium boot under a
+     * lock. This class is constructed from `PasskeyPlatformInit.initialize()` on
+     * the pre-UI startup path, so doing it in `init` meant every launch paid for an
+     * engine nothing had asked for yet — and, worse, booted it *before* startup had
+     * checked whether the installed engine matches this build's JxBrowser. A
+     * mismatched engine then threw UnsatisfiedLinkError here, ahead of the download
+     * that would have repaired it.
+     *
+     * Only [openInFluckBrowser] genuinely needs a live engine, and it is a suspend
+     * function on Dispatchers.IO. The other two callers read the engine purely as a
+     * capability flag and return OS-derived answers either way, so they observe
+     * whatever is already initialised and never force a boot.
+     */
+    private fun ensureWebAuthnEngine() {
+        if (webAuthnInitAttempted) return
+        synchronized(this) {
+            if (webAuthnInitAttempted) return
+            webAuthnInitAttempted = true
+            initializeWebAuthnEngine()
+        }
     }
 
     /**
@@ -94,6 +118,11 @@ class CrossDeviceBrowserManager {
         withContext(Dispatchers.IO) {
             return@withContext try {
                 logger.debug(LogCategory.BROWSER, "Preparing URL for embedded Fluck browser", mapOf("url" to url))
+
+                // The one caller that actually needs a live engine. Safe to boot
+                // here: suspend, on Dispatchers.IO, and only once a passkey flow
+                // has genuinely asked for the embedded browser.
+                ensureWebAuthnEngine()
 
                 // Validate that we have a WebAuthn engine available
                 if (webAuthnEngine == null || webAuthnBrowser == null) {

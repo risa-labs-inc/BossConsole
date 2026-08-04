@@ -423,14 +423,47 @@ fun main(args: Array<String>) {
         logger.warn(LogCategory.SYSTEM, "Proactive browser lock cleanup failed", error = e)
     }
 
+    // Decide whether the installed engine is usable BEFORE anything boots it.
+    //
+    // This has to precede every engine-creating call below, and the ordering is
+    // load-bearing rather than cosmetic. JxBrowser resolves its native toolkit
+    // under Versions/<VersionInfo.chromiumVersion()>, baked into the jar, so an
+    // engine directory left over from an older app version fails the native load
+    // with an UnsatisfiedLinkError. That is recoverable — isChromiumInstalled
+    // spots the mismatch and the download UI below repairs it — but only if the
+    // check runs first. With the check downstream of the pre-warm and of
+    // PasskeyPlatformInit, both booted against the stale engine and threw before
+    // the repair path was ever reached, so shipping a JxBrowser bump broke the
+    // browser for every existing install instead of prompting a download.
+    //
+    // promotePendingInstall must also stay ahead of any engine creation: it
+    // renames the engine directory, which cannot be done safely once a running
+    // engine holds files inside it.
+    ChromiumAutoDownloader.promotePendingInstall()
+
+    val chromiumNeedsDownload = !ChromiumAutoDownloader.isChromiumInstalled()
+    if (chromiumNeedsDownload) {
+        logger.info(
+            LogCategory.SYSTEM,
+            "Installed browser engine missing or mismatched - will prompt for download",
+            mapOf("required" to ChromiumAutoDownloader.effectiveVersion),
+        )
+    }
+
     // Pre-warm the browser engine off the UI thread so the first browser tab
     // opens against an already-running Chromium instead of paying the full
     // engine boot inside its composition. Opt out with BOSS_BROWSER_PREWARM=false.
-    try {
-        ai.rever.boss.plugin.browser.FluckEngine
-            .prewarmInBackground()
-    } catch (e: Exception) {
-        logger.warn(LogCategory.SYSTEM, "Browser engine pre-warm failed to start", error = e)
+    //
+    // Skipped when the engine needs downloading: pre-warming against a mismatched
+    // directory cannot succeed, and its only effect is to raise the very error
+    // the download is about to fix.
+    if (!chromiumNeedsDownload) {
+        try {
+            ai.rever.boss.plugin.browser.FluckEngine
+                .prewarmInBackground()
+        } catch (e: Exception) {
+            logger.warn(LogCategory.SYSTEM, "Browser engine pre-warm failed to start", error = e)
+        }
     }
 
     // Parse CLI arguments if provided
@@ -529,14 +562,8 @@ fun main(args: Array<String>) {
         )
     logger.debug(LogCategory.SYSTEM, "API key availability", apiKeyStatus.mapValues { if (it.value) "set" else "not set" })
 
-    // Apply any engine install staged from Settings before validating/creating the engine
-    ChromiumAutoDownloader.promotePendingInstall()
-
-    // Check if Chromium needs to be downloaded (for debug/dev builds)
-    val chromiumNeedsDownload = !ChromiumAutoDownloader.isChromiumInstalled()
-    if (chromiumNeedsDownload) {
-        logger.info(LogCategory.SYSTEM, "BOSS-branded Chromium not found - will prompt for download")
-    }
+    // chromiumNeedsDownload was resolved far earlier, above the first engine boot
+    // — see the comment there for why that ordering matters.
 
     // Create initial window BEFORE application{} to prevent auto-recreation
     // This runs once on startup, not during recomposition

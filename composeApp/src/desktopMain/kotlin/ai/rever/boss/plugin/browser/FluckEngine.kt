@@ -1151,6 +1151,17 @@ object FluckEngine {
 
         val chromiumDir = getChromiumDir()
 
+        // Refuse a mismatched engine with a message that names the cause.
+        //
+        // Left to JxBrowser this surfaces as `UnsatisfiedLinkError: Can't load
+        // library: .../Versions/<x>/Libraries/libtoolkit.dylib` — a path and no
+        // explanation, which cost a full debugging session to trace the first time.
+        // Startup checks the installed version before booting anything, so in the
+        // normal flow this never fires; it exists because that ordering is a
+        // convention a future edit can silently break, and when it does break the
+        // failure should say what is wrong rather than where a file was missing.
+        chromiumVersionMismatch(chromiumDir)?.let { throw IllegalStateException(it) }
+
         // Create directories if they don't exist
         chromiumDir.toFile().mkdirs()
 
@@ -1166,6 +1177,74 @@ object FluckEngine {
      * 1. Bundled BOSS-branded Chromium (in app resources)
      * 2. Cached BOSS-branded Chromium (~/.boss/boss-chromium/)
      */
+
+    /**
+     * Why [chromiumDir] cannot serve this build's JxBrowser, or null if it can.
+     *
+     * JxBrowser loads its native toolkit from
+     * `<executable>.app/Contents/Frameworks/Chromium Framework.framework/Versions/<chromium>/Libraries/`,
+     * where `<chromium>` is [com.teamdev.jxbrowser.VersionInfo.chromiumVersion] —
+     * a value compiled into the jar. So the engine on disk has to carry exactly the
+     * Chromium build this jar was made against; anything else fails at
+     * `System.load` no matter how well-formed the directory is.
+     *
+     * macOS only: the Versions/<chromium> layout is specific to the framework
+     * bundle. Other platforms return null (no claim made) rather than guessing.
+     */
+    internal fun chromiumVersionMismatch(chromiumDir: java.nio.file.Path): String? {
+        val required =
+            com.teamdev.jxbrowser.VersionInfo
+                .chromiumVersion()
+        val versionsDir = frameworkVersionsDir(chromiumDir)
+
+        // Every "can't tell" path yields null: refusing to boot on a guess would be
+        // a worse failure than the cryptic error this exists to replace.
+        return if (versionsDir == null || versionsDir.resolve(required).isDirectory) {
+            null
+        } else {
+            val present =
+                versionsDir
+                    .listFiles()
+                    ?.filter { it.isDirectory && it.name != "Current" }
+                    ?.joinToString(", ") { it.name }
+                    ?.ifEmpty { "none" }
+                    ?: "none"
+            "Installed browser engine does not match this build of BOSS. " +
+                "JxBrowser ${com.teamdev.jxbrowser.VersionInfo.version()} requires Chromium $required, " +
+                "but the engine at $chromiumDir provides: $present. " +
+                "Delete ~/.boss/boss-chromium and restart to re-download the matching engine."
+        }
+    }
+
+    /** The framework's `Versions` directory, or null when this isn't a layout we model. */
+    private fun frameworkVersionsDir(chromiumDir: java.nio.file.Path): java.io.File? {
+        val isMac =
+            System
+                .getProperty("os.name")
+                .orEmpty()
+                .lowercase()
+                .contains("mac")
+        val executableName =
+            if (!isMac) {
+                null
+            } else {
+                runCatching {
+                    chromiumDir
+                        .resolve("executable.name")
+                        .toFile()
+                        .readText()
+                        .trim()
+                }.getOrNull()
+                    ?.takeIf { it.isNotEmpty() }
+            }
+        return executableName
+            ?.let {
+                chromiumDir
+                    .resolve("$it.app/Contents/Frameworks/Chromium Framework.framework/Versions")
+                    .toFile()
+            }?.takeIf { it.isDirectory }
+    }
+
     private fun getChromiumDir(): java.nio.file.Path {
         // Priority 1: Bundled BOSS-branded Chromium (in app resources)
         val bundledDir = getBundledChromiumPath()
