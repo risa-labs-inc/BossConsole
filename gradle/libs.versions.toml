@@ -35,7 +35,7 @@ kotlinx-serialization = "1.11.0"
 # known reason this cannot move: treat the next 3.5.x bump as worth trying, and
 # if it fails, write down what broke here.
 ktor = "3.5.1"
-logback = "1.5.38"
+logback = "1.6.1"
 precompose = "1.6.2"
 slf4j = "2.0.18"
 supabase = "3.7.0"
