@@ -1,5 +1,6 @@
 package ai.rever.boss.components.dialogs
 
+import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.services.supabase.AuthService
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.*
@@ -10,7 +11,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.launch
 
 @Composable
@@ -19,7 +19,7 @@ fun LogoutConfirmationDialog(onDismiss: () -> Unit) {
     val coroutineScope = rememberCoroutineScope()
     val currentUser by AuthService.currentUser.collectAsState()
 
-    Dialog(onDismissRequest = { if (!isLoading) onDismiss() }) {
+    BossDialog(onDismissRequest = { if (!isLoading) onDismiss() }) {
         Card(
             modifier =
                 Modifier

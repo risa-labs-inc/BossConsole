@@ -1,5 +1,6 @@
 package ai.rever.boss.components.dialogs
 
+import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -12,7 +13,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 
 /**
@@ -40,7 +40,7 @@ fun ConfirmationDialog(
 ) {
     val colors = BossTheme.colors
     val radii = BossTheme.radius
-    Dialog(
+    BossDialog(
         onDismissRequest = onDismiss,
         properties =
             DialogProperties(

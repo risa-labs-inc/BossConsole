@@ -2,6 +2,7 @@ package ai.rever.boss.components.plugin.providers
 
 import ai.rever.boss.plugin.api.DialogButton
 import ai.rever.boss.plugin.api.DialogChoiceItem
+import ai.rever.boss.plugin.ui.BossAlertDialog
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -93,7 +94,7 @@ private fun TextInputDialog(request: DialogRequest.TextInput) {
         focusRequester.requestFocus()
     }
 
-    AlertDialog(
+    BossAlertDialog(
         onDismissRequest = { request.result.complete(null) },
         title = { Text(request.title) },
         text = {
@@ -151,7 +152,7 @@ private fun TextInputDialog(request: DialogRequest.TextInput) {
 
 @Composable
 private fun ConfirmationDialog(request: DialogRequest.Confirmation) {
-    AlertDialog(
+    BossAlertDialog(
         onDismissRequest = { request.result.complete(false) },
         title = { Text(request.title) },
         text = { Text(request.message) },
@@ -182,7 +183,7 @@ private fun ConfirmationDialog(request: DialogRequest.Confirmation) {
 private fun SingleChoiceDialog(request: DialogRequest.SingleChoice) {
     var selectedIndex by remember { mutableStateOf(request.selectedIndex) }
 
-    AlertDialog(
+    BossAlertDialog(
         onDismissRequest = { request.result.complete(null) },
         title = { Text(request.title) },
         text = {
@@ -253,7 +254,7 @@ private fun MultiChoiceDialog(request: DialogRequest.MultiChoice) {
         selectedItems.addAll(request.choices.filter { it.isSelected }.map { it.id })
     }
 
-    AlertDialog(
+    BossAlertDialog(
         onDismissRequest = { request.result.complete(null) },
         title = { Text(request.title) },
         text = {
@@ -333,7 +334,7 @@ private fun MultiChoiceDialog(request: DialogRequest.MultiChoice) {
 
 @Composable
 private fun AlertDialogWrapper(request: DialogRequest.Alert) {
-    AlertDialog(
+    BossAlertDialog(
         onDismissRequest = { request.result.complete(Unit) },
         title = { Text(request.title) },
         text = { Text(request.message) },
@@ -347,7 +348,7 @@ private fun AlertDialogWrapper(request: DialogRequest.Alert) {
 
 @Composable
 private fun ThreeButtonDialog(request: DialogRequest.ThreeButton) {
-    AlertDialog(
+    BossAlertDialog(
         onDismissRequest = { request.result.complete(DialogButton.CANCELLED) },
         title = { Text(request.title) },
         text = { Text(request.message) },
@@ -378,7 +379,7 @@ private fun ProgressDialog(request: DialogRequest.Progress) {
     val progress by request.handle.progress.collectAsState()
     val message by request.handle.message.collectAsState()
 
-    AlertDialog(
+    BossAlertDialog(
         onDismissRequest = {
             if (request.cancellable) {
                 request.handle.cancel()

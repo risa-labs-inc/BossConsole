@@ -3,7 +3,6 @@ package ai.rever.boss.components.overlays
 import ai.rever.boss.components.model.BossDraggableComponent
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.Icon
 import androidx.compose.runtime.Composable
@@ -11,8 +10,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.round
+
+/** The ghost icon's size. Shared with the ghost's own window, which must match it exactly. */
+private val GHOST_ICON_SIZE = 22.dp
 
 // Overlay composable to draw the ghost item following the pointer
 @Composable
@@ -29,22 +32,27 @@ fun BossDraggableComponent.DraggingItemOverlay() {
         val currentPosition = startPosition + delta
 
         // Calculate the offset to center the ghost icon on the pointer
-        val iconSizePx = with(LocalDensity.current) { 22.dp.toPx() }
+        val iconSizePx = with(LocalDensity.current) { GHOST_ICON_SIZE.toPx() }
         val centeredOffset = Offset(currentPosition.x - iconSizePx / 2, currentPosition.y - iconSizePx / 2)
 
-        Box(
-            modifier =
-                Modifier
-                    // Position the ghost based on calculated absolute position, centered
-                    .offset { centeredOffset.round() }
-                    .alpha(0.7f), // Apply transparency
+        // Under HARDWARE the browser's native surface paints over the Compose scene, so this ghost
+        // disappeared as soon as the drag crossed a page. OverlayGhost gives it its own
+        // cursor-tracking window there; on OFF_SCREEN it is the same offset Box as before.
+        OverlayGhost(
+            size = DpSize(GHOST_ICON_SIZE, GHOST_ICON_SIZE),
+            // Position the ghost based on calculated absolute position, centered
+            windowOffset = { centeredOffset.round() },
         ) {
-            Icon(
-                imageVector = item.icon,
-                contentDescription = null, // Decorative
-                modifier = Modifier.size(22.dp), // Match icon size
-                tint = BossTheme.colors.textPrimary,
-            )
+            Box(
+                modifier = Modifier.alpha(0.7f), // Apply transparency
+            ) {
+                Icon(
+                    imageVector = item.icon,
+                    contentDescription = null, // Decorative
+                    modifier = Modifier.size(GHOST_ICON_SIZE), // Match icon size
+                    tint = BossTheme.colors.textPrimary,
+                )
+            }
         }
     }
 }

@@ -1,5 +1,6 @@
 package ai.rever.boss.components.dialogs
 
+import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.terminal.TerminalLinkOpenMode
 import androidx.compose.foundation.clickable
@@ -22,7 +23,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 
 /**
@@ -47,7 +47,7 @@ fun TerminalLinkOpenDialog(
 ) {
     var rememberChoice by remember { mutableStateOf(false) }
 
-    Dialog(
+    BossDialog(
         onDismissRequest = onDismiss,
         properties =
             DialogProperties(

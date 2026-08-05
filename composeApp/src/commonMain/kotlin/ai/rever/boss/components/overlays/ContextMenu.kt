@@ -78,12 +78,16 @@ fun ContextMenu(
     onDismissRequest: () -> Unit,
 ) {
     val heavyweight = OverlayConfig.heavyweightPopup
-    if (OverlayConfig.useHeavyweightPopups && heavyweight != null) {
+    if (routeOverlayHeavyweight(heavyweight != null) && heavyweight != null) {
         // HARDWARE_ACCELERATED browser: a lightweight Compose Popup renders BEHIND the
         // browser's native surface, so a right-click menu over a page would be hidden by
         // the page it belongs to. Route it through a heavyweight window instead. Dormant
         // wherever OFF_SCREEN is the mode (macOS, Linux) - the flag is false there, so
         // this branch is never taken and those platforms keep the exact Popup below.
+        //
+        // Also dormant in a window with no browser surface (Settings): the heavyweight window
+        // is sized to LocalAwtWindow, which is still the MAIN window there, so its scrim would
+        // land over the wrong window. See routeOverlayHeavyweight.
         //
         // NOTE: [alignment] is not honoured on this path - the heavyweight window positions
         // from the cursor, not from an alignment within a parent layout. No caller passes a

@@ -1,5 +1,6 @@
 package ai.rever.boss.updater
 
+import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.utils.Version
 import androidx.compose.foundation.BorderStroke
@@ -14,7 +15,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 
 /**
  * Warning dialog shown before downgrading to an older version
@@ -26,7 +26,7 @@ fun DowngradeWarningDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    Dialog(onDismissRequest = onDismiss) {
+    BossDialog(onDismissRequest = onDismiss) {
         Card(
             modifier = Modifier.width(500.dp),
             backgroundColor = BossTheme.colors.panel,

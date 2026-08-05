@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -24,9 +23,14 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+
+/** The ghost card's size. Shared with the ghost's own window, which must match it exactly. */
+private val GHOST_WIDTH = 180.dp
+private val GHOST_HEIGHT = 32.dp
 
 /**
  * Overlay composable to draw a ghost tab following the pointer during drag.
@@ -41,8 +45,8 @@ fun TabDraggableComponent.TabDraggingOverlay() {
 
     // Offset to position the ghost tab with its left edge near the cursor
     val density = LocalDensity.current
-    val tabWidthPx = with(density) { 180.dp.toPx() }
-    val tabHeightPx = with(density) { 32.dp.toPx() }
+    val tabWidthPx = with(density) { GHOST_WIDTH.toPx() }
+    val tabHeightPx = with(density) { GHOST_HEIGHT.toPx() }
 
     // Position slightly offset from cursor so user can see where they're dropping
     val offsetPosition =
@@ -51,66 +55,74 @@ fun TabDraggableComponent.TabDraggingOverlay() {
             currentPosition.y - tabHeightPx / 2,
         )
 
-    Box(
-        modifier =
-            Modifier
-                .offset { IntOffset(offsetPosition.x.toInt(), offsetPosition.y.toInt()) }
-                .shadow(8.dp, RoundedCornerShape(4.dp))
-                .width(180.dp)
-                .height(32.dp)
-                .background(BossTheme.colors.raised.copy(alpha = 0.95f), RoundedCornerShape(4.dp))
-                .border(1.dp, BossTheme.colors.signal, RoundedCornerShape(4.dp))
-                .alpha(0.9f),
+    // OverlayGhost puts the ghost in its own cursor-tracking window under HARDWARE, where the
+    // browser's native surface would otherwise paint over it - so the ghost used to vanish for
+    // exactly the part of the drag that crosses a page. On OFF_SCREEN this is the same offset Box
+    // it has always been.
+    OverlayGhost(
+        size = DpSize(GHOST_WIDTH, GHOST_HEIGHT),
+        windowOffset = { IntOffset(offsetPosition.x.toInt(), offsetPosition.y.toInt()) },
     ) {
-        Row(
+        Box(
             modifier =
                 Modifier
-                    .padding(horizontal = 8.dp)
-                    .align(Alignment.CenterStart),
-            verticalAlignment = Alignment.CenterVertically,
+                    .shadow(8.dp, RoundedCornerShape(4.dp))
+                    .width(GHOST_WIDTH)
+                    .height(GHOST_HEIGHT)
+                    .background(BossTheme.colors.raised.copy(alpha = 0.95f), RoundedCornerShape(4.dp))
+                    .border(1.dp, BossTheme.colors.signal, RoundedCornerShape(4.dp))
+                    .alpha(0.9f),
         ) {
-            // Tab icon
-            when (val icon = dragging.icon) {
-                is ai.rever.boss.plugin.api.TabIcon.Vector -> {
-                    Icon(
-                        imageVector = icon.imageVector,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                        tint = BossTheme.colors.textPrimary,
-                    )
+            Row(
+                modifier =
+                    Modifier
+                        .padding(horizontal = 8.dp)
+                        .align(Alignment.CenterStart),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // Tab icon
+                when (val icon = dragging.icon) {
+                    is ai.rever.boss.plugin.api.TabIcon.Vector -> {
+                        Icon(
+                            imageVector = icon.imageVector,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = BossTheme.colors.textPrimary,
+                        )
+                    }
+
+                    is ai.rever.boss.plugin.api.TabIcon.Image -> {
+                        Icon(
+                            painter = icon.painter,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = BossTheme.colors.textPrimary,
+                        )
+                    }
+
+                    null -> {
+                        // Use default icon from tabInfo
+                        Icon(
+                            imageVector = dragging.tabInfo.icon,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = BossTheme.colors.textPrimary,
+                        )
+                    }
                 }
 
-                is ai.rever.boss.plugin.api.TabIcon.Image -> {
-                    Icon(
-                        painter = icon.painter,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                        tint = BossTheme.colors.textPrimary,
-                    )
-                }
+                Spacer(modifier = Modifier.width(8.dp))
 
-                null -> {
-                    // Use default icon from tabInfo
-                    Icon(
-                        imageVector = dragging.tabInfo.icon,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                        tint = BossTheme.colors.textPrimary,
-                    )
-                }
+                // Tab title
+                Text(
+                    text = dragging.title,
+                    color = BossTheme.colors.textPrimary,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
             }
-
-            Spacer(modifier = Modifier.width(8.dp))
-
-            // Tab title
-            Text(
-                text = dragging.title,
-                color = BossTheme.colors.textPrimary,
-                fontSize = 12.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
-            )
         }
     }
 }

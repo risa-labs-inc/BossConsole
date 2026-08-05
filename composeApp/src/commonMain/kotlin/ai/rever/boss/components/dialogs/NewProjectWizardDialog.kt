@@ -1,6 +1,7 @@
 package ai.rever.boss.components.dialogs
 
 import ai.rever.boss.platform.rememberDirectoryPicker
+import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.ui.BossThemeController
 import ai.rever.boss.project.ProjectCreationService
@@ -38,7 +39,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.collectLatest
@@ -64,7 +64,7 @@ fun NewProjectWizardDialog(
 ) {
     var wizardStep by remember { mutableStateOf<WizardStep>(WizardStep.TemplateSelection) }
 
-    Dialog(
+    BossDialog(
         onDismissRequest = {
             // Only allow dismiss if not creating
             if (wizardStep !is WizardStep.Creating) {

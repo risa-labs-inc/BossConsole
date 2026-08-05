@@ -1,5 +1,6 @@
 package ai.rever.boss.components.wizard
 
+import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -31,7 +32,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 
 /**
@@ -80,7 +80,7 @@ fun WizardDialog(
     maxHeight: Dp = 600.dp,
     content: @Composable () -> Unit,
 ) {
-    Dialog(
+    BossDialog(
         onDismissRequest = {
             if (dismissOnClickOutside) {
                 onDismiss()

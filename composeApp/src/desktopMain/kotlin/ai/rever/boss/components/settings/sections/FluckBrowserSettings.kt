@@ -12,6 +12,7 @@ import ai.rever.boss.components.settings.shared.SettingsTheme.TextSecondary
 import ai.rever.boss.components.settings.shared.SettingsToggle
 import ai.rever.boss.plugin.browser.BrowserSettings
 import ai.rever.boss.plugin.browser.BrowserSettingsManager
+import ai.rever.boss.plugin.ui.BossAlertDialog
 import ai.rever.boss.terminal.ExistingSplitTargetMode
 import ai.rever.boss.terminal.TerminalLinkOpenMode
 import ai.rever.boss.terminal.TerminalLinkSettingsManager
@@ -335,7 +336,7 @@ fun FluckBrowserSettings() {
 
     // Restart dialog
     if (showRestartDialog) {
-        AlertDialog(
+        BossAlertDialog(
             onDismissRequest = { showRestartDialog = false },
             title = {
                 Text(

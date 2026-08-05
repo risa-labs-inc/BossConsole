@@ -2,6 +2,7 @@ package ai.rever.boss.components.dialogs
 
 import ai.rever.boss.platform.rememberFilePicker
 import ai.rever.boss.plugin.api.BookmarkDataProvider
+import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.services.auth.AuthStateManager
 import ai.rever.boss.services.bookmarks.BookmarkAPIAccess
@@ -28,7 +29,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -165,7 +165,7 @@ private fun DialogShell(
     onDismiss: () -> Unit,
     content: @Composable () -> Unit,
 ) {
-    Dialog(onDismissRequest = { if (dismissable) onDismiss() }) {
+    BossDialog(onDismissRequest = { if (dismissable) onDismiss() }) {
         Card(
             modifier = Modifier.width(DIALOG_WIDTH).padding(BossTheme.space.lg),
             elevation = BossTheme.elevation.popover,

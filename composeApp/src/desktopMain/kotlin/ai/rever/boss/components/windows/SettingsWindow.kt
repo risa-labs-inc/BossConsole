@@ -16,7 +16,9 @@ import ai.rever.boss.components.settings.sidebar.SettingsSidebar
 import ai.rever.boss.config.BrowserEngineSettingsManager
 import ai.rever.boss.focusmode.FocusModeSettingsManager
 import ai.rever.boss.performance.PerformanceSettingsManager
+import ai.rever.boss.plugin.ui.BossAlertDialog
 import ai.rever.boss.plugin.ui.BossThemeController
+import ai.rever.boss.plugin.ui.LocalHeavyweightOverlays
 import ai.rever.boss.run.RunnerSettingsManager
 import ai.rever.boss.scrollbar.ScrollbarSettingsManager
 import ai.rever.boss.startup.StartupSettingsManager
@@ -61,8 +63,18 @@ actual fun SettingsWindow(
                     position = WindowPosition.Aligned(Alignment.Center),
                 ),
         ) {
-            BossTheme {
-                SettingsContent(initialSection = initialSection)
+            // Opt this window's dialogs back OUT of heavyweight overlays.
+            //
+            // SettingsWindow is composed from inside the main window's subtree (BossAppDialogs), so
+            // it inherits LocalHeavyweightOverlays = true from BossWindow. There is no browser
+            // surface here to escape, and routing anyway would be actively wrong: the heavyweight
+            // window measures LocalAwtWindow, which is still the MAIN window, so a settings dialog
+            // would open centered over the main window and - being always-on-top, and deliberately
+            // not dismissed by focus moving within the same application - keep floating above it.
+            CompositionLocalProvider(LocalHeavyweightOverlays provides false) {
+                BossTheme {
+                    SettingsContent(initialSection = initialSection)
+                }
             }
         }
     }
@@ -172,7 +184,7 @@ private fun SettingsContent(initialSection: String? = null) {
 
     // Reset confirmation dialog
     if (showResetConfirmation) {
-        AlertDialog(
+        BossAlertDialog(
             onDismissRequest = { showResetConfirmation = false },
             title = {
                 Text(

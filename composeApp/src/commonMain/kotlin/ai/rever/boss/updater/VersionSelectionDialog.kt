@@ -1,6 +1,7 @@
 package ai.rever.boss.updater
 
 import ai.rever.boss.components.common.BossSearchBar
+import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.utils.Version
 import ai.rever.boss.utils.logging.BossLogger
@@ -21,7 +22,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 
 private val logger = BossLogger.forComponent("VersionSelectionDialog")
@@ -57,7 +57,7 @@ fun VersionSelectionDialog(
                 }
         }
 
-    Dialog(
+    BossDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {

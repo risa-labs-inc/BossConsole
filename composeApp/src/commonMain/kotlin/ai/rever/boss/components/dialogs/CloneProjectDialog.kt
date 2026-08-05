@@ -3,6 +3,7 @@ package ai.rever.boss.components.dialogs
 import ai.rever.boss.git.GitOperationResult
 import ai.rever.boss.git.GitService
 import ai.rever.boss.platform.rememberDirectoryPicker
+import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.project.ProjectCreationService
 import ai.rever.boss.utils.logging.BossLogger
@@ -23,7 +24,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.launch
 import java.io.File
@@ -48,7 +48,7 @@ fun CloneProjectDialog(
 ) {
     var cloneStep by remember { mutableStateOf<CloneStep>(CloneStep.Configuration) }
 
-    Dialog(
+    BossDialog(
         onDismissRequest = {
             // Only allow dismiss if not cloning
             if (cloneStep !is CloneStep.Cloning) {

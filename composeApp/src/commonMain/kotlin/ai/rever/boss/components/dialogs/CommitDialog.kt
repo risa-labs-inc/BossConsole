@@ -4,6 +4,7 @@ import ai.rever.boss.git.GitFileStatus
 import ai.rever.boss.git.GitFileStatusType
 import ai.rever.boss.git.GitOperationResult
 import ai.rever.boss.git.GitService
+import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.window.LocalWindowGitState
 import ai.rever.boss.window.LocalWindowId
@@ -27,7 +28,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.launch
 import ai.rever.boss.plugin.git.GitOperationResult.Error as GitError
 import ai.rever.boss.plugin.git.GitOperationResult.Success as GitSuccess
@@ -88,7 +88,7 @@ fun CommitDialog(
     val unstagedFiles = fileStatus.filter { it.isUnstaged || it.indexStatus == GitFileStatusType.UNTRACKED }
     val hasChangesToCommit = stagedFiles.isNotEmpty()
 
-    Dialog(onDismissRequest = onDismiss) {
+    BossDialog(onDismissRequest = onDismiss) {
         Surface(
             modifier =
                 Modifier

@@ -1,5 +1,6 @@
 package ai.rever.boss.components.dialogs
 
+import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.utils.CLIInstallResult
 import ai.rever.boss.utils.CLIInstaller
@@ -14,7 +15,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.launch
 
 /**
@@ -40,7 +40,7 @@ fun CLIInstallationDialog(onDismiss: () -> Unit) {
         }
     }
 
-    Dialog(onDismissRequest = {
+    BossDialog(onDismissRequest = {
         // Only allow dismiss if not installing
         if (installState !is InstallState.Installing) {
             onDismiss()

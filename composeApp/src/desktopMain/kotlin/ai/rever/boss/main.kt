@@ -430,6 +430,21 @@ fun main(args: Array<String>) {
         ai.rever.boss.components.overlays.SwingTooltip
             .hide()
     }
+    ai.rever.boss.components.overlays.OverlayConfig.heavyweightHud = { alignment, hudContent ->
+        ai.rever.boss.components.overlays
+            .HeavyweightHud(alignment, hudContent)
+    }
+    ai.rever.boss.components.overlays.OverlayConfig.heavyweightGhost = { size, ghostContent ->
+        ai.rever.boss.components.overlays
+            .HeavyweightGhost(size, ghostContent)
+    }
+    // plugin-ui-core owns the modal registry (plugins draw dialogs too) and depends on nothing but
+    // Compose, so it cannot log. Give it this logger instead: the condition it reports is a dialog
+    // that silently fell back to lightweight and is now hidden behind the page, which is invisible
+    // on screen and would otherwise have to be diagnosed from a screenshot.
+    ai.rever.boss.plugin.ui.BossOverlayHost.diagnostics = { message ->
+        logger.warn(LogCategory.UI, message)
+    }
     ai.rever.boss.components.overlays.OverlayConfig.useHeavyweightPopups =
         ai.rever.boss.config.JxBrowserConfig.renderingMode ==
         com.teamdev.jxbrowser.engine.RenderingMode.HARDWARE_ACCELERATED

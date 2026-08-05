@@ -365,7 +365,7 @@ internal fun BossAppScaffold(
             // MRU tab-switcher overlay (Ctrl+Tab in most-recently-used mode)
             TabCycleOverlayHost(
                 data = state.tabCycleOverlay,
-                modifier = Modifier.align(Alignment.Center),
+                alignment = Alignment.Center,
             )
         }
     }

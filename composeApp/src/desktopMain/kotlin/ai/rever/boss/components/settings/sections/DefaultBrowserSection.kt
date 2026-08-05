@@ -1,6 +1,7 @@
 package ai.rever.boss.components.settings.sections
 
 import ai.rever.boss.components.settings.shared.SettingsSection
+import ai.rever.boss.plugin.ui.BossAlertDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.utils.DefaultBrowserManager
 import androidx.compose.foundation.BorderStroke
@@ -299,7 +300,7 @@ fun DefaultBrowserSection() {
 
     // Success Dialog
     if (showSuccessDialog) {
-        AlertDialog(
+        BossAlertDialog(
             onDismissRequest = { showSuccessDialog = false },
             title = {
                 Text(
@@ -328,7 +329,7 @@ fun DefaultBrowserSection() {
 
     // Instructions Dialog (platform-aware)
     if (showInstructionsDialog) {
-        AlertDialog(
+        BossAlertDialog(
             onDismissRequest = { showInstructionsDialog = false },
             title = {
                 Text(

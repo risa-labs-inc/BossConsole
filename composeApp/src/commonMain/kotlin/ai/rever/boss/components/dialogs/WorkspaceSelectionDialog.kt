@@ -1,6 +1,7 @@
 package ai.rever.boss.components.dialogs
 
 import ai.rever.boss.components.workspaces.extractPanels
+import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -22,7 +23,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 
 /**
@@ -45,7 +45,7 @@ fun WorkspaceSelectionDialog(
     // Map of workspace name -> panel ID (null = auto/active panel)
     var workspacePanelSelections by remember { mutableStateOf(preselectedWorkspaces) }
 
-    Dialog(
+    BossDialog(
         onDismissRequest = onDismiss,
         properties =
             DialogProperties(

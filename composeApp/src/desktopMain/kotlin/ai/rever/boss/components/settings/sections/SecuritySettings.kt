@@ -1,6 +1,7 @@
 package ai.rever.boss.components.settings.sections
 
 import ai.rever.boss.components.settings.shared.SettingsSection
+import ai.rever.boss.plugin.ui.BossAlertDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.services.passkey.PasskeyInfo
 import ai.rever.boss.services.passkey.PasskeyState
@@ -644,7 +645,7 @@ fun SecuritySettings() {
 
     // Show remove passkey confirmation dialog
     showRemovePasskeyDialog?.let { passkey ->
-        AlertDialog(
+        BossAlertDialog(
             onDismissRequest = { showRemovePasskeyDialog = null },
             title = {
                 Text(
@@ -775,7 +776,7 @@ private fun PasskeyEnrollmentDialog(
     var isEnrolling by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
-    AlertDialog(
+    BossAlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(

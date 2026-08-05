@@ -13,8 +13,10 @@ import ai.rever.boss.plugin.browser.FluckEngine
 import ai.rever.boss.plugin.browser.LocalAwtWindow
 import ai.rever.boss.plugin.browser.ScreenCaptureNotifier
 import ai.rever.boss.plugin.browser.ScreenCapturePickerDialog
+import ai.rever.boss.plugin.ui.BossAlertDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.ui.BossThemeController
+import ai.rever.boss.plugin.ui.LocalHeavyweightOverlays
 import ai.rever.boss.services.terminal.TerminalAPIAccess
 import ai.rever.boss.updater.UpdateCoordinator
 import ai.rever.boss.utils.CLIInstaller
@@ -26,7 +28,6 @@ import ai.rever.boss.window.WindowType
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
-import androidx.compose.material.AlertDialog
 import androidx.compose.material.Button
 import androidx.compose.material.ButtonDefaults
 import androidx.compose.material.Text
@@ -900,7 +901,15 @@ fun ApplicationScope.BossWindow(
 
         // Provide the AWT window via LocalAwtWindow for multi-window support
         // This ensures JxBrowser instances get the correct window handle for their containing window
-        CompositionLocalProvider(LocalAwtWindow provides window) {
+        //
+        // LocalHeavyweightOverlays marks this as a window that HOSTS a browser surface, which is
+        // what makes its dialogs escape into always-on-top windows under HARDWARE. It is provided
+        // here rather than defaulted on, because secondary windows (Settings) are composed from
+        // inside this subtree and must opt back out - see SettingsWindow.
+        CompositionLocalProvider(
+            LocalAwtWindow provides window,
+            LocalHeavyweightOverlays provides true,
+        ) {
             // Create independent component context for this window
             // Each window gets its own Decompose context tree
             with(createBossAppContext) {
@@ -942,7 +951,7 @@ fun ApplicationScope.BossWindow(
         if (showResetBrowserDialog) {
             var isResetting by remember { mutableStateOf(false) }
 
-            AlertDialog(
+            BossAlertDialog(
                 onDismissRequest = {
                     if (!isResetting) {
                         showResetBrowserDialog = false
@@ -1061,7 +1070,7 @@ fun ApplicationScope.BossWindow(
         if (showResetTerminalDialog) {
             var isResetting by remember { mutableStateOf(false) }
 
-            AlertDialog(
+            BossAlertDialog(
                 onDismissRequest = {
                     if (!isResetting) {
                         showResetTerminalDialog = false
@@ -1213,7 +1222,7 @@ fun ApplicationScope.BossWindow(
         // Screen Recording permission rationale — explains why, before the macOS prompt.
         val permissionRationale by ScreenCaptureNotifier.permissionRationale.collectAsState()
         if (permissionRationale != null) {
-            AlertDialog(
+            BossAlertDialog(
                 onDismissRequest = { ScreenCaptureNotifier.resolvePermissionRationale(false) },
                 title = { Text("Allow screen sharing?") },
                 text = {

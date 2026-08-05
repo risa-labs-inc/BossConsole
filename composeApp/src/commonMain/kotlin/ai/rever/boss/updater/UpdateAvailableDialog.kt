@@ -1,5 +1,6 @@
 package ai.rever.boss.updater
 
+import ai.rever.boss.plugin.ui.BossAlertDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -52,7 +53,7 @@ fun UpdateAvailableDialog(
                 .getOrNull()
                 ?.takeIf { it.isNotEmpty() }
         }
-    AlertDialog(
+    BossAlertDialog(
         onDismissRequest = onLater,
         modifier = Modifier.widthIn(min = 360.dp, max = 480.dp),
         title = {

@@ -4,7 +4,6 @@ import ContextMenuBackground
 import ContextMenuBorder
 import ai.rever.boss.components.overlays.ContextMenu
 import ai.rever.boss.components.overlays.ContextMenuItem
-import ai.rever.boss.components.overlays.OverlayModal
 import ai.rever.boss.components.plugin.panels.left_top.ProjectState
 import ai.rever.boss.components.plugin.panels.left_top.directoryHasChildren
 import ai.rever.boss.components.plugin.panels.left_top.scanDirectory
@@ -24,6 +23,7 @@ import ai.rever.boss.plugin.tab.codeeditor.CodeEditorTabType
 import ai.rever.boss.plugin.tab.fluck.FluckTabType
 import ai.rever.boss.plugin.tab.jupyter.JupyterTabInfo
 import ai.rever.boss.plugin.tab.terminal.TerminalTabType
+import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.utils.extractFileName
@@ -33,7 +33,6 @@ import ai.rever.boss.window.Project
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -291,929 +290,915 @@ fun NewTabDialog(
         }
     }
 
-    // Full-screen overlay with scrim. OverlayModal renders this in a separate always-on-top
-    // window when the browser is a heavyweight GPU surface (HARDWARE_ACCELERATED), because a
-    // plain Popup would be drawn UNDER the page; it falls back to exactly the centered Popup
-    // below on OFF_SCREEN. Routed here rather than at the three call sites so every one of them
-    // gets it.
-    OverlayModal(onDismissRequest = onDismiss) {
+    // BossDialog renders this in a separate always-on-top window when the browser is a heavyweight
+    // GPU surface (HARDWARE_ACCELERATED), because a plain Popup would be drawn UNDER the page; it
+    // falls back to an ordinary Compose Dialog on OFF_SCREEN. Routed here rather than at the three
+    // call sites so every one of them gets it.
+    //
+    // The scrim and centering that used to be hand-rolled here now belong to BossDialog, so every
+    // dialog in the app gets the same ones rather than this one being a special case.
+    BossDialog(onDismissRequest = onDismiss) {
+        // Dialog content with ContextMenu styling
         Box(
             modifier =
                 Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.4f))
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                    ) { onDismiss() },
-            contentAlignment = Alignment.Center,
+                    .width(500.dp)
+                    .background(
+                        color = ContextMenuBackground,
+                        shape = RoundedCornerShape(8.dp),
+                    ).border(
+                        width = 1.dp,
+                        color = ContextMenuBorder,
+                        shape = RoundedCornerShape(8.dp),
+                    ).onKeyEvent { event ->
+                        if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                            onDismiss()
+                            true
+                        } else {
+                            false
+                        }
+                    },
         ) {
-            // Dialog content with ContextMenu styling
-            Box(
-                modifier =
-                    Modifier
-                        .width(500.dp)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                        ) { /* Consume click to prevent dismissing */ }
-                        .background(
-                            color = ContextMenuBackground,
-                            shape = RoundedCornerShape(8.dp),
-                        ).border(
-                            width = 1.dp,
-                            color = ContextMenuBorder,
-                            shape = RoundedCornerShape(8.dp),
-                        ).onKeyEvent { event ->
-                            if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
-                                onDismiss()
-                                true
-                            } else {
-                                false
-                            }
-                        },
+            Column(
+                modifier = Modifier.padding(16.dp),
             ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                ) {
-                    // Title
-                    Text(
-                        text = "New Tab",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = BossTheme.colors.textPrimary,
-                        modifier = Modifier.padding(bottom = 16.dp),
-                    )
+                // Title
+                Text(
+                    text = "New Tab",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = BossTheme.colors.textPrimary,
+                    modifier = Modifier.padding(bottom = 16.dp),
+                )
 
-                    if (availableTypes.isEmpty() && pluginTypes.isEmpty()) {
-                        // Empty state when no tab plugins are enabled
-                        Box(
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .height(120.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                text = "No tab types available. Enable a tab plugin or install one from the Plugin Store.",
-                                color = BossTheme.colors.textSecondary,
-                                fontSize = 13.sp,
+                if (availableTypes.isEmpty() && pluginTypes.isEmpty()) {
+                    // Empty state when no tab plugins are enabled
+                    Box(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .height(120.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "No tab types available. Enable a tab plugin or install one from the Plugin Store.",
+                            color = BossTheme.colors.textSecondary,
+                            fontSize = 13.sp,
+                        )
+                    }
+                } else {
+                    // Type selector
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        if (TabType.URL in availableTypes) {
+                            TabTypeOption(
+                                icon = Icons.Default.Language,
+                                label = "URL",
+                                isSelected = selectedPluginType == null && selectedType == TabType.URL,
+                                onClick = {
+                                    // Save current text before switching
+                                    when (selectedType) {
+                                        TabType.FILE -> {
+                                            fileText = inputText
+                                        }
+
+                                        TabType.JUPYTER -> {
+                                            jupyterName = inputText
+                                        }
+
+                                        else -> {}
+                                    }
+                                    selectedPluginType = null
+                                    selectedType = TabType.URL
+                                    inputText = urlText
+                                },
+                                modifier = Modifier.weight(1f),
                             )
                         }
-                    } else {
-                        // Type selector
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            if (TabType.URL in availableTypes) {
-                                TabTypeOption(
-                                    icon = Icons.Default.Language,
-                                    label = "URL",
-                                    isSelected = selectedPluginType == null && selectedType == TabType.URL,
-                                    onClick = {
-                                        // Save current text before switching
-                                        when (selectedType) {
-                                            TabType.FILE -> {
-                                                fileText = inputText
-                                            }
 
-                                            TabType.JUPYTER -> {
-                                                jupyterName = inputText
-                                            }
-
-                                            else -> {}
+                        if (TabType.FILE in availableTypes) {
+                            TabTypeOption(
+                                icon = Icons.AutoMirrored.Filled.InsertDriveFile,
+                                label = "File",
+                                isSelected = selectedPluginType == null && selectedType == TabType.FILE,
+                                onClick = {
+                                    // Save current text before switching
+                                    when (selectedType) {
+                                        TabType.URL -> {
+                                            urlText = inputText
                                         }
-                                        selectedPluginType = null
-                                        selectedType = TabType.URL
-                                        inputText = urlText
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                )
-                            }
 
-                            if (TabType.FILE in availableTypes) {
-                                TabTypeOption(
-                                    icon = Icons.AutoMirrored.Filled.InsertDriveFile,
-                                    label = "File",
-                                    isSelected = selectedPluginType == null && selectedType == TabType.FILE,
-                                    onClick = {
-                                        // Save current text before switching
-                                        when (selectedType) {
-                                            TabType.URL -> {
-                                                urlText = inputText
-                                            }
-
-                                            TabType.JUPYTER -> {
-                                                jupyterName = inputText
-                                            }
-
-                                            else -> {}
+                                        TabType.JUPYTER -> {
+                                            jupyterName = inputText
                                         }
-                                        selectedPluginType = null
-                                        selectedType = TabType.FILE
-                                        inputText = fileText
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                )
-                            }
 
-                            if (TabType.TERMINAL in availableTypes) {
-                                TabTypeOption(
-                                    icon = Icons.Outlined.Terminal,
-                                    label = "Terminal",
-                                    isSelected = selectedPluginType == null && selectedType == TabType.TERMINAL,
-                                    onClick = {
-                                        // Save current text before switching
-                                        when (selectedType) {
-                                            TabType.URL -> {
-                                                urlText = inputText
-                                            }
-
-                                            TabType.FILE -> {
-                                                fileText = inputText
-                                            }
-
-                                            TabType.JUPYTER -> {
-                                                jupyterName = inputText
-                                            }
-
-                                            else -> {}
-                                        }
-                                        selectedPluginType = null
-                                        selectedType = TabType.TERMINAL
-                                        inputText = terminalCommand
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                )
-                            }
-
-                            // Plugin-registered tab types that opted into the dialog
-                            // via TabTypeInfo.newTabSpec — fully dynamic, no host
-                            // change needed for a new tab type to appear here.
-                            for (pluginType in pluginTypes) {
-                                TabTypeOption(
-                                    icon = pluginType.icon,
-                                    label = pluginType.displayName,
-                                    isSelected = selectedPluginType == pluginType.typeId,
-                                    onClick = {
-                                        when (selectedType) {
-                                            TabType.URL -> {
-                                                urlText = inputText
-                                            }
-
-                                            TabType.FILE -> {
-                                                fileText = inputText
-                                            }
-
-                                            TabType.JUPYTER -> {
-                                                jupyterName = inputText
-                                            }
-
-                                            else -> {}
-                                        }
-                                        selectedPluginType = pluginType.typeId
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                )
-                            }
-
-                            if (TabType.JUPYTER in availableTypes) {
-                                TabTypeOption(
-                                    // Matches JupyterTabInfo's default tab icon for a consistent identity.
-                                    icon = Icons.Outlined.Code,
-                                    label = "Jupyter",
-                                    isSelected = selectedPluginType == null && selectedType == TabType.JUPYTER,
-                                    onClick = {
-                                        when (selectedType) {
-                                            TabType.URL -> {
-                                                urlText = inputText
-                                            }
-
-                                            TabType.FILE -> {
-                                                fileText = inputText
-                                            }
-
-                                            TabType.TERMINAL -> {
-                                                terminalCommand = inputText
-                                            }
-
-                                            else -> {}
-                                        }
-                                        selectedType = TabType.JUPYTER
-                                        inputText = jupyterName
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                )
-                            }
+                                        else -> {}
+                                    }
+                                    selectedPluginType = null
+                                    selectedType = TabType.FILE
+                                    inputText = fileText
+                                },
+                                modifier = Modifier.weight(1f),
+                            )
                         }
 
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        // Input field
-                        Column {
-                            // Plugin tab type input — one generic field driven by the
-                            // type's NewTabSpec; the plugin validates via createTabInfo.
-                            if (selectedPluginTypeInfo != null) {
-                                val spec = selectedPluginTypeInfo.newTabSpec!!
-                                val pluginFocusRequester = remember { FocusRequester() }
-                                LaunchedEffect(selectedPluginType) {
-                                    pluginFocusRequester.requestFocus()
-                                }
-                                OutlinedTextField(
-                                    value = pluginInput,
-                                    onValueChange = { pluginInput = it },
-                                    label = {
-                                        Text(
-                                            spec.inputLabel + if (spec.inputOptional) " (optional)" else "",
-                                            color = BossTheme.colors.textSecondary,
-                                        )
-                                    },
-                                    placeholder = {
-                                        Text(
-                                            spec.inputPlaceholder,
-                                            color = BossTheme.colors.textMuted,
-                                        )
-                                    },
-                                    modifier =
-                                        Modifier
-                                            .fillMaxWidth()
-                                            .focusRequester(pluginFocusRequester)
-                                            .onPreviewKeyEvent { event ->
-                                                if (event.type == KeyEventType.KeyDown && event.key == Key.Enter) {
-                                                    confirmPluginTab()
-                                                    true
-                                                } else {
-                                                    false
-                                                }
-                                            },
-                                    colors =
-                                        TextFieldDefaults.outlinedTextFieldColors(
-                                            textColor = BossTheme.colors.textPrimary,
-                                            cursorColor = BossTheme.colors.textPrimary,
-                                            focusedBorderColor = BossTheme.colors.signal,
-                                            unfocusedBorderColor = BossTheme.colors.line,
-                                            backgroundColor = BossTheme.colors.panel,
-                                        ),
-                                    singleLine = true,
-                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                    keyboardActions = KeyboardActions(onDone = { confirmPluginTab() }),
-                                )
-                            } else if (selectedType == TabType.TERMINAL) {
-                                // Terminal command input
-                                LaunchedEffect(selectedType) {
-                                    if (selectedType == TabType.TERMINAL) {
-                                        terminalFocusRequester.requestFocus()
-                                    }
-                                }
-                                OutlinedTextField(
-                                    value = terminalCommand,
-                                    onValueChange = { newValue ->
-                                        terminalCommand = newValue
-                                        inputText = newValue
-                                    },
-                                    label = {
-                                        Text(
-                                            "Initial command (optional)",
-                                            color = BossTheme.colors.textSecondary,
-                                        )
-                                    },
-                                    placeholder = {
-                                        Text(
-                                            "e.g., npm run dev",
-                                            color = BossTheme.colors.textMuted,
-                                        )
-                                    },
-                                    modifier =
-                                        Modifier
-                                            .fillMaxWidth()
-                                            .focusRequester(terminalFocusRequester)
-                                            .onPreviewKeyEvent { event ->
-                                                if (event.type == KeyEventType.KeyDown && event.key == Key.Enter) {
-                                                    handleCreateTab(selectedType, terminalCommand, onCreateTab, onDismiss)
-                                                    true
-                                                } else {
-                                                    false
-                                                }
-                                            },
-                                    colors =
-                                        TextFieldDefaults.outlinedTextFieldColors(
-                                            textColor = BossTheme.colors.textPrimary,
-                                            cursorColor = BossTheme.colors.textPrimary,
-                                            focusedBorderColor = BossTheme.colors.signal,
-                                            unfocusedBorderColor = BossTheme.colors.line,
-                                            backgroundColor = BossTheme.colors.panel,
-                                        ),
-                                    singleLine = true,
-                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                    keyboardActions =
-                                        KeyboardActions(
-                                            onDone = {
-                                                handleCreateTab(selectedType, terminalCommand, onCreateTab, onDismiss)
-                                            },
-                                        ),
-                                )
-                            } else if (selectedType == TabType.JUPYTER) {
-                                // Optional notebook name (blank = a new untitled notebook)
-                                val jupyterFocusRequester = remember { FocusRequester() }
-                                LaunchedEffect(selectedType) {
-                                    if (selectedType == TabType.JUPYTER) jupyterFocusRequester.requestFocus()
-                                }
-                                OutlinedTextField(
-                                    value = inputText,
-                                    onValueChange = { inputText = it },
-                                    label = { Text("Notebook name (optional)", color = BossTheme.colors.textSecondary) },
-                                    placeholder = { Text("e.g., analysis", color = BossTheme.colors.textMuted) },
-                                    modifier =
-                                        Modifier
-                                            .fillMaxWidth()
-                                            .focusRequester(jupyterFocusRequester)
-                                            .onPreviewKeyEvent { event ->
-                                                if (event.type == KeyEventType.KeyDown && event.key == Key.Enter) {
-                                                    handleCreateTab(selectedType, inputText, onCreateTab, onDismiss)
-                                                    true
-                                                } else {
-                                                    false
-                                                }
-                                            },
-                                    colors =
-                                        TextFieldDefaults.outlinedTextFieldColors(
-                                            textColor = BossTheme.colors.textPrimary,
-                                            cursorColor = BossTheme.colors.textPrimary,
-                                            focusedBorderColor = BossTheme.colors.signal,
-                                            unfocusedBorderColor = BossTheme.colors.line,
-                                            backgroundColor = BossTheme.colors.panel,
-                                        ),
-                                    singleLine = true,
-                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                    keyboardActions =
-                                        KeyboardActions(
-                                            onDone = { handleCreateTab(selectedType, inputText, onCreateTab, onDismiss) },
-                                        ),
-                                )
-                            } else if (selectedType == TabType.FILE) {
-                                // Current project/folder selector (uses global recent projects)
-                                // Note: In NewTabDialog we don't have window context, so we use the most recent project
-                                val recentProjects by ProjectState.recentProjects.collectAsState()
-                                var selectedProject by remember {
-                                    mutableStateOf(
-                                        recentProjects.firstOrNull()
-                                            ?: Project("No Project", "", 0L),
-                                    )
-                                }
-                                // Update selectedProject when recentProjects changes
-                                LaunchedEffect(recentProjects) {
-                                    if (selectedProject.path.isEmpty() && recentProjects.isNotEmpty()) {
-                                        selectedProject = recentProjects.first()
-                                    }
-                                }
-                                var showFolderDropdown by remember { mutableStateOf(false) }
-                                var buttonHeight by remember { mutableStateOf(0) }
-
-                                // File tree state
-                                var fileTree by remember { mutableStateOf<FileNodeData?>(null) }
-                                var expandedPaths by remember { mutableStateOf(setOf<String>()) }
-                                var isLoadingTree by remember { mutableStateOf(false) }
-                                val coroutineScope = rememberCoroutineScope()
-
-                                // Load file tree when project changes
-                                LaunchedEffect(selectedProject.path) {
-                                    if (selectedProject.path.isNotEmpty()) {
-                                        isLoadingTree = true
-                                        fileTree =
-                                            try {
-                                                withContext(Dispatchers.IO) {
-                                                    scanDirectory(selectedProject.path)
-                                                }
-                                            } catch (e: Exception) {
-                                                newTabDialogLogger.warn(LogCategory.FILE, "Error scanning directory", error = e)
-                                                null
-                                            }
-                                        isLoadingTree = false
-                                    } else {
-                                        fileTree = null
-                                    }
-                                }
-
-                                // Directory picker for selecting new folder
-                                val directoryPicker =
-                                    rememberDirectoryPicker { path ->
-                                        path?.let {
-                                            val projectName = it.extractFileName().ifEmpty { "Unknown" }
-                                            val newProject =
-                                                Project(
-                                                    name = projectName,
-                                                    path = it,
-                                                )
-                                            // Update local state and recent projects list
-                                            selectedProject = newProject
-                                            ProjectState.updateRecentProjects(newProject)
-                                            // Clear expanded paths for new folder
-                                            expandedPaths = emptySet()
+                        if (TabType.TERMINAL in availableTypes) {
+                            TabTypeOption(
+                                icon = Icons.Outlined.Terminal,
+                                label = "Terminal",
+                                isSelected = selectedPluginType == null && selectedType == TabType.TERMINAL,
+                                onClick = {
+                                    // Save current text before switching
+                                    when (selectedType) {
+                                        TabType.URL -> {
+                                            urlText = inputText
                                         }
-                                    }
 
-                                // Show "Open Project" button when no project is selected
-                                if (selectedProject.path.isEmpty()) {
-                                    Box(
+                                        TabType.FILE -> {
+                                            fileText = inputText
+                                        }
+
+                                        TabType.JUPYTER -> {
+                                            jupyterName = inputText
+                                        }
+
+                                        else -> {}
+                                    }
+                                    selectedPluginType = null
+                                    selectedType = TabType.TERMINAL
+                                    inputText = terminalCommand
+                                },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+
+                        // Plugin-registered tab types that opted into the dialog
+                        // via TabTypeInfo.newTabSpec — fully dynamic, no host
+                        // change needed for a new tab type to appear here.
+                        for (pluginType in pluginTypes) {
+                            TabTypeOption(
+                                icon = pluginType.icon,
+                                label = pluginType.displayName,
+                                isSelected = selectedPluginType == pluginType.typeId,
+                                onClick = {
+                                    when (selectedType) {
+                                        TabType.URL -> {
+                                            urlText = inputText
+                                        }
+
+                                        TabType.FILE -> {
+                                            fileText = inputText
+                                        }
+
+                                        TabType.JUPYTER -> {
+                                            jupyterName = inputText
+                                        }
+
+                                        else -> {}
+                                    }
+                                    selectedPluginType = pluginType.typeId
+                                },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+
+                        if (TabType.JUPYTER in availableTypes) {
+                            TabTypeOption(
+                                // Matches JupyterTabInfo's default tab icon for a consistent identity.
+                                icon = Icons.Outlined.Code,
+                                label = "Jupyter",
+                                isSelected = selectedPluginType == null && selectedType == TabType.JUPYTER,
+                                onClick = {
+                                    when (selectedType) {
+                                        TabType.URL -> {
+                                            urlText = inputText
+                                        }
+
+                                        TabType.FILE -> {
+                                            fileText = inputText
+                                        }
+
+                                        TabType.TERMINAL -> {
+                                            terminalCommand = inputText
+                                        }
+
+                                        else -> {}
+                                    }
+                                    selectedType = TabType.JUPYTER
+                                    inputText = jupyterName
+                                },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Input field
+                    Column {
+                        // Plugin tab type input — one generic field driven by the
+                        // type's NewTabSpec; the plugin validates via createTabInfo.
+                        if (selectedPluginTypeInfo != null) {
+                            val spec = selectedPluginTypeInfo.newTabSpec!!
+                            val pluginFocusRequester = remember { FocusRequester() }
+                            LaunchedEffect(selectedPluginType) {
+                                pluginFocusRequester.requestFocus()
+                            }
+                            OutlinedTextField(
+                                value = pluginInput,
+                                onValueChange = { pluginInput = it },
+                                label = {
+                                    Text(
+                                        spec.inputLabel + if (spec.inputOptional) " (optional)" else "",
+                                        color = BossTheme.colors.textSecondary,
+                                    )
+                                },
+                                placeholder = {
+                                    Text(
+                                        spec.inputPlaceholder,
+                                        color = BossTheme.colors.textMuted,
+                                    )
+                                },
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .focusRequester(pluginFocusRequester)
+                                        .onPreviewKeyEvent { event ->
+                                            if (event.type == KeyEventType.KeyDown && event.key == Key.Enter) {
+                                                confirmPluginTab()
+                                                true
+                                            } else {
+                                                false
+                                            }
+                                        },
+                                colors =
+                                    TextFieldDefaults.outlinedTextFieldColors(
+                                        textColor = BossTheme.colors.textPrimary,
+                                        cursorColor = BossTheme.colors.textPrimary,
+                                        focusedBorderColor = BossTheme.colors.signal,
+                                        unfocusedBorderColor = BossTheme.colors.line,
+                                        backgroundColor = BossTheme.colors.panel,
+                                    ),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                keyboardActions = KeyboardActions(onDone = { confirmPluginTab() }),
+                            )
+                        } else if (selectedType == TabType.TERMINAL) {
+                            // Terminal command input
+                            LaunchedEffect(selectedType) {
+                                if (selectedType == TabType.TERMINAL) {
+                                    terminalFocusRequester.requestFocus()
+                                }
+                            }
+                            OutlinedTextField(
+                                value = terminalCommand,
+                                onValueChange = { newValue ->
+                                    terminalCommand = newValue
+                                    inputText = newValue
+                                },
+                                label = {
+                                    Text(
+                                        "Initial command (optional)",
+                                        color = BossTheme.colors.textSecondary,
+                                    )
+                                },
+                                placeholder = {
+                                    Text(
+                                        "e.g., npm run dev",
+                                        color = BossTheme.colors.textMuted,
+                                    )
+                                },
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .focusRequester(terminalFocusRequester)
+                                        .onPreviewKeyEvent { event ->
+                                            if (event.type == KeyEventType.KeyDown && event.key == Key.Enter) {
+                                                handleCreateTab(selectedType, terminalCommand, onCreateTab, onDismiss)
+                                                true
+                                            } else {
+                                                false
+                                            }
+                                        },
+                                colors =
+                                    TextFieldDefaults.outlinedTextFieldColors(
+                                        textColor = BossTheme.colors.textPrimary,
+                                        cursorColor = BossTheme.colors.textPrimary,
+                                        focusedBorderColor = BossTheme.colors.signal,
+                                        unfocusedBorderColor = BossTheme.colors.line,
+                                        backgroundColor = BossTheme.colors.panel,
+                                    ),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                keyboardActions =
+                                    KeyboardActions(
+                                        onDone = {
+                                            handleCreateTab(selectedType, terminalCommand, onCreateTab, onDismiss)
+                                        },
+                                    ),
+                            )
+                        } else if (selectedType == TabType.JUPYTER) {
+                            // Optional notebook name (blank = a new untitled notebook)
+                            val jupyterFocusRequester = remember { FocusRequester() }
+                            LaunchedEffect(selectedType) {
+                                if (selectedType == TabType.JUPYTER) jupyterFocusRequester.requestFocus()
+                            }
+                            OutlinedTextField(
+                                value = inputText,
+                                onValueChange = { inputText = it },
+                                label = { Text("Notebook name (optional)", color = BossTheme.colors.textSecondary) },
+                                placeholder = { Text("e.g., analysis", color = BossTheme.colors.textMuted) },
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .focusRequester(jupyterFocusRequester)
+                                        .onPreviewKeyEvent { event ->
+                                            if (event.type == KeyEventType.KeyDown && event.key == Key.Enter) {
+                                                handleCreateTab(selectedType, inputText, onCreateTab, onDismiss)
+                                                true
+                                            } else {
+                                                false
+                                            }
+                                        },
+                                colors =
+                                    TextFieldDefaults.outlinedTextFieldColors(
+                                        textColor = BossTheme.colors.textPrimary,
+                                        cursorColor = BossTheme.colors.textPrimary,
+                                        focusedBorderColor = BossTheme.colors.signal,
+                                        unfocusedBorderColor = BossTheme.colors.line,
+                                        backgroundColor = BossTheme.colors.panel,
+                                    ),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                keyboardActions =
+                                    KeyboardActions(
+                                        onDone = { handleCreateTab(selectedType, inputText, onCreateTab, onDismiss) },
+                                    ),
+                            )
+                        } else if (selectedType == TabType.FILE) {
+                            // Current project/folder selector (uses global recent projects)
+                            // Note: In NewTabDialog we don't have window context, so we use the most recent project
+                            val recentProjects by ProjectState.recentProjects.collectAsState()
+                            var selectedProject by remember {
+                                mutableStateOf(
+                                    recentProjects.firstOrNull()
+                                        ?: Project("No Project", "", 0L),
+                                )
+                            }
+                            // Update selectedProject when recentProjects changes
+                            LaunchedEffect(recentProjects) {
+                                if (selectedProject.path.isEmpty() && recentProjects.isNotEmpty()) {
+                                    selectedProject = recentProjects.first()
+                                }
+                            }
+                            var showFolderDropdown by remember { mutableStateOf(false) }
+                            var buttonHeight by remember { mutableStateOf(0) }
+
+                            // File tree state
+                            var fileTree by remember { mutableStateOf<FileNodeData?>(null) }
+                            var expandedPaths by remember { mutableStateOf(setOf<String>()) }
+                            var isLoadingTree by remember { mutableStateOf(false) }
+                            val coroutineScope = rememberCoroutineScope()
+
+                            // Load file tree when project changes
+                            LaunchedEffect(selectedProject.path) {
+                                if (selectedProject.path.isNotEmpty()) {
+                                    isLoadingTree = true
+                                    fileTree =
+                                        try {
+                                            withContext(Dispatchers.IO) {
+                                                scanDirectory(selectedProject.path)
+                                            }
+                                        } catch (e: Exception) {
+                                            newTabDialogLogger.warn(LogCategory.FILE, "Error scanning directory", error = e)
+                                            null
+                                        }
+                                    isLoadingTree = false
+                                } else {
+                                    fileTree = null
+                                }
+                            }
+
+                            // Directory picker for selecting new folder
+                            val directoryPicker =
+                                rememberDirectoryPicker { path ->
+                                    path?.let {
+                                        val projectName = it.extractFileName().ifEmpty { "Unknown" }
+                                        val newProject =
+                                            Project(
+                                                name = projectName,
+                                                path = it,
+                                            )
+                                        // Update local state and recent projects list
+                                        selectedProject = newProject
+                                        ProjectState.updateRecentProjects(newProject)
+                                        // Clear expanded paths for new folder
+                                        expandedPaths = emptySet()
+                                    }
+                                }
+
+                            // Show "Open Project" button when no project is selected
+                            if (selectedProject.path.isEmpty()) {
+                                Box(
+                                    modifier =
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .height(200.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Button(
+                                        onClick = { directoryPicker.pickDirectory() },
+                                        colors =
+                                            ButtonDefaults.buttonColors(
+                                                backgroundColor = BossTheme.colors.signal,
+                                                contentColor = BossTheme.colors.onSignal,
+                                            ),
+                                        shape = RoundedCornerShape(4.dp),
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.FolderOpen,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("Open Project")
+                                    }
+                                }
+                            } else {
+                                // Folder selector dropdown
+                                Box(modifier = Modifier.fillMaxWidth()) {
+                                    OutlinedButton(
+                                        onClick = { showFolderDropdown = true },
                                         modifier =
                                             Modifier
                                                 .fillMaxWidth()
-                                                .height(200.dp),
-                                        contentAlignment = Alignment.Center,
+                                                .onGloballyPositioned { coordinates ->
+                                                    buttonHeight = coordinates.size.height
+                                                },
+                                        colors =
+                                            ButtonDefaults.outlinedButtonColors(
+                                                backgroundColor = BossTheme.colors.panel,
+                                                contentColor = BossTheme.colors.textPrimary,
+                                            ),
+                                        border =
+                                            ButtonDefaults.outlinedBorder.copy(
+                                                brush =
+                                                    androidx.compose.ui.graphics
+                                                        .SolidColor(BossTheme.colors.line),
+                                            ),
+                                        shape = RoundedCornerShape(4.dp),
                                     ) {
-                                        Button(
-                                            onClick = { directoryPicker.pickDirectory() },
-                                            colors =
-                                                ButtonDefaults.buttonColors(
-                                                    backgroundColor = BossTheme.colors.signal,
-                                                    contentColor = BossTheme.colors.onSignal,
-                                                ),
-                                            shape = RoundedCornerShape(4.dp),
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.FolderOpen,
-                                                contentDescription = null,
-                                                modifier = Modifier.size(18.dp),
-                                            )
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Text("Open Project")
-                                        }
+                                        Icon(
+                                            imageVector = Icons.Outlined.Folder,
+                                            contentDescription = "Folder",
+                                            tint = BossTheme.colors.signalText,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = selectedProject.name,
+                                            color = BossTheme.colors.textPrimary,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                        Icon(
+                                            imageVector = Icons.Default.ArrowDropDown,
+                                            contentDescription = "Expand",
+                                            tint = BossTheme.colors.textSecondary,
+                                        )
                                     }
-                                } else {
-                                    // Folder selector dropdown
-                                    Box(modifier = Modifier.fillMaxWidth()) {
-                                        OutlinedButton(
-                                            onClick = { showFolderDropdown = true },
-                                            modifier =
-                                                Modifier
-                                                    .fillMaxWidth()
-                                                    .onGloballyPositioned { coordinates ->
-                                                        buttonHeight = coordinates.size.height
-                                                    },
-                                            colors =
-                                                ButtonDefaults.outlinedButtonColors(
-                                                    backgroundColor = BossTheme.colors.panel,
-                                                    contentColor = BossTheme.colors.textPrimary,
-                                                ),
-                                            border =
-                                                ButtonDefaults.outlinedBorder.copy(
-                                                    brush =
-                                                        androidx.compose.ui.graphics
-                                                            .SolidColor(BossTheme.colors.line),
-                                                ),
-                                            shape = RoundedCornerShape(4.dp),
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Outlined.Folder,
-                                                contentDescription = "Folder",
-                                                tint = BossTheme.colors.signalText,
-                                                modifier = Modifier.size(18.dp),
-                                            )
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Text(
-                                                text = selectedProject.name,
-                                                color = BossTheme.colors.textPrimary,
-                                                modifier = Modifier.weight(1f),
-                                            )
-                                            Icon(
-                                                imageVector = Icons.Default.ArrowDropDown,
-                                                contentDescription = "Expand",
-                                                tint = BossTheme.colors.textSecondary,
-                                            )
-                                        }
 
-                                        if (showFolderDropdown) {
-                                            ContextMenu(
-                                                items =
-                                                    buildList {
-                                                        // Recent projects
-                                                        recentProjects.forEach { project ->
-                                                            add(
-                                                                ContextMenuItem(
-                                                                    text = project.name,
-                                                                    icon = Icons.Outlined.Folder,
-                                                                    onClick = {
-                                                                        selectedProject = project
-                                                                        expandedPaths = emptySet()
-                                                                    },
-                                                                ),
-                                                            )
-                                                        }
-                                                        // Divider if there are recent projects
-                                                        if (recentProjects.isNotEmpty()) {
-                                                            add(ContextMenuItem(isDivider = true))
-                                                        }
-                                                        // Browse option
+                                    if (showFolderDropdown) {
+                                        ContextMenu(
+                                            items =
+                                                buildList {
+                                                    // Recent projects
+                                                    recentProjects.forEach { project ->
                                                         add(
                                                             ContextMenuItem(
-                                                                text = "Browse...",
-                                                                icon = Icons.Default.FolderOpen,
-                                                                onClick = { directoryPicker.pickDirectory() },
+                                                                text = project.name,
+                                                                icon = Icons.Outlined.Folder,
+                                                                onClick = {
+                                                                    selectedProject = project
+                                                                    expandedPaths = emptySet()
+                                                                },
                                                             ),
                                                         )
-                                                    },
-                                                offset = IntOffset(0, buttonHeight),
-                                                modifier = Modifier.widthIn(min = 200.dp),
-                                                onDismissRequest = { showFolderDropdown = false },
+                                                    }
+                                                    // Divider if there are recent projects
+                                                    if (recentProjects.isNotEmpty()) {
+                                                        add(ContextMenuItem(isDivider = true))
+                                                    }
+                                                    // Browse option
+                                                    add(
+                                                        ContextMenuItem(
+                                                            text = "Browse...",
+                                                            icon = Icons.Default.FolderOpen,
+                                                            onClick = { directoryPicker.pickDirectory() },
+                                                        ),
+                                                    )
+                                                },
+                                            offset = IntOffset(0, buttonHeight),
+                                            modifier = Modifier.widthIn(min = 200.dp),
+                                            onDismissRequest = { showFolderDropdown = false },
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                // File tree browser
+                                Box(
+                                    modifier =
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .height(200.dp)
+                                            .background(
+                                                color = BossTheme.colors.panel,
+                                                shape = RoundedCornerShape(4.dp),
+                                            ).border(
+                                                width = 1.dp,
+                                                color = ContextMenuBorder,
+                                                shape = RoundedCornerShape(4.dp),
+                                            ),
+                                ) {
+                                    if (isLoadingTree) {
+                                        Box(
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(24.dp),
+                                                color = BossTheme.colors.signal,
+                                                strokeWidth = 2.dp,
                                             )
                                         }
-                                    }
+                                    } else if (fileTree != null && fileTree?.children?.isNotEmpty() == true) {
+                                        Column(
+                                            modifier =
+                                                Modifier
+                                                    .fillMaxSize()
+                                                    .verticalScroll(rememberScrollState())
+                                                    .padding(4.dp),
+                                        ) {
+                                            fileTree?.children?.forEach { node ->
+                                                DialogFileTreeItem(
+                                                    node = node,
+                                                    level = 0,
+                                                    expandedPaths = expandedPaths,
+                                                    onToggleExpanded = { path ->
+                                                        if (expandedPaths.contains(path)) {
+                                                            // Collapse - just remove from expanded set
+                                                            expandedPaths = expandedPaths - path
+                                                        } else {
+                                                            // Expand - add to expanded set and load children
+                                                            expandedPaths = expandedPaths + path
 
-                                    Spacer(modifier = Modifier.height(8.dp))
-
-                                    // File tree browser
-                                    Box(
-                                        modifier =
-                                            Modifier
-                                                .fillMaxWidth()
-                                                .height(200.dp)
-                                                .background(
-                                                    color = BossTheme.colors.panel,
-                                                    shape = RoundedCornerShape(4.dp),
-                                                ).border(
-                                                    width = 1.dp,
-                                                    color = ContextMenuBorder,
-                                                    shape = RoundedCornerShape(4.dp),
-                                                ),
-                                    ) {
-                                        if (isLoadingTree) {
-                                            Box(
-                                                modifier = Modifier.fillMaxSize(),
-                                                contentAlignment = Alignment.Center,
-                                            ) {
-                                                CircularProgressIndicator(
-                                                    modifier = Modifier.size(24.dp),
-                                                    color = BossTheme.colors.signal,
-                                                    strokeWidth = 2.dp,
-                                                )
-                                            }
-                                        } else if (fileTree != null && fileTree?.children?.isNotEmpty() == true) {
-                                            Column(
-                                                modifier =
-                                                    Modifier
-                                                        .fillMaxSize()
-                                                        .verticalScroll(rememberScrollState())
-                                                        .padding(4.dp),
-                                            ) {
-                                                fileTree?.children?.forEach { node ->
-                                                    DialogFileTreeItem(
-                                                        node = node,
-                                                        level = 0,
-                                                        expandedPaths = expandedPaths,
-                                                        onToggleExpanded = { path ->
-                                                            if (expandedPaths.contains(path)) {
-                                                                // Collapse - just remove from expanded set
-                                                                expandedPaths = expandedPaths - path
-                                                            } else {
-                                                                // Expand - add to expanded set and load children
-                                                                expandedPaths = expandedPaths + path
-
-                                                                // Load children if needed
-                                                                val currentTree = fileTree
-                                                                if (currentTree != null) {
-                                                                    val targetNode = FileTreeUtils.findNodeByPath(currentTree, path)
-                                                                    if (targetNode?.isDirectory == true && targetNode.children.isEmpty()) {
-                                                                        // Need to load children
-                                                                        coroutineScope.launch {
-                                                                            try {
-                                                                                val scannedNode =
-                                                                                    withContext(Dispatchers.IO) {
-                                                                                        scanDirectoryWithDepth(
-                                                                                            path,
-                                                                                            maxDepth = 1,
-                                                                                            startDepth = 0,
+                                                            // Load children if needed
+                                                            val currentTree = fileTree
+                                                            if (currentTree != null) {
+                                                                val targetNode = FileTreeUtils.findNodeByPath(currentTree, path)
+                                                                if (targetNode?.isDirectory == true && targetNode.children.isEmpty()) {
+                                                                    // Need to load children
+                                                                    coroutineScope.launch {
+                                                                        try {
+                                                                            val scannedNode =
+                                                                                withContext(Dispatchers.IO) {
+                                                                                    scanDirectoryWithDepth(
+                                                                                        path,
+                                                                                        maxDepth = 1,
+                                                                                        startDepth = 0,
+                                                                                    )
+                                                                                }
+                                                                            if (scannedNode != null) {
+                                                                                val loadedChildren =
+                                                                                    scannedNode.children.map { child ->
+                                                                                        if (child.isDirectory) {
+                                                                                            val hasKids =
+                                                                                                try {
+                                                                                                    directoryHasChildren(child.path)
+                                                                                                } catch (e: Exception) {
+                                                                                                    logDirProbeFailure(child.path, e)
+                                                                                                    false
+                                                                                                }
+                                                                                            child.copy(hasChildren = hasKids)
+                                                                                        } else {
+                                                                                            child
+                                                                                        }
+                                                                                    }
+                                                                                fileTree =
+                                                                                    FileTreeUtils.updateNodeAtPath(
+                                                                                        currentTree,
+                                                                                        path,
+                                                                                    ) { existingNode ->
+                                                                                        existingNode.copy(
+                                                                                            children = loadedChildren,
+                                                                                            hasChildren = loadedChildren.isNotEmpty(),
                                                                                         )
                                                                                     }
-                                                                                if (scannedNode != null) {
-                                                                                    val loadedChildren =
-                                                                                        scannedNode.children.map { child ->
-                                                                                            if (child.isDirectory) {
-                                                                                                val hasKids =
-                                                                                                    try {
-                                                                                                        directoryHasChildren(child.path)
-                                                                                                    } catch (e: Exception) {
-                                                                                                        logDirProbeFailure(child.path, e)
-                                                                                                        false
-                                                                                                    }
-                                                                                                child.copy(hasChildren = hasKids)
-                                                                                            } else {
-                                                                                                child
-                                                                                            }
-                                                                                        }
-                                                                                    fileTree =
-                                                                                        FileTreeUtils.updateNodeAtPath(
-                                                                                            currentTree,
-                                                                                            path,
-                                                                                        ) { existingNode ->
-                                                                                            existingNode.copy(
-                                                                                                children = loadedChildren,
-                                                                                                hasChildren = loadedChildren.isNotEmpty(),
-                                                                                            )
-                                                                                        }
-                                                                                }
-                                                                            } catch (e: Exception) {
-                                                                                newTabDialogLogger.warn(
-                                                                                    LogCategory.FILE,
-                                                                                    "Error loading folder children",
-                                                                                    error = e,
-                                                                                )
                                                                             }
+                                                                        } catch (e: Exception) {
+                                                                            newTabDialogLogger.warn(
+                                                                                LogCategory.FILE,
+                                                                                "Error loading folder children",
+                                                                                error = e,
+                                                                            )
                                                                         }
                                                                     }
                                                                 }
                                                             }
-                                                        },
-                                                        onFileClick = { file ->
-                                                            inputText = file.path
-                                                            fileText = file.path
-                                                        },
-                                                    )
-                                                }
-                                            }
-                                        } else if (fileTree != null && fileTree?.children?.isEmpty() == true) {
-                                            // Empty folder (hidden files like .git are excluded)
-                                            Box(
-                                                modifier = Modifier.fillMaxSize(),
-                                                contentAlignment = Alignment.Center,
-                                            ) {
-                                                Column(
-                                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                                ) {
-                                                    Text(
-                                                        text = "No visible files",
-                                                        color = BossTheme.colors.textSecondary,
-                                                        fontSize = 13.sp,
-                                                    )
-                                                    Text(
-                                                        text = "(hidden files and build folders are excluded)",
-                                                        color = BossTheme.colors.textMuted,
-                                                        fontSize = 11.sp,
-                                                    )
-                                                }
-                                            }
-                                        } else {
-                                            Box(
-                                                modifier = Modifier.fillMaxSize(),
-                                                contentAlignment = Alignment.Center,
-                                            ) {
-                                                Text(
-                                                    text = "Unable to load files",
-                                                    color = BossTheme.colors.textSecondary,
-                                                    fontSize = 13.sp,
+                                                        }
+                                                    },
+                                                    onFileClick = { file ->
+                                                        inputText = file.path
+                                                        fileText = file.path
+                                                    },
                                                 )
                                             }
                                         }
-                                    }
-
-                                    Spacer(modifier = Modifier.height(8.dp))
-
-                                    // File input with browse button
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        OutlinedTextField(
-                                            value = inputText,
-                                            onValueChange = { newValue ->
-                                                inputText = newValue
-                                                fileText = newValue
-                                            },
-                                            label = {
+                                    } else if (fileTree != null && fileTree?.children?.isEmpty() == true) {
+                                        // Empty folder (hidden files like .git are excluded)
+                                        Box(
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Column(
+                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                            ) {
                                                 Text(
-                                                    "File path",
+                                                    text = "No visible files",
                                                     color = BossTheme.colors.textSecondary,
+                                                    fontSize = 13.sp,
                                                 )
-                                            },
-                                            placeholder = {
                                                 Text(
-                                                    "Select a file above or enter path",
+                                                    text = "(hidden files and build folders are excluded)",
                                                     color = BossTheme.colors.textMuted,
+                                                    fontSize = 11.sp,
                                                 )
-                                            },
-                                            modifier =
-                                                Modifier
-                                                    .weight(1f)
-                                                    .focusRequester(focusRequester)
-                                                    .onPreviewKeyEvent { event ->
-                                                        if (event.type == KeyEventType.KeyDown && event.key == Key.Enter) {
+                                            }
+                                        }
+                                    } else {
+                                        Box(
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Text(
+                                                text = "Unable to load files",
+                                                color = BossTheme.colors.textSecondary,
+                                                fontSize = 13.sp,
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                // File input with browse button
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    OutlinedTextField(
+                                        value = inputText,
+                                        onValueChange = { newValue ->
+                                            inputText = newValue
+                                            fileText = newValue
+                                        },
+                                        label = {
+                                            Text(
+                                                "File path",
+                                                color = BossTheme.colors.textSecondary,
+                                            )
+                                        },
+                                        placeholder = {
+                                            Text(
+                                                "Select a file above or enter path",
+                                                color = BossTheme.colors.textMuted,
+                                            )
+                                        },
+                                        modifier =
+                                            Modifier
+                                                .weight(1f)
+                                                .focusRequester(focusRequester)
+                                                .onPreviewKeyEvent { event ->
+                                                    if (event.type == KeyEventType.KeyDown && event.key == Key.Enter) {
+                                                        handleCreateTab(selectedType, inputText, onCreateTab, onDismiss)
+                                                        true
+                                                    } else {
+                                                        false
+                                                    }
+                                                },
+                                        colors =
+                                            TextFieldDefaults.outlinedTextFieldColors(
+                                                textColor = BossTheme.colors.textPrimary,
+                                                cursorColor = BossTheme.colors.textPrimary,
+                                                focusedBorderColor = BossTheme.colors.signal,
+                                                unfocusedBorderColor = BossTheme.colors.line,
+                                                backgroundColor = BossTheme.colors.panel,
+                                            ),
+                                        singleLine = true,
+                                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                        keyboardActions =
+                                            KeyboardActions(
+                                                onDone = {
+                                                    handleCreateTab(selectedType, inputText, onCreateTab, onDismiss)
+                                                },
+                                            ),
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    IconButton(
+                                        onClick = { filePicker.pickFile() },
+                                        modifier = Modifier.size(48.dp),
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.FolderOpen,
+                                            contentDescription = "Browse files",
+                                            tint = BossTheme.colors.textSecondary,
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            // URL input
+                            OutlinedTextField(
+                                value = inputText,
+                                onValueChange = { newValue ->
+                                    inputText = newValue
+                                    urlText = newValue
+                                },
+                                label = {
+                                    Text(
+                                        "Enter URL or search term",
+                                        color = BossTheme.colors.textSecondary,
+                                    )
+                                },
+                                placeholder = {
+                                    Text(
+                                        "https://example.com or search...",
+                                        color = BossTheme.colors.textMuted,
+                                    )
+                                },
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .focusRequester(focusRequester)
+                                        .onPreviewKeyEvent { event ->
+                                            if (event.type == KeyEventType.KeyDown) {
+                                                when (event.key) {
+                                                    Key.DirectionDown -> {
+                                                        // Always consume arrow keys to prevent cursor movement in text field
+                                                        if (showUrlDropdown && urlSuggestions.isNotEmpty()) {
+                                                            selectedSuggestionIndex =
+                                                                (selectedSuggestionIndex + 1).coerceAtMost(urlSuggestions.size - 1)
+                                                        }
+                                                        true
+                                                    }
+
+                                                    Key.DirectionUp -> {
+                                                        // Always consume arrow keys to prevent cursor movement in text field
+                                                        if (showUrlDropdown && urlSuggestions.isNotEmpty()) {
+                                                            selectedSuggestionIndex = (selectedSuggestionIndex - 1).coerceAtLeast(-1)
+                                                        }
+                                                        true
+                                                    }
+
+                                                    Key.Enter -> {
+                                                        if (selectedSuggestionIndex >= 0 &&
+                                                            selectedSuggestionIndex < urlSuggestions.size
+                                                        ) {
+                                                            val suggestion = urlSuggestions[selectedSuggestionIndex]
+                                                            inputText = suggestion.url
+                                                            urlText = suggestion.url
+                                                            showUrlDropdown = false
                                                             handleCreateTab(selectedType, inputText, onCreateTab, onDismiss)
                                                             true
                                                         } else {
                                                             false
                                                         }
-                                                    },
-                                            colors =
-                                                TextFieldDefaults.outlinedTextFieldColors(
-                                                    textColor = BossTheme.colors.textPrimary,
-                                                    cursorColor = BossTheme.colors.textPrimary,
-                                                    focusedBorderColor = BossTheme.colors.signal,
-                                                    unfocusedBorderColor = BossTheme.colors.line,
-                                                    backgroundColor = BossTheme.colors.panel,
-                                                ),
-                                            singleLine = true,
-                                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                            keyboardActions =
-                                                KeyboardActions(
-                                                    onDone = {
-                                                        handleCreateTab(selectedType, inputText, onCreateTab, onDismiss)
-                                                    },
-                                                ),
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        IconButton(
-                                            onClick = { filePicker.pickFile() },
-                                            modifier = Modifier.size(48.dp),
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.FolderOpen,
-                                                contentDescription = "Browse files",
-                                                tint = BossTheme.colors.textSecondary,
-                                            )
-                                        }
-                                    }
-                                }
-                            } else {
-                                // URL input
-                                OutlinedTextField(
-                                    value = inputText,
-                                    onValueChange = { newValue ->
-                                        inputText = newValue
-                                        urlText = newValue
-                                    },
-                                    label = {
-                                        Text(
-                                            "Enter URL or search term",
-                                            color = BossTheme.colors.textSecondary,
-                                        )
-                                    },
-                                    placeholder = {
-                                        Text(
-                                            "https://example.com or search...",
-                                            color = BossTheme.colors.textMuted,
-                                        )
-                                    },
-                                    modifier =
-                                        Modifier
-                                            .fillMaxWidth()
-                                            .focusRequester(focusRequester)
-                                            .onPreviewKeyEvent { event ->
-                                                if (event.type == KeyEventType.KeyDown) {
-                                                    when (event.key) {
-                                                        Key.DirectionDown -> {
-                                                            // Always consume arrow keys to prevent cursor movement in text field
-                                                            if (showUrlDropdown && urlSuggestions.isNotEmpty()) {
-                                                                selectedSuggestionIndex =
-                                                                    (selectedSuggestionIndex + 1).coerceAtMost(urlSuggestions.size - 1)
-                                                            }
+                                                    }
+
+                                                    Key.Escape -> {
+                                                        if (showUrlDropdown) {
+                                                            showUrlDropdown = false
                                                             true
-                                                        }
-
-                                                        Key.DirectionUp -> {
-                                                            // Always consume arrow keys to prevent cursor movement in text field
-                                                            if (showUrlDropdown && urlSuggestions.isNotEmpty()) {
-                                                                selectedSuggestionIndex = (selectedSuggestionIndex - 1).coerceAtLeast(-1)
-                                                            }
-                                                            true
-                                                        }
-
-                                                        Key.Enter -> {
-                                                            if (selectedSuggestionIndex >= 0 &&
-                                                                selectedSuggestionIndex < urlSuggestions.size
-                                                            ) {
-                                                                val suggestion = urlSuggestions[selectedSuggestionIndex]
-                                                                inputText = suggestion.url
-                                                                urlText = suggestion.url
-                                                                showUrlDropdown = false
-                                                                handleCreateTab(selectedType, inputText, onCreateTab, onDismiss)
-                                                                true
-                                                            } else {
-                                                                false
-                                                            }
-                                                        }
-
-                                                        Key.Escape -> {
-                                                            if (showUrlDropdown) {
-                                                                showUrlDropdown = false
-                                                                true
-                                                            } else {
-                                                                false
-                                                            }
-                                                        }
-
-                                                        else -> {
+                                                        } else {
                                                             false
                                                         }
                                                     }
-                                                } else {
-                                                    false
-                                                }
-                                            },
-                                    colors =
-                                        TextFieldDefaults.outlinedTextFieldColors(
-                                            textColor = BossTheme.colors.textPrimary,
-                                            cursorColor = BossTheme.colors.textPrimary,
-                                            focusedBorderColor = BossTheme.colors.signal,
-                                            unfocusedBorderColor = BossTheme.colors.line,
-                                            backgroundColor = BossTheme.colors.panel,
-                                        ),
-                                    singleLine = true,
-                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                    keyboardActions =
-                                        KeyboardActions(
-                                            onDone = {
-                                                if (selectedSuggestionIndex >= 0 && selectedSuggestionIndex < urlSuggestions.size) {
-                                                    val suggestion = urlSuggestions[selectedSuggestionIndex]
-                                                    handleCreateTab(selectedType, suggestion.url, onCreateTab, onDismiss)
-                                                } else {
-                                                    handleCreateTab(selectedType, inputText, onCreateTab, onDismiss)
-                                                }
-                                            },
-                                        ),
-                                )
 
-                                // URL suggestions dropdown
-                                if (showUrlDropdown) {
-                                    Box(
-                                        modifier =
-                                            Modifier
-                                                .fillMaxWidth()
-                                                .heightIn(max = 200.dp)
-                                                .background(
-                                                    color = ContextMenuBackground,
-                                                    shape = RoundedCornerShape(0.dp, 0.dp, 4.dp, 4.dp),
-                                                ).border(
-                                                    width = 1.dp,
-                                                    color = ContextMenuBorder,
-                                                    shape = RoundedCornerShape(0.dp, 0.dp, 4.dp, 4.dp),
-                                                ),
-                                    ) {
-                                        LazyColumn(state = listState) {
-                                            itemsIndexed(urlSuggestions) { index, suggestion ->
-                                                Row(
-                                                    modifier =
-                                                        Modifier
-                                                            .fillMaxWidth()
-                                                            .background(
-                                                                if (index == selectedSuggestionIndex) {
-                                                                    BossTheme.colors.signal.copy(alpha = 0.2f)
-                                                                } else {
-                                                                    Color.Transparent
-                                                                },
-                                                            ).clickable {
-                                                                inputText = suggestion.url
-                                                                urlText = suggestion.url
-                                                                showUrlDropdown = false
-                                                                handleCreateTab(TabType.URL, suggestion.url, onCreateTab, onDismiss)
-                                                            }.padding(horizontal = 16.dp, vertical = 10.dp),
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                ) {
-                                                    Icon(
-                                                        imageVector =
-                                                            if (suggestion.isSearchSuggestion) {
-                                                                Icons.Default.Search
+                                                    else -> {
+                                                        false
+                                                    }
+                                                }
+                                            } else {
+                                                false
+                                            }
+                                        },
+                                colors =
+                                    TextFieldDefaults.outlinedTextFieldColors(
+                                        textColor = BossTheme.colors.textPrimary,
+                                        cursorColor = BossTheme.colors.textPrimary,
+                                        focusedBorderColor = BossTheme.colors.signal,
+                                        unfocusedBorderColor = BossTheme.colors.line,
+                                        backgroundColor = BossTheme.colors.panel,
+                                    ),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                keyboardActions =
+                                    KeyboardActions(
+                                        onDone = {
+                                            if (selectedSuggestionIndex >= 0 && selectedSuggestionIndex < urlSuggestions.size) {
+                                                val suggestion = urlSuggestions[selectedSuggestionIndex]
+                                                handleCreateTab(selectedType, suggestion.url, onCreateTab, onDismiss)
+                                            } else {
+                                                handleCreateTab(selectedType, inputText, onCreateTab, onDismiss)
+                                            }
+                                        },
+                                    ),
+                            )
+
+                            // URL suggestions dropdown
+                            if (showUrlDropdown) {
+                                Box(
+                                    modifier =
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(max = 200.dp)
+                                            .background(
+                                                color = ContextMenuBackground,
+                                                shape = RoundedCornerShape(0.dp, 0.dp, 4.dp, 4.dp),
+                                            ).border(
+                                                width = 1.dp,
+                                                color = ContextMenuBorder,
+                                                shape = RoundedCornerShape(0.dp, 0.dp, 4.dp, 4.dp),
+                                            ),
+                                ) {
+                                    LazyColumn(state = listState) {
+                                        itemsIndexed(urlSuggestions) { index, suggestion ->
+                                            Row(
+                                                modifier =
+                                                    Modifier
+                                                        .fillMaxWidth()
+                                                        .background(
+                                                            if (index == selectedSuggestionIndex) {
+                                                                BossTheme.colors.signal.copy(alpha = 0.2f)
                                                             } else {
-                                                                Icons.Default.History
+                                                                Color.Transparent
                                                             },
-                                                        contentDescription = null,
-                                                        modifier = Modifier.size(18.dp),
-                                                        tint = BossTheme.colors.textSecondary,
+                                                        ).clickable {
+                                                            inputText = suggestion.url
+                                                            urlText = suggestion.url
+                                                            showUrlDropdown = false
+                                                            handleCreateTab(TabType.URL, suggestion.url, onCreateTab, onDismiss)
+                                                        }.padding(horizontal = 16.dp, vertical = 10.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                            ) {
+                                                Icon(
+                                                    imageVector =
+                                                        if (suggestion.isSearchSuggestion) {
+                                                            Icons.Default.Search
+                                                        } else {
+                                                            Icons.Default.History
+                                                        },
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(18.dp),
+                                                    tint = BossTheme.colors.textSecondary,
+                                                )
+                                                Spacer(modifier = Modifier.width(12.dp))
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(
+                                                        text = suggestion.title.ifEmpty { suggestion.url },
+                                                        fontSize = 14.sp,
+                                                        color = BossTheme.colors.textPrimary,
+                                                        maxLines = 1,
                                                     )
-                                                    Spacer(modifier = Modifier.width(12.dp))
-                                                    Column(modifier = Modifier.weight(1f)) {
+                                                    if (suggestion.title.isNotEmpty()) {
                                                         Text(
-                                                            text = suggestion.title.ifEmpty { suggestion.url },
-                                                            fontSize = 14.sp,
-                                                            color = BossTheme.colors.textPrimary,
+                                                            text = suggestion.url,
+                                                            fontSize = 12.sp,
+                                                            color = BossTheme.colors.textSecondary,
                                                             maxLines = 1,
                                                         )
-                                                        if (suggestion.title.isNotEmpty()) {
-                                                            Text(
-                                                                text = suggestion.url,
-                                                                fontSize = 12.sp,
-                                                                color = BossTheme.colors.textSecondary,
-                                                                maxLines = 1,
-                                                            )
+                                                    }
+                                                }
+                                                IconButton(
+                                                    onClick = {
+                                                        UrlHistoryProvider.deleteUrl(suggestion.url)
+                                                        // Update suggestions
+                                                        urlSuggestions = urlSuggestions.filterNot { it.url == suggestion.url }
+                                                        if (urlSuggestions.isEmpty()) {
+                                                            showUrlDropdown = false
                                                         }
-                                                    }
-                                                    IconButton(
-                                                        onClick = {
-                                                            UrlHistoryProvider.deleteUrl(suggestion.url)
-                                                            // Update suggestions
-                                                            urlSuggestions = urlSuggestions.filterNot { it.url == suggestion.url }
-                                                            if (urlSuggestions.isEmpty()) {
-                                                                showUrlDropdown = false
-                                                            }
-                                                        },
-                                                        modifier = Modifier.size(24.dp),
-                                                    ) {
-                                                        Icon(
-                                                            imageVector = Icons.Default.Close,
-                                                            contentDescription = "Delete",
-                                                            modifier = Modifier.size(16.dp),
-                                                            tint = BossTheme.colors.textSecondary,
-                                                        )
-                                                    }
+                                                    },
+                                                    modifier = Modifier.size(24.dp),
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Close,
+                                                        contentDescription = "Delete",
+                                                        modifier = Modifier.size(16.dp),
+                                                        tint = BossTheme.colors.textSecondary,
+                                                    )
                                                 }
                                             }
                                         }
@@ -1221,65 +1206,65 @@ fun NewTabDialog(
                                 }
                             }
                         }
-                    } // end availableTypes.isNotEmpty() else
+                    }
+                } // end availableTypes.isNotEmpty() else
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
-                    // Buttons
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End,
-                        verticalAlignment = Alignment.CenterVertically,
+                // Buttons
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(
+                        onClick = onDismiss,
+                        colors =
+                            ButtonDefaults.textButtonColors(
+                                contentColor = BossTheme.colors.textSecondary,
+                            ),
                     ) {
-                        TextButton(
-                            onClick = onDismiss,
-                            colors =
-                                ButtonDefaults.textButtonColors(
-                                    contentColor = BossTheme.colors.textSecondary,
-                                ),
-                        ) {
-                            Text("Cancel")
-                        }
+                        Text("Cancel")
+                    }
 
-                        Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
 
-                        Button(
-                            onClick = {
-                                if (selectedPluginTypeInfo != null) {
-                                    confirmPluginTab()
-                                } else {
-                                    val input = if (selectedType == TabType.TERMINAL) terminalCommand else inputText
-                                    handleCreateTab(selectedType, input, onCreateTab, onDismiss)
+                    Button(
+                        onClick = {
+                            if (selectedPluginTypeInfo != null) {
+                                confirmPluginTab()
+                            } else {
+                                val input = if (selectedType == TabType.TERMINAL) terminalCommand else inputText
+                                handleCreateTab(selectedType, input, onCreateTab, onDismiss)
+                            }
+                        },
+                        enabled =
+                            if (selectedPluginTypeInfo != null) {
+                                selectedPluginTypeInfo.newTabSpec!!.inputOptional || pluginInput.isNotBlank()
+                            } else {
+                                availableTypes.isNotEmpty() &&
+                                    (selectedType == TabType.TERMINAL || selectedType == TabType.JUPYTER || inputText.isNotBlank())
+                            },
+                        colors =
+                            ButtonDefaults.buttonColors(
+                                backgroundColor = BossTheme.colors.signal,
+                                contentColor = BossTheme.colors.onSignal,
+                                disabledBackgroundColor = BossTheme.colors.raised,
+                                disabledContentColor = BossTheme.colors.textMuted,
+                            ),
+                    ) {
+                        Text(
+                            if (selectedPluginTypeInfo != null) {
+                                selectedPluginTypeInfo.newTabSpec!!.confirmLabel
+                            } else {
+                                when (selectedType) {
+                                    TabType.URL -> "Fluck it"
+                                    TabType.FILE -> "Open"
+                                    TabType.TERMINAL -> "Open Terminal"
+                                    TabType.JUPYTER -> "New Notebook"
                                 }
                             },
-                            enabled =
-                                if (selectedPluginTypeInfo != null) {
-                                    selectedPluginTypeInfo.newTabSpec!!.inputOptional || pluginInput.isNotBlank()
-                                } else {
-                                    availableTypes.isNotEmpty() &&
-                                        (selectedType == TabType.TERMINAL || selectedType == TabType.JUPYTER || inputText.isNotBlank())
-                                },
-                            colors =
-                                ButtonDefaults.buttonColors(
-                                    backgroundColor = BossTheme.colors.signal,
-                                    contentColor = BossTheme.colors.onSignal,
-                                    disabledBackgroundColor = BossTheme.colors.raised,
-                                    disabledContentColor = BossTheme.colors.textMuted,
-                                ),
-                        ) {
-                            Text(
-                                if (selectedPluginTypeInfo != null) {
-                                    selectedPluginTypeInfo.newTabSpec!!.confirmLabel
-                                } else {
-                                    when (selectedType) {
-                                        TabType.URL -> "Fluck it"
-                                        TabType.FILE -> "Open"
-                                        TabType.TERMINAL -> "Open Terminal"
-                                        TabType.JUPYTER -> "New Notebook"
-                                    }
-                                },
-                            )
-                        }
+                        )
                     }
                 }
             }

@@ -1,6 +1,7 @@
 package ai.rever.boss.components.settings.keymap
 
 import ai.rever.boss.keymap.model.KeymapSettings
+import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -17,7 +18,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.launch
 
 /**
@@ -59,7 +59,7 @@ fun ShortcutTestDialog(
             )
         }
 
-    Dialog(onDismissRequest = onDismiss) {
+    BossDialog(onDismissRequest = onDismiss) {
         Surface(
             modifier =
                 Modifier

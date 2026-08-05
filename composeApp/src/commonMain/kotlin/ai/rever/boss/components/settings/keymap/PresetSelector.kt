@@ -2,6 +2,8 @@ package ai.rever.boss.components.settings.keymap
 
 import ai.rever.boss.keymap.model.KeymapSettings
 import ai.rever.boss.keymap.presets.KeymapPresets
+import ai.rever.boss.plugin.ui.BossAlertDialog
+import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -21,7 +23,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.launch
 
 /**
@@ -183,7 +184,7 @@ private fun PresetMenuDialog(
 ) {
     val presets = KeymapPresets.getAvailablePresets()
 
-    Dialog(onDismissRequest = onDismiss) {
+    BossDialog(onDismissRequest = onDismiss) {
         Surface(
             modifier = Modifier.width(450.dp),
             shape = RoundedCornerShape(12.dp),
@@ -289,7 +290,7 @@ private fun ResetConfirmationDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    AlertDialog(
+    BossAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Reset to Default Keymap?", color = BossTheme.colors.textPrimary) },
         text = {

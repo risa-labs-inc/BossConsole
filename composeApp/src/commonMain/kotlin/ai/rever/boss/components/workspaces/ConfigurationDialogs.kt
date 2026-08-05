@@ -1,6 +1,7 @@
 package ai.rever.boss.components.workspaces
 
 import ai.rever.boss.platform.rememberFilePicker
+import ai.rever.boss.plugin.ui.BossAlertDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -29,7 +30,7 @@ fun SaveWorkspaceDialog(
 ) {
     var name by remember { mutableStateOf("") }
 
-    androidx.compose.material.AlertDialog(
+    BossAlertDialog(
         onDismissRequest = onDismiss,
         title = { androidx.compose.material.Text("Save Workspace") },
         text = {
@@ -92,7 +93,7 @@ fun DeleteWorkspaceDialog(
 ) {
     var selectedWorkspace by remember { mutableStateOf<String?>(null) }
 
-    androidx.compose.material.AlertDialog(
+    BossAlertDialog(
         onDismissRequest = onDismiss,
         title = { androidx.compose.material.Text("Delete Workspace") },
         text = {

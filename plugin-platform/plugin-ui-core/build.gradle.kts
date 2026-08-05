@@ -9,7 +9,7 @@ plugins {
 }
 
 group = "com.risaboss"
-version = "1.0.7"
+version = "1.0.8"
 
 kotlin {
     compilerOptions {
@@ -44,7 +44,19 @@ kotlin {
                 implementation(compose.desktop.currentOs)
             }
         }
+
+        named("desktopTest") {
+            dependencies {
+                implementation(kotlin("test"))
+                implementation(kotlin("test-junit5"))
+                implementation(libs.junit.jupiter)
+            }
+        }
     }
+}
+
+tasks.withType<Test> {
+    useJUnitPlatform()
 }
 
 mavenPublishing {

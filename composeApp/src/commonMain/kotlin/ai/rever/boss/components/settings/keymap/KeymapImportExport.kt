@@ -1,6 +1,7 @@
 package ai.rever.boss.components.settings.keymap
 
 import ai.rever.boss.keymap.KeymapSettingsManager
+import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -18,7 +19,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.launch
 
 /**
@@ -158,7 +158,7 @@ private fun ExportDialog(onDismiss: () -> Unit) {
     val exportedJson = KeymapSettingsManager.exportToJson()
     var copied by remember { mutableStateOf(false) }
 
-    Dialog(onDismissRequest = onDismiss) {
+    BossDialog(onDismissRequest = onDismiss) {
         Surface(
             modifier =
                 Modifier
@@ -253,7 +253,7 @@ private fun ImportDialog(
     var jsonInput by remember { mutableStateOf("") }
     var showError by remember { mutableStateOf(false) }
 
-    Dialog(onDismissRequest = onDismiss) {
+    BossDialog(onDismissRequest = onDismiss) {
         Surface(
             modifier =
                 Modifier

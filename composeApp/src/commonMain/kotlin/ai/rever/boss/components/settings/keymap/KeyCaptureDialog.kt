@@ -2,6 +2,7 @@ package ai.rever.boss.components.settings.keymap
 
 import ai.rever.boss.keymap.model.KeyBinding
 import ai.rever.boss.keymap.model.ShortcutContext
+import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.utils.SystemUtils
 import androidx.compose.foundation.background
@@ -23,7 +24,6 @@ import androidx.compose.ui.input.key.*
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 
 /**
  * Dialog for capturing keyboard shortcuts.
@@ -48,7 +48,7 @@ fun KeyCaptureDialog(
         focusRequester.requestFocus()
     }
 
-    Dialog(onDismissRequest = onDismiss) {
+    BossDialog(onDismissRequest = onDismiss) {
         Surface(
             modifier =
                 Modifier

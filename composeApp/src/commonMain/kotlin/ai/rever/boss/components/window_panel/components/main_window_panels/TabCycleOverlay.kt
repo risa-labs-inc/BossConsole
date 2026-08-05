@@ -4,6 +4,7 @@ import ContextMenuBackground
 import ContextMenuBorder
 import ContextMenuHover
 import ai.rever.boss.components.common.rememberFaviconLoader
+import ai.rever.boss.components.overlays.OverlayHud
 import ai.rever.boss.plugin.api.TabIcon
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.ui.BossTheme
@@ -11,6 +12,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -46,12 +48,15 @@ private const val OVERLAY_REVEAL_DELAY_MS = 180L
  * (press-and-release within the delay) doesn't flash the switcher. Renders nothing in
  * positional mode, where [data] stays null.
  *
- * Call this from within a `Box` and pass `Modifier.align(...)` to position the card.
+ * Call this from within a `Box`; [alignment] positions the card in it. The card goes through
+ * [OverlayHud] rather than being drawn straight into the scaffold, because under HARDWARE the
+ * browser's native surface paints over the Compose scene - so the switcher was invisible over a
+ * browser tab, which is exactly when it is used.
  */
 @Composable
-fun TabCycleOverlayHost(
+fun BoxScope.TabCycleOverlayHost(
     data: TabCycleOverlayData?,
-    modifier: Modifier = Modifier,
+    alignment: Alignment = Alignment.Center,
 ) {
     var visible by remember { mutableStateOf(false) }
     LaunchedEffect(data == null) {
@@ -63,7 +68,9 @@ fun TabCycleOverlayHost(
         }
     }
     if (data != null && visible) {
-        TabCycleOverlay(data = data, modifier = modifier)
+        OverlayHud(alignment = alignment) {
+            TabCycleOverlay(data = data)
+        }
     }
 }
 

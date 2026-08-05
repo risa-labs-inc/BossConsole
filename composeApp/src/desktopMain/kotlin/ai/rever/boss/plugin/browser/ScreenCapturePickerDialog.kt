@@ -4,6 +4,7 @@ import ai.rever.boss.cache.loadHighQualityFavicon
 import ai.rever.boss.components.common.rememberFaviconLoader
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
 import ai.rever.boss.plugin.api.TabIcon
+import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -33,7 +34,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.teamdev.jxbrowser.capture.AudioCaptureMode
 
@@ -62,7 +62,7 @@ fun ScreenCapturePickerDialog(
     var selectedSource by remember { mutableStateOf<ScreenCaptureNotifier.CaptureSourceItem?>(null) }
     var includeAudio by remember { mutableStateOf(true) }
 
-    Dialog(
+    BossDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(dismissOnClickOutside = true, dismissOnBackPress = true),
     ) {

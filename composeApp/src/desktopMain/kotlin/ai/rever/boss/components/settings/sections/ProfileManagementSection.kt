@@ -3,6 +3,7 @@ package ai.rever.boss.components.settings.sections
 import ai.rever.boss.components.settings.shared.SettingsSection
 import ai.rever.boss.plugin.browser.BrowserSettings
 import ai.rever.boss.plugin.browser.BrowserSettingsManager
+import ai.rever.boss.plugin.ui.BossAlertDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -159,7 +160,7 @@ fun ProfileManagementSection(
 
     // New Profile Dialog
     if (showNewProfileDialog) {
-        AlertDialog(
+        BossAlertDialog(
             onDismissRequest = {
                 showNewProfileDialog = false
                 newProfileName = ""

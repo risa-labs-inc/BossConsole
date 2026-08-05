@@ -20,6 +20,7 @@ import ai.rever.boss.git.GitOperationResult
 import ai.rever.boss.git.GitService
 import ai.rever.boss.git.GitStashInfo
 import ai.rever.boss.platform.rememberDirectoryPicker
+import ai.rever.boss.plugin.ui.BossAlertDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.services.supabase.AuthService
 import ai.rever.boss.utils.extractFileName
@@ -522,7 +523,7 @@ fun BossDraggableComponent.BossTopLeftBar(
 
     // Deleted project dialog
     deletedProjectName?.let { projectName ->
-        AlertDialog(
+        BossAlertDialog(
             onDismissRequest = { deletedProjectName = null },
             title = { Text("Project Not Found") },
             text = { Text("The project \"$projectName\" no longer exists. It has been removed from the recent projects list.") },
@@ -611,7 +612,7 @@ fun BossDraggableComponent.BossTopLeftBar(
 
     // Git error dialog
     gitErrorMessage?.let { errorMsg ->
-        AlertDialog(
+        BossAlertDialog(
             onDismissRequest = { gitErrorMessage = null },
             title = { Text("Git Error") },
             text = { Text(errorMsg) },
@@ -625,7 +626,7 @@ fun BossDraggableComponent.BossTopLeftBar(
 
     // Git success dialog
     gitSuccessMessage?.let { successMsg ->
-        AlertDialog(
+        BossAlertDialog(
             onDismissRequest = { gitSuccessMessage = null },
             title = { Text("Git Operation Successful") },
             text = { Text(successMsg) },
@@ -855,7 +856,7 @@ private fun CreateBranchDialog(
     var branchName by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
 
-    AlertDialog(
+    BossAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Create New Branch") },
         text = {

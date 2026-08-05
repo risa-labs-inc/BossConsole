@@ -4,6 +4,7 @@ import ai.rever.boss.plugin.browser.parseTopInsetDp
 import ai.rever.boss.plugin.browser.pointerInsideBounds
 import ai.rever.boss.plugin.browser.shouldAllowPinch
 import ai.rever.boss.plugin.browser.shouldRetainSurface
+import ai.rever.boss.plugin.ui.BossOverlayHost
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.unit.IntOffset
@@ -274,6 +275,8 @@ class HeavyweightOverlayTest {
         OverlayConfig.heavyweightModal = null
         OverlayConfig.heavyweightTooltip = null
         OverlayConfig.hideHeavyweightTooltip = null
+        OverlayConfig.heavyweightHud = null
+        OverlayConfig.heavyweightGhost = null
         OverlayConfig.openHeavyweightPopups = 0
     }
 
@@ -281,13 +284,31 @@ class HeavyweightOverlayTest {
     fun `overlay renderers default to null so callers fall back to Compose popups`() {
         // useHeavyweightPopups can be true while the renderers are null: any entry point that does
         // not run main.kt's wiring (a test host, a tool) reaches exactly that state. The null
-        // checks in ContextMenu / OverlayModal are what stand between that and no menus at all,
+        // checks in ContextMenu / BossDialog are what stand between that and no menus at all,
         // so the defaults they rely on are pinned here.
         assertFalse(OverlayConfig.useHeavyweightPopups)
         assertNull(OverlayConfig.heavyweightPopup)
         assertNull(OverlayConfig.heavyweightModal)
         assertNull(OverlayConfig.heavyweightTooltip)
         assertNull(OverlayConfig.hideHeavyweightTooltip)
+        assertNull(OverlayConfig.heavyweightHud)
+        assertNull(OverlayConfig.heavyweightGhost)
+        assertEquals(0, OverlayConfig.openHeavyweightPopups)
+    }
+
+    @Test
+    fun `the modal switch and popup counter are the same ones plugins see`() {
+        // OverlayConfig's modal properties are forwarding accessors onto BossOverlayHost, which is
+        // what plugin-drawn dialogs read. If that forwarding is ever replaced by a second backing
+        // field, the host would route heavyweight while every plugin dialog silently stayed behind
+        // the page - the exact bug this path exists to fix, and invisible from either side.
+        OverlayConfig.useHeavyweightPopups = true
+        assertTrue(BossOverlayHost.useHeavyweightOverlays)
+
+        OverlayConfig.openHeavyweightPopups = 3
+        assertEquals(3, BossOverlayHost.openHeavyweightPopups)
+
+        BossOverlayHost.openHeavyweightPopups = 0
         assertEquals(0, OverlayConfig.openHeavyweightPopups)
     }
 
