@@ -395,13 +395,28 @@ fun BossAlertDialog(
 /**
  * An anchored, non-modal overlay that layers correctly above a GPU-composited browser surface.
  *
- * Drop-in replacement for `androidx.compose.ui.window.Popup`, and the counterpart to [BossDialog] for
+ * Same shape as `androidx.compose.ui.window.Popup` for the parameters it exposes, and the
+ * counterpart to [BossDialog] for
  * everything that is not a modal: a context menu, a dropdown, an autocomplete list. `BossDialog`
  * cannot stand in for these - it centers its content, draws a scrim, and takes focus.
  *
- * **[focusable] is the parameter to think about.** A suggestion list under a text field must pass
- * `false`, or the popup steals focus from the field and the user cannot keep typing. A menu that
- * handles its own arrow keys wants `true`.
+ * The surface is deliberately narrower than `Popup`: no `alignment`, and `PopupProperties` is
+ * constructed internally. That is a decision rather than an oversight, because adding a parameter to
+ * this `@Composable` later is pinned by the binary-compatibility validator in two repos and costs a
+ * coordinated host and api release.
+ *
+ * **[focusable] is the parameter to think about, and it defaults to `false` to match `Popup`.** A
+ * suggestion list under a text field needs `false`, or the popup steals focus and the user cannot
+ * keep typing. A menu that handles its own arrow keys wants `true` and must say so. The default
+ * deliberately mirrors `PopupProperties()` rather than being chosen on merit: this is documented as a
+ * rename-only migration, and a default that disagreed with `Popup` would make a mechanical rename
+ * silently start stealing focus - the exact failure this parameter exists to prevent.
+ *
+ * **Dismissal with `focusable = false` is weaker on the lightweight path.** A non-focusable desktop
+ * `Popup` does not receive key events, so Escape cannot reach it, and outside-click dismissal is tied
+ * to focusability there. The heavyweight renderer owns dismissal itself and is unaffected. Since the
+ * api jar's own body is the lightweight path on an older host, a `focusable = false` popup should not
+ * rely on Escape - drive it from the anchoring control's own key handling, as the URL bar does.
  *
  * [offset] is relative to the anchoring layout. It is honoured exactly on the lightweight path; the
  * heavyweight renderer currently prefers the cursor, because converting a layout-relative offset to
@@ -412,13 +427,14 @@ fun BossAlertDialog(
  * the parameter is already here, so a renderer that learns true window-space anchoring needs no api
  * change. Do not rely on cursor placement.
  *
- * @param onDismissRequest Called on a click outside, on Escape, or when focus leaves the application.
+ * @param onDismissRequest Called on a click outside, on Escape, or when focus leaves the
+ *   application - subject to the `focusable = false` caveat above on the lightweight path.
  */
 @Composable
 fun BossPopup(
     onDismissRequest: () -> Unit,
     offset: IntOffset = IntOffset.Zero,
-    focusable: Boolean = true,
+    focusable: Boolean = false,
     anchoring: BossPopupAnchoring = BossPopupAnchoring.Cursor,
     content: @Composable () -> Unit,
 ) {
