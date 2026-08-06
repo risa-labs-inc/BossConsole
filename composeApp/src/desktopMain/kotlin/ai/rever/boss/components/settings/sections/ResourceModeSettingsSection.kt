@@ -16,12 +16,16 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 private const val AUTO_LABEL = "Auto (recommended)"
 
@@ -30,10 +34,28 @@ private fun BossResourceMode.settingsLabel(): String = "$displayName - $summary"
 
 private fun ResourceModeReason.explain(mode: BossResourceMode): String =
     when (this) {
-        ResourceModeReason.EXPLICIT_OVERRIDE -> "${mode.displayName}, because you selected it"
-        ResourceModeReason.PLATFORM_DEFAULT -> "${mode.displayName}, the default on this platform"
-        ResourceModeReason.DETECTED_MEMORY -> "${mode.displayName}, chosen from this machine's memory"
-        ResourceModeReason.DEFAULT -> "${mode.displayName}, nothing asked for a reduced tier"
+        // Named explicitly rather than folded into "because you selected it": when the env var is
+        // set, the dropdown above still shows the user's own choice, and claiming they selected
+        // this tier contradicts the control they are looking at.
+        ResourceModeReason.ENVIRONMENT_OVERRIDE -> {
+            "${mode.displayName}, forced by ${ResourceModeConfig.MODE_KEY}"
+        }
+
+        ResourceModeReason.USER_SELECTION -> {
+            "${mode.displayName}, because you selected it"
+        }
+
+        ResourceModeReason.PLATFORM_DEFAULT -> {
+            "${mode.displayName}, the default on this platform"
+        }
+
+        ResourceModeReason.DETECTED_MEMORY -> {
+            "${mode.displayName}, chosen from this machine's memory"
+        }
+
+        ResourceModeReason.DEFAULT -> {
+            "${mode.displayName}, nothing asked for a reduced tier"
+        }
     }
 
 /**
@@ -53,8 +75,18 @@ fun ResourceModeSettingsSection() {
         remember {
             SystemMemory.totalPhysicalBytes().toDouble() / ResourceModeConfig.BYTES_PER_GB
         }
-    val skipped = remember { PluginStoreSetup.skippedByResourceMode }
+    // Collected, not remembered: plugin loading is asynchronous, so a Settings screen opened
+    // early would otherwise pin an empty list forever - on the one screen that exists to explain
+    // where the plugins went.
+    val skipped by PluginStoreSetup.skippedByResourceMode.collectAsState()
     var optedIn by remember { mutableStateOf(LiteModePluginPolicy.userAllowlist()) }
+    val scope = rememberCoroutineScope()
+
+    // Persisting is a small file write, but it is still disk I/O and these run from Compose
+    // callbacks, one per toggle in a per-plugin loop. docs/THREADING.md is firm about this.
+    fun persist(block: () -> Unit) {
+        scope.launch(Dispatchers.IO) { block() }
+    }
 
     val options = listOf(AUTO_LABEL) + BossResourceMode.entries.map { it.settingsLabel() }
     val selectedLabel =
@@ -71,12 +103,18 @@ fun ResourceModeSettingsSection() {
             selectedLabel = selectedLabel,
             decision = decision,
             totalGb = totalGb,
-            onSelected = { persisted = ResourceModeSettings.current() },
+            onSelected = { name ->
+                persisted = persisted.copy(selectedMode = name)
+                persist { ResourceModeSettings.update { it.copy(selectedMode = name) } }
+            },
         )
 
         AutomaticSelectionSection(
             persisted = persisted,
-            onChanged = { persisted = ResourceModeSettings.current() },
+            onChanged = { updated ->
+                persisted = updated
+                persist { ResourceModeSettings.update { updated } }
+            },
         )
 
         PluginVisibilitySections(
@@ -84,8 +122,8 @@ fun ResourceModeSettingsSection() {
             optedIn = optedIn,
             onToggleOptIn = { pluginId, keep ->
                 val next = if (keep) optedIn + pluginId else optedIn - pluginId
-                LiteModePluginPolicy.setUserAllowlist(next)
-                optedIn = LiteModePluginPolicy.userAllowlist()
+                optedIn = next
+                persist { LiteModePluginPolicy.setUserAllowlist(next) }
             },
         )
     }
@@ -98,7 +136,7 @@ private fun ModeSelectorSection(
     selectedLabel: String,
     decision: ai.rever.boss.config.ResourceModeDecision,
     totalGb: Double,
-    onSelected: () -> Unit,
+    onSelected: (String?) -> Unit,
 ) {
     SettingsSection(title = "Resource Mode") {
         SettingsDropdown(
@@ -106,9 +144,7 @@ private fun ModeSelectorSection(
             options = options,
             selectedOption = selectedLabel,
             onOptionSelected = { label ->
-                val mode = BossResourceMode.entries.firstOrNull { it.settingsLabel() == label }
-                ResourceModeSettings.update { it.copy(selectedMode = mode?.name) }
-                onSelected()
+                onSelected(BossResourceMode.entries.firstOrNull { it.settingsLabel() == label }?.name)
             },
             description =
                 "Takes effect on the next launch. Plugin loading happens once at startup, so a " +
@@ -144,16 +180,13 @@ private fun ModeSelectorSection(
 @Composable
 private fun AutomaticSelectionSection(
     persisted: ai.rever.boss.config.ResourceModeSettingsData,
-    onChanged: () -> Unit,
+    onChanged: (ai.rever.boss.config.ResourceModeSettingsData) -> Unit,
 ) {
     SettingsSection(title = "Automatic Selection") {
         SettingsNumberInput(
             label = "Use Lite below",
             value = persisted.liteThresholdGb,
-            onValueChange = { gb ->
-                ResourceModeSettings.update { it.copy(liteThresholdGb = gb) }
-                onChanged()
-            },
+            onValueChange = { gb -> onChanged(persisted.copy(liteThresholdGb = gb)) },
             range = 1..1024,
             description = "Total machine memory, in GB, below which Auto picks Lite.",
         )
@@ -161,24 +194,20 @@ private fun AutomaticSelectionSection(
         SettingsNumberInput(
             label = "Use Ultra Lite below",
             value = persisted.ultraLiteThresholdGb,
-            onValueChange = { gb ->
-                ResourceModeSettings.update { it.copy(ultraLiteThresholdGb = gb) }
-                onChanged()
-            },
+            onValueChange = { gb -> onChanged(persisted.copy(ultraLiteThresholdGb = gb)) },
             range = 1..1024,
-            description = "Total machine memory, in GB, below which Auto picks Ultra Lite.",
+            description =
+                "Total machine memory, in GB, below which Auto picks Ultra Lite. Clamped to the " +
+                    "Lite threshold, since a higher value would make Lite unreachable.",
         )
 
         SettingsToggle(
             label = "React to low memory while running",
             checked = persisted.livePressureEnabled,
-            onCheckedChange = { on ->
-                ResourceModeSettings.update { it.copy(livePressureEnabled = on) }
-                onChanged()
-            },
+            onCheckedChange = { on -> onChanged(persisted.copy(livePressureEnabled = on)) },
             description =
-                "Switch to Lite mid-session when free memory stays low, and say so. Installed " +
-                    "memory alone cannot tell how much is actually free.",
+                "Switch to Lite mid-session when available memory stays low, and say so. " +
+                    "Installed memory alone cannot tell how much is actually free.",
         )
     }
 }

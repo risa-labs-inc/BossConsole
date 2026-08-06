@@ -68,15 +68,41 @@ object PluginStoreSetup {
     private val manifestJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
     private var initialized = false
 
+    private val _skippedByResourceMode = kotlinx.coroutines.flow.MutableStateFlow<Set<String>>(emptySet())
+
     /**
      * Plugin ids this launch declined to load because of the resource tier.
      *
-     * Read by Settings so a missing plugin is explained rather than mysterious. Populated once
-     * during [loadPersistedPlugins]; empty on FULL and on any launch that skipped nothing.
+     * Read by Settings so a missing plugin is explained rather than mysterious. A flow rather
+     * than a plain value because plugin loading is asynchronous: a Settings screen composed
+     * before [loadPersistedPlugins] finishes would otherwise show an empty skipped list for its
+     * whole lifetime and never recover, which is the worst possible moment for that list to be
+     * wrong. Empty on FULL and on any launch that skipped nothing.
      */
-    @Volatile
-    var skippedByResourceMode: Set<String> = emptySet()
-        private set
+    val skippedByResourceMode: kotlinx.coroutines.flow.StateFlow<Set<String>> get() = _skippedByResourceMode
+
+    /**
+     * Splits persisted plugins into those to load and those the resource tier declines.
+     *
+     * Extracted from [loadPersistedPlugins] purely so it can be tested: inline in a large
+     * `suspend` function, the one rule that actually matters here had no coverage and had to be
+     * fixed by hand after review.
+     *
+     * That rule: **a plugin the user disabled is not a plugin the tier skipped.** Without the
+     * `!entry.enabled` term such a plugin is admitted here, declined downstream anyway, and then
+     * listed under "Plugins Skipped This Launch" as though a reduced tier had taken it away,
+     * which blames the feature for the user's own choice.
+     */
+    internal fun partitionForResourceMode(
+        entries: List<PluginPersistence.InstalledPluginEntry>,
+        mode: ai.rever.boss.config.BossResourceMode,
+        shouldLoad: (String) -> Boolean,
+    ): Pair<List<PluginPersistence.InstalledPluginEntry>, List<PluginPersistence.InstalledPluginEntry>> =
+        if (!mode.gatesPlugins) {
+            entries to emptyList()
+        } else {
+            entries.partition { !it.enabled || shouldLoad(it.pluginId) }
+        }
 
     /**
      * Local plugin directory (installed plugins).
@@ -1388,17 +1414,13 @@ object PluginStoreSetup {
         // tier restores them on the next launch with no reinstall.
         val mode = ai.rever.boss.config.ResourceModeConfig.mode
         val (admitted, skipped) =
-            persistedPlugins.partition { entry ->
-                // A plugin the USER disabled is not a plugin the resource mode skipped. Without
-                // this it would be admitted here, then declined downstream, and still show up
-                // under "Plugins Skipped This Launch" attributed to the tier - blaming Lite for
-                // the user's own choice.
-                !entry.enabled || LiteModePluginPolicy.shouldLoad(entry.pluginId, mode)
+            partitionForResourceMode(persistedPlugins, mode) { pluginId ->
+                LiteModePluginPolicy.shouldLoad(pluginId, mode)
             }
 
         // Assigned unconditionally: a later launch that skips nothing must clear the previous
         // set, not leave a stale list for Settings to display.
-        skippedByResourceMode = skipped.map { it.pluginId }.toSet()
+        _skippedByResourceMode.value = skipped.map { it.pluginId }.toSet()
 
         if (skipped.isNotEmpty()) {
             logger.info(

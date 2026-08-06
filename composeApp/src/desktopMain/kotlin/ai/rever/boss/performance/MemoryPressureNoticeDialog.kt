@@ -122,6 +122,21 @@ fun BrowserCapNoticeDialog() {
     }
 }
 
+/**
+ * What a live tighten to [mode] actually changed, in the user's terms.
+ *
+ * Only the levers a *mid-session* tighten can really apply belong here. Plugin gating and the
+ * Chromium renderer cap are both fixed at startup, so however constrained the tier is on paper,
+ * a running session cannot have gained them. Internal so `MemoryPressureCopyTest` can hold it
+ * against the tier table, which is how the previous version's false claim went unnoticed.
+ */
+internal fun changeSummary(mode: ai.rever.boss.config.BossResourceMode): String {
+    val parts = mutableListOf<String>()
+    mode.maxConcurrentBrowsers?.let { parts += "at most $it browsers can be open at once" }
+    if (!mode.backgroundSamplingEnabled) parts += "background performance sampling is off"
+    return if (parts.isEmpty()) "nothing yet; a restart is needed to apply this tier" else parts.joinToString(", and ")
+}
+
 @Composable
 private fun NoticeBody(notice: MemoryPressureNotice) {
     val colors = BossTheme.colors
@@ -147,8 +162,13 @@ private fun NoticeBody(notice: MemoryPressureNotice) {
 
     Spacer(Modifier.height(12.dp))
 
+    // Derived from the tier rather than written out, because the hardcoded version said
+    // "background performance sampling is off" and that was simply untrue: the watchdog only
+    // ever applies LITE, LITE leaves sampling on, and the sampler is started once at boot and
+    // never stopped mid-session anyway. A false sentence is worse here than in most places -
+    // this dialog's whole job is explaining a change the user did not ask for.
     Text(
-        text = "What changed: the browser is now capped, and background performance sampling is off.",
+        text = "What changed: ${changeSummary(notice.appliedMode)}",
         color = colors.textMuted,
         fontSize = 12.sp,
     )

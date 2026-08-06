@@ -247,6 +247,18 @@ object BrowserServiceImpl : BrowserService {
     // Track active browser handles for resource management
     private val activeBrowsers = ConcurrentHashMap<String, BrowserHandleImpl>()
 
+    /**
+     * Live handles plus in-flight creations, which is what the tier ceiling is enforced against.
+     *
+     * `activeBrowsers.size` alone is check-then-act: the handle is not registered until several
+     * suspension points after the guard, so concurrent creations would all see room and all
+     * proceed. Decremented on any creation that does not yield a handle, and when a handle is
+     * disposed.
+     */
+    private val reservedBrowsers =
+        java.util.concurrent.atomic
+            .AtomicInteger(0)
+
     private val _capRefusals = kotlinx.coroutines.flow.MutableStateFlow<BrowserCapRefusal?>(null)
 
     /**
@@ -260,6 +272,20 @@ object BrowserServiceImpl : BrowserService {
     fun acknowledgeCapRefusal() {
         _capRefusals.value = null
     }
+
+    /**
+     * Hands a reservation slot back, never below zero.
+     *
+     * The floor matters: a slot released twice would otherwise drive the counter negative and
+     * quietly raise the ceiling above what the tier advertises, which is the failure this cap
+     * exists to prevent.
+     */
+    private fun releaseBrowserReservation() {
+        reservedBrowsers.updateAndGet { current -> if (current > 0) current - 1 else 0 }
+    }
+
+    /** Live handles plus in-flight creations. Test seam for the reservation accounting. */
+    internal fun reservedBrowserCount(): Int = reservedBrowsers.get()
 
     // BrowserService is shared process-wide, but plugin handles belong to the
     // window whose PluginContext created them.
@@ -420,7 +446,12 @@ object BrowserServiceImpl : BrowserService {
         ownerWindowId: String,
     ): BrowserHandle? {
         val mode = ai.rever.boss.config.ResourceModeConfig.mode
-        if (isAtBrowserCeiling(activeBrowsers.size, mode)) {
+        // Reserve before suspending, so concurrent creations cannot all pass the same check.
+        // reservedBrowsers counts live handles plus in-flight creations; the slot is released in
+        // the finally below when the creation does not produce one.
+        val reserved = reservedBrowsers.getAndIncrement()
+        if (isAtBrowserCeiling(reserved, mode)) {
+            reservedBrowsers.decrementAndGet()
             logger.warn(
                 LogCategory.BROWSER,
                 "Browser creation refused - at the resource-mode ceiling",
@@ -439,7 +470,18 @@ object BrowserServiceImpl : BrowserService {
                 BrowserCapRefusal(mode = mode, cap = mode.maxConcurrentBrowsers ?: 0)
             return null
         }
-        return createBrowserWithRetry(config, ownerWindowId)
+
+        // try/finally rather than catch: a creation that produced nothing must give its slot
+        // back however it failed, or the ceiling ratchets down over a session until no browser
+        // can open at all. Only a handle that actually exists keeps its reservation.
+        var produced = false
+        try {
+            val handle = createBrowserWithRetry(config, ownerWindowId)
+            produced = handle != null
+            return handle
+        } finally {
+            if (!produced) releaseBrowserReservation()
+        }
     }
 
     private suspend fun createBrowserWithRetry(
@@ -468,8 +510,16 @@ object BrowserServiceImpl : BrowserService {
      * Pure part of the concurrent-browser ceiling, split out so the guard is unit-testable
      * without an engine.
      *
-     * A null [BossResourceMode.maxConcurrentBrowsers] means uncapped, which is [FULL]'s
-     * behaviour and the behaviour every build had before resource modes existed.
+     * A null [BossResourceMode.maxConcurrentBrowsers] means uncapped, which is FULL's behaviour
+     * and the behaviour every build had before resource modes existed.
+     *
+     * **The bound is enforced against reservations, not against live handles.** `createBrowser`
+     * takes a slot in [reservedBrowsers] before suspending and releases it on failure, because
+     * the naive version read `activeBrowsers.size` and did not register the handle until several
+     * suspension points later: N concurrent creations all observed `cap - 1`, all proceeded, and
+     * the process overshot its advertised ceiling by the number of in-flight creations. That is
+     * the same off-by-one family as the `>=` versus `>` choice below, only larger, and it guards
+     * an allocator whose failure mode is an uncatchable abort.
      */
     internal fun isAtBrowserCeiling(
         active: Int,
@@ -608,7 +658,9 @@ object BrowserServiceImpl : BrowserService {
     }
 
     override suspend fun disposeBrowser(handle: BrowserHandle) {
-        activeBrowsers.remove(handle.id)
+        // Conditional on an actual removal: disposing a handle twice, or one that never reached
+        // the map, must not hand back a reservation slot that was never taken.
+        if (activeBrowsers.remove(handle.id) != null) releaseBrowserReservation()
         browserOwners.unregister(handle.id)
         try {
             handle.dispose()
@@ -692,6 +744,7 @@ object BrowserServiceImpl : BrowserService {
 
     private fun disposeTrackedBrowserBlocking(handle: BrowserHandleImpl): Boolean {
         if (!activeBrowsers.remove(handle.id, handle)) return false
+        releaseBrowserReservation()
 
         browserOwners.unregister(handle.id)
         try {

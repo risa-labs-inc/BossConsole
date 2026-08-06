@@ -92,8 +92,18 @@ enum class BossResourceMode(
  * is indistinguishable from a broken install unless the app can say why.
  */
 enum class ResourceModeReason {
-    /** An explicit, recognized BOSS_RESOURCE_MODE value. */
-    EXPLICIT_OVERRIDE,
+    /**
+     * An explicit, recognized BOSS_RESOURCE_MODE env var or system property.
+     *
+     * Distinct from [USER_SELECTION] because the two need different sentences. When the operator
+     * sets the env var, Settings still shows whatever the user picked in the dropdown, and
+     * telling them the tier is what they selected is a flat contradiction of the control sitting
+     * directly above it.
+     */
+    ENVIRONMENT_OVERRIDE,
+
+    /** The tier chosen in Settings. */
+    USER_SELECTION,
 
     /** Windows, which defaults to the most conservative tier. */
     PLATFORM_DEFAULT,
@@ -110,6 +120,25 @@ data class ResourceModeDecision(
     val mode: BossResourceMode,
     val reason: ResourceModeReason,
 )
+
+/**
+ * Total-RAM ceilings, in GB, that automatic selection compares against.
+ *
+ * A pair rather than two loose parameters because they are only ever meaningful together: the
+ * ultra ceiling has to sit at or below the lite one, and [normalized] is the single place that
+ * invariant is enforced.
+ */
+data class ResourceModeThresholds(
+    val liteGb: Int = ResourceModeConfig.DEFAULT_LITE_THRESHOLD_GB,
+    val ultraLiteGb: Int = ResourceModeConfig.DEFAULT_ULTRA_LITE_THRESHOLD_GB,
+) {
+    /**
+     * Ultra Lite is tested first, so an ultra ceiling above the lite one would make LITE
+     * unreachable and quietly put a mid-size machine in the tightest tier. These arrive as two
+     * independent free-form Settings inputs, so coerce to the nearer intent rather than reject.
+     */
+    fun normalized(): ResourceModeThresholds = copy(ultraLiteGb = ultraLiteGb.coerceAtMost(liteGb))
+}
 
 /**
  * Resolves the process's [BossResourceMode] once, at startup.
@@ -163,7 +192,8 @@ object ResourceModeConfig {
         // An env var or system property still outranks the Settings choice, matching how
         // BOSS_RENDERING_MODE behaves: the operator's environment is the outer authority, and
         // it is the escape hatch when a persisted choice turns out to be the problem.
-        val raw = ConfigLoader.getConfig(MODE_KEY) ?: settings.selectedMode
+        val fromEnvironment = ConfigLoader.getConfig(MODE_KEY)
+        val raw = fromEnvironment ?: settings.selectedMode
         val os = System.getProperty("os.name").orEmpty().lowercase()
         val totalBytes = SystemMemory.totalPhysicalBytes()
         val resolved =
@@ -171,10 +201,13 @@ object ResourceModeConfig {
                 raw = raw,
                 os = os,
                 totalMemoryBytes = totalBytes,
-                liteThresholdGb =
-                    thresholdGb(LITE_THRESHOLD_GB_KEY, settings.liteThresholdGb),
-                ultraLiteThresholdGb =
-                    thresholdGb(ULTRA_LITE_THRESHOLD_GB_KEY, settings.ultraLiteThresholdGb),
+                thresholds =
+                    ResourceModeThresholds(
+                        liteGb = thresholdGb(LITE_THRESHOLD_GB_KEY, settings.liteThresholdGb),
+                        ultraLiteGb =
+                            thresholdGb(ULTRA_LITE_THRESHOLD_GB_KEY, settings.ultraLiteThresholdGb),
+                    ),
+                explicitCameFromEnvironment = fromEnvironment != null,
             )
 
         if (!raw.isNullOrBlank() && !isRecognizedResourceMode(raw)) {
@@ -247,12 +280,24 @@ object ResourceModeConfig {
         return true
     }
 
-    /** Whether the live memory-pressure watchdog is allowed to act. Defaults to on. */
+    /**
+     * Whether the live memory-pressure watchdog is allowed to act. Defaults to on.
+     *
+     * Three-state, not two. An unrecognized value must fall through to the Settings toggle rather
+     * than count as "on": reading `BOSS_RESOURCE_LIVE_PRESSURE=disabled` as an enable would both
+     * invert the operator's obvious intent and silently override a user who turned the watchdog
+     * off in Settings.
+     */
     val livePressureEnabled: Boolean by lazy {
         val raw = ConfigLoader.getConfig(LIVE_PRESSURE_KEY)?.trim()?.lowercase()
-        raw?.let { it !in FALSY_FLAGS } ?: ResourceModeSettings.current().livePressureEnabled
+        when (raw) {
+            in TRUTHY_FLAGS -> true
+            in FALSY_FLAGS -> false
+            else -> ResourceModeSettings.current().livePressureEnabled
+        }
     }
 
+    private val TRUTHY_FLAGS = setOf("true", "1", "yes", "on")
     private val FALSY_FLAGS = setOf("false", "0", "no", "off")
 
     /**
@@ -289,8 +334,8 @@ object ResourceModeConfig {
         raw: String?,
         os: String,
         totalMemoryBytes: Long,
-        liteThresholdGb: Int = DEFAULT_LITE_THRESHOLD_GB,
-        ultraLiteThresholdGb: Int = DEFAULT_ULTRA_LITE_THRESHOLD_GB,
+        thresholds: ResourceModeThresholds = ResourceModeThresholds(),
+        explicitCameFromEnvironment: Boolean = false,
     ): ResourceModeDecision {
         val explicit =
             when (raw?.trim()?.uppercase()) {
@@ -305,16 +350,24 @@ object ResourceModeConfig {
             }
 
         return explicit
-            ?.let { ResourceModeDecision(it, ResourceModeReason.EXPLICIT_OVERRIDE) }
-            ?: detectResourceMode(os, totalMemoryBytes, liteThresholdGb, ultraLiteThresholdGb)
+            ?.let {
+                ResourceModeDecision(
+                    it,
+                    if (explicitCameFromEnvironment) {
+                        ResourceModeReason.ENVIRONMENT_OVERRIDE
+                    } else {
+                        ResourceModeReason.USER_SELECTION
+                    },
+                )
+            }
+            ?: detectResourceMode(os, totalMemoryBytes, thresholds.normalized())
     }
 
     /** The automatic half of [resolveResourceMode], reached when nothing explicit applied. */
     private fun detectResourceMode(
         os: String,
         totalMemoryBytes: Long,
-        liteThresholdGb: Int,
-        ultraLiteThresholdGb: Int,
+        thresholds: ResourceModeThresholds,
     ): ResourceModeDecision {
         // Windows defaults to the most conservative tier. It is the platform where the
         // memory pressure is worst-felt and where OFF_SCREEN forced the entire Compose UI
@@ -338,11 +391,11 @@ object ResourceModeConfig {
                 ResourceModeDecision(BossResourceMode.FULL, ResourceModeReason.DEFAULT)
             }
 
-            totalGb < ultraLiteThresholdGb -> {
+            totalGb < thresholds.ultraLiteGb -> {
                 ResourceModeDecision(BossResourceMode.ULTRA_LITE, ResourceModeReason.DETECTED_MEMORY)
             }
 
-            totalGb < liteThresholdGb -> {
+            totalGb < thresholds.liteGb -> {
                 ResourceModeDecision(BossResourceMode.LITE, ResourceModeReason.DETECTED_MEMORY)
             }
 

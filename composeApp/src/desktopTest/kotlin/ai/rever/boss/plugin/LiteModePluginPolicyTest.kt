@@ -94,23 +94,53 @@ class LiteModePluginPolicyTest {
      * which defaults to ULTRA_LITE - and it would only show up on the platform least likely to
      * be the developer's.
      *
-     * This reads the LIVE manifest, cache included, so it also covers the upgrade path pinned
-     * by `an older cache cannot revoke eligibility` below.
+     * Deliberately reads `mergeWithFallbackForTest(emptyList())` rather than `currentList()`.
+     * The latter goes through `loadCacheOrFallback`, which reads `~/.boss/system-plugins.json`,
+     * so the assertion would mean one thing on CI (no cache, tests FALLBACK) and something else
+     * on a machine that has run BOSS. A test whose subject depends on `$HOME` is not pinning
+     * anything.
      */
     @Test
     fun `every shipped system plugin survives ULTRA_LITE`() {
-        val eligible = SystemPluginManifestService.liteEligibleIds()
-        for (info in SystemPluginManifestService.currentList(isKernelMode = true)) {
+        val shipped = SystemPluginManifestService.mergeWithFallbackForTest(emptyList())
+        val eligible = shipped.filter { it.liteEligible }.map { it.pluginId }.toSet()
+        for (entry in shipped) {
             assertTrue(
                 LiteModePluginPolicy.isAllowed(
-                    pluginId = info.pluginId,
+                    pluginId = entry.pluginId,
                     mode = BossResourceMode.ULTRA_LITE,
                     liteEligibleIds = eligible,
                     userAllowlist = emptySet(),
                 ),
-                "${info.pluginId} is a system plugin but would be skipped in ULTRA_LITE",
+                "${entry.pluginId} is a shipped system plugin but would be skipped in ULTRA_LITE",
             )
         }
+    }
+
+    /**
+     * `mergeWithFallback` uses `putIfAbsent` for rows the remote table has but FALLBACK does not,
+     * so such a row keeps whatever `liteEligible` it arrived with - which is `false` by default.
+     * A system plugin the host installs itself would then be skipped under ULTRA_LITE.
+     *
+     * This pins the behaviour rather than asserting it is wrong: the migration's UPDATE covers
+     * exactly the seven FALLBACK rows, so any eighth row in `system_plugins` needs its
+     * `lite_eligible` set deliberately. If that is ever forgotten, this documents where it bites.
+     */
+    @Test
+    fun `a remote-only row keeps its own eligibility rather than inheriting one`() {
+        val remoteOnly =
+            SystemPluginManifestEntry(
+                pluginId = "ai.rever.boss.plugin.dynamic.somethingnew",
+                githubRepo = "risa-labs-inc/whatever",
+                artifactPrefix = "whatever",
+                liteEligible = false,
+            )
+        val merged = SystemPluginManifestService.mergeWithFallbackForTest(listOf(remoteOnly))
+        val row = merged.single { it.pluginId == remoteOnly.pluginId }
+        assertFalse(
+            row.liteEligible,
+            "an uncurated remote row must not silently become eligible - it must be set in the table",
+        )
     }
 
     /**

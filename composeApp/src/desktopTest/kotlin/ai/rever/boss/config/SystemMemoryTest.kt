@@ -47,9 +47,24 @@ class SystemMemoryTest {
         assertTrue(fraction > 0.0 && fraction <= 1.0, "freeFraction() was $fraction")
     }
 
+    /**
+     * Deliberately a sanity bound rather than `available <= total`.
+     *
+     * Inside a memory-limited container those two measure different things: `getTotalMemorySize`
+     * is cgroup-aware while `/proc/meminfo` `MemAvailable` is host-wide, so available legitimately
+     * exceeds total and a strict assertion is a flake on any containerised build. [freeFraction]
+     * already clamps to 1.0 for that case, which leaves the watchdog inert in containers - the
+     * safe direction, and preferable to a red build that says nothing about this code.
+     */
     @Test
-    fun `available never exceeds total`() {
-        assertTrue(SystemMemory.availableBytes() <= SystemMemory.totalPhysicalBytes())
+    fun `available is a plausible magnitude`() {
+        val available = SystemMemory.availableBytes()
+        val total = SystemMemory.totalPhysicalBytes()
+        assertTrue(available > 0L && total > 0L)
+        assertTrue(
+            available <= total * 4,
+            "available=$available is implausible against total=$total",
+        )
     }
 
     /**

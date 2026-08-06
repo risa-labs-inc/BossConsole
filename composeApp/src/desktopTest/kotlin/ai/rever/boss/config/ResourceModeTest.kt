@@ -94,14 +94,43 @@ class ResourceModeTest {
     }
 
     @Test
+    fun `an ultra threshold above the lite one is clamped rather than inverting the tiers`() {
+        // Ultra is tested first, so an un-clamped 32 would put this 24 GB machine in ULTRA_LITE
+        // even though the user asked for Lite below 8.
+        val decision =
+            ResourceModeConfig.resolveResourceMode(
+                raw = null,
+                os = mac,
+                totalMemoryBytes = 24 * gb,
+                thresholds = ResourceModeThresholds(liteGb = 8, ultraLiteGb = 32),
+            )
+        assertEquals(BossResourceMode.FULL, decision.mode)
+        assertEquals(8, ResourceModeThresholds(liteGb = 8, ultraLiteGb = 32).normalized().ultraLiteGb)
+    }
+
+    @Test
+    fun `an environment override is distinguished from a settings choice`() {
+        // Settings still shows the user's own pick, so calling the env var "because you selected
+        // it" would contradict the control right above it.
+        val fromEnv =
+            ResourceModeConfig.resolveResourceMode(
+                raw = "LITE",
+                os = mac,
+                totalMemoryBytes = 64 * gb,
+                explicitCameFromEnvironment = true,
+            )
+        assertEquals(ResourceModeReason.ENVIRONMENT_OVERRIDE, fromEnv.reason)
+        assertEquals(ResourceModeReason.USER_SELECTION, resolve(raw = "LITE").reason)
+    }
+
+    @Test
     fun `thresholds are configurable`() {
         val decision =
             ResourceModeConfig.resolveResourceMode(
                 raw = null,
                 os = mac,
                 totalMemoryBytes = 24 * gb,
-                liteThresholdGb = 32,
-                ultraLiteThresholdGb = 16,
+                thresholds = ResourceModeThresholds(liteGb = 32, ultraLiteGb = 16),
             )
         assertEquals(BossResourceMode.LITE, decision.mode)
     }
@@ -143,7 +172,7 @@ class ResourceModeTest {
         // The escape hatch that matters most: a Windows user who wants their plugins back.
         val decision = resolve(raw = "FULL", os = windows, totalGb = 8.0)
         assertEquals(BossResourceMode.FULL, decision.mode)
-        assertEquals(ResourceModeReason.EXPLICIT_OVERRIDE, decision.reason)
+        assertEquals(ResourceModeReason.USER_SELECTION, decision.reason)
     }
 
     @Test
@@ -174,7 +203,7 @@ class ResourceModeTest {
         for (raw in listOf("ULTRA", "LIGHT", "LITEE", "yes", "1", "!!")) {
             val decision = resolve(raw = raw, os = mac, totalGb = 64.0)
             assertEquals(BossResourceMode.FULL, decision.mode, raw)
-            assertNotEquals(ResourceModeReason.EXPLICIT_OVERRIDE, decision.reason, raw)
+            assertNotEquals(ResourceModeReason.USER_SELECTION, decision.reason, raw)
         }
     }
 

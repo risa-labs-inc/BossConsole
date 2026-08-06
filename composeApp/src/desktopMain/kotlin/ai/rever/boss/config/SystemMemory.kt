@@ -38,17 +38,30 @@ object SystemMemory {
     fun totalPhysicalBytes(): Long = osBean?.totalMemorySize?.takeIf { it > 0L } ?: 0L
 
     /**
-     * Memory available for allocation without swapping, in bytes, or 0 when it cannot be read.
+     * Memory available for allocation without evicting the user's working set, in bytes, or 0
+     * when it cannot be read.
      *
-     * On Linux this reads `MemAvailable` from `/proc/meminfo` in preference to the JDK's
-     * `getFreeMemorySize`, which reports `MemFree`. The two are very different numbers on a
-     * healthy machine: `MemFree` excludes the page cache, so a Linux box that has been up for a
-     * while routinely shows single-digit-percent `MemFree` while many gigabytes are reclaimable
-     * on demand. Driving [freeFraction] off `MemFree` would make the memory-pressure watchdog
-     * fire on ordinary healthy systems, and because tightening is one-way that costs the user
-     * their browser cap for the rest of the session.
+     * **Not** the JDK's `getFreeMemorySize` on Linux or macOS, and the difference is not academic.
+     * That call reports genuinely-unused pages, which a healthy operating system deliberately
+     * keeps near zero: it would rather cache than idle. Measured on a 128 GB Mac that macOS itself
+     * described as "92% free", `getFreeMemorySize` returned 0.9 GB, a free fraction of **0.0073**.
+     * Driving the watchdog off that would have tightened the tier one-way and shown an
+     * interruptive modal on essentially every Mac session, one minute in, on machines with over a
+     * hundred gigabytes spare. That is the precise failure this method exists to avoid, so each
+     * platform gets the reading that actually answers "could a large allocation succeed".
+     *
+     *  - **Linux**: `MemAvailable` from `/proc/meminfo`, the kernel's own estimate. `MemFree`
+     *    excludes the page cache and misleads for the same reason.
+     *  - **macOS**: free + inactive + speculative + purgeable from `vm_stat`. Inactive and
+     *    purgeable pages are reclaimable on demand, and on a warm Mac they are most of the
+     *    reclaimable total.
+     *  - **Elsewhere** (Windows): the JDK reading, which maps to `ullAvailPhys` and already means
+     *    "available" rather than "untouched".
      */
-    fun availableBytes(): Long = linuxMemAvailableBytes() ?: (osBean?.freeMemorySize ?: 0L)
+    fun availableBytes(): Long =
+        linuxMemAvailableBytes()
+            ?: macAvailableBytes()
+            ?: (osBean?.freeMemorySize ?: 0L)
 
     /**
      * Available RAM as a fraction of total, in `0.0..1.0`, or null when either reading failed.
@@ -74,12 +87,67 @@ object SystemMemory {
         runCatching {
             val meminfo = File("/proc/meminfo")
             if (!meminfo.exists()) return@runCatching null
-            meminfo
-                .useLines { lines ->
-                    lines.firstOrNull { it.startsWith("MemAvailable:") }
-                }?.split(Regex("\\s+"))
-                ?.getOrNull(1)
-                ?.toLongOrNull()
-                ?.times(1024L)
+            parseMemAvailableKb(meminfo.readText())?.times(1024L)
         }.getOrNull()
+
+    /** `MemAvailable` in kB from `/proc/meminfo` text, or null when absent. */
+    internal fun parseMemAvailableKb(meminfo: String): Long? =
+        meminfo
+            .lineSequence()
+            .firstOrNull { it.startsWith("MemAvailable:") }
+            ?.split(Regex("\\s+"))
+            ?.getOrNull(1)
+            ?.toLongOrNull()
+
+    private fun macAvailableBytes(): Long? =
+        runCatching {
+            if (!System
+                    .getProperty("os.name")
+                    .orEmpty()
+                    .lowercase()
+                    .startsWith("mac")
+            ) {
+                return@runCatching null
+            }
+            val process =
+                ProcessBuilder("/usr/bin/vm_stat")
+                    .redirectErrorStream(true)
+                    .start()
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+            // Do not let a wedged vm_stat hold the polling coroutine.
+            if (!process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                process.destroyForcibly()
+                return@runCatching null
+            }
+            parseVmStatAvailableBytes(output)
+        }.getOrNull()
+
+    /**
+     * Reclaimable bytes from `vm_stat` output, or null when it cannot be parsed.
+     *
+     * Sums free, inactive, speculative and purgeable pages. Split out and internal so the
+     * arithmetic is testable against captured fixture text rather than against whatever the
+     * developer's machine happens to be doing.
+     */
+    internal fun parseVmStatAvailableBytes(output: String): Long? {
+        val pageSize = vmStatField(output, "page size of (\\d+) bytes") ?: return null
+
+        val counts =
+            listOf("Pages free", "Pages inactive", "Pages speculative", "Pages purgeable")
+                .map { label -> vmStatField(output, "^\\Q$label\\E:\\s+(\\d+)") }
+
+        // Free is the only one we insist on; the others vary by macOS version and a missing
+        // optional field should narrow the estimate, not discard the reading entirely.
+        return counts.first()?.let { counts.filterNotNull().sum() * pageSize }
+    }
+
+    private fun vmStatField(
+        output: String,
+        pattern: String,
+    ): Long? =
+        Regex(pattern, RegexOption.MULTILINE)
+            .find(output)
+            ?.groupValues
+            ?.get(1)
+            ?.toLongOrNull()
 }

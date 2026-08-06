@@ -959,7 +959,12 @@ fun ApplicationScope.BossWindow(
                 onRestartRequested = {
                     ai.rever.boss.config.ResourceModeConfig
                         .requestUltraLiteOnNextLaunch()
-                    WindowOperations.closeWindow(windowState.id)
+                    // A real relaunch, via the path the updater and Browser Engine settings
+                    // already use. Closing this window instead only removed one entry from
+                    // WindowManager, so with a second window open a button labelled "Restart"
+                    // made the user's tabs vanish and left the app running in the old tier.
+                    ai.rever.boss.utils.ApplicationRestarter
+                        .restartApplication()
                 },
             )
             ai.rever.boss.performance

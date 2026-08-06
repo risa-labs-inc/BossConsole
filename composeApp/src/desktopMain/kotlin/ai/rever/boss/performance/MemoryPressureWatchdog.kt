@@ -135,11 +135,28 @@ object MemoryPressureWatchdog {
      * Claims the [started] flag as a side effect, so it must be called exactly once per [start].
      */
     private fun shouldStart(): Boolean {
-        if (!ResourceModeConfig.livePressureEnabled) {
-            logger.info(LogCategory.SYSTEM, "Live memory-pressure watchdog disabled by setting")
-            return false
+        // Both declines are logged, with their reason. Logging only one of them left an empty
+        // log with two possible meanings and no way to tell them apart.
+        val decline =
+            when {
+                !ResourceModeConfig.livePressureEnabled -> {
+                    "disabled by setting"
+                }
+
+                ResourceModeConfig.mode != BossResourceMode.FULL -> {
+                    "the session is already reduced to ${ResourceModeConfig.mode.name}"
+                }
+
+                else -> {
+                    null
+                }
+            }
+        return if (decline != null) {
+            logger.info(LogCategory.SYSTEM, "Live memory-pressure watchdog not started - $decline")
+            false
+        } else {
+            started.compareAndSet(false, true)
         }
-        return ResourceModeConfig.mode == BossResourceMode.FULL && started.compareAndSet(false, true)
     }
 
     /**
