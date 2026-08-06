@@ -62,7 +62,11 @@ object OverlayConfig {
             focusable: Boolean,
             content: @Composable () -> Unit,
         ) -> Unit
-    )? = null
+    )?
+        get() = BossOverlayHost.popupRenderer
+        set(value) {
+            BossOverlayHost.popupRenderer = value
+        }
 
     /**
      * Platform-injected heavyweight MODAL renderer — for centered, full-window dialogs rather than

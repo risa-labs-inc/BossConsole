@@ -35,9 +35,12 @@ import androidx.compose.ui.graphics.takeOrElse
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import kotlinx.coroutines.delay
 
 /**
@@ -356,5 +359,57 @@ fun BossAlertDialog(
                 buttons()
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Anchored popup
+// ---------------------------------------------------------------------------
+
+/**
+ * An anchored, non-modal overlay that layers correctly above a GPU-composited browser surface.
+ *
+ * Drop-in replacement for `androidx.compose.ui.window.Popup`, and the counterpart to [BossDialog] for
+ * everything that is not a modal: a context menu, a dropdown, an autocomplete list. `BossDialog`
+ * cannot stand in for these - it centers its content, draws a scrim, and takes focus.
+ *
+ * **[focusable] is the parameter to think about.** A suggestion list under a text field must pass
+ * `false`, or the popup steals focus from the field and the user cannot keep typing. A menu that
+ * handles its own arrow keys wants `true`.
+ *
+ * [offset] is relative to the anchoring layout. It is honoured exactly on the lightweight path; the
+ * heavyweight renderer currently prefers the cursor, because converting a layout-relative offset to
+ * screen coordinates has to go through the content pane rather than the window and is off by the
+ * title-bar height otherwise. For a menu opened by a click the two coincide. For a control anchored
+ * somewhere the pointer is not - a suggestion list under a text field being the case that exposes it
+ * - the cursor currently wins, and that is a host-side limitation rather than part of this contract:
+ * the parameter is already here, so a renderer that learns true window-space anchoring needs no api
+ * change. Do not rely on cursor placement.
+ *
+ * @param onDismissRequest Called on a click outside, on Escape, or when focus leaves the application.
+ */
+@Composable
+fun BossPopup(
+    onDismissRequest: () -> Unit,
+    offset: IntOffset = IntOffset.Zero,
+    focusable: Boolean = true,
+    content: @Composable () -> Unit,
+) {
+    val renderer = BossOverlayHost.popupRenderer
+    val heavyweight =
+        shouldRouteHeavyweight(
+            useHeavyweightOverlays = BossOverlayHost.useHeavyweightOverlays,
+            hasRenderer = renderer != null,
+            hostNeedsHeavyweight = LocalHeavyweightOverlays.current,
+        )
+    if (heavyweight && renderer != null) {
+        renderer(onDismissRequest, offset, focusable, content)
+    } else {
+        Popup(
+            onDismissRequest = onDismissRequest,
+            offset = offset,
+            properties = PopupProperties(focusable = focusable),
+            content = content,
+        )
     }
 }

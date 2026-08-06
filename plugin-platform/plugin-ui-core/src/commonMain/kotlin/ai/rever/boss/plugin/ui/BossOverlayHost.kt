@@ -1,6 +1,7 @@
 package ai.rever.boss.plugin.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.window.DialogProperties
 
 /**
@@ -67,6 +68,28 @@ object BossOverlayHost {
         @Composable (
             properties: DialogProperties,
             onDismissRequest: () -> Unit,
+            content: @Composable () -> Unit,
+        ) -> Unit
+    )? = null
+
+    /**
+     * Platform-injected POPUP renderer: shows [content] in a separate always-on-top window anchored
+     * near [offset]. Null until injected; callers fall back to a Compose `Popup`.
+     *
+     * Separate from [modalRenderer] because a popup is not a modal, and the differences are the whole
+     * reason a plugin cannot fake one with `BossDialog`: it is anchored rather than centered, it draws
+     * no scrim, and with `focusable = false` it does not take focus - which is what a URL-bar
+     * suggestion list needs, since the text field must keep focus while the user types.
+     *
+     * Signature matches the host's own popup renderer so the same window implementation serves the
+     * host's context menus and a plugin's, rather than two that can drift.
+     */
+    @Volatile
+    var popupRenderer: (
+        @Composable (
+            onDismissRequest: () -> Unit,
+            offset: IntOffset,
+            focusable: Boolean,
             content: @Composable () -> Unit,
         ) -> Unit
     )? = null
