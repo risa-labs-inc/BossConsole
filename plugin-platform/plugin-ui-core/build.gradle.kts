@@ -50,6 +50,11 @@ kotlin {
                 implementation(kotlin("test"))
                 implementation(kotlin("test-junit5"))
                 implementation(libs.junit.jupiter)
+                // Compose's UI test API is JUnit 4 only, and this module runs on the JUnit
+                // Platform, so the vintage engine is what actually executes it - same pairing
+                // composeApp uses.
+                implementation(compose.desktop.uiTestJUnit4)
+                runtimeOnly(libs.junit.vintage.engine)
             }
         }
     }

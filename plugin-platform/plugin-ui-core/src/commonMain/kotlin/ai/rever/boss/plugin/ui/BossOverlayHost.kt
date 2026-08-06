@@ -20,15 +20,24 @@ import androidx.compose.runtime.Composable
  * vars are enough. Composables read them directly and they are NOT snapshot state - flipping one
  * at runtime would not recompose anything already on screen.
  *
- * **This file exists twice, and the SIGNATURES must stay identical.** plugin-ui-core is the copy
- * that RUNS: `PluginClassLoader.defaultSharedPackages` lists `ai.rever.boss.plugin.ui.`, so a plugin
- * classloader resolves this package parent-first from the host and the host's copy is the one whose
- * fields the startup injection actually writes. The `boss-plugin-api` copy exists only so plugins
- * compile; its bodies are a stand-in nothing ever executes, and they differ where that package has
- * not been synced (it predates the design-system tokens). Signatures are the part that must match,
- * for the reason `BossTheme` documents about overloads versus defaulted parameters: one that differs
- * links at build time and is missing at runtime, which the binary-compatibility validator rejects as
- * a whole-plugin failure.
+ * **This file exists twice, and the SIGNATURES must stay identical.** On a host that has this class
+ * compiled in, plugin-ui-core is the copy that runs: `ai.rever.boss.plugin.ui.` is in
+ * `PluginClassLoader.defaultSharedPackages`, so a plugin resolves it parent-first from the host, and
+ * the host's copy is the one the startup injection writes to.
+ *
+ * The `boss-plugin-api` copy is NOT dead code, which is worth stating because it looks like it. On an
+ * OLDER host these types are absent, and `ApiClassLoader` then serves them out of the installed api
+ * jar - that is what makes them reachable at all there, and it is why `minApiVersion` rather than
+ * `minBossVersion` is the gate a plugin should declare (see ApiClassLoader's own doc: brand-new types
+ * ship via the jar, member additions to host-compiled types do not). On that path the api jar's
+ * bodies really do execute, with nothing having injected a renderer, so they must degrade cleanly:
+ * `BossDialog` falls back to a plain Compose `Dialog`, which is the pre-fix behaviour rather than a
+ * crash. Their layout constants differ from the host's only because that package predates the
+ * design-system tokens.
+ *
+ * Signatures are the part that must match, for the reason `BossTheme` documents about overloads
+ * versus defaulted parameters: one that differs links at build time and is missing at runtime, which
+ * the binary-compatibility validator rejects as a whole-plugin failure.
  */
 object BossOverlayHost {
     /** True when modals must escape into heavyweight windows (HARDWARE_ACCELERATED browser). */
