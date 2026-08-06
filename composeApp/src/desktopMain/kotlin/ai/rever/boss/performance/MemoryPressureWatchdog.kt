@@ -6,11 +6,13 @@ import ai.rever.boss.config.SystemMemory
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** What the watchdog wants the user told, once it has acted. */
 data class MemoryPressureNotice(
@@ -171,7 +173,10 @@ object MemoryPressureWatchdog {
             while (isActive) {
                 delay(POLL_INTERVAL_MS)
 
-                val free = SystemMemory.freeFraction()
+                // Explicitly on IO: this reads /proc/meminfo or spawns vm_stat, and the caller
+                // hands us a Dispatchers.Default scope, whose threads are sized for CPU work.
+                // docs/THREADING.md puts file and process I/O on IO.
+                val free = withContext(Dispatchers.IO) { SystemMemory.freeFraction() }
                 val now = System.currentTimeMillis()
                 pressureSince = nextPressureSince(free, pressureSince, now)
 

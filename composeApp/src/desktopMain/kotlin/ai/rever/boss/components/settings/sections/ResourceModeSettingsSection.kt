@@ -25,9 +25,54 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private const val AUTO_LABEL = "Auto (recommended)"
+
+/** Settle time before a Settings edit reaches disk. Long enough to swallow a typed number. */
+private const val PERSIST_DEBOUNCE_MS = 400L
+
+/**
+ * A single edited field, applied to whatever the persisted state is at write time.
+ *
+ * Exists so Settings never writes back a whole snapshot: doing that clobbers concurrent writers,
+ * and the concrete victim is [ResourceModeConfig.requestUltraLiteOnNextLaunch] firing from the
+ * memory-pressure dialog while this screen is open.
+ */
+private typealias ModeSettings = ai.rever.boss.config.ResourceModeSettingsData
+
+private sealed interface ResourceModeField {
+    fun applyTo(current: ModeSettings): ModeSettings
+
+    data class LiteThreshold(
+        val gb: Int,
+    ) : ResourceModeField {
+        override fun applyTo(current: ModeSettings) = current.copy(liteThresholdGb = gb)
+    }
+
+    data class UltraLiteThreshold(
+        val gb: Int,
+    ) : ResourceModeField {
+        override fun applyTo(current: ModeSettings) = current.copy(ultraLiteThresholdGb = gb)
+    }
+
+    data class LivePressure(
+        val enabled: Boolean,
+    ) : ResourceModeField {
+        override fun applyTo(current: ModeSettings) = current.copy(livePressureEnabled = enabled)
+    }
+}
+
+/**
+ * A readable label for a plugin id.
+ *
+ * The last segment alone collapses: `ai.rever.boss.plugin.api` renders as "api", and two plugins
+ * whose ids end in the same word render identically. Dropping the shared `ai.rever.boss.plugin.`
+ * prefix keeps them distinct while staying short. The full id is still in the description.
+ */
+private fun String.pluginLabel(): String = removePrefix("ai.rever.boss.plugin.").ifBlank { this }
 
 /** The Settings label for a tier, e.g. "Lite - Caps the browser. Every plugin still loads." */
 private fun BossResourceMode.settingsLabel(): String = "$displayName - $summary"
@@ -88,6 +133,21 @@ fun ResourceModeSettingsSection() {
         scope.launch(Dispatchers.IO) { block() }
     }
 
+    // Only the typed number inputs are debounced, and they get their OWN job handle.
+    // SettingsNumberInput fires onValueChange per keystroke, so typing "128" would rewrite the
+    // JSON three times. A single shared debounce job would be worse than none: a threshold edit
+    // would cancel a pending plugin-allowlist write and silently lose it.
+    var pendingThreshold by remember { mutableStateOf<Job?>(null) }
+
+    fun persistDebounced(block: () -> Unit) {
+        pendingThreshold?.cancel()
+        pendingThreshold =
+            scope.launch(Dispatchers.IO) {
+                delay(PERSIST_DEBOUNCE_MS)
+                block()
+            }
+    }
+
     val options = listOf(AUTO_LABEL) + BossResourceMode.entries.map { it.settingsLabel() }
     val selectedLabel =
         persisted.selectedMode
@@ -111,9 +171,15 @@ fun ResourceModeSettingsSection() {
 
         AutomaticSelectionSection(
             persisted = persisted,
-            onChanged = { updated ->
-                persisted = updated
-                persist { ResourceModeSettings.update { updated } }
+            // Per-field, never `update { updated }`. Writing back a whole snapshot captured when
+            // the screen composed clobbers any concurrent write - most concretely
+            // requestUltraLiteOnNextLaunch() firing from the memory-pressure dialog, which would
+            // silently undo the "Restart in Ultra Lite" the user had just clicked.
+            onChanged = { field ->
+                persisted = field.applyTo(persisted)
+                val write = { ResourceModeSettings.update { current -> field.applyTo(current) } }
+                // The toggle is one discrete event; only the typed thresholds need settling.
+                if (field is ResourceModeField.LivePressure) persist(write) else persistDebounced(write)
             },
         )
 
@@ -179,14 +245,14 @@ private fun ModeSelectorSection(
 /** Thresholds and the live-pressure toggle that drive Auto. */
 @Composable
 private fun AutomaticSelectionSection(
-    persisted: ai.rever.boss.config.ResourceModeSettingsData,
-    onChanged: (ai.rever.boss.config.ResourceModeSettingsData) -> Unit,
+    persisted: ModeSettings,
+    onChanged: (ResourceModeField) -> Unit,
 ) {
     SettingsSection(title = "Automatic Selection") {
         SettingsNumberInput(
             label = "Use Lite below",
             value = persisted.liteThresholdGb,
-            onValueChange = { gb -> onChanged(persisted.copy(liteThresholdGb = gb)) },
+            onValueChange = { gb -> onChanged(ResourceModeField.LiteThreshold(gb)) },
             range = 1..1024,
             description = "Total machine memory, in GB, below which Auto picks Lite.",
         )
@@ -194,7 +260,7 @@ private fun AutomaticSelectionSection(
         SettingsNumberInput(
             label = "Use Ultra Lite below",
             value = persisted.ultraLiteThresholdGb,
-            onValueChange = { gb -> onChanged(persisted.copy(ultraLiteThresholdGb = gb)) },
+            onValueChange = { gb -> onChanged(ResourceModeField.UltraLiteThreshold(gb)) },
             range = 1..1024,
             description =
                 "Total machine memory, in GB, below which Auto picks Ultra Lite. Clamped to the " +
@@ -204,7 +270,7 @@ private fun AutomaticSelectionSection(
         SettingsToggle(
             label = "React to low memory while running",
             checked = persisted.livePressureEnabled,
-            onCheckedChange = { on -> onChanged(persisted.copy(livePressureEnabled = on)) },
+            onCheckedChange = { on -> onChanged(ResourceModeField.LivePressure(on)) },
             description =
                 "Switch to Lite mid-session when available memory stays low, and say so. " +
                     "Installed memory alone cannot tell how much is actually free.",
@@ -238,7 +304,7 @@ private fun PluginVisibilitySections(
             // recovery story anyone can be expected to find.
             skipped.sorted().forEach { pluginId ->
                 SettingsToggle(
-                    label = pluginId.substringAfterLast('.'),
+                    label = pluginId.pluginLabel(),
                     checked = pluginId in optedIn,
                     onCheckedChange = { keep -> onToggleOptIn(pluginId, keep) },
                     description = pluginId,
@@ -254,7 +320,7 @@ private fun PluginVisibilitySections(
         SettingsSection(title = "Always Load in Ultra Lite") {
             otherExceptions.sorted().forEach { pluginId ->
                 SettingsToggle(
-                    label = pluginId.substringAfterLast('.'),
+                    label = pluginId.pluginLabel(),
                     checked = true,
                     onCheckedChange = { keep -> onToggleOptIn(pluginId, keep) },
                     description = pluginId,

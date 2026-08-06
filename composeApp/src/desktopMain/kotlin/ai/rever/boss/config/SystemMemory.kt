@@ -15,12 +15,13 @@ import java.lang.management.ManagementFactory
  * exports nor opens. Resolving a method on that **implementation class** and calling
  * `setAccessible(true)` throws `InaccessibleObjectException` on JDK 17, 22 and 26 alike, and
  * invoking without it throws `IllegalAccessException`. The reflective version nonetheless
- * returned the right number, purely because `getTotalPhysicalMemorySize` is a *deprecated
- * default method on the exported interface* and happened to be tried first; its modern
- * replacement `getTotalMemorySize` is declared on the impl and could never have worked. So the
- * "try both spellings so a JDK bump cannot break us" fallback was backwards: the fallback was
- * the broken one, and the day the deprecated shim is finally removed the reading would have
- * silently become 0.
+ * returned the right number, purely because the *deprecated* `getTotalPhysicalMemorySize` is a
+ * default method the impl does not override, so `getMethod` resolved it to the exported
+ * interface - and it happened to be tried first. Its modern replacement `getTotalMemorySize` is
+ * declared on that same interface (JDK 14+) but **is** overridden by the impl, so `getMethod`
+ * resolves it to the non-exported override and access fails. So the "try both spellings so a JDK
+ * bump cannot break us" fallback was backwards: the fallback was the broken one, and the day the
+ * deprecated shim is finally removed the reading would have silently become 0.
  *
  * Silently is the operative word. Every caller treats 0 as "unknown", so automatic tier
  * selection and the whole memory-pressure watchdog would have quietly become dead code with
@@ -31,6 +32,17 @@ import java.lang.management.ManagementFactory
  * where a failed read deliberately does *not* trigger a reduced tier.
  */
 object SystemMemory {
+    /**
+     * Free fraction above which macOS skips the `vm_stat` spawn entirely.
+     *
+     * Well clear of `MemoryPressureWatchdog.PRESSURE_THRESHOLD`, because `freeMemorySize` is a
+     * strict undercount of what is really available: if even that reads comfortable, the true
+     * figure is comfortable too.
+     */
+    private const val MAC_PREFILTER_FRACTION = 0.25
+
+    private const val VM_STAT_TIMEOUT_SECONDS = 5L
+
     private val osBean: com.sun.management.OperatingSystemMXBean? =
         ManagementFactory.getOperatingSystemMXBean() as? com.sun.management.OperatingSystemMXBean
 
@@ -99,27 +111,43 @@ object SystemMemory {
             ?.getOrNull(1)
             ?.toLongOrNull()
 
-    private fun macAvailableBytes(): Long? =
+    private fun macAvailableBytes(): Long? {
+        if (!System
+                .getProperty("os.name")
+                .orEmpty()
+                .lowercase()
+                .startsWith("mac")
+        ) {
+            return null
+        }
+
+        // Cheap pre-filter. `freeMemorySize` is useless as the decision input (see the KDoc
+        // above - it read 0.0073 on a healthy machine) but that is exactly what makes it a good
+        // gate: it is always at or below the real figure, so a comfortable reading here proves
+        // there is no pressure without spawning anything. At a 15 s poll the alternative is
+        // roughly 5,760 subprocesses a day, in a feature whose whole purpose is holding
+        // footprint down.
+        val total = totalPhysicalBytes()
+        val cheap = osBean?.freeMemorySize ?: 0L
+        val comfortable = total > 0 && cheap.toDouble() / total > MAC_PREFILTER_FRACTION
+
+        return if (comfortable) cheap else vmStatAvailableBytes()
+    }
+
+    private fun vmStatAvailableBytes(): Long? =
         runCatching {
-            if (!System
-                    .getProperty("os.name")
-                    .orEmpty()
-                    .lowercase()
-                    .startsWith("mac")
-            ) {
-                return@runCatching null
-            }
             val process =
                 ProcessBuilder("/usr/bin/vm_stat")
                     .redirectErrorStream(true)
                     .start()
-            val output = process.inputStream.bufferedReader().use { it.readText() }
-            // Do not let a wedged vm_stat hold the polling coroutine.
-            if (!process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+            // waitFor FIRST, then drain. Reading to EOF before waiting made the timeout
+            // unreachable: a wedged vm_stat blocks in readText(), so waitFor was never called
+            // and the guard described an intent the code did not implement.
+            if (!process.waitFor(VM_STAT_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)) {
                 process.destroyForcibly()
                 return@runCatching null
             }
-            parseVmStatAvailableBytes(output)
+            parseVmStatAvailableBytes(process.inputStream.bufferedReader().use { it.readText() })
         }.getOrNull()
 
     /**
@@ -128,6 +156,13 @@ object SystemMemory {
      * Sums free, inactive, speculative and purgeable pages. Split out and internal so the
      * arithmetic is testable against captured fixture text rather than against whatever the
      * developer's machine happens to be doing.
+     *
+     * **This over-counts.** Mach's buckets are not disjoint: speculative and purgeable pages
+     * overlap the others, so the sum is an upper bound on what is really reclaimable. The bias
+     * is deliberately toward "plenty available", which makes the watchdog under-fire rather than
+     * false-alarm, and under-firing is the safe direction for a one-way tighten. But it does
+     * compound the uncertainty in `MemoryPressureWatchdog.PRESSURE_THRESHOLD`, which is already
+     * uncalibrated - so whoever calibrates it should know the input is biased high.
      */
     internal fun parseVmStatAvailableBytes(output: String): Long? {
         val pageSize = vmStatField(output, "page size of (\\d+) bytes") ?: return null

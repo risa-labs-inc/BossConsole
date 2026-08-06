@@ -287,6 +287,70 @@ object BrowserServiceImpl : BrowserService {
     /** Live handles plus in-flight creations. Test seam for the reservation accounting. */
     internal fun reservedBrowserCount(): Int = reservedBrowsers.get()
 
+    /**
+     * Takes a reservation slot, or returns false when the tier's ceiling is genuinely full.
+     *
+     * Reserves optimistically and gives the slot back on refusal, so concurrent creations cannot
+     * all observe room and all proceed. On a first refusal it reconciles once (see
+     * [reconcileBrowserReservations]) and retries, so a ceiling held up by handles that have
+     * already gone away recovers instead of becoming permanent.
+     */
+    private fun tryReserveBrowserSlot(mode: ai.rever.boss.config.BossResourceMode): Boolean {
+        // Reserve optimistically, hand the slot back if that put us over.
+        fun claim(): Boolean =
+            if (isAtBrowserCeiling(reservedBrowsers.getAndIncrement(), mode)) {
+                releaseBrowserReservation()
+                false
+            } else {
+                true
+            }
+
+        // One reconcile between the two attempts, so a ceiling held up by handles that have
+        // already gone away recovers instead of becoming permanent.
+        return claim() ||
+            run {
+                reconcileBrowserReservations()
+                claim()
+            }
+    }
+
+    /**
+     * Drops handles whose browser is gone and resyncs the reservation counter to match.
+     *
+     * Necessary because a reservation is only handed back through [disposeBrowser] and
+     * [disposeTrackedBrowserBlocking], and a browser has three other ways to die: a plugin
+     * calling the public `BrowserHandle.dispose()` itself, a renderer crashing, and a page
+     * calling `window.close()`. None of those touch `activeBrowsers`, and there is no close
+     * subscription here to notice.
+     *
+     * Before the ceiling existed that was harmless drift in `getActiveBrowserCount()`. With a cap
+     * it is a **one-way ratchet**: each orphan permanently consumes a slot, so four of them on
+     * the Windows default means no browser can ever open again - and the refusal dialog would
+     * blame the tier, which is both wrong and unactionable, since closing tabs cannot release a
+     * slot whose handle is already gone. The session length that produces these is the same
+     * 35-hour length that produced the crash this feature exists for.
+     *
+     * @return the reconciled reservation count.
+     */
+    internal fun reconcileBrowserReservations(): Int {
+        val orphans = activeBrowsers.entries.filter { !it.value.isValid }
+        for ((id, handle) in orphans) {
+            if (activeBrowsers.remove(id, handle)) {
+                browserOwners.unregister(id)
+                managedByHandle.remove(id)?.let { releaseManaged(it) }
+                releaseBrowserReservation()
+            }
+        }
+        if (orphans.isNotEmpty()) {
+            logger.info(
+                LogCategory.BROWSER,
+                "Reclaimed browser slots whose handles had gone away",
+                mapOf("reclaimed" to orphans.size.toString(), "active" to activeBrowsers.size.toString()),
+            )
+        }
+        return reservedBrowsers.get()
+    }
+
     // BrowserService is shared process-wide, but plugin handles belong to the
     // window whose PluginContext created them.
     private val browserOwners = BrowserWindowOwnershipRegistry()
@@ -449,9 +513,7 @@ object BrowserServiceImpl : BrowserService {
         // Reserve before suspending, so concurrent creations cannot all pass the same check.
         // reservedBrowsers counts live handles plus in-flight creations; the slot is released in
         // the finally below when the creation does not produce one.
-        val reserved = reservedBrowsers.getAndIncrement()
-        if (isAtBrowserCeiling(reserved, mode)) {
-            reservedBrowsers.decrementAndGet()
+        if (!tryReserveBrowserSlot(mode)) {
             logger.warn(
                 LogCategory.BROWSER,
                 "Browser creation refused - at the resource-mode ceiling",
