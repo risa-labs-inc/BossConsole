@@ -113,6 +113,10 @@ object BossOverlayHost {
      * for safe publication to readers, not to make the arithmetic safe. Do not write it from a
      * background thread, and do not "fix" it to `AtomicInteger` casually - that changes the
      * descriptor and needs a coordinated host and api release.
+     *
+     * **HOST-OWNED. Plugins must not write this.** It is public only because the host's popup
+     * renderer lives in a different module; a lost decrement from anywhere leaves every host modal
+     * unable to dismiss on focus loss.
      */
     @Volatile
     var openHeavyweightPopups: Int = 0
@@ -141,6 +145,28 @@ object BossOverlayHost {
      * two different suffixes - a gratuitous descriptor difference in the one file whose contract is
      * that its signatures match. Nothing outside the routing composables should call this.
      */
+
+    /** Reported at most once per process, for the same reason as the modal one. */
+    @Volatile
+    private var reportedMissingPopupRenderer = false
+
+    /**
+     * The [reportMissingModalRenderer] counterpart for popups.
+     *
+     * A separate function rather than a parameter on that one: this surface is pinned by the
+     * binary-compatibility validator in two repos, so changing an existing descriptor costs a
+     * coordinated host and api release while adding one is free. Added now for exactly that reason -
+     * a popup rendering behind the browser would otherwise produce nothing in the log at all.
+     */
+    fun reportMissingPopupRenderer() {
+        if (reportedMissingPopupRenderer) return
+        reportedMissingPopupRenderer = true
+        diagnostics?.invoke(
+            "Heavyweight overlays are enabled but no popup renderer is registered - menus and " +
+                "dropdowns will render behind the browser surface.",
+        )
+    }
+
     fun reportMissingModalRenderer() {
         if (reportedMissingRenderer) return
         reportedMissingRenderer = true
