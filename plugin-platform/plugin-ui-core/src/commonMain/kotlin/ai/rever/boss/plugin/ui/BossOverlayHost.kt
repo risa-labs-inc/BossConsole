@@ -89,6 +89,7 @@ object BossOverlayHost {
     var popupRenderer: (
         @Composable (
             onDismissRequest: () -> Unit,
+            // In AWT LOGICAL UNITS (dp), not pixels - the host places overlay content in dp.
             anchorInWindow: IntRect,
             anchoring: BossPopupAnchoring,
             offset: IntOffset,

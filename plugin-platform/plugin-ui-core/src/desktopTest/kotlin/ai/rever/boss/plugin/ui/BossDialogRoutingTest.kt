@@ -1,8 +1,11 @@
 package ai.rever.boss.plugin.ui
 
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.unit.IntRect
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import kotlin.test.assertEquals
 
 /**
  * Pins which modals escape into a heavyweight window.
@@ -103,5 +106,40 @@ class ModalInputArmingRuleTest {
         for (askedByTimer in listOf(true, false)) {
             assertFalse(shouldArmModalInput(pointerDown = true), "armed while pressed (timer=$askedByTimer)")
         }
+    }
+}
+
+/**
+ * The px-to-dp conversion for a popup's anchor.
+ *
+ * Compose measures layout in PIXELS; the host places overlay content in AWT LOGICAL UNITS. Shipping
+ * the raw pixel rect put the URL-bar suggestion list at roughly double its intended position on a 2x
+ * display - and looked perfectly correct on a 1x one, which is why this is tested at several scale
+ * factors rather than eyeballed on one screen.
+ */
+class AnchorRectConversionTest {
+    @Test
+    fun `at 1x the numbers are unchanged, which is why the bug hid`() {
+        val r = anchorRectInDp(Rect(120f, 40f, 620f, 68f), density = 1f)
+        assertEquals(IntRect(120, 40, 620, 68), r)
+    }
+
+    @Test
+    fun `at 2x every edge halves`() {
+        val r = anchorRectInDp(Rect(240f, 80f, 1240f, 136f), density = 2f)
+        assertEquals(IntRect(120, 40, 620, 68), r)
+    }
+
+    @Test
+    fun `a 150 percent display is handled, not just integral scales`() {
+        val r = anchorRectInDp(Rect(180f, 60f, 930f, 102f), density = 1.5f)
+        assertEquals(IntRect(120, 40, 620, 68), r)
+    }
+
+    @Test
+    fun `a nonsensical density yields an empty rect rather than a divide by zero`() {
+        // An anchor at the origin degrades to cursor-like placement; NaN coordinates would propagate
+        // into a window position and put the popup somewhere unrecoverable.
+        assertEquals(IntRect.Zero, anchorRectInDp(Rect(10f, 10f, 20f, 20f), density = 0f))
     }
 }

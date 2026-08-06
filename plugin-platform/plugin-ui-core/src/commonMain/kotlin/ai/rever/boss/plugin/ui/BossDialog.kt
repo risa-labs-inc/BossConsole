@@ -29,6 +29,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.takeOrElse
@@ -36,6 +37,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
@@ -413,17 +415,11 @@ fun BossPopup(
     // reaching for LocalAwtWindow, which plugin code should not have to do. The Box contributes no
     // size, so it is layout-neutral wherever it is placed.
     var anchorInWindow by remember { mutableStateOf(IntRect.Zero) }
+    val density = LocalDensity.current.density
     Box(
         modifier =
             Modifier.onGloballyPositioned { coordinates ->
-                val bounds = coordinates.boundsInWindow()
-                anchorInWindow =
-                    IntRect(
-                        left = bounds.left.roundToInt(),
-                        top = bounds.top.roundToInt(),
-                        right = bounds.right.roundToInt(),
-                        bottom = bounds.bottom.roundToInt(),
-                    )
+                anchorInWindow = anchorRectInDp(coordinates.boundsInWindow(), density)
             },
     ) {
         if (heavyweight && renderer != null) {
@@ -437,6 +433,31 @@ fun BossPopup(
             )
         }
     }
+}
+
+/**
+ * The anchor rect converted from Compose PIXELS to AWT logical units (dp).
+ *
+ * The unit change is the entire point and is easy to miss: `boundsInWindow()` is in pixels, while the
+ * host places overlay content with `absoluteOffset(x.dp, y.dp)` in logical units. Passing pixels
+ * straight through put the URL-bar suggestion list at roughly double its intended position on a 2x
+ * display - correct on a 1x screen, visibly wrong on every Retina one, which is exactly the class of
+ * bug the host's own popup code already carries a warning about.
+ *
+ * Pure, and separate from the composable, so the conversion is pinned by a test at more than one
+ * scale factor rather than only by looking at a 1x screen.
+ */
+internal fun anchorRectInDp(
+    boundsPx: Rect,
+    density: Float,
+): IntRect {
+    if (density <= 0f) return IntRect.Zero
+    return IntRect(
+        left = (boundsPx.left / density).roundToInt(),
+        top = (boundsPx.top / density).roundToInt(),
+        right = (boundsPx.right / density).roundToInt(),
+        bottom = (boundsPx.bottom / density).roundToInt(),
+    )
 }
 
 /**
