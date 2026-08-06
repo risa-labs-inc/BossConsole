@@ -149,6 +149,14 @@ private sealed interface CreationOutcome {
 private const val NEW_BROWSER_TIMEOUT_MS = 20_000L
 
 /**
+ * How recently a browser must have been used to be safe from LRU eviction.
+ *
+ * Guards against a burst of opens cannibalising itself: without it, opening several tabs in
+ * quick succession under a reduced tier would evict the one opened moments earlier.
+ */
+private const val EVICTION_GRACE_MS = 30_000L
+
+/**
  * Run the engine's own browser-creation call, time-boxed.
  *
  * [create] runs on a standalone scope and is consumed via `await()`, because
@@ -235,10 +243,17 @@ private object WedgeRecovery {
  * Singleton, shared across all plugins.
  */
 
-/** A browser that was not opened because the resource tier's ceiling was already reached. */
+/**
+ * The resource tier acting on the browser ceiling.
+ *
+ * [evictedIdleMs] non-null means an idle browser was closed to make room, which is the normal
+ * outcome; null means every candidate was protected (under the pointer, or too recently used) so
+ * the new browser was declined instead.
+ */
 data class BrowserCapRefusal(
     val mode: ai.rever.boss.config.BossResourceMode,
     val cap: Int,
+    val evictedIdleMs: Long? = null,
 )
 
 object BrowserServiceImpl : BrowserService {
@@ -287,6 +302,42 @@ object BrowserServiceImpl : BrowserService {
     /** Live handles plus in-flight creations. Test seam for the reservation accounting. */
     internal fun reservedBrowserCount(): Int = reservedBrowsers.get()
 
+    /** A live browser considered for LRU eviction under a reduced tier. */
+    internal data class BrowserEvictCandidate(
+        val id: String,
+        val lastInteractionMs: Long,
+        val isPointerOver: Boolean,
+    )
+
+    /**
+     * The least-recently-used browser to close so a new one can open, or null to refuse instead.
+     *
+     * Deliberately shaped like [selectEvictionVictims], which already does this for named
+     * profiles on disk: sort by last use, never touch something in use, and be a pure function so
+     * the policy is testable without an engine.
+     *
+     * Two candidates are never chosen, and both matter more than the ordering:
+     *
+     *  - **The one under the pointer.** Closing the browser the user is looking at, to open one
+     *    they just asked for, is a strictly worse outcome than declining the new one.
+     *  - **Anything used within [EVICTION_GRACE_MS].** Without it, opening N+1 tabs in quick
+     *    succession would evict the tab opened moments earlier, so a burst of opens would
+     *    cannibalise itself and the user would be left wondering which ones survived.
+     *
+     * Returning null when every candidate is protected is what keeps the ceiling a ceiling: the
+     * caller falls back to refusing, which is visible and explained, rather than closing
+     * something it should not.
+     */
+    internal fun selectBrowserEvictionVictim(
+        candidates: List<BrowserEvictCandidate>,
+        nowMs: Long,
+    ): String? =
+        candidates
+            .filterNot { it.isPointerOver }
+            .filter { nowMs - it.lastInteractionMs >= EVICTION_GRACE_MS }
+            .minByOrNull { it.lastInteractionMs }
+            ?.id
+
     /**
      * Takes a reservation slot, or returns false when the tier's ceiling is genuinely full.
      *
@@ -295,7 +346,7 @@ object BrowserServiceImpl : BrowserService {
      * [reconcileBrowserReservations]) and retries, so a ceiling held up by handles that have
      * already gone away recovers instead of becoming permanent.
      */
-    private fun tryReserveBrowserSlot(mode: ai.rever.boss.config.BossResourceMode): Boolean {
+    private suspend fun tryReserveBrowserSlot(mode: ai.rever.boss.config.BossResourceMode): Boolean {
         // Reserve optimistically, hand the slot back if that put us over.
         fun claim(): Boolean =
             if (isAtBrowserCeiling(reservedBrowsers.getAndIncrement(), mode)) {
@@ -305,13 +356,63 @@ object BrowserServiceImpl : BrowserService {
                 true
             }
 
-        // One reconcile between the two attempts, so a ceiling held up by handles that have
-        // already gone away recovers instead of becoming permanent.
+        // Three escalating attempts, cheapest first:
+        //  1. just take a slot;
+        //  2. reclaim slots held by handles that have already gone away - the only fix for a
+        //     ceiling that would otherwise be permanently full;
+        //  3. close the least-recently-used browser rather than decline the one the user just
+        //     asked for. A reduced tier is a promise about how much runs at once, not a promise
+        //     that the next thing you open will fail, and an idle background tab is a better
+        //     thing to spend than the action in front of the user.
         return claim() ||
             run {
                 reconcileBrowserReservations()
                 claim()
-            }
+            } ||
+            (evictLeastRecentlyUsedBrowser(mode) && claim())
+    }
+
+    /**
+     * Closes the least-recently-used browser to make room under a reduced tier.
+     *
+     * @return true when a browser was actually closed, i.e. a slot should now be free.
+     */
+    private suspend fun evictLeastRecentlyUsedBrowser(mode: ai.rever.boss.config.BossResourceMode): Boolean {
+        val now = System.currentTimeMillis()
+        val victim =
+            selectBrowserEvictionVictim(
+                activeBrowsers.map { (id, handle) ->
+                    BrowserEvictCandidate(
+                        id = id,
+                        lastInteractionMs = handle.lastInteractionMs,
+                        isPointerOver = handle.isPointerOver,
+                    )
+                },
+                nowMs = now,
+            )?.let { activeBrowsers[it] } ?: return false
+
+        val idleMs = now - victim.lastInteractionMs
+        logger.info(
+            LogCategory.BROWSER,
+            "Closing the least-recently-used browser to stay within the resource mode",
+            mapOf(
+                "mode" to mode.name,
+                "browserId" to victim.id,
+                "idleMs" to idleMs.toString(),
+                "cap" to (mode.maxConcurrentBrowsers?.toString() ?: "none"),
+            ),
+        )
+        // Publish it so the UI can say a tab was reclaimed, rather than leaving the user to
+        // discover a dead one. Reuses the refusal channel: both mean "the tier acted".
+        _capRefusals.value =
+            BrowserCapRefusal(
+                mode = mode,
+                cap = mode.maxConcurrentBrowsers ?: 0,
+                evictedIdleMs = idleMs,
+            )
+
+        disposeBrowser(victim)
+        return true
     }
 
     /**

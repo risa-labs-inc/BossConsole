@@ -4,6 +4,7 @@ import ai.rever.boss.config.BossResourceMode
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -90,4 +91,95 @@ class BrowserReservationTest {
             )
         }
     }
+
+    // region LRU eviction
+
+    private val now = 1_000_000L
+    private val grace = 30_000L
+
+    private fun candidate(
+        id: String,
+        idleMs: Long,
+        pointerOver: Boolean = false,
+    ) = BrowserServiceImpl.BrowserEvictCandidate(
+        id = id,
+        lastInteractionMs = now - idleMs,
+        isPointerOver = pointerOver,
+    )
+
+    @Test
+    fun `the least recently used browser is the victim`() {
+        val victim =
+            BrowserServiceImpl.selectBrowserEvictionVictim(
+                listOf(
+                    candidate("fresh", idleMs = grace + 1),
+                    candidate("oldest", idleMs = 10 * grace),
+                    candidate("middle", idleMs = 5 * grace),
+                ),
+                nowMs = now,
+            )
+        assertEquals("oldest", victim)
+    }
+
+    /**
+     * Closing the browser the user is looking at, in order to open one they just asked for, is a
+     * strictly worse outcome than declining the new one. This is the case that would make the
+     * feature feel like a malfunction rather than a policy.
+     */
+    @Test
+    fun `the browser under the pointer is never evicted`() {
+        val victim =
+            BrowserServiceImpl.selectBrowserEvictionVictim(
+                listOf(candidate("watched", idleMs = 100 * grace, pointerOver = true)),
+                nowMs = now,
+            )
+        assertNull(victim, "the browser under the pointer must survive even when it is the oldest")
+    }
+
+    @Test
+    fun `the pointer wins over age when both are candidates`() {
+        val victim =
+            BrowserServiceImpl.selectBrowserEvictionVictim(
+                listOf(
+                    candidate("watched-and-oldest", idleMs = 100 * grace, pointerOver = true),
+                    candidate("idle", idleMs = 2 * grace),
+                ),
+                nowMs = now,
+            )
+        assertEquals("idle", victim)
+    }
+
+    /**
+     * Without a grace period, opening several tabs quickly under a reduced tier would evict the
+     * one opened moments earlier, so a burst of opens cannibalises itself.
+     */
+    @Test
+    fun `a browser used moments ago is not evicted`() {
+        assertNull(
+            BrowserServiceImpl.selectBrowserEvictionVictim(
+                listOf(candidate("justOpened", idleMs = 0), candidate("alsoRecent", idleMs = 5_000)),
+                nowMs = now,
+            ),
+        )
+    }
+
+    @Test
+    fun `refusing is the fallback when every candidate is protected`() {
+        // Null here is what keeps the ceiling a ceiling: the caller declines, visibly and with a
+        // reason, rather than closing something it should not.
+        assertNull(BrowserServiceImpl.selectBrowserEvictionVictim(emptyList(), nowMs = now))
+    }
+
+    @Test
+    fun `a browser idle exactly the grace period is eligible`() {
+        assertEquals(
+            "borderline",
+            BrowserServiceImpl.selectBrowserEvictionVictim(
+                listOf(candidate("borderline", idleMs = grace)),
+                nowMs = now,
+            ),
+        )
+    }
+
+    // endregion
 }

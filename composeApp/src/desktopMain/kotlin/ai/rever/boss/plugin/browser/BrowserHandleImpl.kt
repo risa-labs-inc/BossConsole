@@ -198,6 +198,30 @@ internal class BrowserHandleImpl(
     private val disposed = AtomicBoolean(false)
     private val subscriptions = mutableListOf<Subscription>()
 
+    /**
+     * When this browser was last used, for the reduced tiers' LRU eviction.
+     *
+     * Seeded at construction rather than 0, so a browser that has not been touched yet is not
+     * instantly the oldest thing in the process and evicted before it is ever shown.
+     *
+     * Updated by [touch] from the handful of places that mean "the user is working in this
+     * browser": navigation, and the pointer entering the view. Deliberately not from passive
+     * reads like [canGoBack] or title callbacks - a background tab firing page events is exactly
+     * what LRU is supposed to be able to reclaim, and letting those count would keep a chatty
+     * idle tab alive ahead of a quiet one the user actually cares about.
+     */
+    @Volatile
+    var lastInteractionMs: Long = System.currentTimeMillis()
+        private set
+
+    /** Whether the pointer is currently over this browser, i.e. the user is looking at it. */
+    val isPointerOver: Boolean get() = pointerOverBrowserView
+
+    /** Marks this browser as just used. See [lastInteractionMs]. */
+    fun touch() {
+        lastInteractionMs = System.currentTimeMillis()
+    }
+
     private val navigationListeners = CopyOnWriteArrayList<(String) -> Unit>()
     private val titleListeners = CopyOnWriteArrayList<(String) -> Unit>()
     private val faviconListeners = CopyOnWriteArrayList<(String?) -> Unit>()
@@ -1266,6 +1290,7 @@ internal class BrowserHandleImpl(
                 FluckEngine.currentEngineGeneration == engineGeneration
 
     override suspend fun loadUrl(url: String) {
+        touch()
         if (!isValid) {
             logger.warn(LogCategory.BROWSER, "Cannot load URL - browser invalid", mapOf("handleId" to id))
             return
@@ -1338,18 +1363,21 @@ internal class BrowserHandleImpl(
     }
 
     override fun goBack() {
+        touch()
         if (isValid && browser.navigation().canGoBack()) {
             browser.navigation().goBack()
         }
     }
 
     override fun goForward() {
+        touch()
         if (isValid && browser.navigation().canGoForward()) {
             browser.navigation().goForward()
         }
     }
 
     override fun reload() {
+        touch()
         if (isValid) {
             browser.navigation().reload()
         }
@@ -2072,8 +2100,10 @@ internal class BrowserHandleImpl(
                         // Hover tracking that gates the window-wide pinch gesture listener to
                         // this view under OFF_SCREEN (see the DisposableEffect above). Never
                         // fires under HARDWARE_ACCELERATED; see shouldAllowPinch.
-                        .onPointerEvent(PointerEventType.Enter) { pointerOverBrowserView = true }
-                        .onPointerEvent(PointerEventType.Exit) { pointerOverBrowserView = false }
+                        .onPointerEvent(PointerEventType.Enter) {
+                            pointerOverBrowserView = true
+                            touch()
+                        }.onPointerEvent(PointerEventType.Exit) { pointerOverBrowserView = false }
                         .onPointerEvent(PointerEventType.Press) { event ->
                             // Get the native AWT mouse event to check button codes
                             val awtEvent = event.nativeEvent as? java.awt.event.MouseEvent
