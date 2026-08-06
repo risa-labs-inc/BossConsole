@@ -137,15 +137,6 @@ object BossOverlayHost {
     @Volatile
     private var reportedMissingRenderer = false
 
-    /**
-     * Report the null-renderer condition described on [diagnostics], at most once per process.
-     *
-     * Public rather than `internal` on purpose. Kotlin mangles an internal member's JVM name with the
-     * MODULE name, so the two copies of this file would emit `reportMissingModalRenderer$...` under
-     * two different suffixes - a gratuitous descriptor difference in the one file whose contract is
-     * that its signatures match. Nothing outside the routing composables should call this.
-     */
-
     /** Reported at most once per process, for the same reason as the modal one. */
     @Volatile
     private var reportedMissingPopupRenderer = false
@@ -167,6 +158,14 @@ object BossOverlayHost {
         )
     }
 
+    /**
+     * Report the null-renderer condition described on [diagnostics], at most once per process.
+     *
+     * Public rather than `internal` on purpose. Kotlin mangles an internal member's JVM name with the
+     * MODULE name, so the two copies of this file would emit `reportMissingModalRenderer$...` under
+     * two different suffixes - a gratuitous descriptor difference in the one file whose contract is
+     * that its signatures match. Nothing outside the routing composables should call this.
+     */
     fun reportMissingModalRenderer() {
         if (reportedMissingRenderer) return
         reportedMissingRenderer = true
