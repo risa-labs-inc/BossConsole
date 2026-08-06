@@ -59,35 +59,12 @@ fun MemoryPressureNoticeDialog(onRestartRequested: () -> Unit) {
 }
 
 /**
- * What the browser-ceiling notice says, given what the tier actually did.
+ * Explains a browser tab that did not open because the tier's ceiling was already reached.
  *
- * Internal so `MemoryPressureCopyTest` can hold it against the two outcomes. The previous
- * version of this dialog stated one thing unconditionally and was wrong for the other case,
- * which is the mistake this file has already made once.
- */
-internal fun capNoticeBody(refusal: ai.rever.boss.plugin.browser.BrowserCapRefusal): String {
-    val tier =
-        "BOSS is running in ${refusal.mode.displayName}, which keeps at most ${refusal.cap} " +
-            "browsers open at once."
-    val idleMinutes = refusal.evictedIdleMs?.let { (it / 60_000).coerceAtLeast(1) }
-    return if (idleMinutes != null) {
-        "$tier To make room, it closed the browser you had not used for about " +
-            "$idleMinutes minute${if (idleMinutes == 1L) "" else "s"}. Change the mode in " +
-            "Settings > Performance if you would rather keep them all."
-    } else {
-        "$tier Every open browser is either in use or was opened moments ago, so this one was " +
-            "not opened. Close one, or change the mode in Settings > Performance."
-    }
-}
-
-/**
- * Explains what the tier did to the browser ceiling: an idle browser reclaimed, or a new one
- * declined because everything open was in use.
- *
- * Without this the user gets the same nothing an engine failure gives them, for a limit they
- * never chose, on a tier the app may have picked for them. The ceiling is process-wide across
- * every window and shares its pool with RPA and automation handles, so "where did my tab go" has
- * an answer they cannot otherwise reach.
+ * Without this the user gets the same nothing they would get from an engine failure, for a limit
+ * they never chose, on a tier the app may have selected for them. The cap is process-wide across
+ * every window and shares its pool with RPA and automation handles, so "why did my tab not open"
+ * has an answer the user cannot otherwise reach.
  */
 @Composable
 fun BrowserCapNoticeDialog() {
@@ -111,12 +88,7 @@ fun BrowserCapNoticeDialog() {
                     .padding(20.dp),
         ) {
             Text(
-                text =
-                    if (current.evictedIdleMs != null) {
-                        "Closed an idle browser"
-                    } else {
-                        "Browser limit reached"
-                    },
+                text = "Browser limit reached",
                 color = colors.textPrimary,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -125,7 +97,10 @@ fun BrowserCapNoticeDialog() {
             Spacer(Modifier.height(10.dp))
 
             Text(
-                text = capNoticeBody(current),
+                text =
+                    "BOSS is running in ${current.mode.displayName}, which allows " +
+                        "${current.cap} browsers at once. Close one to open another, or change " +
+                        "the mode in Settings > Performance.",
                 color = colors.textSecondary,
                 fontSize = 13.sp,
             )
