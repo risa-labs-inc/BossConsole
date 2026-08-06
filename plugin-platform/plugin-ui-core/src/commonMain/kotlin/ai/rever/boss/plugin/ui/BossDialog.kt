@@ -34,14 +34,18 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.takeOrElse
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 
 /**
  * Whether the window hosting this composition is one that needs heavyweight overlays.
@@ -393,6 +397,7 @@ fun BossPopup(
     onDismissRequest: () -> Unit,
     offset: IntOffset = IntOffset.Zero,
     focusable: Boolean = true,
+    anchoring: BossPopupAnchoring = BossPopupAnchoring.Cursor,
     content: @Composable () -> Unit,
 ) {
     val renderer = BossOverlayHost.popupRenderer
@@ -402,14 +407,60 @@ fun BossPopup(
             hasRenderer = renderer != null,
             hostNeedsHeavyweight = LocalHeavyweightOverlays.current,
         )
-    if (heavyweight && renderer != null) {
-        renderer(onDismissRequest, offset, focusable, content)
-    } else {
-        Popup(
-            onDismissRequest = onDismissRequest,
-            offset = offset,
-            properties = PopupProperties(focusable = focusable),
-            content = content,
-        )
+    // A zero-size probe that reports where this popup sits in the window, so
+    // BossPopupAnchoring.AnchorBounds has something real to anchor to. Measured here rather than
+    // asked of the caller: a caller cannot convert its own layout position into window space without
+    // reaching for LocalAwtWindow, which plugin code should not have to do. The Box contributes no
+    // size, so it is layout-neutral wherever it is placed.
+    var anchorInWindow by remember { mutableStateOf(IntRect.Zero) }
+    Box(
+        modifier =
+            Modifier.onGloballyPositioned { coordinates ->
+                val bounds = coordinates.boundsInWindow()
+                anchorInWindow =
+                    IntRect(
+                        left = bounds.left.roundToInt(),
+                        top = bounds.top.roundToInt(),
+                        right = bounds.right.roundToInt(),
+                        bottom = bounds.bottom.roundToInt(),
+                    )
+            },
+    ) {
+        if (heavyweight && renderer != null) {
+            renderer(onDismissRequest, anchorInWindow, anchoring, offset, focusable, content)
+        } else {
+            Popup(
+                onDismissRequest = onDismissRequest,
+                offset = offset,
+                properties = PopupProperties(focusable = focusable),
+                content = content,
+            )
+        }
     }
+}
+
+/**
+ * Where a [BossPopup] places itself on the heavyweight path.
+ *
+ * The lightweight path always anchors to the calling layout, because that is what Compose's `Popup`
+ * does; this only distinguishes the two on the heavyweight path, where the overlay is its own window
+ * and something has to choose.
+ */
+enum class BossPopupAnchoring {
+    /**
+     * At the pointer. Correct for anything the user opened by clicking - a context menu, a
+     * right-click menu - where the cursor IS the intended position and no coordinate conversion is
+     * needed. This is the default because it is the common case and the safe one.
+     */
+    Cursor,
+
+    /**
+     * Below the calling layout, wherever that sits in the window.
+     *
+     * For a control anchored to something other than the pointer: a suggestion list under a URL bar
+     * is the case that forced this to exist, since the user is typing and the cursor may be anywhere
+     * on screen. Costs a window-space conversion the host has to get right - see the content-pane
+     * note in `HeavyweightPopup` - which is why it is opt-in rather than the default.
+     */
+    AnchorBounds,
 }

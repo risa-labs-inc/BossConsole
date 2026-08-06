@@ -1,5 +1,7 @@
 package ai.rever.boss.components.overlays
 
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -123,5 +125,57 @@ class HeavyweightGhostPlacementTest {
         val placed =
             clampGhostToScreens(cursorX = 40, cursorY = 60, width = GHOST_W, height = GHOST_H, screens = emptyList())
         assertEquals(Pair(56, 76), placed)
+    }
+}
+
+/**
+ * Where an anchored heavyweight popup sits, i.e. the content-pane correction.
+ *
+ * The overlay window is placed at the parent FRAME's origin, while Compose measures an anchor against
+ * the CONTENT PANE. On a decorated window those differ by the title bar, so an anchored popup placed
+ * without the correction floats a title-bar's height above the control it belongs to. That is the same
+ * off-by-a-title-bar the pinch-zoom gate had to solve, it is invisible in review, and it is the reason
+ * the URL-bar suggestion list needed this rather than cursor placement.
+ */
+class AnchoredPopupPlacementTest {
+    private companion object {
+        /** A URL bar 28dp tall, 40px down the content pane. */
+        val URL_BAR = IntRect(left = 120, top = 40, right = 620, bottom = 68)
+        const val TITLE_BAR = 28
+    }
+
+    @Test
+    fun `an anchored popup opens directly below the anchor, not over it`() {
+        val at = anchoredContentOffset(URL_BAR, insetX = 0, insetY = TITLE_BAR)
+        assertEquals(URL_BAR.bottom + TITLE_BAR, at.y)
+        assertTrue(at.y > URL_BAR.top, "popup must not cover the control it belongs to")
+    }
+
+    @Test
+    fun `it lines up with the anchor's left edge`() {
+        val at = anchoredContentOffset(URL_BAR, insetX = 0, insetY = TITLE_BAR)
+        assertEquals(URL_BAR.left, at.x)
+    }
+
+    @Test
+    fun `the title-bar inset is added, which is the whole point`() {
+        // Without the correction the popup would land at the anchor's own y, i.e. a title bar too
+        // high - overlapping the URL bar rather than sitting under it.
+        val corrected = anchoredContentOffset(URL_BAR, insetX = 0, insetY = TITLE_BAR)
+        val uncorrected = anchoredContentOffset(URL_BAR, insetX = 0, insetY = 0)
+        assertEquals(TITLE_BAR, corrected.y - uncorrected.y)
+    }
+
+    @Test
+    fun `an undecorated window needs no correction and gets none`() {
+        // Zero inset is the correct answer for an undecorated window, not a failure to measure.
+        val at = anchoredContentOffset(URL_BAR, insetX = 0, insetY = 0)
+        assertEquals(IntOffset(URL_BAR.left, URL_BAR.bottom), at)
+    }
+
+    @Test
+    fun `a horizontal inset is honoured too, for platforms that have one`() {
+        val at = anchoredContentOffset(URL_BAR, insetX = 8, insetY = TITLE_BAR)
+        assertEquals(URL_BAR.left + 8, at.x)
     }
 }

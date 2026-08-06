@@ -1,6 +1,7 @@
 package ai.rever.boss.components.overlays
 
 import ai.rever.boss.plugin.browser.LocalAwtWindow
+import ai.rever.boss.plugin.ui.BossPopupAnchoring
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -20,6 +21,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
@@ -58,6 +60,8 @@ import androidx.compose.ui.window.Window
 @Composable
 fun HeavyweightPopup(
     onDismissRequest: () -> Unit,
+    anchorInWindow: IntRect,
+    anchoring: BossPopupAnchoring,
     offset: IntOffset,
     focusable: Boolean,
     content: @Composable () -> Unit,
@@ -83,7 +87,23 @@ fun HeavyweightPopup(
     val state = rememberOverlayWindowState(bounds)
 
     // Where the content sits INSIDE the overlay window.
-    val contentOffset = contentOffsetFor(cursor?.x, cursor?.y, offset, bounds?.get(0), bounds?.get(1))
+    //
+    // The overlay window is placed at the parent FRAME's origin, while Compose measures
+    // anchorInWindow against the CONTENT PANE. On a decorated window those differ by the title bar,
+    // so an anchored popup placed without this correction sits too high by exactly that much - the
+    // same off-by-a-title-bar that the pinch-zoom gate had to solve. Read the inset from the content
+    // pane rather than assuming a value.
+    val contentInset = remember(parent) { contentPaneInset(parent) }
+    val contentOffset =
+        when (anchoring) {
+            BossPopupAnchoring.AnchorBounds -> {
+                anchoredContentOffset(anchorInWindow, contentInset.first, contentInset.second)
+            }
+
+            BossPopupAnchoring.Cursor -> {
+                contentOffsetFor(cursor?.x, cursor?.y, offset, bounds?.get(0), bounds?.get(1))
+            }
+        }
 
     Window(
         onCloseRequest = onDismissRequest,
@@ -282,3 +302,32 @@ internal fun contentOffsetFor(
     } else {
         anchor
     }
+
+/**
+ * Where an [BossPopupAnchoring.AnchorBounds] popup sits inside the overlay window: directly below the
+ * anchor, shifted by the parent's content-pane inset.
+ *
+ * Pure so the correction can be pinned by a test, because getting it wrong is invisible in code review
+ * and shows up as a popup floating a title-bar's height away from the control it belongs to.
+ */
+internal fun anchoredContentOffset(
+    anchorInWindow: IntRect,
+    insetX: Int,
+    insetY: Int,
+): IntOffset = IntOffset(anchorInWindow.left + insetX, anchorInWindow.bottom + insetY)
+
+/**
+ * The parent's content-pane origin relative to its frame origin, as `(dx, dy)`.
+ *
+ * Zero when the window is undecorated, has no content pane, or cannot be measured - all of which are
+ * the "no correction needed" answer rather than an error, so this stays quiet. `locationOnScreen`
+ * throws for a window that is not showing, hence the runCatching.
+ */
+private fun contentPaneInset(parent: java.awt.Window?): Pair<Int, Int> {
+    val pane = (parent as? javax.swing.RootPaneContainer)?.contentPane ?: return 0 to 0
+    return runCatching {
+        val frameAt = parent.locationOnScreen
+        val paneAt = pane.locationOnScreen
+        (paneAt.x - frameAt.x) to (paneAt.y - frameAt.y)
+    }.getOrDefault(0 to 0)
+}

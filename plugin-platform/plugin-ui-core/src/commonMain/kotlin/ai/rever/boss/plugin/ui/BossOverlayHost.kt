@@ -2,6 +2,7 @@ package ai.rever.boss.plugin.ui
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.window.DialogProperties
 
 /**
@@ -88,6 +89,8 @@ object BossOverlayHost {
     var popupRenderer: (
         @Composable (
             onDismissRequest: () -> Unit,
+            anchorInWindow: IntRect,
+            anchoring: BossPopupAnchoring,
             offset: IntOffset,
             focusable: Boolean,
             content: @Composable () -> Unit,

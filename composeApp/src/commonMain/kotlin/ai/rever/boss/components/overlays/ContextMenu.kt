@@ -4,6 +4,7 @@ import ContextMenuBackground
 import ContextMenuBorder
 import ContextMenuHover
 import ai.rever.boss.platform.ContextMenuHandler
+import ai.rever.boss.plugin.ui.BossPopupAnchoring
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
@@ -28,6 +29,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
@@ -94,7 +96,10 @@ fun ContextMenu(
         // non-default today, so this is latent rather than a live bug, but a caller that did
         // would get different placement per platform. Honouring it means teaching
         // HeavyweightPopup about window-space anchors first.
-        heavyweight(onDismissRequest, offset, true) {
+        // Cursor anchoring: a context menu is opened by a click, so the pointer IS the intended
+        // position and no window-space conversion is needed. IntRect.Zero because this path never
+        // consults the anchor.
+        heavyweight(onDismissRequest, IntRect.Zero, BossPopupAnchoring.Cursor, offset, true) {
             ContextMenuContent(
                 items = items,
                 modifier = modifier,

@@ -414,9 +414,9 @@ fun main(args: Array<String>) {
     // unchanged platforms cannot regress. See JxBrowserConfig.renderingMode and
     // benchmarks/speedometer/win/WINDOWS.md.
     ai.rever.boss.components.overlays.OverlayConfig.heavyweightPopup =
-        { onDismiss, popupOffset, focusable, popupContent ->
+        { onDismiss, anchorInWindow, anchoring, popupOffset, focusable, popupContent ->
             ai.rever.boss.components.overlays
-                .HeavyweightPopup(onDismiss, popupOffset, focusable, popupContent)
+                .HeavyweightPopup(onDismiss, anchorInWindow, anchoring, popupOffset, focusable, popupContent)
         }
     ai.rever.boss.components.overlays.OverlayConfig.heavyweightModal = { properties, onDismiss, modalContent ->
         ai.rever.boss.components.overlays

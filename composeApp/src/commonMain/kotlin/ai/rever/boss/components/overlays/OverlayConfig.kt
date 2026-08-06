@@ -1,6 +1,7 @@
 package ai.rever.boss.components.overlays
 
 import ai.rever.boss.plugin.ui.BossOverlayHost
+import ai.rever.boss.plugin.ui.BossPopupAnchoring
 import ai.rever.boss.plugin.ui.LocalHeavyweightOverlays
 import ai.rever.boss.plugin.ui.shouldRouteHeavyweight
 import androidx.compose.foundation.layout.Box
@@ -11,6 +12,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.window.DialogProperties
 
 /**
@@ -58,6 +60,8 @@ object OverlayConfig {
     var heavyweightPopup: (
         @Composable (
             onDismissRequest: () -> Unit,
+            anchorInWindow: IntRect,
+            anchoring: BossPopupAnchoring,
             offset: IntOffset,
             focusable: Boolean,
             content: @Composable () -> Unit,
