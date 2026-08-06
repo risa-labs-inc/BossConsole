@@ -8,6 +8,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.Window
 
 /**
@@ -40,6 +41,7 @@ import androidx.compose.ui.window.Window
  */
 @Composable
 fun HeavyweightModal(
+    properties: DialogProperties,
     onDismissRequest: () -> Unit,
     content: @Composable () -> Unit,
 ) {
@@ -56,7 +58,11 @@ fun HeavyweightModal(
         focusable = true,
         resizable = false,
         onKeyEvent = { event ->
-            if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+            // dismissOnBackPress is what Compose maps Escape to, and only this window can honour it:
+            // Escape is handled here, not by anything inside the content. A caller that passed
+            // dismissOnBackPress = false used to get an Escape-proof dialog on the lightweight path
+            // and an Escape-dismissable one here.
+            if (properties.dismissOnBackPress && event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
                 onDismissRequest()
                 true
             } else {

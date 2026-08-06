@@ -1,6 +1,7 @@
 package ai.rever.boss.plugin.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.window.DialogProperties
 
 /**
  * Where a modal surface goes when the browser is GPU-composited.
@@ -27,13 +28,19 @@ import androidx.compose.runtime.Composable
  *
  * The `boss-plugin-api` copy is NOT dead code, which is worth stating because it looks like it. On an
  * OLDER host these types are absent, and `ApiClassLoader` then serves them out of the installed api
- * jar - that is what makes them reachable at all there, and it is why `minApiVersion` rather than
- * `minBossVersion` is the gate a plugin should declare (see ApiClassLoader's own doc: brand-new types
+ * jar - that is what makes them reachable at all there (see ApiClassLoader's own doc: brand-new types
  * ship via the jar, member additions to host-compiled types do not). On that path the api jar's
  * bodies really do execute, with nothing having injected a renderer, so they must degrade cleanly:
- * `BossDialog` falls back to a plain Compose `Dialog`, which is the pre-fix behaviour rather than a
- * crash. Their layout constants differ from the host's only because that package predates the
- * design-system tokens.
+ * `BossDialog` falls back to a plain Compose `Dialog`. Their layout constants differ from the host's
+ * only because that package predates the design-system tokens.
+ *
+ * **Which gate a plugin should declare, stated once so the two answers stop competing:**
+ * `minApiVersion: 1.0.72` is what makes the symbols RESOLVE, and it is the minimum a plugin needs to
+ * install and run. It does not promise the dialog is in front of the browser - on a host without
+ * these types compiled in, the api jar's fallback is the pre-fix, occluded dialog. A plugin that
+ * merely wants to compile and behave no worse than before needs only `minApiVersion`. A plugin whose
+ * feature DEPENDS on the dialog actually clearing the browser surface must additionally gate on the
+ * `minBossVersion` of the release that carries the host's copy.
  *
  * Signatures are the part that must match, for the reason `BossTheme` documents about overloads
  * versus defaulted parameters: one that differs links at build time and is missing at runtime, which
@@ -47,10 +54,18 @@ object BossOverlayHost {
     /**
      * Platform-injected modal renderer: shows [content] in a separate always-on-top window
      * covering the parent window. Null until injected; callers fall back to a Compose `Dialog`.
+     *
+     * Takes the caller's `DialogProperties` because the renderer is the only thing that can honour
+     * some of them. `dismissOnBackPress` maps to Escape, and Escape is handled by the window itself
+     * rather than by anything inside it - a renderer that never saw the properties silently made
+     * every heavyweight dialog Escape-dismissable regardless. Passed at the boundary rather than
+     * added later on purpose: this signature is pinned by the binary-compatibility validator in two
+     * repos at once, so widening it after release costs a coordinated host and api release.
      */
     @Volatile
     var modalRenderer: (
         @Composable (
+            properties: DialogProperties,
             onDismissRequest: () -> Unit,
             content: @Composable () -> Unit,
         ) -> Unit
@@ -64,6 +79,13 @@ object BossOverlayHost {
      * the modal's `windowLostFocus` and would otherwise dismiss the dialog the dropdown belongs
      * to. Maintained by the host's popup renderer and read by the host's modal renderer; it lives
      * here so there is one counter rather than one per module.
+     *
+     * **UI-thread only.** `++`/`--` on a plain Int are not atomic, and a lost decrement would leave a
+     * modal permanently unable to dismiss on focus loss. Every writer is a Compose
+     * `DisposableEffect` on the UI thread, so the contract holds by construction; `@Volatile` is here
+     * for safe publication to readers, not to make the arithmetic safe. Do not write it from a
+     * background thread, and do not "fix" it to `AtomicInteger` casually - that changes the
+     * descriptor and needs a coordinated host and api release.
      */
     @Volatile
     var openHeavyweightPopups: Int = 0

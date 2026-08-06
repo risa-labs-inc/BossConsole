@@ -418,9 +418,9 @@ fun main(args: Array<String>) {
             ai.rever.boss.components.overlays
                 .HeavyweightPopup(onDismiss, popupOffset, focusable, popupContent)
         }
-    ai.rever.boss.components.overlays.OverlayConfig.heavyweightModal = { onDismiss, modalContent ->
+    ai.rever.boss.components.overlays.OverlayConfig.heavyweightModal = { properties, onDismiss, modalContent ->
         ai.rever.boss.components.overlays
-            .HeavyweightModal(onDismiss, modalContent)
+            .HeavyweightModal(properties, onDismiss, modalContent)
     }
     ai.rever.boss.components.overlays.OverlayConfig.heavyweightTooltip = { text ->
         ai.rever.boss.components.overlays.SwingTooltip

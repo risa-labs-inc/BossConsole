@@ -20,6 +20,7 @@ import androidx.compose.material.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -27,6 +28,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.takeOrElse
@@ -40,6 +42,15 @@ import kotlinx.coroutines.delay
 
 /**
  * Whether the window hosting this composition is one that needs heavyweight overlays.
+ *
+ * **This declaration must stay in a file named `BossDialog.kt`.** Kotlin derives a top-level
+ * declaration's JVM facade class from the FILE name, so the api dump records it as
+ * `BossDialogKt.getLocalHeavyweightOverlays`. Moving it to `BossOverlayHost.kt` - its conceptual
+ * home, and where a maintainer would naturally put it - renames the symbol to
+ * `BossOverlayHostKt.getLocalHeavyweightOverlays`, and plugins compiled against the old name fail
+ * with NoClassDefFoundError at first use while `apiCheck` stays green in the api repo. The same trap
+ * applies to `shouldRouteHeavyweight` and to both `BossAlertDialog` overloads, whose `Color`
+ * parameters additionally mangle their JVM names.
  *
  * Default false, provided `true` by the host's main application window only. Secondary windows
  * (Settings, the first-run setup window) contain no browser surface, and routing their dialogs
@@ -103,8 +114,11 @@ fun BossDialog(
     content: @Composable () -> Unit,
 ) {
     val renderer = BossOverlayHost.modalRenderer
-    if (BossOverlayHost.useHeavyweightOverlays && renderer == null) {
-        BossOverlayHost.reportMissingModalRenderer()
+    val missingRenderer = BossOverlayHost.useHeavyweightOverlays && renderer == null
+    // SideEffect, not a bare call: composition can be re-run, skipped or abandoned, and a report
+    // should describe a composition that actually committed.
+    if (missingRenderer) {
+        SideEffect { BossOverlayHost.reportMissingModalRenderer() }
     }
     val heavyweight =
         shouldRouteHeavyweight(
@@ -113,7 +127,7 @@ fun BossDialog(
             hostNeedsHeavyweight = LocalHeavyweightOverlays.current,
         )
     if (heavyweight && renderer != null) {
-        renderer(onDismissRequest) {
+        renderer(properties, onDismissRequest) {
             ScrimmedModalContent(
                 dismissOnClickOutside = properties.dismissOnClickOutside,
                 onDismissRequest = onDismissRequest,
@@ -134,6 +148,17 @@ fun BossDialog(
 internal const val INPUT_ARM_DELAY_MS = 200L
 
 /**
+ * Whether a freshly-opened modal should start accepting pointer input.
+ *
+ * One input, deliberately: **a held button vetoes arming, whichever signal is asking.** Both callers
+ * - the pointer handler and the [INPUT_ARM_DELAY_MS] timer - ask the same question, and the timer
+ * having elapsed is never a reason to override a press. Writing that as a named, tested function is
+ * the point; an earlier version let the timer arm unconditionally and reinstated the very bug the
+ * guard exists for, only intermittently.
+ */
+internal fun shouldArmModalInput(pointerDown: Boolean): Boolean = !pointerDown
+
+/**
  * Full-window scrim with the card centered on it.
  *
  * The card carries a no-op click handler so a click inside it is consumed rather than falling
@@ -146,11 +171,17 @@ internal const val INPUT_ARM_DELAY_MS = 200L
  * beneath the pointer and chose it - the user picked an option they never aimed at. The lightweight
  * path cannot do this: it draws inside the existing window, whose press it already saw.
  *
- * Two arming rules, because either one alone loses a click:
- *  - any pointer event with no button held arms it, which covers the in-flight release and any
- *    stray movement;
- *  - a [INPUT_ARM_DELAY_MS] timer arms it too, for a dialog opened from the keyboard or a menu,
- *    where no pointer event may ever arrive and the first real click would otherwise be eaten.
+ * Two arming rules, and the ORDER of precedence between them is the whole correctness argument:
+ *  - a pointer event with no button held arms it. That is the real signal, and it covers both the
+ *    in-flight release and any stray movement.
+ *  - the [INPUT_ARM_DELAY_MS] timer arms it ONLY IF no button is held at that moment. It exists
+ *    purely for a dialog opened from the keyboard or a menu, where no pointer event may ever arrive
+ *    and the first real click would otherwise be eaten.
+ *
+ * The timer must not arm unconditionally. A deliberate modifier-click is easily held longer than
+ * 200ms, and the new window's first-frame latency counts against that budget too, so an
+ * unconditional timer can expire while the button is still down - reinstating the reported bug and
+ * making it rarer, which is worse than leaving it. See [shouldArmModalInput].
  */
 @Composable
 internal fun ScrimmedModalContent(
@@ -161,9 +192,13 @@ internal fun ScrimmedModalContent(
     val scrimInteraction = remember { MutableInteractionSource() }
     val cardInteraction = remember { MutableInteractionSource() }
     var armed by remember { mutableStateOf(false) }
+    // Tracks the button state the timer has to consult. Not snapshot-observed for recomposition,
+    // only read inside the effect, so a plain holder would do; kept as state so the pointer handler
+    // and the timer share one obvious source of truth.
+    val pointerDown = remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         delay(INPUT_ARM_DELAY_MS)
-        armed = true
+        if (shouldArmModalInput(pointerDown.value)) armed = true
     }
     Box(
         modifier =
@@ -177,7 +212,8 @@ internal fun ScrimmedModalContent(
                     awaitPointerEventScope {
                         while (!armed) {
                             val event = awaitPointerEvent(PointerEventPass.Initial)
-                            if (event.changes.none { it.pressed }) armed = true
+                            pointerDown.value = event.changes.any { it.pressed }
+                            if (shouldArmModalInput(pointerDown.value)) armed = true
                             event.changes.forEach { it.consume() }
                         }
                     }
@@ -196,11 +232,13 @@ internal fun ScrimmedModalContent(
     ) {
         Box(
             modifier =
-                Modifier.clickable(
-                    interactionSource = cardInteraction,
-                    indication = null,
-                    onClick = {},
-                ),
+                Modifier
+                    .focusProperties { canFocus = false }
+                    .clickable(
+                        interactionSource = cardInteraction,
+                        indication = null,
+                        onClick = {},
+                    ),
         ) {
             content()
         }

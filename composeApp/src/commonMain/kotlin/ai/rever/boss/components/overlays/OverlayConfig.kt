@@ -11,6 +11,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.window.DialogProperties
 
 /**
  * Routing for app overlays (context menus, dropdowns) so they can render correctly above a
@@ -72,6 +73,7 @@ object OverlayConfig {
      */
     var heavyweightModal: (
         @Composable (
+            properties: DialogProperties,
             onDismissRequest: () -> Unit,
             content: @Composable () -> Unit,
         ) -> Unit
