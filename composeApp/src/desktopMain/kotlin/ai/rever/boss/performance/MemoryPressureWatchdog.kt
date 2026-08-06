@@ -50,7 +50,19 @@ data class MemoryPressureNotice(
 object MemoryPressureWatchdog {
     private val logger = BossLogger.forComponent("MemoryPressureWatchdog")
 
-    /** Free-memory fraction at or below which the machine counts as under pressure. */
+    /**
+     * Available-memory fraction at or below which the machine counts as under pressure.
+     *
+     * **Not calibrated against a measured allocation failure.** It is a judgement call, chosen on
+     * the reasoning that PartitionAlloc's pools are a fraction of the machine and 12% leaves room
+     * to act before the wall. Treat it as provisional until someone reproduces the 5 Aug crash
+     * with this watchdog running and records what the number actually was beforehand.
+     *
+     * It reads [SystemMemory.availableBytes], which is `MemAvailable` on Linux rather than
+     * `MemFree`. That distinction matters more than the threshold: `MemFree` excludes the page
+     * cache, and a healthy long-running Linux box sits in single digits by that measure. Against
+     * `MemFree` almost any threshold produces false positives.
+     */
     internal const val PRESSURE_THRESHOLD = 0.12
 
     /** How long pressure must persist before acting. */
@@ -58,6 +70,10 @@ object MemoryPressureWatchdog {
 
     /** Gap between readings. Cheap enough to be irrelevant, frequent enough to be timely. */
     internal const val POLL_INTERVAL_MS = 15_000L
+
+    private val started =
+        java.util.concurrent.atomic
+            .AtomicBoolean(false)
 
     private val _notices = MutableStateFlow<MemoryPressureNotice?>(null)
 
@@ -109,18 +125,29 @@ object MemoryPressureWatchdog {
         }
 
     /**
-     * Starts polling. Idempotent per [scope]; returns immediately without starting anything
-     * when there is nothing this watchdog could do.
+     * Whether a polling loop should be launched at all.
+     *
+     * Three reasons not to: the operator turned it off, the session is already reduced so the
+     * only lever left needs a restart, or a loop is already running. The last is enforced rather
+     * than merely documented, since two loops racing on the same one-way tighten is a confusing
+     * way to learn this is only called once today.
+     *
+     * Claims the [started] flag as a side effect, so it must be called exactly once per [start].
      */
-    fun start(scope: CoroutineScope) {
+    private fun shouldStart(): Boolean {
         if (!ResourceModeConfig.livePressureEnabled) {
             logger.info(LogCategory.SYSTEM, "Live memory-pressure watchdog disabled by setting")
-            return
+            return false
         }
-        if (ResourceModeConfig.mode != BossResourceMode.FULL) {
-            // Already reduced: the only lever left needs a restart, so there is nothing to poll for.
-            return
-        }
+        return ResourceModeConfig.mode == BossResourceMode.FULL && started.compareAndSet(false, true)
+    }
+
+    /**
+     * Starts polling. Idempotent: only the first call starts a loop. Returns immediately without
+     * starting anything when there is nothing this watchdog could do.
+     */
+    fun start(scope: CoroutineScope) {
+        if (!shouldStart()) return
 
         scope.launch {
             var pressureSince: Long? = null

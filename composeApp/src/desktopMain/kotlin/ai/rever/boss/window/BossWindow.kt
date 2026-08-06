@@ -947,9 +947,14 @@ fun ApplicationScope.BossWindow(
             ImportDataDialog(onDismiss = { showImportDialog = false })
         }
 
-        // Only the first window mounts this. The watchdog is process-wide, so mounting it per
-        // window would show the same notice once per open window.
-        if (WindowManager.windowCount <= 1) {
+        // Exactly one window mounts this: the watchdog is process-wide, so mounting it per window
+        // would show the same notice once per open window.
+        //
+        // Identity, not a count. `windowCount <= 1` looks equivalent but is the opposite bug: with
+        // two windows open it is false in BOTH, so nobody mounts the dialog and the notice is
+        // never seen at all. Reading `windows` also registers a snapshot read, so this re-evaluates
+        // when the first window closes and the role passes to the next one.
+        if (WindowManager.windows.firstOrNull()?.id == windowState.id) {
             ai.rever.boss.performance.MemoryPressureNoticeDialog(
                 onRestartRequested = {
                     ai.rever.boss.config.ResourceModeConfig
@@ -957,6 +962,8 @@ fun ApplicationScope.BossWindow(
                     WindowOperations.closeWindow(windowState.id)
                 },
             )
+            ai.rever.boss.performance
+                .BrowserCapNoticeDialog()
         }
 
         // Reset Browser Confirmation Dialog

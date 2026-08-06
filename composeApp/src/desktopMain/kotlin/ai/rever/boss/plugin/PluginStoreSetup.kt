@@ -1388,7 +1388,17 @@ object PluginStoreSetup {
         // tier restores them on the next launch with no reinstall.
         val mode = ai.rever.boss.config.ResourceModeConfig.mode
         val (admitted, skipped) =
-            persistedPlugins.partition { LiteModePluginPolicy.shouldLoad(it.pluginId, mode) }
+            persistedPlugins.partition { entry ->
+                // A plugin the USER disabled is not a plugin the resource mode skipped. Without
+                // this it would be admitted here, then declined downstream, and still show up
+                // under "Plugins Skipped This Launch" attributed to the tier - blaming Lite for
+                // the user's own choice.
+                !entry.enabled || LiteModePluginPolicy.shouldLoad(entry.pluginId, mode)
+            }
+
+        // Assigned unconditionally: a later launch that skips nothing must clear the previous
+        // set, not leave a stale list for Settings to display.
+        skippedByResourceMode = skipped.map { it.pluginId }.toSet()
 
         if (skipped.isNotEmpty()) {
             logger.info(
@@ -1401,7 +1411,6 @@ object PluginStoreSetup {
                     "pluginIds" to skipped.joinToString(",") { it.pluginId },
                 ),
             )
-            skippedByResourceMode = skipped.map { it.pluginId }.toSet()
         }
 
         val entries =

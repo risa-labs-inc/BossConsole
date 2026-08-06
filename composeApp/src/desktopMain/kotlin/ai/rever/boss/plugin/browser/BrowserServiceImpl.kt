@@ -234,11 +234,32 @@ private object WedgeRecovery {
  *
  * Singleton, shared across all plugins.
  */
+
+/** A browser that was not opened because the resource tier's ceiling was already reached. */
+data class BrowserCapRefusal(
+    val mode: ai.rever.boss.config.BossResourceMode,
+    val cap: Int,
+)
+
 object BrowserServiceImpl : BrowserService {
     private val logger = BossLogger.forComponent("BrowserServiceImpl")
 
     // Track active browser handles for resource management
     private val activeBrowsers = ConcurrentHashMap<String, BrowserHandleImpl>()
+
+    private val _capRefusals = kotlinx.coroutines.flow.MutableStateFlow<BrowserCapRefusal?>(null)
+
+    /**
+     * The most recent browser refused for hitting the resource tier's ceiling, or null.
+     *
+     * Rendered by `BrowserCapNoticeDialog`. Cleared by [acknowledgeCapRefusal].
+     */
+    val capRefusals: kotlinx.coroutines.flow.StateFlow<BrowserCapRefusal?> get() = _capRefusals
+
+    /** Clears the current refusal once the UI has shown it. */
+    fun acknowledgeCapRefusal() {
+        _capRefusals.value = null
+    }
 
     // BrowserService is shared process-wide, but plugin handles belong to the
     // window whose PluginContext created them.
@@ -409,6 +430,13 @@ object BrowserServiceImpl : BrowserService {
                     "active" to activeBrowsers.size.toString(),
                 ),
             )
+            // Publish the reason as well as logging it. Callers get the same null they get from
+            // an engine failure, so without this the user sees a tab that just did not open and
+            // has no way to connect it to a setting they never chose. The cap is process-wide
+            // across every window and shares its pool with RPA/automation handles, so being able
+            // to name it is the difference between a tunable and a haunting.
+            _capRefusals.value =
+                BrowserCapRefusal(mode = mode, cap = mode.maxConcurrentBrowsers ?: 0)
             return null
         }
         return createBrowserWithRetry(config, ownerWindowId)

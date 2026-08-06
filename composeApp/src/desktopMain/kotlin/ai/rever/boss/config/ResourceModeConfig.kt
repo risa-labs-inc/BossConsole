@@ -20,10 +20,15 @@ import kotlinx.coroutines.flow.StateFlow
  * Short of moving JxBrowser out of the host process, the only defence is to keep demand
  * well below the wall. That is what these tiers do.
  *
- * [FULL] is unchanged behaviour. [LITE] caps the browser only, so nothing a user can see
- * disappears. [ULTRA_LITE] additionally stops loading plugins that are not on the
- * allowlist, which is the single largest consumer: the crashed session had 36 plugins
- * installed and 314 threads.
+ * [FULL] is unchanged behaviour. [LITE] caps the browser and leaves every feature installed.
+ * [ULTRA_LITE] additionally stops loading plugins that are not on the allowlist, which is the
+ * single largest consumer: the crashed session had 36 plugins installed and 314 threads.
+ *
+ * "Caps the browser" is not invisible, and it should not be described as though it were. The
+ * ceiling is process-wide across every window and shares its pool with RPA and automation
+ * handles, so a user at the limit sees a tab decline to open. That is why the refusal publishes
+ * a reason (`BrowserServiceImpl.capRefusals`) rather than only returning null: an unexplained
+ * limit the app chose on the user's behalf is worse than a smaller one they understand.
  *
  * Each tier carries its own numbers so the policy is one table rather than scattered
  * `when` blocks, and so [BossResourceModeTest] can assert on it without a running app.
@@ -75,8 +80,8 @@ enum class BossResourceMode(
         get() =
             when (this) {
                 FULL -> "Everything on. No caps."
-                LITE -> "Caps the browser. Every plugin still loads."
-                ULTRA_LITE -> "Caps the browser and loads only essential plugins."
+                LITE -> "Limits how many browsers open at once. Every plugin still loads."
+                ULTRA_LITE -> "Limits browsers, and loads only essential plugins."
             }
 }
 
@@ -209,7 +214,11 @@ object ResourceModeConfig {
      * (`FluckEngine`'s renderer cap, plugin gating), and those are exactly the levers a
      * downgrade cannot apply without a restart.
      */
-    val effectiveMode: StateFlow<BossResourceMode> by lazy { MutableStateFlow(decision.mode) }
+    private val _effectiveMode: MutableStateFlow<BossResourceMode> by lazy {
+        MutableStateFlow(decision.mode)
+    }
+
+    val effectiveMode: StateFlow<BossResourceMode> get() = _effectiveMode
 
     /** Convenience accessor for the common case where the reason does not matter. */
     val mode: BossResourceMode get() = effectiveMode.value
@@ -226,11 +235,10 @@ object ResourceModeConfig {
      * @return true when this call actually changed the tier.
      */
     internal fun tightenTo(target: BossResourceMode): Boolean {
-        val flow = effectiveMode as MutableStateFlow<BossResourceMode>
-        val current = flow.value
+        val current = _effectiveMode.value
         // Ordinal order is FULL < LITE < ULTRA_LITE, i.e. increasingly constrained.
         if (target.ordinal <= current.ordinal) return false
-        flow.value = target
+        _effectiveMode.value = target
         logger.info(
             LogCategory.SYSTEM,
             "Resource mode tightened for this session",

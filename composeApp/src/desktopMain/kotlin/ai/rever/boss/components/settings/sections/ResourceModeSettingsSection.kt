@@ -54,7 +54,7 @@ fun ResourceModeSettingsSection() {
             SystemMemory.totalPhysicalBytes().toDouble() / ResourceModeConfig.BYTES_PER_GB
         }
     val skipped = remember { PluginStoreSetup.skippedByResourceMode }
-    val optedIn = remember { LiteModePluginPolicy.userAllowlist() }
+    var optedIn by remember { mutableStateOf(LiteModePluginPolicy.userAllowlist()) }
 
     val options = listOf(AUTO_LABEL) + BossResourceMode.entries.map { it.settingsLabel() }
     val selectedLabel =
@@ -79,7 +79,15 @@ fun ResourceModeSettingsSection() {
             onChanged = { persisted = ResourceModeSettings.current() },
         )
 
-        PluginVisibilitySections(skipped = skipped, optedIn = optedIn)
+        PluginVisibilitySections(
+            skipped = skipped,
+            optedIn = optedIn,
+            onToggleOptIn = { pluginId, keep ->
+                val next = if (keep) optedIn + pluginId else optedIn - pluginId
+                LiteModePluginPolicy.setUserAllowlist(next)
+                optedIn = LiteModePluginPolicy.userAllowlist()
+            },
+        )
     }
 }
 
@@ -185,6 +193,7 @@ private fun AutomaticSelectionSection(
 private fun PluginVisibilitySections(
     skipped: Set<String>,
     optedIn: Set<String>,
+    onToggleOptIn: (String, Boolean) -> Unit,
 ) {
     if (skipped.isNotEmpty()) {
         SettingsSection(title = "Plugins Skipped This Launch") {
@@ -192,20 +201,36 @@ private fun PluginVisibilitySections(
                 label = "Not loaded",
                 value = "${skipped.size} plugin${if (skipped.size == 1) "" else "s"}",
                 description =
-                    "These are installed but were not loaded, to save memory: " +
-                        skipped.sorted().joinToString(", ") +
-                        ". They come back on the next launch in Full or Lite.",
+                    "These are installed but were not loaded, to save memory. Turn one on to " +
+                        "keep it in Ultra Lite from the next launch.",
             )
+            // A toggle per skipped plugin, so the recovery really is one click. Without these
+            // the only way back is hand-editing ~/.boss/lite-plugins.json, which is not a
+            // recovery story anyone can be expected to find.
+            skipped.sorted().forEach { pluginId ->
+                SettingsToggle(
+                    label = pluginId.substringAfterLast('.'),
+                    checked = pluginId in optedIn,
+                    onCheckedChange = { keep -> onToggleOptIn(pluginId, keep) },
+                    description = pluginId,
+                )
+            }
         }
     }
 
-    if (optedIn.isNotEmpty()) {
+    // Exceptions the user added that this launch did not skip, e.g. because they are already
+    // running in Full. Shown separately so the list above stays "what happened this launch".
+    val otherExceptions = optedIn - skipped
+    if (otherExceptions.isNotEmpty()) {
         SettingsSection(title = "Always Load in Ultra Lite") {
-            SettingsInfoRow(
-                label = "Your exceptions",
-                value = "${optedIn.size} plugin${if (optedIn.size == 1) "" else "s"}",
-                description = optedIn.sorted().joinToString(", "),
-            )
+            otherExceptions.sorted().forEach { pluginId ->
+                SettingsToggle(
+                    label = pluginId.substringAfterLast('.'),
+                    checked = true,
+                    onCheckedChange = { keep -> onToggleOptIn(pluginId, keep) },
+                    description = pluginId,
+                )
+            }
         }
     }
 }
