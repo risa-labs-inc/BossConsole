@@ -27,6 +27,10 @@ fun PerformanceSettings() {
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        // How much of itself BOSS runs. First, because it outranks every threshold below it:
+        // a reduced tier turns the sampler off entirely.
+        ResourceModeSettingsSection()
+
         // General Settings
         SettingsSection(title = "General") {
             SettingsToggle(

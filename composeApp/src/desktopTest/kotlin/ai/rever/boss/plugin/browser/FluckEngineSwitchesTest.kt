@@ -1,5 +1,6 @@
 package ai.rever.boss.plugin.browser
 
+import ai.rever.boss.config.BossResourceMode
 import com.teamdev.jxbrowser.engine.RenderingMode
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -119,6 +120,56 @@ class FluckEngineSwitchesTest {
         // through as if they were.
         for (raw in listOf(null, "", "   ", "0", "-1", "many", "4.5")) {
             assertEquals(null, FluckEngine.renderCapSwitch(raw), "expected no cap for '$raw'")
+        }
+    }
+
+    @Test
+    fun `reduced tiers supply a renderer cap and FULL supplies none`() {
+        assertEquals(null, FluckEngine.resolvedRenderCapSwitch(null, BossResourceMode.FULL))
+        assertEquals(
+            "--renderer-process-limit=${BossResourceMode.LITE.rendererProcessLimit}",
+            FluckEngine.resolvedRenderCapSwitch(null, BossResourceMode.LITE),
+        )
+        assertEquals(
+            "--renderer-process-limit=${BossResourceMode.ULTRA_LITE.rendererProcessLimit}",
+            FluckEngine.resolvedRenderCapSwitch(null, BossResourceMode.ULTRA_LITE),
+        )
+    }
+
+    @Test
+    fun `an explicit setting outranks the tier in both directions`() {
+        // Raising it above the tier's cap.
+        assertEquals(
+            "--renderer-process-limit=12",
+            FluckEngine.resolvedRenderCapSwitch("12", BossResourceMode.ULTRA_LITE),
+        )
+        // And lowering it below FULL's absence of one.
+        assertEquals(
+            "--renderer-process-limit=1",
+            FluckEngine.resolvedRenderCapSwitch("1", BossResourceMode.FULL),
+        )
+    }
+
+    /**
+     * An explicit `0` means "no cap" and has to survive a reduced tier, otherwise an operator
+     * who deliberately turned the cap off gets silently re-capped the moment the machine is
+     * small enough to pick ULTRA_LITE. `renderCapSwitch` alone cannot express this - it maps
+     * both `0` and unset to null - which is the whole reason `resolvedRenderCapSwitch` exists.
+     */
+    @Test
+    fun `an explicit zero disables the cap even on a reduced tier`() {
+        assertEquals(null, FluckEngine.resolvedRenderCapSwitch("0", BossResourceMode.ULTRA_LITE))
+        assertEquals(null, FluckEngine.resolvedRenderCapSwitch(" -1 ", BossResourceMode.LITE))
+    }
+
+    @Test
+    fun `an unparseable setting falls through to the tier rather than to no cap`() {
+        for (raw in listOf("", "   ", "many", "4.5")) {
+            assertEquals(
+                "--renderer-process-limit=${BossResourceMode.LITE.rendererProcessLimit}",
+                FluckEngine.resolvedRenderCapSwitch(raw, BossResourceMode.LITE),
+                "expected the tier default for '$raw'",
+            )
         }
     }
 

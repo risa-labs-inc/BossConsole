@@ -1,0 +1,254 @@
+package ai.rever.boss.config
+
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
+
+/**
+ * Guards the resource-tier decision in [ResourceModeConfig].
+ *
+ * This decision is unusually expensive to get wrong in one direction. [BossResourceMode.ULTRA_LITE]
+ * stops loading every plugin that is not on the `lite_eligible` allowlist, so a machine that lands
+ * there by accident looks to its user like an install that lost its features - with no error and
+ * nothing in the UI to blame. The asymmetry runs through these tests: over-reducing is treated as
+ * the serious failure, under-reducing merely as a missed optimisation.
+ */
+class ResourceModeTest {
+    private val windows = "windows 11"
+    private val mac = "mac os x"
+    private val linux = "linux"
+
+    private val gb = ResourceModeConfig.BYTES_PER_GB
+
+    private fun resolve(
+        raw: String? = null,
+        os: String = mac,
+        totalGb: Double = 64.0,
+    ) = ResourceModeConfig.resolveResourceMode(
+        raw = raw,
+        os = os,
+        totalMemoryBytes = (totalGb * gb).toLong(),
+    )
+
+    // region platform
+
+    @Test
+    fun `windows defaults to ULTRA_LITE regardless of how much memory it has`() {
+        for (totalGb in listOf(8.0, 16.0, 64.0, 512.0)) {
+            val decision = resolve(os = windows, totalGb = totalGb)
+            assertEquals(BossResourceMode.ULTRA_LITE, decision.mode, "at ${totalGb}GB")
+            assertEquals(ResourceModeReason.PLATFORM_DEFAULT, decision.reason, "at ${totalGb}GB")
+        }
+    }
+
+    @Test
+    fun `every windows spelling is caught`() {
+        for (os in listOf("windows 10", "windows 11", "windows server 2022", "windows")) {
+            assertEquals(BossResourceMode.ULTRA_LITE, resolve(os = os, totalGb = 64.0).mode, os)
+        }
+    }
+
+    /**
+     * The trap this test exists for: `"darwin"` contains the substring `"win"`, so a platform
+     * check written as `contains("win")` hands macOS the Windows branch. Under this feature that
+     * is not a cosmetic slip - it silently strips every non-allowlisted plugin from a Mac.
+     *
+     * [JxBrowserRenderingModeTest] keeps the same case alive for the rendering-mode resolver.
+     */
+    @Test
+    fun `darwin is not windows`() {
+        val decision = resolve(os = "darwin", totalGb = 64.0)
+        assertEquals(BossResourceMode.FULL, decision.mode)
+        assertNotEquals(ResourceModeReason.PLATFORM_DEFAULT, decision.reason)
+    }
+
+    @Test
+    fun `roomy mac and linux stay on FULL`() {
+        for (os in listOf(mac, linux, "freebsd", "sunos", "")) {
+            val decision = resolve(os = os, totalGb = 64.0)
+            assertEquals(BossResourceMode.FULL, decision.mode, os)
+            assertEquals(ResourceModeReason.DEFAULT, decision.reason, os)
+        }
+    }
+
+    // endregion
+
+    // region memory thresholds
+
+    @Test
+    fun `memory thresholds pick the tier`() {
+        assertEquals(BossResourceMode.ULTRA_LITE, resolve(totalGb = 4.0).mode)
+        assertEquals(BossResourceMode.ULTRA_LITE, resolve(totalGb = 7.9).mode)
+        assertEquals(BossResourceMode.LITE, resolve(totalGb = 8.0).mode)
+        assertEquals(BossResourceMode.LITE, resolve(totalGb = 15.9).mode)
+        assertEquals(BossResourceMode.FULL, resolve(totalGb = 16.0).mode)
+        assertEquals(BossResourceMode.FULL, resolve(totalGb = 128.0).mode)
+    }
+
+    @Test
+    fun `a memory-driven tier says so`() {
+        assertEquals(ResourceModeReason.DETECTED_MEMORY, resolve(totalGb = 4.0).reason)
+        assertEquals(ResourceModeReason.DETECTED_MEMORY, resolve(totalGb = 12.0).reason)
+    }
+
+    @Test
+    fun `thresholds are configurable`() {
+        val decision =
+            ResourceModeConfig.resolveResourceMode(
+                raw = null,
+                os = mac,
+                totalMemoryBytes = 24 * gb,
+                liteThresholdGb = 32,
+                ultraLiteThresholdGb = 16,
+            )
+        assertEquals(BossResourceMode.LITE, decision.mode)
+    }
+
+    /**
+     * An unreadable MXBean reports 0, which is "unknown", not "no memory". Treating it as a
+     * small machine would let one failed reflective call strip a 512 GB workstation of every
+     * plugin it has.
+     */
+    @Test
+    fun `undetectable memory does not reduce`() {
+        val decision =
+            ResourceModeConfig.resolveResourceMode(
+                raw = null,
+                os = mac,
+                totalMemoryBytes = 0L,
+            )
+        assertEquals(BossResourceMode.FULL, decision.mode)
+        assertEquals(ResourceModeReason.DEFAULT, decision.reason)
+    }
+
+    @Test
+    fun `a negative reading is treated the same as unknown`() {
+        val decision =
+            ResourceModeConfig.resolveResourceMode(
+                raw = null,
+                os = mac,
+                totalMemoryBytes = -1L,
+            )
+        assertEquals(BossResourceMode.FULL, decision.mode)
+    }
+
+    // endregion
+
+    // region explicit override
+
+    @Test
+    fun `an explicit tier beats the platform default`() {
+        // The escape hatch that matters most: a Windows user who wants their plugins back.
+        val decision = resolve(raw = "FULL", os = windows, totalGb = 8.0)
+        assertEquals(BossResourceMode.FULL, decision.mode)
+        assertEquals(ResourceModeReason.EXPLICIT_OVERRIDE, decision.reason)
+    }
+
+    @Test
+    fun `an explicit tier beats detected memory in both directions`() {
+        assertEquals(BossResourceMode.FULL, resolve(raw = "FULL", totalGb = 2.0).mode)
+        assertEquals(BossResourceMode.ULTRA_LITE, resolve(raw = "ULTRALITE", totalGb = 512.0).mode)
+    }
+
+    @Test
+    fun `every spelling resolves`() {
+        for (raw in listOf("FULL", "full", " Full ", "NONE", "OFF")) {
+            assertEquals(BossResourceMode.FULL, resolve(raw = raw, os = windows).mode, raw)
+        }
+        for (raw in listOf("LITE", "lite", " Lite ")) {
+            assertEquals(BossResourceMode.LITE, resolve(raw = raw, os = windows).mode, raw)
+        }
+        for (raw in listOf("ULTRALITE", "ULTRA_LITE", "ultra-lite", " Minimal ")) {
+            assertEquals(BossResourceMode.ULTRA_LITE, resolve(raw = raw).mode, raw)
+        }
+    }
+
+    /**
+     * A typo must fall through to automatic selection, never to a guess. `"ULTRA"` is the
+     * realistic near-miss and it must NOT be read as ULTRA_LITE.
+     */
+    @Test
+    fun `an unrecognized value falls through to automatic selection`() {
+        for (raw in listOf("ULTRA", "LIGHT", "LITEE", "yes", "1", "!!")) {
+            val decision = resolve(raw = raw, os = mac, totalGb = 64.0)
+            assertEquals(BossResourceMode.FULL, decision.mode, raw)
+            assertNotEquals(ResourceModeReason.EXPLICIT_OVERRIDE, decision.reason, raw)
+        }
+    }
+
+    @Test
+    fun `AUTO is recognized but selects nothing itself`() {
+        assertTrue(ResourceModeConfig.isRecognizedResourceMode("AUTO"))
+        assertTrue(ResourceModeConfig.isRecognizedResourceMode("detect"))
+        // Recognized means "do not warn", not "override" - AUTO still resolves by memory.
+        assertEquals(BossResourceMode.ULTRA_LITE, resolve(raw = "AUTO", totalGb = 4.0).mode)
+        assertEquals(BossResourceMode.FULL, resolve(raw = "AUTO", totalGb = 64.0).mode)
+    }
+
+    @Test
+    fun `recognition covers exactly the honoured spellings`() {
+        for (raw in listOf("FULL", "LITE", "ULTRALITE", "ULTRA_LITE", "AUTO")) {
+            assertTrue(ResourceModeConfig.isRecognizedResourceMode(raw), raw)
+        }
+        for (raw in listOf(null, "", "  ", "ULTRA", "SMALL")) {
+            assertFalse(ResourceModeConfig.isRecognizedResourceMode(raw), raw ?: "null")
+        }
+    }
+
+    // endregion
+
+    // region tier table
+
+    @Test
+    fun `FULL constrains nothing`() {
+        assertFalse(BossResourceMode.FULL.isReduced)
+        assertEquals(null, BossResourceMode.FULL.rendererProcessLimit)
+        assertEquals(null, BossResourceMode.FULL.maxConcurrentBrowsers)
+        assertFalse(BossResourceMode.FULL.gatesPlugins)
+        assertTrue(BossResourceMode.FULL.backgroundSamplingEnabled)
+    }
+
+    /**
+     * LITE caps the browser and nothing else. This is the whole distinction between the two
+     * reduced tiers: LITE must stay invisible to the user, so if it ever starts gating plugins
+     * the tiers have collapsed into one and the Settings copy is lying.
+     */
+    @Test
+    fun `LITE caps the browser without touching plugins`() {
+        assertTrue(BossResourceMode.LITE.isReduced)
+        assertFalse(BossResourceMode.LITE.gatesPlugins)
+        assertTrue(BossResourceMode.LITE.rendererProcessLimit!! > 0)
+        assertTrue(BossResourceMode.LITE.maxConcurrentBrowsers!! > 0)
+    }
+
+    @Test
+    fun `ULTRA_LITE gates plugins and is strictly tighter than LITE`() {
+        assertTrue(BossResourceMode.ULTRA_LITE.gatesPlugins)
+        assertFalse(BossResourceMode.ULTRA_LITE.backgroundSamplingEnabled)
+        assertTrue(
+            BossResourceMode.ULTRA_LITE.rendererProcessLimit!! <
+                BossResourceMode.LITE.rendererProcessLimit!!,
+        )
+        assertTrue(
+            BossResourceMode.ULTRA_LITE.maxConcurrentBrowsers!! <
+                BossResourceMode.LITE.maxConcurrentBrowsers!!,
+        )
+    }
+
+    /**
+     * A renderer cap of 0 is not a cap - Chromium reads `--renderer-process-limit=0` as
+     * unlimited, so a zero here would quietly mean the opposite of what the tier intends.
+     * `FluckEngine.renderCapSwitch` drops non-positive values for the same reason.
+     */
+    @Test
+    fun `no tier declares a meaningless cap`() {
+        for (mode in BossResourceMode.entries) {
+            mode.rendererProcessLimit?.let { assertTrue(it > 0, "${mode.name} renderer limit") }
+            mode.maxConcurrentBrowsers?.let { assertTrue(it > 0, "${mode.name} browser cap") }
+        }
+    }
+
+    // endregion
+}

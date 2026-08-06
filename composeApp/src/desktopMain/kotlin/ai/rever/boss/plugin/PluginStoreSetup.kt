@@ -69,6 +69,16 @@ object PluginStoreSetup {
     private var initialized = false
 
     /**
+     * Plugin ids this launch declined to load because of the resource tier.
+     *
+     * Read by Settings so a missing plugin is explained rather than mysterious. Populated once
+     * during [loadPersistedPlugins]; empty on FULL and on any launch that skipped nothing.
+     */
+    @Volatile
+    var skippedByResourceMode: Set<String> = emptySet()
+        private set
+
+    /**
      * Local plugin directory (installed plugins).
      */
     private val _pluginDir: File by lazy {
@@ -1369,8 +1379,33 @@ object PluginStoreSetup {
             ),
         )
 
+        // Reduced tiers gate loading here, at the single chokepoint, rather than by passing
+        // enabled = false below. That distinction is the entire memory saving: installPlugin
+        // still opens the JAR and builds a classloader for a disabled plugin, so "disabled"
+        // costs nearly as much as "loaded" — and a disabled plugin also skips dispose(), which
+        // orphans any child process it had started. Not loading is the only version that saves
+        // anything. Skipped plugins keep their installed.json entry untouched, so leaving the
+        // tier restores them on the next launch with no reinstall.
+        val mode = ai.rever.boss.config.ResourceModeConfig.mode
+        val (admitted, skipped) =
+            persistedPlugins.partition { LiteModePluginPolicy.shouldLoad(it.pluginId, mode) }
+
+        if (skipped.isNotEmpty()) {
+            logger.info(
+                LogCategory.SYSTEM,
+                "Resource mode is skipping plugins",
+                mapOf(
+                    "mode" to mode.name,
+                    "skipped" to skipped.size,
+                    "loading" to admitted.size,
+                    "pluginIds" to skipped.joinToString(",") { it.pluginId },
+                ),
+            )
+            skippedByResourceMode = skipped.map { it.pluginId }.toSet()
+        }
+
         val entries =
-            persistedPlugins.map { entry ->
+            admitted.map { entry ->
                 ai.rever.boss.components.plugin.PersistedPluginEntry(
                     pluginId = entry.pluginId,
                     jarPath = entry.jarPath,

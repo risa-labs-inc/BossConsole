@@ -1962,19 +1962,21 @@ object FluckEngine {
             )
         }
 
-        // Opt-in RAM cap for many-tab sessions, OFF by default. Bounding the renderer process
-        // count trades cross-tab isolation and stability for memory, which is not a trade to make
-        // for everyone — Lite exposes it as a tunable for exactly that reason, pending real-world
-        // tab-count data. Values <= 0 are ignored rather than passed through, since
-        // --renderer-process-limit=0 is not a meaningful cap.
+        // RAM cap for many-tab sessions. Bounding the renderer process count trades cross-tab
+        // isolation and stability for memory, which is not a trade to make for everyone — so it
+        // stays OFF on FULL and is supplied by the reduced tiers, which exist precisely to make
+        // that trade. The operator's setting still wins either way (see resolvedRenderCapSwitch).
+        // Values <= 0 are ignored rather than passed through, since --renderer-process-limit=0 is
+        // not a meaningful cap.
         //
         // Resolved HERE rather than inside performanceSwitchesFor so that function stays pure and
         // its tests stay independent of the developer's environment. Inserted BEFORE the operator's
         // extras so the documented "extras are appended last, so operator flags win ties" holds.
         val rendererCap =
-            renderCapSwitch(
+            resolvedRenderCapSwitch(
                 ai.rever.boss.config.ConfigLoader
                     .getConfig(ChromiumFlagKeys.RENDERER_PROCESS_LIMIT),
+                ai.rever.boss.config.ResourceModeConfig.mode,
             )
 
         val platformSwitches =
@@ -2232,6 +2234,27 @@ object FluckEngine {
             ?.toIntOrNull()
             ?.takeIf { it > 0 }
             ?.let { "--renderer-process-limit=$it" }
+
+    /**
+     * The renderer-process cap actually applied, combining the operator's setting with the
+     * process's [ai.rever.boss.config.BossResourceMode].
+     *
+     * The setting still wins whenever it parses, in **both** directions: a number raises or
+     * lowers the tier's cap, and an explicit `0` means "no cap" and must survive a reduced
+     * tier. That is the difference between this and [renderCapSwitch] alone - the latter maps
+     * both `0` and "unset" to null, which would let the tier default silently re-cap an
+     * operator who had deliberately turned the cap off.
+     *
+     * Only an absent, blank or unparseable value falls through to the tier.
+     */
+    internal fun resolvedRenderCapSwitch(
+        raw: String?,
+        mode: ai.rever.boss.config.BossResourceMode,
+    ): String? {
+        val explicit = raw?.trim()?.toIntOrNull()
+        if (explicit != null) return renderCapSwitch(explicit.toString())
+        return mode.rendererProcessLimit?.let { renderCapSwitch(it.toString()) }
+    }
 
     /**
      * Opt-in DevTools endpoint on the embedded engine, for measuring the fluck

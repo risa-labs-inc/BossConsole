@@ -947,6 +947,18 @@ fun ApplicationScope.BossWindow(
             ImportDataDialog(onDismiss = { showImportDialog = false })
         }
 
+        // Only the first window mounts this. The watchdog is process-wide, so mounting it per
+        // window would show the same notice once per open window.
+        if (WindowManager.windowCount <= 1) {
+            ai.rever.boss.performance.MemoryPressureNoticeDialog(
+                onRestartRequested = {
+                    ai.rever.boss.config.ResourceModeConfig
+                        .requestUltraLiteOnNextLaunch()
+                    WindowOperations.closeWindow(windowState.id)
+                },
+            )
+        }
+
         // Reset Browser Confirmation Dialog
         if (showResetBrowserDialog) {
             var isResetting by remember { mutableStateOf(false) }

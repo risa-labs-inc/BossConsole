@@ -133,16 +133,8 @@ fun AdvancedSettings() {
                 ) {
                     val totalSystemMb =
                         remember {
-                            try {
-                                val osBean =
-                                    java.lang.management.ManagementFactory
-                                        .getOperatingSystemMXBean()
-                                val method = osBean.javaClass.getMethod("getTotalPhysicalMemorySize")
-                                method.isAccessible = true
-                                (method.invoke(osBean) as Long) / (1024 * 1024)
-                            } catch (_: Exception) {
-                                0L
-                            }
+                            ai.rever.boss.config.SystemMemory
+                                .totalPhysicalBytes() / (1024 * 1024)
                         }
                     val totalPluginMb = pluginHeap.toLong() * 16
                     Text(

@@ -385,7 +385,36 @@ object BrowserServiceImpl : BrowserService {
         }
     }
 
+    /**
+     * Refuses past the tier's ceiling, then delegates to [createBrowserWithRetry].
+     *
+     * Each handle is a live Chromium renderer, and every native allocation in this process is
+     * served by Chromium's PartitionAlloc, whose failure mode is an immediate uncatchable abort
+     * rather than an exception — so an unbounded browser count is an unbounded path to killing
+     * the whole app. Returning null is a path callers already handle (engine failure returns
+     * null here too); it degrades to "that tab did not open" instead of "BOSS vanished".
+     */
     private suspend fun createBrowser(
+        config: BrowserConfig,
+        ownerWindowId: String,
+    ): BrowserHandle? {
+        val mode = ai.rever.boss.config.ResourceModeConfig.mode
+        if (isAtBrowserCeiling(activeBrowsers.size, mode)) {
+            logger.warn(
+                LogCategory.BROWSER,
+                "Browser creation refused - at the resource-mode ceiling",
+                mapOf(
+                    "mode" to mode.name,
+                    "cap" to (mode.maxConcurrentBrowsers?.toString() ?: "none"),
+                    "active" to activeBrowsers.size.toString(),
+                ),
+            )
+            return null
+        }
+        return createBrowserWithRetry(config, ownerWindowId)
+    }
+
+    private suspend fun createBrowserWithRetry(
         config: BrowserConfig,
         ownerWindowId: String,
     ): BrowserHandle? {
@@ -405,6 +434,21 @@ object BrowserServiceImpl : BrowserService {
             if (outcome !is CreationOutcome.EngineFailure || !WedgeRecovery.recycleIfWedged()) break
         }
         return null
+    }
+
+    /**
+     * Pure part of the concurrent-browser ceiling, split out so the guard is unit-testable
+     * without an engine.
+     *
+     * A null [BossResourceMode.maxConcurrentBrowsers] means uncapped, which is [FULL]'s
+     * behaviour and the behaviour every build had before resource modes existed.
+     */
+    internal fun isAtBrowserCeiling(
+        active: Int,
+        mode: ai.rever.boss.config.BossResourceMode,
+    ): Boolean {
+        val cap = mode.maxConcurrentBrowsers ?: return false
+        return active >= cap
     }
 
     private suspend fun attemptCreateBrowser(

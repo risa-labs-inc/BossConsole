@@ -42,6 +42,16 @@ data class SystemPluginManifestEntry(
     @SerialName("min_version") val minVersion: String? = null,
     @SerialName("kernel_only") val kernelOnly: Boolean = false,
     @SerialName("enabled") val enabled: Boolean = true,
+    /**
+     * Whether this plugin still loads under [ai.rever.boss.config.BossResourceMode.ULTRA_LITE].
+     *
+     * Defaults to false, so a row nobody has curated is *skipped* on a constrained machine
+     * rather than loaded. That is the safe direction for the failure this exists to avoid -
+     * an uncurated plugin costing memory on a machine that has none is how the app dies,
+     * whereas an uncurated plugin missing from a reduced tier is visible and recoverable
+     * (Settings lists what the tier skipped, and the user can opt it back in).
+     */
+    @SerialName("lite_eligible") val liteEligible: Boolean = false,
 )
 
 /**
@@ -74,7 +84,17 @@ object SystemPluginManifestService {
 
     private val cacheFile: File by lazy { BossDirectories.resolve("system-plugins.json") }
 
-    /** The last-shipped hardcoded set — used when no cache exists (first run / cache wiped). */
+    /**
+     * The last-shipped hardcoded set — used when no cache exists (first run / cache wiped).
+     *
+     * Every entry here is `liteEligible`, and that is deliberate rather than an oversight:
+     * this list *is* the core product (terminal, browser, editor, plugin manager), so a
+     * reduced tier that dropped any of it would not be a smaller BOSS, it would be a broken
+     * one. Gating bites the plugins that are NOT in this manifest - the store and sideloaded
+     * ones, which is where a 36-plugin install actually accumulates.
+     *
+     * Must stay in lockstep with the `system_plugins` table's `lite_eligible` column.
+     */
     private val FALLBACK: List<SystemPluginManifestEntry> =
         listOf(
             SystemPluginManifestEntry(
@@ -82,6 +102,7 @@ object SystemPluginManifestService {
                 githubRepo = "risa-labs-inc/boss-plugin-api",
                 artifactPrefix = "boss-plugin-api",
                 loadPriority = 0,
+                liteEligible = true,
             ),
             SystemPluginManifestEntry(
                 pluginId = ai.rever.boss.components.plugin.MicrokernelRuntime.PLUGIN_ID,
@@ -90,30 +111,37 @@ object SystemPluginManifestService {
                 loadPriority = 1,
                 downloadOnly = true,
                 kernelOnly = true,
+                // downloadOnly, so it is never loaded into this JVM and costs no memory here.
+                liteEligible = true,
             ),
             SystemPluginManifestEntry(
                 pluginId = "ai.rever.boss.plugin.dynamic.pluginmanager",
                 githubRepo = "risa-labs-inc/boss-plugin-plugin-manager",
                 artifactPrefix = "boss-plugin-plugin-manager",
                 loadPriority = 5,
+                // Also a bootstrap id: without it there is no UI to leave a reduced tier from.
+                liteEligible = true,
             ),
             SystemPluginManifestEntry(
                 pluginId = "ai.rever.boss.plugin.dynamic.terminaltab",
                 githubRepo = "risa-labs-inc/boss-plugin-terminal-tab",
                 artifactPrefix = "boss-plugin-terminal-tab",
                 loadPriority = 10,
+                liteEligible = true,
             ),
             SystemPluginManifestEntry(
                 pluginId = "ai.rever.boss.plugin.dynamic.terminal",
                 githubRepo = "risa-labs-inc/boss-plugin-terminal",
                 artifactPrefix = "boss-plugin-terminal",
                 loadPriority = 10,
+                liteEligible = true,
             ),
             SystemPluginManifestEntry(
                 pluginId = "ai.rever.boss.plugin.dynamic.fluckbrowser",
                 githubRepo = "risa-labs-inc/boss-plugin-fluck-browser",
                 artifactPrefix = "boss-plugin-fluck-browser",
                 loadPriority = 10,
+                liteEligible = true,
             ),
             SystemPluginManifestEntry(
                 pluginId = "ai.rever.boss.plugin.dynamic.editortab",
@@ -123,6 +151,7 @@ object SystemPluginManifestService {
                 // 1.4.0 bundles BossEditor privately; older plugin JARs resolve
                 // bosseditor from a host that no longer carries it.
                 minVersion = "1.4.0",
+                liteEligible = true,
             ),
         )
 
@@ -130,7 +159,7 @@ object SystemPluginManifestService {
      * Plugin ids this host build cannot run without. Remote rows may
      * retarget or reprioritize them but can never disable or drop them.
      */
-    private val BOOTSTRAP_PLUGIN_IDS =
+    internal val BOOTSTRAP_PLUGIN_IDS =
         setOf(
             "ai.rever.boss.plugin.api",
             "ai.rever.boss.plugin.dynamic.pluginmanager",
@@ -174,6 +203,20 @@ object SystemPluginManifestService {
             }
 
     /**
+     * Plugin ids the manifest marks as surviving [ai.rever.boss.config.BossResourceMode.ULTRA_LITE].
+     *
+     * Deliberately separate from [currentList], which drives **installation**. A reduced tier
+     * gates *loading*, not downloading: the JAR on disk costs no memory, and keeping it means
+     * switching back to FULL is a restart rather than a 350 MB re-download. This is the same
+     * split `downloadOnly` already expresses.
+     */
+    fun liteEligibleIds(): Set<String> =
+        entries.value
+            .filter { it.enabled && it.liteEligible }
+            .map { it.pluginId }
+            .toSet()
+
+    /**
      * Merge remote rows over the built-in [FALLBACK] so a table edit can add
      * plugins, retarget repos, raise version floors, or disable optional
      * rows — but can never DROP a row this host build ships with, LOWER a
@@ -182,6 +225,11 @@ object SystemPluginManifestService {
      * [BOOTSTRAP_PLUGIN_IDS] row. Without this, a partial/fat-fingered edit
      * would be cached verbatim and shadow the fallback on every later launch.
      */
+
+    /** [mergeWithFallback] for tests, which cannot reach a private member of an object. */
+    internal fun mergeWithFallbackForTest(fetched: List<SystemPluginManifestEntry>): List<SystemPluginManifestEntry> =
+        mergeWithFallback(fetched)
+
     private fun mergeWithFallback(fetched: List<SystemPluginManifestEntry>): List<SystemPluginManifestEntry> {
         val fetchedById = fetched.associateBy { it.pluginId }
         val merged = LinkedHashMap<String, SystemPluginManifestEntry>()
@@ -194,6 +242,15 @@ object SystemPluginManifestService {
                     remote.copy(
                         minVersion = highestVersion(remote.minVersion, fallback.minVersion),
                         enabled = remote.enabled || fallback.pluginId in BOOTSTRAP_PLUGIN_IDS,
+                        // A row this build ships as lite-eligible stays lite-eligible. Remote
+                        // rows may GRANT eligibility to others but can never revoke it from
+                        // the core set - and, more urgently, neither can an older cache. Every
+                        // install upgrading into this feature has a cached manifest predating
+                        // the column, where it decodes to the `false` default; without this
+                        // OR, the first launch on a Windows machine (which defaults to
+                        // ULTRA_LITE) would skip the terminal, browser, editor and plugin
+                        // manager and look like a broken install.
+                        liteEligible = remote.liteEligible || fallback.liteEligible,
                     )
                 }
         }
