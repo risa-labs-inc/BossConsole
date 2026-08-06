@@ -7,6 +7,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.absoluteOffset
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -131,6 +132,7 @@ fun HeavyweightPopup(
 
         ScrimmedContent(
             contentOffset = contentOffset,
+            anchorWidthDp = if (anchoring == BossPopupAnchoring.AnchorBounds) anchorInWindow.width else null,
             windowWidth = bounds?.get(2),
             windowHeight = bounds?.get(3),
             onDismissRequest = onDismissRequest,
@@ -193,6 +195,13 @@ private fun DismissOnFocusLoss(
 @Composable
 private fun ScrimmedContent(
     contentOffset: IntOffset,
+    /**
+     * Width to IMPOSE on the content, for an anchored popup. Distinct from the local
+     * `contentWidthDp` below, which is the width the content MEASURED at - naming both the same
+     * shadowed this parameter, so the content was constrained to the width it already had (the whole
+     * overlay window) and anchored popups stayed full-width no matter what the anchor reported.
+     */
+    anchorWidthDp: Int?,
     windowWidth: Int?,
     windowHeight: Int?,
     onDismissRequest: () -> Unit,
@@ -251,7 +260,18 @@ private fun ScrimmedContent(
             modifier =
                 Modifier
                     .absoluteOffset(x = clamped.x.dp, y = clamped.y.dp)
-                    .onGloballyPositioned { contentSize = it.size }
+                    // An anchored popup is given its anchor's width, so a caller that wrote
+                    // fillMaxWidth() against its own layout still means that and not the width of
+                    // the whole overlay window - which is what it would otherwise inherit, since
+                    // this window covers the parent. The URL-bar suggestion list stretched edge to
+                    // edge without this.
+                    .then(
+                        if (anchorWidthDp != null && anchorWidthDp > 0) {
+                            Modifier.width(anchorWidthDp.dp)
+                        } else {
+                            Modifier
+                        },
+                    ).onGloballyPositioned { contentSize = it.size }
                     // Swallow clicks that land on the menu's own background or padding. Without
                     // this they fall through to the scrim and dismiss the menu out from under a
                     // user who was aiming at an item.

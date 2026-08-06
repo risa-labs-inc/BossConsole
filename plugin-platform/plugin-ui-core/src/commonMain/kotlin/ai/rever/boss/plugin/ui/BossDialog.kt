@@ -29,18 +29,19 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusProperties
-import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.takeOrElse
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -418,9 +419,22 @@ fun BossPopup(
     val density = LocalDensity.current.density
     Box(
         modifier =
-            Modifier.onGloballyPositioned { coordinates ->
-                anchorInWindow = anchorRectInDp(coordinates.boundsInWindow(), density)
-            },
+            Modifier
+                // fillMaxWidth so the probe ADOPTS the caller's width, rather than trying to read it
+                // back off the parent. Walking up with parentLayoutCoordinates does not reliably land
+                // on the caller's layout - modifier nodes have coordinates of their own - and it
+                // returned a zero width, which let the content inherit the overlay window's width and
+                // then get clamped to x = 0. Filling is deterministic and needs no traversal.
+                //
+                // Layout-safe because the probe renders nothing on this path: it has zero height, and
+                // its parent's width is already decided by the caller. Height stays zero, so the
+                // anchor's bottom is its top, which is what "open below the anchor" means for a
+                // zero-height probe placed where the popup should start.
+                .fillMaxWidth()
+                .onGloballyPositioned { coordinates ->
+                    anchorInWindow =
+                        anchorRectInDp(coordinates.positionInWindow(), coordinates.size, density)
+                },
     ) {
         if (heavyweight && renderer != null) {
             renderer(onDismissRequest, anchorInWindow, anchoring, offset, focusable, content)
@@ -438,27 +452,38 @@ fun BossPopup(
 /**
  * The anchor rect converted from Compose PIXELS to AWT logical units (dp).
  *
- * The unit change is the entire point and is easy to miss: `boundsInWindow()` is in pixels, while the
+ * The unit change is the entire point and is easy to miss: layout coordinates are in pixels, while the
  * host places overlay content with `absoluteOffset(x.dp, y.dp)` in logical units. Passing pixels
  * straight through put the URL-bar suggestion list at roughly double its intended position on a 2x
  * display - correct on a 1x screen, visibly wrong on every Retina one, which is exactly the class of
  * bug the host's own popup code already carries a warning about.
  *
+ * Takes position and size rather than a Rect because the caller must use `positionInWindow()`, which
+ * is UNCLIPPED. `boundsInWindow()` clips, and a zero-size probe then collapses to an empty rect at the
+ * origin - which placed the suggestion list in the screen's top-left corner rather than under the URL
+ * bar.
+ *
  * Pure, and separate from the composable, so the conversion is pinned by a test at more than one
  * scale factor rather than only by looking at a 1x screen.
  */
 internal fun anchorRectInDp(
-    boundsPx: Rect,
+    positionPx: Offset,
+    sizePx: IntSize,
     density: Float,
 ): IntRect {
-    if (density <= 0f) return IntRect.Zero
+    if (density <= 0f || !positionPx.isValid()) return IntRect.Zero
+    val left = (positionPx.x / density).roundToInt()
+    val top = (positionPx.y / density).roundToInt()
     return IntRect(
-        left = (boundsPx.left / density).roundToInt(),
-        top = (boundsPx.top / density).roundToInt(),
-        right = (boundsPx.right / density).roundToInt(),
-        bottom = (boundsPx.bottom / density).roundToInt(),
+        left = left,
+        top = top,
+        right = left + (sizePx.width / density).roundToInt(),
+        bottom = top + (sizePx.height / density).roundToInt(),
     )
 }
+
+/** Guards against the Unspecified/NaN offset a detached or not-yet-placed layout reports. */
+private fun Offset.isValid(): Boolean = !x.isNaN() && !y.isNaN()
 
 /**
  * Where a [BossPopup] places itself on the heavyweight path.

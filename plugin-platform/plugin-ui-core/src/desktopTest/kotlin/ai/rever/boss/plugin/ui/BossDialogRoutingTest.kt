@@ -1,7 +1,8 @@
 package ai.rever.boss.plugin.ui
 
-import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -120,26 +121,45 @@ class ModalInputArmingRuleTest {
 class AnchorRectConversionTest {
     @Test
     fun `at 1x the numbers are unchanged, which is why the bug hid`() {
-        val r = anchorRectInDp(Rect(120f, 40f, 620f, 68f), density = 1f)
+        val r = anchorRectInDp(Offset(120f, 40f), IntSize(500, 28), density = 1f)
         assertEquals(IntRect(120, 40, 620, 68), r)
     }
 
     @Test
-    fun `at 2x every edge halves`() {
-        val r = anchorRectInDp(Rect(240f, 80f, 1240f, 136f), density = 2f)
+    fun `at 2x position and size both halve`() {
+        val r = anchorRectInDp(Offset(240f, 80f), IntSize(1000, 56), density = 2f)
         assertEquals(IntRect(120, 40, 620, 68), r)
     }
 
     @Test
     fun `a 150 percent display is handled, not just integral scales`() {
-        val r = anchorRectInDp(Rect(180f, 60f, 930f, 102f), density = 1.5f)
+        val r = anchorRectInDp(Offset(180f, 60f), IntSize(750, 42), density = 1.5f)
         assertEquals(IntRect(120, 40, 620, 68), r)
     }
 
     @Test
+    fun `the anchor keeps its width, which is what the content is sized to`() {
+        // The list stretched edge to edge because a zero-width anchor left the content inheriting
+        // the overlay window's width. Width has to survive the conversion.
+        val r = anchorRectInDp(Offset(240f, 80f), IntSize(1000, 0), density = 2f)
+        assertEquals(500, r.width)
+    }
+
+    @Test
+    fun `a zero-height anchor still reports its position, so the popup opens there`() {
+        // The anchor Box wraps a zero-size probe, so zero height is the NORMAL case, not an error.
+        val r = anchorRectInDp(Offset(240f, 80f), IntSize(1000, 0), density = 2f)
+        assertEquals(40, r.top)
+        assertEquals(40, r.bottom)
+    }
+
+    @Test
     fun `a nonsensical density yields an empty rect rather than a divide by zero`() {
-        // An anchor at the origin degrades to cursor-like placement; NaN coordinates would propagate
-        // into a window position and put the popup somewhere unrecoverable.
-        assertEquals(IntRect.Zero, anchorRectInDp(Rect(10f, 10f, 20f, 20f), density = 0f))
+        assertEquals(IntRect.Zero, anchorRectInDp(Offset(10f, 10f), IntSize(10, 10), density = 0f))
+    }
+
+    @Test
+    fun `an unplaced layout reporting NaN does not become a NaN window position`() {
+        assertEquals(IntRect.Zero, anchorRectInDp(Offset(Float.NaN, Float.NaN), IntSize(10, 10), density = 2f))
     }
 }
