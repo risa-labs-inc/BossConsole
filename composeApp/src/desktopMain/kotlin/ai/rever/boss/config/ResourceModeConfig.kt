@@ -93,12 +93,19 @@ enum class BossResourceMode(
  */
 enum class ResourceModeReason {
     /**
-     * An explicit, recognized BOSS_RESOURCE_MODE env var or system property.
+     * An explicit, recognized BOSS_RESOURCE_MODE from outside the app: env var, system property
+     * **or `local.properties`**. All three arrive through one [ConfigLoader] call, so they are
+     * indistinguishable here and are reported as one reason.
      *
      * Distinct from [USER_SELECTION] because the two need different sentences. When the operator
-     * sets the env var, Settings still shows whatever the user picked in the dropdown, and
+     * sets it externally, Settings still shows whatever the user picked in the dropdown, and
      * telling them the tier is what they selected is a flat contradiction of the control sitting
      * directly above it.
+     *
+     * `local.properties` is worth calling out because it persists across every run of a checkout
+     * with nothing in the UI to reveal it. That is acceptable here only because a tier can never
+     * *grant* capability - see the object KDoc - but it does mean a developer who sets it and
+     * forgets will keep launching reduced.
      */
     ENVIRONMENT_OVERRIDE,
 
