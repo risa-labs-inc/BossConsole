@@ -72,11 +72,18 @@ private const val JSON_INPUT_MARKER = "\nJSON input: "
  * is only the malformed-input path that appends the document. The distinction does not
  * matter to callers, so everything is sanitised uniformly.
  *
+ * BOUNDED, and deliberately so: anything that is not a `SerializationException` passes
+ * through untouched, because network and auth failures are not ours to rewrite and losing
+ * their type would break callers that distinguish them. That is not the same as "nothing
+ * else can leak" - supabase-kt's `RestException` carries the PostgREST error body, and a
+ * constraint violation can echo column values back ("Key (col)=(value) already exists").
+ * Do not read this helper as covering every way a payload can escape this package.
+ *
  * The diagnostic half of the message is kept deliberately. "Encountered an unknown key
  * 'org_id' at path: $" is exactly what identified this outage; discarding it to be safe
  * would trade a credential leak for an undiagnosable one.
  */
-internal fun sanitizeResponseFailure(
+internal fun sanitizeSupabaseFailure(
     operation: String,
     error: Throwable,
 ): Throwable {
@@ -86,7 +93,7 @@ internal fun sanitizeResponseFailure(
             ?.substringBefore(JSON_INPUT_MARKER)
             ?.takeIf { it.isNotBlank() }
             ?: "malformed response"
-    return SupabaseResponseException("$operation: $diagnostic")
+    return SupabaseFailure("$operation: $diagnostic")
 }
 
 /**
@@ -96,6 +103,6 @@ internal fun sanitizeResponseFailure(
  * payload back within reach of any handler that walks `cause`, which is the whole thing
  * being prevented.
  */
-internal class SupabaseResponseException(
+internal class SupabaseFailure(
     message: String,
 ) : Exception(message)

@@ -82,8 +82,8 @@ object RoleCreationService {
                 Result.failure(Exception(result.error ?: "Failed to create role"))
             }
         } catch (e: Exception) {
-            logger.warn(LogCategory.AUTH, "createRole failed", error = sanitizeResponseFailure("createRole", e))
-            Result.failure(e)
+            logger.warn(LogCategory.AUTH, "createRole failed", error = sanitizeSupabaseFailure("createRole", e))
+            Result.failure(sanitizeSupabaseFailure("createRole", e))
         }
 
     /**
@@ -130,9 +130,9 @@ object RoleCreationService {
             logger.warn(
                 LogCategory.AUTH,
                 "createPermission failed",
-                error = sanitizeResponseFailure("createPermission", e),
+                error = sanitizeSupabaseFailure("createPermission", e),
             )
-            Result.failure(e)
+            Result.failure(sanitizeSupabaseFailure("createPermission", e))
         }
 
     /**
@@ -169,8 +169,8 @@ object RoleCreationService {
                 Result.failure(Exception(result.error ?: "Failed to get roles"))
             }
         } catch (e: Exception) {
-            logger.warn(LogCategory.AUTH, "getAllRoles failed", error = sanitizeResponseFailure("getAllRoles", e))
-            Result.failure(e)
+            logger.warn(LogCategory.AUTH, "getAllRoles failed", error = sanitizeSupabaseFailure("getAllRoles", e))
+            Result.failure(sanitizeSupabaseFailure("getAllRoles", e))
         }
 
     /**
@@ -210,9 +210,9 @@ object RoleCreationService {
             logger.warn(
                 LogCategory.AUTH,
                 "getAllPermissions failed",
-                error = sanitizeResponseFailure("getAllPermissions", e),
+                error = sanitizeSupabaseFailure("getAllPermissions", e),
             )
-            Result.failure(e)
+            Result.failure(sanitizeSupabaseFailure("getAllPermissions", e))
         }
 
     /**
@@ -251,9 +251,9 @@ object RoleCreationService {
             logger.warn(
                 LogCategory.AUTH,
                 "assignPermissionToRole failed",
-                error = sanitizeResponseFailure("assignPermissionToRole", e),
+                error = sanitizeSupabaseFailure("assignPermissionToRole", e),
             )
-            Result.failure(e)
+            Result.failure(sanitizeSupabaseFailure("assignPermissionToRole", e))
         }
 
     /**
@@ -292,9 +292,9 @@ object RoleCreationService {
             logger.warn(
                 LogCategory.AUTH,
                 "removePermissionFromRole failed",
-                error = sanitizeResponseFailure("removePermissionFromRole", e),
+                error = sanitizeSupabaseFailure("removePermissionFromRole", e),
             )
-            Result.failure(e)
+            Result.failure(sanitizeSupabaseFailure("removePermissionFromRole", e))
         }
 
     /**
@@ -333,9 +333,9 @@ object RoleCreationService {
             logger.warn(
                 LogCategory.AUTH,
                 "getRolePermissions failed",
-                error = sanitizeResponseFailure("getRolePermissions", e),
+                error = sanitizeSupabaseFailure("getRolePermissions", e),
             )
-            Result.failure(e)
+            Result.failure(sanitizeSupabaseFailure("getRolePermissions", e))
         }
 
     /**
@@ -366,8 +366,8 @@ object RoleCreationService {
                 Result.failure(Exception(result.error ?: "Failed to delete role"))
             }
         } catch (e: Exception) {
-            logger.warn(LogCategory.AUTH, "deleteRole failed", error = sanitizeResponseFailure("deleteRole", e))
-            Result.failure(e)
+            logger.warn(LogCategory.AUTH, "deleteRole failed", error = sanitizeSupabaseFailure("deleteRole", e))
+            Result.failure(sanitizeSupabaseFailure("deleteRole", e))
         }
 
     /**
@@ -401,9 +401,9 @@ object RoleCreationService {
             logger.warn(
                 LogCategory.AUTH,
                 "deletePermission failed",
-                error = sanitizeResponseFailure("deletePermission", e),
+                error = sanitizeSupabaseFailure("deletePermission", e),
             )
-            Result.failure(e)
+            Result.failure(sanitizeSupabaseFailure("deletePermission", e))
         }
 
     /**

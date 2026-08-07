@@ -31,7 +31,7 @@ class SupabaseJsonTest {
         val raw = runCatching { supabaseJson.parseToJsonElement(malformedBody) }.exceptionOrNull()
         assertTrue(raw is SerializationException, "expected a serialization failure, got $raw")
 
-        val safe = sanitizeResponseFailure("getUserSecrets", raw)
+        val safe = sanitizeSupabaseFailure("getUserSecrets", raw)
 
         val message = safe.message.orEmpty()
         assertFalse(message.contains(password), "password leaked into: $message")
@@ -42,7 +42,7 @@ class SupabaseJsonTest {
     @Test
     fun `the sanitiser is doing work, not decorating an already-safe message`() {
         // Canary. kotlinx appends the offending document to a PARSE failure today, which is
-        // the entire reason sanitizeResponseFailure exists. If an upgrade stops doing that,
+        // the entire reason sanitizeSupabaseFailure exists. If an upgrade stops doing that,
         // this fails - and that failure is worth having: it says the threat model moved and
         // the sanitiser may now be dead code, rather than letting it rot untested.
         val raw = runCatching { supabaseJson.parseToJsonElement(malformedBody) }.exceptionOrNull()
@@ -60,7 +60,7 @@ class SupabaseJsonTest {
         val body = """[{"id":"1","org_id":null}]"""
         val raw = runCatching { Json.decodeFromString<List<SecretEntry>>(body) }.exceptionOrNull()
 
-        val safe = sanitizeResponseFailure("getUserSecrets", raw!!)
+        val safe = sanitizeSupabaseFailure("getUserSecrets", raw!!)
 
         assertTrue(safe.message.orEmpty().contains("getUserSecrets"), "operation name missing")
         assertTrue(safe.message.orEmpty().contains("org_id"), "key name missing: ${safe.message}")
@@ -76,7 +76,7 @@ class SupabaseJsonTest {
                 """"created_at":"x","updated_at":"x"}]"""
         val raw = runCatching { supabaseJson.decodeFromString<List<SecretEntry>>(nullPassword) }.exceptionOrNull()
 
-        val safe = sanitizeResponseFailure("getUserSecrets", raw!!)
+        val safe = sanitizeSupabaseFailure("getUserSecrets", raw!!)
 
         assertFalse(safe.message.orEmpty().contains("JSON input"))
         assertTrue(safe.message.orEmpty().contains("password"), "should still name the offending field")
@@ -88,7 +88,7 @@ class SupabaseJsonTest {
         // break any caller that distinguishes them.
         val original = IllegalStateException("connection reset")
 
-        val result = sanitizeResponseFailure("getUserSecrets", original)
+        val result = sanitizeSupabaseFailure("getUserSecrets", original)
 
         assertEquals(original, result)
     }
@@ -99,11 +99,44 @@ class SupabaseJsonTest {
         // handler that walks the chain, which defeats the whole exercise.
         val raw = runCatching { supabaseJson.parseToJsonElement(malformedBody) }.exceptionOrNull()!!
 
-        val safe = sanitizeResponseFailure("getUserSecrets", raw)
+        val safe = sanitizeSupabaseFailure("getUserSecrets", raw)
 
         // assertNull for the same reason SecretDecodingTest argues for it: it takes Any? and
         // so keeps compiling if the type changes, failing for the real reason.
         assertNull(safe.cause)
-        assertTrue(safe is SupabaseResponseException)
+        assertTrue(safe is SupabaseFailure)
     }
+}
+
+/**
+ * The plugin-facing path, exercised for real.
+ *
+ * `SupabaseDataProviderImpl.rpc` parses caller-supplied `parameters` before it touches the
+ * network, so a malformed params string fails without a backend - which makes this the one
+ * leak path in the package that can be tested by execution rather than by reading source.
+ *
+ * It is worth executing because reasoning got it wrong twice. First I cleared this function
+ * on the grounds that untyped parsing cannot fail on unknown keys (true, and beside the
+ * point - it can still fail on malformed input). Then I sanitised its log and left the
+ * returned exception built from the raw message, which strips the document from our log and
+ * hands it to the plugin instead.
+ */
+class SupabaseDataProviderLeakTest {
+    private val password = "SUPERSECRET_PW"
+
+    @Test
+    fun `a malformed create_secret params string does not return the password to the plugin`() =
+        kotlinx.coroutines.runBlocking {
+            // Truncated mid-object, as a serialisation bug or a cut write would leave it.
+            val params = """{"p_website":"github.com","p_password":"$password" """
+
+            val result = SupabaseDataProviderImpl().rpc("create_secret", params)
+
+            val message = result.exceptionOrNull()?.message.orEmpty()
+            assertTrue(result.isFailure, "expected the malformed params to fail")
+            assertFalse(message.contains(password), "password returned to caller in: $message")
+            assertFalse(message.contains("JSON input"), "body marker returned to caller in: $message")
+            // Still says which call failed, or the plugin author is left with nothing.
+            assertTrue(message.contains("create_secret"), "lost the function name: $message")
+        }
 }

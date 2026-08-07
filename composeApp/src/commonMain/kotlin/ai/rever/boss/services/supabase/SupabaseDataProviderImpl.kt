@@ -9,7 +9,6 @@ import ai.rever.boss.utils.logging.LogCategory
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.rpc
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 
 /**
@@ -47,13 +46,14 @@ class SupabaseDataProviderImpl : SupabaseDataProvider {
                     }
             Result.success(result.data)
         } catch (e: Exception) {
+            val safe = sanitizeSupabaseFailure("select($table)", e)
             logger.error(
                 LogCategory.NETWORK,
                 "Supabase select failed",
                 data = mapOf("table" to table),
-                error = sanitizeResponseFailure("select($table)", e),
+                error = safe,
             )
-            Result.failure(Exception("Select on '$table' failed: ${e.message}"))
+            Result.failure(Exception("Select on '$table' failed: ${safe.message}"))
         }
 
     override suspend fun rpc(
@@ -71,14 +71,19 @@ class SupabaseDataProviderImpl : SupabaseDataProvider {
         } catch (e: Exception) {
             // Sanitised in the REQUEST direction too, which is easy to miss: `parameters` is
             // caller-supplied, and a plugin calling create_secret puts the new password in it.
-            // A malformed params string would otherwise be logged with the document attached.
+            //
+            // Sanitised ONCE and used for both the log and the returned exception. Doing only
+            // the log is worse than useless here: the caller is a plugin, the plugin is at
+            // least as likely to log what it gets, and the document would have been stripped
+            // from our log and handed straight to it.
+            val safe = sanitizeSupabaseFailure("rpc($function)", e)
             logger.error(
                 LogCategory.NETWORK,
                 "Supabase rpc failed",
                 data = mapOf("function" to function),
-                error = sanitizeResponseFailure("rpc($function)", e),
+                error = safe,
             )
-            Result.failure(Exception("RPC '$function' failed: ${e.message}"))
+            Result.failure(Exception("RPC '$function' failed: ${safe.message}"))
         }
 
     private fun io.github.jan.supabase.postgrest.query.filter.PostgrestFilterBuilder.applyFilter(f: QueryFilter) {

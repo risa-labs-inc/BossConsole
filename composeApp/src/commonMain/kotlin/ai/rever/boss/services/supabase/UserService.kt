@@ -66,8 +66,8 @@ object UserService {
             logger.debug(LogCategory.AUTH, "Fetched users", mapOf("count" to actualUsers.size, "offset" to offset, "hasMore" to hasMore))
             Result.success(PaginatedResult(actualUsers, hasMore))
         } catch (e: Exception) {
-            logger.error(LogCategory.AUTH, "Failed to fetch users", error = sanitizeResponseFailure("getAllUsers", e))
-            Result.failure(Exception("Failed to fetch users: ${e.message}"))
+            logger.error(LogCategory.AUTH, "Failed to fetch users", error = sanitizeSupabaseFailure("getAllUsers", e))
+            Result.failure(Exception("Failed to fetch users: ${sanitizeSupabaseFailure("getAllUsers", e).message}"))
         }
 
     /**
@@ -127,12 +127,13 @@ object UserService {
             )
             Result.success(PaginatedResult(usersWithRoles, paginatedUsers.hasMore))
         } catch (e: Exception) {
+            val safe = sanitizeSupabaseFailure("getAllUsersWithRoles", e)
             logger.error(
                 LogCategory.AUTH,
                 "Failed to fetch users with roles",
-                error = sanitizeResponseFailure("getAllUsersWithRoles", e),
+                error = safe,
             )
-            Result.failure(Exception("Failed to fetch users with roles: ${e.message}"))
+            Result.failure(Exception("Failed to fetch users with roles: ${safe.message}"))
         }
     }
 
@@ -215,9 +216,11 @@ object UserService {
             logger.error(
                 LogCategory.AUTH,
                 "Failed to search users",
-                error = sanitizeResponseFailure("searchUsersByEmail", e),
+                error = sanitizeSupabaseFailure("searchUsersByEmail", e),
             )
-            Result.failure(Exception("Failed to search users: ${e.message}"))
+            Result.failure(
+                Exception("Failed to search users: ${sanitizeSupabaseFailure("searchUsersByEmail", e).message}"),
+            )
         }
     }
 
@@ -238,7 +241,7 @@ object UserService {
             Result.success(user)
         } catch (e: Exception) {
             logger.error(LogCategory.AUTH, "Failed to fetch user", mapOf("userId" to userId, "error" to (e.message ?: "unknown")))
-            Result.failure(Exception("Failed to fetch user: ${e.message}"))
+            Result.failure(Exception("Failed to fetch user: ${sanitizeSupabaseFailure("getUserById", e).message}"))
         }
 
     /**
@@ -272,9 +275,11 @@ object UserService {
             logger.error(
                 LogCategory.AUTH,
                 "Failed to fetch user with roles",
-                error = sanitizeResponseFailure("getUserWithRoles", e),
+                error = sanitizeSupabaseFailure("getUserWithRoles", e),
             )
-            Result.failure(Exception("Failed to fetch user with roles: ${e.message}"))
+            Result.failure(
+                Exception("Failed to fetch user with roles: ${sanitizeSupabaseFailure("getUserWithRoles", e).message}"),
+            )
         }
     }
 
@@ -307,8 +312,8 @@ object UserService {
             logger.info(LogCategory.AUTH, "Successfully deleted user", mapOf("userId" to userId))
             Result.success(Unit)
         } catch (e: Exception) {
-            logger.error(LogCategory.AUTH, "Failed to delete user", error = sanitizeResponseFailure("deleteUser", e))
-            Result.failure(Exception("Failed to delete user: ${e.message}"))
+            logger.error(LogCategory.AUTH, "Failed to delete user", error = sanitizeSupabaseFailure("deleteUser", e))
+            Result.failure(Exception("Failed to delete user: ${sanitizeSupabaseFailure("deleteUser", e).message}"))
         }
 }
 

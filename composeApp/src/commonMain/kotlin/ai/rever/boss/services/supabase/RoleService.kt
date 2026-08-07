@@ -93,7 +93,7 @@ object RoleService {
             logger.warn(
                 LogCategory.AUTH,
                 "Failed to parse role claims",
-                error = sanitizeResponseFailure("parseRoleClaimsFromSession", e),
+                error = sanitizeSupabaseFailure("parseRoleClaimsFromSession", e),
             )
             null
         }
@@ -164,7 +164,7 @@ object RoleService {
             // garbled payload makes kotlinx append the whole document to the message, so
             // logging the raw exception logs the claim set the debug line deliberately
             // withholds.
-            logger.warn(LogCategory.AUTH, "Failed to decode JWT", error = sanitizeResponseFailure("decodeJWTClaims", e))
+            logger.warn(LogCategory.AUTH, "Failed to decode JWT", error = sanitizeSupabaseFailure("decodeJWTClaims", e))
             emptyMap()
         }
 
@@ -192,9 +192,9 @@ object RoleService {
             logger.warn(
                 LogCategory.AUTH,
                 "Failed to get user roles",
-                error = sanitizeResponseFailure("getUserRoles", e),
+                error = sanitizeSupabaseFailure("getUserRoles", e),
             )
-            Result.failure(e)
+            Result.failure(sanitizeSupabaseFailure("getUserRoles", e))
         }
 
     /**
@@ -224,9 +224,9 @@ object RoleService {
             logger.warn(
                 LogCategory.AUTH,
                 "Failed to check user role",
-                error = sanitizeResponseFailure("userHasRole", e),
+                error = sanitizeSupabaseFailure("userHasRole", e),
             )
-            Result.failure(e)
+            Result.failure(sanitizeSupabaseFailure("userHasRole", e))
         }
 
     /**
@@ -257,9 +257,11 @@ object RoleService {
             logger.error(
                 LogCategory.AUTH,
                 "Failed to assign role",
-                error = sanitizeResponseFailure("assignRoleByName", e),
+                error = sanitizeSupabaseFailure("assignRoleByName", e),
             )
-            Result.failure(Exception("Failed to assign role: ${e.message}"))
+            Result.failure(
+                Exception("Failed to assign role: ${sanitizeSupabaseFailure("assignRoleByName", e).message}"),
+            )
         }
 
     /**
@@ -285,9 +287,11 @@ object RoleService {
             logger.error(
                 LogCategory.AUTH,
                 "Failed to remove role",
-                error = sanitizeResponseFailure("removeRoleByName", e),
+                error = sanitizeSupabaseFailure("removeRoleByName", e),
             )
-            Result.failure(Exception("Failed to remove role: ${e.message}"))
+            Result.failure(
+                Exception("Failed to remove role: ${sanitizeSupabaseFailure("removeRoleByName", e).message}"),
+            )
         }
 
     /**
@@ -313,9 +317,9 @@ object RoleService {
             logger.warn(
                 LogCategory.AUTH,
                 "Failed to get role permissions",
-                error = sanitizeResponseFailure("getRolePermissions", e),
+                error = sanitizeSupabaseFailure("getRolePermissions", e),
             )
-            Result.failure(e)
+            Result.failure(sanitizeSupabaseFailure("getRolePermissions", e))
         }
 
     /**
@@ -352,9 +356,9 @@ object RoleService {
             logger.warn(
                 LogCategory.AUTH,
                 "Failed to check permission",
-                error = sanitizeResponseFailure("canPerformAction", e),
+                error = sanitizeSupabaseFailure("canPerformAction", e),
             )
-            Result.failure(e)
+            Result.failure(sanitizeSupabaseFailure("canPerformAction", e))
         }
     }
 }

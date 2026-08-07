@@ -44,11 +44,25 @@
 --
 -- (3) NEW OUTPUT COLUMNS REACH THE KOTLIN CLIENT.
 --     get_user_secrets, search_user_secrets, get_user_secrets_with_shared and
---     get_secret_shares all gain columns. supabase-kt decodes with
---     ignoreUnknownKeys = true by default, so an older Secret Manager plugin
---     ignores them -- but VERIFY that before deploying, because if a client
---     ever decoded strictly this would break reading every secret. New columns
---     are APPENDED so positional readers keep working.
+--     get_secret_shares all gain columns. New columns are APPENDED so
+--     positional readers keep working.
+--
+--     CORRECTED AFTER THE FACT. This block used to say supabase-kt decodes
+--     with ignoreUnknownKeys = true by default, so an older Secret Manager
+--     plugin ignores them - with "VERIFY that before deploying, because if a
+--     client ever decoded strictly this would break reading every secret".
+--
+--     The warning was right and the reassurance was wrong. The plugins do not
+--     read these RPCs; the HOST does, through SecretService, with raw kotlinx
+--     rather than through supabase-kt - and raw kotlinx is strict. Deploying
+--     this emptied the secret panels on every installed build at once, and
+--     because the RPCs return LISTS it was all-or-nothing rather than a
+--     missing field. search_user_secrets and get_secret_shares broke too and
+--     went unreported, since a failed fetch renders as an empty list.
+--
+--     Fixed in BossConsole#144. Before extending an RPC's RETURNS TABLE, read
+--     the "Decoding Supabase payloads" section of AGENTS.md: audit the client
+--     by its decoder, not by which library you assume it uses.
 --
 -- Next migration: 20260802010000_secret_role_share_hierarchy.sql
 -- ============================================================================

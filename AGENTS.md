@@ -116,9 +116,12 @@ files keeps `Json.Default` in scope, so the broken thing is what you get by not 
 about it.
 
 Leniency covers extra keys and nothing else. A null in a non-nullable slot still throws
-for the whole list, so **declare every projected column `T? = null`** except the key.
+for the whole list, so **declare every projected column `T? = null`** except the key. Unlike
+the other two rules here, this one is **convention, upheld by review** - no test enforces it,
+and the existing models do not all follow it yet (they are safe only because the columns
+behind them are `NOT NULL` today).
 
-**Log `sanitizeResponseFailure(op, e)`, never the raw exception.** kotlinx appends the
+**Log `sanitizeSupabaseFailure(op, e)`, never the raw exception.** kotlinx appends the
 whole offending document to a malformed-input error, and these bodies carry passwords the
 server has already decrypted, recovery codes, and JWT claim sets. The request direction
 counts too: `SupabaseDataProviderImpl.rpc` parses caller-supplied parameters, and a plugin
