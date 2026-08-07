@@ -1,5 +1,6 @@
 package ai.rever.boss.services.supabase
 
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 
 /**
@@ -35,3 +36,62 @@ import kotlinx.serialization.json.Json
  * of schema drift.
  */
 internal val supabaseJson = Json { ignoreUnknownKeys = true }
+
+/**
+ * The marker kotlinx puts before the offending document in a parse failure.
+ *
+ * Pinned by `SupabaseJsonTest` rather than trusted: if a kotlinx upgrade renames it, the
+ * sanitiser below silently stops working and starts leaking again, so the test asserts on
+ * a real exception from the current version rather than on this constant.
+ */
+private const val JSON_INPUT_MARKER = "\nJSON input: "
+
+/**
+ * Strip the response body out of a decode failure before it can be logged.
+ *
+ * kotlinx appends the whole offending document to a **parse** error:
+ *
+ * ```
+ * Unexpected JSON token at offset 73: Expected end of the object or comma at path: $
+ * JSON input: [{"id":"1","password":"SUPERSECRET_PW","recovery_codes":["ABC"]
+ * ```
+ *
+ * For the secret RPCs that document holds passwords the server has already decrypted,
+ * plus recovery codes. `SecretService` returns its exceptions through `Result.failure`
+ * and callers log `e.message`, which is how the `org_id` WARN reached the log at all - so
+ * a truncated or garbled response body (a proxy error, a connection cut mid-stream, a
+ * gateway HTML page) would write live credentials into a log file that users attach to
+ * bug reports.
+ *
+ * Verified against the current kotlinx: SCHEMA failures are already safe - an unknown key
+ * or a null in a non-nullable slot reports the key name and JSON path and nothing else. It
+ * is only the malformed-input path that appends the document. The distinction does not
+ * matter to callers, so everything is sanitised uniformly.
+ *
+ * The diagnostic half of the message is kept deliberately. "Encountered an unknown key
+ * 'org_id' at path: $" is exactly what identified this outage; discarding it to be safe
+ * would trade a credential leak for an undiagnosable one.
+ */
+internal fun sanitizeResponseFailure(
+    operation: String,
+    error: Throwable,
+): Throwable {
+    if (error !is SerializationException) return error
+    val diagnostic =
+        error.message
+            ?.substringBefore(JSON_INPUT_MARKER)
+            ?.takeIf { it.isNotBlank() }
+            ?: "malformed response"
+    return SupabaseResponseException("$operation: $diagnostic")
+}
+
+/**
+ * A decode failure with the response body removed.
+ *
+ * A distinct type so the cause cannot be attached: chaining the original would put the
+ * payload back within reach of any handler that walks `cause`, which is the whole thing
+ * being prevented.
+ */
+internal class SupabaseResponseException(
+    message: String,
+) : Exception(message)

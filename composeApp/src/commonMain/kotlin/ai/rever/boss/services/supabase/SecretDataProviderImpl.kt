@@ -135,7 +135,7 @@ class SecretDataProviderImpl : SecretDataProvider {
             sharedWithRoleId = sharedWithRoleId,
             sharedWithRoleName = sharedWithRoleName,
             accessLevel = accessLevel,
-            sharedByEmail = sharedByEmail,
+            sharedByEmail = sharedByEmail ?: "",
             createdAt = createdAt,
             expiresAt = expiresAt,
             notes = notes,

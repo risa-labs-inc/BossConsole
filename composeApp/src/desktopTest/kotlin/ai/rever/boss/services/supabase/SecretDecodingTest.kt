@@ -5,6 +5,7 @@ import ai.rever.boss.services.supabase.models.SecretEntryWithSharing
 import ai.rever.boss.services.supabase.models.SecretShareEntry
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
@@ -12,6 +13,7 @@ import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 
 /**
  * The secret lists must survive columns this build does not model.
@@ -41,7 +43,17 @@ class SecretDecodingTest {
         put("notes", null as String?)
         put("expiration_date", null as String?)
         put("tags", buildJsonArray { })
-        put("metadata", null as String?)
+        put(
+            "metadata",
+            // The RPC emits a jsonb object unconditionally via COALESCE, so a bare null is
+            // not a shape the server can actually send - and decoding it exercises nothing
+            // of SecretMetadata, which otherwise has zero nested coverage here.
+            buildJsonObject {
+                put("twofa_enabled", true)
+                put("twofa_type", "app")
+                put("recovery_codes", buildJsonArray { add(JsonPrimitive("abc-123")) })
+            },
+        )
         put("created_at", "2026-08-01T00:00:00Z")
         put("updated_at", "2026-08-01T00:00:00Z")
     }
@@ -78,6 +90,8 @@ class SecretDecodingTest {
         assertEquals(2, secrets.size)
         assertEquals("github.com", secrets[0].website)
         assertEquals("hunter2", secrets[1].password)
+        assertEquals(true, secrets[0].metadata?.twofaEnabled)
+        assertEquals(listOf("abc-123"), secrets[0].metadata?.recoveryCodes)
     }
 
     @Test
@@ -143,6 +157,36 @@ class SecretDecodingTest {
 
         assertEquals(1, shares.size)
         assertEquals("write", shares[0].accessLevel)
+    }
+
+    @Test
+    fun `get_secret_shares decodes when shared_by_email is null`() {
+        // shared_by_email comes from `LEFT JOIN auth.users sb ON sb.id = ss.shared_by`, and
+        // auth.users.email is nullable. Modelled non-null it would throw for the whole array
+        // - the same "no shares on every secret" outage, through a door leniency does not
+        // cover: ignoreUnknownKeys handles extra keys, never a null where a value is required.
+        val payload =
+            buildJsonArray {
+                add(
+                    buildJsonObject {
+                        put("share_id", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+                        put("access_level", "read")
+                        put("shared_by_email", null as String?)
+                        put("created_at", "2026-08-01T00:00:00Z")
+                        put("shared_with_org_id", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+                        put("shared_with_org_slug", "acme")
+                    },
+                )
+            }
+
+        val shares = supabaseJson.decodeFromJsonElement<List<SecretShareEntry>>(payload)
+
+        assertEquals(1, shares.size)
+        // assertNull, not assertEquals(null, ...): it takes Any? and so still COMPILES if the
+        // field is made non-nullable again, letting the decode throw and fail the test for the
+        // real reason. assertEquals(null, ...) fails type inference instead, which reads as a
+        // broken test and invites fixing the test rather than the model.
+        assertNull(shares[0].sharedByEmail)
     }
 
     @Test

@@ -80,7 +80,7 @@ object SecretService {
 
             Result.success(PaginatedSecrets(data = secrets, hasMore = hasMore))
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(sanitizeResponseFailure("getUserSecrets", e))
         }
 
     /**
@@ -123,7 +123,7 @@ object SecretService {
                 ),
             )
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(sanitizeResponseFailure("searchSecrets", e))
         }
 
     /**
@@ -174,7 +174,7 @@ object SecretService {
                 Result.failure(Exception(result.error ?: "Failed to create secret"))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(sanitizeResponseFailure("createSecret", e))
         }
     }
 
@@ -228,7 +228,7 @@ object SecretService {
                 Result.failure(Exception(result.error ?: "Failed to update secret"))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(sanitizeResponseFailure("updateSecret", e))
         }
     }
 
@@ -260,7 +260,7 @@ object SecretService {
                 Result.failure(Exception(result.error ?: "Failed to delete secret"))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(sanitizeResponseFailure("deleteSecret", e))
         }
 
     /**
@@ -294,7 +294,7 @@ object SecretService {
 
             Result.success(PaginatedSecrets(data = secrets, hasMore = hasMore))
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(sanitizeResponseFailure("getUserSecretsWithShared", e))
         }
 
     /**
@@ -331,7 +331,7 @@ object SecretService {
 
             Result.success(PaginatedSecretsWithSharing(data = secretsWithSharing, hasMore = hasMore))
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(sanitizeResponseFailure("getUserSecretsWithSharingInfo", e))
         }
 
     /**
@@ -376,7 +376,7 @@ object SecretService {
                 Result.failure(Exception(result.error ?: "Failed to share secret"))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(sanitizeResponseFailure("shareSecret", e))
         }
     }
 
@@ -416,7 +416,7 @@ object SecretService {
                 Result.failure(Exception(result.error ?: "Failed to unshare secret"))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(sanitizeResponseFailure("unshareSecret", e))
         }
     }
 
@@ -444,7 +444,7 @@ object SecretService {
 
             Result.success(shares)
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(sanitizeResponseFailure("getSecretShares", e))
         }
 
     /**

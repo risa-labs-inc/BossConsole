@@ -200,7 +200,7 @@ class SecretServiceBridge(
             .setSharedWithRoleId(sharedWithRoleId ?: "")
             .setSharedWithRoleName(sharedWithRoleName ?: "")
             .setAccessLevel(accessLevel)
-            .setSharedByEmail(sharedByEmail)
+            .setSharedByEmail(sharedByEmail ?: "")
             .setCreatedAt(createdAt)
             .setExpiresAt(expiresAt ?: "")
             .setNotes(notes ?: "")
