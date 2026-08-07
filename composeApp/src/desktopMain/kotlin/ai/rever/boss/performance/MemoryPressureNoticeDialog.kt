@@ -59,70 +59,6 @@ fun MemoryPressureNoticeDialog(onRestartRequested: () -> Unit) {
 }
 
 /**
- * Explains a browser tab that did not open because the tier's ceiling was already reached.
- *
- * Without this the user gets the same nothing they would get from an engine failure, for a limit
- * they never chose, on a tier the app may have selected for them. The cap is process-wide across
- * every window and shares its pool with RPA and automation handles, so "why did my tab not open"
- * has an answer the user cannot otherwise reach.
- */
-@Composable
-fun BrowserCapNoticeDialog() {
-    val refusal by ai.rever.boss.plugin.browser.BrowserServiceImpl.capRefusals
-        .collectAsState()
-    val current = refusal ?: return
-
-    val colors = BossTheme.colors
-
-    Dialog(onDismissRequest = {
-        ai.rever.boss.plugin.browser.BrowserServiceImpl
-            .acknowledgeCapRefusal()
-    }) {
-        Column(
-            modifier =
-                Modifier
-                    .width(430.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(colors.panel)
-                    .border(1.dp, colors.line, RoundedCornerShape(8.dp))
-                    .padding(20.dp),
-        ) {
-            Text(
-                text = "Browser limit reached",
-                color = colors.textPrimary,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
-
-            Spacer(Modifier.height(10.dp))
-
-            Text(
-                text =
-                    "BOSS is running in ${current.mode.displayName}, which allows " +
-                        "${current.cap} browsers at once. Close one to open another, or change " +
-                        "the mode in Settings > Performance.",
-                color = colors.textSecondary,
-                fontSize = 13.sp,
-            )
-
-            Spacer(Modifier.height(18.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                TextButton(onClick = {
-                    ai.rever.boss.plugin.browser.BrowserServiceImpl
-                        .acknowledgeCapRefusal()
-                }) {
-                    Text("Continue", color = colors.signal, fontSize = 13.sp)
-                }
-            }
-        }
-    }
-}
-
-/**
  * What a live tighten to [mode] actually changed, in the user's terms.
  *
  * Only the levers a *mid-session* tighten can really apply belong here. Plugin gating and the
@@ -132,7 +68,6 @@ fun BrowserCapNoticeDialog() {
  */
 internal fun changeSummary(mode: ai.rever.boss.config.BossResourceMode): String {
     val parts = mutableListOf<String>()
-    mode.maxConcurrentBrowsers?.let { parts += "at most $it browsers can be open at once" }
     if (!mode.backgroundSamplingEnabled) parts += "background performance sampling is off"
     return if (parts.isEmpty()) "nothing yet; a restart is needed to apply this tier" else parts.joinToString(", and ")
 }

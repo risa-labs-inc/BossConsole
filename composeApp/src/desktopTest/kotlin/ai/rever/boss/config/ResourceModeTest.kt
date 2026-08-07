@@ -234,22 +234,21 @@ class ResourceModeTest {
     fun `FULL constrains nothing`() {
         assertFalse(BossResourceMode.FULL.isReduced)
         assertEquals(null, BossResourceMode.FULL.rendererProcessLimit)
-        assertEquals(null, BossResourceMode.FULL.maxConcurrentBrowsers)
         assertFalse(BossResourceMode.FULL.gatesPlugins)
         assertTrue(BossResourceMode.FULL.backgroundSamplingEnabled)
     }
 
     /**
-     * LITE caps the browser and nothing else. This is the whole distinction between the two
+     * LITE touches the browser and nothing else. This is the whole distinction between the two
      * reduced tiers: LITE must stay invisible to the user, so if it ever starts gating plugins
      * the tiers have collapsed into one and the Settings copy is lying.
      */
     @Test
-    fun `LITE caps the browser without touching plugins`() {
+    fun `LITE constrains the browser without touching plugins`() {
         assertTrue(BossResourceMode.LITE.isReduced)
         assertFalse(BossResourceMode.LITE.gatesPlugins)
         assertTrue(BossResourceMode.LITE.rendererProcessLimit!! > 0)
-        assertTrue(BossResourceMode.LITE.maxConcurrentBrowsers!! > 0)
+        assertTrue(BossResourceMode.LITE.hibernationIdleMs > 0)
     }
 
     @Test
@@ -261,22 +260,25 @@ class ResourceModeTest {
                 BossResourceMode.LITE.rendererProcessLimit!!,
         )
         assertTrue(
-            BossResourceMode.ULTRA_LITE.maxConcurrentBrowsers!! <
-                BossResourceMode.LITE.maxConcurrentBrowsers!!,
+            BossResourceMode.ULTRA_LITE.hibernationIdleMs < BossResourceMode.LITE.hibernationIdleMs,
         )
     }
 
     /**
-     * A renderer cap of 0 is not a cap - Chromium reads `--renderer-process-limit=0` as
-     * unlimited, so a zero here would quietly mean the opposite of what the tier intends.
-     * `FluckEngine.renderCapSwitch` drops non-positive values for the same reason.
+     * Every tier hibernates, increasingly eagerly. Deliberately no "never hibernate" option, even
+     * for FULL: that would reinstate the unbounded browser growth the tiers exist to prevent, and
+     * hibernation is the *only* remaining browser bound now that the concurrent-browser ceiling
+     * is gone. The ceiling was retired because it refused the tab the user had just asked for
+     * while idle ones sat untouched, and because it could not coexist with hibernation at all -
+     * waking a hibernated tab needs a slot, so switching tabs got refused.
      */
     @Test
-    fun `no tier declares a meaningless cap`() {
+    fun `every tier hibernates, and more eagerly as it tightens`() {
         for (mode in BossResourceMode.entries) {
+            assertTrue(mode.hibernationIdleMs > 0, "${mode.name} must hibernate")
             mode.rendererProcessLimit?.let { assertTrue(it > 0, "${mode.name} renderer limit") }
-            mode.maxConcurrentBrowsers?.let { assertTrue(it > 0, "${mode.name} browser cap") }
         }
+        assertTrue(BossResourceMode.FULL.hibernationIdleMs > BossResourceMode.LITE.hibernationIdleMs)
     }
 
     // endregion

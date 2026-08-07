@@ -967,8 +967,6 @@ fun ApplicationScope.BossWindow(
                         .restartApplication()
                 },
             )
-            ai.rever.boss.performance
-                .BrowserCapNoticeDialog()
         }
 
         // Reset Browser Confirmation Dialog

@@ -24,11 +24,10 @@ import kotlinx.coroutines.flow.StateFlow
  * [ULTRA_LITE] additionally stops loading plugins that are not on the allowlist, which is the
  * single largest consumer: the crashed session had 36 plugins installed and 314 threads.
  *
- * "Caps the browser" is not invisible, and it should not be described as though it were. The
- * ceiling is process-wide across every window and shares its pool with RPA and automation
- * handles, so a user at the limit sees a tab decline to open. That is why the refusal publishes
- * a reason (`BrowserServiceImpl.capRefusals`) rather than only returning null: an unexplained
- * limit the app chose on the user's behalf is worse than a smaller one they understand.
+ * Nothing here refuses work. The browser lever is hibernation - an idle background tab gives its
+ * Chromium process tree back and reloads when you return to it - because the concurrent-browser
+ * ceiling this replaced refused the tab you had just asked for while idle ones sat untouched,
+ * and could not coexist with hibernation at all (waking a tab needs a slot).
  *
  * Each tier carries its own numbers so the policy is one table rather than scattered
  * `when` blocks, and so [BossResourceModeTest] can assert on it without a running app.
@@ -36,8 +35,22 @@ import kotlinx.coroutines.flow.StateFlow
 enum class BossResourceMode(
     /** `--renderer-process-limit` value, or null to leave Chromium's default alone. */
     val rendererProcessLimit: Int?,
-    /** Ceiling on concurrent [ai.rever.boss.plugin.api.BrowserHandle]s, or null for uncapped. */
-    val maxConcurrentBrowsers: Int?,
+    /**
+     * How long a browser tab may sit in the background before the fluck-browser plugin
+     * hibernates it - tearing down its Chromium process tree and recreating it from the saved
+     * URL when it is next shown.
+     *
+     * This replaced a ceiling on concurrent browsers, which was the wrong tool twice over. It
+     * fired on tab *count* rather than on idleness, so it refused a tab you had just asked for
+     * while four idle ones sat untouched. And it is actively incompatible with hibernation: a
+     * hibernated tab recreates its browser when you switch to it, so under a cap merely moving
+     * between tabs gets refused. Observed with 7 tabs open - four wakes in four seconds, then
+     * "Browser limit reached" on the fifth.
+     *
+     * Hibernation is the better bound in any case: it reclaims memory from tabs that are not
+     * being used, rather than refusing work.
+     */
+    val hibernationIdleMs: Long,
     /** Whether plugin loading is restricted to the `lite_eligible` allowlist. */
     val gatesPlugins: Boolean,
     /** Whether the background performance sampler runs. */
@@ -45,19 +58,20 @@ enum class BossResourceMode(
 ) {
     FULL(
         rendererProcessLimit = null,
-        maxConcurrentBrowsers = null,
+        hibernationIdleMs = 30 * 60 * 1000L,
         gatesPlugins = false,
         backgroundSamplingEnabled = true,
     ),
     LITE(
         rendererProcessLimit = 4,
-        maxConcurrentBrowsers = 8,
+        // The plugin's own default, which is Lite's.
+        hibernationIdleMs = 10 * 60 * 1000L,
         gatesPlugins = false,
         backgroundSamplingEnabled = true,
     ),
     ULTRA_LITE(
         rendererProcessLimit = 2,
-        maxConcurrentBrowsers = 4,
+        hibernationIdleMs = 2 * 60 * 1000L,
         gatesPlugins = true,
         backgroundSamplingEnabled = false,
     ),
@@ -79,9 +93,9 @@ enum class BossResourceMode(
     val summary: String
         get() =
             when (this) {
-                FULL -> "Everything on. No caps."
-                LITE -> "Limits how many browsers open at once. Every plugin still loads."
-                ULTRA_LITE -> "Limits browsers, and loads only essential plugins."
+                FULL -> "Everything on. Idle browser tabs sleep after 30 minutes."
+                LITE -> "Idle browser tabs sleep after 10 minutes. Every plugin still loads."
+                ULTRA_LITE -> "Idle browser tabs sleep after 2 minutes, and only essential plugins load."
             }
 }
 

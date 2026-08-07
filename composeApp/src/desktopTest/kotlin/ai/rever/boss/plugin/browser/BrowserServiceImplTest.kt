@@ -148,46 +148,4 @@ class BrowserServiceImplTest {
         val legacy = """[{"id":"id1","name":"rpa-named-id1","path":"/p/1","lastUsedMs":123}]"""
         assertEquals(0L, BrowserServiceImpl.decodeMeta(legacy).single().diskBytes)
     }
-
-    @Test
-    fun `FULL never refuses a browser however many are open`() {
-        for (active in listOf(0, 1, 8, 64, 1_000)) {
-            assertFalse(
-                BrowserServiceImpl.isAtBrowserCeiling(active, BossResourceMode.FULL),
-                "FULL must stay uncapped at $active active",
-            )
-        }
-    }
-
-    @Test
-    fun `a reduced tier refuses only at or above its ceiling`() {
-        for (mode in listOf(BossResourceMode.LITE, BossResourceMode.ULTRA_LITE)) {
-            val cap = mode.maxConcurrentBrowsers!!
-            assertFalse(BrowserServiceImpl.isAtBrowserCeiling(0, mode), "${mode.name} at 0")
-            assertFalse(
-                BrowserServiceImpl.isAtBrowserCeiling(cap - 1, mode),
-                "${mode.name} one below the cap must still open",
-            )
-            assertTrue(
-                BrowserServiceImpl.isAtBrowserCeiling(cap, mode),
-                "${mode.name} at the cap must refuse",
-            )
-            assertTrue(
-                BrowserServiceImpl.isAtBrowserCeiling(cap + 5, mode),
-                "${mode.name} above the cap must refuse",
-            )
-        }
-    }
-
-    /**
-     * The cap counts handles that already exist, so the comparison has to be `>=` rather than
-     * `>`. With `>` every tier would quietly permit one browser more than it advertises, which
-     * is the kind of off-by-one that only shows up as a crash on a machine that was already at
-     * its limit.
-     */
-    @Test
-    fun `the ceiling is inclusive`() {
-        val cap = BossResourceMode.ULTRA_LITE.maxConcurrentBrowsers!!
-        assertTrue(BrowserServiceImpl.isAtBrowserCeiling(cap, BossResourceMode.ULTRA_LITE))
-    }
 }

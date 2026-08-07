@@ -235,12 +235,6 @@ private object WedgeRecovery {
  * Singleton, shared across all plugins.
  */
 
-/** A browser that was not opened because the resource tier's ceiling was already reached. */
-data class BrowserCapRefusal(
-    val mode: ai.rever.boss.config.BossResourceMode,
-    val cap: Int,
-)
-
 object BrowserServiceImpl : BrowserService {
     private val logger = BossLogger.forComponent("BrowserServiceImpl")
 
@@ -248,89 +242,20 @@ object BrowserServiceImpl : BrowserService {
     private val activeBrowsers = ConcurrentHashMap<String, BrowserHandleImpl>()
 
     /**
-     * Live handles plus in-flight creations, which is what the tier ceiling is enforced against.
+     * Drops handles whose browser has gone away without passing through a dispose path.
      *
-     * `activeBrowsers.size` alone is check-then-act: the handle is not registered until several
-     * suspension points after the guard, so concurrent creations would all see room and all
-     * proceed. Decremented on any creation that does not yield a handle, and when a handle is
-     * disposed.
-     */
-    private val reservedBrowsers =
-        java.util.concurrent.atomic
-            .AtomicInteger(0)
-
-    private val _capRefusals = kotlinx.coroutines.flow.MutableStateFlow<BrowserCapRefusal?>(null)
-
-    /**
-     * The most recent browser refused for hitting the resource tier's ceiling, or null.
+     * A browser has three ways to die that never touch `activeBrowsers`: a plugin calling the
+     * public `BrowserHandle.dispose()` itself, a renderer crashing, and a page calling
+     * `window.close()`. There is no close subscription here to notice any of them, so the map
+     * keeps entries for browsers that no longer exist.
      *
-     * Rendered by `BrowserCapNoticeDialog`. Cleared by [acknowledgeCapRefusal].
-     */
-    val capRefusals: kotlinx.coroutines.flow.StateFlow<BrowserCapRefusal?> get() = _capRefusals
-
-    /** Clears the current refusal once the UI has shown it. */
-    fun acknowledgeCapRefusal() {
-        _capRefusals.value = null
-    }
-
-    /**
-     * Hands a reservation slot back, never below zero.
+     * That drift is cosmetic now - it only skews `getActiveBrowserCount()` and leaks a managed
+     * profile reference. It was briefly load-bearing, while a concurrent-browser ceiling existed,
+     * because each orphan permanently consumed a slot. The ceiling is gone (hibernation replaced
+     * it), so this is back to hygiene, and is kept because releasing the managed profile still
+     * matters.
      *
-     * The floor matters: a slot released twice would otherwise drive the counter negative and
-     * quietly raise the ceiling above what the tier advertises, which is the failure this cap
-     * exists to prevent.
-     */
-    private fun releaseBrowserReservation() {
-        reservedBrowsers.updateAndGet { current -> if (current > 0) current - 1 else 0 }
-    }
-
-    /** Live handles plus in-flight creations. Test seam for the reservation accounting. */
-    internal fun reservedBrowserCount(): Int = reservedBrowsers.get()
-
-    /**
-     * Takes a reservation slot, or returns false when the tier's ceiling is genuinely full.
-     *
-     * Reserves optimistically and gives the slot back on refusal, so concurrent creations cannot
-     * all observe room and all proceed. On a first refusal it reconciles once (see
-     * [reconcileBrowserReservations]) and retries, so a ceiling held up by handles that have
-     * already gone away recovers instead of becoming permanent.
-     */
-    private fun tryReserveBrowserSlot(mode: ai.rever.boss.config.BossResourceMode): Boolean {
-        // Reserve optimistically, hand the slot back if that put us over.
-        fun claim(): Boolean =
-            if (isAtBrowserCeiling(reservedBrowsers.getAndIncrement(), mode)) {
-                releaseBrowserReservation()
-                false
-            } else {
-                true
-            }
-
-        // One reconcile between the two attempts, so a ceiling held up by handles that have
-        // already gone away recovers instead of becoming permanent.
-        return claim() ||
-            run {
-                reconcileBrowserReservations()
-                claim()
-            }
-    }
-
-    /**
-     * Drops handles whose browser is gone and resyncs the reservation counter to match.
-     *
-     * Necessary because a reservation is only handed back through [disposeBrowser] and
-     * [disposeTrackedBrowserBlocking], and a browser has three other ways to die: a plugin
-     * calling the public `BrowserHandle.dispose()` itself, a renderer crashing, and a page
-     * calling `window.close()`. None of those touch `activeBrowsers`, and there is no close
-     * subscription here to notice.
-     *
-     * Before the ceiling existed that was harmless drift in `getActiveBrowserCount()`. With a cap
-     * it is a **one-way ratchet**: each orphan permanently consumes a slot, so four of them on
-     * the Windows default means no browser can ever open again - and the refusal dialog would
-     * blame the tier, which is both wrong and unactionable, since closing tabs cannot release a
-     * slot whose handle is already gone. The session length that produces these is the same
-     * 35-hour length that produced the crash this feature exists for.
-     *
-     * @return the reconciled reservation count.
+     * @return the number of live handles after pruning.
      */
     internal fun reconcileBrowserReservations(): Int {
         val orphans = activeBrowsers.entries.filter { !it.value.isValid }
@@ -338,17 +263,16 @@ object BrowserServiceImpl : BrowserService {
             if (activeBrowsers.remove(id, handle)) {
                 browserOwners.unregister(id)
                 managedByHandle.remove(id)?.let { releaseManaged(it) }
-                releaseBrowserReservation()
             }
         }
         if (orphans.isNotEmpty()) {
             logger.info(
                 LogCategory.BROWSER,
-                "Reclaimed browser slots whose handles had gone away",
-                mapOf("reclaimed" to orphans.size.toString(), "active" to activeBrowsers.size.toString()),
+                "Pruned browser handles whose browser had gone away",
+                mapOf("pruned" to orphans.size.toString(), "active" to activeBrowsers.size.toString()),
             )
         }
-        return reservedBrowsers.get()
+        return activeBrowsers.size
     }
 
     // BrowserService is shared process-wide, but plugin handles belong to the
@@ -497,54 +421,22 @@ object BrowserServiceImpl : BrowserService {
     }
 
     /**
-     * Refuses past the tier's ceiling, then delegates to [createBrowserWithRetry].
+     * Creates a browser. **Deliberately not capped.**
      *
-     * Each handle is a live Chromium renderer, and every native allocation in this process is
-     * served by Chromium's PartitionAlloc, whose failure mode is an immediate uncatchable abort
-     * rather than an exception — so an unbounded browser count is an unbounded path to killing
-     * the whole app. Returning null is a path callers already handle (engine failure returns
-     * null here too); it degrades to "that tab did not open" instead of "BOSS vanished".
+     * A concurrent-browser ceiling lived here briefly and was removed, because it was the wrong
+     * bound twice over. It fired on tab *count* rather than on idleness, so it refused the tab
+     * the user had just asked for while four idle ones sat untouched. And it cannot coexist with
+     * the fluck-browser plugin's tab hibernation: a hibernated tab recreates its browser when you
+     * switch to it, so under a cap merely moving between tabs got refused. Observed with 7 tabs
+     * open - four wakes in four seconds, then "Browser limit reached" on the fifth.
+     *
+     * The memory bound is hibernation instead (see `BossResourceMode.hibernationIdleMs`), which
+     * reclaims from tabs nobody is using rather than refusing work.
      */
     private suspend fun createBrowser(
         config: BrowserConfig,
         ownerWindowId: String,
-    ): BrowserHandle? {
-        val mode = ai.rever.boss.config.ResourceModeConfig.mode
-        // Reserve before suspending, so concurrent creations cannot all pass the same check.
-        // reservedBrowsers counts live handles plus in-flight creations; the slot is released in
-        // the finally below when the creation does not produce one.
-        if (!tryReserveBrowserSlot(mode)) {
-            logger.warn(
-                LogCategory.BROWSER,
-                "Browser creation refused - at the resource-mode ceiling",
-                mapOf(
-                    "mode" to mode.name,
-                    "cap" to (mode.maxConcurrentBrowsers?.toString() ?: "none"),
-                    "active" to activeBrowsers.size.toString(),
-                ),
-            )
-            // Publish the reason as well as logging it. Callers get the same null they get from
-            // an engine failure, so without this the user sees a tab that just did not open and
-            // has no way to connect it to a setting they never chose. The cap is process-wide
-            // across every window and shares its pool with RPA/automation handles, so being able
-            // to name it is the difference between a tunable and a haunting.
-            _capRefusals.value =
-                BrowserCapRefusal(mode = mode, cap = mode.maxConcurrentBrowsers ?: 0)
-            return null
-        }
-
-        // try/finally rather than catch: a creation that produced nothing must give its slot
-        // back however it failed, or the ceiling ratchets down over a session until no browser
-        // can open at all. Only a handle that actually exists keeps its reservation.
-        var produced = false
-        try {
-            val handle = createBrowserWithRetry(config, ownerWindowId)
-            produced = handle != null
-            return handle
-        } finally {
-            if (!produced) releaseBrowserReservation()
-        }
-    }
+    ): BrowserHandle? = createBrowserWithRetry(config, ownerWindowId)
 
     private suspend fun createBrowserWithRetry(
         config: BrowserConfig,
@@ -566,29 +458,6 @@ object BrowserServiceImpl : BrowserService {
             if (outcome !is CreationOutcome.EngineFailure || !WedgeRecovery.recycleIfWedged()) break
         }
         return null
-    }
-
-    /**
-     * Pure part of the concurrent-browser ceiling, split out so the guard is unit-testable
-     * without an engine.
-     *
-     * A null [BossResourceMode.maxConcurrentBrowsers] means uncapped, which is FULL's behaviour
-     * and the behaviour every build had before resource modes existed.
-     *
-     * **The bound is enforced against reservations, not against live handles.** `createBrowser`
-     * takes a slot in [reservedBrowsers] before suspending and releases it on failure, because
-     * the naive version read `activeBrowsers.size` and did not register the handle until several
-     * suspension points later: N concurrent creations all observed `cap - 1`, all proceeded, and
-     * the process overshot its advertised ceiling by the number of in-flight creations. That is
-     * the same off-by-one family as the `>=` versus `>` choice below, only larger, and it guards
-     * an allocator whose failure mode is an uncatchable abort.
-     */
-    internal fun isAtBrowserCeiling(
-        active: Int,
-        mode: ai.rever.boss.config.BossResourceMode,
-    ): Boolean {
-        val cap = mode.maxConcurrentBrowsers ?: return false
-        return active >= cap
     }
 
     private suspend fun attemptCreateBrowser(
@@ -722,7 +591,7 @@ object BrowserServiceImpl : BrowserService {
     override suspend fun disposeBrowser(handle: BrowserHandle) {
         // Conditional on an actual removal: disposing a handle twice, or one that never reached
         // the map, must not hand back a reservation slot that was never taken.
-        if (activeBrowsers.remove(handle.id) != null) releaseBrowserReservation()
+        activeBrowsers.remove(handle.id)
         browserOwners.unregister(handle.id)
         try {
             handle.dispose()
@@ -806,7 +675,6 @@ object BrowserServiceImpl : BrowserService {
 
     private fun disposeTrackedBrowserBlocking(handle: BrowserHandleImpl): Boolean {
         if (!activeBrowsers.remove(handle.id, handle)) return false
-        releaseBrowserReservation()
 
         browserOwners.unregister(handle.id)
         try {

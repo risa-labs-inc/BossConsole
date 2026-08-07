@@ -31,37 +31,15 @@ class MemoryPressureCopyTest {
         }
     }
 
-    @Test
-    fun `the summary mentions the browser cap exactly when the tier has one`() {
-        for (mode in BossResourceMode.entries) {
-            val summary = changeSummary(mode)
-            val cap = mode.maxConcurrentBrowsers
-            if (cap == null) {
-                assertFalse(
-                    summary.contains("browser", ignoreCase = true),
-                    "${mode.name} is uncapped but the notice says: $summary",
-                )
-            } else {
-                assertTrue(
-                    summary.contains(cap.toString()),
-                    "${mode.name} caps at $cap but the notice does not say so: $summary",
-                )
-            }
-        }
-    }
-
     /**
-     * LITE is the only tier the watchdog can actually apply live, so its sentence is the one a
-     * user will really see. Pinned concretely rather than by property, since this is the string
-     * that was wrong.
+     * LITE is the only tier the watchdog can actually apply live, and since the browser ceiling
+     * was retired in favour of hibernation there is nothing left that a mid-session tighten
+     * changes for it. Saying "nothing yet" is the honest answer; inventing an effect here is the
+     * mistake this file exists to prevent.
      */
     @Test
-    fun `the tier the watchdog applies describes only the browser cap`() {
-        val summary = changeSummary(BossResourceMode.LITE)
-        assertEquals(
-            "at most ${BossResourceMode.LITE.maxConcurrentBrowsers} browsers can be open at once",
-            summary,
-        )
+    fun `the tier the watchdog applies claims no live effect it cannot deliver`() {
+        assertTrue(changeSummary(BossResourceMode.LITE).contains("nothing"))
     }
 
     @Test
