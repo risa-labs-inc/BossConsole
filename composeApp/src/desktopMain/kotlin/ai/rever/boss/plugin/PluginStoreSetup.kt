@@ -81,6 +81,20 @@ object PluginStoreSetup {
      */
     val skippedByResourceMode: kotlinx.coroutines.flow.StateFlow<Set<String>> get() = _skippedByResourceMode
 
+    @Volatile
+    private var _skippedJarPaths: Set<String> = emptySet()
+
+    /**
+     * Absolute jar paths the resource tier declined to load this launch.
+     *
+     * Consumed by `DefaultPlugin`'s external-plugin scan, which would otherwise treat them as
+     * manually-dropped jars and load every one straight back - the gate and the scan cancelling
+     * out exactly, so the tier reported a saving it did not make.
+     *
+     * Paths rather than plugin ids because the scan decides per file, before opening the jar.
+     */
+    fun skippedJarPaths(): Set<String> = _skippedJarPaths
+
     /**
      * Splits persisted plugins into those to load and those the resource tier declines.
      *
@@ -1421,6 +1435,9 @@ object PluginStoreSetup {
         // Assigned unconditionally: a later launch that skips nothing must clear the previous
         // set, not leave a stale list for Settings to display.
         _skippedByResourceMode.value = skipped.map { it.pluginId }.toSet()
+        // Recorded BEFORE the load below, because the external-plugin scan that consumes this
+        // runs after it and would otherwise reload everything the gate just declined.
+        _skippedJarPaths = skipped.map { java.io.File(it.jarPath).absolutePath }.toSet()
 
         if (skipped.isNotEmpty()) {
             logger.info(
