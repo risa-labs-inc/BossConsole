@@ -102,6 +102,28 @@ supabase functions deploy <function-name> --project-ref pcnwqamqdnsadranufjv --n
 supabase link --project-ref pcnwqamqdnsadranufjv  # First time
 ```
 
+### Decoding Supabase payloads
+
+Two rules in `ai.rever.boss.services.supabase`, both enforced by `SupabaseWiringTest`:
+
+**Decode through `supabaseJson`, never the `Json` default.** The database is migrated
+ahead of installed builds, so a client will meet columns it does not model. Strict
+decoding treats those as a hard error, and since these RPCs return lists, one new
+column throws and takes the whole page with it. That is not theoretical - the
+organisation migration extended four secret RPCs and emptied the secret panels on every
+installed build at once. Note the wildcard `kotlinx.serialization.json.*` import in these
+files keeps `Json.Default` in scope, so the broken thing is what you get by not thinking
+about it.
+
+Leniency covers extra keys and nothing else. A null in a non-nullable slot still throws
+for the whole list, so **declare every projected column `T? = null`** except the key.
+
+**Log `sanitizeResponseFailure(op, e)`, never the raw exception.** kotlinx appends the
+whole offending document to a malformed-input error, and these bodies carry passwords the
+server has already decrypted, recovery codes, and JWT claim sets. The request direction
+counts too: `SupabaseDataProviderImpl.rpc` parses caller-supplied parameters, and a plugin
+calling `create_secret` puts the new password in them.
+
 ## Code Quality
 
 - Use Compose Multiplatform Resource API (not Android resources)

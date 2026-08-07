@@ -82,7 +82,7 @@ object RoleCreationService {
                 Result.failure(Exception(result.error ?: "Failed to create role"))
             }
         } catch (e: Exception) {
-            logger.warn(LogCategory.AUTH, "createRole failed", error = e)
+            logger.warn(LogCategory.AUTH, "createRole failed", error = sanitizeResponseFailure("createRole", e))
             Result.failure(e)
         }
 
@@ -127,7 +127,11 @@ object RoleCreationService {
                 Result.failure(Exception(result.error ?: "Failed to create permission"))
             }
         } catch (e: Exception) {
-            logger.warn(LogCategory.AUTH, "createPermission failed", error = e)
+            logger.warn(
+                LogCategory.AUTH,
+                "createPermission failed",
+                error = sanitizeResponseFailure("createPermission", e),
+            )
             Result.failure(e)
         }
 
@@ -165,7 +169,7 @@ object RoleCreationService {
                 Result.failure(Exception(result.error ?: "Failed to get roles"))
             }
         } catch (e: Exception) {
-            logger.warn(LogCategory.AUTH, "getAllRoles failed", error = e)
+            logger.warn(LogCategory.AUTH, "getAllRoles failed", error = sanitizeResponseFailure("getAllRoles", e))
             Result.failure(e)
         }
 
@@ -203,7 +207,11 @@ object RoleCreationService {
                 Result.failure(Exception(result.error ?: "Failed to get permissions"))
             }
         } catch (e: Exception) {
-            logger.warn(LogCategory.AUTH, "getAllPermissions failed", error = e)
+            logger.warn(
+                LogCategory.AUTH,
+                "getAllPermissions failed",
+                error = sanitizeResponseFailure("getAllPermissions", e),
+            )
             Result.failure(e)
         }
 
@@ -240,7 +248,11 @@ object RoleCreationService {
                 Result.failure(Exception(result.error ?: "Failed to assign permission"))
             }
         } catch (e: Exception) {
-            logger.warn(LogCategory.AUTH, "assignPermissionToRole failed", error = e)
+            logger.warn(
+                LogCategory.AUTH,
+                "assignPermissionToRole failed",
+                error = sanitizeResponseFailure("assignPermissionToRole", e),
+            )
             Result.failure(e)
         }
 
@@ -277,7 +289,11 @@ object RoleCreationService {
                 Result.failure(Exception(result.error ?: "Failed to remove permission"))
             }
         } catch (e: Exception) {
-            logger.warn(LogCategory.AUTH, "removePermissionFromRole failed", error = e)
+            logger.warn(
+                LogCategory.AUTH,
+                "removePermissionFromRole failed",
+                error = sanitizeResponseFailure("removePermissionFromRole", e),
+            )
             Result.failure(e)
         }
 
@@ -314,7 +330,11 @@ object RoleCreationService {
                 Result.failure(Exception(result.error ?: "Failed to get role permissions"))
             }
         } catch (e: Exception) {
-            logger.warn(LogCategory.AUTH, "getRolePermissions failed", error = e)
+            logger.warn(
+                LogCategory.AUTH,
+                "getRolePermissions failed",
+                error = sanitizeResponseFailure("getRolePermissions", e),
+            )
             Result.failure(e)
         }
 
@@ -346,7 +366,7 @@ object RoleCreationService {
                 Result.failure(Exception(result.error ?: "Failed to delete role"))
             }
         } catch (e: Exception) {
-            logger.warn(LogCategory.AUTH, "deleteRole failed", error = e)
+            logger.warn(LogCategory.AUTH, "deleteRole failed", error = sanitizeResponseFailure("deleteRole", e))
             Result.failure(e)
         }
 
@@ -378,7 +398,11 @@ object RoleCreationService {
                 Result.failure(Exception(result.error ?: "Failed to delete permission"))
             }
         } catch (e: Exception) {
-            logger.warn(LogCategory.AUTH, "deletePermission failed", error = e)
+            logger.warn(
+                LogCategory.AUTH,
+                "deletePermission failed",
+                error = sanitizeResponseFailure("deletePermission", e),
+            )
             Result.failure(e)
         }
 

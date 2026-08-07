@@ -92,7 +92,11 @@ object SupabaseConfig {
             _isInitialized.value = true
             logger.info(LogCategory.NETWORK, "Supabase client initialized successfully")
         } catch (e: Exception) {
-            logger.error(LogCategory.NETWORK, "Failed to initialize Supabase client", error = e)
+            logger.error(
+                LogCategory.NETWORK,
+                "Failed to initialize Supabase client",
+                error = sanitizeResponseFailure("initialize", e),
+            )
             throw e
         }
     }

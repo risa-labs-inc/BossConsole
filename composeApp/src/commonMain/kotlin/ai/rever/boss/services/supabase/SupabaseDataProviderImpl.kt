@@ -47,7 +47,12 @@ class SupabaseDataProviderImpl : SupabaseDataProvider {
                     }
             Result.success(result.data)
         } catch (e: Exception) {
-            logger.error(LogCategory.NETWORK, "Supabase select failed", data = mapOf("table" to table), error = e)
+            logger.error(
+                LogCategory.NETWORK,
+                "Supabase select failed",
+                data = mapOf("table" to table),
+                error = sanitizeResponseFailure("select($table)", e),
+            )
             Result.failure(Exception("Select on '$table' failed: ${e.message}"))
         }
 
@@ -56,7 +61,7 @@ class SupabaseDataProviderImpl : SupabaseDataProvider {
         parameters: String,
     ): Result<String> =
         try {
-            val params: JsonElement = Json.parseToJsonElement(parameters)
+            val params: JsonElement = supabaseJson.parseToJsonElement(parameters)
             val result =
                 client.postgrest.rpc(
                     function = function,
@@ -64,7 +69,15 @@ class SupabaseDataProviderImpl : SupabaseDataProvider {
                 )
             Result.success(result.data)
         } catch (e: Exception) {
-            logger.error(LogCategory.NETWORK, "Supabase rpc failed", data = mapOf("function" to function), error = e)
+            // Sanitised in the REQUEST direction too, which is easy to miss: `parameters` is
+            // caller-supplied, and a plugin calling create_secret puts the new password in it.
+            // A malformed params string would otherwise be logged with the document attached.
+            logger.error(
+                LogCategory.NETWORK,
+                "Supabase rpc failed",
+                data = mapOf("function" to function),
+                error = sanitizeResponseFailure("rpc($function)", e),
+            )
             Result.failure(Exception("RPC '$function' failed: ${e.message}"))
         }
 

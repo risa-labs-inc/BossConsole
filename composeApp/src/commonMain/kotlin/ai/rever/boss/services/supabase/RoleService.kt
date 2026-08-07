@@ -90,7 +90,11 @@ object RoleService {
 
             roleClaims
         } catch (e: Exception) {
-            logger.warn(LogCategory.AUTH, "Failed to parse role claims", error = e)
+            logger.warn(
+                LogCategory.AUTH,
+                "Failed to parse role claims",
+                error = sanitizeResponseFailure("parseRoleClaimsFromSession", e),
+            )
             null
         }
     }
@@ -155,7 +159,12 @@ object RoleService {
                     },
             )
         } catch (e: Exception) {
-            logger.warn(LogCategory.AUTH, "Failed to decode JWT", error = e)
+            // Sanitised, because the comment fifteen lines up ("JWT payload not logged to
+            // avoid exposing sensitive claims") is defeated by its own failure path: a
+            // garbled payload makes kotlinx append the whole document to the message, so
+            // logging the raw exception logs the claim set the debug line deliberately
+            // withholds.
+            logger.warn(LogCategory.AUTH, "Failed to decode JWT", error = sanitizeResponseFailure("decodeJWTClaims", e))
             emptyMap()
         }
 
@@ -180,7 +189,11 @@ object RoleService {
 
             Result.success(roles)
         } catch (e: Exception) {
-            logger.warn(LogCategory.AUTH, "Failed to get user roles", error = e)
+            logger.warn(
+                LogCategory.AUTH,
+                "Failed to get user roles",
+                error = sanitizeResponseFailure("getUserRoles", e),
+            )
             Result.failure(e)
         }
 
@@ -208,7 +221,11 @@ object RoleService {
 
             Result.success(hasRole)
         } catch (e: Exception) {
-            logger.warn(LogCategory.AUTH, "Failed to check user role", error = e)
+            logger.warn(
+                LogCategory.AUTH,
+                "Failed to check user role",
+                error = sanitizeResponseFailure("userHasRole", e),
+            )
             Result.failure(e)
         }
 
@@ -237,7 +254,11 @@ object RoleService {
 
             Result.success(Unit)
         } catch (e: Exception) {
-            logger.error(LogCategory.AUTH, "Failed to assign role", error = e)
+            logger.error(
+                LogCategory.AUTH,
+                "Failed to assign role",
+                error = sanitizeResponseFailure("assignRoleByName", e),
+            )
             Result.failure(Exception("Failed to assign role: ${e.message}"))
         }
 
@@ -261,7 +282,11 @@ object RoleService {
 
             Result.success(Unit)
         } catch (e: Exception) {
-            logger.error(LogCategory.AUTH, "Failed to remove role", error = e)
+            logger.error(
+                LogCategory.AUTH,
+                "Failed to remove role",
+                error = sanitizeResponseFailure("removeRoleByName", e),
+            )
             Result.failure(Exception("Failed to remove role: ${e.message}"))
         }
 
@@ -285,7 +310,11 @@ object RoleService {
 
             Result.success(permissions)
         } catch (e: Exception) {
-            logger.warn(LogCategory.AUTH, "Failed to get role permissions", error = e)
+            logger.warn(
+                LogCategory.AUTH,
+                "Failed to get role permissions",
+                error = sanitizeResponseFailure("getRolePermissions", e),
+            )
             Result.failure(e)
         }
 
@@ -320,7 +349,11 @@ object RoleService {
 
             Result.success(false)
         } catch (e: Exception) {
-            logger.warn(LogCategory.AUTH, "Failed to check permission", error = e)
+            logger.warn(
+                LogCategory.AUTH,
+                "Failed to check permission",
+                error = sanitizeResponseFailure("canPerformAction", e),
+            )
             Result.failure(e)
         }
     }

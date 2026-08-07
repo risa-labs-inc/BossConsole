@@ -4,7 +4,11 @@ import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 
 /**
- * The decoder for every Supabase RPC response in this package.
+ * The Json instance for every Supabase payload in this package, in both directions.
+ *
+ * Responses are the reason it exists, but request parameters and decoded JWT payloads go
+ * through it as well, so that "never the `Json` default here" is a rule with no exceptions
+ * to remember. `SupabaseWiringTest` enforces exactly that.
  *
  * `ignoreUnknownKeys` is not a convenience, it is a requirement of how BOSS ships.
  * The database is migrated ahead of the desktop app and installed copies keep talking

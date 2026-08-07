@@ -1,9 +1,12 @@
 package ai.rever.boss.services.supabase
 
+import ai.rever.boss.services.supabase.models.SecretEntry
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -55,11 +58,7 @@ class SupabaseJsonTest {
         // Stripping the whole message would trade a credential leak for an undiagnosable
         // outage. "Encountered an unknown key 'org_id'" is precisely what identified this bug.
         val body = """[{"id":"1","org_id":null}]"""
-        val strict = kotlinx.serialization.json.Json
-        val raw =
-            runCatching {
-                strict.decodeFromString<List<ai.rever.boss.services.supabase.models.SecretEntry>>(body)
-            }.exceptionOrNull()
+        val raw = runCatching { Json.decodeFromString<List<SecretEntry>>(body) }.exceptionOrNull()
 
         val safe = sanitizeResponseFailure("getUserSecrets", raw!!)
 
@@ -75,10 +74,7 @@ class SupabaseJsonTest {
         val nullPassword =
             """[{"id":"1","website":"w","username":"u","password":null,"tags":[],""" +
                 """"created_at":"x","updated_at":"x"}]"""
-        val raw =
-            runCatching {
-                supabaseJson.decodeFromString<List<ai.rever.boss.services.supabase.models.SecretEntry>>(nullPassword)
-            }.exceptionOrNull()
+        val raw = runCatching { supabaseJson.decodeFromString<List<SecretEntry>>(nullPassword) }.exceptionOrNull()
 
         val safe = sanitizeResponseFailure("getUserSecrets", raw!!)
 
@@ -105,7 +101,9 @@ class SupabaseJsonTest {
 
         val safe = sanitizeResponseFailure("getUserSecrets", raw)
 
-        assertEquals(null, safe.cause)
+        // assertNull for the same reason SecretDecodingTest argues for it: it takes Any? and
+        // so keeps compiling if the type changes, failing for the real reason.
+        assertNull(safe.cause)
         assertTrue(safe is SupabaseResponseException)
     }
 }

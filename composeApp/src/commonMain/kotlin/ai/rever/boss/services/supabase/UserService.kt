@@ -66,7 +66,7 @@ object UserService {
             logger.debug(LogCategory.AUTH, "Fetched users", mapOf("count" to actualUsers.size, "offset" to offset, "hasMore" to hasMore))
             Result.success(PaginatedResult(actualUsers, hasMore))
         } catch (e: Exception) {
-            logger.error(LogCategory.AUTH, "Failed to fetch users", error = e)
+            logger.error(LogCategory.AUTH, "Failed to fetch users", error = sanitizeResponseFailure("getAllUsers", e))
             Result.failure(Exception("Failed to fetch users: ${e.message}"))
         }
 
@@ -127,7 +127,11 @@ object UserService {
             )
             Result.success(PaginatedResult(usersWithRoles, paginatedUsers.hasMore))
         } catch (e: Exception) {
-            logger.error(LogCategory.AUTH, "Failed to fetch users with roles", error = e)
+            logger.error(
+                LogCategory.AUTH,
+                "Failed to fetch users with roles",
+                error = sanitizeResponseFailure("getAllUsersWithRoles", e),
+            )
             Result.failure(Exception("Failed to fetch users with roles: ${e.message}"))
         }
     }
@@ -208,7 +212,11 @@ object UserService {
             )
             Result.success(PaginatedResult(usersWithRoles, hasMore))
         } catch (e: Exception) {
-            logger.error(LogCategory.AUTH, "Failed to search users", error = e)
+            logger.error(
+                LogCategory.AUTH,
+                "Failed to search users",
+                error = sanitizeResponseFailure("searchUsersByEmail", e),
+            )
             Result.failure(Exception("Failed to search users: ${e.message}"))
         }
     }
@@ -261,7 +269,11 @@ object UserService {
 
             Result.success(userWithRoles)
         } catch (e: Exception) {
-            logger.error(LogCategory.AUTH, "Failed to fetch user with roles", error = e)
+            logger.error(
+                LogCategory.AUTH,
+                "Failed to fetch user with roles",
+                error = sanitizeResponseFailure("getUserWithRoles", e),
+            )
             Result.failure(Exception("Failed to fetch user with roles: ${e.message}"))
         }
     }
@@ -295,7 +307,7 @@ object UserService {
             logger.info(LogCategory.AUTH, "Successfully deleted user", mapOf("userId" to userId))
             Result.success(Unit)
         } catch (e: Exception) {
-            logger.error(LogCategory.AUTH, "Failed to delete user", error = e)
+            logger.error(LogCategory.AUTH, "Failed to delete user", error = sanitizeResponseFailure("deleteUser", e))
             Result.failure(Exception("Failed to delete user: ${e.message}"))
         }
 }
