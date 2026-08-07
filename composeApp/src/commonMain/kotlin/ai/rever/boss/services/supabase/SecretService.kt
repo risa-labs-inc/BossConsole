@@ -51,6 +51,31 @@ object SecretService {
         get() = SupabaseConfig.client
 
     /**
+     * Decoder for every RPC response on this service.
+     *
+     * `ignoreUnknownKeys` is not a convenience here, it is a requirement of how this
+     * system ships: the database is migrated ahead of the desktop app, and an installed
+     * copy keeps talking to it. The default strict `Json` treats a column the running
+     * build has never heard of as a hard error, and because these RPCs return a LIST,
+     * one unknown key fails the whole decode - every secret disappears, not just the new
+     * field.
+     *
+     * That is not hypothetical. Adding `secrets.org_id` and `secret_shares.shared_with_org_id`
+     * for organisation multi-tenancy broke `getUserSecrets` and `getUserSecretsWithSharingInfo`
+     * on every already-installed build the moment the migration landed:
+     * "Encountered an unknown key 'org_id'". The secret list rendered empty with only a WARN
+     * in the log.
+     *
+     * So: a new column must never be able to do that again. Additive schema changes are
+     * expected and must degrade to "the app ignores the field it does not model yet".
+     *
+     * `internal` rather than `private` so `SecretDecodingTest` can assert that property
+     * against this exact instance. A test that built its own lenient `Json` would pass
+     * whatever this one is configured to do, which is the thing worth pinning.
+     */
+    internal val json = Json { ignoreUnknownKeys = true }
+
+    /**
      * Get user secrets with pagination
      *
      * @param limit Maximum number of secrets to return
@@ -74,8 +99,8 @@ object SecretService {
                     parameters = params,
                 )
 
-            val jsonElement = Json.parseToJsonElement(postgrestResult.data)
-            val secrets = Json.decodeFromJsonElement<List<SecretEntry>>(jsonElement)
+            val jsonElement = json.parseToJsonElement(postgrestResult.data)
+            val secrets = json.decodeFromJsonElement<List<SecretEntry>>(jsonElement)
             val hasMore = secrets.size >= limit
 
             Result.success(PaginatedSecrets(data = secrets, hasMore = hasMore))
@@ -110,8 +135,8 @@ object SecretService {
                     parameters = params,
                 )
 
-            val jsonElement = Json.parseToJsonElement(postgrestResult.data)
-            val secrets = Json.decodeFromJsonElement<List<SecretEntry>>(jsonElement)
+            val jsonElement = json.parseToJsonElement(postgrestResult.data)
+            val secrets = json.decodeFromJsonElement<List<SecretEntry>>(jsonElement)
 
             // Check if there might be more results
             val hasMore = secrets.size >= limit
@@ -165,8 +190,8 @@ object SecretService {
                     parameters = params,
                 )
 
-            val jsonElement = Json.parseToJsonElement(postgrestResult.data)
-            val result = Json.decodeFromJsonElement<RpcResponse>(jsonElement)
+            val jsonElement = json.parseToJsonElement(postgrestResult.data)
+            val result = json.decodeFromJsonElement<RpcResponse>(jsonElement)
 
             if (result.success) {
                 Result.success(Unit)
@@ -219,8 +244,8 @@ object SecretService {
                     parameters = params,
                 )
 
-            val jsonElement = Json.parseToJsonElement(postgrestResult.data)
-            val result = Json.decodeFromJsonElement<RpcResponse>(jsonElement)
+            val jsonElement = json.parseToJsonElement(postgrestResult.data)
+            val result = json.decodeFromJsonElement<RpcResponse>(jsonElement)
 
             if (result.success) {
                 Result.success(Unit)
@@ -251,8 +276,8 @@ object SecretService {
                     parameters = params,
                 )
 
-            val jsonElement = Json.parseToJsonElement(postgrestResult.data)
-            val result = Json.decodeFromJsonElement<RpcResponse>(jsonElement)
+            val jsonElement = json.parseToJsonElement(postgrestResult.data)
+            val result = json.decodeFromJsonElement<RpcResponse>(jsonElement)
 
             if (result.success) {
                 Result.success(Unit)
@@ -287,8 +312,8 @@ object SecretService {
                     parameters = params,
                 )
 
-            val jsonElement = Json.parseToJsonElement(postgrestResult.data)
-            val secretsWithSharing = Json.decodeFromJsonElement<List<SecretEntryWithSharing>>(jsonElement)
+            val jsonElement = json.parseToJsonElement(postgrestResult.data)
+            val secretsWithSharing = json.decodeFromJsonElement<List<SecretEntryWithSharing>>(jsonElement)
             val secrets = secretsWithSharing.map { it.toSecretEntry() }
             val hasMore = secrets.size >= limit
 
@@ -325,8 +350,8 @@ object SecretService {
                     parameters = params,
                 )
 
-            val jsonElement = Json.parseToJsonElement(postgrestResult.data)
-            val secretsWithSharing = Json.decodeFromJsonElement<List<SecretEntryWithSharing>>(jsonElement)
+            val jsonElement = json.parseToJsonElement(postgrestResult.data)
+            val secretsWithSharing = json.decodeFromJsonElement<List<SecretEntryWithSharing>>(jsonElement)
             val hasMore = secretsWithSharing.size >= limit
 
             Result.success(PaginatedSecretsWithSharing(data = secretsWithSharing, hasMore = hasMore))
@@ -367,8 +392,8 @@ object SecretService {
                     parameters = params,
                 )
 
-            val jsonElement = Json.parseToJsonElement(postgrestResult.data)
-            val result = Json.decodeFromJsonElement<RpcResponse>(jsonElement)
+            val jsonElement = json.parseToJsonElement(postgrestResult.data)
+            val result = json.decodeFromJsonElement<RpcResponse>(jsonElement)
 
             if (result.success) {
                 Result.success(Unit)
@@ -407,8 +432,8 @@ object SecretService {
                     parameters = params,
                 )
 
-            val jsonElement = Json.parseToJsonElement(postgrestResult.data)
-            val result = Json.decodeFromJsonElement<RpcResponse>(jsonElement)
+            val jsonElement = json.parseToJsonElement(postgrestResult.data)
+            val result = json.decodeFromJsonElement<RpcResponse>(jsonElement)
 
             if (result.success) {
                 Result.success(Unit)
@@ -439,8 +464,8 @@ object SecretService {
                     parameters = params,
                 )
 
-            val jsonElement = Json.parseToJsonElement(postgrestResult.data)
-            val shares = Json.decodeFromJsonElement<List<SecretShareEntry>>(jsonElement)
+            val jsonElement = json.parseToJsonElement(postgrestResult.data)
+            val shares = json.decodeFromJsonElement<List<SecretShareEntry>>(jsonElement)
 
             Result.success(shares)
         } catch (e: Exception) {
