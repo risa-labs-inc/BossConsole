@@ -67,8 +67,8 @@ object RoleCreationService {
                     parameters = params,
                 )
 
-            val jsonElement = Json.parseToJsonElement(postgrestResult.data)
-            val result = Json.decodeFromJsonElement<RpcResponse>(jsonElement)
+            val jsonElement = supabaseJson.parseToJsonElement(postgrestResult.data)
+            val result = supabaseJson.decodeFromJsonElement<RpcResponse>(jsonElement)
 
             if (result.success) {
                 Result.success(
@@ -112,8 +112,8 @@ object RoleCreationService {
                     parameters = params,
                 )
 
-            val jsonElement = Json.parseToJsonElement(postgrestResult.data)
-            val result = Json.decodeFromJsonElement<RpcResponse>(jsonElement)
+            val jsonElement = supabaseJson.parseToJsonElement(postgrestResult.data)
+            val result = supabaseJson.decodeFromJsonElement<RpcResponse>(jsonElement)
 
             if (result.success) {
                 Result.success(
@@ -144,8 +144,8 @@ object RoleCreationService {
                     parameters = buildJsonObject { },
                 )
 
-            val jsonElement = Json.parseToJsonElement(postgrestResult.data)
-            val result = Json.decodeFromJsonElement<RolesResponseNew>(jsonElement)
+            val jsonElement = supabaseJson.parseToJsonElement(postgrestResult.data)
+            val result = supabaseJson.decodeFromJsonElement<RolesResponseNew>(jsonElement)
 
             if (result.success) {
                 val roles =
@@ -182,8 +182,8 @@ object RoleCreationService {
                     parameters = buildJsonObject { },
                 )
 
-            val jsonElement = Json.parseToJsonElement(postgrestResult.data)
-            val result = Json.decodeFromJsonElement<PermissionsResponseNew>(jsonElement)
+            val jsonElement = supabaseJson.parseToJsonElement(postgrestResult.data)
+            val result = supabaseJson.decodeFromJsonElement<PermissionsResponseNew>(jsonElement)
 
             if (result.success) {
                 val permissions =
@@ -231,8 +231,8 @@ object RoleCreationService {
                     parameters = params,
                 )
 
-            val jsonElement = Json.parseToJsonElement(postgrestResult.data)
-            val result = Json.decodeFromJsonElement<RpcResponse>(jsonElement)
+            val jsonElement = supabaseJson.parseToJsonElement(postgrestResult.data)
+            val result = supabaseJson.decodeFromJsonElement<RpcResponse>(jsonElement)
 
             if (result.success) {
                 Result.success(Unit)
@@ -268,8 +268,8 @@ object RoleCreationService {
                     parameters = params,
                 )
 
-            val jsonElement = Json.parseToJsonElement(postgrestResult.data)
-            val result = Json.decodeFromJsonElement<RpcResponse>(jsonElement)
+            val jsonElement = supabaseJson.parseToJsonElement(postgrestResult.data)
+            val result = supabaseJson.decodeFromJsonElement<RpcResponse>(jsonElement)
 
             if (result.success) {
                 Result.success(Unit)
@@ -300,8 +300,8 @@ object RoleCreationService {
                     parameters = params,
                 )
 
-            val jsonElement = Json.parseToJsonElement(postgrestResult.data)
-            val result = Json.decodeFromJsonElement<RolePermissionsResponse>(jsonElement)
+            val jsonElement = supabaseJson.parseToJsonElement(postgrestResult.data)
+            val result = supabaseJson.decodeFromJsonElement<RolePermissionsResponse>(jsonElement)
 
             if (result.success) {
                 Result.success(
@@ -337,8 +337,8 @@ object RoleCreationService {
                     parameters = params,
                 )
 
-            val jsonElement = Json.parseToJsonElement(postgrestResult.data)
-            val result = Json.decodeFromJsonElement<RpcResponse>(jsonElement)
+            val jsonElement = supabaseJson.parseToJsonElement(postgrestResult.data)
+            val result = supabaseJson.decodeFromJsonElement<RpcResponse>(jsonElement)
 
             if (result.success) {
                 Result.success(Unit)
@@ -369,8 +369,8 @@ object RoleCreationService {
                     parameters = params,
                 )
 
-            val jsonElement = Json.parseToJsonElement(postgrestResult.data)
-            val result = Json.decodeFromJsonElement<RpcResponse>(jsonElement)
+            val jsonElement = supabaseJson.parseToJsonElement(postgrestResult.data)
+            val result = supabaseJson.decodeFromJsonElement<RpcResponse>(jsonElement)
 
             if (result.success) {
                 Result.success(Unit)

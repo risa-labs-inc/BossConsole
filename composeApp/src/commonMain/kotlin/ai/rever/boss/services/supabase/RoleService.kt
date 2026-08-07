@@ -139,7 +139,7 @@ object RoleService {
             logger.debug(LogCategory.AUTH, "Decoding JWT payload")
 
             // Parse JSON using kotlinx.serialization (secure and reliable)
-            val jsonObject = Json.parseToJsonElement(jsonString).jsonObject
+            val jsonObject = supabaseJson.parseToJsonElement(jsonString).jsonObject
 
             // Extract RBAC claims
             mapOf(
@@ -175,8 +175,8 @@ object RoleService {
                         },
                 )
 
-            val jsonElement = Json.parseToJsonElement(postgrestResult.data)
-            val roles = Json.decodeFromJsonElement<List<UserRole>>(jsonElement)
+            val jsonElement = supabaseJson.parseToJsonElement(postgrestResult.data)
+            val roles = supabaseJson.decodeFromJsonElement<List<UserRole>>(jsonElement)
 
             Result.success(roles)
         } catch (e: Exception) {
@@ -203,7 +203,7 @@ object RoleService {
                         },
                 )
 
-            val jsonElement = Json.parseToJsonElement(postgrestResult.data)
+            val jsonElement = supabaseJson.parseToJsonElement(postgrestResult.data)
             val hasRole = jsonElement.jsonPrimitive.boolean
 
             Result.success(hasRole)
@@ -280,8 +280,8 @@ object RoleService {
                         },
                 )
 
-            val jsonElement = Json.parseToJsonElement(postgrestResult.data)
-            val permissions = Json.decodeFromJsonElement<List<RolePermission>>(jsonElement)
+            val jsonElement = supabaseJson.parseToJsonElement(postgrestResult.data)
+            val permissions = supabaseJson.decodeFromJsonElement<List<RolePermission>>(jsonElement)
 
             Result.success(permissions)
         } catch (e: Exception) {
