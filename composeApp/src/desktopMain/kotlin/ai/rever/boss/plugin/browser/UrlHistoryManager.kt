@@ -234,6 +234,13 @@ object UrlHistoryManager {
         val domain = suggestableHost(url) ?: return
         if (NavigationOutcomeTracker.didFail(url)) return
 
+        // Analytics is NOT emitted here. It applies these same two gates — a real http(s)
+        // host and a page that actually loaded — but from BrowserHandleImpl's navigation
+        // handler, which is the only place that knows *which tab* navigated. Dwell time and
+        // navigation depth are per-tab, and this entry point has no tab identity at all
+        // (UrlHistoryProvider.addUrl takes a url and a title), so tracking here would
+        // interleave every tab's visits into one bogus timeline.
+
         val key = distinctPageKey(url)
         val existing = history[key]
 

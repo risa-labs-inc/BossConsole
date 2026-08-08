@@ -3,6 +3,7 @@ package ai.rever.boss.plugin.browser
 import ai.rever.boss.cache.FaviconCache
 import ai.rever.boss.config.JxBrowserConfig
 import ai.rever.boss.dashboard.RecentBrowserPagesManager
+import ai.rever.boss.plugin.api.BrowserNavigationType
 import ai.rever.boss.plugin.window.LocalWindowId
 import ai.rever.boss.tabfullscreen.FullscreenBrowserWindow
 import ai.rever.boss.utils.MacOSGestureHandler
@@ -194,6 +195,43 @@ internal class BrowserHandleImpl(
     private val logger = BossLogger.forComponent("BrowserHandleImpl")
 
     override val id: String = UUID.randomUUID().toString()
+
+    /**
+     * Per-tab engagement accounting. Owned here because dwell time and navigation depth are
+     * only meaningful per tab, and this is the one object with that identity plus the full
+     * navigation lifecycle. Publishes nothing itself — see [BrowserAnalytics].
+     */
+    private val visitTracker = BrowserVisitTracker(windowId = ownerWindowId)
+
+    /**
+     * Host-side kill switch for browser telemetry. Consent for *sending* analytics lives in
+     * the analytics plugin, which gates egress for every event source alike; this is a
+     * separate, blunter control for deployments that want no telemetry script running in
+     * pages at all, whatever a plugin later decides to do with the events.
+     */
+    private val browserTelemetryEnabled: Boolean =
+        System.getenv("BOSS_BROWSER_TELEMETRY_DISABLED")?.lowercase() != "true"
+
+    /**
+     * Authority of the page currently loaded in this tab, as last seen by the navigation
+     * handler. Volatile because it is written from a JxBrowser navigation callback and read
+     * from the JS thread that delivers interaction batches.
+     *
+     * Cached rather than resolved on demand: reading it used to call `getCurrentUrl()` →
+     * `browser.url()` from inside `emit()`, which runs on the page's JS thread. `runCatching`
+     * covers a throw but not a stall, and [BrowserInteractionBridge] documents that `emit`
+     * must not block that thread — so the old version contradicted its own contract. The
+     * navigation handler is what would observe an SPA route change anyway, so freshness is
+     * identical and each batch is cheaper.
+     */
+    @Volatile private var currentPageAuthority: String? = null
+
+    /** Receives in-page interaction batches, attributed to the page that is actually loaded. */
+    private val interactionBridge =
+        BrowserInteractionBridge(
+            authorityProvider = { currentPageAuthority },
+            windowId = ownerWindowId,
+        )
 
     private val disposed = AtomicBoolean(false)
     private val subscriptions = mutableListOf<Subscription>()
@@ -420,6 +458,11 @@ internal class BrowserHandleImpl(
         setupEventListeners()
         setupBrowserHandlers()
 
+        // A tab exists from here on, whether or not it ever loads a page. Reporting the open
+        // before the initial navigation keeps opens and closes balanced for tabs the user
+        // shuts before anything renders.
+        visitTracker.opened(config.url.takeIf { it.isNotBlank() }?.let(::suggestableHost))
+
         // Load initial URL
         if (config.url.isNotBlank()) {
             val postData = config.initialPostData
@@ -483,6 +526,20 @@ internal class BrowserHandleImpl(
                         } catch (e: Exception) {
                             logger.warn(LogCategory.BROWSER, "Navigation listener threw exception", error = e)
                         }
+                    }
+
+                    // Engagement tracking rides the same two gates the URL history uses: a
+                    // real http(s) host, and a page that actually loaded. recordNavigationOutcome
+                    // ran at the top of this handler, so didFail is already accurate for this
+                    // navigation — a mistyped host commits an error page and must not count as
+                    // a visit any more than it counts as history.
+                    // Set unconditionally, including to null: an interaction arriving after a
+                    // navigation to something unreportable (a dev server, an IP) must not be
+                    // attributed to whatever site preceded it.
+                    val authority = suggestableHost(url)
+                    currentPageAuthority = authority
+                    if (authority != null && !NavigationOutcomeTracker.didFail(url)) {
+                        visitTracker.pageViewed(authority)
                     }
 
                     // Skip injection for about:blank pages (used for dashboard display)
@@ -952,10 +1009,38 @@ internal class BrowserHandleImpl(
                 // Inject form field detection script for secret auto-fill
                 FormFieldDetector.injectFormDetectionScript(createLockedBrowser())
 
+                injectInteractionCollector(frame)
+
                 logger.debug(LogCategory.BROWSER, "Page helpers injected", mapOf("handleId" to id))
             } catch (e: Exception) {
                 logger.warn(LogCategory.BROWSER, "Failed to inject page helpers", error = e)
             }
+        }
+    }
+
+    /**
+     * Publish the interaction bridge on this page and start the collector.
+     *
+     * Re-run per navigation because each document gets a fresh JS context; the script
+     * guards itself against double-injection into the same one.
+     *
+     * The authority is resolved lazily, at the moment a batch arrives, rather than captured
+     * here — a single-page app can navigate without a new document, and stamping events
+     * with the authority that happened to be current at injection time would attribute a
+     * later page's interactions to an earlier site.
+     */
+    private fun injectInteractionCollector(frame: Frame) {
+        if (!browserTelemetryEnabled) return
+        try {
+            val window = frame.executeJavaScript<JsObject>("window")
+            window?.putProperty(BrowserInteractionScript.BRIDGE_PROPERTY, interactionBridge)
+            frame.executeJavaScript<Any?>(BrowserInteractionScript.source)
+        } catch (e: Exception) {
+            logger.debug(
+                LogCategory.BROWSER,
+                "Interaction collector injection failed",
+                mapOf("handleId" to id, "error" to e.toString()),
+            )
         }
     }
 
@@ -1270,6 +1355,10 @@ internal class BrowserHandleImpl(
             logger.warn(LogCategory.BROWSER, "Cannot load URL - browser invalid", mapOf("handleId" to id))
             return
         }
+        // Someone asked for this destination by name (URL bar, bookmark, deep link) rather
+        // than clicking through to it. Only these four entry points can say how a navigation
+        // started; anything reaching the handler without a hint came from the page.
+        visitTracker.expect(BrowserNavigationType.TYPED)
         browser.navigation().loadUrl(url)
     }
 
@@ -1339,18 +1428,21 @@ internal class BrowserHandleImpl(
 
     override fun goBack() {
         if (isValid && browser.navigation().canGoBack()) {
+            visitTracker.expect(BrowserNavigationType.BACK_FORWARD)
             browser.navigation().goBack()
         }
     }
 
     override fun goForward() {
         if (isValid && browser.navigation().canGoForward()) {
+            visitTracker.expect(BrowserNavigationType.BACK_FORWARD)
             browser.navigation().goForward()
         }
     }
 
     override fun reload() {
         if (isValid) {
+            visitTracker.expect(BrowserNavigationType.RELOAD)
             browser.navigation().reload()
         }
     }
@@ -1886,6 +1978,20 @@ internal class BrowserHandleImpl(
             )
         }
 
+        // Tab visibility drives the active-time counter. Leaving composition means this tab
+        // was hidden (the surface is retained; dispose() owns real closure), which is exactly
+        // the moment engagement should stop accruing — a portal left open behind three other
+        // tabs is not being read. Kept as its own effect rather than folded into the surface
+        // effect below, which is keyed on the host window and would double-fire on a move.
+        //
+        // Window-level focus is deliberately not consulted here: a visible tab in a
+        // background window still counts as active. WindowFocusEvent is reported separately,
+        // so a consumer that cares can intersect the two.
+        DisposableEffect(Unit) {
+            visitTracker.setFocused(true)
+            onDispose { visitTracker.setFocused(false) }
+        }
+
         // Track last navigation time for debouncing mouse button navigation
         var lastNavigationTime by remember { mutableStateOf(0L) }
 
@@ -2108,6 +2214,10 @@ internal class BrowserHandleImpl(
 
     override fun dispose() {
         if (!disposed.compareAndSet(false, true)) return
+        // Flush the visit in progress before anything is torn down. This is the only place a
+        // page's dwell time can be closed out when a tab is shut while still on a page —
+        // every other path ends a visit by starting the next one.
+        visitTracker.closed()
         FullscreenBrowserWindow.exitFullscreen(browser)
 
         // Stop co-browse capture so a disposed tab can never keep streaming.
