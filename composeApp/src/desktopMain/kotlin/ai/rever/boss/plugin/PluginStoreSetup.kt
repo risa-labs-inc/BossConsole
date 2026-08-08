@@ -68,56 +68,6 @@ object PluginStoreSetup {
     private val manifestJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
     private var initialized = false
 
-    private val _skippedByResourceMode = kotlinx.coroutines.flow.MutableStateFlow<Set<String>>(emptySet())
-
-    /**
-     * Plugin ids this launch declined to load because of the resource tier.
-     *
-     * Read by Settings so a missing plugin is explained rather than mysterious. A flow rather
-     * than a plain value because plugin loading is asynchronous: a Settings screen composed
-     * before [loadPersistedPlugins] finishes would otherwise show an empty skipped list for its
-     * whole lifetime and never recover, which is the worst possible moment for that list to be
-     * wrong. Empty on FULL and on any launch that skipped nothing.
-     */
-    val skippedByResourceMode: kotlinx.coroutines.flow.StateFlow<Set<String>> get() = _skippedByResourceMode
-
-    @Volatile
-    private var _skippedJarPaths: Set<String> = emptySet()
-
-    /**
-     * Absolute jar paths the resource tier declined to load this launch.
-     *
-     * Consumed by `DefaultPlugin`'s external-plugin scan, which would otherwise treat them as
-     * manually-dropped jars and load every one straight back - the gate and the scan cancelling
-     * out exactly, so the tier reported a saving it did not make.
-     *
-     * Paths rather than plugin ids because the scan decides per file, before opening the jar.
-     */
-    fun skippedJarPaths(): Set<String> = _skippedJarPaths
-
-    /**
-     * Splits persisted plugins into those to load and those the resource tier declines.
-     *
-     * Extracted from [loadPersistedPlugins] purely so it can be tested: inline in a large
-     * `suspend` function, the one rule that actually matters here had no coverage and had to be
-     * fixed by hand after review.
-     *
-     * That rule: **a plugin the user disabled is not a plugin the tier skipped.** Without the
-     * `!entry.enabled` term such a plugin is admitted here, declined downstream anyway, and then
-     * listed under "Plugins Skipped This Launch" as though a reduced tier had taken it away,
-     * which blames the feature for the user's own choice.
-     */
-    internal fun partitionForResourceMode(
-        entries: List<PluginPersistence.InstalledPluginEntry>,
-        mode: ai.rever.boss.config.BossResourceMode,
-        shouldLoad: (String) -> Boolean,
-    ): Pair<List<PluginPersistence.InstalledPluginEntry>, List<PluginPersistence.InstalledPluginEntry>> =
-        if (!mode.gatesPlugins) {
-            entries to emptyList()
-        } else {
-            entries.partition { !it.enabled || shouldLoad(it.pluginId) }
-        }
-
     /**
      * Local plugin directory (installed plugins).
      */
@@ -1419,41 +1369,8 @@ object PluginStoreSetup {
             ),
         )
 
-        // Reduced tiers gate loading here, at the single chokepoint, rather than by passing
-        // enabled = false below. That distinction is the entire memory saving: installPlugin
-        // still opens the JAR and builds a classloader for a disabled plugin, so "disabled"
-        // costs nearly as much as "loaded" — and a disabled plugin also skips dispose(), which
-        // orphans any child process it had started. Not loading is the only version that saves
-        // anything. Skipped plugins keep their installed.json entry untouched, so leaving the
-        // tier restores them on the next launch with no reinstall.
-        val mode = ai.rever.boss.config.ResourceModeConfig.mode
-        val (admitted, skipped) =
-            partitionForResourceMode(persistedPlugins, mode) { pluginId ->
-                LiteModePluginPolicy.shouldLoad(pluginId, mode)
-            }
-
-        // Assigned unconditionally: a later launch that skips nothing must clear the previous
-        // set, not leave a stale list for Settings to display.
-        _skippedByResourceMode.value = skipped.map { it.pluginId }.toSet()
-        // Recorded BEFORE the load below, because the external-plugin scan that consumes this
-        // runs after it and would otherwise reload everything the gate just declined.
-        _skippedJarPaths = skipped.map { java.io.File(it.jarPath).absolutePath }.toSet()
-
-        if (skipped.isNotEmpty()) {
-            logger.info(
-                LogCategory.SYSTEM,
-                "Resource mode is skipping plugins",
-                mapOf(
-                    "mode" to mode.name,
-                    "skipped" to skipped.size,
-                    "loading" to admitted.size,
-                    "pluginIds" to skipped.joinToString(",") { it.pluginId },
-                ),
-            )
-        }
-
         val entries =
-            admitted.map { entry ->
+            persistedPlugins.map { entry ->
                 ai.rever.boss.components.plugin.PersistedPluginEntry(
                     pluginId = entry.pluginId,
                     jarPath = entry.jarPath,

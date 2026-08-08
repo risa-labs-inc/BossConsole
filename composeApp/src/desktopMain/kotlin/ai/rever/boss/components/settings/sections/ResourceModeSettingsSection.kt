@@ -10,8 +10,6 @@ import ai.rever.boss.config.ResourceModeConfig
 import ai.rever.boss.config.ResourceModeReason
 import ai.rever.boss.config.ResourceModeSettings
 import ai.rever.boss.config.SystemMemory
-import ai.rever.boss.plugin.LiteModePluginPolicy
-import ai.rever.boss.plugin.PluginStoreSetup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -65,15 +63,6 @@ private sealed interface ResourceModeField {
     }
 }
 
-/**
- * A readable label for a plugin id.
- *
- * The last segment alone collapses: `ai.rever.boss.plugin.api` renders as "api", and two plugins
- * whose ids end in the same word render identically. Dropping the shared `ai.rever.boss.plugin.`
- * prefix keeps them distinct while staying short. The full id is still in the description.
- */
-private fun String.pluginLabel(): String = removePrefix("ai.rever.boss.plugin.").ifBlank { this }
-
 /** The Settings label for a tier, e.g. "Lite - Caps the browser. Every plugin still loads." */
 private fun BossResourceMode.settingsLabel(): String = "$displayName - $summary"
 
@@ -106,10 +95,9 @@ private fun ResourceModeReason.explain(mode: BossResourceMode): String =
 /**
  * Settings for how much of itself BOSS runs.
  *
- * Two things this screen has to do beyond offering the choice. It must say **why** the current
- * tier was chosen, because a tier that silently drops plugins is otherwise indistinguishable
- * from a broken install. And it must name the plugins a reduced tier skipped, for the same
- * reason - "Docker is missing" needs an answer that is not "reinstall BOSS".
+ * Beyond offering the choice, this screen has to say **why** the current tier was chosen. The
+ * app picks a tier on the user's behalf from their machine's memory and platform, and a setting
+ * that changed itself without explanation is indistinguishable from a bug.
  */
 @Composable
 fun ResourceModeSettingsSection() {
@@ -120,23 +108,16 @@ fun ResourceModeSettingsSection() {
         remember {
             SystemMemory.totalPhysicalBytes().toDouble() / ResourceModeConfig.BYTES_PER_GB
         }
-    // Collected, not remembered: plugin loading is asynchronous, so a Settings screen opened
-    // early would otherwise pin an empty list forever - on the one screen that exists to explain
-    // where the plugins went.
-    val skipped by PluginStoreSetup.skippedByResourceMode.collectAsState()
-    var optedIn by remember { mutableStateOf(LiteModePluginPolicy.userAllowlist()) }
     val scope = rememberCoroutineScope()
 
-    // Persisting is a small file write, but it is still disk I/O and these run from Compose
-    // callbacks, one per toggle in a per-plugin loop. docs/THREADING.md is firm about this.
+    // Persisting is a small file write, but it is still disk I/O and it runs from a Compose
+    // callback. docs/THREADING.md is firm about this.
     fun persist(block: () -> Unit) {
         scope.launch(Dispatchers.IO) { block() }
     }
 
-    // Only the typed number inputs are debounced, and they get their OWN job handle.
-    // SettingsNumberInput fires onValueChange per keystroke, so typing "128" would rewrite the
-    // JSON three times. A single shared debounce job would be worse than none: a threshold edit
-    // would cancel a pending plugin-allowlist write and silently lose it.
+    // The typed number inputs are debounced on their own job handle: SettingsNumberInput fires
+    // onValueChange per keystroke, so typing "128" would otherwise rewrite the JSON three times.
     var pendingThreshold by remember { mutableStateOf<Job?>(null) }
 
     fun persistDebounced(block: () -> Unit) {
@@ -180,16 +161,6 @@ fun ResourceModeSettingsSection() {
                 val write = { ResourceModeSettings.update { current -> field.applyTo(current) } }
                 // The toggle is one discrete event; only the typed thresholds need settling.
                 if (field is ResourceModeField.LivePressure) persist(write) else persistDebounced(write)
-            },
-        )
-
-        PluginVisibilitySections(
-            skipped = skipped,
-            optedIn = optedIn,
-            onToggleOptIn = { pluginId, keep ->
-                val next = if (keep) optedIn + pluginId else optedIn - pluginId
-                optedIn = next
-                persist { LiteModePluginPolicy.setUserAllowlist(next) }
             },
         )
     }
@@ -275,57 +246,5 @@ private fun AutomaticSelectionSection(
                 "Switch to Lite mid-session when available memory stays low, and say so. " +
                     "Installed memory alone cannot tell how much is actually free.",
         )
-    }
-}
-
-/**
- * Names what the tier skipped, and what the user has excepted from it.
- *
- * The skipped list is the part that matters: without it, a reduced tier is indistinguishable
- * from an install that lost its plugins.
- */
-@Composable
-private fun PluginVisibilitySections(
-    skipped: Set<String>,
-    optedIn: Set<String>,
-    onToggleOptIn: (String, Boolean) -> Unit,
-) {
-    if (skipped.isNotEmpty()) {
-        SettingsSection(title = "Plugins Skipped This Launch") {
-            SettingsInfoRow(
-                label = "Not loaded",
-                value = "${skipped.size} plugin${if (skipped.size == 1) "" else "s"}",
-                description =
-                    "These are installed but were not loaded, to save memory. Turn one on to " +
-                        "keep it in Ultra Lite from the next launch.",
-            )
-            // A toggle per skipped plugin, so the recovery really is one click. Without these
-            // the only way back is hand-editing ~/.boss/lite-plugins.json, which is not a
-            // recovery story anyone can be expected to find.
-            skipped.sorted().forEach { pluginId ->
-                SettingsToggle(
-                    label = pluginId.pluginLabel(),
-                    checked = pluginId in optedIn,
-                    onCheckedChange = { keep -> onToggleOptIn(pluginId, keep) },
-                    description = pluginId,
-                )
-            }
-        }
-    }
-
-    // Exceptions the user added that this launch did not skip, e.g. because they are already
-    // running in Full. Shown separately so the list above stays "what happened this launch".
-    val otherExceptions = optedIn - skipped
-    if (otherExceptions.isNotEmpty()) {
-        SettingsSection(title = "Always Load in Ultra Lite") {
-            otherExceptions.sorted().forEach { pluginId ->
-                SettingsToggle(
-                    label = pluginId.pluginLabel(),
-                    checked = true,
-                    onCheckedChange = { keep -> onToggleOptIn(pluginId, keep) },
-                    description = pluginId,
-                )
-            }
-        }
     }
 }

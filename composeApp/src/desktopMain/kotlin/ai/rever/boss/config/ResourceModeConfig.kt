@@ -20,9 +20,10 @@ import kotlinx.coroutines.flow.StateFlow
  * Short of moving JxBrowser out of the host process, the only defence is to keep demand
  * well below the wall. That is what these tiers do.
  *
- * [FULL] is unchanged behaviour. [LITE] caps the browser and leaves every feature installed.
- * [ULTRA_LITE] additionally stops loading plugins that are not on the allowlist, which is the
- * single largest consumer: the crashed session had 36 plugins installed and 314 threads.
+ * [FULL] is unchanged behaviour. [LITE] and [ULTRA_LITE] hibernate idle browser tabs sooner,
+ * cap Chromium's renderer processes, and (at the tightest tier) stop the background sampler.
+ * Every plugin still loads at every tier: gating them was tried and removed, because it took
+ * features away from the user to save memory that hibernation reclaims without asking.
  *
  * Nothing here refuses work. The browser lever is hibernation - an idle background tab gives its
  * Chromium process tree back and reloads when you return to it - because the concurrent-browser
@@ -51,28 +52,23 @@ enum class BossResourceMode(
      * being used, rather than refusing work.
      */
     val hibernationIdleMs: Long,
-    /** Whether plugin loading is restricted to the `lite_eligible` allowlist. */
-    val gatesPlugins: Boolean,
     /** Whether the background performance sampler runs. */
     val backgroundSamplingEnabled: Boolean,
 ) {
     FULL(
         rendererProcessLimit = null,
         hibernationIdleMs = 30 * 60 * 1000L,
-        gatesPlugins = false,
         backgroundSamplingEnabled = true,
     ),
     LITE(
         rendererProcessLimit = 4,
         // The plugin's own default, which is Lite's.
         hibernationIdleMs = 10 * 60 * 1000L,
-        gatesPlugins = false,
         backgroundSamplingEnabled = true,
     ),
     ULTRA_LITE(
         rendererProcessLimit = 2,
         hibernationIdleMs = 2 * 60 * 1000L,
-        gatesPlugins = true,
         backgroundSamplingEnabled = false,
     ),
     ;
@@ -95,15 +91,15 @@ enum class BossResourceMode(
             when (this) {
                 FULL -> "Everything on. Idle browser tabs sleep after 30 minutes."
                 LITE -> "Idle browser tabs sleep after 10 minutes. Every plugin still loads."
-                ULTRA_LITE -> "Idle browser tabs sleep after 2 minutes, and only essential plugins load."
+                ULTRA_LITE -> "Idle browser tabs sleep after 2 minutes. Every plugin still loads."
             }
 }
 
 /**
  * Why [ResourceModeConfig.mode] resolved the way it did.
  *
- * Surfaced in Settings and in the startup log because a mode that silently drops plugins
- * is indistinguishable from a broken install unless the app can say why.
+ * Surfaced in Settings and in the startup log: a tier the app chose on the user's behalf should
+ * be able to say why it chose it.
  */
 enum class ResourceModeReason {
     /**
@@ -251,7 +247,6 @@ object ResourceModeConfig {
                 "os" to os,
                 "totalRamGb" to
                     if (totalBytes > 0) "%.1f".format(totalBytes / BYTES_PER_GB.toDouble()) else "unknown",
-                "gatesPlugins" to resolved.mode.gatesPlugins.toString(),
                 "rendererLimit" to (resolved.mode.rendererProcessLimit?.toString() ?: "default"),
             ),
         )

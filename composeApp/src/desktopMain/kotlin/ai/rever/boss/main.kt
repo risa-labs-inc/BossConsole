@@ -630,12 +630,6 @@ fun main(args: Array<String>) {
         PluginStoreSetup.loadPersistedPlugins(manager)
     }
 
-    // Without this the external-plugin scan reloads everything the resource tier just declined,
-    // so a reduced tier frees nothing while its log says otherwise.
-    ai.rever.boss.components.plugin.DefaultPlugin.Companion.resourceModeSkippedJarPaths = {
-        PluginStoreSetup.skippedJarPaths()
-    }
-
     // Note: no PSI or ProjectIndexer lifecycle here. The PSI stack lives in
     // the editor-tab plugin's bundled BossEditor now — the plugin warms it up
     // on register and shuts it down on dispose. (Indexing user.dir at startup

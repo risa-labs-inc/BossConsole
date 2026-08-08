@@ -171,43 +171,6 @@ class DefaultPlugin(
         var loadPersistedPluginsInternal: suspend (DynamicPluginManager) -> Unit = { _ ->
             // Default no-op - platform-specific code should set this
         }
-
-        /**
-         * Absolute jar paths the persisted load deliberately declined, e.g. because the resource
-         * mode gates plugin loading.
-         *
-         * Needed because the directory scan below treats "not in pluginStates" as "a jar someone
-         * dropped in manually" and installs it. A plugin the tier skipped is exactly that from the
-         * scan's point of view, so without this the two cancel out perfectly: the gate reports
-         * skipping 22 plugins and the scan loads all 22 straight back, freeing nothing while the
-         * log claims otherwise. Measured on a real launch before this existed - 22 skipped, 32
-         * loaded, which is every plugin installed.
-         *
-         * A path set rather than plugin ids, because the scan works on files and has not opened
-         * the jar yet, so an id is not available at the point the decision is made.
-         *
-         * Same seam as [loadPersistedPluginsInternal]: the decision lives in desktop-only code
-         * (`PluginStoreSetup`), and this object is common.
-         */
-        var resourceModeSkippedJarPaths: () -> Set<String> = { emptySet() }
-
-        /**
-         * Whether the external-plugin scan should install [jarPath].
-         *
-         * Two reasons not to, and conflating them is what shipped broken:
-         *  - [trackedJarPaths]: the persisted pass already handled it, loaded or rejected.
-         *  - [skippedJarPaths]: the resource tier declined it on purpose. Absent from
-         *    `pluginStates` for the same reason a hand-dropped jar is, so treating the two alike
-         *    made the scan reload every plugin the tier had just skipped.
-         *
-         * Pure and internal so the rule is testable without a manager or a directory - see
-         * `ResourceModeScanBypassTest`.
-         */
-        internal fun shouldScanInstall(
-            jarPath: String,
-            trackedJarPaths: Set<String>,
-            skippedJarPaths: Set<String>,
-        ): Boolean = jarPath !in trackedJarPaths && jarPath !in skippedJarPaths
     }
 
     private val logger = BossLogger.forComponent("DefaultPlugin")
@@ -1051,9 +1014,6 @@ class DefaultPlugin(
                     mapOf(
                         "count" to jarFiles.size,
                         "path" to pluginDir.absolutePath,
-                        // Proof the tier's skip list reached the scan. When this is 0 on a
-                        // reduced tier, the scan is about to reload everything the gate declined.
-                        "skippedByResourceMode" to resourceModeSkippedJarPaths().size,
                     ),
                 )
 
@@ -1068,13 +1028,8 @@ class DefaultPlugin(
                         .map { it.jarPath }
                         .toSet()
 
-                // Jars the persisted pass declined on purpose. They are absent from pluginStates
-                // for the same reason a manually-dropped jar is, so without this the scan would
-                // undo the resource mode's whole saving. See [resourceModeSkippedJarPaths].
-                val skippedByResourceMode = resourceModeSkippedJarPaths()
-
                 for (jarFile in jarFiles) {
-                    if (!shouldScanInstall(jarFile.absolutePath, trackedJarPaths, skippedByResourceMode)) continue
+                    if (jarFile.absolutePath in trackedJarPaths) continue
                     try {
                         logger.info(
                             LogCategory.SYSTEM,

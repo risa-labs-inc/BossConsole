@@ -9,11 +9,10 @@ import kotlin.test.assertTrue
 /**
  * Guards the resource-tier decision in [ResourceModeConfig].
  *
- * This decision is unusually expensive to get wrong in one direction. [BossResourceMode.ULTRA_LITE]
- * stops loading every plugin that is not on the `lite_eligible` allowlist, so a machine that lands
- * there by accident looks to its user like an install that lost its features - with no error and
- * nothing in the UI to blame. The asymmetry runs through these tests: over-reducing is treated as
- * the serious failure, under-reducing merely as a missed optimisation.
+ * Over-reducing is treated as the serious failure throughout, under-reducing merely as a missed
+ * optimisation. A machine that lands in a tighter tier by accident gets a capped browser and
+ * eager hibernation it never asked for; one that lands too loose only misses an optimisation.
+ * The asymmetry is deliberate, and it is why an unreadable memory reading resolves to FULL.
  */
 class ResourceModeTest {
     private val windows = "windows 11"
@@ -52,8 +51,8 @@ class ResourceModeTest {
 
     /**
      * The trap this test exists for: `"darwin"` contains the substring `"win"`, so a platform
-     * check written as `contains("win")` hands macOS the Windows branch. Under this feature that
-     * is not a cosmetic slip - it silently strips every non-allowlisted plugin from a Mac.
+     * check written as `contains("win")` hands macOS the Windows branch, which would silently
+     * put every Mac in the tightest tier.
      *
      * [JxBrowserRenderingModeTest] keeps the same case alive for the rendering-mode resolver.
      */
@@ -137,8 +136,8 @@ class ResourceModeTest {
 
     /**
      * An unreadable MXBean reports 0, which is "unknown", not "no memory". Treating it as a
-     * small machine would let one failed reflective call strip a 512 GB workstation of every
-     * plugin it has.
+     * small machine would let one failed reflective call put a 512 GB workstation in the
+     * tightest tier.
      */
     @Test
     fun `undetectable memory does not reduce`() {
@@ -169,7 +168,7 @@ class ResourceModeTest {
 
     @Test
     fun `an explicit tier beats the platform default`() {
-        // The escape hatch that matters most: a Windows user who wants their plugins back.
+        // The escape hatch that matters most: a Windows user who wants the unreduced app.
         val decision = resolve(raw = "FULL", os = windows, totalGb = 8.0)
         assertEquals(BossResourceMode.FULL, decision.mode)
         assertEquals(ResourceModeReason.USER_SELECTION, decision.reason)
@@ -234,26 +233,19 @@ class ResourceModeTest {
     fun `FULL constrains nothing`() {
         assertFalse(BossResourceMode.FULL.isReduced)
         assertEquals(null, BossResourceMode.FULL.rendererProcessLimit)
-        assertFalse(BossResourceMode.FULL.gatesPlugins)
         assertTrue(BossResourceMode.FULL.backgroundSamplingEnabled)
     }
 
-    /**
-     * LITE touches the browser and nothing else. This is the whole distinction between the two
-     * reduced tiers: LITE must stay invisible to the user, so if it ever starts gating plugins
-     * the tiers have collapsed into one and the Settings copy is lying.
-     */
     @Test
-    fun `LITE constrains the browser without touching plugins`() {
+    fun `LITE constrains the browser only`() {
         assertTrue(BossResourceMode.LITE.isReduced)
-        assertFalse(BossResourceMode.LITE.gatesPlugins)
         assertTrue(BossResourceMode.LITE.rendererProcessLimit!! > 0)
         assertTrue(BossResourceMode.LITE.hibernationIdleMs > 0)
+        assertTrue(BossResourceMode.LITE.backgroundSamplingEnabled)
     }
 
     @Test
-    fun `ULTRA_LITE gates plugins and is strictly tighter than LITE`() {
-        assertTrue(BossResourceMode.ULTRA_LITE.gatesPlugins)
+    fun `ULTRA_LITE is strictly tighter than LITE`() {
         assertFalse(BossResourceMode.ULTRA_LITE.backgroundSamplingEnabled)
         assertTrue(
             BossResourceMode.ULTRA_LITE.rendererProcessLimit!! <
@@ -266,11 +258,11 @@ class ResourceModeTest {
 
     /**
      * Every tier hibernates, increasingly eagerly. Deliberately no "never hibernate" option, even
-     * for FULL: that would reinstate the unbounded browser growth the tiers exist to prevent, and
-     * hibernation is the *only* remaining browser bound now that the concurrent-browser ceiling
-     * is gone. The ceiling was retired because it refused the tab the user had just asked for
-     * while idle ones sat untouched, and because it could not coexist with hibernation at all -
-     * waking a hibernated tab needs a slot, so switching tabs got refused.
+     * for FULL: hibernation is now the *only* browser bound. The concurrent-browser ceiling was
+     * retired because it refused the tab the user had just asked for while idle ones sat
+     * untouched, and because it could not coexist with hibernation at all - waking a hibernated
+     * tab needs a slot, so switching tabs got refused. Plugin gating was retired for the same
+     * class of reason: it took features away to save memory that hibernation reclaims silently.
      */
     @Test
     fun `every tier hibernates, and more eagerly as it tightens`() {
