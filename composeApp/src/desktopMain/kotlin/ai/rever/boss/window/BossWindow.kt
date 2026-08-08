@@ -604,6 +604,8 @@ fun ApplicationScope.BossWindow(
                     },
                 )
 
+                ResourceModeMenu()
+
                 Separator()
 
                 Item(

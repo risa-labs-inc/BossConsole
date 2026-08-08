@@ -3,6 +3,9 @@ package ai.rever.boss.config
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -25,9 +28,9 @@ data class ResourceModeSettingsData(
  * Reads and writes `~/.boss/resource-mode.json`.
  *
  * Every value here takes effect on the **next launch**, which is a property of the feature
- * rather than a limitation of the storage: plugin gating happens once during startup, and a
- * classloader that was already built cannot be un-built to reclaim its memory. Settings says
- * so rather than pretending otherwise.
+ * rather than a limitation of the storage: the renderer-process limit is a Chromium command-line
+ * switch, read once when the engine initialises and not re-readable afterwards. Both the Settings
+ * screen and the View menu say so rather than appearing to apply a change that has not happened.
  */
 object ResourceModeSettings {
     private val logger = BossLogger.forComponent("ResourceModeSettings")
@@ -38,14 +41,20 @@ object ResourceModeSettings {
             ignoreUnknownKeys = true
         }
 
-    @Volatile
-    private var cached: ResourceModeSettingsData? = null
+    // `by lazy` so the disk read still happens on first use rather than at class-init, which is
+    // what the hand-rolled double-checked cache here used to buy.
+    private val state: MutableStateFlow<ResourceModeSettingsData> by lazy { MutableStateFlow(load()) }
+
+    /**
+     * Observable settings, so every surface showing the mode agrees.
+     *
+     * There are two of them now - the Settings screen and the View menu - and a plain cached read
+     * left whichever composed first showing a stale selection until something else recomposed it.
+     */
+    val settings: StateFlow<ResourceModeSettingsData> get() = state.asStateFlow()
 
     /** Current persisted settings, defaults when the file is absent or unreadable. */
-    fun current(): ResourceModeSettingsData =
-        cached ?: synchronized(this) {
-            cached ?: load().also { cached = it }
-        }
+    fun current(): ResourceModeSettingsData = state.value
 
     fun update(transform: (ResourceModeSettingsData) -> ResourceModeSettingsData) {
         synchronized(this) {
@@ -53,7 +62,7 @@ object ResourceModeSettings {
             runCatching {
                 settingsFile.parentFile?.mkdirs()
                 settingsFile.writeText(json.encodeToString(ResourceModeSettingsData.serializer(), next))
-                cached = next
+                state.value = next
             }.onFailure { e ->
                 logger.warn(
                     LogCategory.SYSTEM,
