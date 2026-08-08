@@ -33,13 +33,19 @@ import java.lang.management.ManagementFactory
  */
 object SystemMemory {
     /**
-     * Free fraction above which macOS skips the `vm_stat` spawn entirely.
+     * How long a macOS `vm_stat` reading may be reused before spawning again.
      *
-     * Well clear of `MemoryPressureWatchdog.PRESSURE_THRESHOLD`, because `freeMemorySize` is a
-     * strict undercount of what is really available: if even that reads comfortable, the true
-     * figure is comfortable too.
+     * Chosen against the consumer, not the poll: `MemoryPressureWatchdog` requires pressure to
+     * persist for a full minute before it acts, so a reading this stale cannot change any
+     * decision it reaches. At the watchdog's 15 s poll this turns four spawns a minute into one.
+     *
+     * This replaced a free-fraction pre-filter that could never fire - `freeMemorySize` reads a
+     * few thousandths of total on a perfectly healthy Mac, so it failed any sensible gate and
+     * spawned every time regardless.
      */
-    private const val MAC_PREFILTER_FRACTION = 0.25
+    internal const val CACHE_TTL_MS = 30_000L
+
+    private const val CACHE_TTL_NANOS = CACHE_TTL_MS * 1_000_000L
 
     private const val VM_STAT_TIMEOUT_SECONDS = 5L
 
@@ -112,27 +118,36 @@ object SystemMemory {
             ?.toLongOrNull()
 
     private fun macAvailableBytes(): Long? {
-        if (!System
+        val isMac =
+            System
                 .getProperty("os.name")
                 .orEmpty()
                 .lowercase()
                 .startsWith("mac")
-        ) {
-            return null
-        }
+        if (!isMac) return null
 
-        // Cheap pre-filter. `freeMemorySize` is useless as the decision input (see the KDoc
-        // above - it read 0.0073 on a healthy machine) but that is exactly what makes it a good
-        // gate: it is always at or below the real figure, so a comfortable reading here proves
-        // there is no pressure without spawning anything. At a 15 s poll the alternative is
-        // roughly 5,760 subprocesses a day, in a feature whose whole purpose is holding
-        // footprint down.
-        val total = totalPhysicalBytes()
-        val cheap = osBean?.freeMemorySize ?: 0L
-        val comfortable = total > 0 && cheap.toDouble() / total > MAC_PREFILTER_FRACTION
-
-        return if (comfortable) cheap else vmStatAvailableBytes()
+        // Cached, not pre-filtered. The previous version gated the subprocess on
+        // `freeMemorySize / total > 0.25`, which cannot work: the KDoc above records that same
+        // number reading 0.0073 on a machine macOS itself called 92% free, and that is precisely
+        // why this method exists. A gate that a healthy machine fails is not a gate - it spawned
+        // vm_stat on every single poll, the ~5,760-a-day case it was written to avoid.
+        //
+        // A short TTL is the honest version of the same intent. The watchdog needs sustained
+        // pressure over a full minute before it acts, so a reading up to CACHE_TTL_MS stale
+        // cannot change any decision it makes, and the spawn rate drops by the poll:TTL ratio.
+        val now = System.nanoTime()
+        val cached = macCache?.takeIf { now - it.takenAtNanos < CACHE_TTL_NANOS }
+        return cached?.bytes ?: vmStatAvailableBytes()?.also { macCache = MacReading(it, now) }
     }
+
+    /** A `vm_stat` reading and when it was taken, so it can be reused briefly. */
+    private data class MacReading(
+        val bytes: Long,
+        val takenAtNanos: Long,
+    )
+
+    @Volatile
+    private var macCache: MacReading? = null
 
     private fun vmStatAvailableBytes(): Long? =
         runCatching {
@@ -148,11 +163,19 @@ object SystemMemory {
             // waitFor FIRST, then drain. Reading to EOF before waiting made the timeout
             // unreachable: a wedged vm_stat blocks in readText(), so waitFor was never called
             // and the guard described an intent the code did not implement.
-            if (!process.waitFor(VM_STAT_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)) {
-                process.destroyForcibly()
-                return@runCatching null
+            try {
+                if (!process.waitFor(VM_STAT_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)) {
+                    process.destroyForcibly()
+                    return@runCatching null
+                }
+                parseVmStatAvailableBytes(process.inputStream.bufferedReader().use { it.readText() })
+            } finally {
+                // The timeout branch returns without reading either stream, which would leave
+                // both descriptors to the finalizer. destroyForcibly does not close them.
+                process.inputStream.close()
+                process.errorStream.close()
+                process.outputStream.close()
             }
-            parseVmStatAvailableBytes(process.inputStream.bufferedReader().use { it.readText() })
         }.getOrNull()
 
     /**

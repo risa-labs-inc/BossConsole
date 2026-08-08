@@ -20,12 +20,18 @@ data class MemoryPressureNotice(
     val appliedMode: BossResourceMode,
     /** Free physical memory when the decision was made, as a percentage. */
     val freePercent: Int,
+) {
     /**
-     * True when the remaining savings need a restart, i.e. the session is already as
-     * constrained as it can get live and plugin gating is the only lever left.
+     * Whether restarting would reclaim more than this live tighten did.
+     *
+     * Derived, not stored. It was a constructor field that its one call site always passed
+     * `true` - a flag that could not be false, which is a fact about the code dressed up as
+     * data. It is true whenever a tier stricter than the applied one exists, because every
+     * remaining lever (the renderer cap) is a startup-only Chromium switch.
      */
-    val restartWouldHelpFurther: Boolean,
-)
+    val restartWouldHelpFurther: Boolean
+        get() = appliedMode.ordinal < BossResourceMode.entries.last().ordinal
+}
 
 /**
  * Tightens the resource tier when the machine is actually running out of memory, rather than
@@ -39,10 +45,11 @@ data class MemoryPressureNotice(
  * Deliberately narrow in what it does:
  *
  *  - It only ever tightens to [BossResourceMode.LITE], never [BossResourceMode.ULTRA_LITE].
- *    ULTRA_LITE's distinguishing lever is plugin gating, and plugins already loaded cannot be
- *    unloaded to reclaim memory (a classloader that exists cannot be un-built, and disabling
- *    skips `dispose()` and orphans child processes). Claiming ULTRA_LITE live would advertise
- *    a saving that did not happen; the notice asks for a restart instead.
+ *    What separates the two is the Chromium renderer limit, and that is a command-line switch
+ *    read once when the engine initialises - it cannot be lowered in place. Claiming ULTRA_LITE
+ *    live would advertise a saving that did not happen; the notice asks for a restart instead.
+ *    (This was justified by plugin gating until that was removed. The conclusion survived; the
+ *    reason did not.)
  *  - It requires the reading to be sustained, so one transient dip during a build does not
  *    cap the user's browser.
  *  - It never loosens. See [ResourceModeConfig.tightenTo].
@@ -195,9 +202,6 @@ object MemoryPressureWatchdog {
                             MemoryPressureNotice(
                                 appliedMode = BossResourceMode.LITE,
                                 freePercent = freePercent,
-                                // LITE is as far as a live downgrade can go; plugin gating is
-                                // the remaining saving and it needs a restart to take effect.
-                                restartWouldHelpFurther = true,
                             )
                     }
                     return@launch

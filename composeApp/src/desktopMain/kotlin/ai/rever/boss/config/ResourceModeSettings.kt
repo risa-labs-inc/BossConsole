@@ -83,8 +83,14 @@ object ResourceModeSettings {
         }
     }
 
+    // readText inside the runCatching, not outside it: current()'s contract is "defaults when the
+    // file is absent OR unreadable", and an existing-but-unreadable file throws an IOException
+    // that would escape the `by lazy` and take startup's publishToPlugins() with it.
     private fun load(): ResourceModeSettingsData =
-        if (settingsFile.exists()) decode(settingsFile.readText()) else ResourceModeSettingsData()
+        runCatching { if (settingsFile.exists()) settingsFile.readText() else null }
+            .getOrNull()
+            ?.let { decode(it) }
+            ?: ResourceModeSettingsData()
 
     /**
      * Parses the settings document, falling back to defaults rather than throwing.

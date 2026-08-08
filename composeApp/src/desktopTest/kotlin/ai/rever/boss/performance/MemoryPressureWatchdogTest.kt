@@ -97,8 +97,8 @@ class MemoryPressureWatchdogTest {
 
     /**
      * Already-reduced sessions are left alone. LITE is as far as a live downgrade can go, since
-     * ULTRA_LITE's distinguishing lever is plugin gating and loaded plugins cannot be unloaded
-     * to reclaim memory - so acting again would announce a saving that did not happen.
+     * what separates it from ULTRA_LITE is the Chromium renderer limit - a command-line switch
+     * fixed when the engine starts - so acting again would announce a saving that did not happen.
      */
     @Test
     fun `an already-reduced session is left alone`() {

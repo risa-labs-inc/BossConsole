@@ -14,15 +14,15 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -143,16 +143,38 @@ fun ResourceModeSettingsSection() {
     // already been updated optimistically.
     val pending = remember { mutableStateMapOf<String, Job>() }
 
+    // The pending write itself, kept alongside the job so leaving the screen can still run it.
+    val pendingWrites = remember { mutableStateMapOf<String, () -> Unit>() }
+
     fun persistDebounced(
         key: String,
         block: () -> Unit,
     ) {
         pending.remove(key)?.cancel()
+        pendingWrites[key] = block
         pending[key] =
             scope.launch(Dispatchers.IO) {
                 delay(PERSIST_DEBOUNCE_MS)
                 block()
+                pendingWrites.remove(key)
             }
+    }
+
+    // Flush on the way out. `scope` is rememberCoroutineScope(), so it is cancelled when this
+    // screen leaves composition - typing a threshold and switching tabs within the debounce
+    // window otherwise dropped the edit silently, and with no optimistic copy the field simply
+    // showed the old value again next time. Same failure the per-field keying above fixes for
+    // the sibling-field case; this is the dispose case of it.
+    DisposableEffect(Unit) {
+        onDispose {
+            val outstanding = pendingWrites.values.toList()
+            pendingWrites.clear()
+            if (outstanding.isNotEmpty()) {
+                // A detached scope: `scope` is already cancelled by the time onDispose runs,
+                // so launching the flush on it would be a no-op.
+                CoroutineScope(Dispatchers.IO).launch { outstanding.forEach { it() } }
+            }
+        }
     }
 
     val options = listOf(AUTO_LABEL) + BossResourceMode.entries.map { it.settingsLabel() }
@@ -279,7 +301,8 @@ private fun AutomaticSelectionSection(
             onCheckedChange = { on -> onChanged(ResourceModeField.LivePressure(on)) },
             description =
                 "Switch to Lite mid-session when available memory stays low, and say so. " +
-                    "Installed memory alone cannot tell how much is actually free.",
+                    "Installed memory alone cannot tell how much is actually free. Takes effect " +
+                    "on the next launch: the watchdog reads this once, when it starts.",
         )
     }
 }

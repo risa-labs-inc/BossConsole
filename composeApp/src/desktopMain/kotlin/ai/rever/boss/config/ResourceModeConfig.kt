@@ -126,9 +126,10 @@ enum class ResourceModeReason {
      * directly above it.
      *
      * `local.properties` is worth calling out because it persists across every run of a checkout
-     * with nothing in the UI to reveal it. That is acceptable here only because a tier can never
-     * *grant* capability - see the object KDoc - but it does mean a developer who sets it and
-     * forgets will keep launching reduced.
+     * with nothing in the UI to reveal it, and because under an override the Settings radios are
+     * disabled - so a developer who set it and forgot keeps launching reduced, with the one
+     * control that looks like it should fix it greyed out. See the object KDoc for why that is
+     * accepted, and why "a tier only removes capability" is *not* the reason.
      */
     ENVIRONMENT_OVERRIDE,
 
@@ -185,6 +186,14 @@ enum class ResourceModeSource {
             PRESSURE_RESTART -> ResourceModeReason.PRESSURE_RESTART
             SETTINGS -> ResourceModeReason.USER_SELECTION
         }
+
+    /** Where to tell the operator to look, when a value from here could not be honoured. */
+    fun describeOrigin(): String =
+        when (this) {
+            ENVIRONMENT -> ResourceModeConfig.MODE_KEY
+            PRESSURE_RESTART -> "resource-mode.json (nextLaunchMode)"
+            SETTINGS -> "resource-mode.json (selectedMode)"
+        }
 }
 
 /**
@@ -214,9 +223,21 @@ data class ResourceModeThresholds(
  * without an engine, a window or a machine of a particular size.
  *
  * Read through [ConfigLoader] (env var, system property or local.properties), matching
- * `BOSS_RENDERING_MODE`. The rule that capability-granting keys must bypass ConfigLoader
- * does not apply here: every tier only ever *removes* capability, so a local.properties
- * value cannot grant this process anything it did not already have.
+ * `BOSS_RENDERING_MODE`.
+ *
+ * **This is not covered by "a tier only removes capability", and that justification should not be
+ * reused.** It was the original reasoning here and it is wrong: `--renderer-process-limit` is a
+ * security control, not only a memory one. Lowering it forces unrelated origins to share a
+ * renderer, which is exactly the boundary Site Isolation exists to hold, so a tighter tier widens
+ * the blast radius of a renderer compromise rather than narrowing anything. That is a capability
+ * *change*, not a removal.
+ *
+ * It is accepted here on narrower grounds: `local.properties` is a developer-checkout file that
+ * ships in no build, the tightest limit BOSS sets (2) is still Chromium's own documented switch
+ * rather than `--disable-site-isolation-trials`, and the value is surfaced in Settings and in the
+ * startup log. The sharp edge left is that a stale entry persists across every run of a checkout
+ * with nothing in the UI to clear it - see [ResourceModeReason.ENVIRONMENT_OVERRIDE]. A key that
+ * granted capability would still have to bypass ConfigLoader entirely.
  *
  * Not to be confused with `BOSS_MODE` / `boss.mode`, which is the orthogonal
  * kernel-versus-normal axis read by `PluginStoreSetup.isKernelMode`.
@@ -235,6 +256,10 @@ object ResourceModeConfig {
 
     /** Whether the live memory-pressure watchdog may downgrade mid-session. */
     const val LIVE_PRESSURE_KEY = "BOSS_RESOURCE_LIVE_PRESSURE"
+
+    /** Matches `range = 1..1024` on the Settings inputs, so both paths agree. */
+    internal const val MIN_THRESHOLD_GB = 1
+    internal const val MAX_THRESHOLD_GB = 1024
 
     internal const val DEFAULT_LITE_THRESHOLD_GB = 16
     internal const val DEFAULT_ULTRA_LITE_THRESHOLD_GB = 8
@@ -259,22 +284,12 @@ object ResourceModeConfig {
         // BOSS_RENDERING_MODE behaves: the operator's environment is the outer authority, and
         // it is the escape hatch when a persisted choice turns out to be the problem.
         val fromEnvironment = ConfigLoader.getConfig(MODE_KEY)
-        // Between the two sits the one-shot pressure request, which has to outrank the stored
-        // selection (it exists precisely because that selection was too loose for this machine)
-        // while never becoming it.
-        val fromPressure = settings.nextLaunchMode
-        val raw = fromEnvironment ?: fromPressure ?: settings.selectedMode
-        val source =
-            when {
-                fromEnvironment != null -> ResourceModeSource.ENVIRONMENT
-                fromPressure != null -> ResourceModeSource.PRESSURE_RESTART
-                else -> ResourceModeSource.SETTINGS
-            }
-        // Consumed here, so it applies to exactly the one launch it was requested for. Only
-        // written when actually set, which keeps tests that merely read `decision` off the disk.
-        if (fromPressure != null) {
-            ResourceModeSettings.update { it.copy(nextLaunchMode = null) }
-        }
+        val (raw, source) =
+            resolveRawAndSource(
+                fromEnvironment = fromEnvironment,
+                fromPressure = settings.nextLaunchMode,
+                fromSettings = settings.selectedMode,
+            )
         val os = System.getProperty("os.name").orEmpty().lowercase()
         val totalBytes = SystemMemory.totalPhysicalBytes()
         val resolved =
@@ -294,10 +309,18 @@ object ResourceModeConfig {
         if (!raw.isNullOrBlank() && !isRecognizedResourceMode(raw)) {
             // Unset and AUTO are the normal cases and stay silent. Only a value we could
             // not honour is worth a warning, since it otherwise silently keeps the default.
+            //
+            // Named by its real origin. This used to say "$MODE_KEY" whatever the source, so an
+            // unreadable `selectedMode` in resource-mode.json - written by a newer build, or hand
+            // edited - pointed the operator at an environment variable they had never set.
             logger.warn(
                 LogCategory.SYSTEM,
-                "Ignoring unrecognized $MODE_KEY - falling back to automatic selection",
-                mapOf("value" to raw, "using" to resolved.mode.name),
+                "Ignoring unrecognized resource mode - falling back to automatic selection",
+                mapOf(
+                    "value" to raw,
+                    "from" to source.describeOrigin(),
+                    "using" to resolved.mode.name,
+                ),
             )
         }
 
@@ -401,13 +424,40 @@ object ResourceModeConfig {
     const val HIBERNATION_IDLE_PROPERTY = "boss.browser.hibernationIdleMs"
 
     /**
-     * Publishes the tier's settings where plugins can read them. Call once, at startup.
+     * Publishes the tier's settings where plugins can read them, and consumes any one-shot
+     * request. Call once, at startup.
      *
-     * Separate from [decision] so that merely *asking* the tier never mutates global state.
+     * The consumption lives here rather than in [decision] so that merely *asking* what tier this
+     * is never writes to disk. A lazy that wrote to `~/.boss` as a side effect made every test
+     * that so much as rendered the Settings screen touch the developer's real home directory, and
+     * made the one-shot's "exactly once" depend on who read the value first.
      */
     fun publishToPlugins() {
         System.setProperty(HIBERNATION_IDLE_PROPERTY, mode.hibernationIdleMs.toString())
+        if (decision.reason == ResourceModeReason.PRESSURE_RESTART) {
+            ResourceModeSettings.update { it.copy(nextLaunchMode = null) }
+            logger.info(LogCategory.SYSTEM, "Consumed the one-shot resource-mode request")
+        }
     }
+
+    /**
+     * Picks the explicit tier string and says where it came from. Pure, so the precedence is
+     * testable without an environment, a settings file or a machine.
+     *
+     * Environment beats the one-shot beats the stored selection. The one-shot has to outrank the
+     * selection - it exists precisely because that selection was too loose for this machine - and
+     * must never *become* it.
+     */
+    internal fun resolveRawAndSource(
+        fromEnvironment: String?,
+        fromPressure: String?,
+        fromSettings: String?,
+    ): Pair<String?, ResourceModeSource> =
+        when {
+            fromEnvironment != null -> fromEnvironment to ResourceModeSource.ENVIRONMENT
+            fromPressure != null -> fromPressure to ResourceModeSource.PRESSURE_RESTART
+            else -> fromSettings to ResourceModeSource.SETTINGS
+        }
 
     /**
      * Pure part of [decision], split out so the platform and memory decisions are testable
@@ -511,6 +561,12 @@ object ResourceModeConfig {
                 it in AUTO_SPELLINGS
         }
 
+    /**
+     * A GB threshold from the environment, bounded to the same range the Settings input allows.
+     *
+     * Bounded because the UI's `range = 1..1024` was the only thing enforcing it, which left
+     * `BOSS_RESOURCE_LITE_GB=100000` putting every machine that ever runs BOSS into LITE.
+     */
     private fun thresholdGb(
         key: String,
         default: Int,
@@ -520,6 +576,7 @@ object ResourceModeConfig {
             ?.trim()
             ?.toIntOrNull()
             ?.takeIf { it > 0 }
+            ?.coerceIn(MIN_THRESHOLD_GB, MAX_THRESHOLD_GB)
             ?: default
 
     internal const val BYTES_PER_GB = 1024L * 1024L * 1024L

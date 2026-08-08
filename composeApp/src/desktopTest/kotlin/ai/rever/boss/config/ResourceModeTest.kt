@@ -261,6 +261,104 @@ class ResourceModeTest {
 
     // endregion
 
+    // region precedence
+
+    /**
+     * The impure half of [ResourceModeConfig.decision]: which of three possible sources wins, and
+     * what the resulting decision is attributed to. This ordering was reshaped by two rounds of
+     * review and had no test until the third asked for one.
+     */
+    @Test
+    fun `the environment outranks both stored values`() {
+        val (raw, source) =
+            ResourceModeConfig.resolveRawAndSource(
+                fromEnvironment = "FULL",
+                fromPressure = "ULTRALITE",
+                fromSettings = "LITE",
+            )
+        assertEquals("FULL", raw)
+        assertEquals(ResourceModeSource.ENVIRONMENT, source)
+    }
+
+    /**
+     * The one-shot has to beat the stored selection: it exists precisely because that selection
+     * turned out to be too loose for this machine.
+     */
+    @Test
+    fun `a pressure request outranks the stored selection`() {
+        val (raw, source) =
+            ResourceModeConfig.resolveRawAndSource(
+                fromEnvironment = null,
+                fromPressure = "ULTRALITE",
+                fromSettings = "LITE",
+            )
+        assertEquals("ULTRALITE", raw)
+        assertEquals(ResourceModeSource.PRESSURE_RESTART, source)
+    }
+
+    @Test
+    fun `the stored selection is used when nothing outranks it`() {
+        val (raw, source) =
+            ResourceModeConfig.resolveRawAndSource(
+                fromEnvironment = null,
+                fromPressure = null,
+                fromSettings = "LITE",
+            )
+        assertEquals("LITE", raw)
+        assertEquals(ResourceModeSource.SETTINGS, source)
+    }
+
+    @Test
+    fun `nothing set at all resolves to no explicit value`() {
+        val (raw, source) =
+            ResourceModeConfig.resolveRawAndSource(
+                fromEnvironment = null,
+                fromPressure = null,
+                fromSettings = null,
+            )
+        assertEquals(null, raw)
+        // SETTINGS is the resting source; with a null raw it never reaches a reason anyway.
+        assertEquals(ResourceModeSource.SETTINGS, source)
+    }
+
+    /** Every source must name somewhere a person can actually go and look. */
+    @Test
+    fun `each source names its own origin`() {
+        val origins = ResourceModeSource.entries.map { it.describeOrigin() }
+        assertEquals(origins.size, origins.toSet().size, "two sources point at the same place")
+        for (origin in origins) assertTrue(origin.isNotBlank())
+        assertEquals(ResourceModeConfig.MODE_KEY, ResourceModeSource.ENVIRONMENT.describeOrigin())
+    }
+
+    // endregion
+
+    // region live tighten
+
+    @Test
+    fun `tightenTo refuses to loosen and reports whether it changed anything`() {
+        // Ordinal order is the contract tightenTo relies on: FULL < LITE < ULTRA_LITE.
+        assertTrue(BossResourceMode.FULL.ordinal < BossResourceMode.LITE.ordinal)
+        assertTrue(BossResourceMode.LITE.ordinal < BossResourceMode.ULTRA_LITE.ordinal)
+
+        // Tightening to the tier already in force is not a change, in either direction.
+        val current = ResourceModeConfig.mode
+        assertFalse(ResourceModeConfig.tightenTo(current), "same tier reported a change")
+        for (looser in BossResourceMode.entries.filter { it.ordinal < current.ordinal }) {
+            assertFalse(ResourceModeConfig.tightenTo(looser), "loosened to ${looser.name}")
+            assertEquals(current, ResourceModeConfig.mode, "mode moved after refusing ${looser.name}")
+        }
+    }
+
+    /** The published contract plugins read. A typo here is invisible until a plugin misbehaves. */
+    @Test
+    fun `publishToPlugins exposes the tier timing as a system property`() {
+        ResourceModeConfig.publishToPlugins()
+        val published = System.getProperty(ResourceModeConfig.HIBERNATION_IDLE_PROPERTY)
+        assertEquals(ResourceModeConfig.mode.hibernationIdleMs.toString(), published)
+    }
+
+    // endregion
+
     // region tier table
 
     @Test
