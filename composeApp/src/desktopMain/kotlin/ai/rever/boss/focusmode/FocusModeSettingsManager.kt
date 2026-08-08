@@ -29,7 +29,15 @@ actual object FocusModeSettingsManager {
             ignoreUnknownKeys = true
         }
 
-    private val _currentSettings = MutableStateFlow(FocusModeSettings())
+    /**
+     * Fresh settings for this platform. Hover-to-reveal starts OFF on Windows, where the
+     * HARDWARE browser surface swallows the pointer events the reveal depends on - see
+     * [FocusModeSettings.defaultAutoReveal].
+     */
+    private val platformDefaults: FocusModeSettings
+        get() = FocusModeSettings.defaultsFor(System.getProperty("os.name").orEmpty())
+
+    private val _currentSettings = MutableStateFlow(platformDefaults)
     actual val currentSettings: StateFlow<FocusModeSettings> = _currentSettings.asStateFlow()
 
     init {
@@ -54,7 +62,7 @@ actual object FocusModeSettingsManager {
             } else {
                 // First run - create default settings file
                 logger.debug(LogCategory.SYSTEM, "No settings file found, using defaults")
-                val defaultSettings = FocusModeSettings()
+                val defaultSettings = platformDefaults
                 _currentSettings.value = defaultSettings
 
                 // Save default settings to file
@@ -68,7 +76,7 @@ actual object FocusModeSettingsManager {
             }
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Failed to load settings, falling back to defaults", error = e)
-            _currentSettings.value = FocusModeSettings()
+            _currentSettings.value = platformDefaults
         }
     }
 
@@ -127,6 +135,6 @@ actual object FocusModeSettingsManager {
      * Reset to default settings.
      */
     actual suspend fun resetToDefault() {
-        updateSettings(FocusModeSettings())
+        updateSettings(platformDefaults)
     }
 }

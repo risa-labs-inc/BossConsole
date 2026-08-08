@@ -74,4 +74,53 @@ class FocusModeSettingsTest {
         assertTrue(toggled.autoRevealEnabled, "Auto-reveal should be preserved")
         assertEquals(15f, toggled.revealOffsetPx, "Reveal offset should be preserved")
     }
+
+    // region platform defaults
+
+    /**
+     * Hover-to-reveal starts OFF on Windows because the mechanism cannot work there. Reveal is
+     * driven by Compose `onPointerEvent(Enter/Exit)` on edge strips, and Windows runs the browser
+     * in HARDWARE mode, where Chromium owns a foreign native window that composites over the
+     * Compose scene. The OS routes pointer events to that window, so Compose never sees the
+     * pointer reach an edge strip beneath the browser: a user in focus mode with a browser tab
+     * open would sweep the edge and the bars would simply never come back.
+     */
+    @Test
+    fun `windows starts with hover-to-reveal off`() {
+        for (os in listOf("Windows 10", "Windows 11", "Windows Server 2022", "windows")) {
+            assertFalse(FocusModeSettings.defaultAutoReveal(os), os)
+            assertFalse(FocusModeSettings.defaultsFor(os).autoRevealEnabled, os)
+        }
+    }
+
+    @Test
+    fun `every other platform keeps hover-to-reveal on`() {
+        for (os in listOf("Mac OS X", "macOS", "Linux", "FreeBSD", "SunOS", "")) {
+            assertTrue(FocusModeSettings.defaultAutoReveal(os), os)
+            assertTrue(FocusModeSettings.defaultsFor(os).autoRevealEnabled, os)
+        }
+    }
+
+    /**
+     * `"darwin"` contains `"win"`. A check written with `contains` would disable a feature on
+     * macOS that works perfectly well there. The same trap is pinned in `ResourceModeTest` and
+     * `JxBrowserRenderingModeTest`.
+     */
+    @Test
+    fun `darwin is not windows`() {
+        assertTrue(FocusModeSettings.defaultAutoReveal("darwin"))
+    }
+
+    /** Only the reveal default is platform-specific; focus mode itself stays off everywhere. */
+    @Test
+    fun `the platform default changes nothing else`() {
+        val win = FocusModeSettings.defaultsFor("Windows 11")
+        val mac = FocusModeSettings.defaultsFor("Mac OS X")
+        assertFalse(win.enabled)
+        assertFalse(mac.enabled)
+        assertEquals(mac.revealOffsetPx, win.revealOffsetPx)
+        assertEquals(mac.revealDelayMs, win.revealDelayMs)
+    }
+
+    // endregion
 }
