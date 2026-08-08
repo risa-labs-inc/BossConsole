@@ -1,7 +1,6 @@
 package ai.rever.boss.plugin.browser
 
 import ai.rever.boss.components.plugin.getBrowserServiceInstance
-import ai.rever.boss.config.BossResourceMode
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals

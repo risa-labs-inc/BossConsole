@@ -62,7 +62,9 @@ fun MenuScope.ResourceModeMenu() {
     val persisted by ResourceModeSettings.settings.collectAsState()
 
     val decision = ResourceModeConfig.decision
-    val liveMode = ResourceModeConfig.mode
+    // Collected, not read as a plain value: StateFlow.value is not a snapshot read, so after a
+    // live tighten "Running as Full" would sit there until an unrelated recomposition.
+    val liveMode by ResourceModeConfig.effectiveMode.collectAsState()
     val forcedByEnvironment = decision.reason == ResourceModeReason.ENVIRONMENT_OVERRIDE
 
     fun select(name: String?) {

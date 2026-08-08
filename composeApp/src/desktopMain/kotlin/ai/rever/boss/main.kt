@@ -639,6 +639,11 @@ fun main(args: Array<String>) {
     // Start global log capture from app startup
     GlobalLogCapture.start()
 
+    // Hand the tier's browser settings to plugins, which cannot see host classes. Before any
+    // plugin loads, so fluck-browser sees it when it first builds a tab.
+    ai.rever.boss.config.ResourceModeConfig
+        .publishToPlugins()
+
     // Start performance monitoring from app startup — unless the resource tier says the
     // sampler's own overhead is not worth paying on this machine.
     if (ai.rever.boss.config.ResourceModeConfig.mode.backgroundSamplingEnabled) {

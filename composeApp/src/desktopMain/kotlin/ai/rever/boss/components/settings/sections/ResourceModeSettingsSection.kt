@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -43,6 +44,12 @@ private typealias ModeSettings = ai.rever.boss.config.ResourceModeSettingsData
 
 private sealed interface ResourceModeField {
     fun applyTo(current: ModeSettings): ModeSettings
+
+    /**
+     * Debounce identity. Distinct per field so an edit to one threshold cannot cancel the pending
+     * write of the other, which silently dropped it.
+     */
+    val debounceKey: String get() = this::class.simpleName.orEmpty()
 
     data class LiteThreshold(
         val gb: Int,
@@ -79,6 +86,10 @@ private fun ResourceModeReason.explain(mode: BossResourceMode): String =
             "${mode.displayName}, because you selected it"
         }
 
+        ResourceModeReason.PRESSURE_RESTART -> {
+            "${mode.displayName}, for this launch only, after low memory"
+        }
+
         ResourceModeReason.PLATFORM_DEFAULT -> {
             "${mode.displayName}, the default on this platform"
         }
@@ -101,7 +112,14 @@ private fun ResourceModeReason.explain(mode: BossResourceMode): String =
  */
 @Composable
 fun ResourceModeSettingsSection() {
-    var persisted by remember { mutableStateOf(ResourceModeSettings.current()) }
+    // Observed, not snapshotted. A one-shot `remember { current() }` here left this screen showing
+    // a stale selection whenever anything else wrote one while it was composed - the View menu, or
+    // the memory-pressure dialog's restart button.
+    val persisted by ResourceModeSettings.settings.collectAsState()
+
+    // Likewise a flow: after a live tighten, a plain `ResourceModeConfig.mode` read left "Running
+    // as Full" on screen until an unrelated recomposition happened to refresh it.
+    val liveMode by ResourceModeConfig.effectiveMode.collectAsState()
 
     val decision = ResourceModeConfig.decision
     val totalGb =
@@ -116,13 +134,21 @@ fun ResourceModeSettingsSection() {
         scope.launch(Dispatchers.IO) { block() }
     }
 
-    // The typed number inputs are debounced on their own job handle: SettingsNumberInput fires
-    // onValueChange per keystroke, so typing "128" would otherwise rewrite the JSON three times.
-    var pendingThreshold by remember { mutableStateOf<Job?>(null) }
+    // The typed number inputs are debounced: SettingsNumberInput fires onValueChange per
+    // keystroke, so typing "128" would otherwise rewrite the JSON three times.
+    //
+    // Keyed per field, not one shared handle. A single job meant that touching the second
+    // threshold within the debounce window cancelled the first one's pending write, which was
+    // then never reissued - and the UI kept showing the lost value, because `persisted` had
+    // already been updated optimistically.
+    val pending = remember { mutableStateMapOf<String, Job>() }
 
-    fun persistDebounced(block: () -> Unit) {
-        pendingThreshold?.cancel()
-        pendingThreshold =
+    fun persistDebounced(
+        key: String,
+        block: () -> Unit,
+    ) {
+        pending.remove(key)?.cancel()
+        pending[key] =
             scope.launch(Dispatchers.IO) {
                 delay(PERSIST_DEBOUNCE_MS)
                 block()
@@ -143,9 +169,11 @@ fun ResourceModeSettingsSection() {
             options = options,
             selectedLabel = selectedLabel,
             decision = decision,
+            liveMode = liveMode,
             totalGb = totalGb,
+            // No optimistic local copy: the write updates the StateFlow this screen collects, so
+            // the radio state arrives back through the same path an external change would.
             onSelected = { name ->
-                persisted = persisted.copy(selectedMode = name)
                 persist { ResourceModeSettings.update { it.copy(selectedMode = name) } }
             },
         )
@@ -156,11 +184,16 @@ fun ResourceModeSettingsSection() {
             // the screen composed clobbers any concurrent write - most concretely
             // requestUltraLiteOnNextLaunch() firing from the memory-pressure dialog, which would
             // silently undo the "Restart in Ultra Lite" the user had just clicked.
+            // SettingsNumberInput keys its own text state on `value`, so it holds what was typed
+            // until the write lands - no optimistic copy needed to keep the field responsive.
             onChanged = { field ->
-                persisted = field.applyTo(persisted)
                 val write = { ResourceModeSettings.update { current -> field.applyTo(current) } }
                 // The toggle is one discrete event; only the typed thresholds need settling.
-                if (field is ResourceModeField.LivePressure) persist(write) else persistDebounced(write)
+                if (field is ResourceModeField.LivePressure) {
+                    persist(write)
+                } else {
+                    persistDebounced(field.debounceKey, write)
+                }
             },
         )
     }
@@ -172,6 +205,7 @@ private fun ModeSelectorSection(
     options: List<String>,
     selectedLabel: String,
     decision: ai.rever.boss.config.ResourceModeDecision,
+    liveMode: BossResourceMode,
     totalGb: Double,
     onSelected: (String?) -> Unit,
 ) {
@@ -184,17 +218,18 @@ private fun ModeSelectorSection(
                 onSelected(BossResourceMode.entries.firstOrNull { it.settingsLabel() == label }?.name)
             },
             description =
-                "Takes effect on the next launch. Plugin loading happens once at startup, so a " +
-                    "tier change cannot apply to a session already running.",
+                "Takes effect on the next launch. Chromium's process limit is a command-line " +
+                    "switch read once when the browser engine starts, so a tier change cannot " +
+                    "apply to a session already running.",
         )
 
         SettingsInfoRow(
             label = "Running as",
             value = decision.reason.explain(decision.mode),
             description =
-                if (ResourceModeConfig.mode != decision.mode) {
-                    "Tightened to ${ResourceModeConfig.mode.displayName} during this session " +
-                        "after sustained low memory."
+                if (liveMode != decision.mode) {
+                    "Tightened to ${liveMode.displayName} during this session after sustained " +
+                        "low memory."
                 } else {
                     null
                 },

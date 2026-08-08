@@ -33,19 +33,30 @@ class ResourceModeTest {
 
     // region platform
 
+    /**
+     * LITE, not ULTRA_LITE. The renderer limit is a security control as well as a memory one:
+     * ULTRA_LITE's limit of 2 forces nearly every tab into a shared process, collapsing the Site
+     * Isolation boundary. Not a default worth shipping to a whole platform.
+     */
     @Test
-    fun `windows defaults to ULTRA_LITE regardless of how much memory it has`() {
+    fun `windows defaults to LITE regardless of how much memory it has`() {
         for (totalGb in listOf(8.0, 16.0, 64.0, 512.0)) {
             val decision = resolve(os = windows, totalGb = totalGb)
-            assertEquals(BossResourceMode.ULTRA_LITE, decision.mode, "at ${totalGb}GB")
+            assertEquals(BossResourceMode.LITE, decision.mode, "at ${totalGb}GB")
             assertEquals(ResourceModeReason.PLATFORM_DEFAULT, decision.reason, "at ${totalGb}GB")
         }
     }
 
     @Test
+    fun `the windows default keeps site isolation usable`() {
+        val limit = BossResourceMode.LITE.rendererProcessLimit!!
+        assertTrue(limit > BossResourceMode.ULTRA_LITE.rendererProcessLimit!!, "limit=$limit")
+    }
+
+    @Test
     fun `every windows spelling is caught`() {
         for (os in listOf("windows 10", "windows 11", "windows server 2022", "windows")) {
-            assertEquals(BossResourceMode.ULTRA_LITE, resolve(os = os, totalGb = 64.0).mode, os)
+            assertEquals(BossResourceMode.LITE, resolve(os = os, totalGb = 64.0).mode, os)
         }
     }
 
@@ -116,10 +127,33 @@ class ResourceModeTest {
                 raw = "LITE",
                 os = mac,
                 totalMemoryBytes = 64 * gb,
-                explicitCameFromEnvironment = true,
+                explicitSource = ResourceModeSource.ENVIRONMENT,
             )
         assertEquals(ResourceModeReason.ENVIRONMENT_OVERRIDE, fromEnv.reason)
         assertEquals(ResourceModeReason.USER_SELECTION, resolve(raw = "LITE").reason)
+    }
+
+    /**
+     * A pressure restart must not read as a user selection. It is neither permanent nor chosen,
+     * and Settings exists to explain how the tier was picked.
+     */
+    @Test
+    fun `a pressure restart is its own reason`() {
+        val decision =
+            ResourceModeConfig.resolveResourceMode(
+                raw = "ULTRALITE",
+                os = mac,
+                totalMemoryBytes = 64 * gb,
+                explicitSource = ResourceModeSource.PRESSURE_RESTART,
+            )
+        assertEquals(BossResourceMode.ULTRA_LITE, decision.mode)
+        assertEquals(ResourceModeReason.PRESSURE_RESTART, decision.reason)
+    }
+
+    @Test
+    fun `every source maps to a distinct reason`() {
+        val reasons = ResourceModeSource.entries.map { it.toReason() }
+        assertEquals(reasons.size, reasons.toSet().size, "sources collapsed onto one reason")
     }
 
     @Test

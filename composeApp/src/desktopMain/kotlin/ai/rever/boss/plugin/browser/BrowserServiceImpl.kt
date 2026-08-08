@@ -234,7 +234,6 @@ private object WedgeRecovery {
  *
  * Singleton, shared across all plugins.
  */
-
 object BrowserServiceImpl : BrowserService {
     private val logger = BossLogger.forComponent("BrowserServiceImpl")
 
@@ -249,15 +248,20 @@ object BrowserServiceImpl : BrowserService {
      * `window.close()`. There is no close subscription here to notice any of them, so the map
      * keeps entries for browsers that no longer exist.
      *
-     * That drift is cosmetic now - it only skews `getActiveBrowserCount()` and leaks a managed
-     * profile reference. It was briefly load-bearing, while a concurrent-browser ceiling existed,
-     * because each orphan permanently consumed a slot. The ceiling is gone (hibernation replaced
-     * it), so this is back to hygiene, and is kept because releasing the managed profile still
-     * matters.
+     * It was briefly load-bearing, while a concurrent-browser ceiling existed, because each
+     * orphan permanently consumed a slot. The ceiling is gone (hibernation replaced it), so what
+     * remains is a wrong count and, more importantly, a leaked managed-profile reference: those
+     * are reference-counted behind a per-named-profile fence, so never releasing one leaves the
+     * fence held for the rest of the session.
+     *
+     * Called from [getActiveBrowserCount], which is the one place that both wants the number to
+     * be true and runs often enough to keep profiles from accumulating. Hibernation makes this
+     * matter more than it used to: a hibernated tab disposes its browser through the plugin's own
+     * handle, which is exactly the path that never reaches this map.
      *
      * @return the number of live handles after pruning.
      */
-    internal fun reconcileBrowserReservations(): Int {
+    internal fun reconcileOrphanedBrowsers(): Int {
         val orphans = activeBrowsers.entries.filter { !it.value.isValid }
         for ((id, handle) in orphans) {
             if (activeBrowsers.remove(id, handle)) {
@@ -405,7 +409,7 @@ object BrowserServiceImpl : BrowserService {
         config: BrowserConfig,
     ): BrowserHandle? {
         require(windowId.isNotBlank()) { "Browser owner windowId must not be blank" }
-        return createBrowser(config, ownerWindowId = windowId)
+        return createBrowserWithRetry(config, ownerWindowId = windowId)
     }
 
     internal fun finishBrowserCreation(windowId: String) {
@@ -433,11 +437,6 @@ object BrowserServiceImpl : BrowserService {
      * The memory bound is hibernation instead (see `BossResourceMode.hibernationIdleMs`), which
      * reclaims from tabs nobody is using rather than refusing work.
      */
-    private suspend fun createBrowser(
-        config: BrowserConfig,
-        ownerWindowId: String,
-    ): BrowserHandle? = createBrowserWithRetry(config, ownerWindowId)
-
     private suspend fun createBrowserWithRetry(
         config: BrowserConfig,
         ownerWindowId: String,
@@ -589,8 +588,6 @@ object BrowserServiceImpl : BrowserService {
     }
 
     override suspend fun disposeBrowser(handle: BrowserHandle) {
-        // Conditional on an actual removal: disposing a handle twice, or one that never reached
-        // the map, must not hand back a reservation slot that was never taken.
         activeBrowsers.remove(handle.id)
         browserOwners.unregister(handle.id)
         try {
@@ -628,7 +625,7 @@ object BrowserServiceImpl : BrowserService {
         )
     }
 
-    override fun getActiveBrowserCount(): Int = activeBrowsers.size
+    override fun getActiveBrowserCount(): Int = reconcileOrphanedBrowsers()
 
     internal fun getActiveBrowserCountForWindow(windowId: String): Int = browserOwners.count(windowId)
 

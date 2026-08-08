@@ -140,6 +140,11 @@ object SystemMemory {
                 ProcessBuilder("/usr/bin/vm_stat")
                     .redirectErrorStream(true)
                     .start()
+            // Safe for vm_stat specifically: its output is a fixed ~1 KB table, well under the
+            // OS pipe buffer, so it cannot block writing while nothing drains. Do not copy this
+            // ordering to a command with unbounded output - there it would deadlock until the
+            // timeout. It is this way round because:
+            //
             // waitFor FIRST, then drain. Reading to EOF before waiting made the timeout
             // unreachable: a wedged vm_stat blocks in readText(), so waitFor was never called
             // and the guard described an intent the code did not implement.

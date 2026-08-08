@@ -2,7 +2,6 @@ package ai.rever.boss.performance
 
 import ai.rever.boss.config.BossResourceMode
 import kotlin.test.Test
-import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -45,5 +44,40 @@ class MemoryPressureCopyTest {
     @Test
     fun `a tier that changes nothing live says so rather than inventing an effect`() {
         assertTrue(changeSummary(BossResourceMode.FULL).contains("nothing"))
+    }
+
+    /**
+     * The restart sentence drifted the same way the summary did, and for longer. It promised that
+     * restarting in Ultra Lite "would also skip non-essential plugins on the way up", which
+     * stopped being true the moment plugin gating was removed: no tier skips a plugin now.
+     */
+    @Test
+    fun `the restart rationale never promises to skip plugins`() {
+        for (mode in BossResourceMode.entries) {
+            val rationale = restartRationale(mode)
+            assertFalse(
+                rationale.contains("plugin", ignoreCase = true),
+                "${mode.name} promises plugin savings no tier delivers: $rationale",
+            )
+        }
+    }
+
+    @Test
+    fun `the restart rationale names the limit the tier will actually apply`() {
+        for (mode in BossResourceMode.entries) {
+            val limit = mode.rendererProcessLimit ?: continue
+            assertTrue(
+                restartRationale(mode).contains(limit.toString()),
+                "${mode.name} caps at $limit but says: ${restartRationale(mode)}",
+            )
+        }
+    }
+
+    /** FULL caps nothing, so it must not invent a number to quote. */
+    @Test
+    fun `an uncapped tier quotes no limit`() {
+        val rationale = restartRationale(BossResourceMode.FULL)
+        assertFalse(rationale.contains("capped"), rationale)
+        assertTrue(rationale.isNotBlank())
     }
 }

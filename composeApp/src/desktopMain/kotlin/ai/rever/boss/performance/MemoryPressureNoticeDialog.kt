@@ -27,10 +27,13 @@ import androidx.compose.ui.window.Dialog
 /**
  * Tells the user when the memory-pressure watchdog has tightened the resource tier under them.
  *
- * This is deliberately interruptive rather than a toast. The downgrade is one-way for the rest of
- * the session and it changes behaviour the user will otherwise discover as a malfunction - a new
- * browser tab that silently refuses to open looks like a bug, not like a policy. It also fires
- * rarely by construction: sustained low memory over a full minute, at most once per session.
+ * Interruptive rather than a toast, but only just. The original justification - "a new browser tab
+ * that silently refuses to open looks like a bug" - died with the concurrent-browser ceiling, and
+ * a modal that blocks the UI to announce that nothing has changed yet is a poor trade. It stays
+ * modal because the downgrade is one-way for the session and the restart action is the only way to
+ * act on it, and it fires rarely by construction: sustained low memory over a full minute, at most
+ * once per session. Worth revisiting as a non-modal notice once [changeSummary] can report a real
+ * live effect.
  *
  * Mounted by `BossWindow`; renders nothing until [MemoryPressureWatchdog] has actually acted.
  */
@@ -66,10 +69,29 @@ fun MemoryPressureNoticeDialog(onRestartRequested: () -> Unit) {
  * a running session cannot have gained them. Internal so `MemoryPressureCopyTest` can hold it
  * against the tier table, which is how the previous version's false claim went unnoticed.
  */
-internal fun changeSummary(mode: ai.rever.boss.config.BossResourceMode): String {
-    val parts = mutableListOf<String>()
-    if (!mode.backgroundSamplingEnabled) parts += "background performance sampling is off"
-    return if (parts.isEmpty()) "nothing yet; a restart is needed to apply this tier" else parts.joinToString(", and ")
+internal fun changeSummary(mode: ai.rever.boss.config.BossResourceMode): String =
+    if (mode.backgroundSamplingEnabled) {
+        "nothing yet; a restart is needed to apply this tier"
+    } else {
+        "background performance sampling is off"
+    }
+
+/**
+ * Why restarting would reclaim more than the live tighten just did.
+ *
+ * Derived rather than written out, for the same reason as [changeSummary]. The previous string
+ * claimed a restart "would also skip non-essential plugins on the way up", which stopped being
+ * true when plugin gating was removed: no tier skips a plugin now. The honest remaining reason is
+ * the renderer cap, which is a Chromium switch fixed when the engine starts.
+ */
+internal fun restartRationale(target: ai.rever.boss.config.BossResourceMode): String {
+    val limit = target.rendererProcessLimit
+    return if (limit != null) {
+        "Chromium's process limit is fixed when the browser engine starts, so it cannot be " +
+            "lowered in place. Restarting in ${target.displayName} brings it up capped at $limit."
+    } else {
+        "Restarting in ${target.displayName} applies the tier from a clean start."
+    }
 }
 
 @Composable
@@ -111,9 +133,7 @@ private fun NoticeBody(notice: MemoryPressureNotice) {
     if (notice.restartWouldHelpFurther) {
         Spacer(Modifier.height(6.dp))
         Text(
-            text =
-                "Plugins already loaded cannot be unloaded to reclaim memory. Restarting in " +
-                    "Ultra Lite would also skip non-essential plugins on the way up.",
+            text = restartRationale(ai.rever.boss.config.BossResourceMode.ULTRA_LITE),
             color = colors.textMuted,
             fontSize = 12.sp,
         )

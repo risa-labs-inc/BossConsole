@@ -50,6 +50,11 @@ enum class BossResourceMode(
      *
      * Hibernation is the better bound in any case: it reclaims memory from tabs that are not
      * being used, rather than refusing work.
+     *
+     * **Published, not yet obeyed.** The host writes this to [HIBERNATION_IDLE_PROPERTY] at
+     * startup, which is the seam the plugin needs, but fluck-browser still reads only its own
+     * `BOSS_TAB_HIBERNATION_IDLE_MS` env var. Until the plugin reads the property, these numbers
+     * describe intent rather than behaviour - which is why no user-facing string mentions them.
      */
     val hibernationIdleMs: Long,
     /** Whether the background performance sampler runs. */
@@ -85,13 +90,21 @@ enum class BossResourceMode(
                 ULTRA_LITE -> "Ultra Lite"
             }
 
-    /** One line on what this tier gives up, for the Settings selector. */
+    /**
+     * One line on what this tier gives up, for the Settings selector.
+     *
+     * Describes only what the tier does **today**. An earlier version promised "idle browser tabs
+     * sleep after 10 minutes", which nothing in the app delivers: [hibernationIdleMs] has no
+     * consumer yet. Copy that describes a planned lever as a shipped one is worse than no copy,
+     * because the user cannot tell the difference between a feature that is off and one that is
+     * broken. `ResourceModeCopyTest` holds these strings against the tier table.
+     */
     val summary: String
         get() =
             when (this) {
-                FULL -> "Everything on. Idle browser tabs sleep after 30 minutes."
-                LITE -> "Idle browser tabs sleep after 10 minutes. Every plugin still loads."
-                ULTRA_LITE -> "Idle browser tabs sleep after 2 minutes. Every plugin still loads."
+                FULL -> "Everything on."
+                LITE -> "Fewer Chromium processes for the browser. Every plugin still loads."
+                ULTRA_LITE -> "Fewest Chromium processes, and no background performance sampling."
             }
 }
 
@@ -122,7 +135,18 @@ enum class ResourceModeReason {
     /** The tier chosen in Settings. */
     USER_SELECTION,
 
-    /** Windows, which defaults to the most conservative tier. */
+    /**
+     * A one-shot tier requested by the memory-pressure notice's "Restart in Ultra Lite" button.
+     *
+     * Distinct from [USER_SELECTION] because it is neither permanent nor, in any ordinary sense,
+     * selected. It previously wrote the same field the dropdown writes, which made Settings report
+     * "Ultra Lite, because you selected it" to a user who had done nothing of the kind - on the
+     * one screen whose entire purpose is explaining how the tier was chosen - and made a single
+     * click under pressure the tier for every launch thereafter.
+     */
+    PRESSURE_RESTART,
+
+    /** Windows, which defaults to a reduced tier. */
     PLATFORM_DEFAULT,
 
     /** Total physical RAM fell below a configured threshold. */
@@ -137,6 +161,31 @@ data class ResourceModeDecision(
     val mode: BossResourceMode,
     val reason: ResourceModeReason,
 )
+
+/**
+ * Where an explicit tier came from, which decides which [ResourceModeReason] explains it.
+ *
+ * An enum rather than the boolean this replaced: there are three origins now, and a boolean
+ * forced the third (a pressure restart) to masquerade as one of the other two.
+ */
+enum class ResourceModeSource {
+    /** `BOSS_RESOURCE_MODE` from env, system property or local.properties. */
+    ENVIRONMENT,
+
+    /** The one-shot request written by the memory-pressure notice. */
+    PRESSURE_RESTART,
+
+    /** The tier picked in Settings or the View menu. */
+    SETTINGS,
+    ;
+
+    fun toReason(): ResourceModeReason =
+        when (this) {
+            ENVIRONMENT -> ResourceModeReason.ENVIRONMENT_OVERRIDE
+            PRESSURE_RESTART -> ResourceModeReason.PRESSURE_RESTART
+            SETTINGS -> ResourceModeReason.USER_SELECTION
+        }
+}
 
 /**
  * Total-RAM ceilings, in GB, that automatic selection compares against.
@@ -198,11 +247,11 @@ object ResourceModeConfig {
     /**
      * The tier this process runs in, decided once at startup.
      *
-     * Startup-only on purpose. Plugin gating cannot be undone without a restart (a
-     * classloader that was never built cannot be un-built), so a value that changed
-     * underneath callers would describe a process that does not exist. The live watchdog
-     * in `MemoryPressureWatchdog` handles mid-session pressure with the reversible levers
-     * only, and asks for a restart for the rest.
+     * Startup-only on purpose. `--renderer-process-limit` is a Chromium command-line switch
+     * read once when the engine initialises, so a value that changed underneath callers would
+     * describe a process that does not exist. The live watchdog in `MemoryPressureWatchdog`
+     * handles mid-session pressure with the reversible levers only, and asks for a restart for
+     * the rest.
      */
     val decision: ResourceModeDecision by lazy {
         val settings = ResourceModeSettings.current()
@@ -210,7 +259,22 @@ object ResourceModeConfig {
         // BOSS_RENDERING_MODE behaves: the operator's environment is the outer authority, and
         // it is the escape hatch when a persisted choice turns out to be the problem.
         val fromEnvironment = ConfigLoader.getConfig(MODE_KEY)
-        val raw = fromEnvironment ?: settings.selectedMode
+        // Between the two sits the one-shot pressure request, which has to outrank the stored
+        // selection (it exists precisely because that selection was too loose for this machine)
+        // while never becoming it.
+        val fromPressure = settings.nextLaunchMode
+        val raw = fromEnvironment ?: fromPressure ?: settings.selectedMode
+        val source =
+            when {
+                fromEnvironment != null -> ResourceModeSource.ENVIRONMENT
+                fromPressure != null -> ResourceModeSource.PRESSURE_RESTART
+                else -> ResourceModeSource.SETTINGS
+            }
+        // Consumed here, so it applies to exactly the one launch it was requested for. Only
+        // written when actually set, which keeps tests that merely read `decision` off the disk.
+        if (fromPressure != null) {
+            ResourceModeSettings.update { it.copy(nextLaunchMode = null) }
+        }
         val os = System.getProperty("os.name").orEmpty().lowercase()
         val totalBytes = SystemMemory.totalPhysicalBytes()
         val resolved =
@@ -224,7 +288,7 @@ object ResourceModeConfig {
                         ultraLiteGb =
                             thresholdGb(ULTRA_LITE_THRESHOLD_GB_KEY, settings.ultraLiteThresholdGb),
                     ),
-                explicitCameFromEnvironment = fromEnvironment != null,
+                explicitSource = source,
             )
 
         if (!raw.isNullOrBlank() && !isRecognizedResourceMode(raw)) {
@@ -257,11 +321,10 @@ object ResourceModeConfig {
      * The tier currently in force, which is [decision]'s tier unless the live memory-pressure
      * watchdog has tightened it since startup.
      *
-     * Callers get whichever is stricter *at the moment they ask*, which is why the levers
-     * divide the way they do. Anything read per-use follows a live downgrade
-     * (`BrowserServiceImpl`'s ceiling); anything read once at startup does not
-     * (`FluckEngine`'s renderer cap, plugin gating), and those are exactly the levers a
-     * downgrade cannot apply without a restart.
+     * Callers get whichever is stricter *at the moment they ask*. Note that every lever this
+     * tier currently owns is read once at startup (`FluckEngine`'s renderer cap, the sampler),
+     * so a live tighten changes little until the plugin reads [HIBERNATION_IDLE_PROPERTY]; the
+     * notice dialog says as much rather than claiming a saving that did not happen.
      */
     private val _effectiveMode: MutableStateFlow<BossResourceMode> by lazy {
         MutableStateFlow(decision.mode)
@@ -317,14 +380,33 @@ object ResourceModeConfig {
     private val FALSY_FLAGS = setOf("false", "0", "no", "off")
 
     /**
-     * Persists Ultra Lite as the choice for the next launch.
+     * Requests Ultra Lite for **the next launch only**.
      *
-     * Used by the memory-pressure notice's restart action: the remaining saving is plugin
-     * gating, which only a fresh startup can apply.
+     * Written to a one-shot field rather than to the Settings selection, and consumed by
+     * [decision]. Writing the selection instead made a single click under memory pressure the
+     * permanent tier, and made Settings attribute it to the user; see
+     * [ResourceModeReason.PRESSURE_RESTART].
      */
     fun requestUltraLiteOnNextLaunch() {
-        ResourceModeSettings.update { it.copy(selectedMode = BossResourceMode.ULTRA_LITE.name) }
-        logger.info(LogCategory.SYSTEM, "Ultra Lite requested for the next launch")
+        ResourceModeSettings.update { it.copy(nextLaunchMode = BossResourceMode.ULTRA_LITE.name) }
+        logger.info(LogCategory.SYSTEM, "Ultra Lite requested for the next launch only")
+    }
+
+    /**
+     * System property carrying the tier's [BossResourceMode.hibernationIdleMs] to plugins.
+     *
+     * Plugins cannot see host classes, so a published property is the seam - the same shape as
+     * `boss.api.version` and `boss.ipc.version`. fluck-browser does not read it yet.
+     */
+    const val HIBERNATION_IDLE_PROPERTY = "boss.browser.hibernationIdleMs"
+
+    /**
+     * Publishes the tier's settings where plugins can read them. Call once, at startup.
+     *
+     * Separate from [decision] so that merely *asking* the tier never mutates global state.
+     */
+    fun publishToPlugins() {
+        System.setProperty(HIBERNATION_IDLE_PROPERTY, mode.hibernationIdleMs.toString())
     }
 
     /**
@@ -335,7 +417,7 @@ object ResourceModeConfig {
      *  1. An explicit, recognized [raw] value. Also the escape hatch: a user on a small
      *     machine who wants everything can set FULL, and one on a large machine who wants
      *     the footprint can set ULTRALITE.
-     *  2. Windows, which defaults to [BossResourceMode.ULTRA_LITE].
+     *  2. Windows, which defaults to [BossResourceMode.LITE].
      *  3. Total physical RAM against the configured thresholds.
      *  4. [BossResourceMode.FULL].
      *
@@ -351,7 +433,7 @@ object ResourceModeConfig {
         os: String,
         totalMemoryBytes: Long,
         thresholds: ResourceModeThresholds = ResourceModeThresholds(),
-        explicitCameFromEnvironment: Boolean = false,
+        explicitSource: ResourceModeSource = ResourceModeSource.SETTINGS,
     ): ResourceModeDecision {
         val explicit =
             when (raw?.trim()?.uppercase()) {
@@ -366,16 +448,7 @@ object ResourceModeConfig {
             }
 
         return explicit
-            ?.let {
-                ResourceModeDecision(
-                    it,
-                    if (explicitCameFromEnvironment) {
-                        ResourceModeReason.ENVIRONMENT_OVERRIDE
-                    } else {
-                        ResourceModeReason.USER_SELECTION
-                    },
-                )
-            }
+            ?.let { ResourceModeDecision(it, explicitSource.toReason()) }
             ?: detectResourceMode(os, totalMemoryBytes, thresholds.normalized())
     }
 
@@ -385,17 +458,25 @@ object ResourceModeConfig {
         totalMemoryBytes: Long,
         thresholds: ResourceModeThresholds,
     ): ResourceModeDecision {
-        // Windows defaults to the most conservative tier. It is the platform where the
-        // memory pressure is worst-felt and where OFF_SCREEN forced the entire Compose UI
-        // through the CPU before #128.
+        // Windows defaults to LITE. It is the platform where memory pressure is worst-felt and
+        // where OFF_SCREEN forced the entire Compose UI through the CPU before #128.
+        //
+        // LITE and not ULTRA_LITE, deliberately. The renderer limit is a *security* control as
+        // well as a memory one: capping renderers forces unrelated origins to share a process,
+        // which is exactly the boundary Chromium's Site Isolation exists to hold, and at
+        // ULTRA_LITE's limit of 2 a browser used for real work puts very nearly every tab in one
+        // process. That widens the blast radius of any single renderer compromise or crash to
+        // every site open in it. Paying that on every Windows machine by default is a poor trade
+        // when the tier's other distinguishing lever (plugin gating) has been removed and its
+        // remaining one (hibernation timing) is not yet read by the plugin. Users who want the
+        // tightest tier can still select it.
         //
         // startsWith, NOT contains: "darwin" contains "win". Windows reports "Windows 10",
         // "Windows 11", "Windows Server 2022" - all prefixes. JxBrowserRenderingModeTest
-        // keeps a "darwin" case alive for exactly this reason; the same trap applies here,
-        // and here it would silently strip every plugin from a Mac.
+        // keeps a "darwin" case alive for exactly this reason.
         if (os.startsWith("win")) {
             return ResourceModeDecision(
-                BossResourceMode.ULTRA_LITE,
+                BossResourceMode.LITE,
                 ResourceModeReason.PLATFORM_DEFAULT,
             )
         }
