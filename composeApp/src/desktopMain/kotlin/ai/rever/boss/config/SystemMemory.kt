@@ -76,10 +76,27 @@ object SystemMemory {
      *  - **Elsewhere** (Windows): the JDK reading, which maps to `ullAvailPhys` and already means
      *    "available" rather than "untouched".
      */
-    fun availableBytes(): Long =
-        linuxMemAvailableBytes()
-            ?: macAvailableBytes()
-            ?: (osBean?.freeMemorySize ?: 0L)
+    fun availableBytes(): Long {
+        // The platform branch is TOTAL. Chaining these with `?:` looks equivalent and is not: on a
+        // Mac where vm_stat is slow, sandboxed or unparseable, the null meant "this reading
+        // failed" and fell straight through to freeMemorySize - the 0.9 GB / 0.0073 figure this
+        // whole class exists to avoid. That reads as 0.7% free below the watchdog's 12% threshold
+        // on every poll, so sixty seconds later a 128 GB machine gets a one-way tighten and an
+        // interruptive modal. Exactly the bug this was written to fix, reachable via its fallback.
+        //
+        // On a known platform an unreadable reading is 0, i.e. "unknown", which freeFraction()
+        // maps to null and the watchdog ignores. Same asymmetry as the startup decision: unknown
+        // must never be read as pressure.
+        val os = System.getProperty("os.name").orEmpty().lowercase()
+        return when {
+            os.startsWith("linux") -> linuxMemAvailableBytes() ?: 0L
+
+            os.startsWith("mac") -> macAvailableBytes() ?: 0L
+
+            // Windows and anything else: ullAvailPhys already means "available", not "untouched".
+            else -> osBean?.freeMemorySize ?: 0L
+        }
+    }
 
     /**
      * Available RAM as a fraction of total, in `0.0..1.0`, or null when either reading failed.

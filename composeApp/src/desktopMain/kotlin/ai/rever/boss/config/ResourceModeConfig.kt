@@ -434,9 +434,16 @@ object ResourceModeConfig {
      */
     fun publishToPlugins() {
         System.setProperty(HIBERNATION_IDLE_PROPERTY, mode.hibernationIdleMs.toString())
-        if (decision.reason == ResourceModeReason.PRESSURE_RESTART) {
+        // Cleared whenever one is present, not only when it resolved. Keying on the reason left an
+        // unrecognized value stuck in the file for good, since a value that fails to resolve never
+        // produces PRESSURE_RESTART. A one-shot has had its one launch either way.
+        if (ResourceModeSettings.current().nextLaunchMode != null) {
             ResourceModeSettings.update { it.copy(nextLaunchMode = null) }
-            logger.info(LogCategory.SYSTEM, "Consumed the one-shot resource-mode request")
+            logger.info(
+                LogCategory.SYSTEM,
+                "Consumed the one-shot resource-mode request",
+                mapOf("honoured" to (decision.reason == ResourceModeReason.PRESSURE_RESTART).toString()),
+            )
         }
     }
 
@@ -455,7 +462,15 @@ object ResourceModeConfig {
     ): Pair<String?, ResourceModeSource> =
         when {
             fromEnvironment != null -> fromEnvironment to ResourceModeSource.ENVIRONMENT
-            fromPressure != null -> fromPressure to ResourceModeSource.PRESSURE_RESTART
+
+            // Only a one-shot we can actually honour gets to outrank the selection. Taking it
+            // unconditionally made an unrecognized value - written by a newer build, truncated, or
+            // hand-edited - shadow `selectedMode` permanently: it won the precedence, failed to
+            // resolve, and so was never consumed either, because consumption keys on the decision
+            // having come out as PRESSURE_RESTART. The user's Settings choice then silently never
+            // applied again, on any launch, with nothing in the UI able to clear it.
+            isRecognizedResourceMode(fromPressure) -> fromPressure to ResourceModeSource.PRESSURE_RESTART
+
             else -> fromSettings to ResourceModeSource.SETTINGS
         }
 

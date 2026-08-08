@@ -232,6 +232,11 @@ private fun ModeSelectorSection(
     onSelected: (String?) -> Unit,
 ) {
     SettingsSection(title = "Resource Mode") {
+        // Disabled under an environment override, matching the View menu. Leaving it clickable
+        // made the screen contradict itself: the dropdown said "takes effect on the next launch"
+        // while the row directly below said "forced by BOSS_RESOURCE_MODE", and the override wins
+        // on the next launch too - so the click genuinely does nothing.
+        val forcedByEnvironment = decision.reason == ResourceModeReason.ENVIRONMENT_OVERRIDE
         SettingsDropdown(
             label = "Mode",
             options = options,
@@ -239,10 +244,16 @@ private fun ModeSelectorSection(
             onOptionSelected = { label ->
                 onSelected(BossResourceMode.entries.firstOrNull { it.settingsLabel() == label }?.name)
             },
+            enabled = !forcedByEnvironment,
             description =
-                "Takes effect on the next launch. Chromium's process limit is a command-line " +
-                    "switch read once when the browser engine starts, so a tier change cannot " +
-                    "apply to a session already running.",
+                if (forcedByEnvironment) {
+                    "${ResourceModeConfig.MODE_KEY} is set, so this choice would be ignored. " +
+                        "Unset it to choose a tier here."
+                } else {
+                    "Takes effect on the next launch. Chromium's process limit is a command-line " +
+                        "switch read once when the browser engine starts, so a tier change cannot " +
+                        "apply to a session already running."
+                },
         )
 
         SettingsInfoRow(

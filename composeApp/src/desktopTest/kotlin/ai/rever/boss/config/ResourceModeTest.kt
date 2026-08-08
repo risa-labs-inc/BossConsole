@@ -321,6 +321,38 @@ class ResourceModeTest {
         assertEquals(ResourceModeSource.SETTINGS, source)
     }
 
+    /**
+     * The stuck-file case. An unrecognized one-shot must not eat the user's selection: it wins the
+     * precedence, then fails to resolve, and consumption used to key on it having resolved - so it
+     * sat in resource-mode.json for good while every Settings choice was silently ignored, with
+     * nothing in the UI able to clear it.
+     */
+    @Test
+    fun `an unrecognized one-shot falls through to the stored selection`() {
+        val (raw, source) =
+            ResourceModeConfig.resolveRawAndSource(
+                fromEnvironment = null,
+                fromPressure = "ULTRA",
+                fromSettings = "LITE",
+            )
+        assertEquals("LITE", raw)
+        assertEquals(ResourceModeSource.SETTINGS, source)
+    }
+
+    @Test
+    fun `only an honourable one-shot outranks the selection`() {
+        for (junk in listOf("", "  ", "ULTRA", "LIGHT", "!!", "1")) {
+            val (raw, source) =
+                ResourceModeConfig.resolveRawAndSource(
+                    fromEnvironment = null,
+                    fromPressure = junk,
+                    fromSettings = "FULL",
+                )
+            assertEquals("FULL", raw, "junk one-shot '$junk' shadowed the selection")
+            assertEquals(ResourceModeSource.SETTINGS, source, junk)
+        }
+    }
+
     /** Every source must name somewhere a person can actually go and look. */
     @Test
     fun `each source names its own origin`() {
