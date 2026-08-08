@@ -40,11 +40,13 @@ class SingleInstanceChannelTest {
     @BeforeEach
     fun useTempRuntimeDir() {
         SingleInstanceManager.runtimeDirOverride = File(tempDir.toFile(), "run")
+        SingleInstanceManager.llmTokenProviderOverride = null
     }
 
     @AfterEach
     fun releaseChannel() {
         SingleInstanceManager.release()
+        SingleInstanceManager.llmTokenProviderOverride = null
         SingleInstanceManager.runtimeDirOverride = null
     }
 
@@ -97,6 +99,10 @@ class SingleInstanceChannelTest {
         val ping = assertNotNull(parseRequestLine(formatPingRequest(token)))
         assertEquals(VERB_PING, ping.verb)
         assertNull(ping.url)
+
+        val llmToken = assertNotNull(parseRequestLine(formatLlmTokenRequest(token)))
+        assertEquals(VERB_LLM_TOKEN, llmToken.verb)
+        assertNull(llmToken.url)
 
         // A URL with a space in it must survive rather than being cut short.
         val spacedUrl = "boss://url?url=a b"
@@ -202,6 +208,23 @@ class SingleInstanceChannelTest {
         assertTrue(SingleInstanceManager.sendToExistingInstance("boss://auth/verify#access_token=abc"))
         assertFalse(SingleInstanceManager.sendToExistingInstance("  "))
         assertFalse(SingleInstanceManager.sendToExistingInstance("ftp://example.com"))
+    }
+
+    @Test
+    fun `a credential helper receives a token from the signed-in running instance`() {
+        SingleInstanceManager.llmTokenProviderOverride = { Result.success("sk-short-lived-pilot") }
+        assertTrue(SingleInstanceManager.acquireLock())
+
+        val token = SingleInstanceManager.requestLlmToken().getOrThrow()
+
+        assertEquals("sk-short-lived-pilot", token)
+    }
+
+    @Test
+    fun `a credential helper gets a safe error without a running instance`() {
+        val error = assertNotNull(SingleInstanceManager.requestLlmToken().exceptionOrNull())
+
+        assertTrue(error.message.orEmpty().contains("Open BOSS"))
     }
 
     @Test

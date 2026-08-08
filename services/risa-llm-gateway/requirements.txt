@@ -1,0 +1,4 @@
+fastapi==0.116.1
+httpx==0.28.1
+uvicorn[standard]==0.35.0
+asyncpg==0.30.0

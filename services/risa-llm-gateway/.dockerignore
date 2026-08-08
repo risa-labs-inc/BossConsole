@@ -1,0 +1,10 @@
+.env
+.git
+__pycache__
+tests
+*.pyc
+.terraform
+*.tfstate
+*.tfstate.*
+infra
+postgres-init

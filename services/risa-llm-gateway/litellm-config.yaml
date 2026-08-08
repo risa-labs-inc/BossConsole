@@ -1,0 +1,18 @@
+model_list:
+  - model_name: coreweave-glm-5-2
+    litellm_params:
+      model: os.environ/CW_SERVED_MODEL
+      api_base: os.environ/CW_INFERENCE_BASE_URL
+      api_key: os.environ/CW_API_TOKEN
+      use_chat_completions_api: true
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+  store_prompts_in_spend_logs: false
+
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+  turn_off_message_logging: true
+  log_raw_request_response: false

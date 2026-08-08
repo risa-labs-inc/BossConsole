@@ -50,9 +50,14 @@ internal const val VERB_PING = "PING"
 /** Asks the running instance to process a URL. */
 internal const val VERB_OPEN = "OPEN"
 
+/** Asks the signed-in BOSS process for a short-lived RISA LLM credential. */
+internal const val VERB_LLM_TOKEN = "LLM_TOKEN"
+
 internal const val RESPONSE_OK = "OK"
 internal const val RESPONSE_PONG = "PONG"
 internal const val RESPONSE_REJECTED = "REJECTED"
+private const val RESPONSE_LLM_TOKEN_PREFIX = "LLM_TOKEN "
+private const val RESPONSE_ERROR_PREFIX = "ERROR "
 
 /** 32 random bytes, hex encoded. */
 private const val TOKEN_BYTES = 32
@@ -63,6 +68,7 @@ private const val IPC_PORT_RANGE = 10 // Try ports 56789-56798
 private const val TCP_BACKLOG = 5
 
 private const val CONNECTION_TIMEOUT_MS = 10000L // 10 seconds - important for auth deep links
+private const val LLM_TOKEN_TIMEOUT_MS = 90000L
 
 /**
  * Ceiling on a single request. Bounds what one caller can make the app buffer,
@@ -182,9 +188,9 @@ internal fun parseRequestLine(line: String): SingleInstanceRequest? {
 
     val token = parts[1]
     return when (parts[2]) {
-        VERB_PING -> {
+        VERB_PING, VERB_LLM_TOKEN -> {
             if (parts.size == 3) {
-                SingleInstanceRequest(token, VERB_PING, DeepLinkOrigin.EXTERNAL, null)
+                SingleInstanceRequest(token, parts[2], DeepLinkOrigin.EXTERNAL, null)
             } else {
                 null
             }
@@ -213,6 +219,9 @@ internal fun formatOpenRequest(
 
 /** Builds a liveness probe line. Never log the result: it carries the token. */
 internal fun formatPingRequest(token: String): String = "$PROTOCOL_VERSION $token $VERB_PING"
+
+/** Builds a credential request. Never log the result: it carries the channel token. */
+internal fun formatLlmTokenRequest(token: String): String = "$PROTOCOL_VERSION $token $VERB_LLM_TOKEN"
 
 private val secureRandom = SecureRandom()
 
@@ -461,9 +470,10 @@ private object SingleInstanceWire {
     fun exchange(
         descriptor: InstanceDescriptor,
         request: String,
+        timeoutMs: Long = CONNECTION_TIMEOUT_MS,
     ): String? {
         val channel = connect(descriptor) ?: return null
-        val budget = closeAfterBudget(channel)
+        val budget = closeAfterBudget(channel, timeoutMs)
         return try {
             channel.use {
                 writeLine(it, request)
@@ -547,7 +557,10 @@ private object SingleInstanceWire {
         output.flush()
     }
 
-    fun closeAfterBudget(channel: SocketChannel): ScheduledFuture<*> =
+    fun closeAfterBudget(
+        channel: SocketChannel,
+        timeoutMs: Long = CONNECTION_TIMEOUT_MS,
+    ): ScheduledFuture<*> =
         watchdog.schedule(
             Runnable {
                 if (channel.isOpen) {
@@ -555,7 +568,7 @@ private object SingleInstanceWire {
                     closeQuietly(channel)
                 }
             },
-            CONNECTION_TIMEOUT_MS,
+            timeoutMs,
             TimeUnit.MILLISECONDS,
         )
 
@@ -567,6 +580,47 @@ private object SingleInstanceWire {
         }
     }
 }
+
+private fun buildLlmTokenResponse(providerOverride: (() -> Result<String>)?): String {
+    val result =
+        providerOverride?.invoke()
+            ?: runCatching {
+                kotlinx.coroutines.runBlocking {
+                    ai.rever.boss.llm.RisaLlmTokenCommand
+                        .fetchTokenForRunningBoss()
+                }
+            }
+    return result.fold(
+        onSuccess = { token ->
+            if (token.startsWith("sk-") && token.none { it == '\n' || it == '\r' }) {
+                RESPONSE_LLM_TOKEN_PREFIX + token
+            } else {
+                RESPONSE_ERROR_PREFIX + "The RISA LLM gateway returned an invalid credential."
+            }
+        },
+        onFailure = { error ->
+            val safeMessage =
+                (error.message ?: "Could not obtain a RISA LLM credential.")
+                    .replace('\n', ' ')
+                    .replace('\r', ' ')
+                    .take(180)
+            RESPONSE_ERROR_PREFIX + safeMessage
+        },
+    )
+}
+
+private fun acceptNextClient(
+    serverChannel: ServerSocketChannel?,
+    isListening: () -> Boolean,
+): SocketChannel? =
+    try {
+        serverChannel?.accept()
+    } catch (error: IOException) {
+        if (isListening()) {
+            logger.warn(LogCategory.SYSTEM, "Error in IPC listener", error = error)
+        }
+        null
+    }
 
 /**
  * Manages single-instance application behavior.
@@ -607,6 +661,9 @@ private object SingleInstanceWire {
 object SingleInstanceManager {
     private var serverChannel: ServerSocketChannel? = null
     private var listenerThread: Thread? = null
+
+    /** Test seam; production serves credentials from the running BOSS session. */
+    internal var llmTokenProviderOverride: (() -> Result<String>)? = null
 
     @Volatile
     private var isListening: Boolean = false
@@ -700,27 +757,13 @@ object SingleInstanceManager {
                 logger.trace(LogCategory.SYSTEM, "IPC listener thread started")
 
                 while (isListening && !Thread.currentThread().isInterrupted) {
-                    val client = acceptNext() ?: break
+                    val client = acceptNextClient(serverChannel) { isListening } ?: break
                     handleClient(client)
                 }
 
                 logger.trace(LogCategory.SYSTEM, "IPC listener thread stopped")
             }
     }
-
-    /**
-     * Waits for the next connection, or returns null once the channel is gone —
-     * which is what [release] closing it looks like from here.
-     */
-    private fun acceptNext(): SocketChannel? =
-        try {
-            serverChannel?.accept()
-        } catch (e: IOException) {
-            if (isListening) {
-                logger.warn(LogCategory.SYSTEM, "Error in IPC listener", error = e)
-            }
-            null
-        }
 
     /**
      * Handle one connection.
@@ -730,7 +773,7 @@ object SingleInstanceManager {
      */
     private fun handleClient(client: SocketChannel) {
         thread(isDaemon = true, name = "BOSS-IPC-Client-Handler") {
-            val budget = SingleInstanceWire.closeAfterBudget(client)
+            var budget = SingleInstanceWire.closeAfterBudget(client)
             try {
                 client.use { channel ->
                     val line =
@@ -738,7 +781,12 @@ object SingleInstanceManager {
                             BufferedInputStream(Channels.newInputStream(channel)),
                             MAX_REQUEST_BYTES,
                         )
-                    SingleInstanceWire.writeLine(channel, responseFor(line?.let { parseRequestLine(it) }))
+                    val request = line?.let { parseRequestLine(it) }
+                    if (request?.verb == VERB_LLM_TOKEN) {
+                        budget.cancel(false)
+                        budget = SingleInstanceWire.closeAfterBudget(channel, LLM_TOKEN_TIMEOUT_MS)
+                    }
+                    SingleInstanceWire.writeLine(channel, responseFor(request))
                 }
             } catch (e: IOException) {
                 logger.debug(
@@ -782,9 +830,52 @@ object SingleInstanceManager {
                 RESPONSE_OK
             }
 
+            request.verb == VERB_LLM_TOKEN -> {
+                buildLlmTokenResponse(llmTokenProviderOverride)
+            }
+
             else -> {
                 logger.warn(LogCategory.SYSTEM, "Refused a single-instance request BOSS does not serve")
                 RESPONSE_REJECTED
+            }
+        }
+    }
+
+    /**
+     * Requests a credential from the already-running, signed-in BOSS process.
+     * The credential is never written to disk or included in a log line.
+     */
+    fun requestLlmToken(): Result<String> {
+        val target = SingleInstanceFiles.read()
+        return if (target == null) {
+            Result.failure(
+                IllegalStateException("Open BOSS, sign in with your RISA account, and retry."),
+            )
+        } else {
+            val response =
+                SingleInstanceWire.exchange(
+                    target,
+                    formatLlmTokenRequest(target.token),
+                    LLM_TOKEN_TIMEOUT_MS,
+                )
+            if (response == null) {
+                Result.failure(
+                    IllegalStateException("BOSS is not responding. Open BOSS and retry."),
+                )
+            } else {
+                when {
+                    response.startsWith(RESPONSE_LLM_TOKEN_PREFIX) -> {
+                        Result.success(response.removePrefix(RESPONSE_LLM_TOKEN_PREFIX))
+                    }
+
+                    response.startsWith(RESPONSE_ERROR_PREFIX) -> {
+                        Result.failure(IllegalStateException(response.removePrefix(RESPONSE_ERROR_PREFIX)))
+                    }
+
+                    else -> {
+                        Result.failure(IllegalStateException("BOSS rejected the RISA LLM credential request."))
+                    }
+                }
             }
         }
     }

@@ -1,0 +1,10 @@
+project_id = "risa-coreweave-llm-gateway"
+region     = "us-central1"
+
+gateway_image = "REGION-docker.pkg.dev/PROJECT/risa-llm/gateway:COMMIT_SHA"
+litellm_image = "REGION-docker.pkg.dev/PROJECT/risa-llm/litellm:COMMIT_SHA"
+
+supabase_anon_key             = "existing-public-boss-anon-key"
+coreweave_inference_base_url  = "https://YOUR_GATEWAY.gw.cwinference.com/v1"
+coreweave_served_model        = "openai/YOUR_SERVED_MODEL"
+pilot_email_allowlist         = "pilot-one@risalabs.ai,pilot-two@risalabs.ai"
