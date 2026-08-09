@@ -14,6 +14,7 @@ import ai.rever.boss.components.dialogs.TerminalLinkOpenDialog
 import ai.rever.boss.components.dialogs.TopOfMindDialog
 import ai.rever.boss.components.events.FileEventBus
 import ai.rever.boss.components.plugin.MissingDependencyDialog
+import ai.rever.boss.components.plugin.PluginDependencyEventBus
 import ai.rever.boss.components.plugin.PluginUpdateBridge
 import ai.rever.boss.components.plugin.providers.GenericDialogHostContent
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
@@ -51,6 +52,7 @@ import ai.rever.boss.window.selectProjectInWindow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -489,6 +491,10 @@ internal fun BossAppDialogs(state: BossAppState) {
             installing = state.installingMissingDependency,
             error = state.missingDependencyError,
             onDismiss = {
+                // "Not now" is an answer for the session: three plugins declare the gateway
+                // optional, so without this, declining once means being asked again for the
+                // next one that needs it.
+                PluginDependencyEventBus.decline(prompt.missing.missingPluginId)
                 state.pendingMissingPluginDependency = null
                 state.missingDependencyError = null
             },
@@ -497,9 +503,16 @@ internal fun BossAppDialogs(state: BossAppState) {
                 state.missingDependencyError = null
                 coroutineScope.launch {
                     try {
-                        prompt.installer
-                            .install(prompt.missing.missingPluginId)
-                            .onSuccess {
+                        // runCatching rather than a catch block: a throw instead of a failed
+                        // Result would otherwise leave the dialog open with no message and an
+                        // "Install" button, looking like the click did nothing. Cancellation is
+                        // rethrown - the install is detached and continues, so nothing went wrong
+                        // and there is no longer anywhere to report it to.
+                        runCatching { prompt.installer.install(prompt.missing.missingPluginId) }
+                            .getOrElse { error ->
+                                if (error is CancellationException) throw error
+                                Result.failure(error)
+                            }.onSuccess {
                                 state.pendingMissingPluginDependency = null
                                 state.missingDependencyError = null
                                 // The dialog closing is otherwise the only signal, and since the

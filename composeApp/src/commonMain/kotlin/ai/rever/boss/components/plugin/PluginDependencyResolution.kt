@@ -2,6 +2,7 @@ package ai.rever.boss.components.plugin
 
 import ai.rever.boss.plugin.api.PluginDependency
 import ai.rever.boss.plugin.api.PluginManifest
+import ai.rever.boss.plugin.api.PluginState
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.channels.Channel
@@ -83,7 +84,14 @@ object PluginDependencyResolution {
         exists: (jarPath: String) -> Boolean,
     ): Set<String> =
         states
-            .filterValues { info -> exists(info.jarPath) }
+            // A plugin that is LOADED counts however its jar path reads. The manager's
+            // `jarPath` is not repointed when a file moves - `PluginJarReconciler` rewrites
+            // `installed.json` and the updater writes a version-named file and deletes the old
+            // one - so a running plugin can hold a path that no longer exists. Without this it
+            // would look absent, the prompt would fire, and Install would fail with "Plugin
+            // already loaded", which is both wrong and unactionable. The case this predicate
+            // exists for is unaffected: a binary-incompatible entry is DISABLED, never LOADED.
+            .filterValues { info -> info.state == PluginState.LOADED || exists(info.jarPath) }
             .keys
 
     /**
@@ -110,6 +118,9 @@ object PluginDependencyResolution {
             // install: the prompt would ask the user to install what they just installed.
             .filterNot { dependency -> dependency.pluginId == manifest.pluginId }
             .filterNot { dependency -> dependency.pluginId in NOT_USER_INSTALLABLE }
+            // A blank id is a manifest typo, and it reads as one: "Flow works without , but
+            // some of its features need it", then " was not found in the plugin store."
+            .filterNot { dependency -> dependency.pluginId.isBlank() }
             .groupBy { dependency -> dependency.pluginId }
             // One prompt per plugin, and when a manifest declares the same dependency twice
             // with different flags the stricter one wins: calling something "Recommended"
@@ -201,6 +212,28 @@ data class MissingDependencyPrompt(
  */
 open class PluginDependencyBus {
     private val logger = BossLogger.forComponent("PluginDependencyBus")
+
+    /**
+     * Missing plugins the user has already declined, for this process only.
+     *
+     * All three gateway consumers declare it optional, so without this, declining for
+     * jupyter-notebook means being asked again for llmrpa and again for flow-tab. The
+     * `isInstalled` re-check only covers the case where it was installed in between.
+     *
+     * Not persisted, deliberately: "Not now" is an answer about now, and a decision that
+     * outlived the session would leave no way to be asked again short of editing a file.
+     */
+    private val declined =
+        java.util.concurrent.ConcurrentHashMap
+            .newKeySet<String>()
+
+    /** Records a "Not now" so this missing plugin stops asking for the rest of the session. */
+    fun decline(missingPluginId: String) {
+        declined.add(missingPluginId)
+    }
+
+    /** Whether the user already declined this missing plugin in this session. */
+    fun wasDeclined(missingPluginId: String): Boolean = missingPluginId in declined
 
     /**
      * A channel, not a `SharedFlow`, because exactly one window must ask.

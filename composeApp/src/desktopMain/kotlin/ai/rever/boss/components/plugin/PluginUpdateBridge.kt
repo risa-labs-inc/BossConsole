@@ -1,5 +1,6 @@
 package ai.rever.boss.components.plugin
 
+import ai.rever.boss.plugin.MissingDependencyReporter
 import ai.rever.boss.plugin.PluginStoreSetup
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -104,7 +105,13 @@ actual object PluginUpdateBridge {
                 pluginId = pluginId,
                 downloadPath = targetPath,
                 unloadPlugin = { id -> manager.uninstallPlugin(id, force = true).map { } },
-                loadPlugin = { path -> manager.installPlugin(path).map { } },
+                loadPlugin = { path ->
+                    manager.installPlugin(path).map { info ->
+                        // An update can add a dependency the installed version never declared,
+                        // and this path does not go through PluginLoaderDelegateImpl.
+                        MissingDependencyReporter.forManager(manager).report(info.manifest)
+                    }
+                },
             )
         return if (result.isSuccess) {
             PluginUpdateRegistry.clear(pluginId)

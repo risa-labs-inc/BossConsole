@@ -196,7 +196,14 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                     withContext(Dispatchers.IO) {
                         prompt.installer.isInstalled(prompt.missing.missingPluginId)
                     }
-                if (present) return@collect
+                if (present || PluginDependencyEventBus.wasDeclined(prompt.missing.missingPluginId)) {
+                    return@collect
+                }
+                // Reset here rather than relying on the previous dialog's exit path having
+                // cleared them: the three fields are reused for every prompt, and ordering
+                // between that clear and this assignment should not be load-bearing.
+                state.installingMissingDependency = false
+                state.missingDependencyError = null
                 state.pendingMissingPluginDependency = prompt
                 // Back-pressure instead of a queue: the next prompt stays in the channel until
                 // this one is answered, so a second missing dependency is asked about after the

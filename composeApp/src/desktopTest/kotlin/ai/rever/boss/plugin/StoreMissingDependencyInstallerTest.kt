@@ -1,11 +1,15 @@
 package ai.rever.boss.plugin
 
 import ai.rever.boss.plugin.api.PluginManifest
+import ai.rever.boss.plugin.loader.PluginManifestReader
 import ai.rever.boss.plugin.loader.PluginSignatureSidecar
 import ai.rever.boss.plugin.repository.PluginInfo
 import ai.rever.boss.plugin.repository.PluginRepository
 import ai.rever.boss.plugin.repository.PluginSearchFilter
 import ai.rever.boss.plugin.repository.PluginSearchResult
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.test.runTest
 import java.io.File
@@ -405,6 +409,88 @@ class StoreMissingDependencyInstallerTest {
             // startup - and a failed download must not take the user's file with it.
             assertTrue(existing.exists(), "deleted a pre-existing jar this install did not create")
         }
+
+    @Test
+    fun `two concurrent installs of one plugin download once`() =
+        runTest {
+            val downloads =
+                java.util.concurrent.atomic
+                    .AtomicInteger()
+            val store = CountingStore(info(), downloads)
+            val subject = installer(store)
+
+            // Coalescing is process-wide precisely for this: two dependents - or two windows -
+            // can each raise a prompt for the same missing plugin, and two downloads writing the
+            // same path at once is the failure it prevents.
+            val both =
+                listOf(
+                    async { subject.install(PLUGIN_ID) },
+                    async { subject.install(PLUGIN_ID) },
+                ).awaitAll()
+
+            assertTrue(both.all { it.isSuccess }, "one of the coalesced installs failed: $both")
+            assertEquals(1, downloads.get(), "downloaded the same plugin twice")
+        }
+
+    @Test
+    fun `the default manifest reader reads a real jar`() =
+        runTest {
+            // Every other test injects `readManifest`, so without this the production default is
+            // never exercised against actual bytes.
+            temp.mkdirs()
+            val jarFile = File(temp, "real-plugin.jar")
+            java.util.zip.ZipOutputStream(jarFile.outputStream()).use { zip ->
+                zip.putNextEntry(java.util.zip.ZipEntry("META-INF/boss-plugin/plugin.json"))
+                zip.write(
+                    (
+                        """{"pluginId":"$PLUGIN_ID","displayName":"AI Gateway","version":"$JAR_VERSION",""" +
+                            """"apiVersion":"1.0.0","mainClass":"com.example.Main"}"""
+                    ).toByteArray(),
+                )
+                zip.closeEntry()
+            }
+
+            val manifest = PluginManifestReader.readFromJar(jarFile.absolutePath)
+
+            assertEquals(PLUGIN_ID, manifest.pluginId)
+            assertEquals(JAR_VERSION, manifest.version)
+        }
+
+    /** Counts downloads, to prove two concurrent installs collapse into one. */
+    private class CountingStore(
+        private val plugin: PluginInfo,
+        private val downloads: java.util.concurrent.atomic.AtomicInteger,
+    ) : PluginRepository {
+        override val id = "store"
+        override val name = "Store"
+        override val isLocal = false
+        override val isAvailable = true
+
+        override suspend fun listPlugins(): Result<List<PluginInfo>> = Result.success(listOf(plugin))
+
+        override suspend fun searchPlugins(filter: PluginSearchFilter): Result<PluginSearchResult> =
+            Result.failure(UnsupportedOperationException("unused"))
+
+        override suspend fun getPlugin(pluginId: String): Result<PluginInfo?> = Result.success(plugin)
+
+        override suspend fun getPluginVersions(pluginId: String) = listPlugins()
+
+        override suspend fun downloadPlugin(
+            pluginId: String,
+            version: String?,
+            targetPath: String,
+        ): Result<String> {
+            downloads.incrementAndGet()
+            // Long enough that a second, uncoalesced install would overlap this one.
+            delay(50)
+            File(targetPath).writeBytes(ByteArray(8))
+            return Result.success(targetPath)
+        }
+
+        override fun getDownloadProgress(pluginId: String): Flow<Float>? = null
+
+        override suspend fun refresh(): Result<Unit> = Result.success(Unit)
+    }
 
     /** A store whose lookup fails outright, as an offline or rate-limited one does. */
 

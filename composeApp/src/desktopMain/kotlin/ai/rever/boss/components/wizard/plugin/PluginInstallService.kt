@@ -1,6 +1,7 @@
 package ai.rever.boss.components.wizard.plugin
 
 import ai.rever.boss.components.plugin.DynamicPluginManager
+import ai.rever.boss.plugin.MissingDependencyReporter
 import ai.rever.boss.plugin.PluginPersistence
 import ai.rever.boss.plugin.PluginStoreSetup
 import ai.rever.boss.plugin.api.PluginManifest
@@ -25,6 +26,9 @@ import java.util.jar.JarFile
  */
 class PluginInstallService(
     private val dynamicPluginManager: DynamicPluginManager,
+    /** Raises the install-time dependency prompt; see [MissingDependencyReporter]. */
+    private val dependencyReporter: MissingDependencyReporter =
+        MissingDependencyReporter.forManager(dynamicPluginManager),
 ) {
     private val logger = BossLogger.forComponent("PluginInstallService")
 
@@ -176,6 +180,12 @@ class PluginInstallService(
                     val installResult = dynamicPluginManager.installPlugin(jarPath, enabled = true)
 
                     if (installResult.isSuccess) {
+                        // The wizard installs several plugins at once, so it is the path where an
+                        // unmet dependency is most likely - and it never goes through
+                        // PluginLoaderDelegateImpl, so without this it was the one user-initiated
+                        // install that stayed silent.
+                        manifest?.let { dependencyReporter.report(it) }
+
                         // Persist the installation with actual version
                         PluginPersistence.addInstalledPlugin(
                             pluginId = plugin.id,

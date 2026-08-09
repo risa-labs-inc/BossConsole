@@ -2,9 +2,6 @@ package ai.rever.boss.plugin
 
 import ai.rever.boss.components.plugin.DynamicPluginManager
 import ai.rever.boss.components.plugin.MicrokernelRuntime
-import ai.rever.boss.components.plugin.MissingDependencyPrompt
-import ai.rever.boss.components.plugin.PluginDependencyEventBus
-import ai.rever.boss.components.plugin.PluginDependencyResolution
 import ai.rever.boss.components.plugin.findRelocatedPluginJar
 import ai.rever.boss.components.plugin.resolveReloadJarPath
 import ai.rever.boss.components.registery.PanelComponentStoreRegistry
@@ -59,71 +56,45 @@ class PluginLoaderDelegateImpl(
      */
     private val detachedReloads = KeyedDetachedJobs<String, LoadedPluginInfo?>(reloadScope)
 
-    /** See `PluginDependencyResolution.installedAndOnDisk` for why both halves share this. */
-    private fun installedPluginIds(): Set<String> =
-        PluginDependencyResolution.installedAndOnDisk(dynamicPluginManager.pluginStates.value) { jarPath ->
-            File(jarPath).isFile
-        }
+    /**
+     * Raises the install-time dependency prompt. See [MissingDependencyReporter] for which
+     * paths report and, more importantly, which must not.
+     */
+    private val dependencyReporter = MissingDependencyReporter.forManager(dynamicPluginManager)
 
     /**
-     * Fixes a missing dependency, for the prompt's Install button.
+     * Report the plugin's unmet dependencies (unless this is a reload) and describe it for the
+     * caller.
      *
-     * Bound to this delegate's manager so the dependency loads into the same window that
-     * asked, and holds the store lazily because `PluginStoreSetup` initialises during startup
-     * while this delegate can outlive a store that never came up at all.
+     * A function rather than an inline block only because the two together sit four levels deep
+     * inside [loadPlugin]'s try / isSuccess / let.
      */
-    private val dependencyInstaller =
-        StoreMissingDependencyInstaller(
-            repository = { PluginStoreSetup.remoteRepository },
-            pluginDir = { PluginStoreSetup.getPluginDir() },
-            installedNow = { pluginId -> pluginId in installedPluginIds() },
-            load = { jarPath -> dynamicPluginManager.installPlugin(jarPath) },
+    private fun describe(
+        info: ai.rever.boss.components.plugin.DynamicPluginInfo,
+        reportDependencies: Boolean,
+    ): LoadedPluginInfo {
+        if (reportDependencies) dependencyReporter.report(info.manifest)
+        return LoadedPluginInfo(
+            pluginId = info.manifest.pluginId,
+            displayName = info.manifest.displayName,
+            version = info.manifest.version,
+            description = info.manifest.description,
+            author = info.manifest.author,
+            url = info.manifest.url,
+            type =
+                info.manifest.type.name
+                    .lowercase(),
+            apiVersion = info.manifest.apiVersion,
+            minBossVersion = info.manifest.minBossVersion,
+            isSystemPlugin = info.manifest.systemPlugin,
+            canUnload = info.manifest.canUnload,
+            loadPriority = info.manifest.loadPriority,
+            isEnabled = info.enabled,
+            healthy = info.state == PluginState.LOADED,
+            jarPath = info.jarPath,
+            installedAt = System.currentTimeMillis(),
+            requiresAdmin = info.manifest.requiresAdmin,
         )
-
-    /**
-     * Tell the user about dependencies this plugin declares but which are absent.
-     *
-     * Deliberately here and not in `DynamicPluginManager.installPlugin`: that method also
-     * serves startup restore, the bundled-plugin load and the api hot-swap's reload-all, so
-     * a prompt there would be one dialog per plugin on every launch. This delegate is the
-     * path plugin-manager install and update flows take, which is the only place a *user*
-     * asked for something.
-     *
-     * Reporting is fire-and-forget. A missing dependency is worth mentioning but never
-     * worth failing an install the user asked for, or making them wait on a window that may
-     * not exist yet.
-     */
-    private fun reportMissingDependencies(
-        manifest: PluginManifest,
-        report: Boolean,
-    ) {
-        if (!report) return
-        runCatching {
-            // Every plugin present on disk, not only the enabled ones: a disabled dependency
-            // is installed, so offering to install it again would be the wrong fix and the wrong
-            // sentence. The same set the Install guard uses, by construction.
-            val installed = installedPluginIds()
-            PluginDependencyResolution
-                .missingFor(manifest, installed)
-                .forEach { missing ->
-                    logger.info(
-                        LogCategory.SYSTEM,
-                        "Installed plugin declares a dependency that is not present",
-                        mapOf(
-                            "plugin" to missing.dependentPluginId,
-                            "missing" to missing.missingPluginId,
-                            "optional" to missing.optional,
-                        ),
-                    )
-                    PluginDependencyEventBus.report(MissingDependencyPrompt(missing, dependencyInstaller))
-                }
-        }.onFailure { error ->
-            logger.warn(
-                LogCategory.SYSTEM,
-                "Could not check a plugin's dependencies",
-                mapOf("plugin" to manifest.pluginId, "error" to (error.message ?: "unknown")),
-            )
-        }
     }
 
     override suspend fun loadPlugin(jarPath: String): LoadedPluginInfo? = loadPlugin(jarPath, reportDependencies = true)
@@ -178,30 +149,7 @@ class PluginLoaderDelegateImpl(
             val result = dynamicPluginManager.installPlugin(jarPath, enabled = true)
             if (result.isSuccess) {
                 val loadedPlugin = result.getOrNull()
-                loadedPlugin?.let { info ->
-                    reportMissingDependencies(info.manifest, reportDependencies)
-                    LoadedPluginInfo(
-                        pluginId = info.manifest.pluginId,
-                        displayName = info.manifest.displayName,
-                        version = info.manifest.version,
-                        description = info.manifest.description,
-                        author = info.manifest.author,
-                        url = info.manifest.url,
-                        type =
-                            info.manifest.type.name
-                                .lowercase(),
-                        apiVersion = info.manifest.apiVersion,
-                        minBossVersion = info.manifest.minBossVersion,
-                        isSystemPlugin = info.manifest.systemPlugin,
-                        canUnload = info.manifest.canUnload,
-                        loadPriority = info.manifest.loadPriority,
-                        isEnabled = info.enabled,
-                        healthy = info.state == PluginState.LOADED,
-                        jarPath = info.jarPath,
-                        installedAt = System.currentTimeMillis(),
-                        requiresAdmin = info.manifest.requiresAdmin,
-                    )
-                }
+                loadedPlugin?.let { info -> describe(info, reportDependencies) }
             } else {
                 logger.error(LogCategory.SYSTEM, "Failed to load plugin", error = result.exceptionOrNull())
                 null

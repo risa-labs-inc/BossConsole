@@ -2,7 +2,6 @@ package ai.rever.boss.plugin
 
 import java.io.File
 import kotlin.test.Test
-import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -12,14 +11,14 @@ import kotlin.test.assertTrue
  * `doReloadPlugin` finishes by calling `loadPlugin`, and reload is reached by
  * `resetPluginInstances`, the Toolbox's update flow and the evolver's hot reload - none of which
  * is a user asking to install anything, so re-offering a dependency someone already declined on
- * every reload would be worse than saying nothing. The whole distinction is one boolean at two
- * call sites, and collapsing the private overload back into the public one would silently lose
- * it while every behavioural test still passed.
+ * every reload would be worse than saying nothing.
  *
- * A source-level assertion because the seam is unreachable from a unit test:
+ * A source-level assertion because this one seam is unreachable from a unit test:
  * `PluginLoaderDelegateImpl` takes a concrete `DynamicPluginManager`, which cannot be faked.
- * Same approach as `WindowsArm64SourceIsolationTest`, for the same reason - a mistake that no
- * behavioural test can see should still fail a PR.
+ * Same approach as `WindowsArm64SourceIsolationTest`, for the same reason - a mistake no
+ * behavioural test can see should still fail a PR. Everything else about the prompt now has real
+ * tests (`MissingDependencyReporterTest`, `PluginDependencyResolutionTest`), so this file is
+ * deliberately down to the one property that cannot have one.
  */
 class DependencyPromptOnInstallOnlyTest {
     private fun source(): String {
@@ -50,36 +49,12 @@ class DependencyPromptOnInstallOnlyTest {
     }
 
     @Test
-    fun `the report set and the install guard come from one function`() {
-        val text = source()
-
-        // What the definition *is* now has real tests (`installedAndOnDisk` in
-        // PluginDependencyResolutionTest). This only pins that both halves still read it from
-        // one place: when they diverged, a failed install left a dangling entry that silenced
-        // the prompt for every later dependent of that plugin.
-        assertEquals(
-            1,
-            Regex("""fun\s+installedPluginIds\(""").findAll(text).count(),
-            "there must be exactly one definition of the installed set",
-        )
+    fun `the load path consults the flag before reporting`() {
+        // Matches the guard wherever it sits, so adding a log line or rewrapping the expression
+        // does not fail a test about behaviour.
         assertTrue(
-            Regex("""installedNow\s*=\s*\{[^}]*installedPluginIds\(\)""").containsMatchIn(text),
-            "the Install guard must read the same set as the reporter",
-        )
-        assertTrue(
-            Regex("""val\s+installed\s*=\s*installedPluginIds\(\)""").containsMatchIn(text),
-            "the report set must read the same set as the Install guard",
-        )
-    }
-
-    @Test
-    fun `reporting is gated on the flag rather than always running`() {
-        // The flag has to be consulted, not merely accepted: an early-return in the reporter
-        // is what makes the reload path silent.
-        assertTrue(
-            Regex("""fun\s+reportMissingDependencies\([^)]*\)\s*\{\s*\n\s*if\s*\(!\s*\w+\s*\)\s*return""")
-                .containsMatchIn(source()),
-            "reportMissingDependencies must return early when reporting is off",
+            Regex("""if\s*\(\s*reportDependencies\s*\)[\s\S]{0,200}?\.report\(""").containsMatchIn(source()),
+            "the load path must consult reportDependencies before reporting",
         )
     }
 }

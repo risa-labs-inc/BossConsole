@@ -136,6 +136,21 @@ private fun MissingDependencyBody(
             overflow = TextOverflow.Ellipsis,
         )
 
+        Spacer(modifier = Modifier.height(6.dp))
+
+        // The plugin id, always, even once the store name resolves. This is a consent dialog
+        // for downloading and running code, and the display name is the one string the least
+        // trustworthy party controls - so the identity the host will actually install by is
+        // shown alongside it. The clamps stop a crafted name breaking the dialog; they do not
+        // stop it misleading inside it.
+        Text(
+            text = missing.missingPluginId,
+            fontSize = 11.sp,
+            color = BossTheme.colors.textMuted,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+
         if (error != null) {
             Spacer(modifier = Modifier.height(12.dp))
             Text(

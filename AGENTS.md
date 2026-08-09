@@ -73,11 +73,15 @@ feature that silently did nothing. The AI Gateway made that concrete: three plug
 `PluginDependencyResolution.missingFor(manifest, installedIds)` now answers what is absent, and
 `MissingDependencyDialog` offers to install it. Four things about the placement:
 
-- **The hook is in `PluginLoaderDelegateImpl.loadPlugin`, not `installPlugin`.** That manager
-  method also serves startup restore, the bundled-plugin load and the api hot-swap's
-  reload-all, so a prompt there would be one dialog per plugin on every launch. The delegate is
-  the path plugin-manager install and update flows take, which is the only place a *user* asked
-  for something.
+- **`MissingDependencyReporter` is called from the three paths that install for a user**, and
+  never from `DynamicPluginManager.installPlugin`. That manager method also serves startup
+  restore, the bundled-plugin load and the api hot-swap's reload-all, so reporting there would be
+  one dialog per plugin on every launch. The three are `PluginLoaderDelegateImpl.loadPlugin`
+  (what plugin-manager's install and update flows reach), `PluginInstallService` (the first-run
+  wizard, where several plugins are chosen at once and so the likeliest place for an unmet
+  dependency) and `PluginUpdateBridge` (an update can add a dependency the installed version
+  never declared). A **reload** must not report: `resetPluginInstances`, the Toolbox reload and
+  the evolver's hot reload all end in a load, and none is a user asking for anything.
 - **Optional dependencies are reported, flagged, not dropped.** An optional dependency is how a
   plugin says "this feature needs that plugin". Dropping them would leave this reporting
   nothing for the case it was built for.
@@ -144,6 +148,10 @@ Deliberately out of scope, so nobody assumes more than exists:
 - **With two windows open, the window that asks may not be the one that reported.** The install
   is still correct; the answering window may just not show the change until relaunch. See
   `MissingDependencyPrompt`.
+- **A declined prompt is remembered for the session, not persisted.** All three gateway
+  consumers declare it optional, so without that, declining for one means being asked again for
+  the next. "Not now" is an answer about now, and a decision that outlived the session would
+  leave no way to be asked again short of editing a file.
 - **The dependent is not reloaded after its dependency installs.** It has already loaded and
   already resolved its handle to the dependency, typically to null. This is survivable because
   the consumers resolve the API *lazily, per call* - which their own AGENTS.md files require,
@@ -157,6 +165,14 @@ those disagreed - reporter on the raw `pluginStates` keys, installer on keys-plu
 install left a dangling entry that made every *later* dependent of that plugin report nothing at
 all, silently re-creating the problem this feature exists to remove. There is now one
 `installedAndOnDisk` predicate in `PluginLoaderDelegateImpl`, passed to both.
+
+**"Installed" is `state == LOADED || the jar exists`.** Both halves are load-bearing and each
+was a bug on its own. Requiring only an entry meant a binary-incompatible load - which registers
+a DISABLED entry while the installer deletes the jar it rejected - looked installed, so Retry
+reported success with nothing installed and every later dependent went silent. Requiring only the
+jar meant a *running* plugin whose file had moved looked absent: `PluginJarReconciler` and the
+updater both rewrite paths without repointing the manager's in-memory `jarPath`, so the prompt
+would fire for something already loaded and Install would fail with "Plugin already loaded".
 
 One trap worth knowing: `isInstalled` has to mean *usable*, not "the manager has an entry".
 `installPlugin` registers a DISABLED entry for a binary-incompatible plugin, and this installer
