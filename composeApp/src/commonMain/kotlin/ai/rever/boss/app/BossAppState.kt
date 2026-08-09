@@ -86,6 +86,19 @@ internal class BossAppState(
     var showShortcutHelpDialog by mutableStateOf(false)
 
     // Terminal link open dialog (Issue #346)
+
+    /**
+     * A dependency a just-installed plugin declares but which is absent.
+     *
+     * One at a time rather than a queue: installs are user-initiated and one at a time, so
+     * a second is a rare case not worth the state, and a stack of modal dialogs would be
+     * worse than showing the newest.
+     */
+    var pendingMissingPluginDependency by
+        mutableStateOf<ai.rever.boss.components.plugin.MissingDependencyPrompt?>(null)
+    var installingMissingDependency by mutableStateOf(false)
+    var missingDependencyError by mutableStateOf<String?>(null)
+
     var showTerminalLinkDialog by mutableStateOf(false)
     var pendingTerminalLinkUrl by mutableStateOf("")
     var pendingTerminalSourceId by mutableStateOf<String?>(null)

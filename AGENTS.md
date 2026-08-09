@@ -61,6 +61,39 @@ For a bottom split use `panel: horizontal_split`. Reuse a pane across calls by p
 - Supabase + Edge Functions
 - BossTerm for terminal integration (bundled in the `terminal-tab` plugin)
 
+## Plugin dependencies are resolved at install time
+
+`plugin.json` `dependencies` used to be read in exactly one place -
+`DynamicPluginManager.checkCanUnload`, which refuses to uninstall a plugin something else
+depends on. Nothing looked at them when a plugin was *installed*, so installing a plugin whose
+dependency was absent produced no signal at all and the user met the consequence later, as a
+feature that silently did nothing. The AI Gateway made that concrete: three plugins declare it
+`optional: true` and each falls back to an unconfigured state.
+
+`PluginDependencyResolution.missingFor(manifest, installedIds)` now answers what is absent, and
+`MissingDependencyDialog` offers to install it. Four things about the placement:
+
+- **The hook is in `PluginLoaderDelegateImpl.loadPlugin`, not `installPlugin`.** That manager
+  method also serves startup restore, the bundled-plugin load and the api hot-swap's
+  reload-all, so a prompt there would be one dialog per plugin on every launch. The delegate is
+  the path plugin-manager install and update flows take, which is the only place a *user* asked
+  for something.
+- **Optional dependencies are reported, flagged, not dropped.** An optional dependency is how a
+  plugin says "this feature needs that plugin". Dropping them would leave this reporting
+  nothing for the case it was built for.
+- **The event bus is a `Channel`, not a `SharedFlow`.** A broadcast would put the same dialog in
+  front of every open window and let each of them start the same install. The collector applies
+  back-pressure (`snapshotFlow { … }.first { it == null }`) so a second missing dependency is
+  asked about after the first rather than replacing it.
+- **Installing is the host's to do.** `PluginRepository.getPlugin(id)` plus `downloadPlugin`
+  resolve an id to a jar, which no plugin can do - a plugin holding a null API can only send
+  the user to the Toolbox to search by name. `StoreMissingDependencyInstaller` deletes the jar
+  again if it fails to load, so a scan on the next launch cannot pick up something that just
+  failed its checks.
+
+Transitive dependencies are deliberately not chased: the dependency loads through the manager
+directly, so answering one question never produces a second dialog.
+
 ## Configuration
 
 Create `local.properties`:

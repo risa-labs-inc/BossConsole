@@ -2,6 +2,9 @@ package ai.rever.boss.plugin
 
 import ai.rever.boss.components.plugin.DynamicPluginManager
 import ai.rever.boss.components.plugin.MicrokernelRuntime
+import ai.rever.boss.components.plugin.MissingDependencyPrompt
+import ai.rever.boss.components.plugin.PluginDependencyEventBus
+import ai.rever.boss.components.plugin.PluginDependencyResolution
 import ai.rever.boss.components.plugin.findRelocatedPluginJar
 import ai.rever.boss.components.plugin.resolveReloadJarPath
 import ai.rever.boss.components.registery.PanelComponentStoreRegistry
@@ -55,6 +58,56 @@ class PluginLoaderDelegateImpl(
      */
     private val detachedReloads = KeyedDetachedJobs<String, LoadedPluginInfo?>(reloadScope)
 
+    /**
+     * Fixes a missing dependency, for the prompt's Install button.
+     *
+     * Bound to this delegate's manager so the dependency loads into the same window that
+     * asked, and holds the store lazily because `PluginStoreSetup` initialises during startup
+     * while this delegate can outlive a store that never came up at all.
+     */
+    private val dependencyInstaller =
+        StoreMissingDependencyInstaller(
+            dynamicPluginManager = dynamicPluginManager,
+            repository = { PluginStoreSetup.remoteRepository },
+            pluginDir = { PluginStoreSetup.getPluginDir() },
+        )
+
+    /**
+     * Tell the user about dependencies this plugin declares but which are absent.
+     *
+     * Deliberately here and not in `DynamicPluginManager.installPlugin`: that method also
+     * serves startup restore, the bundled-plugin load and the api hot-swap's reload-all, so
+     * a prompt there would be one dialog per plugin on every launch. This delegate is the
+     * path plugin-manager install and update flows take, which is the only place a *user*
+     * asked for something.
+     *
+     * Reporting is fire-and-forget. A missing dependency is worth mentioning but never
+     * worth failing an install the user asked for, or making them wait on a window that may
+     * not exist yet.
+     */
+    private fun reportMissingDependencies(manifest: ai.rever.boss.plugin.api.PluginManifest) {
+        runCatching {
+            // Every plugin the host knows about, not only the enabled ones: a disabled
+            // dependency is installed, so offering to install it again would be the wrong
+            // fix and the wrong sentence.
+            val installed = dynamicPluginManager.pluginStates.value.keys
+            PluginDependencyResolution
+                .missingFor(manifest, installed)
+                .forEach { missing ->
+                    logger.info(
+                        LogCategory.SYSTEM,
+                        "Installed plugin declares a dependency that is not present",
+                        mapOf(
+                            "plugin" to missing.dependentPluginId,
+                            "missing" to missing.missingPluginId,
+                            "optional" to missing.optional,
+                        ),
+                    )
+                    PluginDependencyEventBus.report(MissingDependencyPrompt(missing, dependencyInstaller))
+                }
+        }
+    }
+
     override suspend fun loadPlugin(jarPath: String): LoadedPluginInfo? {
         // Never try to load the microkernel runtime via the plugin-install
         // path — it's a classpath dependency for OOP child JVMs, not a
@@ -95,6 +148,7 @@ class PluginLoaderDelegateImpl(
             if (result.isSuccess) {
                 val loadedPlugin = result.getOrNull()
                 loadedPlugin?.let { info ->
+                    reportMissingDependencies(info.manifest)
                     LoadedPluginInfo(
                         pluginId = info.manifest.pluginId,
                         displayName = info.manifest.displayName,

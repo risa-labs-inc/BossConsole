@@ -478,6 +478,38 @@ internal fun BossAppDialogs(state: BossAppState) {
         )
     }
 
+    // A plugin the user just installed needs another plugin that is not there. Offer to
+    // install it rather than leaving the feature to fail silently later.
+    state.pendingMissingPluginDependency?.let { prompt ->
+        ai.rever.boss.components.plugin.MissingDependencyDialog(
+            prompt = prompt,
+            installing = state.installingMissingDependency,
+            error = state.missingDependencyError,
+            onDismiss = {
+                state.pendingMissingPluginDependency = null
+                state.missingDependencyError = null
+            },
+            onInstall = {
+                state.installingMissingDependency = true
+                state.missingDependencyError = null
+                coroutineScope.launch {
+                    val result = prompt.installer.install(prompt.missing.missingPluginId)
+                    state.installingMissingDependency = false
+                    result
+                        .onSuccess {
+                            state.pendingMissingPluginDependency = null
+                            state.missingDependencyError = null
+                        }.onFailure { error ->
+                            // Keep the dialog up with the reason and a Retry: dismissing on
+                            // failure would look like it worked.
+                            state.missingDependencyError =
+                                error.message ?: "Could not install the plugin."
+                        }
+                }
+            },
+        )
+    }
+
     // Directory picker for project selection (must be outside conditional for Compose)
     val directoryPicker =
         rememberDirectoryPicker { path ->

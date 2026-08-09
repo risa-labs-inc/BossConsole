@@ -1,0 +1,221 @@
+package ai.rever.boss.components.plugin
+
+import ai.rever.boss.components.plugin.PluginDependencyResolution.description
+import ai.rever.boss.plugin.api.PluginDependency
+import ai.rever.boss.plugin.api.PluginManifest
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+
+/**
+ * What the install-time dependency prompt decides, without a plugin loader.
+ *
+ * Until this feature, `PluginManifest.dependencies` was read in exactly one place
+ * (`DynamicPluginManager.checkCanUnload`), so installing a plugin whose dependency was absent
+ * produced no signal at all - the user met the consequence later, as a feature that did
+ * nothing. These pin the rules of the resolver that closes that.
+ */
+class PluginDependencyResolutionTest {
+    private fun manifest(
+        pluginId: String = "com.example.dependent",
+        displayName: String = "Dependent",
+        dependencies: List<PluginDependency> = emptyList(),
+    ) = PluginManifest(
+        pluginId = pluginId,
+        displayName = displayName,
+        version = "1.0.0",
+        apiVersion = "1.0.0",
+        mainClass = "com.example.Main",
+        dependencies = dependencies,
+    )
+
+    private fun dependency(
+        pluginId: String,
+        optional: Boolean = false,
+    ) = PluginDependency(pluginId = pluginId, version = "1.0.0", optional = optional)
+
+    @Test
+    fun `an installed dependency is not reported`() {
+        val missing =
+            PluginDependencyResolution.missingFor(
+                manifest(dependencies = listOf(dependency("com.example.gateway"))),
+                installedPluginIds = setOf("com.example.gateway"),
+            )
+
+        assertTrue(missing.isEmpty(), "expected nothing missing, got $missing")
+    }
+
+    @Test
+    fun `an absent dependency is reported with the dependent's display name`() {
+        val missing =
+            PluginDependencyResolution.missingFor(
+                manifest(displayName = "Flow", dependencies = listOf(dependency("com.example.gateway"))),
+                installedPluginIds = emptySet(),
+            )
+
+        assertEquals(1, missing.size)
+        assertEquals("com.example.gateway", missing.single().missingPluginId)
+        // The dialog says "Flow needs ...", so the name has to survive resolution.
+        assertEquals("Flow", missing.single().dependentDisplayName)
+    }
+
+    /**
+     * The gateway is declared `optional: true` by all three of its consumers, so dropping
+     * optional dependencies here would leave this feature reporting nothing at all for the
+     * case it was built for.
+     */
+    @Test
+    fun `an optional dependency is reported and flagged, not dropped`() {
+        val missing =
+            PluginDependencyResolution.missingFor(
+                manifest(dependencies = listOf(dependency("com.example.gateway", optional = true))),
+                installedPluginIds = emptySet(),
+            )
+
+        assertEquals(1, missing.size)
+        assertTrue(missing.single().optional)
+    }
+
+    @Test
+    fun `a self-dependency is not offered for install`() {
+        val missing =
+            PluginDependencyResolution.missingFor(
+                manifest(
+                    pluginId = "com.example.dependent",
+                    dependencies = listOf(dependency("com.example.dependent")),
+                ),
+                // Deliberately empty: mid-install the plugin is not in the installed set yet,
+                // so without the filter it would offer to install what was just installed.
+                installedPluginIds = emptySet(),
+            )
+
+        assertTrue(missing.isEmpty(), "expected no self-dependency, got $missing")
+    }
+
+    @Test
+    fun `a dependency declared twice prompts once`() {
+        val missing =
+            PluginDependencyResolution.missingFor(
+                manifest(
+                    dependencies =
+                        listOf(
+                            dependency("com.example.gateway"),
+                            dependency("com.example.gateway", optional = true),
+                        ),
+                ),
+                installedPluginIds = emptySet(),
+            )
+
+        assertEquals(1, missing.size)
+    }
+
+    @Test
+    fun `only the absent dependencies of several are reported`() {
+        val missing =
+            PluginDependencyResolution.missingFor(
+                manifest(
+                    dependencies =
+                        listOf(
+                            dependency("com.example.here"),
+                            dependency("com.example.gone"),
+                        ),
+                ),
+                installedPluginIds = setOf("com.example.here"),
+            )
+
+        assertEquals(listOf("com.example.gone"), missing.map { it.missingPluginId })
+    }
+
+    @Test
+    fun `a required dependency reads as needed and an optional one as a feature`() {
+        val required =
+            MissingPluginDependency("com.example.d", "Flow", "com.example.gateway", optional = false)
+        val optional = required.copy(optional = true)
+
+        assertEquals("Flow needs AI Gateway, which is not installed.", required.description("AI Gateway"))
+        assertTrue(optional.description("AI Gateway").startsWith("Flow works without AI Gateway"))
+    }
+
+    @Test
+    fun `the description falls back to whatever name it is given`() {
+        val required =
+            MissingPluginDependency("com.example.d", "Flow", "com.example.gateway", optional = false)
+
+        // The dialog passes the plugin id when the store lookup fails, so the sentence still
+        // has to name something rather than reading "Flow needs null".
+        assertTrue(required.description("com.example.gateway").contains("com.example.gateway"))
+    }
+}
+
+/**
+ * The delivery guarantee the prompt depends on.
+ *
+ * A broadcast would put the same dialog in front of every open window and let each of them
+ * start the same install, so "exactly one collector receives it" is the property, not an
+ * implementation detail. Each test builds its own bus - a shared one carries leftover prompts
+ * between tests.
+ */
+class PluginDependencyBusTest {
+    private val noopInstaller =
+        object : MissingDependencyInstaller {
+            override suspend fun displayNameFor(pluginId: String): String? = null
+
+            override suspend fun install(pluginId: String): Result<Unit> = Result.success(Unit)
+        }
+
+    private fun prompt(missingPluginId: String) =
+        MissingDependencyPrompt(
+            MissingPluginDependency("com.example.d", "Dependent", missingPluginId, optional = false),
+            noopInstaller,
+        )
+
+    @Test
+    fun `reporting with nobody collecting neither suspends nor throws`() {
+        // The installer calls this from a plugin-install path: it must never block on a UI
+        // that may not exist yet, and must not fail the install the user asked for.
+        PluginDependencyBus().report(prompt("com.example.dropped"))
+    }
+
+    @Test
+    fun `one prompt reaches exactly one of two collectors`() =
+        runTest {
+            val bus = PluginDependencyBus()
+            val received = mutableListOf<String>()
+            val collectors =
+                List(2) {
+                    launch {
+                        received +=
+                            bus.missingDependencies
+                                .first()
+                                .missing.missingPluginId
+                    }
+                }
+            runCurrent()
+
+            bus.report(prompt("com.example.once"))
+            advanceUntilIdle()
+            collectors.forEach { it.cancel() }
+
+            assertEquals(listOf("com.example.once"), received)
+        }
+
+    @Test
+    fun `a prompt reported before anyone collects is delivered when a collector appears`() =
+        runTest {
+            val bus = PluginDependencyBus()
+            bus.report(prompt("com.example.early"))
+
+            // The install that raised it can finish long before a window exists.
+            assertEquals(
+                "com.example.early",
+                bus.missingDependencies
+                    .first()
+                    .missing.missingPluginId,
+            )
+        }
+}
