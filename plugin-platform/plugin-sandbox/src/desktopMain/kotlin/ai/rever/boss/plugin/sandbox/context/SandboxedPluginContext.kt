@@ -222,11 +222,7 @@ class SandboxedPluginContext(
 
     // Navigation target provider - delegate to underlying context
     override val navigationTargetProvider: NavigationTargetProvider?
-        get() {
-            val result = delegate.navigationTargetProvider
-            println("[HOST-DEBUG] SandboxedPluginContext.navigationTargetProvider: delegate=${delegate::class.simpleName}, result=$result")
-            return result
-        }
+        get() = delegate.navigationTargetProvider
 
     // Clipboard provider - delegate to underlying context
     override val clipboardProvider: ClipboardProvider?

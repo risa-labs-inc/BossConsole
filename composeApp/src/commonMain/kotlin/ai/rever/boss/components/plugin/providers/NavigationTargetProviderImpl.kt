@@ -3,6 +3,8 @@ package ai.rever.boss.components.plugin.providers
 import ai.rever.boss.components.events.NavigationTargetBus
 import ai.rever.boss.plugin.api.NavigationTargetEvent
 import ai.rever.boss.plugin.api.NavigationTargetProvider
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -18,6 +20,7 @@ import kotlinx.coroutines.launch
  * and position their editor cursors appropriately.
  */
 object NavigationTargetProviderImpl : NavigationTargetProvider {
+    private val logger = BossLogger.forComponent("NavigationTargetProviderImpl")
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     private val _targets =
@@ -28,13 +31,15 @@ object NavigationTargetProviderImpl : NavigationTargetProvider {
     override val targets: SharedFlow<NavigationTargetEvent> = _targets.asSharedFlow()
 
     init {
-        println("[HOST-DEBUG] NavigationTargetProviderImpl: init - starting collector")
+        logger.debug(LogCategory.EDITOR, "Starting navigation-target collector")
         // Forward events from NavigationTargetBus to our flow
         scope.launch {
-            println("[HOST-DEBUG] NavigationTargetProviderImpl: collector started")
+            logger.debug(LogCategory.EDITOR, "Navigation-target collector started")
             NavigationTargetBus.targets.collect { event ->
-                println(
-                    "[HOST-DEBUG] NavigationTargetProviderImpl: received event from NavigationTargetBus: ${event.filePath}:${event.line}:${event.column}",
+                logger.debug(
+                    LogCategory.EDITOR,
+                    "Forwarding navigation target to plugins",
+                    mapOf("target" to "${event.filePath}:${event.line}:${event.column}"),
                 )
                 _targets.emit(
                     NavigationTargetEvent(
@@ -44,7 +49,7 @@ object NavigationTargetProviderImpl : NavigationTargetProvider {
                         sourceWindowId = event.sourceWindowId,
                     ),
                 )
-                println("[HOST-DEBUG] NavigationTargetProviderImpl: emitted to plugin targets")
+                logger.debug(LogCategory.EDITOR, "Navigation target emitted to plugin flow")
             }
         }
     }

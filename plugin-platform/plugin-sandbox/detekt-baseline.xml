@@ -12,7 +12,6 @@
     <ID>MaxLineLength:SandboxedPluginContext.kt$SandboxedPluginContext$override fun unregisterDeepLinkActionHandler(handlerId: String)</ID>
     <ID>MaxLineLength:SandboxedPluginContext.kt$SandboxedPluginContext$override fun unregisterPanelMenuContribution(contributionId: String)</ID>
     <ID>MaxLineLength:SandboxedPluginContext.kt$SandboxedPluginContext$override fun unregisterShortcutActionProvider(providerId: String)</ID>
-    <ID>MaxLineLength:SandboxedPluginContext.kt$SandboxedPluginContext$println("[HOST-DEBUG] SandboxedPluginContext.navigationTargetProvider: delegate=${delegate::class.simpleName}, result=$result")</ID>
     <ID>NestedBlockDepth:PluginCrashInterceptor.kt$PluginCrashInterceptor$fun attributeToPlugin( throwable: Throwable, thread: Thread? = null, ): String?</ID>
     <ID>NestedBlockDepth:PluginCrashInterceptor.kt$PluginCrashInterceptor$fun register( pluginId: String, onError: (Throwable) -&gt; Unit, ): Registration</ID>
     <ID>ReturnCount:PluginCrashInterceptor.kt$PluginCrashInterceptor$fun attributeToPlugin( throwable: Throwable, thread: Thread? = null, ): String?</ID>
