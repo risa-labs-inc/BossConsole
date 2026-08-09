@@ -39,6 +39,7 @@ class PluginDependencyResolutionTest {
     private fun info(
         pluginId: String,
         jarPath: String,
+        state: PluginState = PluginState.DISABLED,
     ) = DynamicPluginInfo(
         manifest =
             PluginManifest(
@@ -49,9 +50,9 @@ class PluginDependencyResolutionTest {
                 mainClass = "com.example.Main",
             ),
         jarPath = jarPath,
-        state = PluginState.DISABLED,
+        state = state,
         loadedAt = 0L,
-        enabled = false,
+        enabled = state == PluginState.LOADED,
     )
 
     private fun dependency(
@@ -215,6 +216,46 @@ class PluginDependencyResolutionTest {
         // dangling entry as installed made every LATER dependent of that plugin report nothing,
         // with no prompt and no log line.
         assertEquals(setOf("com.example.present"), installed)
+    }
+
+    @Test
+    fun `a loaded plugin counts as installed even when its jar is gone`() {
+        // The LOADED clause exists for this: `PluginJarReconciler` and the updater rewrite paths
+        // without repointing the manager's in-memory `jarPath`, so a running plugin can hold a
+        // path that no longer exists. Every other test in this file uses a DISABLED entry, so
+        // without this the clause was never exercised at all.
+        val states =
+            mapOf(
+                "com.example.gateway" to
+                    info("com.example.gateway", "/plugins/moved.jar", PluginState.LOADED),
+            )
+
+        val installed = PluginDependencyResolution.installedAndOnDisk(states, exists = { false })
+
+        assertEquals(setOf("com.example.gateway"), installed)
+    }
+
+    @Test
+    fun `a loaded plugin still flagged incompatible counts as installed`() {
+        // `PluginCrashRegistry` keeps the flag until the re-enable path clears it, and neither
+        // install nor update does. So a plugin that failed registration, was updated from the
+        // Toolbox's own incompatibility prompt and is now running still carries it - and
+        // excluding it would report a *running* plugin as missing, then claim the download "did
+        // not start".
+        val states =
+            mapOf(
+                "com.example.gateway" to
+                    info("com.example.gateway", "/plugins/gateway.jar", PluginState.LOADED),
+            )
+
+        val installed =
+            PluginDependencyResolution.installedAndOnDisk(
+                states = states,
+                exists = { true },
+                isIncompatible = { true },
+            )
+
+        assertEquals(setOf("com.example.gateway"), installed)
     }
 
     @Test

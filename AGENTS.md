@@ -125,9 +125,6 @@ in review:
 - **Cleanup removes the `.sig` sidecar with the jar.** Reinstalling the same version reuses the
   filename, so a surviving sidecar meets fresh bytes and hard-fails the load, which is worse
   than being unsigned.
-- **It downloads straight to the final name**, not through a `-downloading.jar` rename. The
-  sidecar is written next to whatever path `downloadPlugin` was given, so a rename afterwards
-  orphans it. (`PluginInstallService` does rename, and does leave the sidecar behind.)
 - **It writes the `installed.json` entry.** `setPluginEnabled` updates an existing entry and
   does nothing when there is none, so a plugin known only by its presence on disk cannot be
   disabled persistently.

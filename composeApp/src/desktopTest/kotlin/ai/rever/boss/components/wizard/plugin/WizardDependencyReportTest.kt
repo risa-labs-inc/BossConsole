@@ -2,6 +2,7 @@ package ai.rever.boss.components.wizard.plugin
 
 import java.io.File
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -59,6 +60,21 @@ class WizardDependencyReportTest {
     }
 
     @Test
+    fun `both branches check the plugin actually registered before reporting it`() {
+        val text = source()
+
+        // `installPlugin` returns success with `state = DISABLED` for a registration-time binary
+        // incompatibility, so reporting on success alone offers to download a second plugin to
+        // support a dead one. Both branches add to the batch, so both need the gate - the store
+        // branch had it and the GitHub branch did not.
+        assertEquals(
+            2,
+            Regex("""PluginState\.LOADED""").findAll(text).count(),
+            "each branch that feeds the dependency batch must check state == LOADED",
+        )
+    }
+
+    @Test
     fun `both install branches feed the batch`() {
         val text = source()
 
@@ -69,9 +85,11 @@ class WizardDependencyReportTest {
             "both the store and GitHub branches must add their manifest to the batch",
         )
         assertTrue(
-            Regex("""installFromGitHub\([\s\S]{0,400}?\): Result<PluginManifest>""").containsMatchIn(text) ||
-                Regex("""\): Result<PluginManifest>""").containsMatchIn(text),
-            "installFromGitHub must return its manifest so the batch can include it",
+            // No `||` fallback: an alternative matching any function with that return type would
+            // always decide the assertion, so the scoped pattern could never fail.
+            Regex("""fun\s+installFromGitHub[\s\S]{0,400}?\): Result<DynamicPluginInfo>""")
+                .containsMatchIn(text),
+            "installFromGitHub must return what registered, so the batch can check it loaded",
         )
     }
 }

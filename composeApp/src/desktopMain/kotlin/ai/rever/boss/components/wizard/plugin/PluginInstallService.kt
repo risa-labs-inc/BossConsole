@@ -1,5 +1,6 @@
 package ai.rever.boss.components.wizard.plugin
 
+import ai.rever.boss.components.plugin.DynamicPluginInfo
 import ai.rever.boss.components.plugin.DynamicPluginManager
 import ai.rever.boss.plugin.MissingDependencyReporter
 import ai.rever.boss.plugin.PluginPersistence
@@ -112,10 +113,14 @@ class PluginInstallService(
                     // If plugin has a GitHub URL, install from GitHub
                     if (plugin.githubUrl.isNotEmpty()) {
                         val result = installFromGitHub(plugin, pluginDir, progress, totalPlugins, onProgress)
-                        val installedManifest = result.getOrNull()
-                        if (installedManifest != null) {
+                        val installedPlugin = result.getOrNull()
+                        if (installedPlugin != null) {
                             installedIds.add(plugin.id)
-                            installedManifests.add(installedManifest)
+                            // Same LOADED gate as the store branch: a plugin that installed but
+                            // did not register must not have its dependencies offered.
+                            if (installedPlugin.state == PluginState.LOADED) {
+                                installedManifests.add(installedPlugin.manifest)
+                            }
                         } else {
                             failedIds.add(plugin.id to (result.exceptionOrNull()?.message ?: "GitHub install failed"))
                         }
@@ -311,14 +316,18 @@ class PluginInstallService(
         )
     }
 
-    /** Returns the installed manifest, so the caller's batch dependency report includes it. */
+    /**
+     * Returns what the manager registered, so the caller's batch dependency report can include it
+     * *and* check that it actually loaded - `installPlugin` returns success with
+     * `state = DISABLED` for a registration-time binary incompatibility.
+     */
     private suspend fun installFromGitHub(
         plugin: WizardPluginInfo,
         pluginDir: File,
         baseProgress: Float,
         totalPlugins: Int,
         onProgress: (Float, String) -> Unit,
-    ): Result<PluginManifest> =
+    ): Result<DynamicPluginInfo> =
         withContext(Dispatchers.IO) {
             try {
                 onProgress(baseProgress + (0.1f / totalPlugins), "Checking GitHub releases for ${plugin.name}...")
@@ -353,9 +362,11 @@ class PluginInstallService(
                 // Install the plugin
                 val installResult = dynamicPluginManager.installPlugin(jarPath, enabled = true)
 
-                if (installResult.isFailure) {
-                    return@withContext Result.failure(installResult.exceptionOrNull() ?: Exception("Install failed"))
-                }
+                val installed =
+                    installResult.getOrNull()
+                        ?: return@withContext Result.failure(
+                            installResult.exceptionOrNull() ?: Exception("Install failed"),
+                        )
 
                 // Persist the installation
                 PluginPersistence.addInstalledPlugin(
@@ -375,7 +386,7 @@ class PluginInstallService(
                     ),
                 )
 
-                Result.success(manifest)
+                Result.success(installed)
             } catch (e: Exception) {
                 logger.error(
                     LogCategory.SYSTEM,
