@@ -237,13 +237,29 @@ open class PluginDependencyBus {
      */
     private val queued = ConcurrentHashMap.newKeySet<String>()
 
-    /** Records a "Not now" so this missing plugin stops asking for the rest of the session. */
-    fun decline(missingPluginId: String) {
-        declined.add(missingPluginId)
+    /**
+     * Records a dismissal so the same question stops being asked this session.
+     *
+     * Keyed differently by kind, because the two buttons ask different things. "Not now" on an
+     * *optional* dependency is an answer about that plugin - three consumers declare the gateway
+     * optional, and being asked three times for one answer is the thing this prevents. "Skip" on
+     * a *required* one is an answer about this dependent only: another plugin that hard-requires
+     * the same thing is a different question, and silencing it would be strictly worse than the
+     * optional case.
+     */
+    fun decline(missing: MissingPluginDependency) {
+        declined.add(declineKey(missing))
     }
 
-    /** Whether the user already declined this missing plugin in this session. */
-    fun wasDeclined(missingPluginId: String): Boolean = missingPluginId in declined
+    /** Whether this exact question was already declined this session. */
+    fun wasDeclined(missing: MissingPluginDependency): Boolean = declineKey(missing) in declined
+
+    private fun declineKey(missing: MissingPluginDependency) =
+        if (missing.optional) {
+            missing.missingPluginId
+        } else {
+            "${missing.dependentPluginId}->${missing.missingPluginId}"
+        }
 
     /**
      * A channel, not a `SharedFlow`, because exactly one window must ask.
@@ -280,7 +296,7 @@ open class PluginDependencyBus {
      */
     fun report(prompt: MissingDependencyPrompt) {
         val missingPluginId = prompt.missing.missingPluginId
-        if (wasDeclined(missingPluginId) || !queued.add(missingPluginId)) return
+        if (wasDeclined(prompt.missing) || !queued.add(missingPluginId)) return
         if (prompts.trySend(prompt).isFailure) {
             queued.remove(missingPluginId)
             // DROP_OLDEST is silent, and a prompt that never appears is indistinguishable

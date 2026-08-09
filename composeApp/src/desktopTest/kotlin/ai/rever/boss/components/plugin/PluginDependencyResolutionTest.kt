@@ -269,6 +269,14 @@ class PluginDependencyBusTest {
             override suspend fun install(pluginId: String): Result<Unit> = Result.success(Unit)
         }
 
+    private fun missing(
+        dependentPluginId: String,
+        missingPluginId: String,
+        optional: Boolean,
+    ) = MissingPluginDependency(dependentPluginId, "Dependent", missingPluginId, optional)
+
+    private fun promptFor(missing: MissingPluginDependency) = MissingDependencyPrompt(missing, noopInstaller)
+
     private fun prompt(missingPluginId: String) =
         MissingDependencyPrompt(
             MissingPluginDependency("com.example.d", "Dependent", missingPluginId, optional = false),
@@ -325,18 +333,39 @@ class PluginDependencyBusTest {
         }
 
     @Test
-    fun `a declined plugin stops being reported for the rest of the session`() =
+    fun `declining an optional dependency silences it for every dependent`() =
         runTest {
             val bus = PluginDependencyBus()
-            bus.decline("com.example.gateway")
+            bus.decline(missing("com.example.first", "com.example.gateway", optional = true))
 
-            bus.report(prompt("com.example.gateway"))
-            bus.report(prompt("com.example.other"))
+            // All three gateway consumers declare it optional, so "Not now" is one answer about
+            // the gateway - not something to be asked again for the next plugin that needs it.
+            bus.report(promptFor(missing("com.example.second", "com.example.gateway", optional = true)))
+            bus.report(promptFor(missing("com.example.second", "com.example.other", optional = true)))
 
-            // All three gateway consumers declare it optional, so without this, declining once
-            // means being asked again for the next plugin that needs it.
             assertEquals(
                 "com.example.other",
+                bus.missingDependencies
+                    .first()
+                    .missing.missingPluginId,
+            )
+        }
+
+    @Test
+    fun `skipping a required dependency does not silence another plugin that requires it`() =
+        runTest {
+            val bus = PluginDependencyBus()
+            bus.decline(missing("com.example.first", "com.example.gateway", optional = false))
+
+            // "Skip" answers for this dependent only: another plugin that hard-requires the same
+            // thing is a different question, and silencing that would be worse than the optional
+            // case rather than better.
+            val other = missing("com.example.second", "com.example.gateway", optional = false)
+            assertFalse(bus.wasDeclined(other))
+            bus.report(promptFor(other))
+
+            assertEquals(
+                "com.example.gateway",
                 bus.missingDependencies
                     .first()
                     .missing.missingPluginId,
@@ -347,10 +376,11 @@ class PluginDependencyBusTest {
     fun `declining one plugin does not silence another`() =
         runTest {
             val bus = PluginDependencyBus()
-            bus.decline("com.example.gateway")
+            val gateway = missing("com.example.first", "com.example.gateway", optional = true)
+            bus.decline(gateway)
 
-            assertTrue(bus.wasDeclined("com.example.gateway"))
-            assertFalse(bus.wasDeclined("com.example.other"))
+            assertTrue(bus.wasDeclined(gateway))
+            assertFalse(bus.wasDeclined(missing("com.example.first", "com.example.other", optional = true)))
         }
 
     @Test

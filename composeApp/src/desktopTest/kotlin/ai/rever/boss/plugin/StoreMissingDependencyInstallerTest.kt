@@ -397,17 +397,43 @@ class StoreMissingDependencyInstallerTest {
         }
 
     @Test
-    fun `a failed download does not delete a jar that was already there`() =
+    fun `a failed download leaves an existing jar byte-identical`() =
         runTest {
             temp.mkdirs()
             val existing = jar()
-            existing.writeText("a plugin the manager never registered")
+            val original = "a plugin the manager never registered"
+            existing.writeText(original)
 
             installer(FakeStore(info(), downloadBytes = null)).install(PLUGIN_ID)
 
-            // A plugin can be on disk without an entry - a load that failed transiently at
-            // startup - and a failed download must not take the user's file with it.
+            // Content, not existence: `downloadPlugin` streams into the path it is given and
+            // `outputStream()` truncates on open, so an earlier version of this asserted
+            // `exists()` and passed on three bytes of junk left by the failed download. The
+            // download goes to a `.part` sibling now, so the real jar is never opened at all.
             assertTrue(existing.exists(), "deleted a pre-existing jar this install did not create")
+            assertEquals(original, existing.readText(), "overwrote a pre-existing jar with a partial download")
+        }
+
+    @Test
+    fun `a failed download leaves no part file behind`() =
+        runTest {
+            installer(FakeStore(info(), downloadBytes = null)).install(PLUGIN_ID)
+
+            val leftovers = temp.listFiles().orEmpty().map { it.name }
+            assertTrue(leftovers.none { it.endsWith(".part") }, "left a part file: $leftovers")
+        }
+
+    @Test
+    fun `a successful download promotes the jar and its sidecar together`() =
+        runTest {
+            assertTrue(installer(FakeStore(info())).install(PLUGIN_ID).isSuccess)
+
+            // Promoting the jar alone would leave the signature under the part name, and the jar
+            // would load as unsigned.
+            assertTrue(jar().exists())
+            assertEquals("signature", PluginSignatureSidecar.read(jar().absolutePath))
+            val leftovers = temp.listFiles().orEmpty().map { it.name }
+            assertTrue(leftovers.none { it.contains(".part") }, "left part files behind: $leftovers")
         }
 
     @Test

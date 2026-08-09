@@ -100,6 +100,7 @@ actual object PluginUpdateBridge {
             return Result.failure(Exception("Refusing to download update outside the plugin directory"))
         }
         val targetPath = targetFile.absolutePath
+        val reporter = MissingDependencyReporter.forManager(manager)
         val result =
             mgr.updatePlugin(
                 pluginId = pluginId,
@@ -109,7 +110,7 @@ actual object PluginUpdateBridge {
                     manager.installPlugin(path).map { info ->
                         // An update can add a dependency the installed version never declared,
                         // and this path does not go through PluginLoaderDelegateImpl.
-                        MissingDependencyReporter.forManager(manager).report(info.manifest)
+                        reporter.report(info.manifest)
                     }
                 },
             )

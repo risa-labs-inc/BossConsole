@@ -73,7 +73,14 @@ class PluginLoaderDelegateImpl(
         info: DynamicPluginInfo,
         reportDependencies: Boolean,
     ): LoadedPluginInfo {
-        if (reportDependencies) dependencyReporter.report(info.manifest)
+        // Only for a plugin that actually registered. `installPlugin` returns success with
+        // `state = DISABLED` when registration failed as binary-incompatible or the plugin is
+        // hidden for lack of access - reporting there would say "Flow needs the AI Gateway" for
+        // something that is not running and will not run, and taking Install would download a
+        // second plugin to support a dead one.
+        if (reportDependencies && info.state == PluginState.LOADED) {
+            dependencyReporter.report(info.manifest)
+        }
         return LoadedPluginInfo(
             pluginId = info.manifest.pluginId,
             displayName = info.manifest.displayName,

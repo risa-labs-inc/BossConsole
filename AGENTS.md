@@ -114,10 +114,14 @@ recorded version comes from that manifest too, since update checking compares ag
 Five things `StoreMissingDependencyInstaller` gets right that are easy to get wrong, all found
 in review:
 
-- **A failed download deletes its jar.** `RemotePluginRepository.downloadPlugin` writes straight
-  into the target path and only deletes on a hash or signature rejection, so a connection that
-  dies mid-stream leaves a truncated jar at the *final* filename - which `PluginJarReconciler`
-  then finds and retries on every launch.
+- **The download goes to a `<name>.jar.part` sibling and is moved into place, with its
+  sidecar.** `downloadPlugin` streams into whatever path it is given and `outputStream()`
+  truncates on open, so downloading onto the final name destroys any jar already there the
+  instant the connection opens - and a stream that then dies leaves a truncated file at a name
+  every later launch tries to load. A "was a file already here" guard does not help: by then its
+  contents are gone either way. The suffix deliberately does not end in `.jar`, so a part file
+  left by a kill is ignored by the directory scan. Both files move together, because the
+  signature is written next to the path `downloadPlugin` was given.
 - **Cleanup removes the `.sig` sidecar with the jar.** Reinstalling the same version reuses the
   filename, so a surviving sidecar meets fresh bytes and hard-fails the load, which is worse
   than being unsigned.
@@ -127,9 +131,10 @@ in review:
 - **It writes the `installed.json` entry.** `setPluginEnabled` updates an existing entry and
   does nothing when there is none, so a plugin known only by its presence on disk cannot be
   disabled persistently.
-- **It only deletes a jar it created.** A plugin can sit on disk with no manager entry (a load
-  that failed transiently at startup), so cleanup checks whether the path was already occupied
-  before the download.
+- **Nothing is reported for a plugin that did not actually register.** `installPlugin` returns
+  success with `state = DISABLED` when registration failed as binary-incompatible or the plugin
+  is hidden for lack of access; reporting then offers to install a second plugin to support a
+  dead one.
 
 Installs are detached and coalesced per plugin id (`KeyedDetachedJobs`, as reloads are): the
 prompt is driven from a window's scope, so closing that window mid-download would otherwise
@@ -158,10 +163,13 @@ Deliberately out of scope, so nobody assumes more than exists:
   certain to discard - declined, or a duplicate of one already waiting - still costs one of four
   buffer slots on the way through, and that can be what refuses a different dependency which
   could have been shown.
-- **A declined prompt is remembered for the session, not persisted.** All three gateway
-  consumers declare it optional, so without that, declining for one means being asked again for
-  the next. "Not now" is an answer about now, and a decision that outlived the session would
-  leave no way to be asked again short of editing a file.
+- **A declined prompt is remembered for the session, not persisted, and keyed by kind.** "Not
+  now" on an *optional* dependency is one answer about that plugin - three consumers declare the
+  gateway optional, and being asked three times for one answer is what this prevents. "Skip" on a
+  *required* one is keyed by `(dependent, missing)`, because another plugin that hard-requires the
+  same thing is a different question and silencing it would be worse, not better. Neither
+  persists: an answer that outlived the session would leave no way to be asked again short of
+  editing a file.
 - **The dependent is not reloaded after its dependency installs.** It has already loaded and
   already resolved its handle to the dependency, typically to null. This is survivable because
   the consumers resolve the API *lazily, per call* - which their own AGENTS.md files require,

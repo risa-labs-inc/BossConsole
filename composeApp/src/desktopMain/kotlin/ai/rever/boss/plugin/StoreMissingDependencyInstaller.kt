@@ -7,6 +7,7 @@ import ai.rever.boss.plugin.loader.PluginManifestReader
 import ai.rever.boss.plugin.loader.PluginSignatureSidecar
 import ai.rever.boss.plugin.repository.PluginInfo
 import ai.rever.boss.plugin.repository.PluginRepository
+import ai.rever.boss.utils.atomicMoveFrom
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CoroutineScope
@@ -98,22 +99,29 @@ class StoreMissingDependencyInstaller(
             runCatching { store.getPlugin(pluginId).getOrNull() }.getOrNull()
                 ?: return failure("$pluginId was not found in the plugin store.")
 
-        val target = targetJar(pluginId, info)
-        // A jar already at this exact path is not ours to delete: a plugin can be on disk
-        // without the manager having registered it (a load that failed transiently at
-        // startup), and a failed download must not take the user's file with it.
-        val preexisting = target.exists()
+        // `<id_with_underscores>_<version>.jar` in the plugins directory, so a later directory
+        // scan picks it up like any other install. Both parts are sanitised because both come
+        // from a store row. Note `PluginInstallService` writes `<id>-<version>.jar` and
+        // `PluginUpdateBridge` a third shape; `PluginJarReconciler` knows all three and dedupes
+        // by manifest id, so this is untidy rather than broken.
+        val target = File(pluginDir(), "${safe(pluginId.replace('.', '_'))}_${safe(info.version)}.jar")
+        // Download beside the target, never onto it. `downloadPlugin` streams into whatever path
+        // it is given and `outputStream()` truncates on open, so downloading straight to the
+        // final name destroys any jar already there the moment the connection opens - and a
+        // download that then dies mid-stream leaves a truncated file at a name every subsequent
+        // launch will try to load. Guarding with "was a file already here" does not help: by
+        // then its contents are gone either way.
+        //
+        // The suffix deliberately does not end in `.jar`, so a part file left behind by a kill
+        // is ignored by the directory scan rather than loaded. (`PluginInstallService` uses
+        // `-downloading.jar`, which is scannable, and moves the jar without its sidecar.)
+        val part = File("${target.absolutePath}.part")
         return store
-            .downloadPlugin(pluginId, info.version, target.absolutePath)
+            .downloadPlugin(pluginId, info.version, part.absolutePath)
             .fold(
-                onSuccess = { jarPath -> vetAndLoad(pluginId, jarPath, info) },
+                onSuccess = { downloaded -> promoteAndLoad(pluginId, downloaded, target, info) },
                 onFailure = { error ->
-                    // A download that dies mid-stream leaves a truncated jar at the final
-                    // name, and nothing upstream removes it: `downloadPlugin` writes straight
-                    // into the target and only deletes on a hash or signature rejection. Left
-                    // there, every launch would find it, fail to read it and log the failure
-                    // again.
-                    if (!preexisting) discard(target.absolutePath)
+                    discard(part.absolutePath)
                     logger.error(LogCategory.SYSTEM, "Failed to download a plugin dependency", error = error)
                     failure("Could not download ${info.displayName}: ${error.message ?: "unknown error"}")
                 },
@@ -121,32 +129,35 @@ class StoreMissingDependencyInstaller(
     }
 
     /**
-     * Where the downloaded jar goes: `<id_with_underscores>_<version>.jar` in the plugins
-     * directory, so a later directory scan picks it up like any other install.
+     * Move the completed download onto its final name, sidecar included, then load it.
      *
-     * Downloaded straight to its final name rather than through a `-downloading.jar` rename:
-     * `downloadPlugin` writes the signature sidecar next to whatever path it was given, and a
-     * rename afterwards would leave the `.sig` behind under the temporary name - so the jar
-     * would load as unsigned. Partial files are handled by deleting on failure instead.
-     *
-     * Both parts are sanitised because both come from a store row, and a `version` of `../x`
-     * would otherwise write outside the plugins directory. Note this scheme differs from
-     * `PluginInstallService`'s `<id>-<version>.jar`; neither is canonical, and the loader finds
-     * either, but a shared helper would stop them drifting further.
+     * Both files move together: `downloadPlugin` writes the signature next to the path it was
+     * given, so promoting the jar alone would leave the `.sig` under the part name and the jar
+     * would load as unsigned.
      */
-    private fun targetJar(
+    private suspend fun promoteAndLoad(
         pluginId: String,
+        downloaded: String,
+        target: File,
         info: PluginInfo,
-    ) = File(pluginDir(), "${safe(pluginId.replace('.', '_'))}_${safe(info.version)}.jar")
-
-    /**
-     * Keeps only what a plugin jar name needs, so no store value can name a path.
-     *
-     * Path separators go, which is what stops a `version` of `../x` escaping the directory;
-     * dots survive because versions are full of them and, with separators gone, cannot
-     * traverse.
-     */
-    private fun safe(part: String) = part.replace(Regex("[^A-Za-z0-9.-]"), "_")
+    ): Result<Unit> {
+        val moved =
+            runCatching {
+                target.atomicMoveFrom(File(downloaded))
+                val signature = PluginSignatureSidecar.read(downloaded)
+                if (signature != null) {
+                    PluginSignatureSidecar.write(target.absolutePath, signature)
+                    PluginSignatureSidecar.delete(downloaded)
+                }
+            }
+        val error = moved.exceptionOrNull()
+        if (error != null) {
+            discard(downloaded)
+            logger.error(LogCategory.SYSTEM, "Could not move a downloaded dependency into place", error = error)
+            return failure("Downloaded ${info.displayName} but could not put it in place.")
+        }
+        return vetAndLoad(pluginId, target.absolutePath, info)
+    }
 
     /**
      * Loads the downloaded jar and records it.
@@ -248,6 +259,14 @@ class StoreMissingDependencyInstaller(
     }
 
     private fun failure(message: String): Result<Unit> = Result.failure(IllegalStateException(message))
+
+    /**
+     * Keeps only what a plugin jar name needs, so no store value can name a path.
+     *
+     * Path separators go, which is what stops a `version` of `../x` escaping the directory; dots
+     * survive because versions are full of them and, with separators gone, cannot traverse.
+     */
+    private fun safe(part: String) = part.replace(Regex("[^A-Za-z0-9.-]"), "_")
 
     private companion object {
         /**

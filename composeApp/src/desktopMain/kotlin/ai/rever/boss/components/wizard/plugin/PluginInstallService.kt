@@ -185,7 +185,17 @@ class PluginInstallService(
                     val installResult = dynamicPluginManager.installPlugin(jarPath, enabled = true)
 
                     if (installResult.isSuccess) {
-                        manifest?.let { installedManifests.add(it) }
+                        if (manifest != null) {
+                            installedManifests.add(manifest)
+                        } else {
+                            // Installed, but its dependencies were never checked. Say so rather
+                            // than leaving the batch quietly incomplete.
+                            logger.warn(
+                                LogCategory.SYSTEM,
+                                "Installed a plugin whose manifest could not be read, so dependencies went unchecked",
+                                mapOf("pluginId" to plugin.id),
+                            )
+                        }
 
                         // Persist the installation with actual version
                         PluginPersistence.addInstalledPlugin(

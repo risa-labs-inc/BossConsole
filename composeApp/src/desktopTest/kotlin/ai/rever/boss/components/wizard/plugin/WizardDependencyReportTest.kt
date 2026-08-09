@@ -50,8 +50,11 @@ class WizardDependencyReportTest {
             "the wizard must report the collected batch, not one manifest per iteration",
         )
         assertTrue(
-            Regex("""\.report\(""").findAll(text).count() == 1,
-            "expected exactly one dependency report in the wizard, after the loop",
+            // Scoped to the dependency reporter: counting every `.report(` in the file would
+            // fail on an unrelated progress or metrics call, with a message about dependency
+            // ordering that would send the next person the wrong way.
+            Regex("""dependencyReporter\.report\(""").findAll(text).count() == 1,
+            "expected exactly one dependencyReporter.report call in the wizard, after the loop",
         )
     }
 

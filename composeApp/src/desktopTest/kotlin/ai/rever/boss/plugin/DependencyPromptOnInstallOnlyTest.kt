@@ -49,11 +49,26 @@ class DependencyPromptOnInstallOnlyTest {
     }
 
     @Test
+    fun `a plugin that did not actually register is not reported for`() {
+        // `installPlugin` returns success with `state = DISABLED` when registration failed as
+        // binary-incompatible, or the plugin is hidden for lack of access. Reporting then says
+        // "Flow needs the AI Gateway" for something that is not running and will not run, and
+        // taking Install downloads a second plugin to support a dead one.
+        assertTrue(
+            Regex(
+                """if\s*\(\s*reportDependencies\s*&&\s*info\.state\s*==\s*""" +
+                    """PluginState\.LOADED\s*\)[\s\S]{0,300}?\.report\(""",
+            ).containsMatchIn(source()),
+            "reporting must be gated on the plugin having actually loaded",
+        )
+    }
+
+    @Test
     fun `the load path consults the flag before reporting`() {
         // Matches the guard wherever it sits, so adding a log line or rewrapping the expression
         // does not fail a test about behaviour.
         assertTrue(
-            Regex("""if\s*\(\s*reportDependencies\s*\)[\s\S]{0,200}?\.report\(""").containsMatchIn(source()),
+            Regex("""if\s*\(\s*reportDependencies\b[\s\S]{0,400}?\.report\(""").containsMatchIn(source()),
             "the load path must consult reportDependencies before reporting",
         )
     }

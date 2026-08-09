@@ -494,7 +494,7 @@ internal fun BossAppDialogs(state: BossAppState) {
                 // "Not now" is an answer for the session: three plugins declare the gateway
                 // optional, so without this, declining once means being asked again for the
                 // next one that needs it.
-                PluginDependencyEventBus.decline(prompt.missing.missingPluginId)
+                PluginDependencyEventBus.decline(prompt.missing)
                 state.pendingMissingPluginDependency = null
                 state.missingDependencyError = null
             },

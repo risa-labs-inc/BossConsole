@@ -8,6 +8,7 @@ import ai.rever.boss.components.plugin.PluginDependencyBus
 import ai.rever.boss.components.plugin.PluginDependencyEventBus
 import ai.rever.boss.components.plugin.PluginDependencyResolution
 import ai.rever.boss.plugin.api.PluginManifest
+import ai.rever.boss.plugin.loader.ApiClassLoader
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import java.io.File
@@ -87,15 +88,19 @@ class MissingDependencyReporter(
      * Log the dependencies that are missing but cannot be offered.
      *
      * `missingFor` filters system components out, so without this a plugin genuinely lacking the
-     * api plugin or the microkernel runtime produced no prompt *and* no log line - the same
-     * silence this feature exists to remove, in the case where a support log matters most.
+     * api plugin produced no prompt *and* no log line - the same silence this feature exists to
+     * remove, in the case where a support log matters most.
      */
     private fun logUnofferable(
         manifest: PluginManifest,
         installed: Set<String>,
     ) {
         manifest.dependencies
-            .filter { it.pluginId in PluginDependencyResolution.NOT_USER_INSTALLABLE && it.pluginId !in installed }
+            // The api plugin only: the microkernel runtime is skipped on directory scan and
+            // refused by `loadPlugin`, so it is *never* in `pluginStates` and this test is always
+            // true for it - every out-of-process plugin declaring it would warn that a system
+            // component is missing while its child JVMs spawn perfectly well.
+            .filter { it.pluginId == ApiClassLoader.API_PLUGIN_ID && it.pluginId !in installed }
             .forEach { dependency ->
                 logger.warn(
                     LogCategory.SYSTEM,

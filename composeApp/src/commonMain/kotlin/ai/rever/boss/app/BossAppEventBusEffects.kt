@@ -196,7 +196,7 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                     withContext(Dispatchers.IO) {
                         prompt.installer.isInstalled(prompt.missing.missingPluginId)
                     }
-                if (present || PluginDependencyEventBus.wasDeclined(prompt.missing.missingPluginId)) {
+                if (present || PluginDependencyEventBus.wasDeclined(prompt.missing)) {
                     return@collect
                 }
                 // Reset here rather than relying on the previous dialog's exit path having
