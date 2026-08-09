@@ -1,6 +1,5 @@
 package ai.rever.boss.components.plugin
 
-import ai.rever.boss.components.plugin.PluginDependencyResolution.description
 import ai.rever.boss.plugin.api.PluginDependency
 import ai.rever.boss.plugin.api.PluginManifest
 import ai.rever.boss.plugin.loader.ApiClassLoader

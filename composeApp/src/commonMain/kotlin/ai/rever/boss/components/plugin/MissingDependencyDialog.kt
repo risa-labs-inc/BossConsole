@@ -1,6 +1,5 @@
 package ai.rever.boss.components.plugin
 
-import ai.rever.boss.components.plugin.PluginDependencyResolution.description
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.layout.Column

@@ -19,7 +19,21 @@ data class MissingPluginDependency(
     val missingPluginId: String,
     /** True when the dependent declared it `optional`, i.e. it works without it. */
     val optional: Boolean,
-)
+) {
+    /**
+     * What to tell the user, given whatever name we managed to resolve for the dependency.
+     *
+     * [resolvedName] is the dependency's store display name when the lookup succeeded and its
+     * plugin id when it did not - a raw id is poor but honest, and better than a prompt that
+     * waits on the network before it can say anything.
+     */
+    fun description(resolvedName: String): String =
+        if (optional) {
+            "$dependentDisplayName works without $resolvedName, but some of its features need it."
+        } else {
+            "$dependentDisplayName needs $resolvedName, which is not installed."
+        }
+}
 
 /**
  * Works out which of a plugin's declared dependencies are absent.
@@ -81,20 +95,6 @@ object PluginDependencyResolution {
             // that the plugin actually requires is the worse way to be wrong.
             .map { (_, declarations) -> declarations.minBy { it.optional } }
             .map { dependency -> manifest.toMissing(dependency) }
-
-    /**
-     * What to tell the user, given whatever name we managed to resolve for the dependency.
-     *
-     * [resolvedName] is the dependency's store display name when the lookup succeeded and its
-     * plugin id when it did not - a raw id is poor but honest, and better than a prompt that
-     * waits on the network before it can say anything.
-     */
-    fun MissingPluginDependency.description(resolvedName: String): String =
-        if (optional) {
-            "$dependentDisplayName works without $resolvedName, but some of its features need it."
-        } else {
-            "$dependentDisplayName needs $resolvedName, which is not installed."
-        }
 
     private fun PluginManifest.toMissing(dependency: PluginDependency) =
         MissingPluginDependency(

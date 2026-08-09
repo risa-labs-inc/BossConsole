@@ -89,18 +89,25 @@ class StoreMissingDependencyInstallerTest {
         override suspend fun refresh(): Result<Unit> = Result.success(Unit)
     }
 
+    /**
+     * @param installedAfterLoad what `installedNow` reports once a load has succeeded, which is
+     *   how the real predicate behaves: the manager registers the plugin the *jar* declares, so
+     *   a mismatched store row leaves the requested id still absent.
+     */
     private fun installer(
         store: PluginRepository?,
         installed: Set<String> = emptySet(),
         load: suspend (String) -> Result<*> = { Result.success(Unit) },
         onPersist: (String) -> Unit = {},
+        installedAfterLoad: Boolean = true,
     ): StoreMissingDependencyInstaller {
         temp.mkdirs()
+        var loaded = false
         return StoreMissingDependencyInstaller(
             repository = { store },
             pluginDir = { temp },
-            installedNow = { it in installed },
-            load = load,
+            installedNow = { id -> id in installed || (loaded && installedAfterLoad) },
+            load = { jarPath -> load(jarPath).also { if (it.isSuccess) loaded = true } },
             persist = { pluginId, _, _ -> onPersist(pluginId) },
         )
     }
@@ -270,6 +277,28 @@ class StoreMissingDependencyInstallerTest {
             val escaped = File(temp.parentFile, "evil.jar")
             assertFalse(escaped.exists(), "wrote outside the plugins directory")
             assertEquals(1, temp.listFiles().orEmpty().count { it.name.endsWith(".jar") })
+        }
+
+    @Test
+    fun `a jar that loads as a different plugin is rejected, not reported as installed`() =
+        runTest {
+            // A store row for X can point at a jar whose manifest declares Y. `load` returning
+            // success is not evidence that X arrived, and reporting success here would close the
+            // dialog with the dependency still absent.
+            val recorded = mutableListOf<String>()
+            val result =
+                installer(
+                    FakeStore(info()),
+                    installed = emptySet(),
+                    load = { Result.success(Unit) },
+                    onPersist = { recorded += it },
+                    // Still absent after a "successful" load: the jar was some other plugin.
+                    installedAfterLoad = false,
+                ).install(PLUGIN_ID)
+
+            assertTrue(result.isFailure, "reported success for a plugin that never arrived")
+            assertTrue(recorded.isEmpty(), "recorded a plugin that never arrived: $recorded")
+            assertFalse(jar().exists(), "left a jar that is not the plugin it claims to be")
         }
 
     /** A store whose lookup fails outright, as an offline or rate-limited one does. */

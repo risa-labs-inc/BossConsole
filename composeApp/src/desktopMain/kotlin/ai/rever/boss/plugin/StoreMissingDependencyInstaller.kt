@@ -52,21 +52,6 @@ class StoreMissingDependencyInstaller(
 ) : MissingDependencyInstaller {
     private val logger = BossLogger.forComponent("MissingDependencyInstaller")
 
-    /**
-     * Owner of detached installs - deliberately never cancelled, like the delegate's
-     * `reloadScope`. The prompt is driven from a window's coroutine scope, and closing that
-     * window mid-download would otherwise abort the install and leave the partial jar behind.
-     */
-    private val installScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
-
-    /**
-     * Detaches installs from the window that asked and coalesces them per plugin id.
-     *
-     * Coalescing is not a nicety here: two dependents can each raise a prompt for the same
-     * missing plugin, so without it two Installs could download to the same path at once.
-     */
-    private val detachedInstalls = KeyedDetachedJobs<String, Result<Unit>>(installScope)
-
     override fun isInstalled(pluginId: String): Boolean = installedNow(pluginId)
 
     override suspend fun displayNameFor(pluginId: String): String? =
@@ -75,7 +60,7 @@ class StoreMissingDependencyInstaller(
             ?.takeIf { it.isNotBlank() }
 
     override suspend fun install(pluginId: String): Result<Unit> =
-        detachedInstalls.run(
+        DETACHED_INSTALLS.run(
             key = pluginId,
             onDetachedFailure = { error ->
                 // The window closed while this ran, so nothing is left to show the failure to.
@@ -165,12 +150,26 @@ class StoreMissingDependencyInstaller(
         info: PluginInfo,
     ): Result<Unit> {
         val error = load(jarPath).exceptionOrNull()
-        if (error != null) {
+        val wrongPlugin = error == null && !isInstalled(pluginId)
+        if (error != null || wrongPlugin) {
             // Leave nothing half-installed: a directory scan on the next launch would find
             // this jar and load it without it ever having passed the checks it just failed.
             discard(jarPath)
-            logger.error(LogCategory.SYSTEM, "Failed to load a downloaded plugin dependency", error = error)
-            return failure("Downloaded ${info.displayName} but could not load it: ${error.message ?: "unknown error"}")
+            return if (wrongPlugin) {
+                // The load succeeded but not as the plugin that was missing: a store row for X
+                // can point at a jar whose manifest declares Y. Reporting success would close
+                // the dialog with the dependency still absent, the one outcome every other
+                // branch here is careful to avoid.
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "A dependency jar loaded as a different plugin",
+                    mapOf("expected" to pluginId, "jarPath" to jarPath),
+                )
+                failure("${info.displayName} did not install as $pluginId. The store entry may be wrong.")
+            } else {
+                logger.error(LogCategory.SYSTEM, "Failed to load a downloaded plugin dependency", error = error)
+                failure("Downloaded ${info.displayName} but could not load it: ${error?.message ?: "unknown error"}")
+            }
         }
         // Write the `installed.json` entry, as every other install path does. Not optional
         // bookkeeping: `setPluginEnabled` updates an existing entry and does nothing when there
@@ -202,4 +201,25 @@ class StoreMissingDependencyInstaller(
     }
 
     private fun failure(message: String): Result<Unit> = Result.failure(IllegalStateException(message))
+
+    private companion object {
+        /**
+         * Owner of detached installs - deliberately never cancelled, like the delegate's
+         * `reloadScope`. The prompt runs on a window's coroutine scope, and closing that window
+         * mid-download would otherwise abort the install and leave the partial jar behind.
+         */
+        private val INSTALL_SCOPE = CoroutineScope(Dispatchers.Default + SupervisorJob())
+
+        /**
+         * Detaches installs from the window that asked and coalesces them per plugin id.
+         *
+         * **Process-wide, not per instance.** One installer exists per window, so a per-instance
+         * guard would not have covered the case that most needs it: two windows each prompting
+         * for the same missing plugin would run two `downloadPlugin` calls writing the same
+         * `<id>_<version>.jar` at once. Coalescing here means the second Install joins the
+         * first job rather than racing it - and so loads into the manager that started it,
+         * which is the multi-window limitation already documented on `MissingDependencyPrompt`.
+         */
+        private val DETACHED_INSTALLS = KeyedDetachedJobs<String, Result<Unit>>(INSTALL_SCOPE)
+    }
 }

@@ -41,12 +41,14 @@ import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.withContext
 
 /**
  * Event-bus listeners for one BossApp window. Every bus is window-filtered by
@@ -189,13 +191,18 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                 // Re-check rather than trusting the report: two dependents of one missing
                 // plugin each raise a prompt, so installing for the first satisfies the
                 // second, whose dialog would otherwise claim something untrue and reinstall
-                // what is already loaded.
-                if (prompt.installer.isInstalled(prompt.missing.missingPluginId)) return@collect
+                // what is already loaded. Off the UI thread because the check stats the jar.
+                val present =
+                    withContext(Dispatchers.IO) {
+                        prompt.installer.isInstalled(prompt.missing.missingPluginId)
+                    }
+                if (present) return@collect
                 state.pendingMissingPluginDependency = prompt
-                // Back-pressure instead of a queue: the next prompt stays in the channel
-                // until this one is answered, so a second missing dependency is asked about
-                // after the first rather than replacing it or being dropped. Cancelling this
-                // effect (the window closing) leaves the rest for another window.
+                // Back-pressure instead of a queue: the next prompt stays in the channel until
+                // this one is answered, so a second missing dependency is asked about after the
+                // first rather than replacing it or being dropped. Cancelling this effect (the
+                // window closing) leaves whatever is still in the channel for another window -
+                // though a prompt already received here and not yet shown does go with it.
                 snapshotFlow { state.pendingMissingPluginDependency }.first { it == null }
             }
     }

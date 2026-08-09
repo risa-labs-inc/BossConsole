@@ -131,6 +131,19 @@ Deliberately out of scope, so nobody assumes more than exists:
 - **With two windows open, the window that asks may not be the one that reported.** The install
   is still correct; the answering window may just not show the change until relaunch. See
   `MissingDependencyPrompt`.
+- **The dependent is not reloaded after its dependency installs.** It has already loaded and
+  already resolved its handle to the dependency, typically to null. This is survivable because
+  the consumers resolve the API *lazily, per call* - which their own AGENTS.md files require,
+  precisely because plugin load order is not guaranteed - so they pick it up without a reload. A
+  consumer that cached the handle at `register()` would stay broken until relaunch, and would be
+  wrong for the same reason on a normal cold start.
+
+**Both halves must share one definition of "installed".** The reporter filters the manifest's
+dependencies against what is present; the installer's Install guard asks the same question. When
+those disagreed - reporter on the raw `pluginStates` keys, installer on keys-plus-jar - a failed
+install left a dangling entry that made every *later* dependent of that plugin report nothing at
+all, silently re-creating the problem this feature exists to remove. There is now one
+`installedAndOnDisk` predicate in `PluginLoaderDelegateImpl`, passed to both.
 
 One trap worth knowing: `isInstalled` has to mean *usable*, not "the manager has an entry".
 `installPlugin` registers a DISABLED entry for a binary-incompatible plugin, and this installer

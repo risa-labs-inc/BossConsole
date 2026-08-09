@@ -40,13 +40,13 @@ class DependencyPromptOnInstallOnlyTest {
 
         assertEquals(
             1,
-            Regex("""reportDependencies = false""").findAll(text).count(),
+            Regex("""reportDependencies\s*=\s*false""").findAll(text).count(),
             "expected exactly one non-reporting load, at the reload call site",
         )
         // Anchored to the comment marking the reload leg of doReloadPlugin, so moving the flag
         // onto some other call fails rather than passing on the count alone.
         assertTrue(
-            Regex("""// Reload\s*\n\s*loadPlugin\(jarPath, reportDependencies = false\)""")
+            Regex("""//\s*Reload\s*\n\s*loadPlugin\(\s*jarPath\s*,\s*reportDependencies\s*=\s*false\s*\)""")
                 .containsMatchIn(text),
             "doReloadPlugin's load must be the one that does not report",
         )
@@ -54,12 +54,37 @@ class DependencyPromptOnInstallOnlyTest {
 
     @Test
     fun `the public entry point is the one that reports`() {
+        // Whitespace-tolerant: a signature change or a ktlint rewrap must not fail this for a
+        // non-reason, or the next person deletes the test instead of reading it.
         assertTrue(
-            source().contains(
-                "override suspend fun loadPlugin(jarPath: String): LoadedPluginInfo? =" +
-                    " loadPlugin(jarPath, reportDependencies = true)",
-            ),
+            Regex(
+                """override\s+suspend\s+fun\s+loadPlugin\(\s*jarPath:\s*String\s*\)""" +
+                    """[^\n]*=\s*loadPlugin\(\s*jarPath\s*,\s*reportDependencies\s*=\s*true\s*\)""",
+            ).containsMatchIn(source()),
             "the delegate's public loadPlugin must be the reporting one",
+        )
+    }
+
+    @Test
+    fun `the report set and the install guard share one definition of installed`() {
+        val text = source()
+
+        // The bug this pins: the reporter used the raw `pluginStates` keys while the installer
+        // required keys-plus-jar. A binary-incompatible load leaves a DISABLED entry whose jar
+        // the installer has deleted, so the reporter then saw that plugin as present and every
+        // LATER dependent of it reported nothing - the silence this feature exists to remove.
+        assertTrue(
+            Regex("""\.keys\s*\n?\s*\.filter\(\s*installedAndOnDisk\s*\)""").containsMatchIn(text),
+            "the report set must be filtered through installedAndOnDisk, not the raw keys",
+        )
+        assertTrue(
+            Regex("""installedNow\s*=\s*installedAndOnDisk""").containsMatchIn(text),
+            "the installer's guard must be the same predicate, not a second copy",
+        )
+        assertEquals(
+            1,
+            Regex("""val\s+installedAndOnDisk""").findAll(text).count(),
+            "there must be exactly one definition of installed",
         )
     }
 
@@ -67,6 +92,10 @@ class DependencyPromptOnInstallOnlyTest {
     fun `reporting is gated on the flag rather than always running`() {
         // The flag has to be consulted, not merely accepted: an early-return in the reporter
         // is what makes the reload path silent.
-        assertTrue(source().contains("if (!report) return"), "reportMissingDependencies must honour its flag")
+        assertTrue(
+            Regex("""fun\s+reportMissingDependencies\([^)]*\)\s*\{\s*\n\s*if\s*\(!\s*\w+\s*\)\s*return""")
+                .containsMatchIn(source()),
+            "reportMissingDependencies must return early when reporting is off",
+        )
     }
 }
