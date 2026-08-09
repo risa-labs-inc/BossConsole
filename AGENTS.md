@@ -84,12 +84,38 @@ feature that silently did nothing. The AI Gateway made that concrete: three plug
 - **The event bus is a `Channel`, not a `SharedFlow`.** A broadcast would put the same dialog in
   front of every open window and let each of them start the same install. The collector applies
   back-pressure (`snapshotFlow { … }.first { it == null }`) so a second missing dependency is
-  asked about after the first rather than replacing it.
+  asked about after the first rather than replacing it, and re-checks `isInstalled` before
+  showing - two dependents of one missing plugin each raise a prompt, so installing for the
+  first satisfies the second.
 - **Installing is the host's to do.** `PluginRepository.getPlugin(id)` plus `downloadPlugin`
   resolve an id to a jar, which no plugin can do - a plugin holding a null API can only send
-  the user to the Toolbox to search by name. `StoreMissingDependencyInstaller` deletes the jar
-  again if it fails to load, so a scan on the next launch cannot pick up something that just
-  failed its checks.
+  the user to the Toolbox to search by name.
+
+Four things `StoreMissingDependencyInstaller` gets right that are easy to get wrong, all found
+in review:
+
+- **A failed download deletes its jar.** `RemotePluginRepository.downloadPlugin` writes straight
+  into the target path and only deletes on a hash or signature rejection, so a connection that
+  dies mid-stream leaves a truncated jar at the *final* filename - which `PluginJarReconciler`
+  then finds and retries on every launch.
+- **Cleanup removes the `.sig` sidecar with the jar.** Reinstalling the same version reuses the
+  filename, so a surviving sidecar meets fresh bytes and hard-fails the load, which is worse
+  than being unsigned.
+- **It downloads straight to the final name**, not through a `-downloading.jar` rename. The
+  sidecar is written next to whatever path `downloadPlugin` was given, so a rename afterwards
+  orphans it. (`PluginInstallService` does rename, and does leave the sidecar behind.)
+- **It writes the `installed.json` entry.** `setPluginEnabled` updates an existing entry and
+  does nothing when there is none, so a plugin known only by its presence on disk cannot be
+  disabled persistently.
+
+Installs are detached and coalesced per plugin id (`KeyedDetachedJobs`, as reloads are): the
+prompt is driven from a window's scope, so closing that window mid-download would otherwise
+abort the install and leave the partial jar.
+
+Reporting is gated to the install entry point. `doReloadPlugin` finishes by calling
+`loadPlugin` too, and reload is reached by `resetPluginInstances`, the Toolbox's update flow and
+the evolver's hot reload - none of which is a user asking to install anything, and re-offering a
+dependency someone declined on every reload would be worse than silence.
 
 Transitive dependencies are deliberately not chased: the dependency loads through the manager
 directly, so answering one question never produces a second dialog.

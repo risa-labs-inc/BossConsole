@@ -13,6 +13,7 @@ import ai.rever.boss.components.dialogs.TabType
 import ai.rever.boss.components.dialogs.TerminalLinkOpenDialog
 import ai.rever.boss.components.dialogs.TopOfMindDialog
 import ai.rever.boss.components.events.FileEventBus
+import ai.rever.boss.components.plugin.MissingDependencyDialog
 import ai.rever.boss.components.plugin.PluginUpdateBridge
 import ai.rever.boss.components.plugin.providers.GenericDialogHostContent
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
@@ -481,7 +482,7 @@ internal fun BossAppDialogs(state: BossAppState) {
     // A plugin the user just installed needs another plugin that is not there. Offer to
     // install it rather than leaving the feature to fail silently later.
     state.pendingMissingPluginDependency?.let { prompt ->
-        ai.rever.boss.components.plugin.MissingDependencyDialog(
+        MissingDependencyDialog(
             prompt = prompt,
             installing = state.installingMissingDependency,
             error = state.missingDependencyError,

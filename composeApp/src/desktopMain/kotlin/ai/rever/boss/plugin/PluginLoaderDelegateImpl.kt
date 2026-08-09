@@ -14,6 +14,7 @@ import ai.rever.boss.plugin.api.InaccessiblePluginInfo
 import ai.rever.boss.plugin.api.LoadedPluginInfo
 import ai.rever.boss.plugin.api.PanelId
 import ai.rever.boss.plugin.api.PluginLoaderDelegate
+import ai.rever.boss.plugin.api.PluginManifest
 import ai.rever.boss.plugin.api.PluginState
 import ai.rever.boss.plugin.loader.PluginSignatureSidecar
 import ai.rever.boss.plugin.repository.remote.PluginStoreConfig
@@ -67,9 +68,10 @@ class PluginLoaderDelegateImpl(
      */
     private val dependencyInstaller =
         StoreMissingDependencyInstaller(
-            dynamicPluginManager = dynamicPluginManager,
             repository = { PluginStoreSetup.remoteRepository },
             pluginDir = { PluginStoreSetup.getPluginDir() },
+            installedNow = { pluginId -> dynamicPluginManager.isInstalled(pluginId) },
+            load = { jarPath -> dynamicPluginManager.installPlugin(jarPath) },
         )
 
     /**
@@ -85,7 +87,11 @@ class PluginLoaderDelegateImpl(
      * worth failing an install the user asked for, or making them wait on a window that may
      * not exist yet.
      */
-    private fun reportMissingDependencies(manifest: ai.rever.boss.plugin.api.PluginManifest) {
+    private fun reportMissingDependencies(
+        manifest: PluginManifest,
+        report: Boolean,
+    ) {
+        if (!report) return
         runCatching {
             // Every plugin the host knows about, not only the enabled ones: a disabled
             // dependency is installed, so offering to install it again would be the wrong
@@ -105,10 +111,29 @@ class PluginLoaderDelegateImpl(
                     )
                     PluginDependencyEventBus.report(MissingDependencyPrompt(missing, dependencyInstaller))
                 }
+        }.onFailure { error ->
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Could not check a plugin's dependencies",
+                mapOf("plugin" to manifest.pluginId, "error" to (error.message ?: "unknown")),
+            )
         }
     }
 
-    override suspend fun loadPlugin(jarPath: String): LoadedPluginInfo? {
+    override suspend fun loadPlugin(jarPath: String): LoadedPluginInfo? = loadPlugin(jarPath, reportDependencies = true)
+
+    /**
+     * @param reportDependencies whether an unmet dependency should prompt.
+     *
+     * False for reloads. `doReloadPlugin` finishes by calling this, and reload is reached by
+     * `resetPluginInstances`, the Toolbox's update flow and the evolver's hot reload - none of
+     * which is a user asking to install anything. Without the distinction, an optional
+     * dependency someone declined with "Not now" would be re-offered on every reload.
+     */
+    private suspend fun loadPlugin(
+        jarPath: String,
+        reportDependencies: Boolean,
+    ): LoadedPluginInfo? {
         // Never try to load the microkernel runtime via the plugin-install
         // path — it's a classpath dependency for OOP child JVMs, not a
         // loadable plugin. DefaultPlugin.loadExternalPlugins already skips
@@ -148,7 +173,7 @@ class PluginLoaderDelegateImpl(
             if (result.isSuccess) {
                 val loadedPlugin = result.getOrNull()
                 loadedPlugin?.let { info ->
-                    reportMissingDependencies(info.manifest)
+                    reportMissingDependencies(info.manifest, reportDependencies)
                     LoadedPluginInfo(
                         pluginId = info.manifest.pluginId,
                         displayName = info.manifest.displayName,
@@ -267,7 +292,7 @@ class PluginLoaderDelegateImpl(
             }
 
             // Reload
-            loadPlugin(jarPath)
+            loadPlugin(jarPath, reportDependencies = false)
         } catch (e: Exception) {
             logger.error(LogCategory.SYSTEM, "Exception reloading plugin", error = e)
             null

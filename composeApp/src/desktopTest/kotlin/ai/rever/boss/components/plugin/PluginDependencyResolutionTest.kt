@@ -163,6 +163,8 @@ class PluginDependencyResolutionTest {
 class PluginDependencyBusTest {
     private val noopInstaller =
         object : MissingDependencyInstaller {
+            override fun isInstalled(pluginId: String): Boolean = false
+
             override suspend fun displayNameFor(pluginId: String): String? = null
 
             override suspend fun install(pluginId: String): Result<Unit> = Result.success(Unit)

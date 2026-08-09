@@ -12,6 +12,7 @@ import ai.rever.boss.components.events.TerminalLinkEventBus
 import ai.rever.boss.components.events.URLEventBus
 import ai.rever.boss.components.events.WorkspaceEventBus
 import ai.rever.boss.components.plugin.PanelIds
+import ai.rever.boss.components.plugin.PluginDependencyEventBus
 import ai.rever.boss.components.window_panel.SplitOrientation
 import ai.rever.boss.components.workspaces.WorkspaceSerializer
 import ai.rever.boss.components.workspaces.applyWorkspace
@@ -183,8 +184,13 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
     // user-initiated installs report here (see PluginLoaderDelegateImpl), so this cannot
     // fire during startup restore or the api hot-swap's reload-all.
     LaunchedEffect(windowId) {
-        ai.rever.boss.components.plugin.PluginDependencyEventBus.missingDependencies
+        PluginDependencyEventBus.missingDependencies
             .collect { prompt ->
+                // Re-check rather than trusting the report: two dependents of one missing
+                // plugin each raise a prompt, so installing for the first satisfies the
+                // second, whose dialog would otherwise claim something untrue and reinstall
+                // what is already loaded.
+                if (prompt.installer.isInstalled(prompt.missing.missingPluginId)) return@collect
                 state.pendingMissingPluginDependency = prompt
                 // Back-pressure instead of a queue: the next prompt stays in the channel
                 // until this one is answered, so a second missing dependency is asked about

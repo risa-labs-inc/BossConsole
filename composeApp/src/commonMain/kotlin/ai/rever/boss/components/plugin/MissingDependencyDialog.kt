@@ -29,6 +29,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
@@ -126,9 +127,14 @@ private fun MissingDependencyBody(
         Spacer(modifier = Modifier.height(10.dp))
 
         Text(
+            // Both names in this sentence are attacker-influenced - the id comes from a
+            // plugin manifest, the resolved name from a store listing - so neither is allowed
+            // to grow the dialog or run on into something that reads like our own copy.
             text = missing.description(resolvedName),
             fontSize = 13.sp,
             color = BossTheme.colors.textSecondary,
+            maxLines = 4,
+            overflow = TextOverflow.Ellipsis,
         )
 
         if (error != null) {
@@ -137,6 +143,8 @@ private fun MissingDependencyBody(
                 text = error,
                 fontSize = 12.sp,
                 color = BossTheme.colors.alert,
+                maxLines = 4,
+                overflow = TextOverflow.Ellipsis,
             )
         }
 
@@ -177,6 +185,9 @@ private fun MissingDependencyActions(
                 text = "Installing $resolvedName",
                 fontSize = 12.sp,
                 color = BossTheme.colors.textSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
             )
         }
 

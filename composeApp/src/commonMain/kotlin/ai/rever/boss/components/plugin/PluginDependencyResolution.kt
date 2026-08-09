@@ -2,7 +2,8 @@ package ai.rever.boss.components.plugin
 
 import ai.rever.boss.plugin.api.PluginDependency
 import ai.rever.boss.plugin.api.PluginManifest
-import kotlinx.coroutines.channels.BufferOverflow
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.receiveAsFlow
 
@@ -47,7 +48,11 @@ object PluginDependencyResolution {
             // A plugin depending on itself is a manifest mistake, not something to offer to
             // install: the prompt would ask the user to install what they just installed.
             .filterNot { dependency -> dependency.pluginId == manifest.pluginId }
-            .distinctBy { dependency -> dependency.pluginId }
+            .groupBy { dependency -> dependency.pluginId }
+            // One prompt per plugin, and when a manifest declares the same dependency twice
+            // with different flags the stricter one wins: calling something "Recommended"
+            // that the plugin actually requires is the worse way to be wrong.
+            .map { (_, declarations) -> declarations.minBy { it.optional } }
             .map { dependency -> manifest.toMissing(dependency) }
 
     /**
@@ -81,6 +86,16 @@ object PluginDependencyResolution {
  * jar is desktop-side work.
  */
 interface MissingDependencyInstaller {
+    /**
+     * Whether the plugin is installed *now*.
+     *
+     * A prompt can be raised and answered later, so what was missing at report time may not
+     * be by the time it reaches a window - two dependents of one missing plugin each raise a
+     * prompt, and installing for the first satisfies the second. Without this the second
+     * dialog would state something untrue and reinstall what is already there.
+     */
+    fun isInstalled(pluginId: String): Boolean
+
     /**
      * The dependency's display name in the store, or null when it cannot be resolved.
      *
@@ -122,6 +137,8 @@ data class MissingDependencyPrompt(
  * windows would have.
  */
 open class PluginDependencyBus {
+    private val logger = BossLogger.forComponent("PluginDependencyBus")
+
     /**
      * A channel, not a `SharedFlow`, because exactly one window must ask.
      *
@@ -130,20 +147,32 @@ open class PluginDependencyBus {
      * thing, it is the wrong delivery semantics. Channel receive hands each prompt to a
      * single collector.
      *
-     * Buffered and dropping, so reporting never suspends the installer and a prompt raised
-     * before any window exists is asked as soon as one appears rather than lost.
+     * Buffered, so reporting never suspends the installer and a prompt raised before any
+     * window exists is asked as soon as one appears rather than lost.
+     *
+     * Left on the default suspend-on-overflow policy and only ever written with `trySend`:
+     * a `DROP_OLDEST` channel always accepts, so the overflow would be invisible, and the
+     * oldest prompt is the one the user is most likely part-way through answering. A full
+     * buffer refuses the newest and says so instead.
      */
-    private val prompts =
-        Channel<MissingDependencyPrompt>(
-            capacity = 4,
-            onBufferOverflow = BufferOverflow.DROP_OLDEST,
-        )
+    private val prompts = Channel<MissingDependencyPrompt>(capacity = 4)
 
     val missingDependencies = prompts.receiveAsFlow()
 
     /** Non-suspending on purpose, so the install path never waits on a UI. */
     fun report(prompt: MissingDependencyPrompt) {
-        prompts.trySend(prompt)
+        if (prompts.trySend(prompt).isFailure) {
+            // DROP_OLDEST is silent, and a prompt that never appears is indistinguishable
+            // from a feature that does not exist. Say so somewhere.
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Dropped a missing-dependency prompt",
+                mapOf(
+                    "dependent" to prompt.missing.dependentPluginId,
+                    "missing" to prompt.missing.missingPluginId,
+                ),
+            )
+        }
     }
 }
 
