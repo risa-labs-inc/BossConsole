@@ -2,6 +2,7 @@ package ai.rever.boss.components.plugin
 
 import ai.rever.boss.plugin.api.PluginDependency
 import ai.rever.boss.plugin.api.PluginManifest
+import ai.rever.boss.plugin.api.PluginState
 import ai.rever.boss.plugin.loader.ApiClassLoader
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -33,6 +34,24 @@ class PluginDependencyResolutionTest {
         apiVersion = "1.0.0",
         mainClass = "com.example.Main",
         dependencies = dependencies,
+    )
+
+    private fun info(
+        pluginId: String,
+        jarPath: String,
+    ) = DynamicPluginInfo(
+        manifest =
+            PluginManifest(
+                pluginId = pluginId,
+                displayName = pluginId,
+                version = "1.0.0",
+                apiVersion = "1.0.0",
+                mainClass = "com.example.Main",
+            ),
+        jarPath = jarPath,
+        state = PluginState.DISABLED,
+        loadedAt = 0L,
+        enabled = false,
     )
 
     private fun dependency(
@@ -174,6 +193,41 @@ class PluginDependencyResolutionTest {
             )
 
         assertEquals(listOf("com.example.gone"), missing.map { it.missingPluginId })
+    }
+
+    @Test
+    fun `an entry whose jar is gone does not count as installed`() {
+        val states =
+            mapOf(
+                "com.example.present" to info("com.example.present", "/plugins/present.jar"),
+                // What `installPlugin` leaves behind for a binary-incompatible plugin, after the
+                // installer has deleted the jar it rejected.
+                "com.example.dangling" to info("com.example.dangling", "/plugins/gone.jar"),
+            )
+
+        val installed =
+            PluginDependencyResolution.installedAndOnDisk(states) { jarPath ->
+                jarPath == "/plugins/present.jar"
+            }
+
+        // The bug this replaces a source-level regex with a real assertion: counting the
+        // dangling entry as installed made every LATER dependent of that plugin report nothing,
+        // with no prompt and no log line.
+        assertEquals(setOf("com.example.present"), installed)
+    }
+
+    @Test
+    fun `a dangling entry means its dependents are still reported as missing`() {
+        val states = mapOf("com.example.gateway" to info("com.example.gateway", "/plugins/gone.jar"))
+
+        val installed = PluginDependencyResolution.installedAndOnDisk(states) { false }
+        val missing =
+            PluginDependencyResolution.missingFor(
+                manifest(dependencies = listOf(dependency("com.example.gateway"))),
+                installedPluginIds = installed,
+            )
+
+        assertEquals(listOf("com.example.gateway"), missing.map { it.missingPluginId })
     }
 
     @Test

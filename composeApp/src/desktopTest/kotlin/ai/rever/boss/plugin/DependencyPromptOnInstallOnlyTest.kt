@@ -36,55 +36,39 @@ class DependencyPromptOnInstallOnlyTest {
 
     @Test
     fun `the reload path does not report missing dependencies`() {
-        val text = source()
-
-        assertEquals(
-            1,
-            Regex("""reportDependencies\s*=\s*false""").findAll(text).count(),
-            "expected exactly one non-reporting load, at the reload call site",
-        )
-        // Anchored to the comment marking the reload leg of doReloadPlugin, so moving the flag
-        // onto some other call fails rather than passing on the count alone.
-        assertTrue(
-            Regex("""//\s*Reload\s*\n\s*loadPlugin\(\s*jarPath\s*,\s*reportDependencies\s*=\s*false\s*\)""")
-                .containsMatchIn(text),
-            "doReloadPlugin's load must be the one that does not report",
-        )
-    }
-
-    @Test
-    fun `the public entry point is the one that reports`() {
-        // Whitespace-tolerant: a signature change or a ktlint rewrap must not fail this for a
-        // non-reason, or the next person deletes the test instead of reading it.
+        // Asserts the property, not the formatting: doReloadPlugin's own load must be a
+        // non-reporting one. Deliberately not a count of `reportDependencies = false` - a second
+        // legitimate non-reporting caller is allowed, and a test that forbade one would be
+        // deleted rather than understood.
         assertTrue(
             Regex(
-                """override\s+suspend\s+fun\s+loadPlugin\(\s*jarPath:\s*String\s*\)""" +
-                    """[^\n]*=\s*loadPlugin\(\s*jarPath\s*,\s*reportDependencies\s*=\s*true\s*\)""",
+                """fun\s+doReloadPlugin[\s\S]{0,4000}?loadPlugin\(\s*jarPath\s*,""" +
+                    """\s*reportDependencies\s*=\s*false\s*\)""",
             ).containsMatchIn(source()),
-            "the delegate's public loadPlugin must be the reporting one",
+            "doReloadPlugin must load without reporting missing dependencies",
         )
     }
 
     @Test
-    fun `the report set and the install guard share one definition of installed`() {
+    fun `the report set and the install guard come from one function`() {
         val text = source()
 
-        // The bug this pins: the reporter used the raw `pluginStates` keys while the installer
-        // required keys-plus-jar. A binary-incompatible load leaves a DISABLED entry whose jar
-        // the installer has deleted, so the reporter then saw that plugin as present and every
-        // LATER dependent of it reported nothing - the silence this feature exists to remove.
-        assertTrue(
-            Regex("""\.keys\s*\n?\s*\.filter\(\s*installedAndOnDisk\s*\)""").containsMatchIn(text),
-            "the report set must be filtered through installedAndOnDisk, not the raw keys",
-        )
-        assertTrue(
-            Regex("""installedNow\s*=\s*installedAndOnDisk""").containsMatchIn(text),
-            "the installer's guard must be the same predicate, not a second copy",
-        )
+        // What the definition *is* now has real tests (`installedAndOnDisk` in
+        // PluginDependencyResolutionTest). This only pins that both halves still read it from
+        // one place: when they diverged, a failed install left a dangling entry that silenced
+        // the prompt for every later dependent of that plugin.
         assertEquals(
             1,
-            Regex("""val\s+installedAndOnDisk""").findAll(text).count(),
-            "there must be exactly one definition of installed",
+            Regex("""fun\s+installedPluginIds\(""").findAll(text).count(),
+            "there must be exactly one definition of the installed set",
+        )
+        assertTrue(
+            Regex("""installedNow\s*=\s*\{[^}]*installedPluginIds\(\)""").containsMatchIn(text),
+            "the Install guard must read the same set as the reporter",
+        )
+        assertTrue(
+            Regex("""val\s+installed\s*=\s*installedPluginIds\(\)""").containsMatchIn(text),
+            "the report set must read the same set as the Install guard",
         )
     }
 

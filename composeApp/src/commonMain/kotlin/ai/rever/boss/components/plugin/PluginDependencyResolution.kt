@@ -66,6 +66,27 @@ object PluginDependencyResolution {
     val NOT_USER_INSTALLABLE = setOf(MicrokernelRuntime.PLUGIN_ID, "ai.rever.boss.plugin.api")
 
     /**
+     * The plugins that count as installed: an entry whose jar is still on disk.
+     *
+     * One function for both halves of the prompt - the reporter's "what is missing" set and the
+     * Install button's guard - because when they disagreed the feature broke in a way no test
+     * saw. `installPlugin` registers a DISABLED entry for a binary-incompatible plugin, and the
+     * installer deletes the jar it just rejected; a definition of "installed" that looked only
+     * at entries then treated that plugin as present, so every *later* dependent of it reported
+     * nothing at all, silently re-creating the problem this feature exists to remove.
+     *
+     * @param exists injected so this is testable without a filesystem; the host passes
+     *   `File(it).isFile`.
+     */
+    fun installedAndOnDisk(
+        states: Map<String, DynamicPluginInfo>,
+        exists: (jarPath: String) -> Boolean,
+    ): Set<String> =
+        states
+            .filterValues { info -> exists(info.jarPath) }
+            .keys
+
+    /**
      * Dependencies of [manifest] that are not in [installedPluginIds].
      *
      * Returns optional dependencies too. They are worth telling someone about - an optional

@@ -31,6 +31,8 @@ import ai.rever.boss.keymap.model.KeymapActions
 import ai.rever.boss.platform.rememberDirectoryPicker
 import ai.rever.boss.plugin.api.Panel.Companion.left
 import ai.rever.boss.plugin.api.Panel.Companion.top
+import ai.rever.boss.plugin.sandbox.notification.ToastMessage
+import ai.rever.boss.plugin.sandbox.notification.ToastType
 import ai.rever.boss.plugin.tab.codeeditor.EditorTabInfo
 import ai.rever.boss.plugin.tab.jupyter.JupyterTabInfo
 import ai.rever.boss.plugin.tab.terminal.TerminalTabInfo
@@ -500,6 +502,18 @@ internal fun BossAppDialogs(state: BossAppState) {
                             .onSuccess {
                                 state.pendingMissingPluginDependency = null
                                 state.missingDependencyError = null
+                                // The dialog closing is otherwise the only signal, and since the
+                                // dependent is deliberately not reloaded, the user needs telling
+                                // that a feature may not light up until they relaunch.
+                                state.currentDefaultPlugin?.pluginToastState?.show(
+                                    ToastMessage(
+                                        type = ToastType.SUCCESS,
+                                        title = "Plugin installed",
+                                        message =
+                                            "${prompt.missing.dependentDisplayName} can use it now. " +
+                                                "Relaunch BOSS if a feature still reports it missing.",
+                                    ),
+                                )
                             }.onFailure { error ->
                                 // Keep the dialog up with the reason and a Retry: dismissing on
                                 // failure would look like it worked.

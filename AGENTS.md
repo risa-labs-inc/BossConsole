@@ -91,7 +91,17 @@ feature that silently did nothing. The AI Gateway made that concrete: three plug
   resolve an id to a jar, which no plugin can do - a plugin holding a null API can only send
   the user to the Toolbox to search by name.
 
-Four things `StoreMissingDependencyInstaller` gets right that are easy to get wrong, all found
+**The downloaded jar is vetted before it is loaded.** Nothing binds a store row to the plugin id
+its jar declares: `enforceStoreSignature` binds the hash to the row and the row to the store's
+key, not the identity, so an admin uploading the wrong jar is enough. Loading first and checking
+after is too late twice over - `installPlugin` inspects the *incoming* manifest and starts a full
+api hot swap for a newer `ai.rever.boss.plugin.api` jar, which is exactly what
+`NOT_USER_INSTALLABLE` exists to keep out of a two-button dialog, and a jar declaring some other
+installed plugin would be registered against a path that is about to be deleted. So the manifest
+is read first and a mismatch is refused; the post-load check stays as belt and braces. The
+recorded version comes from that manifest too, since update checking compares against it.
+
+Five things `StoreMissingDependencyInstaller` gets right that are easy to get wrong, all found
 in review:
 
 - **A failed download deletes its jar.** `RemotePluginRepository.downloadPlugin` writes straight
@@ -107,6 +117,9 @@ in review:
 - **It writes the `installed.json` entry.** `setPluginEnabled` updates an existing entry and
   does nothing when there is none, so a plugin known only by its presence on disk cannot be
   disabled persistently.
+- **It only deletes a jar it created.** A plugin can sit on disk with no manager entry (a load
+  that failed transiently at startup), so cleanup checks whether the path was already occupied
+  before the download.
 
 Installs are detached and coalesced per plugin id (`KeyedDetachedJobs`, as reloads are): the
 prompt is driven from a window's scope, so closing that window mid-download would otherwise

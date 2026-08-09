@@ -59,6 +59,12 @@ class PluginLoaderDelegateImpl(
      */
     private val detachedReloads = KeyedDetachedJobs<String, LoadedPluginInfo?>(reloadScope)
 
+    /** See `PluginDependencyResolution.installedAndOnDisk` for why both halves share this. */
+    private fun installedPluginIds(): Set<String> =
+        PluginDependencyResolution.installedAndOnDisk(dynamicPluginManager.pluginStates.value) { jarPath ->
+            File(jarPath).isFile
+        }
+
     /**
      * Fixes a missing dependency, for the prompt's Install button.
      *
@@ -66,28 +72,11 @@ class PluginLoaderDelegateImpl(
      * asked, and holds the store lazily because `PluginStoreSetup` initialises during startup
      * while this delegate can outlive a store that never came up at all.
      */
-
-    /**
-     * The single definition of "this plugin is installed", for both halves of the prompt.
-     *
-     * A jar on disk as well as an entry, because `installPlugin` registers a DISABLED entry for
-     * a binary-incompatible plugin and the installer deletes the jar it just rejected. The two
-     * halves *must* agree: when the reporter used the raw `pluginStates` keys and the installer
-     * used this, a failed install left a dangling entry that made every later dependent of that
-     * plugin report nothing at all - silently re-creating the problem this feature exists to
-     * remove.
-     */
-    private val installedAndOnDisk: (String) -> Boolean = { pluginId ->
-        dynamicPluginManager.pluginStates.value[pluginId]
-            ?.jarPath
-            ?.let { File(it).exists() } == true
-    }
-
     private val dependencyInstaller =
         StoreMissingDependencyInstaller(
             repository = { PluginStoreSetup.remoteRepository },
             pluginDir = { PluginStoreSetup.getPluginDir() },
-            installedNow = installedAndOnDisk,
+            installedNow = { pluginId -> pluginId in installedPluginIds() },
             load = { jarPath -> dynamicPluginManager.installPlugin(jarPath) },
         )
 
@@ -111,13 +100,9 @@ class PluginLoaderDelegateImpl(
         if (!report) return
         runCatching {
             // Every plugin present on disk, not only the enabled ones: a disabled dependency
-            // is installed, so offering to install it again would be the wrong fix and the
-            // wrong sentence. Filtered through the same predicate the installer uses - see
-            // [installedAndOnDisk] for what a mismatch cost.
-            val installed =
-                dynamicPluginManager.pluginStates.value.keys
-                    .filter(installedAndOnDisk)
-                    .toSet()
+            // is installed, so offering to install it again would be the wrong fix and the wrong
+            // sentence. The same set the Install guard uses, by construction.
+            val installed = installedPluginIds()
             PluginDependencyResolution
                 .missingFor(manifest, installed)
                 .forEach { missing ->

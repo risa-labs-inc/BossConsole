@@ -1,5 +1,6 @@
 package ai.rever.boss.plugin
 
+import ai.rever.boss.plugin.api.PluginManifest
 import ai.rever.boss.plugin.loader.PluginSignatureSidecar
 import ai.rever.boss.plugin.repository.PluginInfo
 import ai.rever.boss.plugin.repository.PluginRepository
@@ -100,6 +101,8 @@ class StoreMissingDependencyInstallerTest {
         load: suspend (String) -> Result<*> = { Result.success(Unit) },
         onPersist: (String) -> Unit = {},
         installedAfterLoad: Boolean = true,
+        declaredId: String? = PLUGIN_ID,
+        onPersistVersion: (String) -> Unit = {},
     ): StoreMissingDependencyInstaller {
         temp.mkdirs()
         var loaded = false
@@ -108,9 +111,23 @@ class StoreMissingDependencyInstallerTest {
             pluginDir = { temp },
             installedNow = { id -> id in installed || (loaded && installedAfterLoad) },
             load = { jarPath -> load(jarPath).also { if (it.isSuccess) loaded = true } },
-            persist = { pluginId, _, _ -> onPersist(pluginId) },
+            readManifest = { _ -> declaredId?.let { jarManifest(it) } },
+            persist = { pluginId, _, version, _ ->
+                onPersist(pluginId)
+                onPersistVersion(version)
+            },
         )
     }
+
+    /** What the downloaded jar actually declares, which is not always what the row said. */
+    private fun jarManifest(pluginId: String) =
+        PluginManifest(
+            pluginId = pluginId,
+            displayName = "AI Gateway",
+            version = JAR_VERSION,
+            apiVersion = "1.0.0",
+            mainClass = "com.example.Main",
+        )
 
     @Test
     fun `a successful install records the plugin`() =
@@ -301,6 +318,96 @@ class StoreMissingDependencyInstallerTest {
             assertFalse(jar().exists(), "left a jar that is not the plugin it claims to be")
         }
 
+    @Test
+    fun `a jar declaring a different plugin is refused before it is loaded`() =
+        runTest {
+            var loads = 0
+            val result =
+                installer(
+                    FakeStore(info()),
+                    load = {
+                        loads++
+                        Result.success(Unit)
+                    },
+                    declaredId = "com.example.something.else",
+                ).install(PLUGIN_ID)
+
+            assertTrue(result.isFailure)
+            // Before, not after: `installPlugin` inspects the incoming manifest, so loading
+            // first means a jar that is really a newer api plugin has already started a full
+            // api hot swap, and a jar declaring another installed plugin has already been
+            // registered against a path about to be deleted.
+            assertEquals(0, loads, "loaded a jar that declares the wrong plugin")
+            assertFalse(jar().exists())
+        }
+
+    @Test
+    fun `a jar that declares a system component is refused even if the row asked for it`() =
+        runTest {
+            var loads = 0
+            val result =
+                installer(
+                    FakeStore(info()),
+                    load = {
+                        loads++
+                        Result.success(Unit)
+                    },
+                    declaredId = "ai.rever.boss.plugin.api",
+                ).install(PLUGIN_ID)
+
+            // The id filter in `missingFor` covers the id a manifest *names*; nothing binds a
+            // store row to the id its jar declares, so the bytes have to be checked too - an
+            // api jar reaching `installPlugin` starts an unload-all / swap / reload-all.
+            assertTrue(result.isFailure)
+            assertEquals(0, loads, "started an api hot swap from a dependency prompt")
+        }
+
+    @Test
+    fun `an unreadable manifest is refused rather than loaded hopefully`() =
+        runTest {
+            var loads = 0
+            val result =
+                installer(
+                    FakeStore(info()),
+                    load = {
+                        loads++
+                        Result.success(Unit)
+                    },
+                    declaredId = null,
+                ).install(PLUGIN_ID)
+
+            assertTrue(result.isFailure)
+            assertEquals(0, loads)
+        }
+
+    @Test
+    fun `the recorded version comes from the jar, not the store row`() =
+        runTest {
+            val versions = mutableListOf<String>()
+            installer(FakeStore(info(version = "1.2.3")), onPersistVersion = { versions += it })
+                .install(PLUGIN_ID)
+
+            // Update checking compares against this value, so a row whose version disagrees
+            // with its jar would make every future comparison wrong.
+            assertEquals(listOf(JAR_VERSION), versions)
+        }
+
+    @Test
+    fun `a failed download does not delete a jar that was already there`() =
+        runTest {
+            temp.mkdirs()
+            val existing = jar()
+            existing.writeText("a plugin the manager never registered")
+
+            installer(FakeStore(info(), downloadBytes = null)).install(PLUGIN_ID)
+
+            // A plugin can be on disk without an entry - a load that failed transiently at
+            // startup - and a failed download must not take the user's file with it.
+            assertTrue(existing.exists(), "deleted a pre-existing jar this install did not create")
+        }
+
+    /** A store whose lookup fails outright, as an offline or rate-limited one does. */
+
     /** A store whose lookup fails outright, as an offline or rate-limited one does. */
     private class ThrowingStore : PluginRepository {
         override val id = "store"
@@ -334,5 +441,8 @@ class StoreMissingDependencyInstallerTest {
 
     private companion object {
         const val PLUGIN_ID = "ai.rever.boss.plugin.dynamic.aigateway"
+
+        /** Deliberately different from the store row's 1.2.3, so tests can tell them apart. */
+        const val JAR_VERSION = "1.2.4"
     }
 }

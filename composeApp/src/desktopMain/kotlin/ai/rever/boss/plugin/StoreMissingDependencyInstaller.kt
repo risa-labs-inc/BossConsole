@@ -1,6 +1,9 @@
 package ai.rever.boss.plugin
 
 import ai.rever.boss.components.plugin.MissingDependencyInstaller
+import ai.rever.boss.components.plugin.PluginDependencyResolution
+import ai.rever.boss.plugin.api.PluginManifest
+import ai.rever.boss.plugin.loader.PluginManifestReader
 import ai.rever.boss.plugin.loader.PluginSignatureSidecar
 import ai.rever.boss.plugin.repository.PluginInfo
 import ai.rever.boss.plugin.repository.PluginRepository
@@ -39,14 +42,17 @@ class StoreMissingDependencyInstaller(
     private val pluginDir: () -> File,
     private val installedNow: (pluginId: String) -> Boolean,
     private val load: suspend (jarPath: String) -> Result<*>,
-    private val persist: (pluginId: String, jarPath: String, info: PluginInfo) -> Unit =
-        { pluginId, jarPath, info ->
+    private val readManifest: (jarPath: String) -> PluginManifest? = { jarPath ->
+        runCatching { PluginManifestReader.readFromJar(jarPath) }.getOrNull()
+    },
+    private val persist: (pluginId: String, jarPath: String, version: String, sourceUrl: String) -> Unit =
+        { pluginId, jarPath, version, sourceUrl ->
             PluginPersistence.addInstalledPlugin(
                 pluginId = pluginId,
                 jarPath = jarPath,
                 enabled = true,
-                sourceUrl = info.downloadUrl,
-                installedVersion = info.version,
+                sourceUrl = sourceUrl,
+                installedVersion = version,
             )
         },
 ) : MissingDependencyInstaller {
@@ -67,20 +73,22 @@ class StoreMissingDependencyInstaller(
                 logger.error(LogCategory.SYSTEM, "Detached dependency install failed", error = error)
             },
         ) {
-            installOnce(pluginId)
-        }
+            // A second prompt for the same dependency can outlive the install that satisfied it.
+            val store = repository()
+            when {
+                isInstalled(pluginId) -> {
+                    Result.success(Unit)
+                }
 
-    private suspend fun installOnce(pluginId: String): Result<Unit> {
-        // A second prompt for the same dependency can outlive the install that satisfied it.
-        if (isInstalled(pluginId)) return Result.success(Unit)
+                store == null -> {
+                    failure("The plugin store is not available. Check your connection and try again.")
+                }
 
-        val store = repository()
-        return if (store == null) {
-            failure("The plugin store is not available. Check your connection and try again.")
-        } else {
-            installFromStore(store, pluginId)
+                else -> {
+                    installFromStore(store, pluginId)
+                }
+            }
         }
-    }
 
     private suspend fun installFromStore(
         store: PluginRepository,
@@ -91,17 +99,21 @@ class StoreMissingDependencyInstaller(
                 ?: return failure("$pluginId was not found in the plugin store.")
 
         val target = targetJar(pluginId, info)
+        // A jar already at this exact path is not ours to delete: a plugin can be on disk
+        // without the manager having registered it (a load that failed transiently at
+        // startup), and a failed download must not take the user's file with it.
+        val preexisting = target.exists()
         return store
             .downloadPlugin(pluginId, info.version, target.absolutePath)
             .fold(
-                onSuccess = { jarPath -> loadAndRecord(pluginId, jarPath, info) },
+                onSuccess = { jarPath -> vetAndLoad(pluginId, jarPath, info) },
                 onFailure = { error ->
                     // A download that dies mid-stream leaves a truncated jar at the final
                     // name, and nothing upstream removes it: `downloadPlugin` writes straight
                     // into the target and only deletes on a hash or signature rejection. Left
                     // there, every launch would find it, fail to read it and log the failure
                     // again.
-                    discard(target.absolutePath)
+                    if (!preexisting) discard(target.absolutePath)
                     logger.error(LogCategory.SYSTEM, "Failed to download a plugin dependency", error = error)
                     failure("Could not download ${info.displayName}: ${error.message ?: "unknown error"}")
                 },
@@ -144,22 +156,51 @@ class StoreMissingDependencyInstaller(
      * and should not be handed a second dialog as its consequence. Anything still missing
      * shows up the next time that plugin is installed or updated.
      */
-    private suspend fun loadAndRecord(
+    private suspend fun vetAndLoad(
         pluginId: String,
         jarPath: String,
         info: PluginInfo,
     ): Result<Unit> {
+        // Vet the bytes BEFORE loading them. The id filter in `missingFor` only covers the id a
+        // manifest *names*; nothing binds a store row to the id its jar *declares* (the
+        // signature binds the hash to the row and the row to the store's key, not the plugin
+        // identity), so an admin uploading the wrong jar is enough. Loading first and noticing
+        // after is too late twice over: `installPlugin` inspects the incoming manifest and
+        // starts a full api hot swap for a newer `ai.rever.boss.plugin.api` jar - the exact
+        // thing NOT_USER_INSTALLABLE exists to keep out of a two-button dialog - and a jar that
+        // declares some *other* installed plugin would be loaded, re-pointed at this path, and
+        // then have that path deleted underneath it.
+        val declared = readManifest(jarPath)
+        val declaredId = declared?.pluginId
+        if (declaredId != pluginId || declaredId in PluginDependencyResolution.NOT_USER_INSTALLABLE) {
+            discard(jarPath)
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Refusing a dependency jar that declares a different plugin",
+                mapOf("expected" to pluginId, "declared" to (declaredId ?: "unreadable")),
+            )
+            return failure(
+                "${info.displayName} did not install as $pluginId. The store entry may be wrong.",
+            )
+        }
+        return loadAndRecord(pluginId, jarPath, info, declared.version)
+    }
+
+    private suspend fun loadAndRecord(
+        pluginId: String,
+        jarPath: String,
+        info: PluginInfo,
+        version: String,
+    ): Result<Unit> {
         val error = load(jarPath).exceptionOrNull()
+        // Belt and braces after the pre-load check: the manager registers what the jar declares,
+        // so if the requested id still is not present the load did not do what it claimed.
         val wrongPlugin = error == null && !isInstalled(pluginId)
         if (error != null || wrongPlugin) {
             // Leave nothing half-installed: a directory scan on the next launch would find
             // this jar and load it without it ever having passed the checks it just failed.
             discard(jarPath)
             return if (wrongPlugin) {
-                // The load succeeded but not as the plugin that was missing: a store row for X
-                // can point at a jar whose manifest declares Y. Reporting success would close
-                // the dialog with the dependency still absent, the one outcome every other
-                // branch here is careful to avoid.
                 logger.warn(
                     LogCategory.SYSTEM,
                     "A dependency jar loaded as a different plugin",
@@ -174,9 +215,12 @@ class StoreMissingDependencyInstaller(
         // Write the `installed.json` entry, as every other install path does. Not optional
         // bookkeeping: `setPluginEnabled` updates an existing entry and does nothing when there
         // is none, so a plugin known only by its presence on disk cannot be disabled
-        // persistently - it would come back enabled on the next launch. The entry also carries
-        // the version and source that update checking reads.
-        runCatching { persist(pluginId, jarPath, info) }
+        // persistently - it would come back enabled on the next launch.
+        //
+        // The version comes from the jar's own manifest, not the store row: update checking
+        // compares against it, and a row whose version string disagrees with its jar would make
+        // every future comparison wrong. Same reason `PluginInstallService` reads the manifest.
+        runCatching { persist(pluginId, jarPath, version, info.downloadUrl) }
             .onFailure { error ->
                 // The plugin is loaded and usable; only the record failed, so this is not worth
                 // turning a successful install into an error the user sees.
