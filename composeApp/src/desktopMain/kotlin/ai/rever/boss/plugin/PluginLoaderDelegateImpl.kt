@@ -1,5 +1,6 @@
 package ai.rever.boss.plugin
 
+import ai.rever.boss.components.plugin.DynamicPluginInfo
 import ai.rever.boss.components.plugin.DynamicPluginManager
 import ai.rever.boss.components.plugin.MicrokernelRuntime
 import ai.rever.boss.components.plugin.findRelocatedPluginJar
@@ -11,7 +12,6 @@ import ai.rever.boss.plugin.api.InaccessiblePluginInfo
 import ai.rever.boss.plugin.api.LoadedPluginInfo
 import ai.rever.boss.plugin.api.PanelId
 import ai.rever.boss.plugin.api.PluginLoaderDelegate
-import ai.rever.boss.plugin.api.PluginManifest
 import ai.rever.boss.plugin.api.PluginState
 import ai.rever.boss.plugin.loader.PluginSignatureSidecar
 import ai.rever.boss.plugin.repository.remote.PluginStoreConfig
@@ -70,7 +70,7 @@ class PluginLoaderDelegateImpl(
      * inside [loadPlugin]'s try / isSuccess / let.
      */
     private fun describe(
-        info: ai.rever.boss.components.plugin.DynamicPluginInfo,
+        info: DynamicPluginInfo,
         reportDependencies: Boolean,
     ): LoadedPluginInfo {
         if (reportDependencies) dependencyReporter.report(info.manifest)

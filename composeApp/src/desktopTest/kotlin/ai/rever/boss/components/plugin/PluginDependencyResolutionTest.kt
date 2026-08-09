@@ -325,6 +325,80 @@ class PluginDependencyBusTest {
         }
 
     @Test
+    fun `a declined plugin stops being reported for the rest of the session`() =
+        runTest {
+            val bus = PluginDependencyBus()
+            bus.decline("com.example.gateway")
+
+            bus.report(prompt("com.example.gateway"))
+            bus.report(prompt("com.example.other"))
+
+            // All three gateway consumers declare it optional, so without this, declining once
+            // means being asked again for the next plugin that needs it.
+            assertEquals(
+                "com.example.other",
+                bus.missingDependencies
+                    .first()
+                    .missing.missingPluginId,
+            )
+        }
+
+    @Test
+    fun `declining one plugin does not silence another`() =
+        runTest {
+            val bus = PluginDependencyBus()
+            bus.decline("com.example.gateway")
+
+            assertTrue(bus.wasDeclined("com.example.gateway"))
+            assertFalse(bus.wasDeclined("com.example.other"))
+        }
+
+    @Test
+    fun `two dependents of one missing plugin occupy a single slot`() =
+        runTest {
+            val bus = PluginDependencyBus()
+
+            bus.report(prompt("com.example.gateway"))
+            bus.report(prompt("com.example.gateway"))
+            bus.report(prompt("com.example.other"))
+
+            // The collector would discard the duplicate on arrival, but it costs a slot first -
+            // and with four slots that can be what refuses a different, still-relevant prompt.
+            assertEquals(
+                listOf("com.example.gateway", "com.example.other"),
+                (1..2).map {
+                    bus.missingDependencies
+                        .first()
+                        .missing.missingPluginId
+                },
+            )
+        }
+
+    @Test
+    fun `a plugin can be reported again once its prompt has been taken`() =
+        runTest {
+            val bus = PluginDependencyBus()
+
+            bus.report(prompt("com.example.gateway"))
+            assertEquals(
+                "com.example.gateway",
+                bus.missingDependencies
+                    .first()
+                    .missing.missingPluginId,
+            )
+
+            // Consuming frees the slot: a second dependent installed later must still be able to
+            // raise it, otherwise the dedup would become a permanent mute.
+            bus.report(prompt("com.example.gateway"))
+            assertEquals(
+                "com.example.gateway",
+                bus.missingDependencies
+                    .first()
+                    .missing.missingPluginId,
+            )
+        }
+
+    @Test
     fun `a prompt reported before anyone collects is delivered when a collector appears`() =
         runTest {
             val bus = PluginDependencyBus()

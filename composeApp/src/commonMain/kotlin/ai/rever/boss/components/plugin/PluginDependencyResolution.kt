@@ -6,7 +6,9 @@ import ai.rever.boss.plugin.api.PluginState
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * A dependency a just-installed plugin declares but which is not present.
@@ -227,6 +229,14 @@ open class PluginDependencyBus {
         java.util.concurrent.ConcurrentHashMap
             .newKeySet<String>()
 
+    /**
+     * Missing plugins with a prompt already waiting, so the buffer is not spent on duplicates.
+     *
+     * Three consumers of one gateway report three prompts and the collector discards two on
+     * arrival - but they occupy slots first.
+     */
+    private val queued = ConcurrentHashMap.newKeySet<String>()
+
     /** Records a "Not now" so this missing plugin stops asking for the rest of the session. */
     fun decline(missingPluginId: String) {
         declined.add(missingPluginId)
@@ -253,11 +263,26 @@ open class PluginDependencyBus {
      */
     private val prompts = Channel<MissingDependencyPrompt>(capacity = 4)
 
-    val missingDependencies = prompts.receiveAsFlow()
+    val missingDependencies =
+        prompts
+            .receiveAsFlow()
+            // Freed on the way out, not when the dialog is answered: the collector may decline to
+            // show this one (already installed, or declined since), and a slot held for a prompt
+            // nobody will ever show is what `queued` exists to avoid.
+            .onEach { prompt -> queued.remove(prompt.missing.missingPluginId) }
 
-    /** Non-suspending on purpose, so the install path never waits on a UI. */
+    /**
+     * Non-suspending on purpose, so the install path never waits on a UI.
+     *
+     * Filters here and not only in the collector, because a prompt the collector is certain to
+     * discard still costs a buffer slot on the way through - and with four slots, that can be
+     * what refuses a different dependency which could have been shown.
+     */
     fun report(prompt: MissingDependencyPrompt) {
+        val missingPluginId = prompt.missing.missingPluginId
+        if (wasDeclined(missingPluginId) || !queued.add(missingPluginId)) return
         if (prompts.trySend(prompt).isFailure) {
+            queued.remove(missingPluginId)
             // DROP_OLDEST is silent, and a prompt that never appears is indistinguishable
             // from a feature that does not exist. Say so somewhere.
             logger.warn(

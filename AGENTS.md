@@ -73,6 +73,12 @@ feature that silently did nothing. The AI Gateway made that concrete: three plug
 `PluginDependencyResolution.missingFor(manifest, installedIds)` now answers what is absent, and
 `MissingDependencyDialog` offers to install it. Four things about the placement:
 
+- **The wizard reports once after its whole batch, never per iteration.** A first-run selection
+  of `[jupyter-notebook, ai-gateway]` - the pick this feature exists for - otherwise prompted for
+  the gateway while the loop was two iterations from installing it, and taking Install raced the
+  wizard's own download (the two paths write different filenames for one plugin id, so neither
+  the path nor the coalescing key collides). After the loop, `installedAndOnDisk` already holds
+  everything the batch installed, so nothing intra-batch is reported at all.
 - **`MissingDependencyReporter` is called from the three paths that install for a user**, and
   never from `DynamicPluginManager.installPlugin`. That manager method also serves startup
   restore, the bundled-plugin load and the api hot-swap's reload-all, so reporting there would be
@@ -148,6 +154,10 @@ Deliberately out of scope, so nobody assumes more than exists:
 - **With two windows open, the window that asks may not be the one that reported.** The install
   is still correct; the answering window may just not show the change until relaunch. See
   `MissingDependencyPrompt`.
+- **The bus filters at report time, not only in the collector.** A prompt the collector is
+  certain to discard - declined, or a duplicate of one already waiting - still costs one of four
+  buffer slots on the way through, and that can be what refuses a different dependency which
+  could have been shown.
 - **A declined prompt is remembered for the session, not persisted.** All three gateway
   consumers declare it optional, so without that, declining for one means being asked again for
   the next. "Not now" is an answer about now, and a decision that outlived the session would

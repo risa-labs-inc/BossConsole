@@ -45,7 +45,7 @@ class StoreMissingDependencyInstaller(
     private val readManifest: (jarPath: String) -> PluginManifest? = { jarPath ->
         runCatching { PluginManifestReader.readFromJar(jarPath) }.getOrNull()
     },
-    private val persist: (pluginId: String, jarPath: String, version: String, sourceUrl: String) -> Unit =
+    private val persist: (pluginId: String, jarPath: String, version: String, sourceUrl: String?) -> Unit =
         { pluginId, jarPath, version, sourceUrl ->
             PluginPersistence.addInstalledPlugin(
                 pluginId = pluginId,
@@ -220,7 +220,10 @@ class StoreMissingDependencyInstaller(
         // The version comes from the jar's own manifest, not the store row: update checking
         // compares against it, and a row whose version string disagrees with its jar would make
         // every future comparison wrong. Same reason `PluginInstallService` reads the manifest.
-        runCatching { persist(pluginId, jarPath, version, info.downloadUrl) }
+        // Null rather than the empty string: the store's detail response never populates
+        // `downloadUrl`, and recording "" would look like a known-empty source instead of an
+        // absent one - and would fight the preserve-existing-sourceUrl logic later.
+        runCatching { persist(pluginId, jarPath, version, info.downloadUrl.ifBlank { null }) }
             .onFailure { error ->
                 // The plugin is loaded and usable; only the record failed, so this is not worth
                 // turning a successful install into an error the user sees.

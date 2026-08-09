@@ -45,6 +45,9 @@ class PluginInstallService(
     ): Result<PluginInstallResult> =
         withContext(Dispatchers.IO) {
             val installedIds = mutableListOf<String>()
+
+            /** Manifests of everything this batch loaded, for the one dependency report below. */
+            val installedManifests = mutableListOf<PluginManifest>()
             val failedIds = mutableListOf<Pair<String, String>>() // pluginId to error message
 
             if (plugins.isEmpty()) {
@@ -108,8 +111,10 @@ class PluginInstallService(
                     // If plugin has a GitHub URL, install from GitHub
                     if (plugin.githubUrl.isNotEmpty()) {
                         val result = installFromGitHub(plugin, pluginDir, progress, totalPlugins, onProgress)
-                        if (result.isSuccess) {
+                        val installedManifest = result.getOrNull()
+                        if (installedManifest != null) {
                             installedIds.add(plugin.id)
+                            installedManifests.add(installedManifest)
                         } else {
                             failedIds.add(plugin.id to (result.exceptionOrNull()?.message ?: "GitHub install failed"))
                         }
@@ -180,11 +185,7 @@ class PluginInstallService(
                     val installResult = dynamicPluginManager.installPlugin(jarPath, enabled = true)
 
                     if (installResult.isSuccess) {
-                        // The wizard installs several plugins at once, so it is the path where an
-                        // unmet dependency is most likely - and it never goes through
-                        // PluginLoaderDelegateImpl, so without this it was the one user-initiated
-                        // install that stayed silent.
-                        manifest?.let { dependencyReporter.report(it) }
+                        manifest?.let { installedManifests.add(it) }
 
                         // Persist the installation with actual version
                         PluginPersistence.addInstalledPlugin(
@@ -233,6 +234,18 @@ class PluginInstallService(
 
             onProgress(1f, "Installation complete")
 
+            // Report unmet dependencies once the whole batch is in, never per iteration.
+            // Reporting inside the loop meant a selection of [jupyter-notebook, ai-gateway] - the
+            // pick this feature exists for - prompted for the gateway while the wizard was still
+            // two lines from installing it: the loop runs on IO, so the collector on Main showed
+            // the dialog over the wizard, and taking Install raced the wizard's own download.
+            // (The two paths write different filenames for one plugin id, so nothing collides at
+            // the path level and the coalescing guard never sees a shared key.) After the loop,
+            // `installedAndOnDisk` already contains everything the batch installed, so nothing
+            // intra-batch is reported at all. This also covers the GitHub branch, which reports
+            // nowhere else.
+            installedManifests.forEach { installedManifest -> dependencyReporter.report(installedManifest) }
+
             // Log summary
             logger.info(
                 LogCategory.SYSTEM,
@@ -262,13 +275,35 @@ class PluginInstallService(
      * Install a plugin from GitHub.
      * Downloads the release JAR directly from GitHub releases.
      */
+
+    /**
+     * The manifest id is authoritative, so a mismatch with the wizard's expectation is logged and
+     * the install continues.
+     */
+    private fun warnOnIdMismatch(
+        plugin: WizardPluginInfo,
+        manifest: PluginManifest,
+    ) {
+        if (manifest.pluginId == plugin.id) return
+        logger.warn(
+            LogCategory.SYSTEM,
+            "Plugin ID mismatch between expected and manifest",
+            mapOf(
+                "expectedId" to plugin.id,
+                "manifestId" to manifest.pluginId,
+                "githubUrl" to plugin.githubUrl,
+            ),
+        )
+    }
+
+    /** Returns the installed manifest, so the caller's batch dependency report includes it. */
     private suspend fun installFromGitHub(
         plugin: WizardPluginInfo,
         pluginDir: File,
         baseProgress: Float,
         totalPlugins: Int,
         onProgress: (Float, String) -> Unit,
-    ): Result<Unit> =
+    ): Result<PluginManifest> =
         withContext(Dispatchers.IO) {
             try {
                 onProgress(baseProgress + (0.1f / totalPlugins), "Checking GitHub releases for ${plugin.name}...")
@@ -296,19 +331,7 @@ class PluginInstallService(
                     extractManifestFromJar(jarPath)
                         ?: return@withContext Result.failure(Exception("Downloaded JAR does not contain valid plugin manifest"))
 
-                // Verify manifest plugin ID matches expected ID
-                if (manifest.pluginId != plugin.id) {
-                    logger.warn(
-                        LogCategory.SYSTEM,
-                        "Plugin ID mismatch between expected and manifest",
-                        mapOf(
-                            "expectedId" to plugin.id,
-                            "manifestId" to manifest.pluginId,
-                            "githubUrl" to plugin.githubUrl,
-                        ),
-                    )
-                    // Continue with manifest ID as it's the authoritative source
-                }
+                warnOnIdMismatch(plugin, manifest)
 
                 onProgress(baseProgress + (0.7f / totalPlugins), "Installing ${plugin.name}...")
 
@@ -337,7 +360,7 @@ class PluginInstallService(
                     ),
                 )
 
-                Result.success(Unit)
+                Result.success(manifest)
             } catch (e: Exception) {
                 logger.error(
                     LogCategory.SYSTEM,
