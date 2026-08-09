@@ -32,12 +32,38 @@ data class MissingPluginDependency(
  */
 object PluginDependencyResolution {
     /**
+     * Plugin ids a manifest can name but which must never be offered for install.
+     *
+     * Both are system components that happen to live in the store under a plugin id, and both
+     * have a guard somewhere else that this path would route around:
+     *
+     * - the **microkernel runtime** is a classpath dependency for out-of-process child JVMs.
+     *   `PluginLoaderDelegateImpl.loadPlugin` refuses it outright, and `DefaultPlugin` skips it
+     *   on directory scan - so it is never in `pluginStates`, which would make it look missing
+     *   to every manifest that names it. Pushing it through `installPlugin` trips the
+     *   binary-compatibility validator on core JDK classes.
+     * - the **api plugin** is the shared `ApiClassLoader` layer. Installing a newer one is an
+     *   unload-everything / swap / reload-everything hot swap, which is not a thing to start
+     *   from a two-button dialog about something else.
+     *
+     * The api id is a literal because `ApiClassLoader.API_PLUGIN_ID` lives in `desktopMain`
+     * while this resolver is common; `PluginDependencyResolutionTest` pins the pair.
+     */
+    val NOT_USER_INSTALLABLE = setOf(MicrokernelRuntime.PLUGIN_ID, "ai.rever.boss.plugin.api")
+
+    /**
      * Dependencies of [manifest] that are not in [installedPluginIds].
      *
      * Returns optional dependencies too. They are worth telling someone about - an optional
      * dependency is how a plugin says "this feature needs that plugin", which is exactly
      * the thing a user would want to know at install time - but they are flagged so the
      * prompt can be a suggestion rather than a warning.
+     *
+     * **Presence is by id only.** `PluginDependency.version` is ignored, so a plugin needing
+     * 2.x is satisfied by 1.x being installed. That matches the one other reader of these
+     * declarations (`DynamicPluginManager.checkCanUnload`); resolving version ranges would be a
+     * different feature, and a prompt that offered to "install" something already present at
+     * the wrong version could not do anything useful about it anyway.
      */
     fun missingFor(
         manifest: PluginManifest,
@@ -48,6 +74,7 @@ object PluginDependencyResolution {
             // A plugin depending on itself is a manifest mistake, not something to offer to
             // install: the prompt would ask the user to install what they just installed.
             .filterNot { dependency -> dependency.pluginId == manifest.pluginId }
+            .filterNot { dependency -> dependency.pluginId in NOT_USER_INSTALLABLE }
             .groupBy { dependency -> dependency.pluginId }
             // One prompt per plugin, and when a manifest declares the same dependency twice
             // with different flags the stricter one wins: calling something "Recommended"
@@ -87,12 +114,18 @@ object PluginDependencyResolution {
  */
 interface MissingDependencyInstaller {
     /**
-     * Whether the plugin is installed *now*.
+     * Whether the plugin is present and usable *now*.
      *
      * A prompt can be raised and answered later, so what was missing at report time may not
      * be by the time it reaches a window - two dependents of one missing plugin each raise a
      * prompt, and installing for the first satisfies the second. Without this the second
      * dialog would state something untrue and reinstall what is already there.
+     *
+     * "Usable" and not merely "the manager has an entry": a load that fails as binary
+     * incompatible *registers* a disabled entry, and this installer deletes the jar it just
+     * rejected. Answering only "is there an entry" would then make Retry close the dialog
+     * reporting success with nothing installed, and silence the prompt for every other
+     * dependent of the same plugin.
      */
     fun isInstalled(pluginId: String): Boolean
 
@@ -112,8 +145,17 @@ interface MissingDependencyInstaller {
  * A missing dependency plus the means to fix it.
  *
  * The installer travels with the event rather than sitting in a global holder because it is
- * bound to the `DynamicPluginManager` that reported - one per window - and installing through
- * a different window's manager would load the plugin into the wrong one.
+ * bound to the `DynamicPluginManager` that reported - one per window - so Install always loads
+ * the dependency into the manager that was actually missing it, whichever window asks.
+ *
+ * **Known limitation, with more than one window open.** Delivery is to whichever window
+ * collects first, which is not necessarily the one that reported. The install is still correct
+ * (the jar lands on disk and loads into the reporting window's manager), but the person who
+ * answered may see nothing change in the window they were looking at until the next launch.
+ * Routing back to the reporting window would need the prompt to carry a window id and the
+ * collector to be able to decline one without consuming it - a claim registry rather than a
+ * channel. Not built, because a single window is the overwhelmingly common case and the
+ * consequence is cosmetic.
  */
 data class MissingDependencyPrompt(
     val missing: MissingPluginDependency,

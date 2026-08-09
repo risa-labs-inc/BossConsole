@@ -70,7 +70,14 @@ class PluginLoaderDelegateImpl(
         StoreMissingDependencyInstaller(
             repository = { PluginStoreSetup.remoteRepository },
             pluginDir = { PluginStoreSetup.getPluginDir() },
-            installedNow = { pluginId -> dynamicPluginManager.isInstalled(pluginId) },
+            // A jar on disk as well as an entry: `installPlugin` registers a DISABLED entry
+            // for a binary-incompatible plugin, and the installer deletes the jar it rejected,
+            // so an entry alone would report a failed install as an install.
+            installedNow = { pluginId ->
+                dynamicPluginManager.pluginStates.value[pluginId]
+                    ?.jarPath
+                    ?.let { File(it).exists() } == true
+            },
             load = { jarPath -> dynamicPluginManager.installPlugin(jarPath) },
         )
 

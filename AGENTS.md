@@ -117,8 +117,26 @@ Reporting is gated to the install entry point. `doReloadPlugin` finishes by call
 the evolver's hot reload - none of which is a user asking to install anything, and re-offering a
 dependency someone declined on every reload would be worse than silence.
 
-Transitive dependencies are deliberately not chased: the dependency loads through the manager
-directly, so answering one question never produces a second dialog.
+Deliberately out of scope, so nobody assumes more than exists:
+
+- **Transitive dependencies are not chased.** The dependency loads through the manager directly,
+  so answering one question never produces a second dialog.
+- **`PluginDependency.version` is ignored.** Presence is by id, matching `checkCanUnload`. A
+  plugin needing 2.x is satisfied by 1.x, and a prompt could not usefully fix a wrong-version
+  install anyway.
+- **`NOT_USER_INSTALLABLE` ids are never offered**: the microkernel runtime (which
+  `loadPlugin` refuses outright and `DefaultPlugin` skips on scan, so it looks missing to every
+  manifest naming it) and the api plugin (whose install is an unload-all / swap / reload-all hot
+  swap, not something to start from a dialog about something else).
+- **With two windows open, the window that asks may not be the one that reported.** The install
+  is still correct; the answering window may just not show the change until relaunch. See
+  `MissingDependencyPrompt`.
+
+One trap worth knowing: `isInstalled` has to mean *usable*, not "the manager has an entry".
+`installPlugin` registers a DISABLED entry for a binary-incompatible plugin, and this installer
+deletes the jar it rejected - so an entry-only check made Retry close the dialog reporting
+success with nothing installed, and silenced the prompt for every other dependent of that
+plugin. The check is an entry whose `jarPath` still exists.
 
 ## Configuration
 

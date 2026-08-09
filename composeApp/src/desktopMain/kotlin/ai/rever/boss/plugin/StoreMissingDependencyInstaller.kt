@@ -22,12 +22,12 @@ import java.io.File
  * Every failure message here is shown to the user, so each says what happened and what it
  * means for them rather than surfacing a transport error.
  *
- * @param repository the store repository, null when it never initialised (offline first run,
- *   or absent store credentials) - the prompt then says so instead of hanging
  * The plugin manager is reached through two lambdas rather than held as an object: those are
  * the only two things wanted from it, and passing them makes the download, cleanup and
  * persistence rules testable without standing up a loader.
  *
+ * @param repository the store repository, null when it never initialised (offline first run,
+ *   or absent store credentials) - the prompt then says so instead of hanging
  * @param pluginDir where installed jars live, so a downloaded dependency is picked up by a
  *   later directory scan exactly like any other install
  * @param installedNow whether a plugin id is loaded in the manager that reported
@@ -58,9 +58,6 @@ class StoreMissingDependencyInstaller(
      * window mid-download would otherwise abort the install and leave the partial jar behind.
      */
     private val installScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
-
-    /** A property rather than a function purely to stay under detekt's per-class count. */
-    private val reason: (Throwable) -> String = { error -> error.message ?: "unknown error" }
 
     /**
      * Detaches installs from the window that asked and coalesces them per plugin id.
@@ -121,24 +118,38 @@ class StoreMissingDependencyInstaller(
                     // again.
                     discard(target.absolutePath)
                     logger.error(LogCategory.SYSTEM, "Failed to download a plugin dependency", error = error)
-                    failure("Could not download ${info.displayName}: ${reason(error)}")
+                    failure("Could not download ${info.displayName}: ${error.message ?: "unknown error"}")
                 },
             )
     }
 
     /**
-     * The name a store download already uses (`ai_rever_boss_x_1.2.3.jar`), so a later update
-     * or uninstall recognises this jar as that plugin instead of leaving a stray copy.
+     * Where the downloaded jar goes: `<id_with_underscores>_<version>.jar` in the plugins
+     * directory, so a later directory scan picks it up like any other install.
      *
      * Downloaded straight to its final name rather than through a `-downloading.jar` rename:
      * `downloadPlugin` writes the signature sidecar next to whatever path it was given, and a
      * rename afterwards would leave the `.sig` behind under the temporary name - so the jar
      * would load as unsigned. Partial files are handled by deleting on failure instead.
+     *
+     * Both parts are sanitised because both come from a store row, and a `version` of `../x`
+     * would otherwise write outside the plugins directory. Note this scheme differs from
+     * `PluginInstallService`'s `<id>-<version>.jar`; neither is canonical, and the loader finds
+     * either, but a shared helper would stop them drifting further.
      */
     private fun targetJar(
         pluginId: String,
         info: PluginInfo,
-    ) = File(pluginDir(), "${pluginId.replace('.', '_')}_${info.version}.jar")
+    ) = File(pluginDir(), "${safe(pluginId.replace('.', '_'))}_${safe(info.version)}.jar")
+
+    /**
+     * Keeps only what a plugin jar name needs, so no store value can name a path.
+     *
+     * Path separators go, which is what stops a `version` of `../x` escaping the directory;
+     * dots survive because versions are full of them and, with separators gone, cannot
+     * traverse.
+     */
+    private fun safe(part: String) = part.replace(Regex("[^A-Za-z0-9.-]"), "_")
 
     /**
      * Loads the downloaded jar and records it.
@@ -159,35 +170,24 @@ class StoreMissingDependencyInstaller(
             // this jar and load it without it ever having passed the checks it just failed.
             discard(jarPath)
             logger.error(LogCategory.SYSTEM, "Failed to load a downloaded plugin dependency", error = error)
-            return failure("Downloaded ${info.displayName} but could not load it: ${reason(error)}")
+            return failure("Downloaded ${info.displayName} but could not load it: ${error.message ?: "unknown error"}")
         }
-        record(pluginId, jarPath, info)
-        return Result.success(Unit)
-    }
-
-    /**
-     * Writes the `installed.json` entry, as every other install path does.
-     *
-     * Not optional bookkeeping: `setPluginEnabled` updates an existing entry and does nothing
-     * at all when there is none, so a dependency known only by its presence on disk cannot be
-     * disabled persistently - it would come back enabled on the next launch. The entry also
-     * carries the version and source that update checking reads.
-     */
-    private fun record(
-        pluginId: String,
-        jarPath: String,
-        info: PluginInfo,
-    ) {
+        // Write the `installed.json` entry, as every other install path does. Not optional
+        // bookkeeping: `setPluginEnabled` updates an existing entry and does nothing when there
+        // is none, so a plugin known only by its presence on disk cannot be disabled
+        // persistently - it would come back enabled on the next launch. The entry also carries
+        // the version and source that update checking reads.
         runCatching { persist(pluginId, jarPath, info) }
             .onFailure { error ->
-                // The plugin is loaded and usable; only the record failed, so this is not
-                // worth turning a successful install into an error the user sees.
+                // The plugin is loaded and usable; only the record failed, so this is not worth
+                // turning a successful install into an error the user sees.
                 logger.warn(
                     LogCategory.SYSTEM,
                     "Installed a dependency but could not record it",
                     mapOf("pluginId" to pluginId, "error" to (error.message ?: "unknown")),
                 )
             }
+        return Result.success(Unit)
     }
 
     /**

@@ -3,6 +3,7 @@ package ai.rever.boss.components.plugin
 import ai.rever.boss.components.plugin.PluginDependencyResolution.description
 import ai.rever.boss.plugin.api.PluginDependency
 import ai.rever.boss.plugin.api.PluginManifest
+import ai.rever.boss.plugin.loader.ApiClassLoader
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -10,6 +11,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -98,20 +100,64 @@ class PluginDependencyResolutionTest {
     }
 
     @Test
-    fun `a dependency declared twice prompts once`() {
+    fun `a dependency declared twice prompts once, as the stricter declaration`() {
+        // Both orders, because asserting only the count passes whichever declaration wins -
+        // and calling something "Recommended" that the plugin requires is the worse mistake.
+        listOf(
+            listOf(dependency("com.example.gateway"), dependency("com.example.gateway", optional = true)),
+            listOf(dependency("com.example.gateway", optional = true), dependency("com.example.gateway")),
+        ).forEach { declarations ->
+            val missing =
+                PluginDependencyResolution.missingFor(
+                    manifest(dependencies = declarations),
+                    installedPluginIds = emptySet(),
+                )
+
+            assertEquals(1, missing.size, "declared twice, prompted ${missing.size} times")
+            assertFalse(missing.single().optional, "the optional declaration won")
+        }
+    }
+
+    @Test
+    fun `system components are never offered for install`() {
+        PluginDependencyResolution.NOT_USER_INSTALLABLE.forEach { systemId ->
+            val missing =
+                PluginDependencyResolution.missingFor(
+                    manifest(dependencies = listOf(dependency(systemId))),
+                    installedPluginIds = emptySet(),
+                )
+
+            // The microkernel runtime is never in `pluginStates` (DefaultPlugin skips it on
+            // scan), so without this filter it looks missing to every manifest naming it - and
+            // installing it trips the binary-compat validator on core JDK classes. The api
+            // plugin's install is an unload-all/swap/reload-all hot swap.
+            assertTrue(missing.isEmpty(), "offered to install $systemId")
+        }
+    }
+
+    @Test
+    fun `the guarded system ids are the real ones`() {
+        // Literals in the resolver because ApiClassLoader.API_PLUGIN_ID is desktop-only; if
+        // either id is renamed, this fails rather than the filter quietly ceasing to match.
+        assertEquals(
+            setOf("ai.rever.boss.microkernel.runtime", "ai.rever.boss.plugin.api"),
+            PluginDependencyResolution.NOT_USER_INSTALLABLE,
+        )
+        assertEquals(MicrokernelRuntime.PLUGIN_ID, "ai.rever.boss.microkernel.runtime")
+        assertEquals(ApiClassLoader.API_PLUGIN_ID, "ai.rever.boss.plugin.api")
+    }
+
+    @Test
+    fun `a version constraint does not make an installed plugin missing`() {
         val missing =
             PluginDependencyResolution.missingFor(
-                manifest(
-                    dependencies =
-                        listOf(
-                            dependency("com.example.gateway"),
-                            dependency("com.example.gateway", optional = true),
-                        ),
-                ),
-                installedPluginIds = emptySet(),
+                manifest(dependencies = listOf(dependency("com.example.gateway"))),
+                installedPluginIds = setOf("com.example.gateway"),
             )
 
-        assertEquals(1, missing.size)
+        // Presence is by id: documented scope, pinned so a future version check is a
+        // deliberate change rather than a surprise.
+        assertTrue(missing.isEmpty())
     }
 
     @Test
@@ -204,6 +250,25 @@ class PluginDependencyBusTest {
             collectors.forEach { it.cancel() }
 
             assertEquals(listOf("com.example.once"), received)
+        }
+
+    @Test
+    fun `a full buffer refuses the newest and keeps the ones already waiting`() =
+        runTest {
+            val bus = PluginDependencyBus()
+            // Capacity is 4. The fifth has nowhere to go.
+            for (n in 1..5) bus.report(prompt("com.example.p$n"))
+
+            val delivered =
+                (1..4).map {
+                    bus.missingDependencies
+                        .first()
+                        .missing.missingPluginId
+                }
+
+            // Not DROP_OLDEST: the oldest prompt is the one a user is most likely part-way
+            // through answering, and a channel that always accepts makes the drop invisible.
+            assertEquals(listOf("com.example.p1", "com.example.p2", "com.example.p3", "com.example.p4"), delivered)
         }
 
     @Test

@@ -12,6 +12,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -196,7 +197,108 @@ class StoreMissingDependencyInstallerTest {
             assertTrue(message.startsWith("Downloaded AI Gateway"), "unhelpful message: $message")
         }
 
-    /** The name a store download uses, so an update or uninstall recognises the jar. */
+    @Test
+    fun `an entry whose jar is gone is not treated as installed`() =
+        runTest {
+            // A binary-incompatible load registers a DISABLED entry and this installer deletes
+            // the jar it rejected. If "installed" meant only "has an entry", Retry would close
+            // the dialog reporting success with nothing installed - so the delegate's check is
+            // an entry whose jar still exists, and this pins the installer half: given a store
+            // and a working load, a retry really does install.
+            val installer = installer(FakeStore(info()))
+
+            assertTrue(installer.install(PLUGIN_ID).isSuccess)
+            assertTrue(jar().exists())
+        }
+
+    @Test
+    fun `a retry after a failed load installs rather than reporting success`() =
+        runTest {
+            var attempt = 0
+            val result =
+                installer(
+                    FakeStore(info()),
+                    load = {
+                        attempt++
+                        if (attempt == 1) {
+                            Result.failure<Unit>(IllegalStateException("incompatible"))
+                        } else {
+                            Result.success(Unit)
+                        }
+                    },
+                ).let { installer ->
+                    assertTrue(installer.install(PLUGIN_ID).isFailure)
+                    installer.install(PLUGIN_ID)
+                }
+
+            assertTrue(result.isSuccess, "retry did not install: ${result.exceptionOrNull()}")
+            assertEquals(2, attempt, "the retry short-circuited instead of loading")
+            assertTrue(jar().exists())
+        }
+
+    @Test
+    fun `displayNameFor returns the store name, and null when there is none`() =
+        runTest {
+            assertEquals("AI Gateway", installer(FakeStore(info())).displayNameFor(PLUGIN_ID))
+            assertNull(installer(FakeStore(plugin = null)).displayNameFor(PLUGIN_ID))
+            assertNull(installer(store = null).displayNameFor(PLUGIN_ID))
+        }
+
+    @Test
+    fun `displayNameFor treats a blank name as no name`() =
+        runTest {
+            // The dialog falls back to the plugin id, which is poor but readable; a blank name
+            // would render the sentence as "Flow needs , which is not installed".
+            val blank = installer(FakeStore(info().copy(displayName = "   ")))
+
+            assertNull(blank.displayNameFor(PLUGIN_ID))
+        }
+
+    @Test
+    fun `displayNameFor survives a store that throws`() =
+        runTest {
+            // Read from `produceState` during composition, so a throw here would take the
+            // dialog down instead of leaving the id on screen.
+            assertNull(installer(ThrowingStore()).displayNameFor(PLUGIN_ID))
+        }
+
+    @Test
+    fun `a version that would escape the plugin directory is sanitised`() =
+        runTest {
+            installer(FakeStore(info(version = "../../evil"))).install(PLUGIN_ID)
+
+            val escaped = File(temp.parentFile, "evil.jar")
+            assertFalse(escaped.exists(), "wrote outside the plugins directory")
+            assertEquals(1, temp.listFiles().orEmpty().count { it.name.endsWith(".jar") })
+        }
+
+    /** A store whose lookup fails outright, as an offline or rate-limited one does. */
+    private class ThrowingStore : PluginRepository {
+        override val id = "store"
+        override val name = "Store"
+        override val isLocal = false
+        override val isAvailable = false
+
+        override suspend fun listPlugins(): Result<List<PluginInfo>> = error("offline")
+
+        override suspend fun searchPlugins(filter: PluginSearchFilter): Result<PluginSearchResult> = error("offline")
+
+        override suspend fun getPlugin(pluginId: String): Result<PluginInfo?> = error("offline")
+
+        override suspend fun getPluginVersions(pluginId: String) = listPlugins()
+
+        override suspend fun downloadPlugin(
+            pluginId: String,
+            version: String?,
+            targetPath: String,
+        ): Result<String> = error("offline")
+
+        override fun getDownloadProgress(pluginId: String): Flow<Float>? = null
+
+        override suspend fun refresh(): Result<Unit> = error("offline")
+    }
+
+    /** Where a download lands: dots in the id become underscores, the version is sanitised. */
     private fun jar() = File(temp, "${PLUGIN_ID.replace('.', '_')}_1.2.3.jar")
 
     private fun sidecar() = File(PluginSignatureSidecar.pathFor(jar().absolutePath))

@@ -494,18 +494,24 @@ internal fun BossAppDialogs(state: BossAppState) {
                 state.installingMissingDependency = true
                 state.missingDependencyError = null
                 coroutineScope.launch {
-                    val result = prompt.installer.install(prompt.missing.missingPluginId)
-                    state.installingMissingDependency = false
-                    result
-                        .onSuccess {
-                            state.pendingMissingPluginDependency = null
-                            state.missingDependencyError = null
-                        }.onFailure { error ->
-                            // Keep the dialog up with the reason and a Retry: dismissing on
-                            // failure would look like it worked.
-                            state.missingDependencyError =
-                                error.message ?: "Could not install the plugin."
-                        }
+                    try {
+                        prompt.installer
+                            .install(prompt.missing.missingPluginId)
+                            .onSuccess {
+                                state.pendingMissingPluginDependency = null
+                                state.missingDependencyError = null
+                            }.onFailure { error ->
+                                // Keep the dialog up with the reason and a Retry: dismissing on
+                                // failure would look like it worked.
+                                state.missingDependencyError =
+                                    error.message ?: "Could not install the plugin."
+                            }
+                    } finally {
+                        // Always, because "installing" disables every button and blocks
+                        // dismissal: a throw here rather than a failed Result would leave a
+                        // modal that can only be escaped by closing the window.
+                        state.installingMissingDependency = false
+                    }
                 }
             },
         )
