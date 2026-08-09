@@ -26,40 +26,24 @@ import java.io.File
  * Every failure message here is shown to the user, so each says what happened and what it
  * means for them rather than surfacing a transport error.
  *
- * The plugin manager is reached through two lambdas rather than held as an object: those are
- * the only two things wanted from it, and passing them makes the download, cleanup and
- * persistence rules testable without standing up a loader.
+ * The plugin manager is reached through lambdas rather than held as an object: they are the only
+ * things wanted from it, and passing them makes the download, cleanup and persistence rules
+ * testable without standing up a loader, a sandbox and two registries.
  *
  * @param repository the store repository, null when it never initialised (offline first run,
  *   or absent store credentials) - the prompt then says so instead of hanging
  * @param pluginDir where installed jars live, so a downloaded dependency is picked up by a
  *   later directory scan exactly like any other install
- * @param installedNow whether a plugin id is loaded in the manager that reported
- * @param load the load leg, i.e. `DynamicPluginManager.installPlugin`
- * @param persist records the install the way every other install path does; see [record]
+ * @param hooks everything this needs from outside itself; see [InstallerHooks]
  */
 class StoreMissingDependencyInstaller(
     private val repository: () -> PluginRepository?,
     private val pluginDir: () -> File,
-    private val installedNow: (pluginId: String) -> Boolean,
-    private val load: suspend (jarPath: String) -> Result<*>,
-    private val readManifest: (jarPath: String) -> PluginManifest? = { jarPath ->
-        runCatching { PluginManifestReader.readFromJar(jarPath) }.getOrNull()
-    },
-    private val persist: (pluginId: String, jarPath: String, version: String, sourceUrl: String?) -> Unit =
-        { pluginId, jarPath, version, sourceUrl ->
-            PluginPersistence.addInstalledPlugin(
-                pluginId = pluginId,
-                jarPath = jarPath,
-                enabled = true,
-                sourceUrl = sourceUrl,
-                installedVersion = version,
-            )
-        },
+    private val hooks: InstallerHooks,
 ) : MissingDependencyInstaller {
     private val logger = BossLogger.forComponent("MissingDependencyInstaller")
 
-    override fun isInstalled(pluginId: String): Boolean = installedNow(pluginId)
+    override fun isInstalled(pluginId: String): Boolean = hooks.installedNow(pluginId)
 
     override suspend fun displayNameFor(pluginId: String): String? =
         runCatching { repository()?.getPlugin(pluginId)?.getOrNull()?.displayName }
@@ -141,18 +125,13 @@ class StoreMissingDependencyInstaller(
         target: File,
         info: PluginInfo,
     ): Result<Unit> {
-        val moved =
-            runCatching {
-                target.atomicMoveFrom(File(downloaded))
-                val signature = PluginSignatureSidecar.read(downloaded)
-                if (signature != null) {
-                    PluginSignatureSidecar.write(target.absolutePath, signature)
-                    PluginSignatureSidecar.delete(downloaded)
-                }
-            }
-        val error = moved.exceptionOrNull()
+        val error = promote(downloaded, target).exceptionOrNull()
         if (error != null) {
+            // Both paths, because the move may already have succeeded: a sidecar step that then
+            // throws would otherwise leave an unvetted, never-loaded jar at a scannable name for
+            // the next launch to pick up - the thing the `.part` suffix exists to prevent.
             discard(downloaded)
+            discard(target.absolutePath)
             logger.error(LogCategory.SYSTEM, "Could not move a downloaded dependency into place", error = error)
             return failure("Downloaded ${info.displayName} but could not put it in place.")
         }
@@ -181,7 +160,7 @@ class StoreMissingDependencyInstaller(
         // thing NOT_USER_INSTALLABLE exists to keep out of a two-button dialog - and a jar that
         // declares some *other* installed plugin would be loaded, re-pointed at this path, and
         // then have that path deleted underneath it.
-        val declared = readManifest(jarPath)
+        val declared = hooks.readManifest(jarPath)
         val declaredId = declared?.pluginId
         if (declaredId != pluginId || declaredId in PluginDependencyResolution.NOT_USER_INSTALLABLE) {
             discard(jarPath)
@@ -203,7 +182,7 @@ class StoreMissingDependencyInstaller(
         info: PluginInfo,
         version: String,
     ): Result<Unit> {
-        val error = load(jarPath).exceptionOrNull()
+        val error = hooks.load(jarPath).exceptionOrNull()
         // Belt and braces after the pre-load check: the manager registers what the jar declares,
         // so if the requested id still is not present the load did not do what it claimed.
         val wrongPlugin = error == null && !isInstalled(pluginId)
@@ -217,7 +196,13 @@ class StoreMissingDependencyInstaller(
                     "A dependency jar loaded as a different plugin",
                     mapOf("expected" to pluginId, "jarPath" to jarPath),
                 )
-                failure("${info.displayName} did not install as $pluginId. The store entry may be wrong.")
+                // Not "the store entry may be wrong": the manifest was vetted before the load,
+                // so by far the likeliest cause here is a plugin that loaded and then failed to
+                // register - binary-incompatible against this host.
+                failure(
+                    "${info.displayName} downloaded but did not start. It may not be compatible with this " +
+                        "version of BOSS.",
+                )
             } else {
                 logger.error(LogCategory.SYSTEM, "Failed to load a downloaded plugin dependency", error = error)
                 failure("Downloaded ${info.displayName} but could not load it: ${error?.message ?: "unknown error"}")
@@ -234,7 +219,7 @@ class StoreMissingDependencyInstaller(
         // Null rather than the empty string: the store's detail response never populates
         // `downloadUrl`, and recording "" would look like a known-empty source instead of an
         // absent one - and would fight the preserve-existing-sourceUrl logic later.
-        runCatching { persist(pluginId, jarPath, version, info.downloadUrl.ifBlank { null }) }
+        runCatching { hooks.persist(pluginId, jarPath, version, info.downloadUrl.ifBlank { null }) }
             .onFailure { error ->
                 // The plugin is loaded and usable; only the record failed, so this is not worth
                 // turning a successful install into an error the user sees.
@@ -261,12 +246,19 @@ class StoreMissingDependencyInstaller(
     private fun failure(message: String): Result<Unit> = Result.failure(IllegalStateException(message))
 
     /**
-     * Keeps only what a plugin jar name needs, so no store value can name a path.
+     * Move the downloaded jar and its signature onto the final name.
      *
-     * Path separators go, which is what stops a `version` of `../x` escaping the directory; dots
-     * survive because versions are full of them and, with separators gone, cannot traverse.
+     * `persist` rather than `write`, because `target` can already exist - reinstalling the same
+     * version reuses the filename - and `persist` is the one that clears a stale sidecar when the
+     * new download is unsigned. A leftover `.sig` beside fresh bytes is a hard load failure,
+     * which is worse than being unsigned.
      */
-    private fun safe(part: String) = part.replace(Regex("[^A-Za-z0-9.-]"), "_")
+    private fun promote(
+        downloaded: String,
+        target: File,
+    ) = runCatching {
+        hooks.promoteFiles(downloaded, target)
+    }
 
     private companion object {
         /**
@@ -289,3 +281,50 @@ class StoreMissingDependencyInstaller(
         private val DETACHED_INSTALLS = KeyedDetachedJobs<String, Result<Unit>>(INSTALL_SCOPE)
     }
 }
+
+/**
+ * Everything [StoreMissingDependencyInstaller] needs from outside itself.
+ *
+ * Grouped rather than seven constructor parameters, which detekt was right to flag: these are one
+ * concept - "how this talks to the plugin manager and the filesystem" - and the three with
+ * defaults exist purely so tests can drive the paths that would otherwise need a real loader, a
+ * real jar and a real `installed.json`.
+ *
+ * @param installedNow whether a plugin id is present and usable in the manager that reported
+ * @param load the load leg, i.e. `DynamicPluginManager.installPlugin`
+ * @param readManifest reads the downloaded jar's own manifest, so a store row that points at the
+ *   wrong plugin is refused before `installPlugin` can act on the bytes
+ * @param promoteFiles moves the completed download and its signature onto the final name;
+ *   injected so a promotion that half-succeeds (jar moved, sidecar failed) is testable
+ * @param persist records the install the way every other install path does
+ */
+class InstallerHooks(
+    val installedNow: (pluginId: String) -> Boolean,
+    val load: suspend (jarPath: String) -> Result<*>,
+    val readManifest: (jarPath: String) -> PluginManifest? = { jarPath ->
+        runCatching { PluginManifestReader.readFromJar(jarPath) }.getOrNull()
+    },
+    val promoteFiles: (downloaded: String, target: File) -> Unit = { downloaded, target ->
+        target.atomicMoveFrom(File(downloaded))
+        PluginSignatureSidecar.persist(target.absolutePath, PluginSignatureSidecar.read(downloaded))
+        PluginSignatureSidecar.delete(downloaded)
+    },
+    val persist: (pluginId: String, jarPath: String, version: String, sourceUrl: String?) -> Unit =
+        { pluginId, jarPath, version, sourceUrl ->
+            PluginPersistence.addInstalledPlugin(
+                pluginId = pluginId,
+                jarPath = jarPath,
+                enabled = true,
+                sourceUrl = sourceUrl,
+                installedVersion = version,
+            )
+        },
+)
+
+/**
+ * Keeps only what a plugin jar name needs, so no store value can name a path.
+ *
+ * Path separators go, which is what stops a `version` of `../x` escaping the directory; dots
+ * survive because versions are full of them and, with separators gone, cannot traverse.
+ */
+private fun safe(part: String) = part.replace(Regex("[^A-Za-z0-9.-]"), "_")

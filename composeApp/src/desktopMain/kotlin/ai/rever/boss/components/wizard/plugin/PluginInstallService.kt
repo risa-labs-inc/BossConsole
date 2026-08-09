@@ -5,6 +5,7 @@ import ai.rever.boss.plugin.MissingDependencyReporter
 import ai.rever.boss.plugin.PluginPersistence
 import ai.rever.boss.plugin.PluginStoreSetup
 import ai.rever.boss.plugin.api.PluginManifest
+import ai.rever.boss.plugin.api.PluginState
 import ai.rever.boss.plugin.repository.PluginWithSource
 import ai.rever.boss.utils.atomicMoveFrom
 import ai.rever.boss.utils.logging.BossLogger
@@ -185,9 +186,13 @@ class PluginInstallService(
                     val installResult = dynamicPluginManager.installPlugin(jarPath, enabled = true)
 
                     if (installResult.isSuccess) {
-                        if (manifest != null) {
+                        // Only a plugin that actually registered: `installPlugin` returns success
+                        // with `state = DISABLED` when registration failed as binary-incompatible,
+                        // and prompting then offers a second plugin to support a dead one.
+                        val registered = installResult.getOrNull()?.state == PluginState.LOADED
+                        if (manifest != null && registered) {
                             installedManifests.add(manifest)
-                        } else {
+                        } else if (manifest == null) {
                             // Installed, but its dependencies were never checked. Say so rather
                             // than leaving the batch quietly incomplete.
                             logger.warn(

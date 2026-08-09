@@ -2,6 +2,7 @@ package ai.rever.boss.components.plugin
 
 import ai.rever.boss.plugin.MissingDependencyReporter
 import ai.rever.boss.plugin.PluginStoreSetup
+import ai.rever.boss.plugin.api.PluginState
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import java.io.File
@@ -109,8 +110,10 @@ actual object PluginUpdateBridge {
                 loadPlugin = { path ->
                     manager.installPlugin(path).map { info ->
                         // An update can add a dependency the installed version never declared,
-                        // and this path does not go through PluginLoaderDelegateImpl.
-                        reporter.report(info.manifest)
+                        // and this path does not go through PluginLoaderDelegateImpl. Only for a
+                        // plugin that actually registered: `installPlugin` returns success with
+                        // `state = DISABLED` when registration failed as binary-incompatible.
+                        if (info.state == PluginState.LOADED) reporter.report(info.manifest)
                     }
                 },
             )

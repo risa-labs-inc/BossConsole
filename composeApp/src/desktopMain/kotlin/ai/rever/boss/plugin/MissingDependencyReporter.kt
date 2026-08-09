@@ -9,6 +9,7 @@ import ai.rever.boss.components.plugin.PluginDependencyEventBus
 import ai.rever.boss.components.plugin.PluginDependencyResolution
 import ai.rever.boss.plugin.api.PluginManifest
 import ai.rever.boss.plugin.loader.ApiClassLoader
+import ai.rever.boss.plugin.sandbox.ui.PluginCrashRegistry
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import java.io.File
@@ -40,6 +41,7 @@ class MissingDependencyReporter(
     private val installer: MissingDependencyInstaller,
     private val bus: PluginDependencyBus = PluginDependencyEventBus,
     private val jarExists: (String) -> Boolean = { File(it).isFile },
+    private val isIncompatible: (String) -> Boolean = { PluginCrashRegistry.isIncompatible(it) },
 ) {
     private val logger = BossLogger.forComponent("MissingDependencyReporter")
 
@@ -48,7 +50,12 @@ class MissingDependencyReporter(
      *
      * See `PluginDependencyResolution.installedAndOnDisk` for why one definition matters.
      */
-    private fun installedPluginIds() = PluginDependencyResolution.installedAndOnDisk(states(), jarExists)
+    private fun installedPluginIds() =
+        PluginDependencyResolution.installedAndOnDisk(
+            states = states(),
+            exists = jarExists,
+            isIncompatible = isIncompatible,
+        )
 
     /**
      * Report whatever [manifest] declares and does not have.
@@ -121,7 +128,11 @@ class MissingDependencyReporter(
         fun forManager(manager: DynamicPluginManager): MissingDependencyReporter {
             val installedNow: (String) -> Boolean = { pluginId ->
                 pluginId in
-                    PluginDependencyResolution.installedAndOnDisk(manager.pluginStates.value) { File(it).isFile }
+                    PluginDependencyResolution.installedAndOnDisk(
+                        states = manager.pluginStates.value,
+                        exists = { File(it).isFile },
+                        isIncompatible = { PluginCrashRegistry.isIncompatible(it) },
+                    )
             }
             return MissingDependencyReporter(
                 states = { manager.pluginStates.value },
@@ -129,8 +140,11 @@ class MissingDependencyReporter(
                     StoreMissingDependencyInstaller(
                         repository = { PluginStoreSetup.remoteRepository },
                         pluginDir = { PluginStoreSetup.getPluginDir() },
-                        installedNow = installedNow,
-                        load = { jarPath -> manager.installPlugin(jarPath) },
+                        hooks =
+                            InstallerHooks(
+                                installedNow = installedNow,
+                                load = { jarPath -> manager.installPlugin(jarPath) },
+                            ),
                     ),
             )
         }

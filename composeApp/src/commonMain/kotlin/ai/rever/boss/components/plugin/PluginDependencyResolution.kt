@@ -78,12 +78,26 @@ object PluginDependencyResolution {
      * at entries then treated that plugin as present, so every *later* dependent of it reported
      * nothing at all, silently re-creating the problem this feature exists to remove.
      *
+     * The jar clause needs [isIncompatible] to stay honest. There are **two** binary
+     * incompatibility paths in `installPlugin` and only one of them fails: the load-time one
+     * returns `Result.failure`, but the *registration-time* one force-unloads the plugin and
+     * returns `Result.success` with `state = DISABLED` and the jar still on disk. Without this
+     * filter that jar makes a plugin which was unloaded and will not run count as installed - so
+     * the Install button would report success for it, and every other dependent of it would go
+     * unprompted.
+     *
      * @param exists injected so this is testable without a filesystem; the host passes
-     *   `File(it).isFile`.
+     *   `File(it).isFile`
+     * @param isIncompatible whether the host has recorded this plugin as binary-incompatible;
+     *   the host passes `PluginCrashRegistry.isIncompatible`. Being last, it captures a trailing
+     *   lambda, so pass both by name - [exists] deliberately has no default, which turns a call
+     *   that meant to write `exists` as a trailing lambda into a compile error rather than a
+     *   silent swap of the two.
      */
     fun installedAndOnDisk(
         states: Map<String, DynamicPluginInfo>,
         exists: (jarPath: String) -> Boolean,
+        isIncompatible: (pluginId: String) -> Boolean = { false },
     ): Set<String> =
         states
             // A plugin that is LOADED counts however its jar path reads. The manager's
@@ -93,6 +107,7 @@ object PluginDependencyResolution {
             // would look absent, the prompt would fire, and Install would fail with "Plugin
             // already loaded", which is both wrong and unactionable. The case this predicate
             // exists for is unaffected: a binary-incompatible entry is DISABLED, never LOADED.
+            .filterKeys { pluginId -> !isIncompatible(pluginId) }
             .filterValues { info -> info.state == PluginState.LOADED || exists(info.jarPath) }
             .keys
 
@@ -285,7 +300,7 @@ open class PluginDependencyBus {
             // Freed on the way out, not when the dialog is answered: the collector may decline to
             // show this one (already installed, or declined since), and a slot held for a prompt
             // nobody will ever show is what `queued` exists to avoid.
-            .onEach { prompt -> queued.remove(prompt.missing.missingPluginId) }
+            .onEach { prompt -> queued.remove(declineKey(prompt.missing)) }
 
     /**
      * Non-suspending on purpose, so the install path never waits on a UI.
@@ -296,9 +311,12 @@ open class PluginDependencyBus {
      */
     fun report(prompt: MissingDependencyPrompt) {
         val missingPluginId = prompt.missing.missingPluginId
-        if (wasDeclined(prompt.missing) || !queued.add(missingPluginId)) return
+        // Keyed like a decline, not by bare id: an optional prompt already waiting would
+        // otherwise swallow a *required* one for the same plugin, and declining the optional
+        // dialog would then silence the plugin that actually requires it.
+        if (wasDeclined(prompt.missing) || !queued.add(declineKey(prompt.missing))) return
         if (prompts.trySend(prompt).isFailure) {
-            queued.remove(missingPluginId)
+            queued.remove(declineKey(prompt.missing))
             // DROP_OLDEST is silent, and a prompt that never appears is indistinguishable
             // from a feature that does not exist. Say so somewhere.
             logger.warn(

@@ -134,7 +134,10 @@ in review:
 - **Nothing is reported for a plugin that did not actually register.** `installPlugin` returns
   success with `state = DISABLED` when registration failed as binary-incompatible or the plugin
   is hidden for lack of access; reporting then offers to install a second plugin to support a
-  dead one.
+  dead one. All **three** report paths check `state == LOADED`, not just the delegate.
+- **A promotion that half-succeeds cleans up both paths.** If the jar moves and the sidecar step
+  then throws, deleting only the part file would leave an unvetted, never-loaded jar at a
+  scannable name for the next launch to load.
 
 Installs are detached and coalesced per plugin id (`KeyedDetachedJobs`, as reloads are): the
 prompt is driven from a window's scope, so closing that window mid-download would otherwise
@@ -184,13 +187,19 @@ install left a dangling entry that made every *later* dependent of that plugin r
 all, silently re-creating the problem this feature exists to remove. There is now one
 `installedAndOnDisk` predicate in `PluginLoaderDelegateImpl`, passed to both.
 
-**"Installed" is `state == LOADED || the jar exists`.** Both halves are load-bearing and each
+**"Installed" is `state == LOADED || (the jar exists && not recorded incompatible)`.** Both halves are load-bearing and each
 was a bug on its own. Requiring only an entry meant a binary-incompatible load - which registers
 a DISABLED entry while the installer deletes the jar it rejected - looked installed, so Retry
 reported success with nothing installed and every later dependent went silent. Requiring only the
 jar meant a *running* plugin whose file had moved looked absent: `PluginJarReconciler` and the
 updater both rewrite paths without repointing the manager's in-memory `jarPath`, so the prompt
 would fire for something already loaded and Install would fail with "Plugin already loaded".
+The incompatibility clause exists because there are **two** binary-incompatibility paths in
+`installPlugin` and only one of them fails: the load-time one returns `Result.failure`, but the
+*registration-time* one force-unloads the plugin and returns `Result.success` with `state =
+DISABLED` and the jar still on disk. Without it, that jar made a plugin which was unloaded and
+will not run count as installed - so Install reported success and wrote an `installed.json` entry
+for it, and every other dependent of it went unprompted.
 
 One trap worth knowing: `isInstalled` has to mean *usable*, not "the manager has an entry".
 `installPlugin` registers a DISABLED entry for a binary-incompatible plugin, and this installer

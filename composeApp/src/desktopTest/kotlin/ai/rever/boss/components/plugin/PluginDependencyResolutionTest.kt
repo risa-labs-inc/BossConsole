@@ -206,9 +206,10 @@ class PluginDependencyResolutionTest {
             )
 
         val installed =
-            PluginDependencyResolution.installedAndOnDisk(states) { jarPath ->
-                jarPath == "/plugins/present.jar"
-            }
+            PluginDependencyResolution.installedAndOnDisk(
+                states = states,
+                exists = { jarPath -> jarPath == "/plugins/present.jar" },
+            )
 
         // The bug this replaces a source-level regex with a real assertion: counting the
         // dangling entry as installed made every LATER dependent of that plugin report nothing,
@@ -217,10 +218,43 @@ class PluginDependencyResolutionTest {
     }
 
     @Test
+    fun `a plugin that failed to register does not count as installed`() {
+        // There are two binary-incompatibility paths in `installPlugin` and only one fails: the
+        // registration-time one force-unloads the plugin and returns SUCCESS with state DISABLED
+        // and the jar still on disk. Counting that jar would have made the Install button report
+        // success for a plugin that was unloaded, and silenced every other dependent of it.
+        val states = mapOf("com.example.gateway" to info("com.example.gateway", "/plugins/gateway.jar"))
+
+        val installed =
+            PluginDependencyResolution.installedAndOnDisk(
+                states = states,
+                exists = { true },
+                isIncompatible = { it == "com.example.gateway" },
+            )
+
+        assertEquals(emptySet(), installed)
+    }
+
+    @Test
+    fun `an incompatible plugin is still reported as missing to its dependents`() {
+        val states = mapOf("com.example.gateway" to info("com.example.gateway", "/plugins/gateway.jar"))
+
+        val installed =
+            PluginDependencyResolution.installedAndOnDisk(states, exists = { true }, isIncompatible = { true })
+        val missing =
+            PluginDependencyResolution.missingFor(
+                manifest(dependencies = listOf(dependency("com.example.gateway"))),
+                installedPluginIds = installed,
+            )
+
+        assertEquals(listOf("com.example.gateway"), missing.map { it.missingPluginId })
+    }
+
+    @Test
     fun `a dangling entry means its dependents are still reported as missing`() {
         val states = mapOf("com.example.gateway" to info("com.example.gateway", "/plugins/gone.jar"))
 
-        val installed = PluginDependencyResolution.installedAndOnDisk(states) { false }
+        val installed = PluginDependencyResolution.installedAndOnDisk(states, exists = { false })
         val missing =
             PluginDependencyResolution.missingFor(
                 manifest(dependencies = listOf(dependency("com.example.gateway"))),
@@ -402,6 +436,26 @@ class PluginDependencyBusTest {
                         .missing.missingPluginId
                 },
             )
+        }
+
+    @Test
+    fun `a required prompt is not swallowed by a pending optional one`() =
+        runTest {
+            val bus = PluginDependencyBus()
+
+            // jupyter declares the gateway optional; a plugin that hard-requires it installs next.
+            bus.report(promptFor(missing("com.example.jupyter", "com.example.gateway", optional = true)))
+            bus.report(promptFor(missing("com.example.strict", "com.example.gateway", optional = false)))
+
+            // Both must survive: keyed by bare id, the required one was dropped, the user saw only
+            // "Recommended / Not now", and declining that silenced the plugin that required it.
+            val delivered =
+                (1..2).map {
+                    bus.missingDependencies
+                        .first()
+                        .missing.optional
+                }
+            assertEquals(listOf(true, false), delivered)
         }
 
     @Test

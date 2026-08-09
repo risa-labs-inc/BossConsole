@@ -7,6 +7,7 @@ import ai.rever.boss.plugin.repository.PluginInfo
 import ai.rever.boss.plugin.repository.PluginRepository
 import ai.rever.boss.plugin.repository.PluginSearchFilter
 import ai.rever.boss.plugin.repository.PluginSearchResult
+import ai.rever.boss.utils.atomicMoveFrom
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
@@ -107,19 +108,32 @@ class StoreMissingDependencyInstallerTest {
         installedAfterLoad: Boolean = true,
         declaredId: String? = PLUGIN_ID,
         onPersistVersion: (String) -> Unit = {},
+        promoteFiles: ((String, File) -> Unit)? = null,
     ): StoreMissingDependencyInstaller {
         temp.mkdirs()
         var loaded = false
         return StoreMissingDependencyInstaller(
             repository = { store },
             pluginDir = { temp },
-            installedNow = { id -> id in installed || (loaded && installedAfterLoad) },
-            load = { jarPath -> load(jarPath).also { if (it.isSuccess) loaded = true } },
-            readManifest = { _ -> declaredId?.let { jarManifest(it) } },
-            persist = { pluginId, _, version, _ ->
-                onPersist(pluginId)
-                onPersistVersion(version)
-            },
+            hooks =
+                InstallerHooks(
+                    installedNow = { id -> id in installed || (loaded && installedAfterLoad) },
+                    load = { jarPath -> load(jarPath).also { if (it.isSuccess) loaded = true } },
+                    readManifest = { _ -> declaredId?.let { jarManifest(it) } },
+                    promoteFiles =
+                        promoteFiles ?: { downloaded, target ->
+                            target.atomicMoveFrom(File(downloaded))
+                            PluginSignatureSidecar.persist(
+                                target.absolutePath,
+                                PluginSignatureSidecar.read(downloaded),
+                            )
+                            PluginSignatureSidecar.delete(downloaded)
+                        },
+                    persist = { pluginId, _, version, _ ->
+                        onPersist(pluginId)
+                        onPersistVersion(version)
+                    },
+                ),
         )
     }
 
@@ -480,6 +494,50 @@ class StoreMissingDependencyInstallerTest {
 
             assertEquals(PLUGIN_ID, manifest.pluginId)
             assertEquals(JAR_VERSION, manifest.version)
+        }
+
+    @Test
+    fun `a promotion that moves the jar and then fails leaves nothing behind`() =
+        runTest {
+            val result =
+                installer(
+                    FakeStore(info()),
+                    promoteFiles = { downloaded, target ->
+                        // The move succeeds, the sidecar step throws - `persist` writes through a
+                        // temp file and both moves propagate IOException, so this is reachable.
+                        target.atomicMoveFrom(File(downloaded))
+                        error("sidecar write failed")
+                    },
+                ).install(PLUGIN_ID)
+
+            assertTrue(result.isFailure)
+            // Cleaning only the part path would leave an unvetted, never-loaded jar at a
+            // scannable name for the next launch's directory scan to load.
+            assertFalse(jar().exists(), "left an unvetted jar at its final name")
+            val leftovers = temp.listFiles().orEmpty().map { it.name }
+            assertTrue(leftovers.none { it.endsWith(".part") }, "left a part file: $leftovers")
+        }
+
+    @Test
+    fun `a plugin that loads but never registers is reported as a failure`() =
+        runTest {
+            val recorded = mutableListOf<String>()
+            val result =
+                installer(
+                    FakeStore(info()),
+                    // `installPlugin` returns SUCCESS with state DISABLED for a registration-time
+                    // binary incompatibility, so the requested id is still not usable afterwards.
+                    load = { Result.success(Unit) },
+                    installedAfterLoad = false,
+                    onPersist = { recorded += it },
+                ).install(PLUGIN_ID)
+
+            assertTrue(result.isFailure, "reported success for a plugin that never registered")
+            assertTrue(recorded.isEmpty(), "recorded a plugin that never registered: $recorded")
+            // The message must not blame the store: the manifest was vetted before the load.
+            val message = result.exceptionOrNull()?.message.orEmpty()
+            assertTrue(message.contains("did not start"), "misleading message: $message")
+            assertFalse(jar().exists())
         }
 
     /** Counts downloads, to prove two concurrent installs collapse into one. */
