@@ -86,6 +86,17 @@ internal class BossAppState(
     var settingsInitialSection by mutableStateOf<String?>(null)
     var showShortcutHelpDialog by mutableStateOf(false)
 
+    /**
+     * The sign-out confirmation, raised from two places: the top bar's Sign Out button and the
+     * focus-mode quick actions.
+     *
+     * Window-scoped rather than owned by either, because two owners is two dialogs. The reveal is
+     * pointer-driven and this dialog does not block it, so raising the confirmation from the
+     * cluster and then hovering the top edge puts a second Sign Out button in reach of a
+     * confirmation that is already up - and each would open its own.
+     */
+    var showLogoutDialog by mutableStateOf(false)
+
     // Terminal link open dialog (Issue #346)
     var showTerminalLinkDialog by mutableStateOf(false)
     var pendingTerminalLinkUrl by mutableStateOf("")

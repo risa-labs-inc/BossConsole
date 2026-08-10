@@ -65,6 +65,7 @@ fun BossDraggableComponent.BossTopBar(
     onShowTopOfMind: (() -> Unit)? = null,
     onShowSettings: (() -> Unit)? = null,
     onShowSearch: (() -> Unit)? = null,
+    onSignOut: (() -> Unit)? = null,
     onNewProject: (() -> Unit)? = null,
     onCloneProject: (() -> Unit)? = null,
 ) {
@@ -90,7 +91,7 @@ fun BossDraggableComponent.BossTopBar(
             // Run/debug controls (Issue #91 / #321)
             BossTopRunBar()
             Spacer(modifier = Modifier.weight(0.1f))
-            BossTopRightBar(onShowSettings = onShowSettings, onShowSearch = onShowSearch)
+            BossTopRightBar(onShowSettings = onShowSettings, onShowSearch = onShowSearch, onSignOut = onSignOut)
         }
     }
     Divider(color = BossTheme.colors.line)
@@ -795,8 +796,8 @@ fun BossDraggableComponent.BossTopLeftBar(
 fun BossTopRightBar(
     onShowSettings: (() -> Unit)? = null,
     onShowSearch: (() -> Unit)? = null,
+    onSignOut: (() -> Unit)? = null,
 ) {
-    var showLogoutDialog by remember { mutableStateOf(false) }
     val currentUser by AuthService.currentUser.collectAsState()
 
     // Show user email if logged in
@@ -816,7 +817,7 @@ fun BossTopRightBar(
         text = "Sign Out",
         hintText = QuickActionHints.SIGN_OUT,
     ) {
-        showLogoutDialog = true
+        onSignOut?.invoke()
     }
 
     // Global search button (Issue #92)
@@ -836,12 +837,9 @@ fun BossTopRightBar(
         onShowSettings?.invoke()
     }
 
-    // Logout confirmation dialog
-    if (showLogoutDialog) {
-        LogoutConfirmationDialog(
-            onDismiss = { showLogoutDialog = false },
-        )
-    }
+    // The confirmation itself is raised by BossAppScaffold, which owns the flag: the focus-mode
+    // quick actions offer the same action, and two owners would be two stacked dialogs. See
+    // BossAppState.showLogoutDialog.
 }
 
 /**

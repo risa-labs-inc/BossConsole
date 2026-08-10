@@ -35,7 +35,7 @@ private const val MEASURE_RETRY_MS = 50L
  * How many measurement attempts before giving up, so a parent that never becomes measurable costs a
  * bounded number of wakeups rather than one per [MEASURE_RETRY_MS] for the session.
  */
-private const val MEASURE_ATTEMPTS = 100
+internal const val MEASURE_ATTEMPTS = 100
 
 /**
  * Heavyweight host for a corner overlay that outlives a keypress - toast notifications.
@@ -68,7 +68,7 @@ private const val MEASURE_ATTEMPTS = 100
  *    is showing, the next toast is then measured inside that smaller window, measures clipped, and
  *    the overlay can never grow back.
  *  - Parent bounds come from the CONTENT PANE, not the window (see [contentPaneBounds]), and are
- *    re-read on the frame clock rather than remembered once.
+ *    re-read as the window moves rather than remembered once (see [trackedContentPaneBounds]).
  *
  * [inset] narrows that parent rectangle at its end and bottom edges (see [insetBounds]). It is how
  * a caller anchored to a SUB-REGION of the window - the main content area, say, rather than the
@@ -182,8 +182,7 @@ private fun trackedContentPaneBounds(parent: AwtWindow?): IntArray? {
 
         fun refresh() {
             val next = contentPaneBounds(parent) ?: return
-            val current = bounds
-            if (current == null || !next.contentEquals(current)) bounds = next
+            if (boundsChanged(bounds, next)) bounds = next
         }
 
         val listener =
@@ -215,7 +214,7 @@ private fun trackedContentPaneBounds(parent: AwtWindow?): IntArray? {
     // session, which is the shape of the problem this whole change exists to remove.
     LaunchedEffect(parent) {
         var attempts = 0
-        while (bounds == null && attempts < MEASURE_ATTEMPTS) {
+        while (shouldKeepMeasuring(bounds, attempts)) {
             delay(MEASURE_RETRY_MS)
             bounds = contentPaneBounds(parent)
             attempts++
@@ -288,7 +287,11 @@ internal fun contentPaneBounds(parent: AwtWindow?): IntArray? {
     return bounds
 }
 
-/** One warning per session for [contentPaneBounds]; it is consulted on the frame clock. */
+/**
+ * One warning per session for [contentPaneBounds]. It is consulted on every window move and resize,
+ * and up to [MEASURE_ATTEMPTS] times while waiting for a parent to start showing, so an unguarded
+ * log line here would repeat.
+ */
 private val unmeasurableParentReported =
     java.util.concurrent.atomic
         .AtomicBoolean(false)
@@ -329,6 +332,33 @@ internal fun cornerPosition(
             }
     return x to y
 }
+
+/**
+ * Whether [next] is worth storing over [current].
+ *
+ * Named and pure because the alternative is invisible: a listener fires on every step of a window
+ * drag, and each assignment is a native `setLocation` on the overlay. Assigning unconditionally
+ * still *looks* right on screen, so nothing but a test distinguishes it from this.
+ */
+internal fun boundsChanged(
+    current: IntArray?,
+    next: IntArray,
+): Boolean = current == null || !next.contentEquals(current)
+
+/**
+ * Whether the mount-time measurement retry should run again, given [bounds] so far and how many
+ * [attempts] have been made.
+ *
+ * Two terminating conditions and both matter. The first measurement ends it, which is the normal
+ * case. The cap ends it when no measurement is ever going to land - a null parent, which is what a
+ * test host or a headless entry point looks like - so the fallback for a window that has not
+ * appeared yet cannot become a wakeup timer that outlives the session. That would be the same
+ * always-awake cost this renderer moved off the frame clock to escape.
+ */
+internal fun shouldKeepMeasuring(
+    bounds: IntArray?,
+    attempts: Int,
+): Boolean = bounds == null && attempts < MEASURE_ATTEMPTS
 
 /**
  * [bounds], with [inset] taken off its END and BOTTOM edges - the sub-region a caller anchored to

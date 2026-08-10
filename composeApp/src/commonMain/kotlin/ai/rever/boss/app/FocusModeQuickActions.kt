@@ -26,6 +26,7 @@ import androidx.compose.ui.layout.findRootCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 
@@ -33,12 +34,27 @@ import androidx.compose.ui.unit.dp
  * Hard upper bound on the quick-actions overlay: its size before measurement, and the ceiling every
  * later measurement is taken against.
  *
- * A bound, not an estimate - content that would exceed it is CLIPPED. Three `BossActionButton`s in
- * `imageVector` mode are 28.dp square each, plus the row's padding and the surface border, so this
- * clears the real content comfortably while staying small enough that the dead click region it
- * defines stays small too.
+ * A bound, not an estimate - content that would exceed it is CLIPPED. The real content is ~94x30dp:
+ * three `BossActionButton`s at 28.dp square in `imageVector` mode, plus `space.xs` on each end of
+ * the row and the 1.dp border. Kept close to that rather than round, because until measurement
+ * lands this is also the region the overlay swallows clicks in - the same reason
+ * `TOAST_OVERLAY_INITIAL_SIZE` gives for keeping itself no larger than it needs to be. The margin
+ * is deliberately NOT in here; it rides in the inset (see [QUICK_ACTIONS_MARGIN]).
  */
-private val QUICK_ACTIONS_OVERLAY_SIZE = DpSize(160.dp, 56.dp)
+private val QUICK_ACTIONS_OVERLAY_SIZE = DpSize(120.dp, 40.dp)
+
+/**
+ * Gap between the cluster and the corner it sits in.
+ *
+ * Applied as *padding* on the lightweight path and as extra *inset* on the heavyweight one, and
+ * that asymmetry is the whole point rather than an inconsistency. Padding inside the overlay window
+ * is transparent but still eats clicks - there is no portable click-through - so a margin drawn
+ * that way would put a dead band across the content area's bottom-right corner, which on some
+ * platforms is the window's own resize hit area and is where a scrollbar's corner lands. Adding it
+ * to the inset instead moves the whole window inward, so the region it swallows is exactly the
+ * surface you can see.
+ */
+internal val QUICK_ACTIONS_MARGIN = 8.dp
 
 /** Test tag of the cluster - see `FocusModeQuickActionsTest`. */
 internal const val FOCUS_QUICK_ACTIONS_TAG = "focus-quick-actions"
@@ -79,8 +95,13 @@ internal const val FOCUS_QUICK_ACTIONS_TAG = "focus-quick-actions"
  * That guard is load-bearing for a second reason, which is easy to miss when deciding it is too
  * cautious: `SettingsWindow` is a separate window this cluster's own Settings button opens, and the
  * guard is the only thing that stops an always-on-top overlay of the MAIN window sitting on top of
- * it. The two in-window dialogs are handled the other way, by `BossAppScaffold` withholding
- * [visible] while either is up, because focus alone does not cover the lightweight path.
+ * it. The same holds for a heavyweight modal, which is also a window and also takes focus.
+ *
+ * In-window dialogs need nothing extra, and deliberately get nothing: a lightweight `BossDialog`
+ * falls back to Compose's own `Dialog`, a platform window ABOVE the composition, so the in-place
+ * cluster is underneath it. An earlier revision listed the dialogs this cluster opens in [visible];
+ * that enumeration would have had to grow with every dialog anyone added, and it was guarding
+ * against something neither path does.
  *
  * [inset] is the content area's distance from the window's end and bottom edges. The lightweight
  * path aligns inside this `BoxScope` and needs nothing, but the heavyweight path places a window
@@ -106,16 +127,22 @@ internal fun BoxScope.FocusModeQuickActions(
 
     if (!LocalWindowInfo.current.isWindowFocused) {
         Box(modifier = Modifier.align(Alignment.BottomEnd)) {
-            QuickActions(onShowSettings, onShowSearch, onSignOut)
+            QuickActions(QUICK_ACTIONS_MARGIN, onShowSettings, onShowSearch, onSignOut)
         }
         return
     }
+    val measured = inset()
     OverlayCorner(
         alignment = Alignment.BottomEnd,
         initialSize = QUICK_ACTIONS_OVERLAY_SIZE,
-        inset = inset(),
+        // The margin rides in the inset rather than in the content - see QUICK_ACTIONS_MARGIN.
+        inset =
+            DpSize(
+                measured.width + QUICK_ACTIONS_MARGIN,
+                measured.height + QUICK_ACTIONS_MARGIN,
+            ),
     ) {
-        QuickActions(onShowSettings, onShowSearch, onSignOut)
+        QuickActions(margin = 0.dp, onShowSettings, onShowSearch, onSignOut)
     }
 }
 
@@ -154,9 +181,14 @@ internal fun Modifier.reportContentInset(
         )
     }
 
-/** The cluster itself, identical on both paths - only where it is drawn differs. */
+/**
+ * The cluster itself, identical on both paths apart from [margin]: the heavyweight path passes
+ * zero and carries the gap in its inset instead, because padding inside that window would be a
+ * transparent strip that still swallows clicks. See [QUICK_ACTIONS_MARGIN].
+ */
 @Composable
 private fun QuickActions(
+    margin: Dp,
     onShowSettings: () -> Unit,
     onShowSearch: () -> Unit,
     onSignOut: () -> Unit,
@@ -166,7 +198,7 @@ private fun QuickActions(
     Surface(
         modifier =
             Modifier
-                .padding(BossTheme.space.sm)
+                .padding(margin)
                 .border(1.dp, BossTheme.colors.line, BossTheme.radius.cardShape)
                 .testTag(FOCUS_QUICK_ACTIONS_TAG),
         color = BossTheme.colors.raised,

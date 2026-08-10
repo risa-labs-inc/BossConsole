@@ -4,9 +4,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -67,7 +67,7 @@ class ContentInsetLayoutTest {
         onInset: (DpSize) -> Unit,
     ) {
         val density = LocalDensity.current.density
-        Column(modifier = Modifier.size(WINDOW_WIDTH, WINDOW_HEIGHT)) {
+        Column(modifier = Modifier.fillMaxSize()) {
             if (topBar) Bar(modifier = Modifier.fillMaxWidth().height(TOP_BAR))
             Row(modifier = Modifier.fillMaxWidth().weight(1f)) {
                 if (leftSidebar) Bar(modifier = Modifier.fillMaxHeight().width(LEFT_SIDEBAR))
@@ -120,8 +120,11 @@ class ContentInsetLayoutTest {
 
     private companion object {
         const val TEST_DENSITY = 2f
-        val WINDOW_WIDTH = 1200.dp
-        val WINDOW_HEIGHT = 800.dp
+
+        // No fixed window size: at TEST_DENSITY a 1200x800dp Column is 2400x1600px, larger than
+        // the test surface, so `size` was clamped and the constants did nothing - a knob a later
+        // reader would turn and see no effect. The assertions never depended on them anyway, only
+        // on the bars' thicknesses, so the tree fills whatever surface it is given.
         val TOP_BAR = 40.dp
         val LEFT_SIDEBAR = 48.dp
         val RIGHT_SIDEBAR = 56.dp

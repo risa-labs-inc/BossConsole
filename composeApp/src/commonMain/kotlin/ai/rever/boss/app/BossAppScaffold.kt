@@ -102,8 +102,13 @@ private val TOAST_OVERLAY_INITIAL_SIZE = DpSize(432.dp, 600.dp)
  *    (`BossPluginNotificationService.notifyPluginDisabled`, an ERROR toast with a "Re-enable"
  *    action - precisely the kind a user leaves sitting while they go elsewhere). Escaping the
  *    scene is only worth anything while the user is looking at this window, so an unfocused window
- *    draws toasts in place, exactly as before this overlay existed. That also stops
- *    `HeavyweightCorner`'s frame-clock loop, which would otherwise run for as long as the toast.
+ *    draws toasts in place, exactly as before this overlay existed.
+ *
+ *    This guard used to carry a second justification: it also stopped `HeavyweightCorner`'s
+ *    frame-clock loop, which would otherwise have run for as long as the toast. That loop is gone -
+ *    the corner renderer is event-driven now - so the reason is gone with it. **The guard is not.**
+ *    The dead click region over another application is on its own sufficient, and it is the reason
+ *    that was always doing the work.
  *
  * Guarding on content matches what `TabCycleOverlayHost` and both drag ghosts already do.
  *
@@ -200,10 +205,6 @@ internal fun BossAppScaffold(
     val splitViewState = state.splitViewState
     val selectedProject by state.windowProjectState.selectedProject.collectAsState()
 
-    // Sign-out is reachable from the focus-mode quick actions, whose buttons live in a separate
-    // overlay window. The confirmation is owned here so the dialog is drawn in the MAIN
-    // composition: a content-sized overlay window has nowhere to put one.
-    var showLogoutDialog by remember { mutableStateOf(false) }
     // The content area's distance from the window's end and bottom edges, i.e. the right sidebar's
     // width plus the bottom bar's height, whatever they currently are. Measured rather than derived
     // from the reveal flags because both animate, and the quick actions have to follow them.
@@ -330,6 +331,9 @@ internal fun BossAppScaffold(
                             onShowSearch = {
                                 state.showGlobalSearchDialog = true
                             },
+                            onSignOut = {
+                                state.showLogoutDialog = true
+                            },
                             onNewProject = {
                                 state.showNewProjectDialog = true
                             },
@@ -391,18 +395,20 @@ internal fun BossAppScaffold(
                         // Composed inside the content area so the lightweight path aligns where it
                         // draws; contentInset is what makes the heavyweight path agree.
                         //
-                        // Stood down while either dialog it opens is up. On the heavyweight path a
-                        // modal takes window focus and the focus guard would drop it in place
-                        // anyway, but that is an emergent consequence rather than a stated rule,
-                        // and it does not hold on the lightweight path - there the cluster would
-                        // keep drawing over the dialog's bottom-right and keep eating clicks in it.
-                        // Saying so here is free and makes the invariant hold on both paths.
+                        // Deliberately NOT also gated on "is a dialog open". An earlier revision
+                        // listed the two dialogs this cluster opens, which would have had to grow
+                        // every time anyone added a dialog to BossAppDialogs and would have gone
+                        // stale silently. It is not needed on either path: a lightweight BossDialog
+                        // falls back to Compose's own Dialog, a real platform window ABOVE the
+                        // composition, so an in-place cluster is underneath it and never over it;
+                        // and a heavyweight modal takes window focus, which drops this to the same
+                        // in-place path by the focus guard in FocusModeQuickActions.
                         FocusModeQuickActions(
-                            visible = !reveal.showTopBar && !state.showGlobalSearchDialog && !showLogoutDialog,
+                            visible = !reveal.showTopBar,
                             inset = { contentInset },
                             onShowSettings = { state.showSettingsDialog = true },
                             onShowSearch = { state.showGlobalSearchDialog = true },
-                            onSignOut = { showLogoutDialog = true },
+                            onSignOut = { state.showLogoutDialog = true },
                         )
                     }
 
@@ -457,11 +463,13 @@ internal fun BossAppScaffold(
                 revealOffsetDp = revealOffsetDp,
             )
 
-            // Raised by the focus-mode quick actions, drawn here rather than in their overlay
-            // window - which is sized to its content and so has no room for a dialog.
-            if (showLogoutDialog) {
+            // Raised by the top bar's Sign Out and by the focus-mode quick actions, and drawn
+            // here for both. The cluster's buttons live in a separate, content-sized overlay
+            // window with no room for a dialog; the flag is window-scoped so the two entry points
+            // cannot each open one. See BossAppState.showLogoutDialog.
+            if (state.showLogoutDialog) {
                 LogoutConfirmationDialog(
-                    onDismiss = { showLogoutDialog = false },
+                    onDismiss = { state.showLogoutDialog = false },
                 )
             }
 

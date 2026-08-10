@@ -103,17 +103,23 @@ class FocusModeQuickActionsTest {
     }
 
     @Test
-    fun `the measured inset reaches the renderer`() {
+    fun `the measured inset reaches the renderer, with the margin folded in`() {
         // The whole design rests on this one argument, and two plausible regressions would leave
         // every other test in the suite green: OverlayCorner forwarding DpSize.Zero (easy, since
         // the parameter has a default) or this composable passing zero instead of its own inset.
         // Either puts the cluster back over the right sidebar and the status bar, which is exactly
         // what the parameter exists to prevent.
+        //
+        // The margin is part of the assertion, not an offset to look past. It rides in the inset
+        // rather than as padding on the surface precisely because padding inside the overlay window
+        // would be transparent and still swallow clicks, right on the corner where a resize handle
+        // and a scrollbar corner live. Moving it back into the content would restore that dead band
+        // and change nothing else observable.
         val measured = DpSize(56.dp, 24.dp)
 
         windowRequestedFor(visible = true, inset = measured)
 
-        assertEquals(measured, receivedInset)
+        assertEquals(DpSize(56.dp + QUICK_ACTIONS_MARGIN, 24.dp + QUICK_ACTIONS_MARGIN), receivedInset)
     }
 
     @Test
