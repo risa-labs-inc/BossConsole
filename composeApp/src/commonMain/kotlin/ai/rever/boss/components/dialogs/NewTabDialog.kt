@@ -14,6 +14,7 @@ import ai.rever.boss.platform.rememberFilePicker
 import ai.rever.boss.plugin.api.FileNodeData
 import ai.rever.boss.plugin.api.FileTreeUtils
 import ai.rever.boss.plugin.api.NewTabContext
+import ai.rever.boss.plugin.api.NewTabSpec
 import ai.rever.boss.plugin.api.NodeLoadingStateData
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.api.TabRegistry
@@ -152,6 +153,13 @@ private fun encodeUrlParameter(input: String): String =
         .replace("=", "%3D")
         .replace("/", "%2F")
 
+/**
+ * A spec that declares no input at all (blank label and placeholder, input
+ * optional): clicking the tab type opens it instantly, no input step.
+ */
+private fun NewTabSpec.needsNoInput(): Boolean =
+    inputOptional && inputLabel.isBlank() && inputPlaceholder.isBlank()
+
 // Platform-specific URL history provider
 expect object UrlHistoryProvider {
     fun getSuggestions(
@@ -215,15 +223,13 @@ fun NewTabDialog(
     val selectedPluginTypeInfo = selectedPluginType?.let { id -> pluginTypes.firstOrNull { it.typeId == id } }
     var pluginInput by remember(selectedPluginType) { mutableStateOf("") }
 
-    // Confirm a plugin tab type: the plugin builds the TabInfo (null = input
-    // rejected, dialog stays open). Crash-isolated — plugin code.
-    val confirmPluginTab: () -> Unit = confirm@{
-        val typeInfo = selectedPluginTypeInfo ?: return@confirm
-        val spec = typeInfo.newTabSpec ?: return@confirm
-        if (!spec.inputOptional && pluginInput.isBlank()) return@confirm
+    // Open a plugin tab type with the given input: the plugin builds the
+    // TabInfo (null = input rejected, dialog stays open). Crash-isolated —
+    // plugin code.
+    val openPluginTab: (TabTypeInfo, String) -> Unit = { typeInfo, input ->
         val tabInfo =
             try {
-                typeInfo.createTabInfo(pluginInput.trim(), NewTabContext(projectPath = projectPath, windowId = windowId))
+                typeInfo.createTabInfo(input.trim(), NewTabContext(projectPath = projectPath, windowId = windowId))
             } catch (e: Exception) {
                 newTabDialogLogger.warn(
                     LogCategory.UI,
@@ -239,6 +245,14 @@ fun NewTabDialog(
             onCreateTabInfo?.invoke(tabInfo)
             onDismiss()
         }
+    }
+
+    // Confirm the selected plugin tab type with the typed input.
+    val confirmPluginTab: () -> Unit = confirm@{
+        val typeInfo = selectedPluginTypeInfo ?: return@confirm
+        val spec = typeInfo.newTabSpec ?: return@confirm
+        if (!spec.inputOptional && pluginInput.isBlank()) return@confirm
+        openPluginTab(typeInfo, pluginInput)
     }
     var urlText by remember { mutableStateOf("") }
     var fileText by remember { mutableStateOf("") }
@@ -443,6 +457,12 @@ fun NewTabDialog(
                                 label = pluginType.displayName,
                                 isSelected = selectedPluginType == pluginType.typeId,
                                 onClick = {
+                                    // Types that declare no input (e.g. Arcade)
+                                    // open on the click itself — no input step.
+                                    if (pluginType.newTabSpec?.needsNoInput() == true) {
+                                        openPluginTab(pluginType, "")
+                                        return@TabTypeOption
+                                    }
                                     when (selectedType) {
                                         TabType.URL -> {
                                             urlText = inputText
