@@ -8,9 +8,12 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.WindowInfo
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import org.junit.After
@@ -129,6 +132,37 @@ class FocusModeQuickActionsTest {
             "the overlay is always-on-top over every other application, so one held open while " +
                 "BOSS is in the background is a dead click region in whatever the user switched to",
         )
+    }
+
+    @Test
+    fun `the lightweight path draws in place and keeps its corner margin`() {
+        // The path a BOSS_RENDERING_MODE=OFF_SCREEN user gets, and the one no test covered:
+        // `heavyweight` defaulted to true everywhere, so "focused, lightweight" was never composed.
+        // That gap hid a real bug - OverlayCorner's lightweight branch ignores `inset`, so folding
+        // the margin into the inset unconditionally dropped it here and put the cluster flush in
+        // the corner, 8dp from where the unfocused branch puts it.
+        assertFalse(
+            windowRequestedFor(visible = true, heavyweight = false),
+            "no overlay window should be asked for when the corner is routed lightweight",
+        )
+        rule.onAllNodesWithTag(FOCUS_QUICK_ACTIONS_TAG).assertCountEquals(1)
+        assertEquals(
+            QUICK_ACTIONS_MARGIN,
+            marginOf(rule.onNodeWithTag(FOCUS_QUICK_ACTIONS_TAG)),
+            "the margin has to survive the path that ignores the inset",
+        )
+    }
+
+    /**
+     * The gap between the tagged surface and the bottom-right of its parent, which is what the
+     * margin actually buys. Read from the layout rather than from the modifier, because the bug
+     * this catches was a modifier that was present and doing nothing.
+     */
+    private fun marginOf(node: SemanticsNodeInteraction): Dp {
+        val bounds = node.fetchSemanticsNode().boundsInRoot
+        val root = node.fetchSemanticsNode().root!!.let { it.semanticsOwner.rootSemanticsNode.boundsInRoot }
+        val density = rule.density
+        return with(density) { (root.bottom - bounds.bottom).toDp() }
     }
 
     @Test

@@ -3,6 +3,7 @@ package ai.rever.boss.app
 import ai.rever.boss.components.buttons.BossActionButton
 import ai.rever.boss.components.buttons.QuickActionHints
 import ai.rever.boss.components.overlays.OverlayCorner
+import ai.rever.boss.components.overlays.overlayCornerIsHeavyweight
 import ai.rever.boss.plugin.api.Panel.Companion.top
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.services.supabase.AuthService
@@ -133,18 +134,35 @@ internal fun BoxScope.FocusModeQuickActions(
         }
         return
     }
+    // Which path OverlayCorner will take, asked before choosing where to put the margin. Its
+    // lightweight branch aligns inside this BoxScope and ignores `inset` entirely, so folding the
+    // margin into the inset unconditionally loses it there - the cluster ends up flush in the
+    // corner, and jumps by 8dp whenever the window loses and regains focus. Reachable today via
+    // BOSS_RENDERING_MODE=OFF_SCREEN, which is a supported escape hatch rather than a dead branch.
+    val heavyweight = overlayCornerIsHeavyweight()
     val measured = inset()
     OverlayCorner(
         alignment = Alignment.BottomEnd,
         initialSize = QUICK_ACTIONS_OVERLAY_SIZE,
-        // The margin rides in the inset rather than in the content - see QUICK_ACTIONS_MARGIN.
         inset =
-            DpSize(
-                measured.width + QUICK_ACTIONS_MARGIN,
-                measured.height + QUICK_ACTIONS_MARGIN,
-            ),
+            if (heavyweight) {
+                DpSize(
+                    measured.width + QUICK_ACTIONS_MARGIN,
+                    measured.height + QUICK_ACTIONS_MARGIN,
+                )
+            } else {
+                DpSize.Zero
+            },
     ) {
-        QuickActions(margin = 0.dp, onShowSettings, onShowSearch, onSignOut)
+        // Margin as inset on the heavyweight path so it is not a dead band on the corner, and as
+        // ordinary padding on the lightweight one, where nothing is swallowed and the inset would
+        // be double-counted. See QUICK_ACTIONS_MARGIN.
+        QuickActions(
+            margin = if (heavyweight) 0.dp else QUICK_ACTIONS_MARGIN,
+            onShowSettings,
+            onShowSearch,
+            onSignOut,
+        )
     }
 }
 

@@ -254,6 +254,21 @@ fun BoxScope.OverlayCorner(
 }
 
 /**
+ * Whether [OverlayCorner] would escape into its own window right here.
+ *
+ * Exists because [OverlayCorner]'s two paths do not accept the same description of where to sit.
+ * The heavyweight one is placed against the whole content pane and so needs an `inset`; the
+ * lightweight one aligns inside the caller's own `BoxScope`, where that same inset would be
+ * double-counted and is therefore ignored. A caller whose spacing must survive both has to know
+ * which it is getting - the alternative is spacing that silently disappears on one path, which is
+ * exactly what happened to this cluster's corner margin.
+ *
+ * Asks the same question [OverlayCorner] does, in the same composition, so the two cannot disagree.
+ */
+@Composable
+internal fun overlayCornerIsHeavyweight(): Boolean = routeOverlayHeavyweight(OverlayConfig.heavyweightCorner != null)
+
+/**
  * A drag ghost of [size] following the pointer, layered above the browser.
  *
  * [windowOffset] positions it on the lightweight path, in the calling layout's coordinates, exactly

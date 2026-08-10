@@ -228,6 +228,8 @@ private fun trackedContentPaneBounds(parent: AwtWindow?): IntArray? {
             }
             attempts++
         }
+        // Only now is an unmeasurable parent a real finding rather than a slow one.
+        if (bounds == null) reportUnmeasurableParent(parent)
     }
 
     return bounds
@@ -276,31 +278,48 @@ internal fun Modifier.measuredAgainst(ceiling: DpSize): Modifier =
  */
 internal fun contentPaneBounds(parent: AwtWindow?): IntArray? {
     val pane = (parent as? RootPaneContainer)?.contentPane?.takeIf { it.isShowing }
-    val bounds =
-        pane?.let {
-            runCatching { it.locationOnScreen }.getOrNull()?.let { at ->
-                intArrayOf(at.x, at.y, it.width, it.height)
-            }
+    return pane?.let {
+        runCatching { it.locationOnScreen }.getOrNull()?.let { at ->
+            intArrayOf(at.x, at.y, it.width, it.height)
         }
-    // Loud, once. A null here does not degrade gracefully: cornerPosition falls back to 0,0, which
-    // is the top-left of the PRIMARY display, so the overlay detaches from the window entirely.
-    // OverlayWindowBounds makes the same condition loud for the same reason - it was silent once,
-    // and an intermittent report of exactly this had nothing to correlate against.
-    if (bounds == null && unmeasurableParentReported.compareAndSet(false, true)) {
-        logger.warn(
-            LogCategory.UI,
-            "Corner overlay could not measure its parent content pane - placing at the screen origin",
-            mapOf("reason" to if (pane == null) "no showing content pane" else "locationOnScreen failed"),
-        )
     }
-    return bounds
 }
 
 /**
- * One warning per session for [contentPaneBounds]. It is consulted on every window move and resize,
- * and up to [MEASURE_ATTEMPTS] times while waiting for a parent to start showing, so an unguarded
- * log line here would repeat.
+ * Report, once per session, that the parent could never be measured.
+ *
+ * Loud, because this does not degrade gracefully: [cornerPosition] falls back to 0,0, which is the
+ * top-left of the PRIMARY display, so the overlay detaches from the window entirely.
+ * `OverlayWindowBounds` makes the same condition loud for the same reason - it was silent once, and
+ * an intermittent report of exactly this had nothing to correlate against.
+ *
+ * Called only when the retry gives up, never from [contentPaneBounds] itself, and that distinction
+ * is now load-bearing. A single unmeasurable read is no longer evidence of anything: the quick
+ * actions mount on the FIRST composition of a window in focus mode, routinely before the content
+ * pane is showing, and the retry repairs it 50ms later. Warning on the read would spend the
+ * one-per-session flag on that transient for precisely the users this overlay was built for, and a
+ * genuine failure later in the same session would then be silent - which is the failure mode the
+ * flag exists to prevent, inverted.
  */
+private fun reportUnmeasurableParent(parent: AwtWindow?) {
+    if (!unmeasurableParentReported.compareAndSet(false, true)) return
+    val pane = (parent as? RootPaneContainer)?.contentPane
+    logger.warn(
+        LogCategory.UI,
+        "Corner overlay could not measure its parent content pane - placing at the screen origin",
+        mapOf(
+            "reason" to
+                when {
+                    pane == null -> "no content pane"
+                    !pane.isShowing -> "content pane never started showing"
+                    else -> "locationOnScreen failed"
+                },
+            "attempts" to MEASURE_ATTEMPTS.toString(),
+        ),
+    )
+}
+
+/** One warning per session for [reportUnmeasurableParent]; every overlay would otherwise report. */
 private val unmeasurableParentReported =
     java.util.concurrent.atomic
         .AtomicBoolean(false)
