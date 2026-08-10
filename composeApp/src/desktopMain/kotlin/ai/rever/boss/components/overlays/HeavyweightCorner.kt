@@ -313,6 +313,11 @@ internal fun contentPaneBounds(parent: AwtWindow?): IntArray? {
  * flag exists to prevent, inverted.
  */
 private fun reportUnmeasurableParent(parent: AwtWindow?) {
+    // No parent at all is host wiring - LocalAwtWindow unprovided, which is what a test host or a
+    // headless entry point looks like - not an overlay that failed to measure a window it had. That
+    // condition exhausts all MEASURE_ATTEMPTS by construction, so reporting it would reliably spend
+    // the one-per-session flag that a real locationOnScreen failure later needs.
+    if (parent == null) return
     if (!unmeasurableParentReported.compareAndSet(false, true)) return
     val pane = (parent as? RootPaneContainer)?.contentPane
     logger.warn(
@@ -321,7 +326,7 @@ private fun reportUnmeasurableParent(parent: AwtWindow?) {
         mapOf(
             "reason" to
                 when {
-                    pane == null -> "no content pane"
+                    pane == null -> "window has no content pane"
                     !pane.isShowing -> "content pane never started showing"
                     else -> "locationOnScreen failed"
                 },

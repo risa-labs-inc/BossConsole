@@ -64,7 +64,11 @@ fun BossDraggableComponent.BossTopBar(
     onShowTopOfMind: (() -> Unit)? = null,
     onShowSettings: (() -> Unit)? = null,
     onShowSearch: (() -> Unit)? = null,
-    onSignOut: (() -> Unit)? = null,
+    // Required, unlike its neighbours. Those were always callback-only; this one used to open the
+    // confirmation itself, and moving that to BossAppState turned Sign Out into a button that
+    // renders, hovers, shows its hint and does nothing if the argument is dropped. A required
+    // parameter makes that a compile error at the single call site instead.
+    onSignOut: () -> Unit,
     onNewProject: (() -> Unit)? = null,
     onCloneProject: (() -> Unit)? = null,
 ) {
@@ -795,7 +799,8 @@ fun BossDraggableComponent.BossTopLeftBar(
 fun BossTopRightBar(
     onShowSettings: (() -> Unit)? = null,
     onShowSearch: (() -> Unit)? = null,
-    onSignOut: (() -> Unit)? = null,
+    // Required - see BossTopBar's onSignOut.
+    onSignOut: () -> Unit,
 ) {
     val currentUser by AuthService.currentUser.collectAsState()
 
@@ -816,7 +821,7 @@ fun BossTopRightBar(
         text = "Sign Out",
         hintText = QuickActionHints.SIGN_OUT,
     ) {
-        onSignOut?.invoke()
+        onSignOut()
     }
 
     // Global search button (Issue #92)

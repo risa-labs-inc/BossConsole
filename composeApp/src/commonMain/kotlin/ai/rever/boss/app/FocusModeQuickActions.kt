@@ -4,6 +4,8 @@ import ai.rever.boss.components.buttons.BossActionButton
 import ai.rever.boss.components.buttons.QuickActionHints
 import ai.rever.boss.components.overlays.OverlayCorner
 import ai.rever.boss.components.overlays.overlayCornerIsHeavyweight
+import ai.rever.boss.focusmode.FocusModeEdge
+import ai.rever.boss.focusmode.FocusModeSettings
 import ai.rever.boss.plugin.api.Panel.Companion.top
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.services.supabase.AuthService
@@ -42,7 +44,7 @@ import androidx.compose.ui.unit.dp
  * `TOAST_OVERLAY_INITIAL_SIZE` gives for keeping itself no larger than it needs to be. The margin
  * is deliberately NOT in here; it rides in the inset (see [QUICK_ACTIONS_MARGIN]).
  */
-private val QUICK_ACTIONS_OVERLAY_SIZE = DpSize(100.dp, 34.dp)
+internal val QUICK_ACTIONS_OVERLAY_SIZE = DpSize(100.dp, 34.dp)
 
 /**
  * Gap between the cluster and the corner it sits in.
@@ -56,6 +58,26 @@ private val QUICK_ACTIONS_OVERLAY_SIZE = DpSize(100.dp, 34.dp)
  * surface you can see.
  */
 internal val QUICK_ACTIONS_MARGIN = 8.dp
+
+/**
+ * Whether the cluster belongs on screen: focus mode clears the top bar, and it is not showing now.
+ *
+ * Both halves, and the first is the one that looks redundant and is not.
+ * `FocusModeEdgeRevealState.shown` starts false and is only turned back on by a `LaunchedEffect`,
+ * so on the FIRST composition of every window `!showTopBar` is true whether or not focus mode is
+ * even enabled. Without the settings half, the heavyweight path creates and immediately disposes a
+ * native always-on-top window on every window open, flashes it in the corner for users who never
+ * turn focus mode on, and reads the content pane before it is showing - which can spend the
+ * one-per-session warning flag that exists to make a real failure visible.
+ *
+ * Pure and named because the alternative is a conjunction inlined in the scaffold that no test can
+ * see, whose failure mode is a corner flash nothing else would notice. Same reason [signOutHint] is
+ * out here.
+ */
+internal fun focusQuickActionsVisible(
+    settings: FocusModeSettings,
+    showTopBar: Boolean,
+): Boolean = settings.hides(FocusModeEdge.TOP) && !showTopBar
 
 /** Test tag of the cluster - see `FocusModeQuickActionsTest`. */
 internal const val FOCUS_QUICK_ACTIONS_TAG = "focus-quick-actions"

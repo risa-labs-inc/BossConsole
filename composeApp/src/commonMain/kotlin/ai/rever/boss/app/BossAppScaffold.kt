@@ -19,7 +19,6 @@ import ai.rever.boss.components.window_panel.components.main_window_panels.TabCy
 import ai.rever.boss.components.workspaces.applyWorkspace
 import ai.rever.boss.components.workspaces.extractCurrentWorkspace
 import ai.rever.boss.components.workspaces.workspaceManager
-import ai.rever.boss.focusmode.FocusModeEdge
 import ai.rever.boss.focusmode.FocusModeSettings
 import ai.rever.boss.handleTabDropResult
 import ai.rever.boss.plugin.api.LocalBookmarkDataProvider
@@ -414,7 +413,7 @@ internal fun BossAppScaffold(
                         // visible. Gating on the setting is also just the honest condition: the
                         // cluster exists because focus mode clears the top bar.
                         FocusModeQuickActions(
-                            visible = focusModeSettings.hides(FocusModeEdge.TOP) && !reveal.showTopBar,
+                            visible = focusQuickActionsVisible(focusModeSettings, reveal.showTopBar),
                             inset = { contentInset },
                             onShowSettings = { state.showSettingsDialog = true },
                             onShowSearch = { state.showGlobalSearchDialog = true },

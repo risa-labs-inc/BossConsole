@@ -155,6 +155,30 @@ class FocusModeQuickActionsTest {
         )
     }
 
+    @Test
+    fun `the content fits inside the overlay's clip ceiling`() {
+        // QUICK_ACTIONS_OVERLAY_SIZE is a hard clip on the heavyweight path, not a first guess, and
+        // exceeding it loses part of a button with nothing logged and every other test still green.
+        // Bumping space.xs, growing the icon button or adding a fourth action would all do it.
+        //
+        // Measured on the lightweight path because that is where the real content lays out; its
+        // margin is padding on the same node, so it comes back off before the comparison.
+        windowRequestedFor(visible = true, heavyweight = false)
+        val outer = sizeOf(rule.onNodeWithTag(FOCUS_QUICK_ACTIONS_TAG))
+        val content = DpSize(outer.width - QUICK_ACTIONS_MARGIN * 2, outer.height - QUICK_ACTIONS_MARGIN * 2)
+
+        assertTrue(
+            content.width <= QUICK_ACTIONS_OVERLAY_SIZE.width && content.height <= QUICK_ACTIONS_OVERLAY_SIZE.height,
+            "content is $content but the ceiling that clips it is $QUICK_ACTIONS_OVERLAY_SIZE",
+        )
+    }
+
+    /** The tagged surface's own size, margin included. */
+    private fun sizeOf(node: SemanticsNodeInteraction): DpSize {
+        val bounds = node.fetchSemanticsNode().boundsInRoot
+        return with(rule.density) { DpSize(bounds.width.toDp(), bounds.height.toDp()) }
+    }
+
     /**
      * The gap between the tagged surface and the bottom-right of its parent, which is what the
      * margin actually buys. Read from the layout rather than from the modifier, because the bug
