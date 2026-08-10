@@ -26,6 +26,7 @@ import kotlinx.coroutines.delay
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
 import javax.swing.RootPaneContainer
+import kotlin.math.roundToInt
 import java.awt.Window as AwtWindow
 
 /** How long to wait between attempts to measure a parent that is not showing yet. */
@@ -70,6 +71,16 @@ internal const val MEASURE_ATTEMPTS = 100
  *  - Parent bounds come from the CONTENT PANE, not the window (see [contentPaneBounds]), and are
  *    re-read as the window moves rather than remembered once (see [trackedContentPaneBounds]).
  *
+ * **No window is composed until the parent has been measured.** `cornerPosition(null, ...)` returns
+ * the screen origin, so composing through that gap put an undecorated always-on-top overlay at the
+ * top-left of the PRIMARY monitor - over whatever was there - until the first retry tick. That gap
+ * is not hypothetical: the focus-mode quick actions mount on the very first composition of a window,
+ * routinely before the AWT content pane is showing. The frame clock used to paper over it by
+ * correcting within a frame; the retry takes [MEASURE_RETRY_MS], so it had to stop being papered
+ * over. If the retry gives up entirely, staying hidden is the deliberate choice: a permanently
+ * misplaced always-on-top window is worse than none, and every caller only composes this while its
+ * own window is focused, so a measurable pane is the normal case rather than the lucky one.
+ *
  * [inset] narrows that parent rectangle at its end and bottom edges (see [insetBounds]). It is how
  * a caller anchored to a SUB-REGION of the window - the main content area, say, rather than the
  * sidebars and status bar around it - lands where it draws on the lightweight path. It changes
@@ -87,7 +98,7 @@ fun HeavyweightCorner(
     val density = LocalDensity.current.density
     var measured by remember { mutableStateOf<DpSize?>(null) }
     val size = measured ?: initialSize
-    val bounds = trackedContentPaneBounds(parent)
+    val bounds = trackedContentPaneBounds(parent) ?: return
     // The rectangle the corner is actually resolved inside: the content pane, less whatever the
     // caller says is not theirs. Remembered rather than computed inline so it is a STABLE instance -
     // `bounds` only changes identity on a real change (see [trackedContentPaneBounds]), and a fresh
@@ -416,8 +427,10 @@ internal fun insetBounds(
     return intArrayOf(
         bounds[0],
         bounds[1],
-        (bounds[2] - inset.width.value.toInt()).coerceAtLeast(0),
-        (bounds[3] - inset.height.value.toInt()).coerceAtLeast(0),
+        // Rounded, not truncated: the inset is derived as px / density, which is not integral at
+        // fractional scale factors, and truncating loses up to a unit per axis.
+        (bounds[2] - inset.width.value.roundToInt()).coerceAtLeast(0),
+        (bounds[3] - inset.height.value.roundToInt()).coerceAtLeast(0),
     )
 }
 

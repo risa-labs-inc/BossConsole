@@ -5,7 +5,6 @@ import ai.rever.boss.components.bars.horizontal.BossTitleBar
 import ai.rever.boss.components.bars.horizontal.BossTopBar
 import ai.rever.boss.components.bars.vertical.BossLeftSideBar
 import ai.rever.boss.components.bars.vertical.BossRightSideBar
-import ai.rever.boss.components.dialogs.LogoutConfirmationDialog
 import ai.rever.boss.components.overlays.DraggingItemOverlay
 import ai.rever.boss.components.overlays.OverlayCorner
 import ai.rever.boss.components.overlays.TabDraggingOverlay
@@ -473,16 +472,6 @@ internal fun BossAppScaffold(
                 settings = focusModeSettings,
                 revealOffsetDp = revealOffsetDp,
             )
-
-            // Raised by the top bar's Sign Out and by the focus-mode quick actions, and drawn
-            // here for both. The cluster's buttons live in a separate, content-sized overlay
-            // window with no room for a dialog; the flag is window-scoped so the two entry points
-            // cannot each open one. See BossAppState.showLogoutDialog.
-            if (state.showLogoutDialog) {
-                LogoutConfirmationDialog(
-                    onDismiss = { state.showLogoutDialog = false },
-                )
-            }
 
             // Draw the dragging item overlay (ghost) if an item is being dragged
             DraggingItemOverlay()

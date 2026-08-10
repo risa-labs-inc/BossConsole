@@ -42,7 +42,7 @@ import androidx.compose.ui.unit.dp
  * `TOAST_OVERLAY_INITIAL_SIZE` gives for keeping itself no larger than it needs to be. The margin
  * is deliberately NOT in here; it rides in the inset (see [QUICK_ACTIONS_MARGIN]).
  */
-private val QUICK_ACTIONS_OVERLAY_SIZE = DpSize(120.dp, 40.dp)
+private val QUICK_ACTIONS_OVERLAY_SIZE = DpSize(100.dp, 34.dp)
 
 /**
  * Gap between the cluster and the corner it sits in.
@@ -114,9 +114,9 @@ internal const val FOCUS_QUICK_ACTIONS_TAG = "focus-quick-actions"
  * and so create no restart scope of their own: reading the inset there subscribes the whole
  * scaffold body to it, and it changes every frame of a 250ms sidebar reveal - the case the measured
  * inset exists to follow. Deferring the read costs nothing here, since this function is
- * non-skippable anyway (fresh lambdas each pass). Note the deferral only buys anything on the
- * heavyweight path: `OverlayCorner` takes a value, so the lightweight branch still reads it and
- * subscribes to something it does not use.
+ * non-skippable anyway (fresh lambdas each pass). It is invoked only on the heavyweight branch,
+ * which is the only one `OverlayCorner` applies an inset on - reading it above the branch would
+ * subscribe the lightweight path to a value it ignores.
  */
 @Composable
 internal fun BoxScope.FocusModeQuickActions(
@@ -140,16 +140,15 @@ internal fun BoxScope.FocusModeQuickActions(
     // corner, and jumps by 8dp whenever the window loses and regains focus. Reachable today via
     // BOSS_RENDERING_MODE=OFF_SCREEN, which is a supported escape hatch rather than a dead branch.
     val heavyweight = overlayCornerIsHeavyweight()
-    val measured = inset()
     OverlayCorner(
         alignment = Alignment.BottomEnd,
         initialSize = QUICK_ACTIONS_OVERLAY_SIZE,
+        // inset() is invoked INSIDE the branch, not above it. Read unconditionally, the lightweight
+        // path subscribes to a value it then ignores and recomposes on every frame of a 250ms
+        // sidebar animation - the exact cost the lambda parameter exists to avoid.
         inset =
             if (heavyweight) {
-                DpSize(
-                    measured.width + QUICK_ACTIONS_MARGIN,
-                    measured.height + QUICK_ACTIONS_MARGIN,
-                )
+                inset().let { DpSize(it.width + QUICK_ACTIONS_MARGIN, it.height + QUICK_ACTIONS_MARGIN) }
             } else {
                 DpSize.Zero
             },

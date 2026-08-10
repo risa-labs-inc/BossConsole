@@ -12,7 +12,9 @@ import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -172,6 +174,42 @@ class FocusModeQuickActionsTest {
         windowRequestedFor(visible = true, focused = false)
 
         rule.onAllNodesWithTag(FOCUS_QUICK_ACTIONS_TAG).assertCountEquals(1)
+    }
+
+    @Test
+    fun `each button reaches its own callback`() {
+        // Reachability of these three is the entire point of the feature, and nothing pinned it:
+        // swapping Search and Settings inside QuickActions, or wiring Sign Out to onShowSettings,
+        // left every other test in this suite green. Mirrors BossTopRightBarTest, which exists for
+        // the same reason on the other copy of these buttons.
+        //
+        // On the lightweight path, so the real content is composed rather than handed to a fake
+        // renderer. The buttons are icon-only, so `text` is the content description.
+        val fired = mutableListOf<String>()
+        OverlayConfig.useHeavyweightPopups = false
+        rule.setContent {
+            CompositionLocalProvider(
+                LocalHeavyweightOverlays provides false,
+                LocalWindowInfo provides FakeWindowInfo(isWindowFocused = true),
+            ) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    FocusModeQuickActions(
+                        visible = true,
+                        inset = { DpSize.Zero },
+                        onShowSettings = { fired += "settings" },
+                        onShowSearch = { fired += "search" },
+                        onSignOut = { fired += "signOut" },
+                    )
+                }
+            }
+        }
+
+        rule.onNodeWithContentDescription("Settings").performClick()
+        rule.onNodeWithContentDescription("Search").performClick()
+        rule.onNodeWithContentDescription("Sign Out").performClick()
+        rule.waitForIdle()
+
+        assertEquals(listOf("settings", "search", "signOut"), fired)
     }
 
     @Test

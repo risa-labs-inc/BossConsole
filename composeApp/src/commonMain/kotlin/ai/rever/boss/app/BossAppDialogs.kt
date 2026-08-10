@@ -4,6 +4,7 @@ import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.components.dialogs.CloneProjectDialog
 import ai.rever.boss.components.dialogs.ConfirmationDialog
 import ai.rever.boss.components.dialogs.GlobalSearchDialog
+import ai.rever.boss.components.dialogs.LogoutConfirmationDialog
 import ai.rever.boss.components.dialogs.NewProjectWizardDialog
 import ai.rever.boss.components.dialogs.NewTabDialog
 import ai.rever.boss.components.dialogs.ProjectOpenModeDialog
@@ -408,6 +409,17 @@ internal fun BossAppDialogs(state: BossAppState) {
     }
 
     // Keyboard Shortcut Help Dialog
+    // Sign-out confirmation, raised by the top bar's Sign Out and by the focus-mode quick actions.
+    // Hosted here with every other state.show*Dialog flag rather than in the scaffold: the cluster's
+    // buttons live in a separate, content-sized overlay window with no room for a dialog, and one
+    // owner is what stops the two entry points each opening their own. Tree position does not affect
+    // z-order - LogoutConfirmationDialog is a BossDialog, a real platform window on both paths.
+    if (state.showLogoutDialog) {
+        LogoutConfirmationDialog(
+            onDismiss = { state.showLogoutDialog = false },
+        )
+    }
+
     if (state.showShortcutHelpDialog) {
         ShortcutHelpDialog(
             keymapSettings = keymapSettings,
