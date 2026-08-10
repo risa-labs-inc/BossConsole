@@ -156,9 +156,9 @@ grpc-util = { module = "io.grpc:grpc-util", version.ref = "grpc" }
 protobuf-kotlin = { module = "com.google.protobuf:protobuf-kotlin", version.ref = "protobuf" }
 protobuf-java = { module = "com.google.protobuf:protobuf-java", version.ref = "protobuf" }
 # Netty transport for Unix domain sockets
-netty-transport-native-epoll = { module = "io.netty:netty-transport-native-epoll", version = "4.2.16.Final" }
-netty-transport-native-kqueue = { module = "io.netty:netty-transport-native-kqueue", version = "4.2.16.Final" }
-netty-transport-native-unix-common = { module = "io.netty:netty-transport-native-unix-common", version = "4.2.16.Final" }
+netty-transport-native-epoll = { module = "io.netty:netty-transport-native-epoll", version = "4.2.17.Final" }
+netty-transport-native-kqueue = { module = "io.netty:netty-transport-native-kqueue", version = "4.2.17.Final" }
+netty-transport-native-unix-common = { module = "io.netty:netty-transport-native-unix-common", version = "4.2.17.Final" }
 
 # K1 PSI dependencies for code navigation
 intellij-platform-core = { module = "com.jetbrains.intellij.platform:core", version.ref = "intellij-platform" }
