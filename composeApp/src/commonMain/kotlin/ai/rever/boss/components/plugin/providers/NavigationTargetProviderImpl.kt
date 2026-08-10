@@ -31,6 +31,10 @@ object NavigationTargetProviderImpl : NavigationTargetProvider {
     override val targets: SharedFlow<NavigationTargetEvent> = _targets.asSharedFlow()
 
     init {
+        // EDITOR, not UI, even though the hop that feeds this one
+        // (SplitViewOperationsImpl.openFileAtPosition) logs under UI: what lands here is a cursor
+        // position for a plugin's editor, and EDITOR is what someone debugging that would turn on.
+        // The cost is that tracing one navigation end to end needs both categories enabled.
         logger.debug(LogCategory.EDITOR, "Starting navigation-target collector")
         // Forward events from NavigationTargetBus to our flow
         scope.launch {
@@ -39,7 +43,11 @@ object NavigationTargetProviderImpl : NavigationTargetProvider {
                 logger.debug(
                     LogCategory.EDITOR,
                     "Forwarding navigation target to plugins",
-                    mapOf("target" to "${event.filePath}:${event.line}:${event.column}"),
+                    mapOf(
+                        "path" to event.filePath,
+                        "line" to event.line,
+                        "column" to event.column,
+                    ),
                 )
                 _targets.emit(
                     NavigationTargetEvent(

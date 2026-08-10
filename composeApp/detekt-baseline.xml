@@ -754,7 +754,6 @@
     <ID>MaxLineLength:MenuActionsHandler.kt$MenuActionsHandler$private val _reloadPluginEvents = MutableSharedFlow&lt;Pair&lt;String, ai.rever.boss.plugin.api.PanelId&gt;&gt;(extraBufferCapacity = 10)</ID>
     <ID>MaxLineLength:MenuActionsHandler.kt$MenuActionsHandler$val checkPluginUpdatesEvents: SharedFlow&lt;Pair&lt;String, ai.rever.boss.plugin.api.PanelId&gt;&gt; = _checkPluginUpdatesEvents.asSharedFlow()</ID>
     <ID>MaxLineLength:MenuActionsHandler.kt$MenuActionsHandler$val reloadPluginEvents: SharedFlow&lt;Pair&lt;String, ai.rever.boss.plugin.api.PanelId&gt;&gt; = _reloadPluginEvents.asSharedFlow()</ID>
-    <ID>MaxLineLength:NavigationTargetProviderImpl.kt$NavigationTargetProviderImpl$"[HOST-DEBUG] NavigationTargetProviderImpl: received event from NavigationTargetBus: ${event.filePath}:${event.line}:${event.column}"</ID>
     <ID>MaxLineLength:NewTabDialog.kt$(selectedSuggestionIndex + 1).coerceAtMost(urlSuggestions.size - 1)</ID>
     <ID>MaxLineLength:NewTabDialog.kt$(selectedType == TabType.TERMINAL || selectedType == TabType.JUPYTER || inputText.isNotBlank())</ID>
     <ID>MaxLineLength:NewTabDialog.kt$// Always consume arrow keys to prevent cursor movement in text field</ID>
