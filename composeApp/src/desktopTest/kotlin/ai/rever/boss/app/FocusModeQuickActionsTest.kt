@@ -12,6 +12,7 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.dp
 import org.junit.After
 import org.junit.Rule
 import org.junit.Test
@@ -36,6 +37,9 @@ class FocusModeQuickActionsTest {
     private val previousRenderer = OverlayConfig.heavyweightCorner
     private val previousUseHeavyweight = OverlayConfig.useHeavyweightPopups
 
+    /** What the fake renderer was handed, so the wiring can be asserted and not just assumed. */
+    private var receivedInset: DpSize? = null
+
     @After
     fun restore() {
         // OverlayConfig is a process-global registry; leaving a fake in it would leak into any
@@ -58,12 +62,14 @@ class FocusModeQuickActionsTest {
         visible: Boolean,
         focused: Boolean = true,
         heavyweight: Boolean = true,
+        inset: DpSize = DpSize.Zero,
     ): Boolean {
         var requested = false
         OverlayConfig.useHeavyweightPopups = heavyweight
-        OverlayConfig.heavyweightCorner = { _, _, _, _ ->
+        OverlayConfig.heavyweightCorner = { _, _, cornerInset, _ ->
             // Recorded, not composed: composing a real Window needs a display.
             requested = true
+            receivedInset = cornerInset
         }
         rule.setContent {
             CompositionLocalProvider(
@@ -73,7 +79,7 @@ class FocusModeQuickActionsTest {
                 Box(modifier = Modifier.fillMaxSize()) {
                     FocusModeQuickActions(
                         visible = visible,
-                        inset = DpSize.Zero,
+                        inset = { inset },
                         onShowSettings = {},
                         onShowSearch = {},
                         onSignOut = {},
@@ -94,6 +100,20 @@ class FocusModeQuickActionsTest {
     @Test
     fun `the cluster appears once the top bar is hidden`() {
         assertTrue(windowRequestedFor(visible = true))
+    }
+
+    @Test
+    fun `the measured inset reaches the renderer`() {
+        // The whole design rests on this one argument, and two plausible regressions would leave
+        // every other test in the suite green: OverlayCorner forwarding DpSize.Zero (easy, since
+        // the parameter has a default) or this composable passing zero instead of its own inset.
+        // Either puts the cluster back over the right sidebar and the status bar, which is exactly
+        // what the parameter exists to prevent.
+        val measured = DpSize(56.dp, 24.dp)
+
+        windowRequestedFor(visible = true, inset = measured)
+
+        assertEquals(measured, receivedInset)
     }
 
     @Test

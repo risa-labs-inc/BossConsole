@@ -1,6 +1,7 @@
 package ai.rever.boss.app
 
 import ai.rever.boss.components.buttons.BossActionButton
+import ai.rever.boss.components.buttons.QuickActionHints
 import ai.rever.boss.components.overlays.OverlayCorner
 import ai.rever.boss.plugin.api.Panel.Companion.top
 import ai.rever.boss.plugin.ui.BossTheme
@@ -75,15 +76,28 @@ internal const val FOCUS_QUICK_ACTIONS_TAG = "focus-quick-actions"
  * costs nothing: reaching it means focusing this window first, and by then it is a real overlay
  * again.
  *
+ * That guard is load-bearing for a second reason, which is easy to miss when deciding it is too
+ * cautious: `SettingsWindow` is a separate window this cluster's own Settings button opens, and the
+ * guard is the only thing that stops an always-on-top overlay of the MAIN window sitting on top of
+ * it. The two in-window dialogs are handled the other way, by `BossAppScaffold` withholding
+ * [visible] while either is up, because focus alone does not cover the lightweight path.
+ *
  * [inset] is the content area's distance from the window's end and bottom edges. The lightweight
  * path aligns inside this `BoxScope` and needs nothing, but the heavyweight path places a window
  * against the whole content pane - so without it the cluster sits over the status bar and the right
  * sidebar, which Windows focus-mode defaults leave visible.
+ *
+ * It is a **lambda, not a value**, so the state read lands in this composable's restart scope. The
+ * scaffold builds its tree entirely out of `Box`/`Column`/`Row` content lambdas, which are inline
+ * and so create no restart scope of their own: reading the inset there subscribes the whole
+ * scaffold body to it, and it changes every frame of a 250ms sidebar reveal - the case the measured
+ * inset exists to follow. Deferring the read costs nothing, since this function is non-skippable
+ * anyway (fresh lambdas each pass).
  */
 @Composable
 internal fun BoxScope.FocusModeQuickActions(
     visible: Boolean,
-    inset: DpSize,
+    inset: () -> DpSize,
     onShowSettings: () -> Unit,
     onShowSearch: () -> Unit,
     onSignOut: () -> Unit,
@@ -99,7 +113,7 @@ internal fun BoxScope.FocusModeQuickActions(
     OverlayCorner(
         alignment = Alignment.BottomEnd,
         initialSize = QUICK_ACTIONS_OVERLAY_SIZE,
-        inset = inset,
+        inset = inset(),
     ) {
         QuickActions(onShowSettings, onShowSearch, onSignOut)
     }
@@ -129,8 +143,13 @@ internal fun Modifier.reportContentInset(
         val root = coordinates.findRootCoordinates().size
         onInset(
             DpSize(
-                ((root.width - bounds.right) / density).dp,
-                ((root.height - bounds.bottom) / density).dp,
+                // Floored at the source as well as inside `insetBounds`. That one only guards the
+                // other direction, so a negative component would GROW the region and place the
+                // overlay outside the content pane - the failure `cornerPosition`'s floor prevents,
+                // reintroduced a layer up. `boundsInRoot` clips to the root so it cannot go
+                // negative today; this costs nothing and stops that being load-bearing.
+                ((root.width - bounds.right).coerceAtLeast(0f) / density).dp,
+                ((root.height - bounds.bottom).coerceAtLeast(0f) / density).dp,
             ),
         )
     }
@@ -155,30 +174,34 @@ private fun QuickActions(
         elevation = BossTheme.elevation.popover,
     ) {
         Row(modifier = Modifier.padding(horizontal = BossTheme.space.xs)) {
+            // Same order as BossTopRightBar, which is not only about muscle memory: it puts Sign
+            // Out at the INNER end, so the destructive action is not the one at the very corner of
+            // the window, where it is easiest to hit by accident.
+            //
             // hintDirection = top throughout: the cluster sits on the bottom edge of the content
             // area, so a hint below it would be off the window on the lightweight path. (On the
             // heavyweight path BossActionButton routes hints to SwingTooltip, which places itself,
             // and this is ignored.)
-            BossActionButton(
-                imageVector = Icons.Outlined.Settings,
-                text = "Settings",
-                hintText = "Configure application settings",
-                hintDirection = top,
-                onClick = onShowSettings,
-            )
-            BossActionButton(
-                imageVector = Icons.Outlined.Search,
-                text = "Search",
-                hintText = "Search files, tabs, bookmarks (⇧⇧)",
-                hintDirection = top,
-                onClick = onShowSearch,
-            )
             BossActionButton(
                 imageVector = Icons.AutoMirrored.Outlined.Logout,
                 text = "Sign Out",
                 hintText = signOutHint(currentUser?.email),
                 hintDirection = top,
                 onClick = onSignOut,
+            )
+            BossActionButton(
+                imageVector = Icons.Outlined.Search,
+                text = "Search",
+                hintText = QuickActionHints.SEARCH,
+                hintDirection = top,
+                onClick = onShowSearch,
+            )
+            BossActionButton(
+                imageVector = Icons.Outlined.Settings,
+                text = "Settings",
+                hintText = QuickActionHints.SETTINGS,
+                hintDirection = top,
+                onClick = onShowSettings,
             )
         }
     }
@@ -195,6 +218,6 @@ private fun QuickActions(
  * test cannot see without driving the clock.
  */
 internal fun signOutHint(email: String?): String {
-    val signedInAs = email?.takeIf { it.isNotBlank() } ?: return "Sign out of your account"
+    val signedInAs = email?.takeIf { it.isNotBlank() } ?: return QuickActionHints.SIGN_OUT
     return "Sign out - $signedInAs"
 }

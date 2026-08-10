@@ -207,6 +207,13 @@ internal fun BossAppScaffold(
     // The content area's distance from the window's end and bottom edges, i.e. the right sidebar's
     // width plus the bottom bar's height, whatever they currently are. Measured rather than derived
     // from the reveal flags because both animate, and the quick actions have to follow them.
+    //
+    // Written from onGloballyPositioned, which BossActionButton deliberately avoids ("non-observable
+    // holders: avoid triggering remeasure during the layout phase"). Safe here, and the difference
+    // is worth stating: this value feeds only the overlay WINDOW's placement, never the layout of
+    // the Box that reports it, so the write cannot feed back into its own measurement. It is passed
+    // to the cluster as a lambda so the read lands in that composable's restart scope rather than
+    // this one - see FocusModeQuickActions.
     var contentInset by remember { mutableStateOf(DpSize.Zero) }
     val density = LocalDensity.current.density
 
@@ -383,9 +390,16 @@ internal fun BossAppScaffold(
                         // Settings / Search / Sign Out, which the top bar otherwise owns outright.
                         // Composed inside the content area so the lightweight path aligns where it
                         // draws; contentInset is what makes the heavyweight path agree.
+                        //
+                        // Stood down while either dialog it opens is up. On the heavyweight path a
+                        // modal takes window focus and the focus guard would drop it in place
+                        // anyway, but that is an emergent consequence rather than a stated rule,
+                        // and it does not hold on the lightweight path - there the cluster would
+                        // keep drawing over the dialog's bottom-right and keep eating clicks in it.
+                        // Saying so here is free and makes the invariant hold on both paths.
                         FocusModeQuickActions(
-                            visible = !reveal.showTopBar,
-                            inset = contentInset,
+                            visible = !reveal.showTopBar && !state.showGlobalSearchDialog && !showLogoutDialog,
+                            inset = { contentInset },
                             onShowSettings = { state.showSettingsDialog = true },
                             onShowSearch = { state.showGlobalSearchDialog = true },
                             onSignOut = { showLogoutDialog = true },

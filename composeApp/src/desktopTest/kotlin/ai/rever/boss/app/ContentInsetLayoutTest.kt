@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
@@ -42,6 +41,8 @@ class ContentInsetLayoutTest {
     private fun insetFor(
         rightSidebar: Boolean,
         bottomBar: Boolean,
+        topBar: Boolean = true,
+        leftSidebar: Boolean = true,
     ): DpSize {
         var reported = DpSize(-1.dp, -1.dp)
         rule.setContent {
@@ -49,7 +50,7 @@ class ContentInsetLayoutTest {
             // answer equals the right one. Verified by mutation - dropping the divide passes at 1x
             // and fails here. The scale is arbitrary, only its being non-unit matters.
             CompositionLocalProvider(LocalDensity provides Density(TEST_DENSITY)) {
-                ScaffoldShape(rightSidebar, bottomBar) { reported = it }
+                ScaffoldShape(rightSidebar, bottomBar, topBar, leftSidebar) { reported = it }
             }
         }
         rule.waitForIdle()
@@ -61,13 +62,15 @@ class ContentInsetLayoutTest {
     private fun ScaffoldShape(
         rightSidebar: Boolean,
         bottomBar: Boolean,
+        topBar: Boolean,
+        leftSidebar: Boolean,
         onInset: (DpSize) -> Unit,
     ) {
         val density = LocalDensity.current.density
         Column(modifier = Modifier.size(WINDOW_WIDTH, WINDOW_HEIGHT)) {
-            Bar(modifier = Modifier.fillMaxWidth().height(TOP_BAR))
+            if (topBar) Bar(modifier = Modifier.fillMaxWidth().height(TOP_BAR))
             Row(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                Bar(modifier = Modifier.fillMaxHeight().width(LEFT_SIDEBAR))
+                if (leftSidebar) Bar(modifier = Modifier.fillMaxHeight().width(LEFT_SIDEBAR))
                 Box(
                     modifier =
                         Modifier
@@ -101,13 +104,18 @@ class ContentInsetLayoutTest {
 
     @Test
     fun `the left sidebar and top bar do not count`() {
-        // Only the END and BOTTOM edges displace a bottom-right anchor. Chrome on the near edges
-        // moves the content area's origin, not its far corner, and counting it would drag the
-        // cluster inward by the width of a sidebar that is nowhere near it.
-        val withNearChrome = insetFor(rightSidebar = true, bottomBar = true)
+        // Only the END and BOTTOM edges displace a bottom-right anchor. Chrome on the NEAR edges
+        // moves the content area's origin, not its far corner, so adding or removing it must not
+        // change the answer at all - counting it would drag the cluster inward by the width of a
+        // sidebar nowhere near it.
+        //
+        // Asserted as invariance across the near-chrome variants, not as the same two numbers test
+        // 1 already asserts. Re-asserting those would make this test unable to fail on its own:
+        // same inputs, same expectations, no independent claim.
+        val withNearChrome = insetFor(rightSidebar = true, bottomBar = true, topBar = true, leftSidebar = true)
+        val withoutNearChrome = insetFor(rightSidebar = true, bottomBar = true, topBar = false, leftSidebar = false)
 
-        assertEquals(RIGHT_SIDEBAR, withNearChrome.width)
-        assertEquals(BOTTOM_BAR, withNearChrome.height)
+        assertEquals(withNearChrome, withoutNearChrome)
     }
 
     private companion object {

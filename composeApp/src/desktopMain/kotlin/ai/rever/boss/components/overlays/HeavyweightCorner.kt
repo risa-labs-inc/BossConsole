@@ -5,12 +5,12 @@ import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.layout
@@ -22,8 +22,20 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.rememberWindowState
+import kotlinx.coroutines.delay
+import java.awt.event.ComponentAdapter
+import java.awt.event.ComponentEvent
 import javax.swing.RootPaneContainer
 import java.awt.Window as AwtWindow
+
+/** How long to wait between attempts to measure a parent that is not showing yet. */
+private const val MEASURE_RETRY_MS = 50L
+
+/**
+ * How many measurement attempts before giving up, so a parent that never becomes measurable costs a
+ * bounded number of wakeups rather than one per [MEASURE_RETRY_MS] for the session.
+ */
+private const val MEASURE_ATTEMPTS = 100
 
 /**
  * Heavyweight host for a corner overlay that outlives a keypress - toast notifications.
@@ -75,11 +87,11 @@ fun HeavyweightCorner(
     val density = LocalDensity.current.density
     var measured by remember { mutableStateOf<DpSize?>(null) }
     val size = measured ?: initialSize
-    var bounds by remember(parent) { mutableStateOf(contentPaneBounds(parent)) }
+    val bounds = trackedContentPaneBounds(parent)
     // The rectangle the corner is actually resolved inside: the content pane, less whatever the
     // caller says is not theirs. Remembered rather than computed inline so it is a STABLE instance -
-    // `bounds` only changes identity on a real change (see the frame-clock effect below), and a
-    // fresh array every recomposition would re-run the placement effect, and with it a native
+    // `bounds` only changes identity on a real change (see [trackedContentPaneBounds]), and a fresh
+    // array every recomposition would re-run the placement effect, and with it a native
     // setLocation, for nothing.
     val region = remember(bounds, inset) { insetBounds(bounds, inset) }
     // Clamp the ceiling to the region. The ceiling is a hard clip, not a soft start, and toast text
@@ -95,19 +107,6 @@ fun HeavyweightCorner(
             size = size,
             position = cornerPosition(region, size, alignment).let { WindowPosition(it.first.dp, it.second.dp) },
         )
-
-    // Track the parent on the frame clock. `rememberOverlayParentBounds` is keyed on the window
-    // INSTANCE, which never changes, so it captures the bounds once - fine for the sub-second
-    // overlays that came before, wrong for one that is up while the user can drag or resize the
-    // window out from under it. Only assign on an actual change: each one is a native setLocation.
-    LaunchedEffect(parent) {
-        while (true) {
-            withFrameNanos { }
-            val next = contentPaneBounds(parent) ?: continue
-            val current = bounds
-            if (current == null || !next.contentEquals(current)) bounds = next
-        }
-    }
 
     // Assign window state from an effect, never during composition - writing it inline during
     // composition is what made the cursor overlay jitter.
@@ -149,6 +148,81 @@ fun HeavyweightCorner(
             content()
         }
     }
+}
+
+/**
+ * The parent content pane's screen bounds, kept current as the window moves and resizes.
+ *
+ * Split out of [HeavyweightCorner] so the tracking is one idea in one place, and because the two
+ * effects below are the whole of it.
+ */
+@Composable
+private fun trackedContentPaneBounds(parent: AwtWindow?): IntArray? {
+    var bounds by remember(parent) { mutableStateOf(contentPaneBounds(parent)) }
+
+    // Track the parent. `rememberOverlayParentBounds` is keyed on the window INSTANCE, which never
+    // changes, so it captures the bounds once - fine for the sub-second overlays that came before,
+    // wrong for one that is up while the user can drag or resize the window out from under it.
+    // Only assign on an actual change: each one is a native setLocation.
+    //
+    // Event-driven, NOT polled on the frame clock. This used to be `while (true) { withFrameNanos
+    // { } ... }`, and a registered frame awaiter keeps the Compose scene from ever going idle - a
+    // full repaint plus a native locationOnScreen every frame, for a rectangle that changes only
+    // when the user moves or resizes the window. That was affordable when the only caller was a
+    // toast up for a few seconds; the focus-mode quick actions are up for the whole focus-mode
+    // session, which on the configuration they target (auto-reveal off, so the top bar stays
+    // cleared) is the whole time the app is open.
+    //
+    // Two listeners, because they see different events. The WINDOW reports its own moves and
+    // resizes; the content pane reports resizes that are not the window's, such as a menu bar
+    // appearing. The pane never reports a MOVE when the window is dragged - its position inside
+    // the window has not changed - so the window listener is the one that cannot be dropped.
+    DisposableEffect(parent) {
+        val pane = (parent as? RootPaneContainer)?.contentPane
+
+        fun refresh() {
+            val next = contentPaneBounds(parent) ?: return
+            val current = bounds
+            if (current == null || !next.contentEquals(current)) bounds = next
+        }
+
+        val listener =
+            object : ComponentAdapter() {
+                override fun componentMoved(e: ComponentEvent?) = refresh()
+
+                override fun componentResized(e: ComponentEvent?) = refresh()
+
+                override fun componentShown(e: ComponentEvent?) = refresh()
+            }
+        parent?.addComponentListener(listener)
+        pane?.addComponentListener(listener)
+        onDispose {
+            parent?.removeComponentListener(listener)
+            pane?.removeComponentListener(listener)
+        }
+    }
+
+    // Listeners fire on a CHANGE, so a parent that is not yet showing when this mounts would never
+    // be measured at all: `contentPaneBounds` returns null until the pane is showing, and
+    // `cornerPosition` then falls back to the screen origin, detaching the overlay from the window
+    // entirely. The frame-clock loop covered that by accident, retrying every frame until the pane
+    // appeared - the one thing lost by going event-driven, so it is restored deliberately rather
+    // than left to chance.
+    //
+    // Bounded twice over: it stops at the first successful measurement, and gives up after
+    // [MEASURE_ATTEMPTS] regardless. Without the cap, a null parent - `LocalAwtWindow` unprovided,
+    // which is what a test host looks like - would leave a wakeup timer running for the whole
+    // session, which is the shape of the problem this whole change exists to remove.
+    LaunchedEffect(parent) {
+        var attempts = 0
+        while (bounds == null && attempts < MEASURE_ATTEMPTS) {
+            delay(MEASURE_RETRY_MS)
+            bounds = contentPaneBounds(parent)
+            attempts++
+        }
+    }
+
+    return bounds
 }
 
 /**

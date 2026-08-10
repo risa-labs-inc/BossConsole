@@ -1,6 +1,7 @@
 package ai.rever.boss.components.bars.horizontal
 
 import ai.rever.boss.components.buttons.BossActionButton
+import ai.rever.boss.components.buttons.QuickActionHints
 import ai.rever.boss.components.dialogs.CommitDialog
 import ai.rever.boss.components.dialogs.LogoutConfirmationDialog
 import ai.rever.boss.components.dialogs.ProjectOpenModeDialog
@@ -808,10 +809,12 @@ fun BossTopRightBar(
         )
     }
 
+    // Hint strings are shared with the focus-mode quick actions, which are these same three
+    // buttons drawn in the other place they are reachable from. See QuickActionHints.
     BossActionButton(
         imageVector = Icons.AutoMirrored.Outlined.Logout,
         text = "Sign Out",
-        hintText = "Sign out of your account",
+        hintText = QuickActionHints.SIGN_OUT,
     ) {
         showLogoutDialog = true
     }
@@ -820,7 +823,7 @@ fun BossTopRightBar(
     BossActionButton(
         imageVector = Icons.Outlined.Search,
         text = "Search",
-        hintText = "Search files, tabs, bookmarks (⇧⇧)",
+        hintText = QuickActionHints.SEARCH,
     ) {
         onShowSearch?.invoke()
     }
@@ -828,7 +831,7 @@ fun BossTopRightBar(
     BossActionButton(
         imageVector = Icons.Outlined.Settings,
         text = "Settings",
-        hintText = "Configure application settings",
+        hintText = QuickActionHints.SETTINGS,
     ) {
         onShowSettings?.invoke()
     }
