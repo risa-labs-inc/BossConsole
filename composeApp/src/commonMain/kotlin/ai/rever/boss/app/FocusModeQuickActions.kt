@@ -112,8 +112,10 @@ internal const val FOCUS_QUICK_ACTIONS_TAG = "focus-quick-actions"
  * scaffold builds its tree entirely out of `Box`/`Column`/`Row` content lambdas, which are inline
  * and so create no restart scope of their own: reading the inset there subscribes the whole
  * scaffold body to it, and it changes every frame of a 250ms sidebar reveal - the case the measured
- * inset exists to follow. Deferring the read costs nothing, since this function is non-skippable
- * anyway (fresh lambdas each pass).
+ * inset exists to follow. Deferring the read costs nothing here, since this function is
+ * non-skippable anyway (fresh lambdas each pass). Note the deferral only buys anything on the
+ * heavyweight path: `OverlayCorner` takes a value, so the lightweight branch still reads it and
+ * subscribes to something it does not use.
  */
 @Composable
 internal fun BoxScope.FocusModeQuickActions(
@@ -203,7 +205,10 @@ private fun QuickActions(
                 .testTag(FOCUS_QUICK_ACTIONS_TAG),
         color = BossTheme.colors.raised,
         shape = BossTheme.radius.cardShape,
-        elevation = BossTheme.elevation.popover,
+        // No elevation, deliberately. The overlay window shrinks to the measured content, so a
+        // drop shadow would fall outside it and simply vanish on the heavyweight path while
+        // showing on the lightweight one - the two paths have to look the same. The hairline
+        // border is what separates the cluster from the content underneath.
     ) {
         Row(modifier = Modifier.padding(horizontal = BossTheme.space.xs)) {
             // Same order as BossTopRightBar, which is not only about muscle memory: it puts Sign

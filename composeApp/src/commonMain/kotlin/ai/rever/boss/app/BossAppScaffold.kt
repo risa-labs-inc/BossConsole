@@ -20,6 +20,7 @@ import ai.rever.boss.components.window_panel.components.main_window_panels.TabCy
 import ai.rever.boss.components.workspaces.applyWorkspace
 import ai.rever.boss.components.workspaces.extractCurrentWorkspace
 import ai.rever.boss.components.workspaces.workspaceManager
+import ai.rever.boss.focusmode.FocusModeEdge
 import ai.rever.boss.focusmode.FocusModeSettings
 import ai.rever.boss.handleTabDropResult
 import ai.rever.boss.plugin.api.LocalBookmarkDataProvider
@@ -373,9 +374,7 @@ internal fun BossAppScaffold(
                         modifier =
                             Modifier
                                 .weight(1f)
-                                .reportContentInset(density) { next ->
-                                    if (next != contentInset) contentInset = next
-                                },
+                                .reportContentInset(density) { contentInset = it },
                     ) {
                         BossWindow(
                             modifier = Modifier.fillMaxSize(),
@@ -403,8 +402,20 @@ internal fun BossAppScaffold(
                         // composition, so an in-place cluster is underneath it and never over it;
                         // and a heavyweight modal takes window focus, which drops this to the same
                         // in-place path by the focus guard in FocusModeQuickActions.
+                        //
+                        // `hides(TOP)` is not redundant with `!showTopBar`, it is what keeps this
+                        // off the launch path entirely. `FocusModeEdgeRevealState.shown` starts
+                        // false and is only turned back on by a LaunchedEffect, so on the FIRST
+                        // composition of every window `!showTopBar` is true whether or not focus
+                        // mode is even enabled. Without this the heavyweight path would create and
+                        // immediately dispose a native always-on-top window on every window open,
+                        // flash it in the corner for users who never turn focus mode on, and call
+                        // contentPaneBounds before the pane is reliably showing - which can burn
+                        // the one-per-session warning flag that exists to make a REAL failure
+                        // visible. Gating on the setting is also just the honest condition: the
+                        // cluster exists because focus mode clears the top bar.
                         FocusModeQuickActions(
-                            visible = !reveal.showTopBar,
+                            visible = focusModeSettings.hides(FocusModeEdge.TOP) && !reveal.showTopBar,
                             inset = { contentInset },
                             onShowSettings = { state.showSettingsDialog = true },
                             onShowSearch = { state.showGlobalSearchDialog = true },

@@ -212,11 +212,20 @@ private fun trackedContentPaneBounds(parent: AwtWindow?): IntArray? {
     // [MEASURE_ATTEMPTS] regardless. Without the cap, a null parent - `LocalAwtWindow` unprovided,
     // which is what a test host looks like - would leave a wakeup timer running for the whole
     // session, which is the shape of the problem this whole change exists to remove.
+    // Through the same guard the listeners use, not a bare assignment. The two writers interleave:
+    // this one sleeps for MEASURE_RETRY_MS, and a componentShown/componentResized landing inside
+    // that window stores a good rectangle which a bare `bounds = contentPaneBounds(parent)` would
+    // then overwrite - with null, if the pane happens not to be showing at that instant, which puts
+    // the overlay at the primary display's origin. Even when it succeeds it would store an
+    // equal-but-fresh IntArray, and since IntArray equality is by reference that reads as a change:
+    // new region identity, placement effect restart, native setLocation.
     LaunchedEffect(parent) {
         var attempts = 0
         while (shouldKeepMeasuring(bounds, attempts)) {
             delay(MEASURE_RETRY_MS)
-            bounds = contentPaneBounds(parent)
+            contentPaneBounds(parent)?.let { next ->
+                if (boundsChanged(bounds, next)) bounds = next
+            }
             attempts++
         }
     }
