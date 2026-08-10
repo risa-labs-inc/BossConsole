@@ -498,10 +498,11 @@ fun main(args: Array<String>) {
     ai.rever.boss.components.overlays.OverlayConfig.heavyweightCorner = {
         alignment,
         initialSize,
+        inset,
         cornerContent,
         ->
         ai.rever.boss.components.overlays
-            .HeavyweightCorner(alignment, initialSize, cornerContent)
+            .HeavyweightCorner(alignment, initialSize, inset, cornerContent)
     }
     // plugin-ui-core owns the modal registry (plugins draw dialogs too) and depends on nothing but
     // Compose, so it cannot log. Give it this logger instead: the condition it reports is a dialog

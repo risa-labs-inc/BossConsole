@@ -57,11 +57,18 @@ import java.awt.Window as AwtWindow
  *    the overlay can never grow back.
  *  - Parent bounds come from the CONTENT PANE, not the window (see [contentPaneBounds]), and are
  *    re-read on the frame clock rather than remembered once.
+ *
+ * [inset] narrows that parent rectangle at its end and bottom edges (see [insetBounds]). It is how
+ * a caller anchored to a SUB-REGION of the window - the main content area, say, rather than the
+ * sidebars and status bar around it - lands where it draws on the lightweight path. It changes
+ * where the overlay is placed and never how big it is, so the region whose clicks it swallows is
+ * the same either way.
  */
 @Composable
 fun HeavyweightCorner(
     alignment: Alignment,
     initialSize: DpSize,
+    inset: DpSize = DpSize.Zero,
     content: @Composable () -> Unit,
 ) {
     val parent = LocalAwtWindow.current
@@ -69,18 +76,24 @@ fun HeavyweightCorner(
     var measured by remember { mutableStateOf<DpSize?>(null) }
     val size = measured ?: initialSize
     var bounds by remember(parent) { mutableStateOf(contentPaneBounds(parent)) }
-    // Clamp the ceiling to the parent. The ceiling is a hard clip, not a soft start, and toast text
+    // The rectangle the corner is actually resolved inside: the content pane, less whatever the
+    // caller says is not theirs. Remembered rather than computed inline so it is a STABLE instance -
+    // `bounds` only changes identity on a real change (see the frame-clock effect below), and a
+    // fresh array every recomposition would re-run the placement effect, and with it a native
+    // setLocation, for nothing.
+    val region = remember(bounds, inset) { insetBounds(bounds, inset) }
+    // Clamp the ceiling to the region. The ceiling is a hard clip, not a soft start, and toast text
     // is arbitrary plugin content: three wordy toasts can exceed a fixed height, and because the
     // window is CONTENT-sized the overflow is not cosmetic - the bottom toast's dismiss button ends
     // up outside the window, unclickable, on the INDEFINITE path where dismissing is the only way
-    // out. Clamping to the parent keeps the overlay inside the window without reintroducing any
-    // dependency on the overlay's OWN size, which is what the ratchet was.
-    val ceiling = clampCeiling(initialSize, bounds)
+    // out. Clamping to the region keeps the overlay inside it without reintroducing any dependency
+    // on the overlay's OWN size, which is what the ratchet was.
+    val ceiling = clampCeiling(initialSize, region)
 
     val state =
         rememberWindowState(
             size = size,
-            position = cornerPosition(bounds, size, alignment).let { WindowPosition(it.first.dp, it.second.dp) },
+            position = cornerPosition(region, size, alignment).let { WindowPosition(it.first.dp, it.second.dp) },
         )
 
     // Track the parent on the frame clock. `rememberOverlayParentBounds` is keyed on the window
@@ -98,9 +111,9 @@ fun HeavyweightCorner(
 
     // Assign window state from an effect, never during composition - writing it inline during
     // composition is what made the cursor overlay jitter.
-    LaunchedEffect(size, bounds, alignment) {
+    LaunchedEffect(size, region, alignment) {
         state.size = size
-        val at = cornerPosition(bounds, size, alignment)
+        val at = cornerPosition(region, size, alignment)
         state.position = WindowPosition(at.first.dp, at.second.dp)
     }
 
@@ -241,6 +254,39 @@ internal fun cornerPosition(
                 else -> slackY / 2
             }
     return x to y
+}
+
+/**
+ * [bounds], with [inset] taken off its END and BOTTOM edges - the sub-region a caller anchored to
+ * part of the window is actually placing itself in.
+ *
+ * Only the far edges, and that is the whole meaning rather than a simplification. The origin is
+ * where a `TopStart` overlay goes, and a caller inset from the right and the bottom has not moved
+ * its top-left corner anywhere - so a near-corner anchor must be unaffected while a far-corner one
+ * moves by exactly the inset. Expressing it as a smaller rectangle rather than as an offset added
+ * after the fact is what gets that for free, and keeps [cornerPosition]'s floor-at-the-origin
+ * behaviour applying to the region rather than to the window.
+ *
+ * Widths floor at zero: an inset wider than the window would otherwise produce a negative extent,
+ * and [cornerPosition] would read that as slack and place the overlay outside the parent.
+ *
+ * A zero inset returns [bounds] ITSELF, not a copy. Every caller that predates this passes zero,
+ * and the result is a `remember` key: an equal-but-new array would change identity on every
+ * recomposition and re-run the placement effect, which is a native `setLocation` each time.
+ */
+internal fun insetBounds(
+    bounds: IntArray?,
+    inset: DpSize,
+): IntArray? {
+    // An unmeasurable parent stays unmeasurable, and a zero inset returns the SAME instance - see
+    // the KDoc on identity above.
+    if (bounds == null || inset == DpSize.Zero) return bounds
+    return intArrayOf(
+        bounds[0],
+        bounds[1],
+        (bounds[2] - inset.width.value.toInt()).coerceAtLeast(0),
+        (bounds[3] - inset.height.value.toInt()).coerceAtLeast(0),
+    )
 }
 
 /**

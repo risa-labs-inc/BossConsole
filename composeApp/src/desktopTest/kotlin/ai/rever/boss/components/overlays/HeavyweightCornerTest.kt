@@ -5,6 +5,8 @@ import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
+import kotlin.test.assertSame
 
 /**
  * Pins [cornerPosition], the only part of the toast overlay reachable without a display.
@@ -51,5 +53,50 @@ class HeavyweightCornerTest {
     @Test
     fun `unmeasured parent falls back to the origin`() {
         assertEquals(0 to 0, cornerPosition(null, size, Alignment.TopEnd))
+    }
+
+    // --- insetBounds: anchoring to a sub-region of the window ---
+
+    @Test
+    fun `a zero inset is the parent itself`() {
+        // Identity, not merely equal contents: every existing caller passes zero, and returning a
+        // fresh array would make the placement effect's key change on every recomposition - one
+        // native setLocation per frame, for nothing.
+        assertSame(parent, insetBounds(parent, DpSize.Zero))
+    }
+
+    @Test
+    fun `an inset shrinks the far edges and leaves the origin alone`() {
+        val region = insetBounds(parent, DpSize(48.dp, 24.dp))
+        assertEquals(listOf(100, 50, 952, 776), region?.toList())
+    }
+
+    @Test
+    fun `bottom end moves in by exactly the inset while top start does not move at all`() {
+        // The whole point of expressing this as a smaller rectangle: a caller inset from the right
+        // and the bottom has not moved its top-left corner, so a near-corner anchor must not move.
+        val region = insetBounds(parent, DpSize(48.dp, 24.dp))
+
+        assertEquals(620 to 626, cornerPosition(region, size, Alignment.BottomEnd))
+        assertEquals(
+            cornerPosition(parent, size, Alignment.TopStart),
+            cornerPosition(region, size, Alignment.TopStart),
+        )
+    }
+
+    @Test
+    fun `an inset wider than the parent floors at zero rather than going negative`() {
+        // A negative extent reads as slack in cornerPosition, which would place the overlay outside
+        // the parent entirely - the failure mode the floor in cornerPosition exists to prevent,
+        // reintroduced one layer up.
+        val region = insetBounds(parent, DpSize(4000.dp, 4000.dp))
+
+        assertEquals(listOf(100, 50, 0, 0), region?.toList())
+        assertEquals(100 to 50, cornerPosition(region, size, Alignment.BottomEnd))
+    }
+
+    @Test
+    fun `an unmeasured parent stays unmeasured through an inset`() {
+        assertNull(insetBounds(null, DpSize(48.dp, 24.dp)))
     }
 }

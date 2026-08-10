@@ -5,6 +5,7 @@ import ai.rever.boss.components.bars.horizontal.BossTitleBar
 import ai.rever.boss.components.bars.horizontal.BossTopBar
 import ai.rever.boss.components.bars.vertical.BossLeftSideBar
 import ai.rever.boss.components.bars.vertical.BossRightSideBar
+import ai.rever.boss.components.dialogs.LogoutConfirmationDialog
 import ai.rever.boss.components.overlays.DraggingItemOverlay
 import ai.rever.boss.components.overlays.OverlayCorner
 import ai.rever.boss.components.overlays.TabDraggingOverlay
@@ -56,9 +57,13 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
@@ -194,6 +199,16 @@ internal fun BossAppScaffold(
     val coroutineScope = state.coroutineScope
     val splitViewState = state.splitViewState
     val selectedProject by state.windowProjectState.selectedProject.collectAsState()
+
+    // Sign-out is reachable from the focus-mode quick actions, whose buttons live in a separate
+    // overlay window. The confirmation is owned here so the dialog is drawn in the MAIN
+    // composition: a content-sized overlay window has nowhere to put one.
+    var showLogoutDialog by remember { mutableStateOf(false) }
+    // The content area's distance from the window's end and bottom edges, i.e. the right sidebar's
+    // width plus the bottom bar's height, whatever they currently are. Measured rather than derived
+    // from the reveal flags because both animate, and the quick actions have to follow them.
+    var contentInset by remember { mutableStateOf(DpSize.Zero) }
+    val density = LocalDensity.current.density
 
     with(state.draggablePanelComponent) {
         Box(
@@ -343,19 +358,39 @@ internal fun BossAppScaffold(
                     }
 
                     // Main content area - always visible (contains tabs)
-                    BossWindow(
-                        modifier = Modifier.weight(1f),
-                        tabsComponent = state.tabsComponent,
-                        panelComponentStore = state.panelComponentStore,
-                        splitViewState = splitViewState,
-                        tabDragComponent = state.tabDragComponent,
-                        onTabDropResult = { result ->
-                            handleTabDropResult(result, splitViewState)
-                        },
-                        onShowSettings = { state.showSettingsDialog = true },
-                        onOpenProjectDialog = { state.showProjectDialog = true },
-                        onNewProject = { state.showNewProjectDialog = true },
-                    )
+                    Box(
+                        modifier =
+                            Modifier
+                                .weight(1f)
+                                .reportContentInset(density) { next ->
+                                    if (next != contentInset) contentInset = next
+                                },
+                    ) {
+                        BossWindow(
+                            modifier = Modifier.fillMaxSize(),
+                            tabsComponent = state.tabsComponent,
+                            panelComponentStore = state.panelComponentStore,
+                            splitViewState = splitViewState,
+                            tabDragComponent = state.tabDragComponent,
+                            onTabDropResult = { result ->
+                                handleTabDropResult(result, splitViewState)
+                            },
+                            onShowSettings = { state.showSettingsDialog = true },
+                            onOpenProjectDialog = { state.showProjectDialog = true },
+                            onNewProject = { state.showNewProjectDialog = true },
+                        )
+
+                        // Settings / Search / Sign Out, which the top bar otherwise owns outright.
+                        // Composed inside the content area so the lightweight path aligns where it
+                        // draws; contentInset is what makes the heavyweight path agree.
+                        FocusModeQuickActions(
+                            visible = !reveal.showTopBar,
+                            inset = contentInset,
+                            onShowSettings = { state.showSettingsDialog = true },
+                            onShowSearch = { state.showGlobalSearchDialog = true },
+                            onSignOut = { showLogoutDialog = true },
+                        )
+                    }
 
                     // Right sidebar - hidden in focus mode with smooth expand/shrink animation
                     AnimatedVisibility(
@@ -407,6 +442,14 @@ internal fun BossAppScaffold(
                 settings = focusModeSettings,
                 revealOffsetDp = revealOffsetDp,
             )
+
+            // Raised by the focus-mode quick actions, drawn here rather than in their overlay
+            // window - which is sized to its content and so has no room for a dialog.
+            if (showLogoutDialog) {
+                LogoutConfirmationDialog(
+                    onDismiss = { showLogoutDialog = false },
+                )
+            }
 
             // Draw the dragging item overlay (ghost) if an item is being dragged
             DraggingItemOverlay()

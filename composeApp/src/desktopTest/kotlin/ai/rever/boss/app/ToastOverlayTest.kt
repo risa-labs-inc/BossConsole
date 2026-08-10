@@ -65,7 +65,7 @@ class ToastOverlayTest {
     ): Boolean {
         var requested = false
         OverlayConfig.useHeavyweightPopups = true
-        OverlayConfig.heavyweightCorner = { _, _, _ ->
+        OverlayConfig.heavyweightCorner = { _, _, _, _ ->
             // Recorded, not composed: composing a real Window needs a display.
             requested = true
         }
