@@ -157,8 +157,7 @@ private fun encodeUrlParameter(input: String): String =
  * A spec that declares no input at all (blank label and placeholder, input
  * optional): clicking the tab type opens it instantly, no input step.
  */
-private fun NewTabSpec.needsNoInput(): Boolean =
-    inputOptional && inputLabel.isBlank() && inputPlaceholder.isBlank()
+internal fun NewTabSpec.needsNoInput(): Boolean = inputOptional && inputLabel.isBlank() && inputPlaceholder.isBlank()
 
 // Platform-specific URL history provider
 expect object UrlHistoryProvider {
@@ -223,27 +222,42 @@ fun NewTabDialog(
     val selectedPluginTypeInfo = selectedPluginType?.let { id -> pluginTypes.firstOrNull { it.typeId == id } }
     var pluginInput by remember(selectedPluginType) { mutableStateOf("") }
 
+    // Guards the create action against a second click landing before the dialog
+    // leaves composition. onCreateTabInfo + onDismiss are state-driven, so two
+    // clicks in that gap open two tabs. The confirm button always had this, but
+    // a TILE is a far more natural thing to double-click than a confirm button,
+    // so the instant-open path is where it actually becomes reachable.
+    var opening by remember { mutableStateOf(false) }
+
     // Open a plugin tab type with the given input: the plugin builds the
     // TabInfo (null = input rejected, dialog stays open). Crash-isolated —
-    // plugin code.
-    val openPluginTab: (TabTypeInfo, String) -> Unit = { typeInfo, input ->
-        val tabInfo =
-            try {
-                typeInfo.createTabInfo(input.trim(), NewTabContext(projectPath = projectPath, windowId = windowId))
-            } catch (e: Exception) {
-                newTabDialogLogger.warn(
-                    LogCategory.UI,
-                    "Plugin createTabInfo failed",
-                    mapOf(
-                        "typeId" to typeInfo.typeId.typeId,
-                    ),
-                    e,
-                )
-                null
+    // plugin code. Returns whether a tab was actually opened, which the
+    // instant-open path needs: with no input on screen there is nothing for the
+    // user to correct, so a refusal has to surface as something.
+    val openPluginTab: (TabTypeInfo, String) -> Boolean = { typeInfo, input ->
+        if (opening) {
+            false
+        } else {
+            val tabInfo =
+                try {
+                    typeInfo.createTabInfo(input.trim(), NewTabContext(projectPath = projectPath, windowId = windowId))
+                } catch (e: Exception) {
+                    newTabDialogLogger.warn(
+                        LogCategory.UI,
+                        "Plugin createTabInfo failed",
+                        mapOf(
+                            "typeId" to typeInfo.typeId.typeId,
+                        ),
+                        e,
+                    )
+                    null
+                }
+            if (tabInfo != null) {
+                opening = true
+                onCreateTabInfo?.invoke(tabInfo)
+                onDismiss()
             }
-        if (tabInfo != null) {
-            onCreateTabInfo?.invoke(tabInfo)
-            onDismiss()
+            tabInfo != null
         }
     }
 
@@ -459,8 +473,17 @@ fun NewTabDialog(
                                 onClick = {
                                     // Types that declare no input (e.g. Arcade)
                                     // open on the click itself — no input step.
+                                    //
+                                    // If the plugin refuses, fall back to selecting
+                                    // the type. Without that the tile is inert: it
+                                    // does not even become selected, so a broken
+                                    // no-input type is a button that visibly does
+                                    // nothing, forever, with only a log line to say
+                                    // why. Selecting degrades it to the old flow.
                                     if (pluginType.newTabSpec?.needsNoInput() == true) {
-                                        openPluginTab(pluginType, "")
+                                        if (!openPluginTab(pluginType, "")) {
+                                            selectedPluginType = pluginType.typeId
+                                        }
                                         return@TabTypeOption
                                     }
                                     when (selectedType) {
@@ -520,7 +543,15 @@ fun NewTabDialog(
                     Column {
                         // Plugin tab type input — one generic field driven by the
                         // type's NewTabSpec; the plugin validates via createTabInfo.
-                        if (selectedPluginTypeInfo != null) {
+                        //
+                        // Gated on the same predicate as the tile click, so the two
+                        // paths agree. A no-input type can still arrive here without
+                        // ever being clicked: when no built-in types are available
+                        // the dialog auto-selects the first plugin type, which would
+                        // otherwise open showing the empty "(optional)" field, the
+                        // focus grab and the confirm button that this change exists
+                        // to remove.
+                        if (selectedPluginTypeInfo != null && selectedPluginTypeInfo.newTabSpec?.needsNoInput() != true) {
                             val spec = selectedPluginTypeInfo.newTabSpec!!
                             val pluginFocusRequester = remember { FocusRequester() }
                             LaunchedEffect(selectedPluginType) {
