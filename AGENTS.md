@@ -229,6 +229,12 @@ Supabase access token - `AuthDataProvider` gives identity only, `SupabaseDataPro
 queries with the host attaching auth - so `CredentialBrokerClient` hands a plugin the
 *downstream* credential and never the session that bought it.
 
+**The gateway itself lives in `risa-labs-inc/risa-llm-gateway`** (private), not here. It was added
+to this repo in PR #136 alongside the desktop client and moved out with its history: it ships in no
+BOSS release, deploys on its own Cloud Build, and this repo is public, which made every infra and
+authorization change a public one. What stays here is the app's half of the contract -
+`RisaLlmTokenCommand`, `CredentialBrokers`, and the `LLM_TOKEN` verb on the single-instance channel.
+
 **A broker is named by id, never by URL.** `CredentialBrokers` owns the id to endpoint map. An
 `exchange(url)` shape would have handed every installed plugin a way to post the user's session
 token to a host of its choosing; as it is, the worst a plugin can do is name a broker this

@@ -1,5 +1,0 @@
-FROM ghcr.io/berriai/litellm:v1.92.1
-
-COPY litellm-config.yaml /app/config.yaml
-
-CMD ["--config", "/app/config.yaml", "--host", "0.0.0.0", "--port", "8080"]
