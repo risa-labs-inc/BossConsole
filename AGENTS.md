@@ -233,7 +233,7 @@ queries with the host attaching auth - so `CredentialBrokerClient` hands a plugi
 to this repo in PR #136 alongside the desktop client and moved out with its history: it ships in no
 BOSS release, deploys on its own Cloud Build, and this repo is public, which made every infra and
 authorization change a public one. What stays here is the app's half of the contract -
-`RisaLlmTokenCommand`, `CredentialBrokers`, and the `LLM_TOKEN` verb on the single-instance channel.
+`RisaLlmTokenCommand`, `CredentialBrokers`, and the `LLM_TOKEN` verb on the single-instance channel. What the two sides owe each other is written down in `docs/llm-gateway-contract.md`, because nothing links the repositories at compile time or in CI any more.
 
 **A broker is named by id, never by URL.** `CredentialBrokers` owns the id to endpoint map. An
 `exchange(url)` shape would have handed every installed plugin a way to post the user's session
