@@ -27,12 +27,29 @@ class PluginWatchdog(
     private val config: SandboxConfig,
     private val scope: CoroutineScope,
     private val onRestartRequested: suspend (String) -> Unit,
+    /** Monotonic clock, injectable so the stall guard can be tested. */
+    private val monotonicMillis: () -> Long = { System.nanoTime() / NANOS_PER_MILLI },
+    /** Wall clock, injectable so the stall guard can be tested. */
+    private val wallClockMillis: () -> Long = System::currentTimeMillis,
 ) {
     private val logger = BossLogger.forComponent("PluginWatchdog")
     private var watchdogJob: Job? = null
 
     // Prevent concurrent restart attempts from rapid successive health check failures
     private val restartInProgress = AtomicBoolean(false)
+
+    // Consecutive checks that found the plugin healthy. Clears the restart
+    // counter once the plugin has stayed healthy long enough to have earned it.
+    private var healthyChecks = 0
+
+    // Wall-clock deadline until which health checks are suppressed after a
+    // process-wide stall, giving every plugin's heartbeat coroutine - frozen by
+    // the same stall - a full unhealthy window to run again and prove liveness.
+    private var suppressChecksUntilMs = 0L
+
+    private companion object {
+        const val NANOS_PER_MILLI = 1_000_000L
+    }
 
     /**
      * Start the watchdog monitoring.
@@ -60,11 +77,71 @@ class PluginWatchdog(
 
         watchdogJob =
             scope.launch {
+                var lastTickMonotonic = monotonicMillis()
+                var lastTickWallClock = wallClockMillis()
                 while (isActive) {
                     delay(config.heartbeatIntervalMs)
-                    checkHealth()
+
+                    val nowMonotonic = monotonicMillis()
+                    val nowWallClock = wallClockMillis()
+                    val monotonicElapsed = nowMonotonic - lastTickMonotonic
+                    val wallClockElapsed = nowWallClock - lastTickWallClock
+                    lastTickMonotonic = nowMonotonic
+                    lastTickWallClock = nowWallClock
+
+                    val stalled = detectStall(monotonicElapsed, wallClockElapsed, nowWallClock)
+                    if (!stalled && nowWallClock >= suppressChecksUntilMs) {
+                        checkHealth()
+                    }
                 }
             }
+    }
+
+    /**
+     * Decide whether this tick can say anything about plugin health.
+     *
+     * Two ways the process itself stalls, each with its own signature:
+     *
+     * - **The machine slept** (or the wall clock jumped). A monotonic clock does
+     *   not advance across suspend on macOS or Linux, so wall-clock time runs
+     *   ahead of it. Every plugin's heartbeat looks exactly that much older
+     *   than it is.
+     * - **The process froze while awake** - a long GC pause, a breakpoint, a
+     *   starved dispatcher. Both clocks advance together, and this loop's own
+     *   overrun is what gives it away.
+     *
+     * In both cases the heartbeats did not go stale because the plugins are
+     * wedged; they went stale because nothing in this JVM ran. Restarting on
+     * that evidence takes down every loaded plugin at once, which is exactly
+     * what used to happen after a laptop lid was closed.
+     *
+     * @return true when this tick must be discarded.
+     */
+    private fun detectStall(
+        monotonicElapsed: Long,
+        wallClockElapsed: Long,
+        nowWallClock: Long,
+    ): Boolean {
+        val suspendedMs = wallClockElapsed - monotonicElapsed
+        val overrunMs = monotonicElapsed - config.heartbeatIntervalMs
+        val stalledMs = maxOf(suspendedMs, overrunMs)
+        if (stalledMs <= config.stallGraceMs) return false
+
+        // Suppress for a full unhealthy window so the plugins' own heartbeat
+        // coroutines - overdue for the same reason - get to run first.
+        suppressChecksUntilMs = nowWallClock + config.unhealthyThresholdMs
+        healthyChecks = 0
+        logger.info(
+            LogCategory.SYSTEM,
+            "Host stalled, skipping plugin health check",
+            mapOf(
+                "pluginId" to sandbox.pluginId,
+                "stalledMs" to stalledMs,
+                "cause" to if (suspendedMs > overrunMs) "host suspended" else "host frozen",
+                "resumeChecksInMs" to config.unhealthyThresholdMs,
+            ),
+        )
+        return true
     }
 
     /**
@@ -91,10 +168,11 @@ class PluginWatchdog(
             return
         }
 
-        val timeSinceHeartbeat = System.currentTimeMillis() - metrics.lastHeartbeat
+        val timeSinceHeartbeat = wallClockMillis() - metrics.lastHeartbeat
 
         // Check for heartbeat timeout (early return prevents duplicate restart triggers)
         if (timeSinceHeartbeat > config.unhealthyThresholdMs) {
+            healthyChecks = 0
             logger.warn(
                 LogCategory.SYSTEM,
                 "Plugin heartbeat timeout",
@@ -111,6 +189,7 @@ class PluginWatchdog(
 
         // Check for consecutive error threshold (early return prevents duplicate restart triggers)
         if (metrics.consecutiveErrors >= config.maxConsecutiveErrors) {
+            healthyChecks = 0
             logger.warn(
                 LogCategory.SYSTEM,
                 "Plugin exceeded error threshold",
@@ -126,6 +205,7 @@ class PluginWatchdog(
 
         // Log if unhealthy but not yet requiring restart
         if (currentState == SandboxState.UNHEALTHY) {
+            healthyChecks = 0
             logger.debug(
                 LogCategory.SYSTEM,
                 "Plugin is unhealthy but monitoring",
@@ -134,7 +214,35 @@ class PluginWatchdog(
                     "consecutiveErrors" to metrics.consecutiveErrors,
                 ),
             )
+            return
         }
+
+        recordHealthyCheck(metrics)
+    }
+
+    /**
+     * Count a check the plugin passed, and once it has passed enough of them in
+     * a row, forgive its earlier restarts.
+     *
+     * Without this a plugin that hiccups once a week eventually reaches
+     * `maxRestartAttempts` and is disabled for a fault it recovered from days
+     * ago. The counter is cleared here rather than when a restart returns,
+     * because a restart returning is not evidence that anything recovered.
+     */
+    private fun recordHealthyCheck(metrics: PluginHealthMetrics) {
+        healthyChecks++
+        if (healthyChecks < config.healthyChecksToClearRestarts || metrics.restartAttempts <= 0) return
+
+        logger.info(
+            LogCategory.SYSTEM,
+            "Plugin healthy again, clearing restart counter",
+            mapOf(
+                "pluginId" to sandbox.pluginId,
+                "clearedAttempts" to metrics.restartAttempts,
+            ),
+        )
+        sandbox.resetRestartAttempts()
+        healthyChecks = 0
     }
 
     private suspend fun triggerRestart(reason: String) {

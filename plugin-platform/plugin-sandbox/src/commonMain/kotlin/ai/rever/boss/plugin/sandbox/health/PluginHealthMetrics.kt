@@ -69,12 +69,28 @@ data class PluginHealthMetrics(
         )
 
     /**
-     * Creates updated metrics after a successful restart (resets restart attempts).
+     * Creates updated metrics after a restart completed.
+     *
+     * [restartAttempts] deliberately survives. A restart returning without
+     * throwing is not evidence that the plugin recovered - for the in-process
+     * sandbox it cannot throw at all - so zeroing the counter here made
+     * `maxRestartAttempts` unreachable and let a plugin restart-loop forever,
+     * every attempt logged as "attempt 1". The counter is cleared by
+     * [withRestartAttemptsCleared] once the watchdog has actually observed the
+     * plugin stay healthy.
      */
     fun withSuccessfulRestart(): PluginHealthMetrics =
         copy(
             consecutiveErrors = 0,
-            restartAttempts = 0,
             lastHeartbeat = System.currentTimeMillis(),
+        )
+
+    /**
+     * Creates updated metrics after the plugin has proven healthy for a
+     * sustained run, forgiving its earlier restarts.
+     */
+    fun withRestartAttemptsCleared(): PluginHealthMetrics =
+        copy(
+            restartAttempts = 0,
         )
 }

@@ -136,4 +136,8 @@ class OutOfProcessPluginSandbox(
             _state.value = SandboxState.RUNNING
         }
     }
+
+    override fun resetRestartAttempts() {
+        _healthMetrics.update { it.withRestartAttemptsCleared() }
+    }
 }

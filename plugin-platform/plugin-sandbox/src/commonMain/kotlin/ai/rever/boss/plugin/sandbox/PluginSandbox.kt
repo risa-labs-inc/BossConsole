@@ -66,6 +66,18 @@ interface PluginSandbox : PluginSandboxRef {
      * Does NOT count as a crash or restart attempt.
      */
     fun resetHealth()
+
+    /**
+     * Clear the restart counter after the plugin has proven itself healthy
+     * again for a sustained period.
+     *
+     * This is deliberately separate from "the restart call returned": a
+     * restart that merely completes says nothing about whether the plugin
+     * recovered, and zeroing the counter there makes [SandboxConfig.maxRestartAttempts]
+     * unreachable. The watchdog calls this only after
+     * [SandboxConfig.healthyChecksToClearRestarts] consecutive healthy checks.
+     */
+    fun resetRestartAttempts()
 }
 
 /**
@@ -112,4 +124,20 @@ data class SandboxConfig(
      * Maximum delay in milliseconds for restart backoff.
      */
     val restartBackoffMaxMs: Long = 30000,
+    /**
+     * How far the watchdog's own check loop may overrun [heartbeatIntervalMs]
+     * before that tick is discarded as evidence about plugin health.
+     *
+     * Heartbeat age is wall-clock, so anything that freezes the whole process
+     * - the machine sleeping, a long GC pause, a debugger breakpoint - ages
+     * every plugin's heartbeat at once while the plugins themselves are doing
+     * nothing wrong. The watchdog's loop is frozen by the same thing, and that
+     * overrun is the signal used to tell the two apart.
+     */
+    val stallGraceMs: Long = 2000,
+    /**
+     * Consecutive healthy checks a plugin must pass before its restart counter
+     * is cleared. At the default interval this is a minute of good behaviour.
+     */
+    val healthyChecksToClearRestarts: Int = 12,
 )
