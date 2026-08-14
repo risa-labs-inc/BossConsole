@@ -214,6 +214,9 @@ class InProcessPluginSandbox(
      */
     private fun ensureRunnable() {
         synchronized(restartLock) {
+            // isShutdown is only ever produced by stop(); restart() replaces
+            // the reference before retiring the old pool, so a live sandbox
+            // never observes its own executor shut down.
             if (executor.isShutdown) {
                 executor = newExecutor()
                 dispatcher.swap(executor.asCoroutineDispatcher())
@@ -328,13 +331,25 @@ class InProcessPluginSandbox(
             heartbeatJob?.cancel()
             heartbeatJob = null
 
-            // Cancel everything the plugin has in flight. The scope object
-            // stays, inert, so a later start() can re-arm it in place rather
-            // than handing the plugin a scope it will never read again.
-            _sandboxScope.cancelJob()
+            // Under the same lock restart() and ensureRunnable() use. Without
+            // it, a stop() racing a start() could cancel the job and kill the
+            // pool *after* ensureRunnable had inspected both and decided
+            // nothing needed re-arming, leaving the sandbox reporting RUNNING
+            // over a cancelled scope and a dead executor - the silent-inert
+            // state this class exists to prevent. A stop() racing a restart()
+            // could equally cancel the job restart() had just installed, or
+            // retire a pool it no longer owns.
+            val retiring: ExecutorService
+            synchronized(restartLock) {
+                // Cancel everything the plugin has in flight. The scope object
+                // stays, inert, so a later start() can re-arm it in place rather
+                // than handing the plugin a scope it will never read again.
+                _sandboxScope.cancelJob()
+                retiring = executor
+            }
 
-            // Shutdown the executor and wait for termination
-            shutdownExecutor(executor)
+            // Outside the lock, as restart() does: this blocks for seconds.
+            shutdownExecutor(retiring)
         }
     }
 

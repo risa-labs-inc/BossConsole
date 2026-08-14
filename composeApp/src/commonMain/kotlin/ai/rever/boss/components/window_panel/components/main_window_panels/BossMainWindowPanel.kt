@@ -21,6 +21,7 @@ import ai.rever.boss.components.model.TabDropResult
 import ai.rever.boss.components.model.TabDropTarget
 import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.contextMenu
+import ai.rever.boss.components.plugin.DynamicPluginManager
 import ai.rever.boss.components.plugin.TabUpdateRegistry
 import ai.rever.boss.components.plugin.providers.publishSystemEvent
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
@@ -998,15 +999,16 @@ fun BossTabsComponent.BossMainPanelContent(
                         pluginId = sandbox.pluginId,
                         sandbox = sandbox,
                         onRestart = {
+                            // Through the manager, never sandbox.restart()
+                            // directly - see SidePanel's copy of this.
                             scope.launch {
-                                val result = sandbox.restart()
-                                if (result.isFailure) {
+                                val restarted = DynamicPluginManager.restartEverywhere(sandbox.pluginId)
+                                if (!restarted) {
                                     pluginLogger?.error(
                                         LogCategory.UI,
                                         "Failed to restart plugin",
                                         mapOf(
                                             "pluginId" to sandbox.pluginId,
-                                            "error" to (result.exceptionOrNull()?.message ?: "unknown"),
                                         ),
                                     )
                                     StatusMessageManager.showMessage(

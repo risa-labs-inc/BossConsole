@@ -58,11 +58,23 @@ class PluginWatchdog(
     // anywhere in particular.
     private var suppressChecksUntilMonotonic = NO_SUPPRESSION
 
+    // Consecutive ticks discarded as host stalls. Bounded, because a host that
+    // is chronically slow rather than briefly frozen would otherwise re-arm the
+    // suppression on every tick and mute this watchdog for the life of the
+    // process - no checks, no escalation, one INFO line per tick as the only
+    // trace. Sustained scheduler starvation is a condition a watchdog exists to
+    // notice, so past the bound it checks anyway and degrades to late
+    // detection rather than none.
+    private var consecutiveStalls = 0
+
     private companion object {
         const val NANOS_PER_MILLI = 1_000_000L
 
         /** Sentinel for "no stall recovery in progress". */
         const val NO_SUPPRESSION = Long.MIN_VALUE
+
+        /** Stalled ticks in a row before checks resume regardless. */
+        const val MAX_CONSECUTIVE_STALLS = 6
     }
 
     /**
@@ -152,10 +164,27 @@ class PluginWatchdog(
         val suspendedMs = wallClockElapsed - monotonicElapsed
         val overrunMs = monotonicElapsed - config.heartbeatIntervalMs
         val stalledMs = maxOf(suspendedMs, overrunMs)
-        if (stalledMs <= config.stallGraceMs) return false
+        val stalled = stalledMs > config.stallGraceMs
+        consecutiveStalls = if (stalled) consecutiveStalls + 1 else 0
 
-        // Suppress for a full unhealthy window so the plugins' own heartbeat
-        // coroutines - overdue for the same reason - get to run first.
+        return when {
+            !stalled -> false
+            consecutiveStalls > MAX_CONSECUTIVE_STALLS -> resumeDespiteStall(stalledMs)
+            else -> beginStallSuppression(nowMonotonic, stalledMs, suspendedMs > overrunMs)
+        }
+    }
+
+    /**
+     * Arm the recovery window, so the plugins' own heartbeat coroutines -
+     * overdue for the same reason - get to run before anything is judged.
+     *
+     * @return true, so the caller discards this tick.
+     */
+    private fun beginStallSuppression(
+        nowMonotonic: Long,
+        stalledMs: Long,
+        suspended: Boolean,
+    ): Boolean {
         suppressChecksUntilMonotonic = nowMonotonic + config.unhealthyThresholdMs
         healthyChecks = 0
         logger.info(
@@ -164,11 +193,30 @@ class PluginWatchdog(
             mapOf(
                 "pluginId" to sandbox.pluginId,
                 "stalledMs" to stalledMs,
-                "cause" to if (suspendedMs > overrunMs) "host suspended" else "host frozen",
+                "cause" to if (suspended) "host suspended" else "host frozen",
                 "resumeChecksInMs" to config.unhealthyThresholdMs,
             ),
         )
         return true
+    }
+
+    /**
+     * Give up on waiting for a chronically slow host and check anyway.
+     *
+     * @return false, so the caller treats the tick as usable.
+     */
+    private fun resumeDespiteStall(stalledMs: Long): Boolean {
+        logger.warn(
+            LogCategory.SYSTEM,
+            "Host still stalling, checking plugin health anyway",
+            mapOf(
+                "pluginId" to sandbox.pluginId,
+                "consecutiveStalls" to consecutiveStalls,
+                "stalledMs" to stalledMs,
+            ),
+        )
+        suppressChecksUntilMonotonic = NO_SUPPRESSION
+        return false
     }
 
     /**
@@ -190,6 +238,7 @@ class PluginWatchdog(
         // restarted instance to bank is not state worth keeping.
         healthyChecks = 0
         suppressChecksUntilMonotonic = NO_SUPPRESSION
+        consecutiveStalls = 0
     }
 
     private suspend fun checkHealth() {
@@ -204,6 +253,10 @@ class PluginWatchdog(
             currentState == SandboxState.RESTARTING ||
             currentState == SandboxState.DISABLED
         ) {
+            // Reset like every other non-healthy branch, so a streak cannot
+            // span a restart and mean something other than "consecutive
+            // healthy checks".
+            healthyChecks = 0
             return
         }
 

@@ -240,6 +240,29 @@ class PluginWatchdogTest {
             }
 
         @Test
+        fun `a chronically slow host does not mute the watchdog for ever`() =
+            runTest {
+                val h = harness()
+
+                // Every tick overruns the grace: not a lid close, a host that
+                // is simply always late. Re-arming the suppression on each one
+                // would mean checkHealth never runs again for the life of the
+                // watchdog - no restarts, no escalation, one INFO line per tick
+                // as the only trace.
+                repeat(12) {
+                    h.clocks.frozenMs += 4_000
+                    h.tick()
+                }
+
+                assertTrue(
+                    h.restartsRequested.isNotEmpty(),
+                    "a permanently slow host must degrade to late detection, not none",
+                )
+
+                h.watchdog.stop()
+            }
+
+        @Test
         fun `a plugin that never beats again is still restarted after the stall`() =
             runTest {
                 val h = harness()

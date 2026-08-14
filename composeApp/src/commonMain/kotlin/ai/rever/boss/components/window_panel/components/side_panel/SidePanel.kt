@@ -2,6 +2,7 @@ package ai.rever.boss.components.window_panel.components.side_panel
 
 import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.components.model.BossDraggableComponent
+import ai.rever.boss.components.plugin.DynamicPluginManager
 import ai.rever.boss.components.plugin.LocalPanelPluginIdResolver
 import ai.rever.boss.components.plugin.PluginUpdateRegistry
 import ai.rever.boss.components.registery.PanelComponentStore
@@ -239,16 +240,18 @@ internal fun RenderPanelContent(
             pluginId = sandbox.pluginId,
             sandbox = sandbox,
             onRestart = {
-                // Restart the sandbox when user clicks restart
+                // Through the manager, never sandbox.restart() directly: only
+                // the manager notifies the listener that re-runs register(),
+                // and without that the plugin comes back with every
+                // subscription it opened there still closed.
                 scope.launch {
-                    val result = sandbox.restart()
-                    if (result.isFailure) {
+                    val restarted = DynamicPluginManager.restartEverywhere(sandbox.pluginId)
+                    if (!restarted) {
                         logger.error(
                             LogCategory.UI,
                             "Failed to restart plugin",
                             mapOf(
                                 "pluginId" to sandbox.pluginId,
-                                "error" to (result.exceptionOrNull()?.message ?: "unknown"),
                             ),
                         )
                         // Show status message to user about failure

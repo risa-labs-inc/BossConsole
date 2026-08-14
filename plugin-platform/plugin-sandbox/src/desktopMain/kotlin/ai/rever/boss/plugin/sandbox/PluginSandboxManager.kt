@@ -292,6 +292,14 @@ class PluginSandboxManagerImpl(
 
     override fun getSandbox(pluginId: String): PluginSandbox? = sandboxes[pluginId]
 
+    /**
+     * Note the watchdog-then-sandbox order here, in [disablePlugin] and in
+     * [fullyUnloadPlugin]. It is safe at these three sites only because none of
+     * them is reached from inside a watchdog coroutine. The same order in
+     * [handleRestartRequest] stopped the coroutine that was executing it and so
+     * skipped the suspending pool teardown entirely - see the comment there
+     * before reordering any of these to match.
+     */
     override suspend fun removeSandbox(pluginId: String) {
         logger.info(
             LogCategory.SYSTEM,

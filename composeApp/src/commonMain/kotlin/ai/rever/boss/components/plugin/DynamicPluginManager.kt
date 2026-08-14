@@ -17,6 +17,7 @@ import ai.rever.boss.plugin.api.TabRegistry
 import ai.rever.boss.plugin.loader.DynamicPluginLoaderImpl
 import ai.rever.boss.plugin.loader.PluginBinaryIncompatibilityException
 import ai.rever.boss.plugin.loader.PluginUnloadException
+import ai.rever.boss.plugin.sandbox.InProcessPluginSandbox
 import ai.rever.boss.plugin.sandbox.PluginErrorClassifier
 import ai.rever.boss.plugin.sandbox.PluginExecutionBoundary
 import ai.rever.boss.plugin.sandbox.PluginSandboxListener
@@ -112,7 +113,7 @@ interface OutOfProcessPluginSpawner {
 class DynamicPluginManager(
     private val panelRegistry: PanelRegistry,
     private val tabRegistry: TabRegistry,
-    private val sandboxManager: PluginSandboxManager,
+    internal val sandboxManager: PluginSandboxManager,
     private val createSandboxedContext: (pluginId: String, config: SandboxConfig) -> PluginContext,
     private val outOfProcessSpawner: OutOfProcessPluginSpawner? = null,
 ) {
@@ -293,6 +294,54 @@ class DynamicPluginManager(
          * that never loaded the plugin failing is expected and not a failure of
          * the operation.
          */
+
+        /**
+         * Restart a plugin through its manager, in every window that has it.
+         *
+         * The error boundary's Restart button used to call `sandbox.restart()`
+         * directly. That restarts the sandbox but notifies no listener, so
+         * nothing re-runs `register()` - leaving the plugin with its scope alive
+         * and every subscription it opened in `register()` still closed, which
+         * is the state this whole change exists to remove, on the path a user
+         * reaches *after* noticing a plugin is wedged.
+         *
+         * The manual restart also forgives the restart budget. `sandbox.restart()`
+         * banks an attempt and the counter now survives, so three presses of a
+         * button offered to the user as the remedy would have pushed a plugin to
+         * `maxRestartAttempts` and let the next watchdog request disable it. The
+         * budget exists to bound an *automatic* loop; a person asking for a
+         * restart is the same deliberate re-arm as `resetHealth`.
+         *
+         * @return true if at least one manager restarted the plugin.
+         */
+        suspend fun restartEverywhere(pluginId: String): Boolean {
+            val managers = activeManagers()
+            var anyRestarted = false
+            for (manager in managers.filter { it.getPluginInfo(pluginId) != null }) {
+                val result = runCatching { manager.sandboxManager.restartPlugin(pluginId) }
+                if (result.getOrNull()?.isSuccess == true) {
+                    anyRestarted = true
+                    manager.sandboxManager.getSandbox(pluginId)?.resetRestartAttempts()
+                } else {
+                    val cause = result.exceptionOrNull() ?: result.getOrNull()?.exceptionOrNull()
+                    companionLogger.warn(
+                        LogCategory.SYSTEM,
+                        "Failed to restart a plugin in one manager",
+                        mapOf("pluginId" to pluginId),
+                        cause,
+                    )
+                }
+            }
+            if (!anyRestarted) {
+                companionLogger.warn(
+                    LogCategory.SYSTEM,
+                    "No live plugin manager could restart the plugin",
+                    mapOf("pluginId" to pluginId),
+                )
+            }
+            return anyRestarted
+        }
+
         suspend fun disableEverywhere(pluginId: String): Boolean {
             val managers = activeManagers()
             if (managers.isEmpty()) {
@@ -544,7 +593,13 @@ class DynamicPluginManager(
                 // state and build panel factories - the two existing paths that
                 // re-register a loaded instance, handleAccessChange and the
                 // Toolbox's enable, both already run there.
-                managerScope.launch(Dispatchers.Main) { reregisterAfterRestart(pluginId) }
+                // runCatching, because managerScope carries a SupervisorJob but
+                // no CoroutineExceptionHandler: runAttributed rethrows, and
+                // Dispatchers.Main throws outright on a headless host, either of
+                // which would otherwise reach the default handler.
+                managerScope.launch(Dispatchers.Main) {
+                    runCatching { reregisterAfterRestart(pluginId) }
+                }
             }
         }
 
@@ -1378,11 +1433,11 @@ class DynamicPluginManager(
      * `restartAttempts` stopped being zeroed by every restart. Without that
      * fix this method would be a restart loop.
      */
-    suspend fun reregisterAfterRestart(pluginId: String): Result<Unit> {
+    internal suspend fun reregisterAfterRestart(pluginId: String): Result<Unit> {
         val result =
             mutex.withLock {
                 val info = _pluginStates.value[pluginId]
-                if (!shouldReregisterAfterRestart(info)) {
+                if (info == null || !shouldReregisterAfterRestart(info)) {
                     logger.debug(
                         LogCategory.SYSTEM,
                         "Skipping re-registration for a plugin that is not running",
@@ -1436,11 +1491,34 @@ class DynamicPluginManager(
                             e,
                         )
                     }
+                if (outcome.isFailure) disableAfterFailedReregister(pluginId, info)
+                outcome
             }
         // Outside the mutex, same as enablePlugin: a panel open across the
-        // restart still holds its pre-restart component.
-        if (result.isSuccess) notifyPanelsRefresh(pluginId)
+        // restart still holds its pre-restart component. Refreshed on failure
+        // too - the plugin has just been unregistered and disabled, and a panel
+        // still drawing the old component over nothing is worse than one
+        // rebuilt against an empty registry, which is what shows the fallback.
+        notifyPanelsRefresh(pluginId)
         return result
+    }
+
+    /**
+     * Mark a plugin that failed to come back from a restart as disabled.
+     *
+     * Logging alone left it with zero registrations, state still LOADED and
+     * enabled still true: no fallback UI, no toast, and an open panel rendering
+     * its pre-restart component over an empty registry. That is the same
+     * looks-alive-does-nothing failure this change removes, reached from
+     * another direction. DISABLED is what `PluginErrorBoundary` gates its
+     * fallback on, and what gives the user something to re-enable.
+     */
+    private fun disableAfterFailedReregister(
+        pluginId: String,
+        info: DynamicPluginInfo,
+    ) {
+        (sandboxManager.getSandbox(pluginId) as? InProcessPluginSandbox)?.setDisabled()
+        updatePluginState(pluginId, info.copy(state = PluginState.DISABLED, enabled = false))
     }
 
     /** Invoke [pluginPanelsRefresh] with [pluginId]'s currently-registered panels; never throws. */
