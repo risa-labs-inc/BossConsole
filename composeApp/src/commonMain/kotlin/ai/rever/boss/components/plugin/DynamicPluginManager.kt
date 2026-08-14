@@ -1391,7 +1391,14 @@ class DynamicPluginManager(
                             "state" to (info?.state?.name ?: "absent"),
                         ),
                     )
-                    return@withLock Result.success(Unit)
+                    // Returns from the whole function, not just the lock, so the
+                    // refresh below is skipped too. Reporting success and
+                    // falling through rebuilt the components of a plugin nothing
+                    // had re-registered - discarding an open panel's in-memory
+                    // state for nothing, which is the same cost enablePlugin
+                    // avoids with wasAlreadyEnabled, and racing an unload that
+                    // is still in progress.
+                    return Result.success(Unit)
                 }
 
                 val loadedPlugin = pluginLoader.getPlugin(pluginId)
@@ -1406,7 +1413,6 @@ class DynamicPluginManager(
                     PluginExecutionBoundary.runAttributed(pluginId) {
                         reregisterInPlace(
                             unregisterAll = { trackingContext.unregisterAll() },
-                            dispose = { loadedPlugin.instance.dispose() },
                             register = { loadedPlugin.instance.register(trackingContext) },
                         )
                     }
@@ -2086,13 +2092,24 @@ class DynamicPluginManager(
 }
 
 /**
- * The unregister / dispose / register sequence [DynamicPluginManager.reregisterAfterRestart]
- * runs, as a pure ordering so the three failure rules can be tested without a
- * loaded jar behind them.
+ * The unregister / register sequence [DynamicPluginManager.reregisterAfterRestart]
+ * runs, as a pure ordering so its failure rules can be tested without a loaded
+ * jar behind them.
  *
- * - A [dispose] that throws does not abort the sequence. Stopping there would
- *   leave the plugin unregistered, which is strictly worse than the restarted
- *   state it was called to repair.
+ * **`dispose()` is deliberately not called.** An earlier version did, on the
+ * reasoning that disposing before registering is the documented lifecycle - but
+ * it is only the documented *unload* lifecycle. `dispose()` has never been
+ * followed by anything: the sole other caller is `DynamicPluginLoader`,
+ * immediately before it closes the classloader, and `disablePlugin` does not
+ * dispose at all, which is why `enablePlugin` can call `register()` straight
+ * onto the live instance. A `dispose()` -> `register()` transition is one no
+ * plugin has been written against, and the pattern most at risk is the very one
+ * this change exists to fix: a plugin that cancels a scope it owns as a field
+ * would come back from `register()` attaching its work to a permanently
+ * cancelled scope, silently. Matching disable/enable exactly keeps the
+ * sequence to one plugins already survive - and it is enough, because what the
+ * restart cancelled was their coroutines, which `register()` starts again.
+ *
  * - A [register] that throws tears down whatever it managed to register first.
  *   Half of a `register()` is panels and agent-callable MCP tools belonging to
  *   a plugin that is not running, which is how a failed recovery leaves live
@@ -2106,12 +2123,10 @@ class DynamicPluginManager(
 @Suppress("TooGenericExceptionCaught")
 internal fun reregisterInPlace(
     unregisterAll: () -> Unit,
-    dispose: () -> Unit,
     register: () -> Unit,
 ): Result<Unit> =
     try {
         unregisterAll()
-        runCatching { dispose() }
         register()
         Result.success(Unit)
     } catch (e: Throwable) {

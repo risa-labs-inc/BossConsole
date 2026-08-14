@@ -42,13 +42,27 @@ class PluginWatchdog(
     // counter once the plugin has stayed healthy long enough to have earned it.
     private var healthyChecks = 0
 
-    // Wall-clock deadline until which health checks are suppressed after a
-    // process-wide stall, giving every plugin's heartbeat coroutine - frozen by
-    // the same stall - a full unhealthy window to run again and prove liveness.
-    private var suppressChecksUntilMs = 0L
+    // Deadline until which health checks are suppressed after a process-wide
+    // stall, giving every plugin's heartbeat coroutine - frozen by the same
+    // stall - a full unhealthy window to run again and prove liveness.
+    //
+    // On the MONOTONIC clock, deliberately. A wall-clock deadline is kept on
+    // the one clock this guard exists to distrust: an NTP correction on wake
+    // can step currentTimeMillis backwards, and an hour of correction is an
+    // hour in which no check for this plugin ever runs again - a genuinely
+    // wedged plugin never restarted, with one "Host stalled" line an hour
+    // earlier as the only trace. It also behaves better across a second
+    // suspend, since a monotonic deadline does not advance while the machine
+    // is asleep, so the grace covers the resume instead of being spent on it.
+    // NO_SUPPRESSION rather than 0 because monotonic values are not anchored
+    // anywhere in particular.
+    private var suppressChecksUntilMonotonic = NO_SUPPRESSION
 
     private companion object {
         const val NANOS_PER_MILLI = 1_000_000L
+
+        /** Sentinel for "no stall recovery in progress". */
+        const val NO_SUPPRESSION = Long.MIN_VALUE
     }
 
     /**
@@ -98,9 +112,9 @@ class PluginWatchdog(
                         suppressIfHostStalled(
                             monotonicElapsed = nowMonotonic - beforeMonotonic,
                             wallClockElapsed = nowWallClock - beforeWallClock,
-                            nowWallClock = nowWallClock,
+                            nowMonotonic = nowMonotonic,
                         )
-                    if (!stalled && nowWallClock >= suppressChecksUntilMs) {
+                    if (!stalled && nowMonotonic >= suppressChecksUntilMonotonic) {
                         checkHealth()
                     }
                 }
@@ -133,7 +147,7 @@ class PluginWatchdog(
     private fun suppressIfHostStalled(
         monotonicElapsed: Long,
         wallClockElapsed: Long,
-        nowWallClock: Long,
+        nowMonotonic: Long,
     ): Boolean {
         val suspendedMs = wallClockElapsed - monotonicElapsed
         val overrunMs = monotonicElapsed - config.heartbeatIntervalMs
@@ -142,7 +156,7 @@ class PluginWatchdog(
 
         // Suppress for a full unhealthy window so the plugins' own heartbeat
         // coroutines - overdue for the same reason - get to run first.
-        suppressChecksUntilMs = nowWallClock + config.unhealthyThresholdMs
+        suppressChecksUntilMonotonic = nowMonotonic + config.unhealthyThresholdMs
         healthyChecks = 0
         logger.info(
             LogCategory.SYSTEM,
@@ -175,7 +189,7 @@ class PluginWatchdog(
         // in practice, but leaving a half-finished healthy streak behind for a
         // restarted instance to bank is not state worth keeping.
         healthyChecks = 0
-        suppressChecksUntilMs = 0
+        suppressChecksUntilMonotonic = NO_SUPPRESSION
     }
 
     private suspend fun checkHealth() {

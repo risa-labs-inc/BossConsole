@@ -73,32 +73,21 @@ class ReregisterAfterRestartTest {
     }
 
     @Test
-    fun `the sequence unregisters, disposes and registers in that order`() {
+    fun `the sequence unregisters then registers, and does not dispose`() {
         val calls = mutableListOf<String>()
 
         val result =
             reregisterInPlace(
                 unregisterAll = { calls.add("unregister") },
-                dispose = { calls.add("dispose") },
                 register = { calls.add("register") },
             )
 
         assertTrue(result.isSuccess)
-        assertEquals(listOf("unregister", "dispose", "register"), calls)
-    }
-
-    @Test
-    fun `a dispose that throws does not stop the re-register`() {
-        val calls = mutableListOf<String>()
-
-        val result =
-            reregisterInPlace(
-                unregisterAll = { calls.add("unregister") },
-                dispose = { throw IllegalStateException("plugin dispose blew up") },
-                register = { calls.add("register") },
-            )
-
-        assertTrue(result.isSuccess, "stopping here would leave the plugin unregistered")
+        // Exactly what disablePlugin/enablePlugin do between them. dispose()
+        // has only ever preceded a classloader close, so a dispose() ->
+        // register() no plugin was written against would relocate this PR's own
+        // bug into them: one that cancels a scope it owns as a field comes back
+        // attaching every launch to a cancelled scope, silently.
         assertEquals(listOf("unregister", "register"), calls)
     }
 
@@ -109,7 +98,6 @@ class ReregisterAfterRestartTest {
         val result =
             reregisterInPlace(
                 unregisterAll = { calls.add("unregister") },
-                dispose = {},
                 register = {
                     calls.add("register")
                     error("register blew up")
@@ -134,8 +122,7 @@ class ReregisterAfterRestartTest {
                     unregisterCalls++
                     if (unregisterCalls == 2) error("teardown blew up too")
                 },
-                dispose = {},
-                register = { throw IllegalStateException("the real problem") },
+                register = { error("the real problem") },
             )
 
         assertTrue(result.isFailure)

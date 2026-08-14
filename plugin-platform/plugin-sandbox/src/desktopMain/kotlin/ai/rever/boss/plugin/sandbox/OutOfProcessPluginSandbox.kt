@@ -127,11 +127,14 @@ class OutOfProcessPluginSandbox(
     override fun resetHealth() {
         logger.info(LogCategory.SYSTEM, "Resetting out-of-process sandbox health", mapOf("pluginId" to pluginId))
         _healthMetrics.update {
-            it.copy(
-                consecutiveErrors = 0,
-                restartAttempts = 0,
-                lastHeartbeat = System.currentTimeMillis(),
-            )
+            // Composed, so "clear the counter" has one definition shared
+            // with resetRestartAttempts rather than two to keep in sync.
+            it
+                .withRestartAttemptsCleared()
+                .copy(
+                    consecutiveErrors = 0,
+                    lastHeartbeat = System.currentTimeMillis(),
+                )
         }
         if (_state.value == SandboxState.UNHEALTHY) {
             _state.value = SandboxState.RUNNING

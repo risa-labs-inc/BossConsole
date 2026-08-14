@@ -1,6 +1,9 @@
 package ai.rever.boss.plugin.sandbox
 
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
@@ -298,6 +301,107 @@ class PluginSandboxManagerTest {
                 manager.dispose()
 
                 assertTrue(manager.getAllSandboxes().isEmpty())
+            }
+    }
+
+    /**
+     * The give-up path, which used to be unreachable: `restartAttempts` was
+     * zeroed by every restart, so no plugin ever reached its budget. It is
+     * reachable now, and it is the branch that produces the user-visible
+     * "plugin disabled" outcome, so all of its effects matter.
+     */
+    @Nested
+    inner class RestartBudgetTests {
+        /**
+         * Driven through a real watchdog rather than by calling
+         * [PluginSandboxManagerImpl.handleRestartRequest] directly, because the
+         * bug this pins only exists when that code runs *inside* the watchdog's
+         * own coroutine - which is where the real path puts it (checkHealth ->
+         * triggerRestart -> onRestartRequested). Called directly from a test
+         * coroutine, stopping the watchdog cancels somebody else and the
+         * teardown completes either way: the first version of this test passed
+         * against the bug it was written for.
+         *
+         * The trigger is the consecutive-error threshold, not a stale
+         * heartbeat, because the sandbox's own heartbeat job keeps beating and
+         * a heartbeat timeout would need the test to outwait it.
+         */
+        @Test
+        fun `exhausting the budget disables the plugin and does not strand its thread pool`() =
+            runBlocking {
+                val config =
+                    SandboxConfig(
+                        maxThreads = 2,
+                        heartbeatIntervalMs = 50,
+                        // Neither the heartbeat nor the stall guard should be
+                        // what fires here.
+                        unhealthyThresholdMs = 60_000,
+                        stallGraceMs = 60_000,
+                        maxConsecutiveErrors = 1,
+                        // So the very first request is already over budget.
+                        maxRestartAttempts = 0,
+                    )
+                val budgetManager = PluginSandboxManagerImpl(config)
+                try {
+                    var disabledNotification: String? = null
+                    val listener =
+                        object : PluginSandboxListener {
+                            override fun onPluginDisabled(pluginId: String) {
+                                disabledNotification = pluginId
+                            }
+                        }
+                    budgetManager.addListener(listener)
+
+                    // Passed explicitly: createSandbox defaults to a stock
+                    // SandboxConfig, not the manager's defaultConfig.
+                    val sandbox = budgetManager.createSandbox("plugin-1", config) as InProcessPluginSandbox
+                    sandbox.start()
+                    sandbox.recordError(RuntimeException("wedged"))
+
+                    val disabled =
+                        withTimeoutOrNull(10_000) {
+                            while (sandbox.state.value != SandboxState.DISABLED) delay(20)
+                            true
+                        } ?: false
+
+                    // All four have to happen. Landing on STOPPED without
+                    // setDisabled() leaves PluginErrorBoundary rendering the
+                    // plugin normally over a dead scope, with no notification
+                    // and isPluginDisabled() false - invisible to the user.
+                    assertTrue(disabled, "the plugin was never marked disabled")
+                    assertTrue(budgetManager.isPluginDisabled("plugin-1"))
+                    assertEquals("plugin-1", disabledNotification)
+
+                    val terminated =
+                        withTimeoutOrNull(5_000) {
+                            while (!sandbox.isExecutorTerminated()) delay(20)
+                            true
+                        } ?: false
+                    assertTrue(
+                        terminated,
+                        "the thread pool leaked: stopping the watchdog first cancels the very coroutine " +
+                            "running this teardown, and sandbox.stop() suspends to retire the pool",
+                    )
+                } finally {
+                    budgetManager.dispose()
+                }
+            }
+
+        @Test
+        fun `a plugin's own restart budget is used, not the manager default`() =
+            runTest {
+                // The manager default is 3 (see setUp). Nothing about
+                // cancellation here, so the request can be made directly.
+                val generous = SandboxConfig(maxRestartAttempts = 5)
+                manager.createSandbox("plugin-generous", generous).start()
+
+                repeat(4) { manager.restartPlugin("plugin-generous") }
+                manager.handleRestartRequest("plugin-generous")
+
+                assertFalse(
+                    manager.isPluginDisabled("plugin-generous"),
+                    "a plugin declaring its own budget had the manager default applied to it",
+                )
             }
     }
 }

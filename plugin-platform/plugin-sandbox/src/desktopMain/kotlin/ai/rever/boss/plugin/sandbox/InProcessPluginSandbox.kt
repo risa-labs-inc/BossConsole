@@ -37,7 +37,8 @@ import kotlin.coroutines.CoroutineContext
  */
 class InProcessPluginSandbox(
     override val pluginId: String,
-    private val config: SandboxConfig = SandboxConfig(),
+    /** Readable by the manager, which enforces this plugin's restart budget. */
+    internal val config: SandboxConfig = SandboxConfig(),
 ) : PluginSandbox {
     private val logger = BossLogger.forComponent("InProcessPluginSandbox")
 
@@ -466,17 +467,29 @@ class InProcessPluginSandbox(
             ),
         )
         _healthMetrics.update {
-            it.copy(
-                consecutiveErrors = 0,
-                restartAttempts = 0,
-                lastHeartbeat = System.currentTimeMillis(),
-            )
+            // Composed, so "clear the counter" has one definition shared
+            // with resetRestartAttempts rather than two to keep in sync.
+            it
+                .withRestartAttemptsCleared()
+                .copy(
+                    consecutiveErrors = 0,
+                    lastHeartbeat = System.currentTimeMillis(),
+                )
         }
         // If sandbox was unhealthy, mark it as running again
         if (_state.value == SandboxState.UNHEALTHY) {
             _state.value = SandboxState.RUNNING
         }
     }
+
+    /**
+     * Whether the plugin's thread pool actually went away.
+     *
+     * Exposed for the teardown test: the pool is non-daemon and fixed-size, so
+     * a stop that silently skipped its shutdown strands two threads for the
+     * life of the process with nothing else to observe it by.
+     */
+    internal fun isExecutorTerminated(): Boolean = executor.isTerminated
 
     override fun resetRestartAttempts() {
         _healthMetrics.update { it.withRestartAttemptsCleared() }

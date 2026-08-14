@@ -185,15 +185,18 @@ class PluginSandboxManagerImpl(
     private val sandboxes = ConcurrentHashMap<String, InProcessPluginSandbox>()
     private val watchdogs = ConcurrentHashMap<String, PluginWatchdog>()
 
-    // The config each sandbox was created with. Plugins can declare their own
-    // sandbox settings in the manifest, so the restart budget and backoff below
-    // have to be read per plugin: they used to be enforced by the watchdog,
-    // which is built with the plugin's own config, and reading defaultConfig
-    // here would quietly apply the wrong thresholds to any plugin that asked
-    // for something else.
-    private val sandboxConfigs = ConcurrentHashMap<String, SandboxConfig>()
-
-    private fun configFor(pluginId: String): SandboxConfig = sandboxConfigs[pluginId] ?: defaultConfig
+    /**
+     * The config a plugin's sandbox was actually created with.
+     *
+     * Plugins can declare their own sandbox settings, so the restart budget and
+     * backoff have to be read per plugin. They used to be enforced by the
+     * watchdog, which is constructed with the plugin's own config; now that the
+     * decision lives here, reading [defaultConfig] would quietly apply the
+     * wrong thresholds to any plugin that asked for something else. Read off
+     * the sandbox rather than a parallel map, so there is nothing to keep in
+     * sync.
+     */
+    private fun configFor(pluginId: String): SandboxConfig = sandboxes[pluginId]?.config ?: defaultConfig
 
     // Weak references to prevent memory leaks from listeners that aren't removed
     private val listeners = CopyOnWriteArrayList<WeakReference<PluginSandboxListener>>()
@@ -271,7 +274,6 @@ class PluginSandboxManagerImpl(
 
         val sandbox = InProcessPluginSandbox(pluginId, config)
         sandboxes[pluginId] = sandbox
-        sandboxConfigs[pluginId] = config
         healthMonitor.registerSandbox(sandbox)
 
         // Create and start watchdog
@@ -306,7 +308,6 @@ class PluginSandboxManagerImpl(
         // Stop and remove sandbox
         sandboxes[pluginId]?.stop()
         sandboxes.remove(pluginId)
-        sandboxConfigs.remove(pluginId)
 
         // Unregister from health monitor
         healthMonitor.unregisterSandbox(pluginId)
@@ -345,7 +346,6 @@ class PluginSandboxManagerImpl(
             // 3. Stop sandbox
             sandboxes[pluginId]?.stop()
             sandboxes.remove(pluginId)
-            sandboxConfigs.remove(pluginId)
 
             // 4. Remove from disabled set if present
             disabledPlugins.remove(pluginId)
@@ -463,7 +463,12 @@ class PluginSandboxManagerImpl(
 
     override fun getDisabledPlugins(): Set<String> = disabledPlugins.toSet()
 
-    private suspend fun handleRestartRequest(pluginId: String) {
+    /**
+     * What the watchdog asks for when a plugin looks dead. Internal rather than
+     * private so the budget-exhaustion branch - the one path that disables a
+     * plugin outright - is reachable from a test.
+     */
+    internal suspend fun handleRestartRequest(pluginId: String) {
         val sandbox = sandboxes[pluginId] ?: return
         val metrics = sandbox.healthMetrics.value
         val config = configFor(pluginId)
@@ -485,12 +490,22 @@ class PluginSandboxManagerImpl(
                     "attempts" to metrics.restartAttempts,
                 ),
             )
-            // Stop watchdog to prevent further restart attempts
-            watchdogs[pluginId]?.stop()
+            // Order matters, and it is the opposite of what reads naturally.
+            // This runs inside the watchdog's own coroutine (checkHealth ->
+            // triggerRestart -> onRestartRequested), so stopping the watchdog
+            // cancels the coroutine executing these very lines. Everything
+            // after it that suspends is then skipped - and sandbox.stop()
+            // suspends, in the withContext that retires the thread pool, with
+            // the CancellationException swallowed by its own runCatching. Every
+            // plugin disabled this way stranded a two-thread non-daemon pool
+            // for the life of the process. So: tear the sandbox down first,
+            // and stop the watchdog once nothing is left that needs to suspend.
             sandbox.stop()
             sandbox.setDisabled()
             disabledPlugins.add(pluginId)
             notifyListeners { it.onPluginDisabled(pluginId) }
+            // Last: prevents further restart attempts, and cancels us.
+            watchdogs[pluginId]?.stop()
             return
         }
 
@@ -536,7 +551,6 @@ class PluginSandboxManagerImpl(
         // Stop all sandboxes
         sandboxes.values.forEach { it.stop() }
         sandboxes.clear()
-        sandboxConfigs.clear()
 
         // Brief delay to allow pending coroutines to complete before scope cancellation
         kotlinx.coroutines.delay(100)
