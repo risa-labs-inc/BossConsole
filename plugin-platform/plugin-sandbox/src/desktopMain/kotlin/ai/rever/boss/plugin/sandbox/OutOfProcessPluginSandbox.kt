@@ -129,6 +129,7 @@ class OutOfProcessPluginSandbox(
         _healthMetrics.update {
             it.copy(
                 consecutiveErrors = 0,
+                restartAttempts = 0,
                 lastHeartbeat = System.currentTimeMillis(),
             )
         }

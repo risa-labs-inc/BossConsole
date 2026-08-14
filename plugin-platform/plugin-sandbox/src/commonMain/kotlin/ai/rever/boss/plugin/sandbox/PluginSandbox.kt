@@ -64,6 +64,12 @@ interface PluginSandbox : PluginSandboxRef {
      * Reset health metrics after a user-initiated reset.
      * Clears consecutive errors and marks the sandbox as healthy again.
      * Does NOT count as a crash or restart attempt.
+     *
+     * This clears the restart budget too. It is the user saying "this
+     * recovered", and while `restartAttempts` was zeroed by every restart that
+     * was moot; now that the counter survives, a plugin sitting at two attempts
+     * whose user was told it had been reset would still be one hiccup from
+     * being disabled outright.
      */
     fun resetHealth()
 

@@ -77,19 +77,29 @@ class PluginWatchdog(
 
         watchdogJob =
             scope.launch {
-                var lastTickMonotonic = monotonicMillis()
-                var lastTickWallClock = wallClockMillis()
                 while (isActive) {
+                    // Sampled either side of the sleep and nowhere else, so the
+                    // measurement covers the sleep alone. Measuring tick to tick
+                    // instead folded in whatever checkHealth() had just done -
+                    // and it can do a lot: a restart it triggers waits out an
+                    // exponential backoff (up to restartBackoffMaxMs) and then
+                    // blocks in awaitTermination. That reliably overran the
+                    // grace, so every restart of a genuinely wedged plugin
+                    // logged a bogus "host frozen" and then suppressed checks
+                    // for a full unhealthy window, slowing down the one case
+                    // this watchdog is actually for.
+                    val beforeMonotonic = monotonicMillis()
+                    val beforeWallClock = wallClockMillis()
                     delay(config.heartbeatIntervalMs)
-
                     val nowMonotonic = monotonicMillis()
                     val nowWallClock = wallClockMillis()
-                    val monotonicElapsed = nowMonotonic - lastTickMonotonic
-                    val wallClockElapsed = nowWallClock - lastTickWallClock
-                    lastTickMonotonic = nowMonotonic
-                    lastTickWallClock = nowWallClock
 
-                    val stalled = detectStall(monotonicElapsed, wallClockElapsed, nowWallClock)
+                    val stalled =
+                        suppressIfHostStalled(
+                            monotonicElapsed = nowMonotonic - beforeMonotonic,
+                            wallClockElapsed = nowWallClock - beforeWallClock,
+                            nowWallClock = nowWallClock,
+                        )
                     if (!stalled && nowWallClock >= suppressChecksUntilMs) {
                         checkHealth()
                     }
@@ -115,9 +125,12 @@ class PluginWatchdog(
      * that evidence takes down every loaded plugin at once, which is exactly
      * what used to happen after a laptop lid was closed.
      *
+     * Named for its side effect: a detected stall also suppresses the checks
+     * that follow it, for one unhealthy window.
+     *
      * @return true when this tick must be discarded.
      */
-    private fun detectStall(
+    private fun suppressIfHostStalled(
         monotonicElapsed: Long,
         wallClockElapsed: Long,
         nowWallClock: Long,
@@ -157,14 +170,26 @@ class PluginWatchdog(
         )
         watchdogJob?.cancel()
         watchdogJob = null
+        // Bookkeeping that only means anything within one monitoring run.
+        // enablePlugin builds a fresh watchdog today, so nothing inherits these
+        // in practice, but leaving a half-finished healthy streak behind for a
+        // restarted instance to bank is not state worth keeping.
+        healthyChecks = 0
+        suppressChecksUntilMs = 0
     }
 
     private suspend fun checkHealth() {
         val metrics = sandbox.healthMetrics.value
         val currentState = sandbox.state.value
 
-        // Skip checks if sandbox is already stopped or restarting
-        if (currentState == SandboxState.STOPPED || currentState == SandboxState.RESTARTING) {
+        // Skip checks if the sandbox is stopped, restarting or disabled.
+        // DISABLED matters because recordError sets it for binary
+        // incompatibility WITHOUT stopping this watchdog, and a plugin the host
+        // has given up on should not be having its restart budget forgiven.
+        if (currentState == SandboxState.STOPPED ||
+            currentState == SandboxState.RESTARTING ||
+            currentState == SandboxState.DISABLED
+        ) {
             return
         }
 
@@ -231,7 +256,15 @@ class PluginWatchdog(
      */
     private fun recordHealthyCheck(metrics: PluginHealthMetrics) {
         healthyChecks++
-        if (healthyChecks < config.healthyChecksToClearRestarts || metrics.restartAttempts <= 0) return
+        if (healthyChecks < config.healthyChecksToClearRestarts) return
+        // Banked before the restartAttempts test, not after. Returning early on
+        // a zero counter while leaving the streak running let a long-healthy
+        // plugin accumulate an unbounded one, so a restart arriving by a path
+        // that does not reset it - the error boundary's own Restart button -
+        // was forgiven by the very next check. "Cleared after a sustained run"
+        // then would not have been true.
+        healthyChecks = 0
+        if (metrics.restartAttempts <= 0) return
 
         logger.info(
             LogCategory.SYSTEM,
@@ -262,23 +295,22 @@ class PluginWatchdog(
         try {
             val metrics = sandbox.healthMetrics.value
 
-            // Check if we've exceeded max restart attempts
-            if (metrics.restartAttempts >= config.maxRestartAttempts) {
-                logger.error(
-                    LogCategory.SYSTEM,
-                    "Plugin exceeded max restart attempts, disabling",
-                    mapOf(
-                        "pluginId" to sandbox.pluginId,
-                        "restartAttempts" to metrics.restartAttempts,
-                        "maxAttempts" to config.maxRestartAttempts,
-                    ),
-                )
-                sandbox.stop()
-                // Stop watchdog to release resources and prevent further monitoring
-                stop()
-                return
-            }
-
+            // The restart budget is deliberately NOT checked here. This used to
+            // hold a copy of the check in PluginSandboxManager.handleRestartRequest,
+            // and because this one runs first, the manager's was unreachable -
+            // which did not matter while restartAttempts was zeroed by every
+            // restart and neither could fire.
+            //
+            // Making the counter survive a restart made the branch live, and the
+            // copy that won was the worse one: it stopped the sandbox without
+            // calling setDisabled(), so the state landed on STOPPED, and
+            // PluginErrorBoundary only synthesises its fallback UI for DISABLED.
+            // The plugin kept rendering normally over a dead scope, isPluginDisabled()
+            // stayed false, and no notification was raised - the exact
+            // looks-alive-does-nothing state this watchdog change exists to
+            // remove, arrived at from the other side. The manager's version
+            // disables the sandbox, records it and notifies listeners, so the
+            // decision belongs there and only there.
             logger.info(
                 LogCategory.SYSTEM,
                 "Triggering plugin restart",

@@ -4,6 +4,7 @@ import ai.rever.boss.plugin.api.PluginManifest
 import ai.rever.boss.plugin.api.PluginState
 import ai.rever.boss.plugin.api.PluginType
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -69,5 +70,75 @@ class ReregisterAfterRestartTest {
             shouldReregisterAfterRestart(null),
             "uninstalled between the restart and this callback",
         )
+    }
+
+    @Test
+    fun `the sequence unregisters, disposes and registers in that order`() {
+        val calls = mutableListOf<String>()
+
+        val result =
+            reregisterInPlace(
+                unregisterAll = { calls.add("unregister") },
+                dispose = { calls.add("dispose") },
+                register = { calls.add("register") },
+            )
+
+        assertTrue(result.isSuccess)
+        assertEquals(listOf("unregister", "dispose", "register"), calls)
+    }
+
+    @Test
+    fun `a dispose that throws does not stop the re-register`() {
+        val calls = mutableListOf<String>()
+
+        val result =
+            reregisterInPlace(
+                unregisterAll = { calls.add("unregister") },
+                dispose = { throw IllegalStateException("plugin dispose blew up") },
+                register = { calls.add("register") },
+            )
+
+        assertTrue(result.isSuccess, "stopping here would leave the plugin unregistered")
+        assertEquals(listOf("unregister", "register"), calls)
+    }
+
+    @Test
+    fun `a register that throws tears down what it half-registered`() {
+        val calls = mutableListOf<String>()
+
+        val result =
+            reregisterInPlace(
+                unregisterAll = { calls.add("unregister") },
+                dispose = {},
+                register = {
+                    calls.add("register")
+                    error("register blew up")
+                },
+            )
+
+        assertTrue(result.isFailure)
+        assertEquals(
+            listOf("unregister", "register", "unregister"),
+            calls,
+            "a half-registered plugin leaves agent-callable MCP tools live",
+        )
+    }
+
+    @Test
+    fun `a teardown that throws does not mask the original failure`() {
+        var unregisterCalls = 0
+
+        val result =
+            reregisterInPlace(
+                unregisterAll = {
+                    unregisterCalls++
+                    if (unregisterCalls == 2) error("teardown blew up too")
+                },
+                dispose = {},
+                register = { throw IllegalStateException("the real problem") },
+            )
+
+        assertTrue(result.isFailure)
+        assertEquals("the real problem", result.exceptionOrNull()?.message)
     }
 }

@@ -185,6 +185,16 @@ class PluginSandboxManagerImpl(
     private val sandboxes = ConcurrentHashMap<String, InProcessPluginSandbox>()
     private val watchdogs = ConcurrentHashMap<String, PluginWatchdog>()
 
+    // The config each sandbox was created with. Plugins can declare their own
+    // sandbox settings in the manifest, so the restart budget and backoff below
+    // have to be read per plugin: they used to be enforced by the watchdog,
+    // which is built with the plugin's own config, and reading defaultConfig
+    // here would quietly apply the wrong thresholds to any plugin that asked
+    // for something else.
+    private val sandboxConfigs = ConcurrentHashMap<String, SandboxConfig>()
+
+    private fun configFor(pluginId: String): SandboxConfig = sandboxConfigs[pluginId] ?: defaultConfig
+
     // Weak references to prevent memory leaks from listeners that aren't removed
     private val listeners = CopyOnWriteArrayList<WeakReference<PluginSandboxListener>>()
 
@@ -261,6 +271,7 @@ class PluginSandboxManagerImpl(
 
         val sandbox = InProcessPluginSandbox(pluginId, config)
         sandboxes[pluginId] = sandbox
+        sandboxConfigs[pluginId] = config
         healthMonitor.registerSandbox(sandbox)
 
         // Create and start watchdog
@@ -295,6 +306,7 @@ class PluginSandboxManagerImpl(
         // Stop and remove sandbox
         sandboxes[pluginId]?.stop()
         sandboxes.remove(pluginId)
+        sandboxConfigs.remove(pluginId)
 
         // Unregister from health monitor
         healthMonitor.unregisterSandbox(pluginId)
@@ -333,6 +345,7 @@ class PluginSandboxManagerImpl(
             // 3. Stop sandbox
             sandboxes[pluginId]?.stop()
             sandboxes.remove(pluginId)
+            sandboxConfigs.remove(pluginId)
 
             // 4. Remove from disabled set if present
             disabledPlugins.remove(pluginId)
@@ -434,7 +447,7 @@ class PluginSandboxManagerImpl(
                 val watchdog =
                     PluginWatchdog(
                         sandbox = sandbox,
-                        config = defaultConfig,
+                        config = configFor(pluginId),
                         scope = managerScope,
                         onRestartRequested = { id -> handleRestartRequest(id) },
                     )
@@ -453,9 +466,17 @@ class PluginSandboxManagerImpl(
     private suspend fun handleRestartRequest(pluginId: String) {
         val sandbox = sandboxes[pluginId] ?: return
         val metrics = sandbox.healthMetrics.value
+        val config = configFor(pluginId)
 
-        // Check if we've exceeded max restarts
-        if (metrics.restartAttempts >= defaultConfig.maxRestartAttempts) {
+        // Check if we've exceeded max restarts.
+        //
+        // This is the ONLY place the restart budget is enforced. PluginWatchdog
+        // used to hold a copy that ran first and so shadowed this one; it
+        // stopped the sandbox without calling setDisabled(), which meant no
+        // fallback UI, no notification and isPluginDisabled() still false. The
+        // branch was unreachable while every restart zeroed restartAttempts,
+        // and became reachable when the counter started surviving.
+        if (metrics.restartAttempts >= config.maxRestartAttempts) {
             logger.error(
                 LogCategory.SYSTEM,
                 "Plugin exceeded max restart attempts, disabling",
@@ -474,7 +495,7 @@ class PluginSandboxManagerImpl(
         }
 
         // Calculate backoff delay
-        val backoffDelay = calculateBackoff(metrics.restartAttempts)
+        val backoffDelay = calculateBackoff(metrics.restartAttempts, config)
         logger.info(
             LogCategory.SYSTEM,
             "Scheduling plugin restart with backoff",
@@ -488,13 +509,16 @@ class PluginSandboxManagerImpl(
         restartPlugin(pluginId)
     }
 
-    private fun calculateBackoff(attempt: Int): Long {
+    private fun calculateBackoff(
+        attempt: Int,
+        config: SandboxConfig,
+    ): Long {
         // Exponential backoff: baseMs * 2^attempt (e.g., 1s, 2s, 4s, 8s... max 30s)
         // Uses bit shift (1L shl n) as efficient equivalent of 2^n
         // coerceIn handles both negative values and overflow prevention
         val safeAttempt = attempt.coerceIn(0, 30)
-        val delay = defaultConfig.restartBackoffBaseMs * (1L shl safeAttempt)
-        return minOf(delay, defaultConfig.restartBackoffMaxMs)
+        val delay = config.restartBackoffBaseMs * (1L shl safeAttempt)
+        return minOf(delay, config.restartBackoffMaxMs)
     }
 
     override fun getAllSandboxes(): Map<String, PluginSandbox> = sandboxes.toMap()
@@ -512,6 +536,7 @@ class PluginSandboxManagerImpl(
         // Stop all sandboxes
         sandboxes.values.forEach { it.stop() }
         sandboxes.clear()
+        sandboxConfigs.clear()
 
         // Brief delay to allow pending coroutines to complete before scope cancellation
         kotlinx.coroutines.delay(100)

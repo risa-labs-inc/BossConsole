@@ -8,6 +8,7 @@ import kotlinx.coroutines.CompletableJob
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -114,9 +116,18 @@ class InProcessPluginSandbox(
      * A dispatcher whose backing pool can be swapped underneath it.
      *
      * A dispatch that reads the delegate just before a swap can land on a pool
-     * that is shutting down; kotlinx's [CoroutineDispatcher] for an executor
-     * already handles that by cancelling the job and falling back, so the race
-     * needs no handling of its own here.
+     * that is shutting down. kotlinx's executor dispatcher already handles that
+     * - it cancels the job and re-dispatches - so the race needs no handling of
+     * its own here. Worth knowing what it re-dispatches *to*, though: kotlinx's
+     * own shared executor, so for that one block the thread isolation this
+     * sandbox exists to provide is not in force. The window predates this class
+     * and is not widened by it.
+     *
+     * [Delay] is deliberately not forwarded. The pools here are plain fixed
+     * thread pools, never scheduled ones, so the wrapped dispatcher had no
+     * `Delay` to offer either and `delay()` inside plugin coroutines has always
+     * used kotlinx's default. Swapping in a scheduled pool later would need
+     * this revisited.
      */
     private class SwappableDispatcher(
         initial: CoroutineDispatcher,
@@ -144,13 +155,30 @@ class InProcessPluginSandbox(
         @Volatile
         private var job: CompletableJob = SupervisorJob()
 
+        /**
+         * Composed once per job generation rather than per read.
+         *
+         * Two reasons. Plugins launch a great deal of work on this scope and
+         * every `launch` reads this, so rebuilding the context each time is
+         * pure waste. More importantly a single volatile read cannot tear:
+         * composing `dispatcher + job + exceptionHandler` on the fly let a
+         * `launch` racing [resetJob] pick up the job that was about to be
+         * cancelled, and a coroutine attached to an already-cancelled job does
+         * not run and does not throw - the exact failure this class is being
+         * changed to stop. It cannot be eliminated (a caller can always read
+         * microseconds before the swap) but it is bounded to one restart rather
+         * than composed of two different generations.
+         */
+        @Volatile
+        private var context: CoroutineContext = dispatcher + job + exceptionHandler
+
         override val coroutineContext: CoroutineContext
-            get() = dispatcher + job + exceptionHandler
+            get() = context
 
         /** Cancel everything in flight and re-arm for new work. */
         fun resetJob() {
             job.cancel()
-            job = SupervisorJob()
+            install(SupervisorJob())
         }
 
         /** Cancel everything in flight, leaving the scope inert until re-armed. */
@@ -158,9 +186,21 @@ class InProcessPluginSandbox(
             job.cancel()
         }
 
-        /** Re-arm after a [cancelJob], for a disable/enable cycle. */
-        fun ensureActive() {
-            if (!job.isActive) job = SupervisorJob()
+        /**
+         * Re-arm after a [cancelJob], for a disable/enable cycle.
+         *
+         * Deliberately NOT called `ensureActive`: `CoroutineScope.ensureActive()`
+         * is a kotlinx extension that *throws* when the job is cancelled, a
+         * member of that name would win over it inside this class, and the two
+         * meanings are opposites.
+         */
+        fun rearmIfCancelled() {
+            if (!job.isActive) install(SupervisorJob())
+        }
+
+        private fun install(fresh: CompletableJob) {
+            job = fresh
+            context = dispatcher + fresh + exceptionHandler
         }
     }
 
@@ -177,26 +217,35 @@ class InProcessPluginSandbox(
                 executor = newExecutor()
                 dispatcher.swap(executor.asCoroutineDispatcher())
             }
-            _sandboxScope.ensureActive()
+            _sandboxScope.rearmIfCancelled()
         }
     }
 
-    private fun shutdownExecutor(target: ExecutorService) {
-        target.shutdown()
-        try {
-            if (!target.awaitTermination(EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                logger.warn(
-                    LogCategory.SYSTEM,
-                    "Executor didn't terminate gracefully, forcing shutdown",
-                    mapOf(
-                        "pluginId" to pluginId,
-                    ),
-                )
+    /**
+     * Retire a pool, off whatever coroutine worker asked for it.
+     *
+     * [ExecutorService.awaitTermination] blocks for up to two seconds and both
+     * callers are suspend functions reached from Dispatchers.Default, whose
+     * workers are a small shared pool.
+     */
+    private suspend fun shutdownExecutor(target: ExecutorService) {
+        withContext(Dispatchers.IO) {
+            target.shutdown()
+            try {
+                if (!target.awaitTermination(EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Executor didn't terminate gracefully, forcing shutdown",
+                        mapOf(
+                            "pluginId" to pluginId,
+                        ),
+                    )
+                    target.shutdownNow()
+                }
+            } catch (e: InterruptedException) {
                 target.shutdownNow()
+                Thread.currentThread().interrupt()
             }
-        } catch (e: InterruptedException) {
-            target.shutdownNow()
-            Thread.currentThread().interrupt()
         }
     }
 
@@ -419,6 +468,7 @@ class InProcessPluginSandbox(
         _healthMetrics.update {
             it.copy(
                 consecutiveErrors = 0,
+                restartAttempts = 0,
                 lastHeartbeat = System.currentTimeMillis(),
             )
         }

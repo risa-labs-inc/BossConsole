@@ -1402,40 +1402,34 @@ class DynamicPluginManager(
                     )
                 }
 
-                try {
+                val outcome =
                     PluginExecutionBoundary.runAttributed(pluginId) {
-                        trackingContext.unregisterAll()
-                        // A dispose() that throws must not stop the re-register.
-                        // Stopping there would leave the plugin unregistered and
-                        // strictly worse off than before the restart.
-                        runCatching { loadedPlugin.instance.dispose() }
-                        loadedPlugin.instance.register(trackingContext)
+                        reregisterInPlace(
+                            unregisterAll = { trackingContext.unregisterAll() },
+                            dispose = { loadedPlugin.instance.dispose() },
+                            register = { loadedPlugin.instance.register(trackingContext) },
+                        )
                     }
-                    logger.info(
-                        LogCategory.SYSTEM,
-                        "Re-registered plugin after sandbox restart",
-                        mapOf(
-                            "pluginId" to pluginId,
-                        ),
-                    )
-                    Result.success(Unit)
-                } catch (e: Throwable) {
-                    logger.error(
-                        LogCategory.SYSTEM,
-                        "Failed to re-register plugin after sandbox restart",
-                        mapOf(
-                            "pluginId" to pluginId,
-                            "errorType" to e.javaClass.simpleName,
-                        ),
-                        e,
-                    )
-                    // register() may have got half way - panels or MCP tools
-                    // already registered - before throwing. Same teardown as
-                    // enablePlugin, so a plugin that failed to come back cannot
-                    // leave agent-callable tools live.
-                    runCatching { trackingContext.unregisterAll() }
-                    Result.failure(e)
-                }
+                outcome
+                    .onSuccess {
+                        logger.info(
+                            LogCategory.SYSTEM,
+                            "Re-registered plugin after sandbox restart",
+                            mapOf(
+                                "pluginId" to pluginId,
+                            ),
+                        )
+                    }.onFailure { e ->
+                        logger.error(
+                            LogCategory.SYSTEM,
+                            "Failed to re-register plugin after sandbox restart",
+                            mapOf(
+                                "pluginId" to pluginId,
+                                "errorType" to e.javaClass.simpleName,
+                            ),
+                            e,
+                        )
+                    }
             }
         // Outside the mutex, same as enablePlugin: a panel open across the
         // restart still holds its pre-restart component.
@@ -2090,6 +2084,40 @@ class DynamicPluginManager(
         }
     }
 }
+
+/**
+ * The unregister / dispose / register sequence [DynamicPluginManager.reregisterAfterRestart]
+ * runs, as a pure ordering so the three failure rules can be tested without a
+ * loaded jar behind them.
+ *
+ * - A [dispose] that throws does not abort the sequence. Stopping there would
+ *   leave the plugin unregistered, which is strictly worse than the restarted
+ *   state it was called to repair.
+ * - A [register] that throws tears down whatever it managed to register first.
+ *   Half of a `register()` is panels and agent-callable MCP tools belonging to
+ *   a plugin that is not running, which is how a failed recovery leaves live
+ *   tools behind.
+ * - That teardown is itself best effort: its failure must not mask the original
+ *   one, which is the failure worth reporting.
+ */
+// Throwable, not Exception: this runs plugin code across a classloader
+// boundary, where a NoClassDefFoundError from a lazily-resolved class is a
+// routine outcome and must be contained exactly like a thrown exception.
+@Suppress("TooGenericExceptionCaught")
+internal fun reregisterInPlace(
+    unregisterAll: () -> Unit,
+    dispose: () -> Unit,
+    register: () -> Unit,
+): Result<Unit> =
+    try {
+        unregisterAll()
+        runCatching { dispose() }
+        register()
+        Result.success(Unit)
+    } catch (e: Throwable) {
+        runCatching { unregisterAll() }
+        Result.failure(e)
+    }
 
 /**
  * Whether a plugin whose sandbox just restarted should have `register()` run

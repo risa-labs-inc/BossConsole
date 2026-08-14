@@ -120,6 +120,12 @@ class PluginWatchdogTest {
     ) {
         val restartsRequested = mutableListOf<String>()
 
+        /** Clock cost a restart incurs inside the tick that triggered it. */
+        var restartCost: () -> Unit = {}
+
+        /** Model a plugin that stays silent even after being restarted. */
+        var stopBeatingOnRestart = false
+
         /** Run one watchdog check interval of virtual time. */
         fun tick(count: Int = 1) {
             repeat(count) {
@@ -143,9 +149,13 @@ class PluginWatchdogTest {
                 scope = this,
                 onRestartRequested = {
                     harness.restartsRequested.add(it)
+                    // Restarting is not free: the manager waits out a backoff
+                    // and the sandbox blocks in awaitTermination, all inside
+                    // this tick.
+                    harness.restartCost()
                     // A real restart refreshes the heartbeat, which is what
                     // stops the watchdog asking again on the very next tick.
-                    harness.beat()
+                    if (!harness.stopBeatingOnRestart) harness.beat()
                 },
                 monotonicMillis = clocks::monotonic,
                 wallClockMillis = clocks::wallClock,
@@ -166,7 +176,9 @@ class PluginWatchdogTest {
                 h.tick()
                 h.beat()
 
-                // The lid closes for 48 seconds. Only the wall clock moves.
+                // The lid closes: 43s of skew on top of the 5s tick, so the
+                // heartbeat ages the 48 seconds the real logs showed. Only the
+                // wall clock moves.
                 h.clocks.suspendedMs += 43_000
                 h.tick()
 
@@ -186,7 +198,8 @@ class PluginWatchdogTest {
                 h.tick()
                 h.beat()
 
-                // A 48 second stop-the-world pause: both clocks jump together.
+                // A stop-the-world pause of the same length, but both clocks
+                // jump together.
                 h.clocks.frozenMs += 43_000
                 h.tick()
 
@@ -203,7 +216,7 @@ class PluginWatchdogTest {
                 h.tick()
                 h.beat()
 
-                // Wake up with every heartbeat 43 seconds stale.
+                // Wake up with every heartbeat 48 seconds stale.
                 h.clocks.suspendedMs += 43_000
                 h.tick()
 
@@ -263,15 +276,61 @@ class PluginWatchdogTest {
             }
 
         @Test
-        fun `a plugin past its restart budget is stopped rather than restarted`() =
+        fun `a plugin past its restart budget is still delegated, not stopped here`() =
             runTest {
                 val h = harness()
                 h.sandbox.setRestartAttempts(config.maxRestartAttempts)
 
                 h.tick(4)
 
-                assertTrue(h.restartsRequested.isEmpty())
-                assertEquals(1, h.sandbox.stopCount, "the budget is spent, so the plugin is stopped")
+                // The watchdog used to enforce the budget itself, duplicating
+                // the check in PluginSandboxManager.handleRestartRequest and
+                // shadowing it - and the copy that ran was the one that stopped
+                // the sandbox WITHOUT marking it disabled, so no fallback UI,
+                // no notification and no isPluginDisabled. The manager's copy
+                // does all three, so the decision has to reach it.
+                assertEquals(listOf("test-plugin"), h.restartsRequested)
+                assertEquals(0, h.sandbox.stopCount, "stopping is the manager's call, with its own bookkeeping")
+
+                h.watchdog.stop()
+            }
+
+        @Test
+        fun `ordinary jitter under the grace still gets the plugin checked`() =
+            runTest {
+                val h = harness()
+
+                // A late tick, but only by a fraction of the grace - a busy
+                // scheduler, not a stalled host. Discarding these would put the
+                // original bug straight back.
+                h.clocks.frozenMs += 1_500
+                h.tick(4)
+
+                assertEquals(listOf("test-plugin"), h.restartsRequested)
+
+                h.watchdog.stop()
+            }
+
+        @Test
+        fun `the time checkHealth spends restarting is not read as a host freeze`() =
+            runTest {
+                val h = harness()
+                // What a real restart costs inside the tick: an exponential
+                // backoff and then awaitTermination, comfortably over the
+                // grace. Measured tick-to-tick it looked like a frozen host and
+                // suppressed the next 15 seconds of checks on the one plugin
+                // that actually needed watching.
+                h.restartCost = { h.clocks.frozenMs += 4_000 }
+
+                h.tick(4)
+                assertEquals(1, h.restartsRequested.size)
+
+                // Still quiet, so the next window must convict it again rather
+                // than being written off as a stall.
+                h.stopBeatingOnRestart = true
+                h.tick(4)
+
+                assertEquals(2, h.restartsRequested.size, "the watchdog's own restart cost suppressed the next check")
 
                 h.watchdog.stop()
             }
