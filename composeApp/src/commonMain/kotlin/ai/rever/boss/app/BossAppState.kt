@@ -82,9 +82,10 @@ internal class BossAppState(
     var showNewProjectDialog by mutableStateOf(false)
     var showCloneProjectDialog by mutableStateOf(false)
     var projectToOpen by mutableStateOf<Project?>(null)
-    var showSettingsDialog by mutableStateOf(false)
-    var settingsInitialSection by mutableStateOf<String?>(null)
     var showShortcutHelpDialog by mutableStateOf(false)
+
+    /** Settings window visibility, deep-link section and raise-requests. See [SettingsWindowState]. */
+    val settingsWindow = SettingsWindowState()
 
     /**
      * The sign-out confirmation, raised from two places: the top bar's Sign Out button and the

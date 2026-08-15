@@ -22,8 +22,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
+/**
+ * The right icon rail.
+ *
+ * [bottomActions] are host-owned icons pinned below the draggable slots, which is where the focus
+ * mode quick actions go while the top bar is cleared (see `focusQuickActionsPlacement`). Empty by
+ * default and empty most of the time: the bar then reserves nothing for them and is unchanged.
+ */
 @Composable
-fun BossDraggableComponent.BossRightSideBar() {
+fun BossDraggableComponent.BossRightSideBar(bottomActions: List<@Composable () -> Unit> = emptyList()) {
     val visibility by SidebarVisibilitySettingsManager.currentSettings.collectAsState()
     val customizeSlotId = visibility.customizeButtonSlotId
     val customizeOnThisBar = !SidebarVisibilitySettings.isLeftSide(customizeSlotId)
@@ -38,9 +45,13 @@ fun BossDraggableComponent.BossRightSideBar() {
                     slots = listOf(right.top.top, right.top.bottom),
                     settings = visibility,
                     barHeight = maxHeight,
+                    // The bottom actions are not one of the slots above, and they are laid out
+                    // after the weighted spacer - so without reserving for them a full rail
+                    // would push them off the bottom of the window instead of capping an icon.
                     reservedHeight =
                         SidebarIconRail.SectionDivider +
-                            (if (customizeOnThisBar) SidebarIconRail.CustomizeButton else 0.dp),
+                            (if (customizeOnThisBar) SidebarIconRail.CustomizeButton else 0.dp) +
+                            SidebarIconRail.bottomSectionHeight(bottomActions.size),
                 )
             Column(
                 modifier = Modifier.fillMaxSize(),
@@ -62,6 +73,7 @@ fun BossDraggableComponent.BossRightSideBar() {
                     SidebarCustomizeMenu(slot = right.top.bottom)
                 }
                 Spacer(modifier = Modifier.weight(1f))
+                SidebarBottomActions(bottomActions)
             }
         }
     }

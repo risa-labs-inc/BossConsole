@@ -6,6 +6,8 @@ import ai.rever.boss.components.overlays.OverlayCorner
 import ai.rever.boss.components.overlays.overlayCornerIsHeavyweight
 import ai.rever.boss.focusmode.FocusModeEdge
 import ai.rever.boss.focusmode.FocusModeSettings
+import ai.rever.boss.plugin.api.Panel
+import ai.rever.boss.plugin.api.Panel.Companion.left
 import ai.rever.boss.plugin.api.Panel.Companion.top
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.services.supabase.AuthService
@@ -14,6 +16,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.Surface
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Logout
@@ -79,12 +82,154 @@ internal fun focusQuickActionsVisible(
     showTopBar: Boolean,
 ): Boolean = settings.hides(FocusModeEdge.TOP) && !showTopBar
 
+/** Where the three actions belong right now. Mutually exclusive by construction. */
+internal enum class FocusQuickActionsPlacement {
+    /** Nowhere: the top bar is up and still owns them. */
+    NONE,
+
+    /** The bottom of the right icon rail, as ordinary sidebar chrome. */
+    RIGHT_RAIL,
+
+    /** A floating cluster in the content area's bottom-right corner. */
+    FLOATING,
+}
+
+/**
+ * Which of the two renderings the actions get, once [focusQuickActionsVisible] says they are needed
+ * at all.
+ *
+ * **The rail wins whenever there is a rail**, and the floating cluster is the fallback for when
+ * there is not. The cluster is an overlay over live content - on the heavyweight path a native
+ * always-on-top window with no click-through - so it is the more intrusive of the two by some
+ * distance. Where the right sidebar is on screen there is already a strip of icon chrome at the
+ * window's end edge with empty space at the bottom of it, and three more icons there cost nothing
+ * and look like what they are.
+ *
+ * That is not a rare case, it is the **default one on Windows**: `defaultHidesSidebars` leaves both
+ * sidebars up there precisely because hover-reveal cannot fire over a browser tab, while the top
+ * bar is still cleared. Windows is also the platform the floating cluster was built for, so the
+ * common configuration it was meant to serve is exactly the one that now gets the rail instead.
+ *
+ * **Decided from the settings, not from `showRightSidebar`.** The reveal flag starts false on every
+ * window's first composition (see [focusQuickActionsVisible] for the same trap), so keying off it
+ * would put one native always-on-top window on screen per window open before the effect flips it -
+ * the flash the settings half of that predicate exists to prevent. It also keeps the answer stable:
+ * a rail focus mode *does* clear is transient chrome the user hover-revealed, and moving the
+ * cluster into it for two seconds and back out again would be worse than leaving it in the corner.
+ * `hides(RIGHT)` is false exactly when the rail is permanent, which is the question being asked.
+ */
+internal fun focusQuickActionsPlacement(
+    settings: FocusModeSettings,
+    showTopBar: Boolean,
+): FocusQuickActionsPlacement =
+    when {
+        !focusQuickActionsVisible(settings, showTopBar) -> FocusQuickActionsPlacement.NONE
+        settings.hides(FocusModeEdge.RIGHT) -> FocusQuickActionsPlacement.FLOATING
+        else -> FocusQuickActionsPlacement.RIGHT_RAIL
+    }
+
 /** Test tag of the cluster - see `FocusModeQuickActionsTest`. */
 internal const val FOCUS_QUICK_ACTIONS_TAG = "focus-quick-actions"
 
 /**
- * Settings, Search and Sign Out, pinned to the bottom-right of the main content area while focus
- * mode has the top bar cleared.
+ * The three actions as composables the caller lays out, [FocusQuickActionsPlacement.RIGHT_RAIL]
+ * flavour: sidebar-sized icons whose hints point into the window.
+ *
+ * Empty for every other placement, which is what makes this safe to call unconditionally - the list
+ * is also what `BossRightSideBar` reserves rail height from, so an empty one reserves nothing and a
+ * bar that is not hosting the actions is left exactly as it was.
+ */
+internal fun focusQuickActionsRail(
+    placement: FocusQuickActionsPlacement,
+    onShowSettings: () -> Unit,
+    onShowSearch: () -> Unit,
+    onSignOut: () -> Unit,
+): List<@Composable () -> Unit> =
+    if (placement != FocusQuickActionsPlacement.RIGHT_RAIL) {
+        emptyList()
+    } else {
+        focusQuickActionButtons(
+            // Hints point INTO the window. The rail is against the window's end edge, so a hint
+            // laid out to its right would be off screen - the same call the rail's own icons make
+            // through `slot.opposite`.
+            hintDirection = left,
+            // 32.dp, where the floating cluster leaves the buttons at their own 28.dp: in the rail
+            // these have to match the icons above them, and `DraggableSidebarSection` sizes those
+            // the same way. An outer fixed size wins over the inner one BossActionButton applies in
+            // imageVector mode, because a fixed constraint coerces what it wraps.
+            modifier = Modifier.size(SIDEBAR_ICON_SIZE),
+            onShowSettings = onShowSettings,
+            onShowSearch = onShowSearch,
+            onSignOut = onSignOut,
+        )
+    }
+
+/** One rail icon, matching what `DraggableSidebarSection` gives the plugin icons above it. */
+private val SIDEBAR_ICON_SIZE = 32.dp
+
+/**
+ * Settings, Search and Sign Out as three separate composables, in the order both hosts want them.
+ *
+ * One definition, two layouts. The **order carries the same intent on both axes**: Sign Out first,
+ * so the destructive action is the one furthest from the window corner - leftmost in the floating
+ * row, topmost in the bottom-anchored rail column - rather than the one sitting in it. That is also
+ * the order `BossTopRightBar` uses, which is where these three live when the top bar is up.
+ *
+ * A list rather than a composable that lays them out, because the two hosts disagree about more
+ * than the axis: the rail has to reserve its own height from the *count* before it renders anything
+ * (see `SidebarIconRail.bottomSectionHeight`), and a list is the only shape where the count and the
+ * content cannot drift apart.
+ */
+private fun focusQuickActionButtons(
+    hintDirection: Panel,
+    modifier: Modifier = Modifier,
+    onShowSettings: () -> Unit,
+    onShowSearch: () -> Unit,
+    onSignOut: () -> Unit,
+): List<@Composable () -> Unit> =
+    listOf(
+        {
+            // The only one of the three that reads auth state, and it reads it here rather than in
+            // either host so that neither recomposes when the signed-in address changes.
+            val currentUser by AuthService.currentUser.collectAsState()
+            BossActionButton(
+                imageVector = Icons.AutoMirrored.Outlined.Logout,
+                text = "Sign Out",
+                modifier = modifier,
+                hintText = signOutHint(currentUser?.email),
+                hintDirection = hintDirection,
+                onClick = onSignOut,
+            )
+        },
+        {
+            BossActionButton(
+                imageVector = Icons.Outlined.Search,
+                text = "Search",
+                modifier = modifier,
+                hintText = QuickActionHints.SEARCH,
+                hintDirection = hintDirection,
+                onClick = onShowSearch,
+            )
+        },
+        {
+            BossActionButton(
+                imageVector = Icons.Outlined.Settings,
+                text = "Settings",
+                modifier = modifier,
+                hintText = QuickActionHints.SETTINGS,
+                hintDirection = hintDirection,
+                onClick = onShowSettings,
+            )
+        },
+    )
+
+/**
+ * Settings, Search and Sign Out as a floating cluster pinned to the bottom-right of the main
+ * content area, for when focus mode has cleared the top bar **and** the right sidebar with it.
+ *
+ * The fallback rendering, not the usual one: with the rail on screen the same three actions go at
+ * the bottom of it instead, as ordinary sidebar chrome and with none of the machinery below. See
+ * [focusQuickActionsPlacement] for which is chosen and why.
  *
  * These three live in `BossTopRightBar` and nowhere else, so clearing the top bar takes them with
  * it. The documented way back is to hover the top edge - and that is driven by Compose
@@ -128,8 +273,10 @@ internal const val FOCUS_QUICK_ACTIONS_TAG = "focus-quick-actions"
  *
  * [inset] is the content area's distance from the window's end and bottom edges. The lightweight
  * path aligns inside this `BoxScope` and needs nothing, but the heavyweight path places a window
- * against the whole content pane - so without it the cluster sits over the status bar and the right
- * sidebar, which Windows focus-mode defaults leave visible.
+ * against the whole content pane - so without it the cluster sits over the status bar, and over a
+ * right sidebar the user has hover-revealed. A sidebar focus mode leaves up permanently no longer
+ * reaches this composable at all (that is [FocusQuickActionsPlacement.RIGHT_RAIL]), but a hidden
+ * one still animates in and out under the cluster, which is the case the measurement follows.
  *
  * It is a **lambda, not a value**, so the state read lands in this composable's restart scope. The
  * scaffold builds its tree entirely out of `Box`/`Column`/`Row` content lambdas, which are inline
@@ -234,8 +381,6 @@ private fun QuickActions(
     onShowSearch: () -> Unit,
     onSignOut: () -> Unit,
 ) {
-    val currentUser by AuthService.currentUser.collectAsState()
-
     Surface(
         modifier =
             Modifier
@@ -250,35 +395,16 @@ private fun QuickActions(
         // border is what separates the cluster from the content underneath.
     ) {
         Row(modifier = Modifier.padding(horizontal = BossTheme.space.xs)) {
-            // Same order as BossTopRightBar, which is not only about muscle memory: it puts Sign
-            // Out at the INNER end, so the destructive action is not the one at the very corner of
-            // the window, where it is easiest to hit by accident.
-            //
             // hintDirection = top throughout: the cluster sits on the bottom edge of the content
             // area, so a hint below it would be off the window on the lightweight path. (On the
             // heavyweight path BossActionButton routes hints to SwingTooltip, which places itself,
             // and this is ignored.)
-            BossActionButton(
-                imageVector = Icons.AutoMirrored.Outlined.Logout,
-                text = "Sign Out",
-                hintText = signOutHint(currentUser?.email),
+            focusQuickActionButtons(
                 hintDirection = top,
-                onClick = onSignOut,
-            )
-            BossActionButton(
-                imageVector = Icons.Outlined.Search,
-                text = "Search",
-                hintText = QuickActionHints.SEARCH,
-                hintDirection = top,
-                onClick = onShowSearch,
-            )
-            BossActionButton(
-                imageVector = Icons.Outlined.Settings,
-                text = "Settings",
-                hintText = QuickActionHints.SETTINGS,
-                hintDirection = top,
-                onClick = onShowSettings,
-            )
+                onShowSettings = onShowSettings,
+                onShowSearch = onShowSearch,
+                onSignOut = onSignOut,
+            ).forEach { action -> action() }
         }
     }
 }

@@ -398,13 +398,16 @@ internal fun BossAppDialogs(state: BossAppState) {
     }
 
     // Settings Window - always available, even in focus mode
-    if (state.showSettingsDialog) {
+    if (state.settingsWindow.visible) {
         SettingsWindow(
             onClose = {
-                state.showSettingsDialog = false
-                state.settingsInitialSection = null
+                state.settingsWindow.close()
             },
-            initialSection = state.settingsInitialSection,
+            initialSection = state.settingsWindow.section,
+            // Every Settings affordance routes through openSettings, which bumps this instead of
+            // re-setting a flag that is already set. Without it the second click is silent: the
+            // window stays wherever it was, which is usually behind the main one.
+            focusRequest = state.settingsWindow.focusRequest,
         )
     }
 
@@ -428,8 +431,7 @@ internal fun BossAppDialogs(state: BossAppState) {
                 state.focusRequester.requestFocus()
             },
             onOpenSettings = {
-                state.settingsInitialSection = "KEYMAP"
-                state.showSettingsDialog = true
+                state.settingsWindow.open("KEYMAP")
             },
         )
     }

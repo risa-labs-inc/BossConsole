@@ -257,8 +257,7 @@ internal fun BossAppMenuActionEffects(
         MenuActionsHandler.openSettingsEvents
             .onEach { (eventWindowId, section) ->
                 if (eventWindowId == windowId) {
-                    state.settingsInitialSection = section
-                    state.showSettingsDialog = true
+                    state.settingsWindow.open(section)
                 }
             }.launchIn(this)
     }

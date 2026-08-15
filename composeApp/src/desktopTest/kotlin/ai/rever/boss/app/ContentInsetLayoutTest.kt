@@ -89,9 +89,12 @@ class ContentInsetLayoutTest {
 
     @Test
     fun `the inset is the right sidebar's width and the bottom bar's height`() {
-        // The Windows focus-mode default: the top bar is cleared while both sidebars and - here,
-        // to prove both axes at once - a bottom bar stay up. Anchoring to the window instead of to
-        // the content area is what would put the cluster on top of them.
+        // A hover-revealed right sidebar over a status bar the user kept: the two pieces of chrome
+        // the floating cluster has to hold itself off, proving both axes at once. (A sidebar focus
+        // mode leaves up permanently takes the actions into its own rail instead, so it is a
+        // revealed one that displaces the cluster - and it does so mid-animation, every frame.)
+        // Anchoring to the window instead of to the content area is what would put it on top of
+        // them.
         assertEquals(DpSize(RIGHT_SIDEBAR, BOTTOM_BAR), insetFor(rightSidebar = true, bottomBar = true))
     }
 

@@ -27,6 +27,18 @@ object SidebarIconRail {
 
     /** `SDivider`: 1dp line + 8dp padding on either side. */
     val SectionDivider = 17.dp
+
+    /**
+     * Height a `SidebarBottomActions` section of [rows] icons takes off the rail: its
+     * separating divider, the section's own chrome, and one [RowPitch] per icon.
+     *
+     * Zero for none, so a bar that is not hosting one reserves nothing and its icon
+     * budget is exactly what it was. Unlike the constants above this one is pinned by a
+     * test (`SidebarBottomActionsLayoutTest`) against the section as actually rendered -
+     * over-reserving silently drops an icon into the More menu, under-reserving pushes
+     * the actions off the bottom of the window, and neither is visible anywhere else.
+     */
+    fun bottomSectionHeight(rows: Int): Dp = if (rows <= 0) 0.dp else SectionDivider + SlotChrome + RowPitch * rows
 }
 
 /**

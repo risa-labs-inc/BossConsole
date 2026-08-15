@@ -47,22 +47,41 @@ import kotlinx.coroutines.launch
 actual fun SettingsWindow(
     onClose: () -> Unit,
     initialSection: String?,
+    focusRequest: Int,
 ) {
     var isOpen by remember { mutableStateOf(true) }
 
     if (isOpen) {
+        val windowState =
+            rememberWindowState(
+                size = DisplayUtils.calculateSettingsWindowSize(),
+                position = WindowPosition.Aligned(Alignment.Center),
+            )
         Window(
             onCloseRequest = {
                 isOpen = false
                 onClose()
             },
             title = "BOSS Settings",
-            state =
-                rememberWindowState(
-                    size = DisplayUtils.calculateSettingsWindowSize(),
-                    position = WindowPosition.Aligned(Alignment.Center),
-                ),
+            state = windowState,
         ) {
+            // Raise this window whenever Settings is asked for again. Keyed on the counter, so it
+            // runs once per request and once on the first composition - which is harmless, the
+            // window is brand new and coming to the front is what it should be doing anyway.
+            //
+            // Deiconify FIRST and through WindowState, not window.state: `toFront` on a minimised
+            // window is a no-op on every platform, so without this, clicking Settings with the
+            // window minimised leaves the user exactly where the original bug left them. Compose
+            // owns placement through WindowState, and writing the AWT field behind its back gets
+            // reverted the next time it reconciles.
+            LaunchedEffect(focusRequest) {
+                if (windowState.isMinimized) {
+                    windowState.isMinimized = false
+                }
+                window.toFront()
+                window.requestFocus()
+            }
+
             // Opt this window's dialogs back OUT of heavyweight overlays.
             //
             // SettingsWindow is composed from inside the main window's subtree (BossAppDialogs), so
