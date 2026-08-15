@@ -8,11 +8,15 @@ import ai.rever.boss.plugin.api.TabComponentWithUI
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.api.TabTypeId
 import ai.rever.boss.plugin.api.TabTypeInfo
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Tab
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.arkivanov.decompose.ComponentContext
+
+private val panelHostTabLogger = BossLogger.forComponent("PanelHostTab")
 
 /**
  * Host-internal tab type that renders a sidebar plugin's panel inside a main tab.
@@ -36,6 +40,18 @@ data class PanelHostTabInfo(
     override val typeId: TabTypeId = PanelHostTabType.typeId
 }
 
+/**
+ * The panel a panel-host tab renders, or null when [config] did not come from the host.
+ *
+ * `SplitViewOperations.openTab` resolves a factory purely by [TabInfo.typeId], so any plugin
+ * can hand this one a [TabInfo] of its own carrying [PanelHostTabType]'s id — and until
+ * `openPanelAsTab` existed, one had a reason to try. Reading the panel id with a checked cast
+ * instead of `as` is what keeps that a dead tab and a log line rather than a
+ * ClassCastException thrown from inside the host. Top-level so the rule is testable without a
+ * ComponentContext or a PanelComponentStore.
+ */
+fun panelIdFor(config: TabInfo): PanelId? = (config as? PanelHostTabInfo)?.panelId
+
 class PanelHostTabComponent(
     override val config: TabInfo,
     componentContext: ComponentContext,
@@ -45,11 +61,19 @@ class PanelHostTabComponent(
     ComponentContext by componentContext {
     override val tabTypeInfo: TabTypeInfo = PanelHostTabType
 
-    private val panelId: PanelId = (config as PanelHostTabInfo).panelId
+    private val panelId: PanelId? = panelIdFor(config)
 
     init {
         // One more live tab instance hosting this panel.
-        draggable.markHostedAsTab(panelId)
+        if (panelId != null) {
+            draggable.markHostedAsTab(panelId)
+        } else {
+            panelHostTabLogger.warn(
+                LogCategory.UI,
+                "Ignoring a panel-host tab whose config is not a PanelHostTabInfo",
+                mapOf("tabId" to config.id, "configClass" to config::class.java.name),
+            )
+        }
     }
 
     /**
@@ -62,13 +86,15 @@ class PanelHostTabComponent(
      * sidebar location.
      */
     fun onClosed() {
-        draggable.unmarkHostedAsTab(panelId)
+        // Nothing was marked for a config we could not read, so nothing to unmark.
+        panelId?.let { draggable.unmarkHostedAsTab(it) }
     }
 
     @Composable
     override fun Content() {
-        val component = store.getOrCreateComponent(panelId)
-        RenderPanelContent(component = component, panelId = panelId)
+        val id = panelId ?: return
+        val component = store.getOrCreateComponent(id)
+        RenderPanelContent(component = component, panelId = id)
     }
 }
 

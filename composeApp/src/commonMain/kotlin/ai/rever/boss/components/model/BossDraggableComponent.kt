@@ -153,6 +153,26 @@ class BossDraggableComponent(
         pendingPromoteToTab = null
     }
 
+    /**
+     * "Open this panel in the main area", with the single-instance rule applied: focus the
+     * tab already hosting [panelId] if there is one, otherwise promote it.
+     *
+     * The guard is not optional. [ai.rever.boss.components.window_panel.components.main_window_panels.BossTabsComponent.addTab]
+     * does not dedupe on [ai.rever.boss.plugin.api.TabInfo.id], so promoting twice would leave
+     * two tabs rendering one cached panel component and break the at-most-one assumption
+     * `ProcessPendingFocusHostedTab` scans on. Every entry point that is not itself already
+     * gated on visibility goes through here: the header drag-out below, and
+     * `SplitViewOperations.openPanelAsTab` via `PanelEventBus`. (The panel header's own
+     * "Open as Tab" is only reachable while the panel is showing in the sidebar, which a
+     * hosted-as-tab panel is not, so it calls [requestPromoteToTab] directly.)
+     */
+    fun requestOpenAsTab(
+        panelId: PanelId,
+        target: TabDropTarget? = null,
+    ) {
+        if (isHostedAsTab(panelId)) requestFocusHostedTab(panelId) else requestPromoteToTab(panelId, target)
+    }
+
     private fun leftHalf(r: Rect) = Rect(r.left, r.top, r.left + r.width / 2f, r.bottom)
 
     private fun rightHalf(r: Rect) = Rect(r.left + r.width / 2f, r.top, r.right, r.bottom)
@@ -390,8 +410,7 @@ class BossDraggableComponent(
         // a tab (e.g. dragging its still-visible icon out again), focus that tab instead
         // of creating a duplicate (single-instance — see panelsHostedAsTab).
         if (currentDraggingItem != null && mainTarget != null && currentDropTarget == null) {
-            val pid = currentDraggingItem.first.pluginContentId
-            if (isHostedAsTab(pid)) requestFocusHostedTab(pid) else requestPromoteToTab(pid, mainTarget)
+            requestOpenAsTab(currentDraggingItem.first.pluginContentId, mainTarget)
             return
         }
 

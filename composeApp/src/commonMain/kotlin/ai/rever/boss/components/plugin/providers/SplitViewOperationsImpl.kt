@@ -1,6 +1,7 @@
 package ai.rever.boss.components.plugin.providers
 
 import ai.rever.boss.components.events.FileEventBus
+import ai.rever.boss.components.events.PanelEventBus
 import ai.rever.boss.components.window_panel.SplitOrientation
 import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.plugin.api.SplitViewOperations
@@ -147,6 +148,22 @@ class SplitViewOperationsImpl(
                     splitViewState.splitPanel(source, SplitOrientation.HORIZONTAL, tabToMove = tabInfo)
                 }
             }
+        }
+    }
+
+    override val supportsOpenPanelAsTab: Boolean = true
+
+    override fun openPanelAsTab(panelId: ai.rever.boss.plugin.api.PanelId) {
+        // Via PanelEventBus rather than directly, for the same reason PanelEventProvider's
+        // open/close go that way: this class holds only the SplitViewState and a window id,
+        // while the promote trigger lives on that window's BossDraggableComponent — which the
+        // plugin-context construction site (DefaultPlugin) has no handle on. The bus is already
+        // window-filtered and already forwards over IPC.
+        //
+        // scope is Dispatchers.Main: a plugin may call this from a background thread and the
+        // handler ends in Compose state writes (same reason openTab launches).
+        scope.launch {
+            PanelEventBus.promotePanelToTab(panelId, windowId)
         }
     }
 

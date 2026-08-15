@@ -396,6 +396,20 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
             }.launchIn(this)
     }
 
+    // Listen for "open this panel as a main-area tab" requests — SplitViewOperations.openPanelAsTab.
+    // Deliberately routed to requestOpenAsTab rather than doing the work here: that is the same
+    // entry point the header drag-out uses, so a plugin inherits the move semantics the host's own
+    // promote path has (the cached component and its state carry into the tab, the sidebar copy is
+    // collapsed without being destroyed) and the single-instance rule (already open => focus that
+    // tab, never a second copy). ProcessPendingPromoteToTab, which has SplitView access, performs it.
+    LaunchedEffect(state.draggablePanelComponent, windowId) {
+        PanelEventBus.panelPromoteToTabEvents
+            .filter { event -> event.sourceWindowId == windowId }
+            .onEach { event ->
+                state.draggablePanelComponent.requestOpenAsTab(event.panelId)
+            }.launchIn(this)
+    }
+
     // Listen for panel close events
     // Issue #506: Filter by window to prevent panel closing in all windows
     LaunchedEffect(state.draggablePanelComponent, windowId) {

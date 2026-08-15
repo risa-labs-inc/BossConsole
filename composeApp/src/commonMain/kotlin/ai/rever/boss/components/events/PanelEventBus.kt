@@ -36,6 +36,18 @@ data class PanelToggleEvent(
     val sourceWindowId: String,
 )
 
+/**
+ * Event emitted when a panel should be opened as a tab in the main area — the
+ * programmatic form of the panel header's "Open as Tab". A move, not a copy: the
+ * handler reuses the panel's cached component and collapses the sidebar copy.
+ * @property panelId The panel to promote
+ * @property sourceWindowId The window that initiated this event (required for multi-window support)
+ */
+data class PanelPromoteToTabEvent(
+    val panelId: PanelId,
+    val sourceWindowId: String,
+)
+
 object PanelEventBus {
     /** Optional IPC bridge for forwarding events cross-process in kernel mode. */
     @Volatile var ipcBridge: IpcEventBridge? = null
@@ -55,6 +67,15 @@ object PanelEventBus {
             extraBufferCapacity = 10,
         )
     val panelToggleEvents: SharedFlow<PanelToggleEvent> = _panelToggleEvents.asSharedFlow()
+
+    private val _panelPromoteToTabEvents =
+        MutableSharedFlow<PanelPromoteToTabEvent>(
+            // Deliberately NO replay, unlike panelOpenEvents. Replay there covers the
+            // startup race for a panel that should end up open; replaying a promote would
+            // make every window opened afterwards spawn its own copy of that tab.
+            extraBufferCapacity = 10,
+        )
+    val panelPromoteToTabEvents: SharedFlow<PanelPromoteToTabEvent> = _panelPromoteToTabEvents.asSharedFlow()
 
     suspend fun closePanel(
         panelId: PanelId,
@@ -81,5 +102,14 @@ object PanelEventBus {
         val event = PanelToggleEvent(panelId, sourceWindowId)
         _panelToggleEvents.emit(event)
         ipcBridge?.forward("PanelToggleEvent", event, sourceWindowId)
+    }
+
+    suspend fun promotePanelToTab(
+        panelId: PanelId,
+        sourceWindowId: String,
+    ) {
+        val event = PanelPromoteToTabEvent(panelId, sourceWindowId)
+        _panelPromoteToTabEvents.emit(event)
+        ipcBridge?.forward("PanelPromoteToTabEvent", event, sourceWindowId)
     }
 }
