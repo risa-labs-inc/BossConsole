@@ -223,10 +223,13 @@ internal fun BossAppScaffold(
     // below cannot disagree about it and briefly show both.
     val quickActionsPlacement = focusQuickActionsPlacement(focusModeSettings, reveal.showTopBar)
 
-    // Remembered, not rebuilt each pass. `List<@Composable () -> Unit>` is an unstable parameter
-    // type, so a fresh list every recomposition means BossRightSideBar can never skip and re-runs
-    // computeSlotIconLimits - which walks every slot's items - on each one. The lambdas capture
-    // `state`, which is a single stable instance for the life of this window.
+    // Remembered, not rebuilt each pass, for the allocations and for a stable reserve - NOT to buy
+    // a skip. `kotlin.collections.List` is unstable to Compose's stability inference, so taking one
+    // as a parameter makes BossRightSideBar non-skippable whatever the argument identity: it was
+    // skippable before this feature (no parameters, @Stable receiver) and is not now, and
+    // computeSlotIconLimits re-runs with it. Making it skippable again would take an @Immutable
+    // holder around the two parameters, which is not worth it for a 40dp rail. The lambdas capture
+    // `state`, a single stable instance for the life of this window.
     val quickActionsRail =
         remember(quickActionsPlacement, state) {
             focusQuickActionsRail(

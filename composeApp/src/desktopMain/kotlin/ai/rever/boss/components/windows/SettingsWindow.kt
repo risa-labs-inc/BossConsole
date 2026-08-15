@@ -51,58 +51,57 @@ actual fun SettingsWindow(
     focusRequest: Int,
     sectionRequest: Int,
 ) {
-    var isOpen by remember { mutableStateOf(true) }
-
-    if (isOpen) {
-        val windowState =
-            rememberWindowState(
-                size = DisplayUtils.calculateSettingsWindowSize(),
-                position = WindowPosition.Aligned(Alignment.Center),
-            )
-        Window(
-            onCloseRequest = {
-                isOpen = false
-                onClose()
-            },
-            title = "BOSS Settings",
-            state = windowState,
-        ) {
-            // Raise this window whenever Settings is asked for again. Keyed on the counter, so it
-            // runs once per request and once on the first composition - which is harmless, the
-            // window is brand new and coming to the front is what it should be doing anyway.
-            //
-            // Deiconify FIRST, and through the AWT frame rather than only through WindowState.
-            // `toFront` on a minimised window is a no-op on every platform, so without a restore
-            // that has actually landed, clicking Settings leaves the user exactly where the
-            // original bug left them. Writing WindowState alone does not land in time: it mutates
-            // snapshot state, which Compose applies to the frame in a later pass, so the `toFront`
-            // below would still run against an iconified frame. The frame write takes effect now;
-            // the WindowState write keeps Compose's own model in step with it.
-            LaunchedEffect(focusRequest) {
-                // Unguarded, because clearing the bit is idempotent on a window that is not
-                // minimised - and any guard would have to read the FRAME, never WindowState. The
-                // argument above is precisely that WindowState lags the frame, so gating the
-                // restore on it reintroduces the bug in the window where the two disagree.
-                window.extendedState = window.extendedState and Frame.ICONIFIED.inv()
-                if (windowState.isMinimized) {
-                    windowState.isMinimized = false
-                }
-                window.toFront()
-                window.requestFocus()
+    // No local `isOpen` flag. Composition is already gated by `SettingsWindowState.visible`, and a
+    // second source of truth for "is this window up" is the bug this whole change fixes, waiting to
+    // happen: if the two ever disagreed with `visible` true and nothing composed, every later
+    // open() would take the focusRequest branch and Settings would be a dead button again - this
+    // time permanently, because nothing would be left to reset it. onCloseRequest reports upward
+    // and lets the one owner decide.
+    val windowState =
+        rememberWindowState(
+            size = DisplayUtils.calculateSettingsWindowSize(),
+            position = WindowPosition.Aligned(Alignment.Center),
+        )
+    Window(
+        onCloseRequest = onClose,
+        title = "BOSS Settings",
+        state = windowState,
+    ) {
+        // Raise this window whenever Settings is asked for again. Keyed on the counter, so it
+        // runs once per request and once on the first composition - which is harmless, the
+        // window is brand new and coming to the front is what it should be doing anyway.
+        //
+        // Deiconify FIRST, and through the AWT frame rather than only through WindowState.
+        // `toFront` on a minimised window is a no-op on every platform, so without a restore
+        // that has actually landed, clicking Settings leaves the user exactly where the
+        // original bug left them. Writing WindowState alone does not land in time: it mutates
+        // snapshot state, which Compose applies to the frame in a later pass, so the `toFront`
+        // below would still run against an iconified frame. The frame write takes effect now;
+        // the WindowState write keeps Compose's own model in step with it.
+        LaunchedEffect(focusRequest) {
+            // Unguarded, because clearing the bit is idempotent on a window that is not
+            // minimised - and any guard would have to read the FRAME, never WindowState. The
+            // argument above is precisely that WindowState lags the frame, so gating the
+            // restore on it reintroduces the bug in the window where the two disagree.
+            window.extendedState = window.extendedState and Frame.ICONIFIED.inv()
+            if (windowState.isMinimized) {
+                windowState.isMinimized = false
             }
+            window.toFront()
+            window.requestFocus()
+        }
 
-            // Opt this window's dialogs back OUT of heavyweight overlays.
-            //
-            // SettingsWindow is composed from inside the main window's subtree (BossAppDialogs), so
-            // it inherits LocalHeavyweightOverlays = true from BossWindow. There is no browser
-            // surface here to escape, and routing anyway would be actively wrong: the heavyweight
-            // window measures LocalAwtWindow, which is still the MAIN window, so a settings dialog
-            // would open centered over the main window and - being always-on-top, and deliberately
-            // not dismissed by focus moving within the same application - keep floating above it.
-            CompositionLocalProvider(LocalHeavyweightOverlays provides false) {
-                BossTheme {
-                    SettingsContent(initialSection = initialSection, sectionRequest = sectionRequest)
-                }
+        // Opt this window's dialogs back OUT of heavyweight overlays.
+        //
+        // SettingsWindow is composed from inside the main window's subtree (BossAppDialogs), so
+        // it inherits LocalHeavyweightOverlays = true from BossWindow. There is no browser
+        // surface here to escape, and routing anyway would be actively wrong: the heavyweight
+        // window measures LocalAwtWindow, which is still the MAIN window, so a settings dialog
+        // would open centered over the main window and - being always-on-top, and deliberately
+        // not dismissed by focus moving within the same application - keep floating above it.
+        CompositionLocalProvider(LocalHeavyweightOverlays provides false) {
+            BossTheme {
+                SettingsContent(initialSection = initialSection, sectionRequest = sectionRequest)
             }
         }
     }

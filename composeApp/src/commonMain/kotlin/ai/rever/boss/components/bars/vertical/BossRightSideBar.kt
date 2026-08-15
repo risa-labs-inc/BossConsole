@@ -84,17 +84,33 @@ fun BossDraggableComponent.BossRightSideBar(
                         slot = right.top.top,
                         maxVisibleIcons = iconLimits[right.top.top],
                     )
-                    if (customizeSlotId == SidebarVisibilitySettings.SLOT_RIGHT_TOP_TOP) {
-                        SidebarCustomizeMenu(slot = right.top.top)
-                    }
                     SDivider()
                     DraggableSidebarSection(
                         slot = right.top.bottom,
                         maxVisibleIcons = iconLimits[right.top.bottom],
                     )
-                    if (customizeSlotId == SidebarVisibilitySettings.SLOT_RIGHT_TOP_BOTTOM) {
-                        SidebarCustomizeMenu(slot = right.top.bottom)
-                    }
+                }
+
+                // Outside the clipped region, because its height is reserved outside the slots'
+                // budget and the layout has to agree with the reserve. It is also the wrong thing
+                // to lose: "View - Customize Sidebar..." force-reveals this bar precisely so this
+                // button has somewhere to land, so clipping it away breaks its own recovery path,
+                // and in FIXED icon-limit mode - where reservedHeight is never read - a tall limit
+                // would do exactly that.
+                //
+                // The cost, stated because it is a real one: on this bar the button now sits below
+                // both slots whichever the user dropped it into, rather than under the slot it
+                // belongs to. `slot` still follows that choice, so its hint direction and drag
+                // behaviour are unchanged, and BossLeftSideBar keeps the old shape entirely.
+                if (customizeOnThisBar) {
+                    SidebarCustomizeMenu(
+                        slot =
+                            if (customizeSlotId == SidebarVisibilitySettings.SLOT_RIGHT_TOP_TOP) {
+                                right.top.top
+                            } else {
+                                right.top.bottom
+                            },
+                    )
                 }
                 SidebarBottomActions(bottomActions)
             }
