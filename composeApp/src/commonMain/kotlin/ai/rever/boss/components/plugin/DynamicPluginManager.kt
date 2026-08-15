@@ -627,9 +627,15 @@ class DynamicPluginManager(
                 // re-register a loaded instance, handleAccessChange and the
                 // Toolbox's enable, both already run there.
                 // runCatching, because managerScope carries a SupervisorJob but
-                // no CoroutineExceptionHandler: runAttributed rethrows, and
-                // Dispatchers.Main throws outright on a headless host, either of
+                // no CoroutineExceptionHandler, and runAttributed rethrows -
                 // which would otherwise reach the default handler.
+                //
+                // It does NOT cover a missing main dispatcher, though an earlier
+                // version of this comment claimed it did: that fails at dispatch
+                // time, which completes the coroutine exceptionally before the
+                // body - and so before this runCatching - ever runs. composeApp
+                // always has a main dispatcher, so the gap is theoretical, but
+                // it is not what this line protects.
                 managerScope.launch(Dispatchers.Main) {
                     runCatching { reregisterAfterRestart(pluginId) }
                 }

@@ -236,12 +236,40 @@ class PluginSandboxManagerImpl(
 
     /**
      * Notify all active listeners and clean up dead references.
+     *
+     * A listener that throws is contained, matching the equivalent helper in
+     * `DynamicPluginManager`. The asymmetry mattered once `onPluginRestarted`
+     * started doing real work: it is dispatched from `restartPlugin`, which on
+     * the automatic path runs inside the watchdog's own coroutine
+     * (checkHealth -> triggerRestart -> onRestartRequested -> handleRestartRequest).
+     * An exception escaping a listener escapes `PluginWatchdog`'s
+     * `while (isActive)` loop and completes that job exceptionally, and
+     * `managerScope` carries a SupervisorJob with no CoroutineExceptionHandler -
+     * so the plugin would be left with no health monitoring at all for the rest
+     * of the session, with a default-handler stack trace as the only trace.
+     *
+     * Throwable rather than Exception: this calls out to listeners that reach
+     * plugin code and Compose dispatchers, where an Error is as plausible as an
+     * exception and just as fatal to the loop.
      */
+    @Suppress("TooGenericExceptionCaught")
     private fun notifyListeners(action: (PluginSandboxListener) -> Unit) {
         listeners.removeIf { ref ->
             val listener = ref.get()
             if (listener != null) {
-                action(listener)
+                try {
+                    action(listener)
+                } catch (e: Throwable) {
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Plugin sandbox listener threw, continuing",
+                        mapOf(
+                            "listener" to (listener::class.simpleName ?: "unknown"),
+                            "error" to (e.message ?: e::class.simpleName ?: "unknown"),
+                        ),
+                        e,
+                    )
+                }
                 false // Keep reference
             } else {
                 true // Remove dead reference

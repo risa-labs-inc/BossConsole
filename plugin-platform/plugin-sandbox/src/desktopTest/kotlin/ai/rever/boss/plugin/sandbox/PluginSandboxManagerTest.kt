@@ -259,6 +259,36 @@ class PluginSandboxManagerTest {
             }
 
         @Test
+        fun `a listener that throws does not stop the others or the caller`() =
+            runTest {
+                var secondListenerSaw: String? = null
+                val thrower =
+                    object : PluginSandboxListener {
+                        override fun onPluginRestarted(pluginId: String) = error("listener blew up")
+                    }
+                val survivor =
+                    object : PluginSandboxListener {
+                        override fun onPluginRestarted(pluginId: String) {
+                            secondListenerSaw = pluginId
+                        }
+                    }
+                manager.addListener(thrower)
+                manager.addListener(survivor)
+                val sandbox = manager.createSandbox("plugin-1")
+                sandbox.start()
+
+                // On the automatic path this is dispatched from inside the
+                // watchdog's own coroutine, so an escaping exception completes
+                // that job - leaving the plugin with no health monitoring for
+                // the rest of the session, and only a default-handler stack
+                // trace to show for it.
+                val result = manager.restartPlugin("plugin-1")
+
+                assertTrue(result.isSuccess, "a throwing listener must not fail the restart")
+                assertEquals("plugin-1", secondListenerSaw, "later listeners were skipped")
+            }
+
+        @Test
         fun `removeListener stops receiving events`() =
             runTest {
                 var callCount = 0

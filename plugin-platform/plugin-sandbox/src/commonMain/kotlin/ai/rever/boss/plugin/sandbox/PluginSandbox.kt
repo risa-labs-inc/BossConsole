@@ -146,4 +146,14 @@ data class SandboxConfig(
      * is cleared. At the default interval this is a minute of good behaviour.
      */
     val healthyChecksToClearRestarts: Int = 12,
+    /**
+     * Ticks in a row that may skip the health check, before one runs anyway.
+     *
+     * Counted in ticks, so its wall-clock meaning is entirely
+     * [heartbeatIntervalMs] - which is why it belongs here rather than in a
+     * constant. A plugin declaring a 500ms interval would get a 3 second
+     * ceiling on suppression from a hardcoded 6; one declaring 60s would get
+     * six minutes of a watchdog that is not watching.
+     */
+    val maxSkippedChecks: Int = 6,
 )

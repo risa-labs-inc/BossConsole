@@ -81,9 +81,6 @@ class PluginWatchdog(
 
         /** Sentinel for "no stall recovery in progress". */
         const val NO_SUPPRESSION = Long.MIN_VALUE
-
-        /** Ticks in a row without a health check before one runs regardless. */
-        const val MAX_SKIPPED_CHECKS = 6
     }
 
     /**
@@ -136,7 +133,7 @@ class PluginWatchdog(
                             nowMonotonic = nowMonotonic,
                         )
                     val suppressed = stalled || nowMonotonic < suppressChecksUntilMonotonic
-                    if (suppressed && skippedChecks < MAX_SKIPPED_CHECKS) {
+                    if (suppressed && skippedChecks < config.maxSkippedChecks) {
                         skippedChecks++
                     } else {
                         if (suppressed) resumeDespiteStall()
