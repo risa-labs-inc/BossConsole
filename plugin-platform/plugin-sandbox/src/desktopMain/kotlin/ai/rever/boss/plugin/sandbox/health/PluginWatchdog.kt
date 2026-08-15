@@ -60,15 +60,21 @@ class PluginWatchdog(
     @Volatile
     private var suppressChecksUntilMonotonic = NO_SUPPRESSION
 
-    // Consecutive ticks discarded as host stalls. Bounded, because a host that
-    // is chronically slow rather than briefly frozen would otherwise re-arm the
-    // suppression on every tick and mute this watchdog for the life of the
-    // process - no checks, no escalation, one INFO line per tick as the only
-    // trace. Sustained scheduler starvation is a condition a watchdog exists to
-    // notice, so past the bound it checks anyway and degrades to late
+    // Ticks in a row that did not reach checkHealth, for any reason. Bounded,
+    // because a host that is chronically slow rather than briefly frozen would
+    // otherwise re-arm the suppression for ever and mute this watchdog for the
+    // life of the process - no checks, no escalation, one INFO line per tick as
+    // the only trace. Sustained scheduler starvation is a condition a watchdog
+    // exists to notice, so past the bound it checks anyway and degrades to late
     // detection rather than none.
+    //
+    // Counting SKIPPED CHECKS rather than consecutive stalls, because the two
+    // differ exactly where it matters: a stall on every other tick resets any
+    // consecutive counter, while the 15s deadline each one arms keeps
+    // suppressing the ticks in between. That pattern muted the watchdog just as
+    // completely and slipped straight through a consecutive bound.
     @Volatile
-    private var consecutiveStalls = 0
+    private var skippedChecks = 0
 
     private companion object {
         const val NANOS_PER_MILLI = 1_000_000L
@@ -76,8 +82,8 @@ class PluginWatchdog(
         /** Sentinel for "no stall recovery in progress". */
         const val NO_SUPPRESSION = Long.MIN_VALUE
 
-        /** Stalled ticks in a row before checks resume regardless. */
-        const val MAX_CONSECUTIVE_STALLS = 6
+        /** Ticks in a row without a health check before one runs regardless. */
+        const val MAX_SKIPPED_CHECKS = 6
     }
 
     /**
@@ -129,7 +135,12 @@ class PluginWatchdog(
                             wallClockElapsed = nowWallClock - beforeWallClock,
                             nowMonotonic = nowMonotonic,
                         )
-                    if (!stalled && nowMonotonic >= suppressChecksUntilMonotonic) {
+                    val suppressed = stalled || nowMonotonic < suppressChecksUntilMonotonic
+                    if (suppressed && skippedChecks < MAX_SKIPPED_CHECKS) {
+                        skippedChecks++
+                    } else {
+                        if (suppressed) resumeDespiteStall()
+                        skippedChecks = 0
                         checkHealth()
                     }
                 }
@@ -167,14 +178,8 @@ class PluginWatchdog(
         val suspendedMs = wallClockElapsed - monotonicElapsed
         val overrunMs = monotonicElapsed - config.heartbeatIntervalMs
         val stalledMs = maxOf(suspendedMs, overrunMs)
-        val stalled = stalledMs > config.stallGraceMs
-        consecutiveStalls = if (stalled) consecutiveStalls + 1 else 0
-
-        return when {
-            !stalled -> false
-            consecutiveStalls > MAX_CONSECUTIVE_STALLS -> resumeDespiteStall(stalledMs)
-            else -> beginStallSuppression(nowMonotonic, stalledMs, suspendedMs > overrunMs)
-        }
+        if (stalledMs <= config.stallGraceMs) return false
+        return beginStallSuppression(nowMonotonic, stalledMs, suspendedMs > overrunMs)
     }
 
     /**
@@ -203,23 +208,17 @@ class PluginWatchdog(
         return true
     }
 
-    /**
-     * Give up on waiting for a chronically slow host and check anyway.
-     *
-     * @return false, so the caller treats the tick as usable.
-     */
-    private fun resumeDespiteStall(stalledMs: Long): Boolean {
+    /** Give up on waiting for a chronically slow host and check anyway. */
+    private fun resumeDespiteStall() {
         logger.warn(
             LogCategory.SYSTEM,
             "Host still stalling, checking plugin health anyway",
             mapOf(
                 "pluginId" to sandbox.pluginId,
-                "consecutiveStalls" to consecutiveStalls,
-                "stalledMs" to stalledMs,
+                "skippedChecks" to skippedChecks,
             ),
         )
         suppressChecksUntilMonotonic = NO_SUPPRESSION
-        return false
     }
 
     /**
@@ -241,7 +240,7 @@ class PluginWatchdog(
         // restarted instance to bank is not state worth keeping.
         healthyChecks = 0
         suppressChecksUntilMonotonic = NO_SUPPRESSION
-        consecutiveStalls = 0
+        skippedChecks = 0
     }
 
     private suspend fun checkHealth() {

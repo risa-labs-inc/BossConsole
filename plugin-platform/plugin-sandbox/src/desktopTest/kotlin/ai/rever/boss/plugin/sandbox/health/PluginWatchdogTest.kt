@@ -263,6 +263,27 @@ class PluginWatchdogTest {
             }
 
         @Test
+        fun `a host that stalls every other tick does not mute the watchdog either`() =
+            runTest {
+                val h = harness()
+
+                // The pattern a consecutive-stall bound misses entirely: the
+                // good ticks reset any such counter, while the 15s deadline
+                // each stalled tick arms suppresses the ticks between them.
+                repeat(16) { tick ->
+                    if (tick % 2 == 0) h.clocks.frozenMs += 4_000
+                    h.tick()
+                }
+
+                assertTrue(
+                    h.restartsRequested.isNotEmpty(),
+                    "alternating stalls suppressed every check without ever counting as consecutive",
+                )
+
+                h.watchdog.stop()
+            }
+
+        @Test
         fun `a plugin that never beats again is still restarted after the stall`() =
             runTest {
                 val h = harness()

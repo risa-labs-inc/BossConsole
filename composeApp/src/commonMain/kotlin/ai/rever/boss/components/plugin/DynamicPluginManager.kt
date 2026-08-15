@@ -387,12 +387,20 @@ class DynamicPluginManager(
             val result =
                 runCatching {
                     if (sandboxManager.isPluginDisabled(pluginId)) {
-                        // Clears disabledPlugins, rebuilds the watchdog and
-                        // starts the sandbox. It does not notify
-                        // onPluginRestarted, so re-registration is explicit.
-                        sandboxManager.enablePlugin(pluginId).also {
-                            if (it.isSuccess) manager.reregisterAfterRestart(pluginId)
-                        }
+                        // The manager's enable, not the sandbox manager's.
+                        // Pairing the sandbox-level enable with
+                        // reregisterAfterRestart looked equivalent and was not:
+                        // disableAfterFailedReregister leaves _pluginStates at
+                        // DISABLED/disabled, which is exactly what
+                        // shouldReregisterAfterRestart refuses, so register()
+                        // never ran and the button reported success over a
+                        // plugin with zero registrations. That gate is right -
+                        // it cannot tell a user's disable from the host's - so
+                        // the caller has to use the path that repairs the state
+                        // first. This one registers, fixes _pluginStates,
+                        // clears the crash registry, enables the sandbox and
+                        // refreshes open panels.
+                        manager.enablePlugin(pluginId)
                     } else {
                         sandboxManager.restartPlugin(pluginId)
                     }
