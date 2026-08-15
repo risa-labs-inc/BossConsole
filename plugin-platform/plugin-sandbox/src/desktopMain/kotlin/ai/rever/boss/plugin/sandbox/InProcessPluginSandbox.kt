@@ -362,64 +362,121 @@ class InProcessPluginSandbox(
         }
     }
 
-    override suspend fun restart(): Result<Unit> =
-        runCatching {
-            logger.info(
-                LogCategory.SYSTEM,
-                "Restarting plugin sandbox",
-                mapOf(
-                    "pluginId" to pluginId,
-                    "restartAttempt" to (_healthMetrics.value.restartAttempts + 1),
-                ),
-            )
+    /**
+     * Restart the sandbox: cancel everything the plugin has in flight, give it
+     * a fresh thread pool, and re-arm the scope it captured at register() time.
+     *
+     * Split in two on purpose. Everything that moves the sandbox out of
+     * [SandboxState.RESTARTING] happens in [swapInFreshRuntime], which does not
+     * suspend; only retiring the *old* pool does, and by then the sandbox is
+     * already RUNNING on the new one.
+     *
+     * The order used to be the other way round, and it left a hole: retiring
+     * the old pool suspends in `withContext(Dispatchers.IO)`, so cancelling
+     * there stopped the coroutine before it ever set RUNNING or re-armed the
+     * heartbeat. The sandbox stayed in RESTARTING, which [PluginWatchdog]
+     * skips outright - so nothing restarted it, nothing marked it unhealthy,
+     * and `PluginErrorBoundary` showed no fallback because the state was not
+     * DISABLED. The plugin was invisible to every recovery path there is.
+     *
+     * Reachable, too: both error-boundary Restart buttons run on a Compose
+     * `rememberCoroutineScope`, so closing the tab or switching side panels
+     * during the up-to-two-second `awaitTermination` cancelled exactly here.
+     */
+    override suspend fun restart(): Result<Unit> {
+        logger.info(
+            LogCategory.SYSTEM,
+            "Restarting plugin sandbox",
+            mapOf(
+                "pluginId" to pluginId,
+                "restartAttempt" to (_healthMetrics.value.restartAttempts + 1),
+            ),
+        )
 
-            _state.value = SandboxState.RESTARTING
+        val retiredExecutor =
+            runCatching { swapInFreshRuntime() }
+                .getOrElse { error ->
+                    // Only reachable if the fresh pool cannot be created at all.
+                    // UNHEALTHY rather than RESTARTING because the watchdog
+                    // still looks at UNHEALTHY, so a sandbox this failed on can
+                    // still be seen and retried.
+                    _state.value = SandboxState.UNHEALTHY
+                    logger.error(
+                        LogCategory.SYSTEM,
+                        "Failed to restart plugin sandbox",
+                        mapOf(
+                            "pluginId" to pluginId,
+                        ),
+                        error,
+                    )
+                    return Result.failure(error)
+                }
 
-            // Record the crash
-            _healthMetrics.update { it.withCrash() }
+        logger.info(
+            LogCategory.SYSTEM,
+            "Plugin sandbox restarted successfully",
+            mapOf(
+                "pluginId" to pluginId,
+            ),
+        )
 
-            // Cancel heartbeat job
-            heartbeatJob?.cancel()
-            heartbeatJob = null
+        // Cleanup of the pool the plugin no longer runs on. It has already had
+        // shutdown() called under the lock, so it drains either way; this only
+        // waits for it and force-kills a pool that will not go. Cancellation
+        // here is allowed to propagate - the sandbox is already running, and
+        // swallowing a CancellationException into Result.failure would report a
+        // restart that did happen as one that did not.
+        shutdownExecutor(retiredExecutor)
+        return Result.success(Unit)
+    }
 
-            // Synchronize executor/job swap to prevent other threads from accessing stale references
-            val retiredExecutor: ExecutorService
-            synchronized(restartLock) {
-                // Cancel the plugin's in-flight coroutines and re-arm the scope
-                // for new work. The scope object itself is deliberately kept -
-                // see the note on [sandboxScope].
-                _sandboxScope.resetJob()
+    /**
+     * Swap in a fresh pool and bring the sandbox back to [SandboxState.RUNNING].
+     *
+     * Every statement here is non-suspending, which is the point: the sandbox
+     * passes through RESTARTING - a state the watchdog ignores - and must not
+     * be able to stop inside it.
+     *
+     * @return the retired pool, for the caller to wait on.
+     */
+    private fun swapInFreshRuntime(): ExecutorService {
+        _state.value = SandboxState.RESTARTING
 
-                // Put the fresh pool in place before retiring the old one, so
-                // nothing dispatched during the swap meets a dead executor.
-                retiredExecutor = executor
-                executor = newExecutor()
-                dispatcher.swap(executor.asCoroutineDispatcher())
-                // Under the lock, so a concurrent stop() cannot capture the
-                // pool this restart just installed and retire it instead.
-                retiredExecutor.shutdown()
-            }
+        // Record the crash
+        _healthMetrics.update { it.withCrash() }
 
-            // Retire the old pool outside the lock: awaitTermination blocks for
-            // seconds and would hold every other caller of restartLock behind it.
-            shutdownExecutor(retiredExecutor)
+        // Cancel heartbeat job
+        heartbeatJob?.cancel()
+        heartbeatJob = null
 
-            // Mark as running with successful restart metrics
-            _healthMetrics.update { it.withSuccessfulRestart() }
-            _state.value = SandboxState.RUNNING
-            isRunning.set(true)
+        // Synchronize executor/job swap to prevent other threads from accessing stale references
+        val retiredExecutor: ExecutorService
+        synchronized(restartLock) {
+            // Cancel the plugin's in-flight coroutines and re-arm the scope
+            // for new work. The scope object itself is deliberately kept -
+            // see the note on [sandboxScope].
+            _sandboxScope.resetJob()
 
-            // Start automatic heartbeat recording
-            startHeartbeatJob()
-
-            logger.info(
-                LogCategory.SYSTEM,
-                "Plugin sandbox restarted successfully",
-                mapOf(
-                    "pluginId" to pluginId,
-                ),
-            )
+            // Put the fresh pool in place before retiring the old one, so
+            // nothing dispatched during the swap meets a dead executor.
+            retiredExecutor = executor
+            executor = newExecutor()
+            dispatcher.swap(executor.asCoroutineDispatcher())
+            // Under the lock, so a concurrent stop() cannot capture the
+            // pool this restart just installed and retire it instead.
+            retiredExecutor.shutdown()
         }
+
+        // Mark as running with successful restart metrics
+        _healthMetrics.update { it.withSuccessfulRestart() }
+        _state.value = SandboxState.RUNNING
+        isRunning.set(true)
+
+        // Start automatic heartbeat recording
+        startHeartbeatJob()
+
+        return retiredExecutor
+    }
 
     override fun recordHeartbeat() {
         _healthMetrics.update { it.withHeartbeat() }

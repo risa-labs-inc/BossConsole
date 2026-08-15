@@ -1,15 +1,19 @@
 package ai.rever.boss.plugin.sandbox
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import java.util.concurrent.CountDownLatch
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
@@ -332,6 +336,52 @@ class InProcessPluginSandboxTest {
 
                 assertSame(scopeCapturedAtRegisterTime, sandbox.sandboxScope)
                 assertTrue(ran.await(), "enable left the plugin with a dead scope")
+            }
+    }
+
+    @Nested
+    inner class CancelledRestartTests {
+        /**
+         * The Restart buttons run on a Compose `rememberCoroutineScope`, so
+         * closing the tab or switching side panels mid-restart cancels this.
+         *
+         * The window is widened deliberately: a thread blocked in a latch is
+         * not interruptible by coroutine cancellation, so the retiring pool
+         * cannot terminate and `awaitTermination` waits its full timeout.
+         */
+        @Test
+        fun `a cancelled restart does not strand the sandbox in RESTARTING`() =
+            runBlocking {
+                sandbox.start()
+                val holdThePool = CountDownLatch(1)
+                sandbox.sandboxScope.launch { holdThePool.await() }
+                // Let it actually occupy a pool thread before the swap.
+                withTimeoutOrNull(2_000) {
+                    while (sandbox.healthMetrics.value.lastHeartbeat == 0L) delay(10)
+                }
+
+                val restart = launch(Dispatchers.Default) { sandbox.restart() }
+                // Past the swap: the state has moved off STOPPED either way -
+                // to RUNNING with the fix, to RESTARTING without it.
+                withTimeoutOrNull(2_000) {
+                    while (sandbox.state.value == SandboxState.STOPPED) delay(5)
+                }
+                restart.cancel()
+                restart.join()
+                holdThePool.countDown()
+
+                // RESTARTING is the state PluginWatchdog skips outright, so a
+                // sandbox left there is never restarted, never marked
+                // unhealthy, and shows no fallback UI. It is invisible to every
+                // recovery path there is.
+                assertEquals(SandboxState.RUNNING, sandbox.state.value)
+
+                val ran = CompletableDeferred<Boolean>()
+                sandbox.sandboxScope.launch { ran.complete(true) }
+                assertTrue(
+                    withTimeoutOrNull(5_000) { ran.await() } == true,
+                    "the scope did not survive a cancelled restart",
+                )
             }
     }
 
