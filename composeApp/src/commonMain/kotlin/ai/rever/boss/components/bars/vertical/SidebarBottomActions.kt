@@ -28,12 +28,19 @@ internal const val SIDEBAR_BOTTOM_ACTIONS_TAG = "sidebar-bottom-actions"
  * Renders nothing at all when [actions] is empty, divider included, so a bar with no bottom
  * section is byte-for-byte the bar that existed before there was one.
  *
- * **The caller must reserve [SidebarIconRail.bottomSectionHeight] for it.** This section is
- * outside the slots `computeSlotIconLimits` budgets, and it is laid out *after* the weighted
- * spacer, so in adaptive mode a rail that has spent its whole height on plugin icons will push
- * this off the bottom of the window rather than shrink to fit it. `bottomSectionHeight` is what
- * the two sides agree on and is measured against this layout by a test, because the failure is
- * three actions the user cannot reach and nothing in the build says so.
+ * **The caller must both reserve [SidebarIconRail.bottomSectionHeight] for it and lay it out
+ * outside the weighted region**, and the two do different jobs. The reserve keeps the slots from
+ * spending the whole rail on plugin icons, so an icon folds into its More menu instead of anything
+ * overlapping - but it is advisory only: `computeSlotIconLimits` returns early in
+ * [ai.rever.boss.components.sidebar.SidebarIconLimitMode.FIXED] mode and never reads
+ * `reservedHeight` at all, and no reserve helps a rail too short to hold both. The layout is what
+ * guarantees this section is on screen: give the *slots* the weight and leave this outside it, so
+ * it is measured first and they clip.
+ *
+ * Getting that backwards is not a cosmetic bug. The content pushed past the bottom of the window
+ * is Settings, Search and Sign Out, and in `RIGHT_RAIL` placement the floating cluster is not
+ * rendered as a backstop - on the Windows defaults, where hover-reveal is off, that leaves the OS
+ * menu bar and a keyboard shortcut as the only ways to reach them.
  */
 @Composable
 internal fun ColumnScope.SidebarBottomActions(actions: List<@Composable () -> Unit>) {
@@ -52,21 +59,23 @@ internal fun ColumnScope.SidebarBottomActions(actions: List<@Composable () -> Un
                 .padding(vertical = ROW_GAP),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        actions.forEachIndexed { index, action ->
-            // Positional keys: the list is fixed-length and built fresh each pass, so an index is
-            // the only stable identity there is. It is enough to keep each button's hover state
-            // with the button rather than with the position.
-            key(index) {
-                Box(modifier = Modifier.padding(vertical = ROW_GAP)) { action() }
-            }
+        // No `key`: the list is fixed-length and fixed-order, so positional identity is already
+        // what a key would give, and `QuickActions` invokes the same list the same way.
+        actions.forEach { action ->
+            Box(modifier = Modifier.padding(vertical = ROW_GAP)) { action() }
         }
     }
 }
 
 /**
- * Half the gap between icon rows, applied above and below each - the same 4dp
- * `DraggableSidebarSection` gives the icons above, so the two sections read as one rail rather
- * than as two lists that happen to touch. A 32dp icon plus this on both sides is one
- * [SidebarIconRail.RowPitch].
+ * Half the gap between icon rows, applied above and below each, so a 32dp icon plus this on both
+ * sides is exactly one [SidebarIconRail.RowPitch] and the reserve arithmetic is a whole number of
+ * rows.
+ *
+ * It is the same 4dp `DraggableSidebarSection` puts *between* its icons, which is what makes the
+ * two sections read as one rail. Not identical at the edges though: that section gives its first
+ * and last icons 4dp on the inside only, where every icon here gets 4dp on both - so this
+ * section's outer edges are 8dp against the slots' 4dp. Deliberate, and counted: it is the
+ * `SlotChrome` term in [SidebarIconRail.bottomSectionHeight], which the layout test measures.
  */
 private val ROW_GAP = 4.dp

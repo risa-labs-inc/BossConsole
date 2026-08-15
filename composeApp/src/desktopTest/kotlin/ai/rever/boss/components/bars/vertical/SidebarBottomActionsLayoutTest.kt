@@ -3,12 +3,14 @@ package ai.rever.boss.components.bars.vertical
 import ai.rever.boss.app.FocusQuickActionsPlacement
 import ai.rever.boss.app.focusQuickActionsRail
 import ai.rever.boss.components.sidebar.SidebarIconRail
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertCountEquals
@@ -30,35 +32,54 @@ import kotlin.test.assertTrue
  * The load-bearing claim is that [SidebarIconRail.bottomSectionHeight] equals what this section
  * renders. That number is what the rail subtracts from its own height before dealing icon rows to
  * the draggable slots, and it is a hand-written mirror of padding written somewhere else - the
- * failure mode `SidebarIconRail`'s own KDoc warns about. Under-reserve and a full rail pushes the
- * three actions off the bottom of the window, since they sit *after* the weighted spacer and so
- * lose to the slots rather than shrinking them. Over-reserve and an icon silently drops into the
- * More menu. Both compile, both pass every other gate, and neither is visible until someone with a
- * crowded sidebar opens focus mode.
+ * failure mode `SidebarIconRail`'s own KDoc warns about. Under-reserve and a crowded rail overlaps
+ * or clips its own plugin icons; over-reserve and one silently drops into the More menu. Both
+ * compile, both pass every other gate, and neither is visible until someone with a crowded sidebar
+ * opens focus mode.
+ *
+ * The second claim is about layout order rather than arithmetic: the slots carry the weight and
+ * this section does not, so when the two cannot both fit it is the slots that give way. That is
+ * what keeps the actions reachable in FIXED icon-limit mode, where the reserve is not read at all.
  */
 class SidebarBottomActionsLayoutTest {
     @get:Rule
     val rule = createComposeRule()
 
-    /** What the section renders into, standing in for the rail: fixed width, generous height. */
+    /**
+     * What the section renders into, standing in for the rail: fixed width, [height] tall, with
+     * [slotRows] rows of stand-in plugin icons above it.
+     *
+     * Mirrors `BossRightSideBar`'s real shape, and the important part is which child carries the
+     * weight. The SLOTS do; this section sits outside it. Laid out the other way round - section
+     * after a weighted spacer - a rail whose slots ask for more room than it has pushes the
+     * section past the bottom edge, and no reserve prevents it in FIXED icon-limit mode.
+     */
     @Composable
-    private fun Rail(actions: List<@Composable () -> Unit>) {
+    private fun Rail(
+        actions: List<@Composable () -> Unit>,
+        height: Dp,
+        slotRows: Int,
+    ) {
         Column(
             modifier =
                 Modifier
                     .width(RAIL_WIDTH)
-                    .height(RAIL_HEIGHT)
+                    .height(height)
                     .testTag(RAIL_TAG),
         ) {
-            // The rail's own shape: everything else, then a weighted spacer, then this section.
-            // The spacer is why the reserve matters and why the section is bottom-anchored.
-            Spacer(modifier = Modifier.weight(1f))
+            Column(modifier = Modifier.weight(1f).clipToBounds()) {
+                repeat(slotRows) { Box(modifier = Modifier.size(SidebarIconRail.RowPitch)) }
+            }
             SidebarBottomActions(actions)
         }
     }
 
-    private fun mountRail(actions: List<@Composable () -> Unit>) {
-        rule.setContent { Rail(actions) }
+    private fun mountRail(
+        actions: List<@Composable () -> Unit>,
+        height: Dp = RAIL_HEIGHT,
+        slotRows: Int = 2,
+    ) {
+        rule.setContent { Rail(actions, height, slotRows) }
         rule.waitForIdle()
     }
 
@@ -126,14 +147,21 @@ class SidebarBottomActionsLayoutTest {
         val section = boundsOf(SIDEBAR_BOTTOM_ACTIONS_TAG)
         val rail = boundsOf(RAIL_TAG)
 
-        assertEquals(rail.bottom, section.bottom, "the section is anchored to the rail's bottom edge")
+        // Same 1dp tolerance as the reserve assertion, and for the same reason: these are floats
+        // reconstructed from integer pixels, so exact equality is a promise the layout never made.
+        assertEquals(
+            rail.bottom,
+            section.bottom,
+            1f,
+            "the section is anchored to the rail's bottom edge",
+        )
         assertTrue(
             section.left >= rail.left && section.right <= rail.right,
             "the section is $section but the 40dp rail it has to fit is $rail",
         )
         assertTrue(
             section.top > rail.top,
-            "the weighted spacer above it should push the section down, not leave it at the top",
+            "the weighted slot region above it should push the section down, not leave it at the top",
         )
     }
 
@@ -160,6 +188,30 @@ class SidebarBottomActionsLayoutTest {
     }
 
     @Test
+    fun `an overcrowded rail clips its slots rather than losing the actions`() {
+        // The case the reserve cannot cover: computeSlotIconLimits returns early in FIXED mode and
+        // never reads reservedHeight, and no reserve helps a rail shorter than its own content.
+        // 20 slot rows into a 300dp rail asks for roughly 800dp. What must not happen is the
+        // section being pushed past the bottom edge, because the content that goes missing is
+        // Settings / Search / Sign Out, with no floating cluster behind it in this placement.
+        mountRail(quickActions(), height = SHORT_RAIL, slotRows = 20)
+
+        val section = boundsOf(SIDEBAR_BOTTOM_ACTIONS_TAG)
+        val rail = boundsOf(RAIL_TAG)
+
+        assertTrue(
+            section.bottom <= rail.bottom + 1f && section.top >= rail.top,
+            "the section is $section but the rail it has to stay inside is $rail",
+        )
+        assertEquals(
+            SidebarIconRail.bottomSectionHeight(3).value - SidebarIconRail.SectionDivider.value,
+            (section.bottom - section.top).toDp().value,
+            1f,
+            "and it is not squashed to fit either - the slots are what give way",
+        )
+    }
+
+    @Test
     fun `sign out is the icon furthest from the corner`() {
         // Order carries intent: the destructive action is deliberately not the one in the very
         // corner of the window, where it is easiest to hit by accident. In a bottom-anchored column
@@ -182,7 +234,10 @@ class SidebarBottomActionsLayoutTest {
         /** `VerticalBar(40.dp)`, the width both rails are built at. */
         val RAIL_WIDTH = 40.dp
 
-        /** Tall enough that the weighted spacer has slack to push the section to the bottom. */
+        /** Tall enough that the slot region has slack and the section sits at the bottom. */
         val RAIL_HEIGHT = 600.dp
+
+        /** Short enough that 20 slot rows cannot fit, which is the overcrowding case. */
+        val SHORT_RAIL = 300.dp
     }
 }

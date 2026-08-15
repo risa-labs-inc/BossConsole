@@ -79,8 +79,12 @@ actual fun SettingsWindow(
             // below would still run against an iconified frame. The frame write takes effect now;
             // the WindowState write keeps Compose's own model in step with it.
             LaunchedEffect(focusRequest) {
+                // Unguarded, because clearing the bit is idempotent on a window that is not
+                // minimised - and any guard would have to read the FRAME, never WindowState. The
+                // argument above is precisely that WindowState lags the frame, so gating the
+                // restore on it reintroduces the bug in the window where the two disagree.
+                window.extendedState = window.extendedState and Frame.ICONIFIED.inv()
                 if (windowState.isMinimized) {
-                    window.extendedState = window.extendedState and Frame.ICONIFIED.inv()
                     windowState.isMinimized = false
                 }
                 window.toFront()
@@ -109,7 +113,7 @@ private fun SettingsContent(
     initialSection: String? = null,
     sectionRequest: Int = 0,
 ) {
-    var selectedSection by remember { mutableStateOf(sectionFor(initialSection)) }
+    var selectedSection by remember { mutableStateOf(initialSectionFor(initialSection, visiblePageIds())) }
     var showResetConfirmation by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
@@ -120,7 +124,7 @@ private fun SettingsContent(
         remember(registryPages, registryAccess) {
             SettingsPageRegistryImpl.visiblePages()
         }
-    var selectedPluginPageId by remember { mutableStateOf(pluginPageFor(initialSection)) }
+    var selectedPluginPageId by remember { mutableStateOf(initialPluginPageFor(initialSection, visiblePageIds())) }
 
     // Apply a deep link that arrives while this window is ALREADY open.
     //
@@ -130,14 +134,23 @@ private fun SettingsContent(
     // twice for the same section leaves that string unchanged and a value key would navigate the
     // first time and silently ignore the second.
     //
-    // It also runs once on the first composition, where it is a no-op: the two remembers have
-    // already applied exactly what it computes.
+    // Unresolved does NOTHING, deliberately: an open window is left where the user had it rather
+    // than defaulted to FLUCK. It also runs once on the first composition, where it is a no-op -
+    // the two remembers have already applied exactly what it computes.
     LaunchedEffect(sectionRequest) {
-        val requested = initialSection ?: return@LaunchedEffect
-        val page = pluginPageFor(requested)
-        selectedPluginPageId = page
-        if (page == null) {
-            selectedSection = sectionFor(requested)
+        when (val link = resolveSettingsDeepLink(initialSection, visiblePageIds())) {
+            is SettingsDeepLink.Page -> {
+                selectedPluginPageId = link.pageId
+            }
+
+            is SettingsDeepLink.Section -> {
+                selectedPluginPageId = null
+                selectedSection = link.section
+            }
+
+            SettingsDeepLink.Unresolved -> {
+                Unit
+            }
         }
     }
 
@@ -267,26 +280,70 @@ private fun SettingsContent(
     }
 }
 
-/**
- * The built-in section [name] names, defaulting to FLUCK.
- *
- * Pulled out of the composition so the first composition and a later deep link resolve a section
- * the same way, rather than through two expressions that have to be kept in step.
- */
-private fun sectionFor(name: String?): SettingsSection =
-    name?.let { candidate ->
-        SettingsSection.entries.find { it.name.equals(candidate, ignoreCase = true) }
-    } ?: SettingsSection.FLUCK
+/** What a deep-link string resolves to. See [resolveSettingsDeepLink]. */
+internal sealed interface SettingsDeepLink {
+    /** A plugin-contributed page that is registered and visible to this user. */
+    data class Page(
+        val pageId: String,
+    ) : SettingsDeepLink
+
+    /** A built-in section. */
+    data class Section(
+        val section: SettingsSection,
+    ) : SettingsDeepLink
+
+    /** Nothing this build can show right now. */
+    data object Unresolved : SettingsDeepLink
+}
 
 /**
- * The plugin page id [name] names, or null when it names a built-in section, nothing at all, or a
- * page the current user cannot see.
+ * Resolve a deep-link string against the built-in sections and [visiblePageIds].
+ *
+ * Pure, and takes the visible page ids rather than reading `SettingsPageRegistryImpl`, so the two
+ * callers below cannot answer differently and both are testable without a `Window` - which is where
+ * the previous round's bug lived, in a layer no test could see.
+ *
+ * **[SettingsDeepLink.Unresolved] is a real answer, not a failure to be defaulted.** Falling back to
+ * FLUCK is right for a window being created and wrong for one already open: there it is a
+ * navigation nobody asked for, and it clears the plugin page the user was reading. That path is
+ * reachable from any plugin - `SettingsProviderImpl.openSettings` forwards an arbitrary string - so
+ * a plugin deep-linking to its own page while that page is disabled, RBAC-hidden or not yet
+ * registered would send the user to FLUCK. Only the initial value applies the default; see
+ * [initialSectionFor].
  */
-private fun pluginPageFor(name: String?): String? =
-    name?.takeIf { candidate ->
-        SettingsSection.entries.none { it.name.equals(candidate, ignoreCase = true) } &&
-            SettingsPageRegistryImpl.visiblePage(candidate) != null
+internal fun resolveSettingsDeepLink(
+    requested: String?,
+    visiblePageIds: Set<String>,
+): SettingsDeepLink {
+    val candidate = requested ?: return SettingsDeepLink.Unresolved
+    val section = SettingsSection.entries.find { it.name.equals(candidate, ignoreCase = true) }
+    return when {
+        // Sections first, so a plugin cannot shadow a built-in page by claiming its id.
+        section != null -> SettingsDeepLink.Section(section)
+
+        candidate in visiblePageIds -> SettingsDeepLink.Page(candidate)
+
+        else -> SettingsDeepLink.Unresolved
     }
+}
+
+/** The section a *new* window starts on: what [requested] names, or FLUCK when it names nothing. */
+private fun initialSectionFor(
+    requested: String?,
+    visiblePageIds: Set<String>,
+): SettingsSection =
+    (resolveSettingsDeepLink(requested, visiblePageIds) as? SettingsDeepLink.Section)
+        ?.section
+        ?: SettingsSection.FLUCK
+
+/** The plugin page a *new* window starts on, or null when [requested] does not name one. */
+private fun initialPluginPageFor(
+    requested: String?,
+    visiblePageIds: Set<String>,
+): String? = (resolveSettingsDeepLink(requested, visiblePageIds) as? SettingsDeepLink.Page)?.pageId
+
+/** Page ids the current user can actually see, as [resolveSettingsDeepLink] wants them. */
+private fun visiblePageIds(): Set<String> = SettingsPageRegistryImpl.visiblePages().map { it.pageId }.toSet()
 
 /**
  * Content area for a plugin-contributed settings page: same header treatment

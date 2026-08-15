@@ -13,13 +13,13 @@ import ai.rever.boss.plugin.api.Panel.Companion.right
 import ai.rever.boss.plugin.api.Panel.Companion.top
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.unit.dp
 
 /**
@@ -54,9 +54,11 @@ fun BossDraggableComponent.BossRightSideBar(
                     slots = listOf(right.top.top, right.top.bottom),
                     settings = visibility,
                     barHeight = maxHeight,
-                    // The bottom actions are not one of the slots above, and they are laid out
-                    // after the weighted spacer - so without reserving for them a full rail
-                    // would push them off the bottom of the window instead of capping an icon.
+                    // The bottom actions are not one of the slots above, so their height has to be
+                    // taken off the budget by hand or a full rail spends it all on plugin icons.
+                    // This is the tidy path, not the safety net: it caps an icon into the More
+                    // menu before anything overlaps. The layout below is what actually guarantees
+                    // the section is on screen, because this is ignored entirely in FIXED mode.
                     reservedHeight =
                         SidebarIconRail.SectionDivider +
                             (if (customizeOnThisBar) SidebarIconRail.CustomizeButton else 0.dp) +
@@ -66,22 +68,34 @@ fun BossDraggableComponent.BossRightSideBar(
                 modifier = Modifier.fillMaxSize(),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                DraggableSidebarSection(
-                    slot = right.top.top,
-                    maxVisibleIcons = iconLimits[right.top.top],
-                )
-                if (customizeSlotId == SidebarVisibilitySettings.SLOT_RIGHT_TOP_TOP) {
-                    SidebarCustomizeMenu(slot = right.top.top)
+                // The slots take what is LEFT once the bottom section has its height, rather than
+                // the section taking what is left after the slots. The reserve above is what
+                // normally keeps them apart, but it is only honoured in ADAPTIVE mode -
+                // computeSlotIconLimits returns early for FIXED and never reads reservedHeight -
+                // and it cannot help a rail too short to hold both. Laid out the other way round,
+                // those cases push the section past the bottom of the window, and the content that
+                // goes missing is Settings / Search / Sign Out with no floating cluster behind it.
+                // Clipped, the slots lose an icon they already have a More button for.
+                Column(
+                    modifier = Modifier.weight(1f).clipToBounds(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    DraggableSidebarSection(
+                        slot = right.top.top,
+                        maxVisibleIcons = iconLimits[right.top.top],
+                    )
+                    if (customizeSlotId == SidebarVisibilitySettings.SLOT_RIGHT_TOP_TOP) {
+                        SidebarCustomizeMenu(slot = right.top.top)
+                    }
+                    SDivider()
+                    DraggableSidebarSection(
+                        slot = right.top.bottom,
+                        maxVisibleIcons = iconLimits[right.top.bottom],
+                    )
+                    if (customizeSlotId == SidebarVisibilitySettings.SLOT_RIGHT_TOP_BOTTOM) {
+                        SidebarCustomizeMenu(slot = right.top.bottom)
+                    }
                 }
-                SDivider()
-                DraggableSidebarSection(
-                    slot = right.top.bottom,
-                    maxVisibleIcons = iconLimits[right.top.bottom],
-                )
-                if (customizeSlotId == SidebarVisibilitySettings.SLOT_RIGHT_TOP_BOTTOM) {
-                    SidebarCustomizeMenu(slot = right.top.bottom)
-                }
-                Spacer(modifier = Modifier.weight(1f))
                 SidebarBottomActions(bottomActions)
             }
         }
