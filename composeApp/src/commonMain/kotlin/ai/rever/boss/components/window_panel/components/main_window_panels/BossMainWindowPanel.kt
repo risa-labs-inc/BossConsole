@@ -1002,7 +1002,7 @@ fun BossTabsComponent.BossMainPanelContent(
                             // Through the manager, never sandbox.restart()
                             // directly - see SidePanel's copy of this.
                             scope.launch {
-                                val restarted = DynamicPluginManager.restartEverywhere(sandbox.pluginId)
+                                val restarted = DynamicPluginManager.restartOwning(sandbox)
                                 if (!restarted) {
                                     pluginLogger?.error(
                                         LogCategory.UI,

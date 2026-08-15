@@ -40,6 +40,7 @@ class PluginWatchdog(
 
     // Consecutive checks that found the plugin healthy. Clears the restart
     // counter once the plugin has stayed healthy long enough to have earned it.
+    @Volatile
     private var healthyChecks = 0
 
     // Deadline until which health checks are suppressed after a process-wide
@@ -56,6 +57,7 @@ class PluginWatchdog(
     // is asleep, so the grace covers the resume instead of being spent on it.
     // NO_SUPPRESSION rather than 0 because monotonic values are not anchored
     // anywhere in particular.
+    @Volatile
     private var suppressChecksUntilMonotonic = NO_SUPPRESSION
 
     // Consecutive ticks discarded as host stalls. Bounded, because a host that
@@ -65,6 +67,7 @@ class PluginWatchdog(
     // trace. Sustained scheduler starvation is a condition a watchdog exists to
     // notice, so past the bound it checks anyway and degrades to late
     // detection rather than none.
+    @Volatile
     private var consecutiveStalls = 0
 
     private companion object {
@@ -342,7 +345,6 @@ class PluginWatchdog(
             ),
         )
         sandbox.resetRestartAttempts()
-        healthyChecks = 0
     }
 
     private suspend fun triggerRestart(reason: String) {

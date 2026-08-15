@@ -245,7 +245,7 @@ internal fun RenderPanelContent(
                 // and without that the plugin comes back with every
                 // subscription it opened there still closed.
                 scope.launch {
-                    val restarted = DynamicPluginManager.restartEverywhere(sandbox.pluginId)
+                    val restarted = DynamicPluginManager.restartOwning(sandbox)
                     if (!restarted) {
                         logger.error(
                             LogCategory.UI,

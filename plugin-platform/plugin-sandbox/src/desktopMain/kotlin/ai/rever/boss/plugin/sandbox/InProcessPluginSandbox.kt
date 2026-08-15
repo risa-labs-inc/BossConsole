@@ -234,6 +234,7 @@ class InProcessPluginSandbox(
      */
     private suspend fun shutdownExecutor(target: ExecutorService) {
         withContext(Dispatchers.IO) {
+            // Idempotent; stop() has already called it under the lock.
             target.shutdown()
             try {
                 if (!target.awaitTermination(EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
@@ -346,9 +347,17 @@ class InProcessPluginSandbox(
                 // than handing the plugin a scope it will never read again.
                 _sandboxScope.cancelJob()
                 retiring = executor
+                // shutdown() itself does not block - only awaitTermination
+                // does - so marking the pool dead happens under the lock. Doing
+                // it outside left a window where a concurrent start() ran
+                // ensureRunnable, saw isShutdown still false, kept the pool and
+                // re-armed the job onto it, and only then did this shut it
+                // down: RUNNING state, live scope, dead executor, every
+                // dispatch silently cancelled.
+                retiring.shutdown()
             }
 
-            // Outside the lock, as restart() does: this blocks for seconds.
+            // Outside the lock, as restart() does: awaiting termination blocks.
             shutdownExecutor(retiring)
         }
     }
@@ -386,6 +395,9 @@ class InProcessPluginSandbox(
                 retiredExecutor = executor
                 executor = newExecutor()
                 dispatcher.swap(executor.asCoroutineDispatcher())
+                // Under the lock, so a concurrent stop() cannot capture the
+                // pool this restart just installed and retire it instead.
+                retiredExecutor.shutdown()
             }
 
             // Retire the old pool outside the lock: awaitTermination blocks for

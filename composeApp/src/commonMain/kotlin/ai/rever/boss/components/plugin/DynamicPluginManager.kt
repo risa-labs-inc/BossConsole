@@ -294,54 +294,6 @@ class DynamicPluginManager(
          * that never loaded the plugin failing is expected and not a failure of
          * the operation.
          */
-
-        /**
-         * Restart a plugin through its manager, in every window that has it.
-         *
-         * The error boundary's Restart button used to call `sandbox.restart()`
-         * directly. That restarts the sandbox but notifies no listener, so
-         * nothing re-runs `register()` - leaving the plugin with its scope alive
-         * and every subscription it opened in `register()` still closed, which
-         * is the state this whole change exists to remove, on the path a user
-         * reaches *after* noticing a plugin is wedged.
-         *
-         * The manual restart also forgives the restart budget. `sandbox.restart()`
-         * banks an attempt and the counter now survives, so three presses of a
-         * button offered to the user as the remedy would have pushed a plugin to
-         * `maxRestartAttempts` and let the next watchdog request disable it. The
-         * budget exists to bound an *automatic* loop; a person asking for a
-         * restart is the same deliberate re-arm as `resetHealth`.
-         *
-         * @return true if at least one manager restarted the plugin.
-         */
-        suspend fun restartEverywhere(pluginId: String): Boolean {
-            val managers = activeManagers()
-            var anyRestarted = false
-            for (manager in managers.filter { it.getPluginInfo(pluginId) != null }) {
-                val result = runCatching { manager.sandboxManager.restartPlugin(pluginId) }
-                if (result.getOrNull()?.isSuccess == true) {
-                    anyRestarted = true
-                    manager.sandboxManager.getSandbox(pluginId)?.resetRestartAttempts()
-                } else {
-                    val cause = result.exceptionOrNull() ?: result.getOrNull()?.exceptionOrNull()
-                    companionLogger.warn(
-                        LogCategory.SYSTEM,
-                        "Failed to restart a plugin in one manager",
-                        mapOf("pluginId" to pluginId),
-                        cause,
-                    )
-                }
-            }
-            if (!anyRestarted) {
-                companionLogger.warn(
-                    LogCategory.SYSTEM,
-                    "No live plugin manager could restart the plugin",
-                    mapOf("pluginId" to pluginId),
-                )
-            }
-            return anyRestarted
-        }
-
         suspend fun disableEverywhere(pluginId: String): Boolean {
             val managers = activeManagers()
             if (managers.isEmpty()) {
@@ -384,6 +336,79 @@ class DynamicPluginManager(
                 ),
             )
             return anyDisabled
+        }
+
+        /**
+         * Restart [sandbox]'s plugin through the manager that owns it.
+         *
+         * The error boundary's Restart button used to call `sandbox.restart()`
+         * directly. That restarts the sandbox but notifies no listener, so
+         * nothing re-runs `register()` - leaving the plugin's scope alive and
+         * every subscription it opened in `register()` still closed, which is
+         * the state this whole change exists to remove, on the path a user
+         * reaches *after* noticing a plugin is wedged.
+         *
+         * Scoped to the owning window, unlike [disableEverywhere]. That one is
+         * deliberately global because a plugin left crashing in another window
+         * keeps crashing; a restart is the opposite case - sandboxes are
+         * per-window, and cancelling every in-flight coroutine of a plugin that
+         * is perfectly healthy in windows B..N is not what someone clicking
+         * Restart on window A's wedged panel asked for. The caller holds the
+         * sandbox instance, which identifies its manager exactly.
+         *
+         * A plugin that spent its restart budget needs enabling, not
+         * restarting: the give-up path stopped its watchdog and recorded it in
+         * `disabledPlugins`, and a bare restart would leave it running,
+         * still reported disabled, and unmonitored for the rest of the session.
+         *
+         * The budget is forgiven either way. `restart()` banks an attempt and
+         * the counter now survives, so three presses of the button offered to
+         * the user as the remedy would push a plugin to `maxRestartAttempts`
+         * and let the next watchdog request disable it. The budget exists to
+         * bound an *automatic* loop; a person asking for a restart is the same
+         * deliberate re-arm as `resetHealth`.
+         *
+         * @return true if the plugin was restarted.
+         */
+        suspend fun restartOwning(sandbox: PluginSandboxRef): Boolean {
+            val pluginId = sandbox.pluginId
+            val manager =
+                activeManagers().firstOrNull { it.sandboxManager.getSandbox(pluginId) === sandbox }
+            if (manager == null) {
+                companionLogger.warn(
+                    LogCategory.SYSTEM,
+                    "No live manager owns this sandbox, cannot restart",
+                    mapOf("pluginId" to pluginId),
+                )
+                return false
+            }
+
+            val sandboxManager = manager.sandboxManager
+            val result =
+                runCatching {
+                    if (sandboxManager.isPluginDisabled(pluginId)) {
+                        // Clears disabledPlugins, rebuilds the watchdog and
+                        // starts the sandbox. It does not notify
+                        // onPluginRestarted, so re-registration is explicit.
+                        sandboxManager.enablePlugin(pluginId).also {
+                            if (it.isSuccess) manager.reregisterAfterRestart(pluginId)
+                        }
+                    } else {
+                        sandboxManager.restartPlugin(pluginId)
+                    }
+                }
+            val restarted = result.getOrNull()?.isSuccess == true
+            if (restarted) {
+                sandboxManager.getSandbox(pluginId)?.resetRestartAttempts()
+            } else {
+                companionLogger.warn(
+                    LogCategory.SYSTEM,
+                    "Failed to restart plugin",
+                    mapOf("pluginId" to pluginId),
+                    result.exceptionOrNull() ?: result.getOrNull()?.exceptionOrNull(),
+                )
+            }
+            return restarted
         }
 
         /**
@@ -1513,11 +1538,18 @@ class DynamicPluginManager(
      * another direction. DISABLED is what `PluginErrorBoundary` gates its
      * fallback on, and what gives the user something to re-enable.
      */
-    private fun disableAfterFailedReregister(
+    private suspend fun disableAfterFailedReregister(
         pluginId: String,
         info: DynamicPluginInfo,
     ) {
-        (sandboxManager.getSandbox(pluginId) as? InProcessPluginSandbox)?.setDisabled()
+        // Through the sandbox manager, not a bare setDisabled(). That alone
+        // left disabledPlugins untouched (so isPluginDisabled kept saying the
+        // plugin was fine), raised no onPluginDisabled notification (the same
+        // "told nobody" failure the watchdog consolidation fixed), and its
+        // `as? InProcessPluginSandbox` silently did nothing at all for an
+        // out-of-process sandbox. disablePlugin does all three and stops the
+        // watchdog.
+        sandboxManager.disablePlugin(pluginId)
         updatePluginState(pluginId, info.copy(state = PluginState.DISABLED, enabled = false))
     }
 
