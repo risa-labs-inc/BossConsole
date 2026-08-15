@@ -16,7 +16,7 @@ import androidx.compose.runtime.setValue
  * main one, clicking Settings did nothing and read as a dead button. Nothing about a `var Boolean`
  * says that, so the fields are `private set` and [open] / [close] are the only ways in.
  */
-class SettingsWindowState {
+internal class SettingsWindowState {
     /** Whether the window is composed at all. */
     var visible by mutableStateOf(false)
         private set
@@ -36,7 +36,21 @@ class SettingsWindowState {
         private set
 
     /**
-     * Show the settings window, or ask the one already open to raise itself.
+     * Bumped once per request that names a [section], so an already-open window navigates to it.
+     *
+     * Separate from [focusRequest], and a counter for its own reason. The window cannot key on the
+     * section *value*: asking twice for the same one leaves the string unchanged, so it would
+     * navigate the first time and silently do nothing the second. And it cannot share
+     * [focusRequest], because a plain [open] bumps that without naming a section - re-applying the
+     * last section there would yank the user off the page they were on, on the one interaction
+     * that is meant only to raise the window.
+     */
+    var sectionRequest by mutableStateOf(0)
+        private set
+
+    /**
+     * Show the settings window, or ask the one already open to raise itself and, when [section] is
+     * named, to navigate there.
      *
      * [section] is applied only when given. Passing null means "just show settings" and must not
      * clear a section another caller navigated to, which a plain assignment would.
@@ -44,6 +58,7 @@ class SettingsWindowState {
     fun open(section: String? = null) {
         if (section != null) {
             this.section = section
+            sectionRequest++
         }
         if (visible) {
             focusRequest++

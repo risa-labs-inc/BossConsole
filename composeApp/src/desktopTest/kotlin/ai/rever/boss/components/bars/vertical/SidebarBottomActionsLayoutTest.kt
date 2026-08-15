@@ -93,13 +93,15 @@ class SidebarBottomActionsLayoutTest {
         val reserved = SidebarIconRail.bottomSectionHeight(3)
 
         // A tolerance, not exact equality: the span is measured back out of integer pixels at the
-        // harness's density, so a half-pixel is rounding rather than a wrong reserve. Anything that
-        // actually breaks the mirror - a padding change, a fourth action, an icon at 28dp instead
-        // of the rail's 32dp - moves this by a whole row or a whole gap.
+        // harness's density, so a fraction of a dp is rounding rather than a wrong reserve. 1dp
+        // rather than a half, because at 2x a single pixel is already 0.5dp and this should not
+        // start flaking on a HiDPI runner. Anything that actually breaks the mirror - a padding
+        // change, a fourth action, an icon at 28dp instead of the rail's 32dp - moves it by a whole
+        // row or a whole gap, an order of magnitude clear of this.
         assertEquals(
             reserved.value,
             rendered.value,
-            0.5f,
+            1f,
             "the rail budgets its icon rows against $reserved but the section renders $rendered",
         )
     }

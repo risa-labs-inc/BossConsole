@@ -380,7 +380,7 @@
     <ID>LongMethod:SettingsComponents.kt$@Composable fun SettingsDropdown( label: String, options: List&lt;String&gt;, selectedOption: String, onOptionSelected: (String) -&gt; Unit, modifier: Modifier = Modifier, description: String? = null, enabled: Boolean = true, )</ID>
     <ID>LongMethod:SettingsComponents.kt$@Composable fun SettingsFilePicker( label: String, value: String, onValueChange: (String) -&gt; Unit, modifier: Modifier = Modifier, description: String? = null, fileExtensions: List&lt;String&gt; = emptyList(), enabled: Boolean = true, )</ID>
     <ID>LongMethod:SettingsComponents.kt$@Composable fun SettingsSectionedDropdown( label: String, sections: Map&lt;String, List&lt;String&gt;&gt;, selectedOption: String, onOptionSelected: (String) -&gt; Unit, modifier: Modifier = Modifier, description: String? = null, enabled: Boolean = true, )</ID>
-    <ID>LongMethod:SettingsWindow.kt$@Composable private fun SettingsContent(initialSection: String? = null)</ID>
+    <ID>LongMethod:SettingsWindow.kt$@Composable private fun SettingsContent( initialSection: String? = null, sectionRequest: Int = 0, )</ID>
     <ID>LongMethod:SettingsWindow.kt$@Composable private fun SettingsContentArea( section: SettingsSection, modifier: Modifier = Modifier, )</ID>
     <ID>LongMethod:ShortcutHelpDialog.kt$@Composable fun ShortcutHelpDialog( keymapSettings: KeymapSettings, onDismiss: () -&gt; Unit, onOpenSettings: () -&gt; Unit, )</ID>
     <ID>LongMethod:ShortcutTestDialog.kt$@Composable fun ShortcutTestDialog( keymapSettings: KeymapSettings, onDismiss: () -&gt; Unit, )</ID>

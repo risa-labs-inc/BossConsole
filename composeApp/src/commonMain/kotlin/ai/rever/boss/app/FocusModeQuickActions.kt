@@ -168,6 +168,38 @@ internal fun focusQuickActionsRail(
 private val SIDEBAR_ICON_SIZE = 32.dp
 
 /**
+ * How many rail rows to keep reserved for the quick actions, whether or not they are on screen at
+ * this instant.
+ *
+ * Deliberately NOT `focusQuickActionsRail(...).size`, and the difference is the whole point. The
+ * rendered list empties the moment the top bar is hover-revealed, and the rail's reserve feeds
+ * `computeSlotIconLimits`, whose ADAPTIVE mode is the default - so a reserve that tracked the
+ * rendered list would hand about three rows back to the plugin slots on every hover and take them
+ * away again on every un-hover. On a crowded rail that pops icons out of the More menu and back in
+ * each time the user reaches for the top bar, which is the common case on the Windows defaults this
+ * placement is aimed at.
+ *
+ * So the budget is held for as long as focus mode *owns* the top bar, and only the three icons come
+ * and go. The cost is up to 145dp of rail that is briefly reserved and empty, which is invisible:
+ * the slack lands in the weighted spacer, and the icons above it do not move.
+ */
+internal fun focusQuickActionsRailRows(settings: FocusModeSettings): Int =
+    if (settings.hides(FocusModeEdge.TOP) && !settings.hides(FocusModeEdge.RIGHT)) {
+        FOCUS_QUICK_ACTION_COUNT
+    } else {
+        0
+    }
+
+/**
+ * How many actions the cluster has.
+ *
+ * A constant because [focusQuickActionsRailRows] has to answer without the callbacks needed to
+ * build the buttons. `FocusQuickActionsPlacementTest` pins it against the rendered list, so the
+ * reserve and the render cannot drift apart.
+ */
+internal const val FOCUS_QUICK_ACTION_COUNT = 3
+
+/**
  * Settings, Search and Sign Out as three separate composables, in the order both hosts want them.
  *
  * One definition, two layouts. The **order carries the same intent on both axes**: Sign Out first,

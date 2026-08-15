@@ -404,10 +404,13 @@ internal fun BossAppDialogs(state: BossAppState) {
                 state.settingsWindow.close()
             },
             initialSection = state.settingsWindow.section,
-            // Every Settings affordance routes through openSettings, which bumps this instead of
-            // re-setting a flag that is already set. Without it the second click is silent: the
-            // window stays wherever it was, which is usually behind the main one.
+            // Every Settings affordance routes through SettingsWindowState.open, which bumps these
+            // instead of re-setting values that are already set. Without focusRequest the second
+            // click is silent: the window stays wherever it was, usually behind the main one.
+            // Without sectionRequest it raises itself but stays on the page the user last picked,
+            // which reads as a different bug rather than as none.
             focusRequest = state.settingsWindow.focusRequest,
+            sectionRequest = state.settingsWindow.sectionRequest,
         )
     }
 

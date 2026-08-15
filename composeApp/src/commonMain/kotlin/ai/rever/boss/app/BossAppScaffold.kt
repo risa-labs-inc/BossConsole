@@ -223,6 +223,20 @@ internal fun BossAppScaffold(
     // below cannot disagree about it and briefly show both.
     val quickActionsPlacement = focusQuickActionsPlacement(focusModeSettings, reveal.showTopBar)
 
+    // Remembered, not rebuilt each pass. `List<@Composable () -> Unit>` is an unstable parameter
+    // type, so a fresh list every recomposition means BossRightSideBar can never skip and re-runs
+    // computeSlotIconLimits - which walks every slot's items - on each one. The lambdas capture
+    // `state`, which is a single stable instance for the life of this window.
+    val quickActionsRail =
+        remember(quickActionsPlacement, state) {
+            focusQuickActionsRail(
+                placement = quickActionsPlacement,
+                onShowSettings = { state.settingsWindow.open() },
+                onShowSearch = { state.showGlobalSearchDialog = true },
+                onSignOut = { state.showLogoutDialog = true },
+            )
+        }
+
     with(state.draggablePanelComponent) {
         Box(
             modifier =
@@ -450,14 +464,14 @@ internal fun BossAppScaffold(
                             // The rail is where these belong whenever there is a rail: three more
                             // icons on a strip that is already icon chrome, instead of an overlay
                             // over live content.
+                            //
+                            // The reserve is deliberately NOT the rendered count: it is held for
+                            // as long as focus mode owns the top bar, so hover-revealing that bar
+                            // takes the three icons away without also handing their rows back to
+                            // the plugin slots and reshuffling them. See focusQuickActionsRailRows.
                             BossRightSideBar(
-                                bottomActions =
-                                    focusQuickActionsRail(
-                                        placement = quickActionsPlacement,
-                                        onShowSettings = { state.settingsWindow.open() },
-                                        onShowSearch = { state.showGlobalSearchDialog = true },
-                                        onSignOut = { state.showLogoutDialog = true },
-                                    ),
+                                bottomActions = quickActionsRail,
+                                bottomActionRows = focusQuickActionsRailRows(focusModeSettings),
                             )
                         }
                     }

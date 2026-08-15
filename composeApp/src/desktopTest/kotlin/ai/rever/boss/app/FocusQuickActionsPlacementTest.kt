@@ -91,6 +91,45 @@ class FocusQuickActionsPlacementTest {
         assertEquals(3, railFor(FocusQuickActionsPlacement.RIGHT_RAIL).size)
     }
 
+    @Test
+    fun `the reserve matches the number of icons actually rendered`() {
+        // Closes the loop between the two halves. The rail reserves height from
+        // focusQuickActionsRailRows while rendering focusQuickActionsRail, and those are separate
+        // expressions on purpose - so nothing but this stops a fourth action being added to one and
+        // not the other, which under-reserves and pushes an icon off the bottom of the window.
+        assertEquals(
+            railFor(FocusQuickActionsPlacement.RIGHT_RAIL).size,
+            focusQuickActionsRailRows(clearsTopKeepsRail),
+        )
+    }
+
+    @Test
+    fun `the reserve survives a hover-revealed top bar, though the icons do not`() {
+        // The churn guard. The rendered list empties the moment the top bar shows, and if the
+        // reserve followed it, ADAPTIVE mode would hand ~3 rows back to the plugin slots and take
+        // them away again on every hover - popping icons in and out of the More menu each time the
+        // user reaches for the top bar, on the very defaults this placement is aimed at.
+        assertEquals(
+            FocusQuickActionsPlacement.NONE,
+            focusQuickActionsPlacement(clearsTopKeepsRail, showTopBar = true),
+            "the premise: the icons themselves stand down while the bar is up",
+        )
+        assertEquals(
+            FOCUS_QUICK_ACTION_COUNT,
+            focusQuickActionsRailRows(clearsTopKeepsRail),
+            "but the rail keeps their rows, because showTopBar is momentary",
+        )
+    }
+
+    @Test
+    fun `nothing is reserved when the actions could never land on the rail`() {
+        // Focus mode off, or clearing the sidebar too: the bar must budget exactly as it did before
+        // this feature existed, or every user who never enables focus mode loses rail rows to it.
+        assertEquals(0, focusQuickActionsRailRows(clearsTopKeepsRail.copy(enabled = false)))
+        assertEquals(0, focusQuickActionsRailRows(clearsBoth))
+        assertEquals(0, focusQuickActionsRailRows(clearsTopKeepsRail.copy(hideTopBar = false)))
+    }
+
     private fun railFor(placement: FocusQuickActionsPlacement) =
         focusQuickActionsRail(
             placement = placement,

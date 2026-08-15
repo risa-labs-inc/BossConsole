@@ -42,12 +42,14 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.rememberWindowState
 import kotlinx.coroutines.launch
+import java.awt.Frame
 
 @Composable
 actual fun SettingsWindow(
     onClose: () -> Unit,
     initialSection: String?,
     focusRequest: Int,
+    sectionRequest: Int,
 ) {
     var isOpen by remember { mutableStateOf(true) }
 
@@ -69,13 +71,16 @@ actual fun SettingsWindow(
             // runs once per request and once on the first composition - which is harmless, the
             // window is brand new and coming to the front is what it should be doing anyway.
             //
-            // Deiconify FIRST and through WindowState, not window.state: `toFront` on a minimised
-            // window is a no-op on every platform, so without this, clicking Settings with the
-            // window minimised leaves the user exactly where the original bug left them. Compose
-            // owns placement through WindowState, and writing the AWT field behind its back gets
-            // reverted the next time it reconciles.
+            // Deiconify FIRST, and through the AWT frame rather than only through WindowState.
+            // `toFront` on a minimised window is a no-op on every platform, so without a restore
+            // that has actually landed, clicking Settings leaves the user exactly where the
+            // original bug left them. Writing WindowState alone does not land in time: it mutates
+            // snapshot state, which Compose applies to the frame in a later pass, so the `toFront`
+            // below would still run against an iconified frame. The frame write takes effect now;
+            // the WindowState write keeps Compose's own model in step with it.
             LaunchedEffect(focusRequest) {
                 if (windowState.isMinimized) {
+                    window.extendedState = window.extendedState and Frame.ICONIFIED.inv()
                     windowState.isMinimized = false
                 }
                 window.toFront()
@@ -92,7 +97,7 @@ actual fun SettingsWindow(
             // not dismissed by focus moving within the same application - keep floating above it.
             CompositionLocalProvider(LocalHeavyweightOverlays provides false) {
                 BossTheme {
-                    SettingsContent(initialSection = initialSection)
+                    SettingsContent(initialSection = initialSection, sectionRequest = sectionRequest)
                 }
             }
         }
@@ -100,17 +105,11 @@ actual fun SettingsWindow(
 }
 
 @Composable
-private fun SettingsContent(initialSection: String? = null) {
-    // Convert initial section string to enum, defaulting to FLUCK. A string
-    // that instead matches a plugin page id (SettingsPageRegistry) deep-
-    // navigates to that page.
-    val startSection =
-        remember(initialSection) {
-            initialSection?.let { name ->
-                SettingsSection.entries.find { it.name.equals(name, ignoreCase = true) }
-            } ?: SettingsSection.FLUCK
-        }
-    var selectedSection by remember { mutableStateOf(startSection) }
+private fun SettingsContent(
+    initialSection: String? = null,
+    sectionRequest: Int = 0,
+) {
+    var selectedSection by remember { mutableStateOf(sectionFor(initialSection)) }
     var showResetConfirmation by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
@@ -121,14 +120,27 @@ private fun SettingsContent(initialSection: String? = null) {
         remember(registryPages, registryAccess) {
             SettingsPageRegistryImpl.visiblePages()
         }
-    var selectedPluginPageId by remember(initialSection) {
-        mutableStateOf(
-            initialSection?.takeIf { candidate ->
-                SettingsSection.entries.none { it.name.equals(candidate, ignoreCase = true) } &&
-                    SettingsPageRegistryImpl.visiblePage(candidate) != null
-            },
-        )
+    var selectedPluginPageId by remember { mutableStateOf(pluginPageFor(initialSection)) }
+
+    // Apply a deep link that arrives while this window is ALREADY open.
+    //
+    // The two `remember`s above only run once, so without this the window raised itself and stayed
+    // on whatever page the user last picked - worse than the old behaviour, which at least did
+    // nothing visible. Keyed on the request counter rather than on `initialSection`, because asking
+    // twice for the same section leaves that string unchanged and a value key would navigate the
+    // first time and silently ignore the second.
+    //
+    // It also runs once on the first composition, where it is a no-op: the two remembers have
+    // already applied exactly what it computes.
+    LaunchedEffect(sectionRequest) {
+        val requested = initialSection ?: return@LaunchedEffect
+        val page = pluginPageFor(requested)
+        selectedPluginPageId = page
+        if (page == null) {
+            selectedSection = sectionFor(requested)
+        }
     }
+
     // If the selected page's plugin is disabled/unloaded, fall back to sections.
     LaunchedEffect(pluginPages) {
         if (selectedPluginPageId != null && pluginPages.none { it.pageId == selectedPluginPageId }) {
@@ -254,6 +266,27 @@ private fun SettingsContent(initialSection: String? = null) {
         )
     }
 }
+
+/**
+ * The built-in section [name] names, defaulting to FLUCK.
+ *
+ * Pulled out of the composition so the first composition and a later deep link resolve a section
+ * the same way, rather than through two expressions that have to be kept in step.
+ */
+private fun sectionFor(name: String?): SettingsSection =
+    name?.let { candidate ->
+        SettingsSection.entries.find { it.name.equals(candidate, ignoreCase = true) }
+    } ?: SettingsSection.FLUCK
+
+/**
+ * The plugin page id [name] names, or null when it names a built-in section, nothing at all, or a
+ * page the current user cannot see.
+ */
+private fun pluginPageFor(name: String?): String? =
+    name?.takeIf { candidate ->
+        SettingsSection.entries.none { it.name.equals(candidate, ignoreCase = true) } &&
+            SettingsPageRegistryImpl.visiblePage(candidate) != null
+    }
 
 /**
  * Content area for a plugin-contributed settings page: same header treatment

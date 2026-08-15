@@ -27,10 +27,19 @@ import androidx.compose.ui.unit.dp
  *
  * [bottomActions] are host-owned icons pinned below the draggable slots, which is where the focus
  * mode quick actions go while the top bar is cleared (see `focusQuickActionsPlacement`). Empty by
- * default and empty most of the time: the bar then reserves nothing for them and is unchanged.
+ * default and empty most of the time: the bar then renders nothing for them and is unchanged.
+ *
+ * [bottomActionRows] is what the rail *reserves*, and it is a separate number on purpose. Held
+ * steady across a momentary hover-reveal of the top bar, it keeps the plugin slots' icon budget
+ * from changing every time [bottomActions] empties and refills, which in ADAPTIVE mode would pop
+ * icons in and out of the More menu. Defaults to the rendered count, which is right for any caller
+ * whose section does not come and go; see `focusQuickActionsRailRows` for the one whose does.
  */
 @Composable
-fun BossDraggableComponent.BossRightSideBar(bottomActions: List<@Composable () -> Unit> = emptyList()) {
+fun BossDraggableComponent.BossRightSideBar(
+    bottomActions: List<@Composable () -> Unit> = emptyList(),
+    bottomActionRows: Int = bottomActions.size,
+) {
     val visibility by SidebarVisibilitySettingsManager.currentSettings.collectAsState()
     val customizeSlotId = visibility.customizeButtonSlotId
     val customizeOnThisBar = !SidebarVisibilitySettings.isLeftSide(customizeSlotId)
@@ -51,7 +60,7 @@ fun BossDraggableComponent.BossRightSideBar(bottomActions: List<@Composable () -
                     reservedHeight =
                         SidebarIconRail.SectionDivider +
                             (if (customizeOnThisBar) SidebarIconRail.CustomizeButton else 0.dp) +
-                            SidebarIconRail.bottomSectionHeight(bottomActions.size),
+                            SidebarIconRail.bottomSectionHeight(bottomActionRows),
                 )
             Column(
                 modifier = Modifier.fillMaxSize(),

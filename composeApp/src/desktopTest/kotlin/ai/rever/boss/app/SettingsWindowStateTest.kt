@@ -65,6 +65,9 @@ class SettingsWindowStateTest {
 
         assertEquals("KEYMAP", state.section)
         assertEquals(1, state.focusRequest, "it is still a raise request")
+        // And why sectionRequest cannot simply BE focusRequest: sharing one counter would re-apply
+        // the last deep link on every raise, which is the same yank by another route.
+        assertEquals(1, state.sectionRequest, "raising is not navigating")
     }
 
     @Test
@@ -76,6 +79,20 @@ class SettingsWindowStateTest {
 
         assertEquals("KEYMAP", state.section)
         assertEquals(1, state.focusRequest)
+        assertEquals(1, state.sectionRequest, "the open window has to be told to navigate")
+    }
+
+    @Test
+    fun `asking twice for the same section still navigates the second time`() {
+        // Why sectionRequest is a counter and the window cannot key on the section VALUE. Deep-link
+        // to KEYMAP, browse away to another page, deep-link to KEYMAP again: the string never
+        // changed, so a value key navigates once and then silently ignores every later request.
+        val state = SettingsWindowState()
+        state.open("KEYMAP")
+
+        state.open("KEYMAP")
+
+        assertEquals(2, state.sectionRequest)
     }
 
     @Test
