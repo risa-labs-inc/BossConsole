@@ -5,6 +5,7 @@ import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.plugin.sandbox.PluginExecutionBoundary
 import ai.rever.boss.plugin.sandbox.ui.PluginRecoveryQuarantine
 import ai.rever.boss.utils.AppVersion
+import ai.rever.boss.utils.atomicMoveFrom
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.LogSanitizer
@@ -110,10 +111,17 @@ object CrashHandler {
     @Volatile
     internal var containedReportDirOverride: File? = null
 
+    /** Pauses a test after the temp file is complete but before it is published. */
+    @Volatile
+    internal var beforeContainedReportPublishForTest: ((temp: File, target: File) -> Unit)? = null
+
     private fun containedReportDir(): File = containedReportDirOverride ?: BossDirectories.resolve(CONTAINED_REPORT_DIR)
 
     /** Lets a test start from a clean dedupe. */
-    internal fun resetContainedStateForTest() = containedSignatures.clear()
+    internal fun resetContainedStateForTest() {
+        containedSignatures.clear()
+        beforeContainedReportPublishForTest = null
+    }
 
     /**
      * Single thread for writing contained reports.
@@ -375,30 +383,40 @@ object CrashHandler {
             .substringBefore('-')
             .toLongOrNull() ?: 0L
 
-    /**
-     * Create [file] owner-only and *then* write [text] into it.
-     *
-     * `writeText` creates at the umask — typically 0644 — and fills the file before
-     * any chmod can run, so tightening afterwards leaves a window in which the
-     * whole report is world-readable at a predictable path. The permissions have to
-     * be attached at creation instead. Falls back to create-then-restrict where
-     * POSIX attributes are unavailable.
-     */
+    /** Write [text] owner-only, then atomically publish it at [file]. */
     private fun writeOwnerOnly(
         file: File,
         text: String,
     ) {
+        val temp = createOwnerOnlyTempFile(file)
+        try {
+            temp.writeText(text)
+            beforeContainedReportPublishForTest?.invoke(temp, file)
+            file.atomicMoveFrom(temp)
+        } finally {
+            // No-op after a successful move; removes a partial temp file on failure.
+            temp.delete()
+        }
+    }
+
+    /** Create a unique owner-only temp file beside [target], so its move can be atomic. */
+    private fun createOwnerOnlyTempFile(target: File): File {
         val createdWithPerms =
             runCatching {
                 java.nio.file.Files
-                    .deleteIfExists(file.toPath())
-                java.nio.file.Files
-                    .createFile(file.toPath(), posixAttribute("rw-------"))
-            }.isSuccess
-        file.writeText(text)
-        // Only needed where creation could not carry the permissions; that path keeps
-        // the narrow exposure window, and is best effort by nature.
-        if (!createdWithPerms) restrictToOwner(file, directory = false)
+                    .createTempFile(
+                        target.parentFile.toPath(),
+                        ".${target.name}.",
+                        ".tmp",
+                        posixAttribute("rw-------"),
+                    ).toFile()
+            }.getOrNull()
+        if (createdWithPerms != null) return createdWithPerms
+
+        // Non-POSIX filesystem: restrict the temp before any report content is written.
+        return File.createTempFile(".${target.name}.", ".tmp", target.parentFile).also {
+            restrictToOwner(it, directory = false)
+        }
     }
 
     private fun posixAttribute(mode: String) =

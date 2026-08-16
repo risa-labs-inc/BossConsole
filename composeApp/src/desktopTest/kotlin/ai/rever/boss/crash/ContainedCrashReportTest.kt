@@ -2,6 +2,8 @@ package ai.rever.boss.crash
 
 import java.io.File
 import java.nio.file.Files
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -48,7 +50,10 @@ class ContainedCrashReportTest {
         dir.deleteRecursively()
     }
 
-    private fun reports(): List<File> = dir.listFiles()?.toList().orEmpty()
+    private fun reports(): List<File> =
+        dir.listFiles { file -> file.name.startsWith("contained-") && file.name.endsWith(".txt") }?.toList().orEmpty()
+
+    private fun tempFiles(): List<File> = dir.listFiles { file -> file.name.endsWith(".tmp") }?.toList().orEmpty()
 
     /**
      * A fault with a signature of its own.
@@ -77,6 +82,34 @@ class ContainedCrashReportTest {
         assertTrue(text.contains("contained render fault"), "the file should say what it is")
         assertTrue(text.contains("plugin:"), "pluginId is the most useful field on this path")
         assertTrue(text.contains("contained-report-test write"), "the original message should survive")
+    }
+
+    @Test
+    fun `a contained report is published only after its content is complete`() {
+        val readyToPublish = CountDownLatch(1)
+        val allowPublish = CountDownLatch(1)
+        CrashHandler.beforeContainedReportPublishForTest = { _, _ ->
+            readyToPublish.countDown()
+            check(allowPublish.await(5, TimeUnit.SECONDS)) { "timed out waiting to publish the report" }
+        }
+
+        CrashHandler.recordContained(uniqueThrowable("atomic-publish"))
+        try {
+            assertTrue(readyToPublish.await(5, TimeUnit.SECONDS), "the writer never reached the publish point")
+            assertTrue(reports().isEmpty(), "the final report must not be visible before the atomic move")
+
+            val temp = tempFiles().single()
+            assertTrue(
+                temp.readText().contains("contained-report-test atomic-publish"),
+                "the temp file must be complete",
+            )
+        } finally {
+            allowPublish.countDown()
+        }
+
+        awaitFiles(1)
+        assertTrue(reports().single().readText().contains("contained-report-test atomic-publish"))
+        assertTrue(tempFiles().isEmpty(), "the temp file must be removed after publication")
     }
 
     @Test
