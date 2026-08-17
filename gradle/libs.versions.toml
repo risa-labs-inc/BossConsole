@@ -45,7 +45,7 @@ kotlinx-serialization = "1.11.0"
 # with mixed ktor artifacts on one classpath. Check what the supabase Gradle
 # module metadata requires before moving either line.
 ktor = "3.5.2"
-logback = "1.6.1"
+logback = "1.6.3"
 precompose = "1.6.2"
 slf4j = "2.0.18"
 supabase = "3.7.0"
