@@ -62,7 +62,7 @@ grpc = "1.83.1"
 grpc-kotlin = "1.5.0"
 protobuf = "4.35.1"
 protobuf-gradle-plugin = "0.10.0"
-graalvm-native-plugin = "1.1.6"
+graalvm-native-plugin = "1.1.9"
 # IntelliJ PSI for code navigation
 intellij-platform = "243.21565.199"
 # The plugin API contract (risa-labs-inc/boss-plugin-api releases). This pin
