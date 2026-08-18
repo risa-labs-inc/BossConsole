@@ -133,6 +133,33 @@ class BrowserClipboardCommandsTest {
         assertFalse(needsExplicitFocusOnReshow(RenderingMode.OFF_SCREEN))
     }
 
+    /**
+     * The rule the fix turns on, and the one no test could reach while it lived inside the
+     * composable. Each clause is asserted by removing it and nothing else, because each is a
+     * distinct bug: focusing on first show steals the URL bar from every new tab, and focusing in
+     * an unfocused window is a background tab taking the keyboard from the one being used.
+     */
+    @Test
+    fun `focus is taken only on a re-show, in the focused window, under hardware`() {
+        assertTrue(
+            shouldFocusOnShow(RenderingMode.HARDWARE_ACCELERATED, alreadyShown = true, hostWindowFocused = true),
+            "the case the fix exists for: switching back to a tab in the window you are using",
+        )
+
+        assertFalse(
+            shouldFocusOnShow(RenderingMode.HARDWARE_ACCELERATED, alreadyShown = false, hostWindowFocused = true),
+            "a tab appearing for the first time must leave the caret in the URL bar",
+        )
+        assertFalse(
+            shouldFocusOnShow(RenderingMode.HARDWARE_ACCELERATED, alreadyShown = true, hostWindowFocused = false),
+            "a re-show in a background window must not take the keyboard",
+        )
+        assertFalse(
+            shouldFocusOnShow(RenderingMode.OFF_SCREEN, alreadyShown = true, hostWindowFocused = true),
+            "under OFF_SCREEN the widget owns focus and a host-side call fights it",
+        )
+    }
+
     // --- the JxBrowser API this rests on ---
 
     /**

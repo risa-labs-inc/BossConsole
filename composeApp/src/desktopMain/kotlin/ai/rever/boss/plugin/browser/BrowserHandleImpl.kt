@@ -2312,19 +2312,19 @@ internal class BrowserHandleImpl(
     // ============================================================
 
     override fun copySelection() {
-        editorCommand(EditorCommand.copy(), "Copy")
+        editorCommand(EditorCommand.copy())
     }
 
     override fun paste() {
-        editorCommand(EditorCommand.paste(), "Paste")
+        editorCommand(EditorCommand.paste())
     }
 
     override fun cut() {
-        editorCommand(EditorCommand.cut(), "Cut")
+        editorCommand(EditorCommand.cut())
     }
 
     override fun selectAll() {
-        editorCommand(EditorCommand.selectAll(), "Select All")
+        editorCommand(EditorCommand.selectAll())
     }
 
     /**
@@ -2349,31 +2349,55 @@ internal class BrowserHandleImpl(
      * that framework-managed inputs listen for; the old paste bypassed them, so a React or Vue
      * field could show text its own state never learned about.
      *
-     * [Browser.focusedFrame] first and `mainFrame()` only as a fallback: the caret is what an
-     * editor command acts on, and it routinely sits in a subframe (an embedded editor, an OAuth
-     * form). Note the menu that offers these is still main-frame-gated upstream — see
-     * `toContextMenuInfo` — so today the fallback is the common path and the preference is what
-     * lets the gate be widened later without revisiting this.
+     * **On the frame choice, and a comment in this package that says the opposite.**
+     * [Browser.focusedFrame] first, `mainFrame()` only as a fallback: the caret is what an editor
+     * command acts on, and it routinely sits in a subframe. `PopupWindowContextMenu` reaches the
+     * other conclusion for its own menu ("browser.focusedFrame() would answer for the wrong frame
+     * inside an iframe") and it is right there: a right-click has a frame Chromium already
+     * resolved for that exact click, `params.frame()`, which beats any inference. These are not
+     * in conflict so much as differently supplied — that callback has the accurate frame in hand
+     * and this method does not.
+     *
+     * What that costs, stated plainly: for a caller reaching `copySelection()` on a non-editable
+     * selection while an iframe holds keyboard focus, `focusedFrame()` is the iframe and the
+     * command acts on its empty selection. `mainFrame()` would have been right there. That case
+     * is not reachable through the browser plugin's menu today — its non-editable branch copies
+     * the reported selection through AWT and never calls this, and the editable branch is gated
+     * on `isEditable`, which `toContextMenuInfo` computes for the main frame only, so a
+     * right-click that reaches here has focused a main-frame editable element. It is reachable by
+     * any other plugin holding a [BrowserHandle].
+     *
+     * The durable answer is to prefer the frame the context-menu callback already resolved
+     * (`BrowserHandleImpl` line ~1232 keeps `params.frame()`), held weakly and only while its
+     * menu is live, with `focusedFrame()` then `mainFrame()` behind it. Not done here: it changes
+     * the shape of the handle for a case nothing currently hits.
      *
      * Never throws: this runs from context-menu handlers on a JxBrowser callback thread, where
      * an escaping exception has no owner. A refusal is logged rather than returned, because
      * `BrowserHandle` declares these as `Unit` and widening that would force a plugin-api
      * release for a signal only this log needs.
      */
-    private fun editorCommand(
-        command: EditorCommand,
-        what: String,
-    ): Boolean {
+    @Suppress("TooGenericExceptionCaught") // Matches PopupWindowContextMenu: Error must propagate.
+    private fun editorCommand(command: EditorCommand): Boolean {
         if (!isValid) return false
+        // The command's own identity, not a hand-passed label: a second parameter would let
+        // editorCommand(EditorCommand.paste(), "Copy") compile and mislabel every log line it
+        // produced.
+        val what = command.name().name
         val accepted =
-            runCatching {
+            try {
                 executeEditorCommand(
                     focusedFrame = browser.focusedFrame().orElse(null),
                     mainFrame = browser.mainFrame().orElse(null),
                     command = command,
                 )
-            }.onFailure { logger.warn(LogCategory.BROWSER, "$what failed", error = it) }
-                .getOrDefault(false)
+            } catch (e: Exception) {
+                // Exception, not Throwable: `runCatching` here would swallow Error, which
+                // PopupWindowContextMenu in this same package deliberately lets propagate. Two
+                // stances on one failure class in one package is how the next reader gets it wrong.
+                logger.warn(LogCategory.BROWSER, "$what failed", mapOf("handleId" to id), error = e)
+                false
+            }
         if (!accepted) {
             // Chromium's own answer, not an exception: nothing selected, nothing editable at
             // the caret, or an empty clipboard. Worth a line — a silently refused clipboard
@@ -2480,12 +2504,36 @@ internal class BrowserHandleImpl(
         // after the incoming one has focused and undo it. Hiding is already communicated by the
         // widget detaching; the missing half was only ever the re-show.
         DisposableEffect(Unit) {
-            if (needsExplicitFocusOnReshow(JxBrowserConfig.renderingMode) && shownBefore.getAndSet(true)) {
+            // Re-entering composition is not by itself "the user switched to this tab". This file
+            // already establishes two other ways in: a cross-window move builds one composition
+            // and tears down the other (why the visibility effect ref-counts), and the surface
+            // effect exists because the window a tab composes in can differ from the one it came
+            // from. A workspace restore, a pane split or a tab moving between panes would all end
+            // in focus() otherwise, including in a window nobody is looking at - and with two
+            // browser tabs side by side, a rebuild would have both handles calling focus() with
+            // the last runnable winning. Gating on the host window being focused keeps the case
+            // this fixes (a tab switch in the window you are using) and drops the rest.
+            // FluckEngine's key-input gate reads the same signal the same way.
+            val focusOnShow =
+                shouldFocusOnShow(
+                    mode = JxBrowserConfig.renderingMode,
+                    alreadyShown = shownBefore.getAndSet(true),
+                    hostWindowFocused = hostWindowId?.let(WindowFocusManager::isWindowFocused) == true,
+                )
+            // Cancelled if this composition leaves before the runnable gets to run. `isValid`
+            // answers "not disposed, engine generation still matches" - it does NOT answer "still
+            // on screen", and the gap is reachable: on a fast A->B->A, B queues a focus, leaves
+            // composition, and the runnable then focuses B, whose native view is still alive
+            // precisely because HARDWARE mode retains the surface. Same first-responder confusion
+            // this effect exists to fix, pointed the other way. A click on the URL bar or another
+            // pane in the interval is the same race with a different loser.
+            var stillComposed = true
+            if (focusOnShow) {
                 // invokeLater, not a direct call: child effects run before parent ones, so the
                 // native view has been shown by now, but the focus request still reads better one
                 // turn of the event loop later than in the middle of applying this frame.
                 SwingUtilities.invokeLater {
-                    if (isValid) {
+                    if (stillComposed && isValid) {
                         runCatching { browser.focus() }
                             .onFailure {
                                 logger.debug(
@@ -2497,7 +2545,7 @@ internal class BrowserHandleImpl(
                     }
                 }
             }
-            onDispose {}
+            onDispose { stillComposed = false }
         }
 
         // Which window telemetry is attributed to, kept current across a tab move. Its own
@@ -2973,6 +3021,29 @@ internal fun executeEditorCommand(
  */
 internal fun needsExplicitFocusOnReshow(mode: com.teamdev.jxbrowser.engine.RenderingMode): Boolean =
     mode == com.teamdev.jxbrowser.engine.RenderingMode.HARDWARE_ACCELERATED
+
+/**
+ * Whether a browser surface entering composition should take keyboard focus.
+ *
+ * All three clauses are load-bearing and each is a bug on its own:
+ *
+ *  - [mode] - see [needsExplicitFocusOnReshow]. Under OFF_SCREEN the widget owns focus and a
+ *    host-side call fights it.
+ *  - [alreadyShown] `false` means this tab is appearing for the first time, and a new browser tab
+ *    is supposed to leave the caret in the URL bar. Focusing here would take it away on every new
+ *    tab, which is a worse bug than the one being fixed.
+ *  - [hostWindowFocused] - composition re-entry happens for reasons that are not a tab switch (a
+ *    cross-window tab move, a workspace restore, a split rebuild), and without this a background
+ *    window steals focus, or two side-by-side browser tabs race to claim it on one rebuild.
+ *
+ * Pure so the rule is pinned by a test: the decision lives inside a composable, where the effect
+ * that consumes it cannot be reached from a unit test.
+ */
+internal fun shouldFocusOnShow(
+    mode: com.teamdev.jxbrowser.engine.RenderingMode,
+    alreadyShown: Boolean,
+    hostWindowFocused: Boolean,
+): Boolean = needsExplicitFocusOnReshow(mode) && alreadyShown && hostWindowFocused
 
 /**
  * Whether an AWT pointer falls inside a Compose-measured rect, given the display density.
