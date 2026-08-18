@@ -40,6 +40,7 @@ import com.teamdev.jxbrowser.browser.event.FaviconChanged
 import com.teamdev.jxbrowser.browser.event.TitleChanged
 import com.teamdev.jxbrowser.engine.Engine
 import com.teamdev.jxbrowser.event.Subscription
+import com.teamdev.jxbrowser.frame.EditorCommand
 import com.teamdev.jxbrowser.frame.Frame
 import com.teamdev.jxbrowser.js.JsObject
 import com.teamdev.jxbrowser.media.MediaType
@@ -91,10 +92,7 @@ import kotlinx.serialization.json.floatOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import java.awt.Toolkit
 import java.awt.Window
-import java.awt.datatransfer.DataFlavor
-import java.awt.datatransfer.StringSelection
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -140,12 +138,14 @@ internal data class ContextMenuTarget(
  *   An inline image's source is a `data:` URL of the whole encoded image, which this is
  *   the first path to hand to plugins; past [MAX_INLINE_IMAGE_URL_LENGTH] it counts as no
  *   address rather than shipping megabytes of base64 into every menu.
- * - Editable is reported for the main frame only. Every action it unlocks —
- *   `cut`/`copySelection`/`paste`/`selectAll` and `fillCredentials` — runs against
- *   `browser.mainFrame()` and `document.activeElement`. Offering them for a field inside an
- *   iframe would act on the wrong frame, and in the credential case could write a password
- *   into whatever main-frame input happens to be focused. Frame-accurate detection has to
- *   wait for a frame-accurate fill path.
+ * - Editable is reported for the main frame only, and `fillCredentials` is why it stays that
+ *   way: it runs against `browser.mainFrame()` and `document.activeElement`, so offering it
+ *   for a field inside an iframe could write a password into whatever main-frame input
+ *   happens to be focused. Frame-accurate detection has to wait for a frame-accurate fill
+ *   path. `cut`/`copySelection`/`paste`/`selectAll` no longer share that limit — they go
+ *   through [BrowserHandleImpl.editorCommand], which targets `focusedFrame()` — but this gate
+ *   still decides whether the menu offers them at all, so widening it is what would actually
+ *   put them in reach inside an iframe.
  */
 internal fun ContextMenuTarget.toContextMenuInfo(
     pageUrl: String,
@@ -243,6 +243,17 @@ internal class BrowserHandleImpl(
         )
 
     private val disposed = AtomicBoolean(false)
+
+    /**
+     * Whether [Content] has ever been composed for this handle.
+     *
+     * Separates "this tab is appearing for the first time" from "this tab is being shown again"
+     * so the focus effect in [Content] can act on the second and not the first. Deliberately not
+     * derived from the retained-surface state: retention answers whether the *surface* survived,
+     * which is a different question and is false on the very first show for the same mode.
+     */
+    private val shownBefore = AtomicBoolean(false)
+
     private val subscriptions = mutableListOf<Subscription>()
 
     private val navigationListeners = CopyOnWriteArrayList<(String) -> Unit>()
@@ -2301,63 +2312,75 @@ internal class BrowserHandleImpl(
     // ============================================================
 
     override fun copySelection() {
-        if (!isValid) return
-        browser.mainFrame().ifPresent { frame ->
-            frame.executeJavaScript<Unit>("document.execCommand('copy')")
-        }
+        editorCommand(EditorCommand.copy(), "Copy")
     }
 
     override fun paste() {
-        if (!isValid) return
-        try {
-            val clipboard = Toolkit.getDefaultToolkit().systemClipboard
-            val clipboardText = clipboard.getData(DataFlavor.stringFlavor) as? String
-            if (!clipboardText.isNullOrEmpty()) {
-                browser.mainFrame().ifPresent { frame ->
-                    val escapedText =
-                        clipboardText
-                            .replace("\\", "\\\\")
-                            .replace("'", "\\'")
-                            .replace("\n", "\\n")
-                            .replace("\r", "")
-                    frame.executeJavaScript<Unit>(
-                        """
-                        (function() {
-                            var el = document.activeElement;
-                            if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) {
-                                if (el.isContentEditable) {
-                                    document.execCommand('insertText', false, '$escapedText');
-                                } else {
-                                    var start = el.selectionStart || 0;
-                                    var end = el.selectionEnd || 0;
-                                    var value = el.value || '';
-                                    el.value = value.substring(0, start) + '$escapedText' + value.substring(end);
-                                    el.selectionStart = el.selectionEnd = start + '$escapedText'.length;
-                                    el.dispatchEvent(new Event('input', { bubbles: true }));
-                                }
-                            }
-                        })()
-                        """.trimIndent(),
-                    )
-                }
-            }
-        } catch (e: Exception) {
-            logger.warn(LogCategory.BROWSER, "Failed to paste from clipboard", error = e)
-        }
+        editorCommand(EditorCommand.paste(), "Paste")
     }
 
     override fun cut() {
-        if (!isValid) return
-        browser.mainFrame().ifPresent { frame ->
-            frame.executeJavaScript<Unit>("document.execCommand('cut')")
-        }
+        editorCommand(EditorCommand.cut(), "Cut")
     }
 
     override fun selectAll() {
-        if (!isValid) return
-        browser.mainFrame().ifPresent { frame ->
-            frame.executeJavaScript<Unit>("document.execCommand('selectAll')")
+        editorCommand(EditorCommand.selectAll(), "Select All")
+    }
+
+    /**
+     * Runs [command] on the frame that holds the caret, and reports whether Chromium took it.
+     *
+     * These four used to be `frame.executeJavaScript("document.execCommand(...)")`, which was
+     * wrong three separate ways and produced the "copy works sometimes" report:
+     *
+     *  - **`execCommand('copy'|'cut')` needs transient user activation.** A right-click grants
+     *    it, but it lapses after roughly five seconds, so picking the item straight away copied
+     *    and picking it after reading the menu silently did nothing. Nothing about the two
+     *    attempts looked different to the user, which is what made it read as flakiness rather
+     *    than as a rule.
+     *  - **It only ever reached `mainFrame()`,** so a selection inside an iframe copied nothing.
+     *  - **The answer was discarded** by the `<Unit>` type argument: `execCommand` returns a
+     *    boolean, and a refusal was indistinguishable from a success.
+     *
+     * `Frame.execute` drives Chromium's own editor instead. It has no activation requirement,
+     * and it reads and writes the real system clipboard rather than splicing a string into
+     * `document.activeElement` from JS — which is what makes a copy here paste in another tab,
+     * in a terminal, or in another application. It also fires the `beforeinput`/`paste` events
+     * that framework-managed inputs listen for; the old paste bypassed them, so a React or Vue
+     * field could show text its own state never learned about.
+     *
+     * [Browser.focusedFrame] first and `mainFrame()` only as a fallback: the caret is what an
+     * editor command acts on, and it routinely sits in a subframe (an embedded editor, an OAuth
+     * form). Note the menu that offers these is still main-frame-gated upstream — see
+     * `toContextMenuInfo` — so today the fallback is the common path and the preference is what
+     * lets the gate be widened later without revisiting this.
+     *
+     * Never throws: this runs from context-menu handlers on a JxBrowser callback thread, where
+     * an escaping exception has no owner. A refusal is logged rather than returned, because
+     * `BrowserHandle` declares these as `Unit` and widening that would force a plugin-api
+     * release for a signal only this log needs.
+     */
+    private fun editorCommand(
+        command: EditorCommand,
+        what: String,
+    ): Boolean {
+        if (!isValid) return false
+        val accepted =
+            runCatching {
+                executeEditorCommand(
+                    focusedFrame = browser.focusedFrame().orElse(null),
+                    mainFrame = browser.mainFrame().orElse(null),
+                    command = command,
+                )
+            }.onFailure { logger.warn(LogCategory.BROWSER, "$what failed", error = it) }
+                .getOrDefault(false)
+        if (!accepted) {
+            // Chromium's own answer, not an exception: nothing selected, nothing editable at
+            // the caret, or an empty clipboard. Worth a line — a silently refused clipboard
+            // command is exactly the failure this method was rewritten to stop hiding.
+            logger.debug(LogCategory.BROWSER, "$what refused by Chromium", mapOf("handleId" to id))
         }
+        return accepted
     }
 
     @OptIn(ExperimentalComposeUiApi::class)
@@ -2377,11 +2400,13 @@ internal class BrowserHandleImpl(
         // and the tab paints BLANK on the way back (A->B->A). BossConsoleLite hit this on its
         // Windows fleet and calls it the "fast-switch blank".
         //
-        // Retaining is gated on the rendering mode, NOT applied unconditionally as Lite does:
-        // Lite defaults HARDWARE everywhere so the two are the same thing there, but here
-        // OFF_SCREEN is still the macOS/Linux default and they must keep the exact lifecycle they
-        // have today. Safe because the surface is still closed for real in dispose(), which runs
-        // when the tab is actually closed rather than merely hidden.
+        // Retaining is gated on the rendering mode, NOT applied unconditionally as Lite does.
+        // HARDWARE is now the default on every platform, so in practice the gate is open
+        // everywhere; it still earns its keep because OFF_SCREEN remains reachable per install
+        // (BOSS_RENDERING_MODE, the Chromium-flags setting), and an install that picks it must
+        // keep the exact close-on-hide lifecycle it had. Safe because the surface is still closed
+        // for real in dispose(), which runs when the tab is actually closed rather than merely
+        // hidden.
         val retainSurfaceAcrossTabSwitches = shouldRetainSurface(JxBrowserConfig.renderingMode)
 
         // The window actually hosting this composition, resolved through the app's window
@@ -2432,9 +2457,54 @@ internal class BrowserHandleImpl(
             }
         }
 
+        // Give the web content keyboard focus when a tab is shown AGAIN, and never the first
+        // time.
+        //
+        // In HARDWARE_ACCELERATED mode the Compose view is JxBrowser's SharedSurfaceWidget over
+        // a native child view, and unlike the OFF_SCREEN widget — whose OffScreenWidgetState
+        // wires onFocusChanged to BrowserWidget.focus()/unfocus() and answers TakeFocusCallback —
+        // it has no Java-side focus wiring at all. It relies entirely on the native view being
+        // first responder. Switching tabs hides that view and shows another, and nothing
+        // promotes the one that reappears, so the returned-to tab can hold no keyboard focus:
+        // Cmd+V goes nowhere until the page is clicked. Whether it happens depends on what the
+        // window fell back to when the outgoing view was hidden, which is what made it read as
+        // "sometimes".
+        //
+        // The first-show exception is the point of [shownBefore], not an optimisation: a tab
+        // being created is supposed to leave the caret in BOSS's own URL bar, and focusing the
+        // page here would take it away on every new tab.
+        //
+        // There is deliberately no unfocus() on the way out. A tab moving between windows builds
+        // one composition and tears down the other in an order this effect does not control (see
+        // the ref-counting note above), so an unfocus from the outgoing composition could land
+        // after the incoming one has focused and undo it. Hiding is already communicated by the
+        // widget detaching; the missing half was only ever the re-show.
+        DisposableEffect(Unit) {
+            if (needsExplicitFocusOnReshow(JxBrowserConfig.renderingMode) && shownBefore.getAndSet(true)) {
+                // invokeLater, not a direct call: child effects run before parent ones, so the
+                // native view has been shown by now, but the focus request still reads better one
+                // turn of the event loop later than in the middle of applying this frame.
+                SwingUtilities.invokeLater {
+                    if (isValid) {
+                        runCatching { browser.focus() }
+                            .onFailure {
+                                logger.debug(
+                                    LogCategory.BROWSER,
+                                    "Could not focus web content on tab re-show",
+                                    mapOf("handleId" to id, "error" to it.toString()),
+                                )
+                            }
+                    }
+                }
+            }
+            onDispose {}
+        }
+
         // Which window telemetry is attributed to, kept current across a tab move. Its own
-        // effect because the focus effect above must stay keyed on Unit - keying that one on
-        // the window would fire a spurious TAB_ACTIVATED every time a tab moved.
+        // effect because the visibility effect above must stay keyed on Unit - keying that one
+        // on the window would fire a spurious TAB_ACTIVATED every time a tab moved. (It used to
+        // say "the focus effect above"; there is now a second effect above that really is about
+        // focus, and this is not the one it means.)
         DisposableEffect(hostWindowId) {
             hostWindowId?.let { currentWindowId = it }
             onDispose {}
@@ -2863,6 +2933,45 @@ internal class BrowserHandleImpl(
  * reading an inline expression buried in a composable.
  */
 internal fun shouldRetainSurface(mode: com.teamdev.jxbrowser.engine.RenderingMode): Boolean =
+    mode == com.teamdev.jxbrowser.engine.RenderingMode.HARDWARE_ACCELERATED
+
+/**
+ * Runs [command] on the frame that should receive it, and reports whether Chromium took it.
+ *
+ * The whole content of this function is the frame choice, and it is the part that was wrong:
+ * the clipboard operations used to reach `mainFrame()` unconditionally, so a caret inside an
+ * iframe copied and pasted nothing. [focusedFrame] is where the caret is; [mainFrame] is the
+ * fallback for the case Chromium reports no focused frame at all.
+ *
+ * Pure and separate from [BrowserHandleImpl] so that choice is pinned by a test instead of
+ * needing a live engine to observe. Exception containment stays at the call site, which owns
+ * the logger.
+ */
+internal fun executeEditorCommand(
+    focusedFrame: Frame?,
+    mainFrame: Frame?,
+    command: EditorCommand,
+): Boolean {
+    val frame = focusedFrame ?: mainFrame ?: return false
+    return frame.execute(command)
+}
+
+/**
+ * Whether the host has to hand keyboard focus back to the web content when a tab is shown again.
+ *
+ * Only under HARDWARE_ACCELERATED, and for a reason unrelated to [shouldRetainSurface] even
+ * though both currently name the same mode. This one is about JxBrowser's Compose widgets:
+ * `OffScreenWidgetState` wires `onFocusChanged` to `BrowserWidget.focus()`/`unfocus()` and
+ * answers `TakeFocusCallback`, so under OFF_SCREEN focus is already handled and a second,
+ * host-side `focus()` would fight it. `SharedSurfaceWidget` — the HARDWARE_ACCELERATED path —
+ * has none of that and depends on the native view being first responder, which nothing restores
+ * after a tab switch.
+ *
+ * Kept as its own predicate rather than reusing [shouldRetainSurface] so the two reasons can
+ * diverge: a future JxBrowser that wires focus into the shared-surface widget would flip this
+ * one and leave surface retention exactly as it is.
+ */
+internal fun needsExplicitFocusOnReshow(mode: com.teamdev.jxbrowser.engine.RenderingMode): Boolean =
     mode == com.teamdev.jxbrowser.engine.RenderingMode.HARDWARE_ACCELERATED
 
 /**
