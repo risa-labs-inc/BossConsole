@@ -249,11 +249,6 @@ object BrowserServiceImpl : BrowserService {
     // Track active browser handles for resource management
     private val activeBrowsers = ConcurrentHashMap<String, BrowserHandleImpl>()
 
-    // Long-lived, for cleanup that outlives the caller's scope. reconcileOrphanedBrowsers() is
-    // called from non-suspending accessors but the named-profile bookkeeping has to stat a
-    // directory, and a SupervisorJob keeps one failing cleanup from cancelling the rest.
-    private val cleanupScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-
     /**
      * Drops handles whose browser has gone away without passing through a dispose path.
      *
@@ -275,19 +270,45 @@ object BrowserServiceImpl : BrowserService {
      * disposes its browser through the plugin's own handle, exactly the path that never reaches
      * this map.
      *
-     * Pruning is synchronous (callers are not suspending), but the managed-profile cleanup is
-     * not: for a named profile it has to stat the directory, so it runs on [cleanupScope].
+     * Fully synchronous, including the managed-profile release. An earlier revision handed the
+     * named-profile bookkeeping to a long-lived IO scope because it can stat a directory; now
+     * that pruning goes through [disposeTrackedBrowserBlocking] - the same path window teardown
+     * takes - it uses the same non-suspending `releaseManaged`, so there is one release path
+     * rather than two that could disagree about whether a fence was dropped.
      *
      * @return the number of live handles after pruning.
      */
     internal fun reconcileOrphanedBrowsers(): Int {
         val orphans = activeBrowsers.entries.filter { !it.value.isValid }
         for ((id, handle) in orphans) {
-            if (activeBrowsers.remove(id, handle)) {
-                browserOwners.unregister(id)
-                managedByHandle.remove(id)?.let { ref ->
-                    cleanupScope.launch { finishManagedProfile(ref) }
-                }
+            // Through the same blocking dispose as window teardown, not a bare map removal.
+            // An earlier version removed the entry, unregistered ownership and released the
+            // profile, but never called `handle.dispose()` - which is not a no-op for a
+            // browser whose transport is gone: it shuts two single-thread executors, cancels
+            // three scopes, unsubscribes every JxBrowser listener and unregisters from
+            // BrowserFindController and ActiveBrowserRegistry, all host-side state that
+            // outlives a dead connection.
+            //
+            // Dropping the entry without that made the leak permanent rather than merely
+            // untidy: `disposeAllForWindow` resolves handles out of `activeBrowsers` and
+            // through `browserOwners`, so once reconcile had removed and unregistered one,
+            // window teardown could never reach it again. Pruning less thoroughly than
+            // teardown means whatever prune wins the race decides whether the resources are
+            // ever released.
+            //
+            // Caught per handle: dispose touches a dead transport (`browser.close()` can
+            // throw) and marshals `exitFullscreen` onto the EDT, and one failure must not
+            // strand the rest of the orphans. `dispose()` is idempotent via its own CAS, so
+            // a handle that teardown also reaches later is safe.
+            try {
+                disposeTrackedBrowserBlocking(handle)
+            } catch (e: Exception) {
+                logger.warn(
+                    LogCategory.BROWSER,
+                    "Error disposing orphaned browser handle",
+                    mapOf("handleId" to id),
+                    e,
+                )
             }
         }
         if (orphans.isNotEmpty()) {
@@ -686,16 +707,17 @@ object BrowserServiceImpl : BrowserService {
     /**
      * Return all active browser handles for internal lookup (e.g. RPA recorder).
      *
-     * Reconciles first, and returns only handles that are still valid. Callers scan this list
-     * and call through what it hands them, so a dead handle here costs a failing IPC round trip
-     * per lookup - and these are lookups on hot paths, repeated for as long as the caller keeps
-     * polling. Pruning on the way out is what keeps a browser that died without passing through
-     * a dispose path from being scanned for the rest of the session.
+     * Filtered, because callers scan this list and call through whatever it hands them: a dead
+     * handle here costs a failing IPC round trip per lookup, on paths that poll for as long as
+     * a panel stays open.
+     *
+     * Filtered rather than pruned. [reconcileOrphanedBrowsers] would also remove them, but it
+     * disposes as it goes - which blocks, marshals onto the EDT, and is the wrong thing to put
+     * on a lookup this hot. The filter alone is what makes the scan safe, and it is safe
+     * whether or not anything ever prunes; leaving the entries in place also keeps them
+     * reachable by window teardown, which is what actually owns their disposal.
      */
-    internal fun getActiveHandles(): List<BrowserHandleImpl> {
-        reconcileOrphanedBrowsers()
-        return activeBrowsers.values.filter { it.isValid }
-    }
+    internal fun getActiveHandles(): List<BrowserHandleImpl> = activeBrowsers.values.filter { it.isValid }
 
     /**
      * Dispose plugin browsers owned by one application window.

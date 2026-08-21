@@ -2046,12 +2046,23 @@ internal class BrowserHandleImpl(
     /**
      * Whether [e] means "this browser's IPC is gone" rather than "this one call failed".
      *
-     * JxBrowser surfaces a closed transport as a plain [IllegalStateException] carrying
-     * "The connection has been closed." / "Failed to receive the response.", and a closed object
-     * as `ObjectClosedException`. Matched on the exception chain because the transport error
-     * arrives as the `cause` of the call-site failure. Anything unrecognised is treated as a
-     * transient call failure, so a new message shape costs a retry rather than a wrongly
-     * discarded live browser.
+     * Only two things are treated as terminal: `ObjectClosedException`, and an
+     * [IllegalStateException] carrying "The connection has been closed." - both of which say
+     * the transport itself is gone, and a closed connection is never reopened.
+     *
+     * Deliberately NOT "Failed to receive the response.", even though that is the message on
+     * the exception this was written for. It describes a round trip that did not come back,
+     * which is also what a live-but-wedged renderer produces - see the frame-stall probe above,
+     * which exists because `executeJavaScript` can block indefinitely against a page that is
+     * still alive. Latching on it would let one slow round trip permanently invalidate a
+     * healthy browser: every navigation and zoom call silently refusing on a tab that renders
+     * fine, which is a worse bug than the one this fixes.
+     *
+     * Nothing is lost by excluding it, because the chain is what is matched, not the top
+     * message: the observed failures arrived as "Failed to receive the response." with
+     * "The connection has been closed." as their `cause`, so the terminal reason is still
+     * found. Anything unrecognised counts as a transient call failure - a new message shape
+     * costs a retry rather than a wrongly discarded live browser.
      */
     private fun isTransportFailure(e: Throwable): Boolean =
         generateSequence(e) { prev -> prev.cause?.takeIf { it !== prev } }
@@ -2059,10 +2070,7 @@ internal class BrowserHandleImpl(
             .take(MAX_CAUSE_DEPTH)
             .any { cause ->
                 cause is ObjectClosedException ||
-                    (cause.message ?: "").let {
-                        it.contains("connection has been closed", ignoreCase = true) ||
-                            it.contains("Failed to receive the response", ignoreCase = true)
-                    }
+                    (cause.message ?: "").contains("connection has been closed", ignoreCase = true)
             }
 
     override suspend fun loadUrl(url: String) {
@@ -2139,31 +2147,29 @@ internal class BrowserHandleImpl(
     }
 
     override fun goBack() {
-        if (isValid && browser.navigation().canGoBack()) {
+        if (!canGoBack()) return
+        syncCall("goBack", Unit) {
             visitTracker.expect(BrowserNavigationType.BACK_FORWARD)
             browser.navigation().goBack()
         }
     }
 
     override fun goForward() {
-        if (isValid && browser.navigation().canGoForward()) {
+        if (!canGoForward()) return
+        syncCall("goForward", Unit) {
             visitTracker.expect(BrowserNavigationType.BACK_FORWARD)
             browser.navigation().goForward()
         }
     }
 
     override fun reload() {
-        if (isValid) {
+        syncCall("reload", Unit) {
             visitTracker.expect(BrowserNavigationType.RELOAD)
             browser.navigation().reload()
         }
     }
 
-    override fun stop() {
-        if (isValid) {
-            browser.navigation().stop()
-        }
-    }
+    override fun stop() = syncCall("stop", Unit) { browser.navigation().stop() }
 
     override fun canGoBack(): Boolean = syncCall("canGoBack", false) { browser.navigation().canGoBack() }
 
@@ -2176,26 +2182,22 @@ internal class BrowserHandleImpl(
     override fun getZoomLevel(): Double = syncCall("zoomLevel", 1.0) { browser.zoom().level().value() }
 
     override fun setZoomLevel(level: Double) {
-        if (!isValid) return
-        browser.zoom().level(ZoomLevel.of(level))
+        syncCall("setZoomLevel", Unit) { browser.zoom().level(ZoomLevel.of(level)) }
         notifyZoomListeners()
     }
 
     override fun zoomIn() {
-        if (!isValid) return
-        browser.zoom().`in`()
+        syncCall("zoomIn", Unit) { browser.zoom().`in`() }
         notifyZoomListeners()
     }
 
     override fun zoomOut() {
-        if (!isValid) return
-        browser.zoom().out()
+        syncCall("zoomOut", Unit) { browser.zoom().out() }
         notifyZoomListeners()
     }
 
     override fun resetZoom() {
-        if (!isValid) return
-        browser.zoom().reset()
+        syncCall("resetZoom", Unit) { browser.zoom().reset() }
         notifyZoomListeners()
     }
 
@@ -2237,8 +2239,10 @@ internal class BrowserHandleImpl(
     // ============================================================
 
     override fun isSecure(): Boolean {
-        if (!isValid) return false
-        val url = browser.url()
+        // Through getCurrentUrl, not browser.url(): this was the same unguarded round trip,
+        // reached from toolbar UI, and "" does not start with https so a dead handle reads
+        // as not-secure rather than throwing into the composable.
+        val url = getCurrentUrl()
         return url.startsWith("https://")
     }
 

@@ -41,7 +41,15 @@ class DesktopLogCapture {
     /**
      * Appends one captured line, trimming to [MAX_BUFFERED_LINES], then notifies listeners.
      *
-     * Both tee streams funnel through here so the count and the queue cannot drift apart.
+     * Both tee streams funnel through here so there is one place the count is maintained.
+     *
+     * The count can still drift from the queue by a little, and deliberately is not locked
+     * against it: an `add` landing between [clear]'s `buffer.clear()` and its `set(0)`
+     * understates by one, and a `record` that polls before a concurrent `clear` and decrements
+     * after can go momentarily negative. Both are bounded and self-correcting - the visible
+     * effect is the buffer sitting a few lines either side of the cap, which is what a cap on a
+     * debug log buffer is for. Locking the two together would put a mutex on the path every
+     * `println` in the process takes, which is the cost this whole change exists to remove.
      */
     private fun record(entry: LogEntry) {
         buffer.add(entry)
@@ -125,6 +133,17 @@ class DesktopLogCapture {
             listeners.remove(listener)
         }
     }
+
+    /**
+     * How many listeners are registered.
+     *
+     * A test seam. A provider that fails to unregister on dispose leaks silently: the leak is
+     * invisible through the provider's own state, because a cancelled consumer publishes
+     * nothing whether or not the listener is still attached. This is the only place the
+     * difference shows.
+     */
+    internal val listenerCount: Int
+        get() = synchronized(listeners) { listeners.size }
 
     /**
      * Notify all listeners of a new log entry.

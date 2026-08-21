@@ -10,6 +10,7 @@ import ai.rever.boss.components.plugin.panels.right_top.BrowserAccessor
 import ai.rever.boss.components.plugin.panels.right_top.storeSplitViewState
 import ai.rever.boss.components.plugin.providers.DashboardContentProviderImpl
 import ai.rever.boss.components.plugin.providers.DirectoryPickerProviderImpl
+import ai.rever.boss.components.plugin.providers.DisposableProvider
 import ai.rever.boss.components.plugin.providers.FileSystemDataProviderImpl
 import ai.rever.boss.components.plugin.providers.NavigationTargetProviderImpl
 import ai.rever.boss.components.plugin.providers.PanelEventProviderImpl
@@ -672,10 +673,14 @@ class DefaultPlugin(
         DefaultContextMenuProvider()
     }
 
-    // Log data provider for console plugin
-    override val logDataProvider: LogDataProvider by lazy {
-        createLogDataProvider()
-    }
+    // Log data provider for console plugin.
+    //
+    // The delegate is named so `dispose()` can ask whether it was ever created. Reading
+    // `logDataProvider` there would construct one - registering a listener on the
+    // process-wide log capture and starting its rebuild coroutine - purely in order to tear
+    // it down, on every window close in an app where nothing opened the console.
+    private val logDataProviderDelegate = lazy { createLogDataProvider() }
+    override val logDataProvider: LogDataProvider by logDataProviderDelegate
 
     // Plugin Store API key provider for secret manager and other plugins
     override val pluginStoreApiKeyProvider: PluginStoreApiKeyProvider by lazy {
@@ -940,6 +945,12 @@ class DefaultPlugin(
         runBlocking {
             dynamicPluginManager.disposeWindow()
             sandboxManager.dispose()
+        }
+        // Providers that registered themselves with a process-wide singleton, or that own a
+        // coroutine, do not go away with `pluginScope` - it is not their scope. Only the ones
+        // actually built: see [logDataProviderDelegate].
+        if (logDataProviderDelegate.isInitialized()) {
+            (logDataProvider as? DisposableProvider)?.dispose()
         }
         pluginScope.cancel()
     }
