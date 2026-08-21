@@ -683,8 +683,19 @@ object BrowserServiceImpl : BrowserService {
         return browserOwners.count(windowId)
     }
 
-    /** Return all active browser handles for internal lookup (e.g. RPA recorder). */
-    internal fun getActiveHandles(): List<BrowserHandleImpl> = activeBrowsers.values.toList()
+    /**
+     * Return all active browser handles for internal lookup (e.g. RPA recorder).
+     *
+     * Reconciles first, and returns only handles that are still valid. Callers scan this list
+     * and call through what it hands them, so a dead handle here costs a failing IPC round trip
+     * per lookup - and these are lookups on hot paths, repeated for as long as the caller keeps
+     * polling. Pruning on the way out is what keeps a browser that died without passing through
+     * a dispose path from being scanned for the rest of the session.
+     */
+    internal fun getActiveHandles(): List<BrowserHandleImpl> {
+        reconcileOrphanedBrowsers()
+        return activeBrowsers.values.filter { it.isValid }
+    }
 
     /**
      * Dispose plugin browsers owned by one application window.

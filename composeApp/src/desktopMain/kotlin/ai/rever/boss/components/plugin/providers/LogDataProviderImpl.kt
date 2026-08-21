@@ -7,9 +7,15 @@ import ai.rever.boss.plugin.api.LogDataProvider
 import ai.rever.boss.plugin.api.LogEntryData
 import ai.rever.boss.plugin.api.LogFilterData
 import ai.rever.boss.plugin.api.LogSourceData
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 /**
  * Implementation of LogDataProvider that wraps GlobalLogCapture.
@@ -41,10 +47,47 @@ class LogDataProviderImpl : LogDataProvider {
     private val _autoScroll = MutableStateFlow(true)
     override val autoScroll: StateFlow<Boolean> = _autoScroll.asStateFlow()
 
+    /**
+     * Coalesces rebuild requests instead of rebuilding once per captured line.
+     *
+     * [updateLogs] is O(buffered lines): it copies the whole capture buffer, filters it, and
+     * allocates a `LogEntryData` for every entry. It used to run **synchronously from the log
+     * listener**, which `DesktopLogCapture` invokes from inside `PrintStream.write` - so each
+     * line of output rebuilt a list of up to 10,000 entries while holding the `System.out`
+     * monitor, and every other thread that wanted to log waited behind it.
+     *
+     * That made log volume self-amplifying. One 30-frame stack trace is ~30 captured lines, so a
+     * component logging a trace a few times a second had the app allocating hundreds of thousands
+     * of objects per second and serialising every logging thread in the process - including the
+     * UI thread - against a queue full of its own output. A repeating exception anywhere could
+     * therefore freeze the whole app, which is what a dead browser handle did in practice.
+     *
+     * CONFLATED, so a burst collapses to one rebuild: the panel wants the latest snapshot, never
+     * the intermediate ones. `trySend` from the listener cannot block or fail on a full buffer,
+     * which keeps the write path O(1) whatever the consumer is doing.
+     */
+    private val rebuildRequests = Channel<Unit>(Channel.CONFLATED)
+
+    /**
+     * Not the caller's scope: this outlives any one window, and the provider is process-wide.
+     * Default rather than Main, because a rebuild must never run on the UI thread.
+     */
+    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+
     init {
-        // Listen for new log entries
+        scope.launch {
+            while (true) {
+                rebuildRequests.receive()
+                updateLogs()
+                // Floor between rebuilds. A steady stream of output would otherwise still
+                // rebuild per line, since CONFLATED only merges what arrives while busy.
+                delay(REBUILD_INTERVAL_MS)
+            }
+        }
+
+        // Listen for new log entries. Must stay O(1) - see [rebuildRequests].
         logCapture.addListener { _ ->
-            updateLogs()
+            rebuildRequests.trySend(Unit)
         }
 
         // Initial load (will load all logs from app startup)
@@ -116,4 +159,9 @@ class LogDataProviderImpl : LogDataProvider {
                     LogSource.STDERR -> LogSourceData.STDERR
                 },
         )
+
+    private companion object {
+        /** Minimum gap between log-list rebuilds while output keeps arriving. */
+        const val REBUILD_INTERVAL_MS = 150L
+    }
 }

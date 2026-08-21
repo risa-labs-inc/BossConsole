@@ -40,6 +40,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
+import com.teamdev.jxbrowser.ObjectClosedException
 import com.teamdev.jxbrowser.browser.Browser
 import com.teamdev.jxbrowser.browser.callback.CreatePopupCallback
 import com.teamdev.jxbrowser.browser.callback.OpenPopupCallback
@@ -267,6 +268,28 @@ internal class BrowserHandleImpl(
         )
 
     private val disposed = AtomicBoolean(false)
+
+    /**
+     * Latched when a synchronous RPC through this browser fails because its transport is gone.
+     *
+     * [isValid]'s generation clause covers a browser outliving *its engine*. It cannot see the
+     * other way a browser's IPC dies: this browser's own connection closing while the engine
+     * generation still matches - a renderer going away, a page calling `window.close()`, or a
+     * plugin disposing the browser behind its own handle. In that state `isClosed` still answers
+     * `false` (nothing arrived to mark it) and the generation still matches, so [isValid]
+     * answered `true` for a browser every call through which throws.
+     *
+     * That made the handle uncollectable: [BrowserServiceImpl.reconcileOrphanedBrowsers] prunes
+     * on `!isValid`, so a handle that can never be valid again was also never pruned, and stayed
+     * in `getActiveHandles()` for the rest of the session. Any scan over those handles then paid
+     * a failing round trip per zombie and, because these accessors threw, aborted at the first
+     * one - so the scan could never reach a live browser again either.
+     *
+     * Latched rather than probed: the condition is terminal (a closed connection is never
+     * reopened - a new browser gets a new handle), and probing would mean spending the failing
+     * round trip this exists to avoid.
+     */
+    private val connectionDead = AtomicBoolean(false)
 
     /**
      * Whether [Content] has ever been composed for this handle.
@@ -1984,8 +2007,63 @@ internal class BrowserHandleImpl(
     override val isValid: Boolean
         get() =
             !disposed.get() &&
+                !connectionDead.get() &&
                 FluckEngine.currentEngineGeneration == engineGeneration &&
                 runCatching { !browser.isClosed }.getOrDefault(false)
+
+    /**
+     * Runs a synchronous JxBrowser accessor, returning [fallback] instead of throwing.
+     *
+     * Every sync accessor here is an IPC round trip that can fail at any moment, and they are
+     * called from plugin code and from scans over [BrowserServiceImpl.getActiveHandles] - an
+     * `if (isValid)` guard cannot make them safe, because the connection can die between the
+     * check and the call. A throw out of one of these is what turned a single dead browser into
+     * a permanently broken lookup, so they report failure by value like the rest of this class.
+     *
+     * A transport failure also latches [connectionDead], which is what lets the handle be pruned.
+     * The log stays at debug: the whole point is that this path can repeat on a hot caller, and
+     * it was a WARN-with-stack-trace per failure that flooded the console buffer.
+     */
+    private fun <T> syncCall(
+        op: String,
+        fallback: T,
+        block: () -> T,
+    ): T {
+        if (!isValid) return fallback
+        return try {
+            block()
+        } catch (e: Exception) {
+            if (isTransportFailure(e)) connectionDead.set(true)
+            logger.debug(
+                LogCategory.BROWSER,
+                "Browser sync call failed",
+                mapOf("handleId" to id, "op" to op, "error" to (e.message ?: e.javaClass.simpleName)),
+            )
+            fallback
+        }
+    }
+
+    /**
+     * Whether [e] means "this browser's IPC is gone" rather than "this one call failed".
+     *
+     * JxBrowser surfaces a closed transport as a plain [IllegalStateException] carrying
+     * "The connection has been closed." / "Failed to receive the response.", and a closed object
+     * as `ObjectClosedException`. Matched on the exception chain because the transport error
+     * arrives as the `cause` of the call-site failure. Anything unrecognised is treated as a
+     * transient call failure, so a new message shape costs a retry rather than a wrongly
+     * discarded live browser.
+     */
+    private fun isTransportFailure(e: Throwable): Boolean =
+        generateSequence(e) { prev -> prev.cause?.takeIf { it !== prev } }
+            // Bounded: a cause cycle longer than self-reference would otherwise not terminate.
+            .take(MAX_CAUSE_DEPTH)
+            .any { cause ->
+                cause is ObjectClosedException ||
+                    (cause.message ?: "").let {
+                        it.contains("connection has been closed", ignoreCase = true) ||
+                            it.contains("Failed to receive the response", ignoreCase = true)
+                    }
+            }
 
     override suspend fun loadUrl(url: String) {
         if (!isValid) {
@@ -2032,15 +2110,9 @@ internal class BrowserHandleImpl(
         }
     }
 
-    override fun getCurrentUrl(): String {
-        if (!isValid) return ""
-        return browser.url()
-    }
+    override fun getCurrentUrl(): String = syncCall("url", "") { browser.url() }
 
-    override fun getTitle(): String {
-        if (!isValid) return ""
-        return browser.title()
-    }
+    override fun getTitle(): String = syncCall("title", "") { browser.title() }
 
     override fun addNavigationListener(listener: (String) -> Unit) {
         navigationListeners.add(listener)
@@ -2093,18 +2165,15 @@ internal class BrowserHandleImpl(
         }
     }
 
-    override fun canGoBack(): Boolean = isValid && browser.navigation().canGoBack()
+    override fun canGoBack(): Boolean = syncCall("canGoBack", false) { browser.navigation().canGoBack() }
 
-    override fun canGoForward(): Boolean = isValid && browser.navigation().canGoForward()
+    override fun canGoForward(): Boolean = syncCall("canGoForward", false) { browser.navigation().canGoForward() }
 
     // ============================================================
     // ZOOM CONTROLS
     // ============================================================
 
-    override fun getZoomLevel(): Double {
-        if (!isValid) return 1.0
-        return browser.zoom().level().value()
-    }
+    override fun getZoomLevel(): Double = syncCall("zoomLevel", 1.0) { browser.zoom().level().value() }
 
     override fun setZoomLevel(level: Double) {
         if (!isValid) return
@@ -3174,6 +3243,9 @@ internal class BrowserHandleImpl(
     )
 
     companion object {
+        /** Cause-chain depth [isTransportFailure] inspects before giving up. */
+        private const val MAX_CAUSE_DEPTH = 16
+
         /**
          * Popup browsers we are currently waiting to capture an upload body for.
          * Populated by the popup handler before [BeforeSendUploadDataCallback] fires;
