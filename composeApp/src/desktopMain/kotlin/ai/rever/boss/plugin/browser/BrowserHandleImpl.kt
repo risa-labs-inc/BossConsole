@@ -260,6 +260,35 @@ internal class BrowserHandleImpl(
      */
     @Volatile private var lastCommittedMainFrameUrl: String = ""
 
+    /**
+     * Whether this handle's page is [url], without asking Chromium.
+     *
+     * Built on [lastCommittedMainFrameUrl] rather than on a second field of its own: main added
+     * that one for the page-event bridge while this was in review, for the same reason - reading
+     * a field instead of betting on whether `Browser.url()` is a synchronous round trip - and two
+     * volatiles tracking one value is how they drift.
+     *
+     * Exists so a handle can be matched against a tab's URL without an IPC round trip.
+     * `DesktopBrowserAccessor.findBrowserForTab` resolves a dynamic plugin's browser tab by
+     * scanning every active handle for the one whose URL equals the tab's, and it used to read
+     * each candidate's `getCurrentUrl()` - a blocking call into Chromium per handle, on a path a
+     * panel can poll. With a dozen tabs open that was a dozen round trips per lookup, and a
+     * handle whose transport had gone made each one a failure that had to fail first.
+     *
+     * The comparison is sound because the field is fed from the same `NavigationFinished`
+     * main-frame branch that notifies [navigationListeners], which is where the plugin's own tab
+     * state gets its URL from: both sides now come from one event, rather than a tracked value on
+     * one side and a live read on the other. Same-document navigations reach that branch too, so
+     * an SPA route change is reflected.
+     *
+     * Falls back to the creation URL while the field is still blank, so a browser that has not
+     * navigated yet is matchable. Deliberately not an exposed getter - a caller holding the
+     * string would be tempted to read live when it looked stale, which is the round trip this
+     * removes - and deliberately NOT the `browser.url()` fallback [lastCommittedMainFrameUrl]'s
+     * other reader uses, since that is the round trip.
+     */
+    internal fun isAtUrl(url: String): Boolean = lastCommittedMainFrameUrl.ifBlank { config.url } == url
+
     /** Receives in-page interaction batches, attributed to the page that is actually loaded. */
     private val interactionBridge =
         BrowserInteractionBridge(

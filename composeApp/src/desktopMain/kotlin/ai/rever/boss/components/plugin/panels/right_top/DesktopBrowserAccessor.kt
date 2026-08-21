@@ -117,6 +117,31 @@ class DesktopBrowserIntegration(
 }
 
 /**
+ * The one candidate matching a tab's URL, reporting rather than hiding an ambiguity.
+ *
+ * Pure and separate from [findBrowserForTab] so it can be tested: the rest of that function
+ * needs a live SplitViewState and real JxBrowser handles, which is why none of it has ever had a
+ * test, and the selection is the part with actual logic in it.
+ *
+ * [onAmbiguous] is called with the match count when more than one candidate matches, and the
+ * first is still returned. Two tabs on one URL are genuinely indistinguishable here - nothing
+ * ties a browser handle to the tab that owns it, so this resolves by iteration order and can
+ * hand back the wrong tab. That is pre-existing and not fixable at this layer: closing it needs
+ * the tab id at browser-creation time, and `BrowserConfig` does not carry one. Reported rather
+ * than silently guessed, because the symptom otherwise is a plugin driving a page the user is
+ * not looking at, with nothing in the log to say so.
+ */
+internal fun <T> resolveSingleByUrl(
+    candidates: List<T>,
+    matches: (T) -> Boolean,
+    onAmbiguous: (Int) -> Unit,
+): T? {
+    val hits = candidates.filter(matches)
+    if (hits.size > 1) onAmbiguous(hits.size)
+    return hits.firstOrNull()
+}
+
+/**
  * Direct browser lookup function - returns thread-safe LockedBrowser wrapper
  */
 private fun findBrowserForTab(
@@ -208,10 +233,25 @@ private fun findBrowserForTab(
                     }
 
                 if (!tabUrl.isNullOrBlank()) {
+                    // Matched against each handle's navigation-fed URL, never a live read.
+                    // This used to call getCurrentUrl() per candidate, which is a blocking IPC
+                    // round trip into Chromium - so one lookup cost a round trip per open
+                    // browser, on a path panels poll, and a handle whose transport had gone
+                    // made each one a failure that had to fail first. See
+                    // BrowserHandleImpl.lastKnownUrl for why the cached value is the better
+                    // comparison and not merely the cheaper one.
                     val handle =
-                        BrowserServiceImpl.getActiveHandles().firstOrNull { h ->
-                            h.isValid && h.getCurrentUrl() == tabUrl
-                        }
+                        resolveSingleByUrl(
+                            candidates = BrowserServiceImpl.getActiveHandles(),
+                            matches = { it.isAtUrl(tabUrl) },
+                            onAmbiguous = { count ->
+                                browserAccessorLogger.warn(
+                                    LogCategory.BROWSER,
+                                    "Multiple browsers share this tab's URL - resolving by iteration order",
+                                    mapOf("tabId" to tabId, "candidates" to count.toString()),
+                                )
+                            },
+                        )
                     if (handle != null) {
                         return LockedBrowser(handle.getRawBrowser(), handle.getBrowserLock())
                     }
