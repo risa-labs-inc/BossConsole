@@ -1026,6 +1026,23 @@ compose.desktop {
                 // if a very small machine ever reports heap trouble.
                 add("-Xmx2g")
 
+                // Start small and let G1 grow into that ceiling, rather than committing it all
+                // at launch.
+                //
+                // Not optional alongside the -Xmx above, and the reason is a trap. The default
+                // InitialHeapSize is 1/64 of physical RAM, which on a 128 GB machine is 2 GB -
+                // exactly the ceiling just set. An -Xms equal to -Xmx tells G1 the heap is fixed,
+                // so it commits the whole 2 GB at startup and never uncommits. Measured, today's
+                // uncapped JVM starts at that same 2 GB and *shrinks* to a 432 MB commit once the
+                // app settles; without this line the cap would have frozen it at 2 GB and added
+                // roughly 1.6 GB of resident memory to every large machine, which is the opposite
+                // of the intent. Small machines were never affected (1/64 of 8 GB is 128 MB).
+                //
+                // 256 MB rather than something nearer the ~300-480 MB steady state, because the
+                // cost of guessing low is a few cheap region expansions during startup and the
+                // cost of guessing high is committed memory the app may never use.
+                add("-Xms256m")
+
                 // Apple Silicon JIT compatibility flags (harmless on other platforms)
                 add("-XX:+IgnoreUnrecognizedVMOptions")
 

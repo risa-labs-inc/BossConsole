@@ -106,6 +106,46 @@ class ProcessFootprintTest {
 
     // endregion
 
+    // region sampling cadence
+
+    /**
+     * The cadence exists for a measured reason: on a machine running 1,227 processes the
+     * ownership scan cost ~95 ms against ~48 ms to measure the dozen pids we own, and running
+     * both every 10 s burnt about 1.5% of a core continuously to draw one status-bar glyph.
+     */
+    @Test
+    fun `discovery is skipped while the process set looks unchanged`() {
+        val t0 = 1_000_000L
+        assertEquals(false, ProcessFootprint.needsDiscovery(t0, t0 + 1_000, 1227, countAtDiscovery = 1227))
+        assertEquals(
+            false,
+            ProcessFootprint.needsDiscovery(t0, t0 + ProcessFootprint.DISCOVERY_TTL_MS - 1, 1227, 1227),
+        )
+    }
+
+    @Test
+    fun `a changed process count rediscovers immediately`() {
+        // A new renderer or plugin host must not wait out the age ceiling to be counted.
+        val t0 = 1_000_000L
+        assertEquals(true, ProcessFootprint.needsDiscovery(t0, t0 + 1, 1228, countAtDiscovery = 1227))
+        assertEquals(true, ProcessFootprint.needsDiscovery(t0, t0 + 1, 1226, countAtDiscovery = 1227))
+    }
+
+    @Test
+    fun `the age ceiling still forces a rediscovery`() {
+        // The count is only a proxy: a simultaneous start and stop leaves it unchanged while
+        // membership has moved underneath. The ceiling is what bounds that error.
+        val t0 = 1_000_000L
+        assertEquals(true, ProcessFootprint.needsDiscovery(t0, t0 + ProcessFootprint.DISCOVERY_TTL_MS, 1227, 1227))
+    }
+
+    @Test
+    fun `the first call always discovers`() {
+        assertEquals(true, ProcessFootprint.needsDiscovery(0L, 0L, 0, countAtDiscovery = -1))
+    }
+
+    // endregion
+
     // region parsers
 
     @Test

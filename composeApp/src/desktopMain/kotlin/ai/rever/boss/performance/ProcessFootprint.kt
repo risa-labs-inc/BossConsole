@@ -58,13 +58,34 @@ object ProcessFootprint {
     private val logger = BossLogger.forComponent("ProcessFootprint")
 
     /**
-     * How long a reading may be reused.
+     * How long a measured reading may be reused.
      *
-     * Enumerating every process and reading each one's command line is the expensive part, and
-     * on macOS it is a `sysctl` per process. The consumer is a status-bar glyph and a 15 s
-     * pressure watchdog, so a reading this stale cannot change any decision either one makes.
+     * The work is split across two cadences because its two halves cost very different amounts.
+     * Measured on a machine running 1,227 processes:
+     *
+     *  - enumerating processes: **~1 ms**
+     *  - reading every process's command line to decide ownership: **~95 ms**
+     *  - querying memory for the dozen pids we own: **~48 ms**, nearly all of it process-spawn
+     *    overhead on macOS, and free on Linux where it is a `/proc` read
+     *
+     * Doing all of it on one 10 s cadence cost ~150 ms every 10 s, about 1.5% of a core burnt
+     * continuously to render one status-bar glyph. That is a poor trade on any machine and an
+     * indefensible one on the small, battery-powered machines this indicator is meant to help.
+     *
+     * So ownership is discovered rarely and memory is measured often: roughly 95 + 4x48 ms a
+     * minute, under 0.5% of a core, and lower again on Linux.
      */
-    internal const val CACHE_TTL_MS = 10_000L
+    internal const val MEASURE_TTL_MS = 15_000L
+
+    /**
+     * How long the set of owned processes may be reused before it is rediscovered.
+     *
+     * A minute of staleness means a browser tab opened just now may not be counted until the next
+     * discovery. That is acceptable for a footprint reading and it is not the only trigger:
+     * [needsDiscovery] also rediscovers whenever the machine's process count has changed at all,
+     * which costs ~1 ms to check and catches a new renderer or plugin host within one tick.
+     */
+    internal const val DISCOVERY_TTL_MS = 60_000L
 
     /** Upper bound on how long the per-platform memory query may take before it is abandoned. */
     private const val QUERY_TIMEOUT_SECONDS = 5L
@@ -92,6 +113,13 @@ object ProcessFootprint {
 
     @Volatile private var cachedAtMs: Long = 0L
 
+    /** Owned pids from the last discovery, and what they were when it ran. */
+    @Volatile private var ownedPids: Map<Long, Owner> = emptyMap()
+
+    @Volatile private var discoveredAtMs: Long = 0L
+
+    @Volatile private var processCountAtDiscovery: Int = -1
+
     /**
      * The current footprint, or null when it cannot be read.
      *
@@ -101,8 +129,8 @@ object ProcessFootprint {
      * trigger any reduced behaviour.
      */
     fun current(nowMs: Long = System.currentTimeMillis()): Reading? {
-        cached?.let { if (nowMs - cachedAtMs < CACHE_TTL_MS) return it }
-        val fresh = read()
+        cached?.let { if (nowMs - cachedAtMs < MEASURE_TTL_MS) return it }
+        val fresh = read(nowMs)
         if (fresh != null) {
             cached = fresh
             cachedAtMs = nowMs
@@ -110,26 +138,56 @@ object ProcessFootprint {
         return fresh
     }
 
-    private fun read(): Reading? =
+    /**
+     * Whether the owned-process set should be rediscovered rather than reused.
+     *
+     * Pure so the cadence is testable without waiting a real minute. Two triggers: the set is
+     * older than [DISCOVERY_TTL_MS], or the machine's process count has moved, which is the cheap
+     * proxy for "something started or stopped, and it might be ours". The count alone would miss
+     * a simultaneous start and stop, which is why the age ceiling is also there.
+     */
+    internal fun needsDiscovery(
+        discoveredAtMs: Long,
+        nowMs: Long,
+        liveProcessCount: Int,
+        countAtDiscovery: Int,
+    ): Boolean =
+        countAtDiscovery < 0 ||
+            liveProcessCount != countAtDiscovery ||
+            nowMs - discoveredAtMs >= DISCOVERY_TTL_MS
+
+    private fun read(nowMs: Long): Reading? =
         runCatching {
-            val hostPid = ProcessHandle.current().pid()
-            val engineDirs = engineDirPrefixes()
+            // ~1 ms, and it decides whether the ~95 ms scan below is needed at all.
+            val handles = ProcessHandle.allProcesses().toList()
 
-            val owned =
-                ProcessHandle
-                    .allProcesses()
-                    .toList()
-                    .mapNotNull { handle ->
-                        val owner =
-                            classify(
-                                pid = handle.pid(),
-                                commandLine = handle.info().commandLine().orElse(""),
-                                hostPid = hostPid,
-                                engineDirs = engineDirs,
-                            ) ?: return@mapNotNull null
-                        handle.pid() to owner
-                    }.toMap()
+            if (needsDiscovery(discoveredAtMs, nowMs, handles.size, processCountAtDiscovery)) {
+                val hostPid = ProcessHandle.current().pid()
+                // Taken from FluckEngine rather than hardcoding ~/.boss/boss-chromium, because a
+                // packaged build can run the engine bundled inside the app image instead, and a
+                // hardcoded cache path would silently score every such install's browser at zero.
+                // Both candidates are matched; only one of them can have live processes.
+                val engineDirs =
+                    runCatching {
+                        FluckEngine.engineLocations().map { it.toAbsolutePath().toString() }
+                    }.getOrElse { emptyList() }
+                ownedPids =
+                    handles
+                        .mapNotNull { handle ->
+                            val owner =
+                                classify(
+                                    pid = handle.pid(),
+                                    commandLine = handle.info().commandLine().orElse(""),
+                                    hostPid = hostPid,
+                                    engineDirs = engineDirs,
+                                ) ?: return@mapNotNull null
+                            handle.pid() to owner
+                        }.toMap()
+                discoveredAtMs = nowMs
+                processCountAtDiscovery = handles.size
+            }
 
+            val owned = ownedPids
             if (owned.isEmpty()) return@runCatching null
 
             val memory = queryMemoryBytes(owned.keys.toList())
@@ -181,19 +239,6 @@ object ProcessFootprint {
 
             else -> null
         }
-
-    /**
-     * Directory prefixes an engine process can be launched from.
-     *
-     * Taken from [FluckEngine.engineLocations] rather than hardcoding `~/.boss/boss-chromium`,
-     * because a packaged build can run the engine bundled inside the app image instead, and a
-     * hardcoded cache path would silently score every such install's browser at zero. Both
-     * candidates are matched; only one of them can have live processes.
-     */
-    private fun engineDirPrefixes(): List<String> =
-        runCatching {
-            FluckEngine.engineLocations().map { it.toAbsolutePath().toString() }
-        }.getOrElse { emptyList() }
 
     /** Physical memory per pid, keyed by pid. Missing entries mean that pid could not be read. */
     private fun queryMemoryBytes(pids: List<Long>): Map<Long, Long> {
