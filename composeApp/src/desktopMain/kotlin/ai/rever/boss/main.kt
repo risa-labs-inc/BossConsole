@@ -960,9 +960,15 @@ fun main(args: Array<String>) {
                                 // The pre-warm was skipped at startup because the engine
                                 // was missing; now that it is installed, warm it so the
                                 // first tab does not pay the full boot.
+                                //
+                                // force, because it was skipped for a SECOND reason this
+                                // comment did not know about: the unforced gate wants an
+                                // existing browser profile, and a machine that has just
+                                // downloaded its engine has never had one. So this call
+                                // silently did nothing, on the one launch it was written for.
                                 runCatching {
                                     ai.rever.boss.plugin.browser.FluckEngine
-                                        .prewarmInBackground()
+                                        .prewarmInBackground(force = true)
                                 }
                                 isDownloadingChromium = false
                             }
@@ -1001,12 +1007,13 @@ fun main(args: Array<String>) {
                                             downloadProgress = progress
                                             if (progress.isComplete) {
                                                 WindowManager.createNewWindow()
-                                                // The pre-warm was skipped at startup because the engine
-                                                // was missing; now that it is installed, warm it so the
-                                                // first tab does not pay the full boot.
+                                                // Forced for the same reason as the first-attempt
+                                                // path above: a freshly downloaded engine has no
+                                                // browser profile yet, which the unforced gate reads
+                                                // as "this machine does not use the browser".
                                                 runCatching {
                                                     ai.rever.boss.plugin.browser.FluckEngine
-                                                        .prewarmInBackground()
+                                                        .prewarmInBackground(force = true)
                                                 }
                                                 isDownloadingChromium = false
                                             }
