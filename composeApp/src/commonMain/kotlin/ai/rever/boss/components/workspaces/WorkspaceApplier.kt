@@ -41,12 +41,16 @@ private val logger = BossLogger.forComponent("WorkspaceApplier")
  * @param restoreProject Whether to restore the project from the workspace. Set to false when
  *                       applying workspace due to project selection change (to avoid overwriting
  *                       the user's project selection).
+ * @param warmEngine Starts the browser engine boot. A parameter only so a test can observe that it
+ *                   is asked BEFORE the tab-type wait rather than after - move those lines below
+ *                   the wait and the whole benefit evaporates with every test still green.
  */
 suspend fun applyWorkspace(
     workspace: LayoutWorkspace,
     splitViewState: SplitViewState,
     windowProjectState: WindowProjectState? = null,
     restoreProject: Boolean = true,
+    warmEngine: () -> Unit = ::warmBrowserEngineForTabs,
 ) {
     // Generate ID if missing
     val workspaceId = workspace.id.ifEmpty { LayoutWorkspace.generateId() }
@@ -111,7 +115,7 @@ suspend fun applyWorkspace(
     // whole cold Chromium boot inside the tab, because the startup pre-warm's gate is "has this
     // machine ever used the browser" and a first install has not.
     if (needsBrowserEngine(requiredTabTypes)) {
-        warmBrowserEngineForTabs()
+        warmEngine()
     }
 
     splitViewState.tabRegistry.awaitTabTypes(requiredTabTypes)
