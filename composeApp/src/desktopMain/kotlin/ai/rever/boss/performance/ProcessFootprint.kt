@@ -78,14 +78,21 @@ object ProcessFootprint {
     internal const val MEASURE_TTL_MS = 15_000L
 
     /**
-     * How long the set of owned processes may be reused before it is rediscovered.
+     * How often the whole process table is reclassified from scratch, ignoring what is known.
      *
-     * A minute of staleness means a browser tab opened just now may not be counted until the next
-     * discovery. That is acceptable for a footprint reading and it is not the only trigger:
-     * [needsDiscovery] also rediscovers whenever the machine's process count has changed at all,
-     * which costs ~1 ms to check and catches a new renderer or plugin host within one tick.
+     * Rare, because it is the expensive path and it is almost never the one that finds anything.
+     * Ownership is normally decided from the *pid-set delta*: enumerating pids costs 0-2 ms and
+     * reading a command line costs well under a millisecond each, so classifying only the handful
+     * of pids that appeared since the last tick is effectively free, where reading all 1,219 of
+     * them costs ~70 ms. Measured on the machine this was written on.
+     *
+     * The delta is exact rather than a proxy - every new pid is classified and every dead one is
+     * dropped - so this exists for one residual case the delta cannot see: a process that calls
+     * `exec` in place, keeping its pid while its command line changes from something we do not own
+     * to something we do. Unlikely for our targets, which are all spawned fresh, but cheap to
+     * cover at this interval.
      */
-    internal const val DISCOVERY_TTL_MS = 60_000L
+    internal const val FULL_RESCAN_TTL_MS = 300_000L
 
     /** Upper bound on how long the per-platform memory query may take before it is abandoned. */
     private const val QUERY_TIMEOUT_SECONDS = 5L
@@ -113,12 +120,13 @@ object ProcessFootprint {
 
     @Volatile private var cachedAtMs: Long = 0L
 
-    /** Owned pids from the last discovery, and what they were when it ran. */
+    /** Owned pids and what each one is, carried forward between ticks. */
     @Volatile private var ownedPids: Map<Long, Owner> = emptyMap()
 
-    @Volatile private var discoveredAtMs: Long = 0L
+    /** Every pid seen at the last enumeration, owned or not, so the next delta is exact. */
+    @Volatile private var knownPids: Set<Long> = emptySet()
 
-    @Volatile private var processCountAtDiscovery: Int = -1
+    @Volatile private var fullScanAtMs: Long = 0L
 
     /**
      * The current footprint, or null when it cannot be read.
@@ -129,7 +137,20 @@ object ProcessFootprint {
      * trigger any reduced behaviour.
      */
     fun current(nowMs: Long = System.currentTimeMillis()): Reading? {
-        cached?.let { if (nowMs - cachedAtMs < MEASURE_TTL_MS) return it }
+        // Nobody can read a glyph that is not on screen, and this is the only consumer of the
+        // reading - the pressure watchdog has its own SystemMemory path. So a hidden bar costs
+        // nothing at all rather than 0.3% of a core, which is not a rare case: focus mode hides
+        // the bottom bar per edge, Windows ships with it, and a bar switched off in settings
+        // never comes back without the View menu.
+        //
+        // Returns the last reading rather than null so that re-mounting draws a number
+        // immediately and refreshes within one sample tick, instead of flashing the heap
+        // fallback first.
+        val reusable = cached
+        if (!FootprintDisplay.isOnScreen || (reusable != null && nowMs - cachedAtMs < MEASURE_TTL_MS)) {
+            return reusable
+        }
+
         val fresh = read(nowMs)
         if (fresh != null) {
             cached = fresh
@@ -139,29 +160,42 @@ object ProcessFootprint {
     }
 
     /**
-     * Whether the owned-process set should be rediscovered rather than reused.
+     * Which pids need their command line read this tick.
      *
-     * Pure so the cadence is testable without waiting a real minute. Two triggers: the set is
-     * older than [DISCOVERY_TTL_MS], or the machine's process count has moved, which is the cheap
-     * proxy for "something started or stopped, and it might be ours". The count alone would miss
-     * a simultaneous start and stop, which is why the age ceiling is also there.
+     * Pure, so the incremental rule is testable without a process table. Everything on a full
+     * rescan; otherwise only what has appeared since the last enumeration, which on a settled
+     * machine is nothing at all.
      */
-    internal fun needsDiscovery(
-        discoveredAtMs: Long,
-        nowMs: Long,
-        liveProcessCount: Int,
-        countAtDiscovery: Int,
-    ): Boolean =
-        countAtDiscovery < 0 ||
-            liveProcessCount != countAtDiscovery ||
-            nowMs - discoveredAtMs >= DISCOVERY_TTL_MS
+    internal fun pidsToClassify(
+        livePids: Set<Long>,
+        knownPids: Set<Long>,
+        fullRescan: Boolean,
+    ): Set<Long> = if (fullRescan) livePids else livePids - knownPids
+
+    /**
+     * The owned-pid map carried into this tick, with the dead dropped.
+     *
+     * Dropping by liveness is what makes a departed process stop counting without any rescan: a
+     * closed browser tab's renderer is gone from `livePids` and therefore gone from the total on
+     * the very next tick. A full rescan starts from nothing instead, since it is about to
+     * reclassify everything anyway.
+     */
+    internal fun retainLive(
+        owned: Map<Long, Owner>,
+        livePids: Set<Long>,
+        fullRescan: Boolean,
+    ): Map<Long, Owner> = if (fullRescan) emptyMap() else owned.filterKeys { it in livePids }
 
     private fun read(nowMs: Long): Reading? =
         runCatching {
-            // ~1 ms, and it decides whether the ~95 ms scan below is needed at all.
+            // 0-2 ms. Everything below is scoped by the delta this produces.
             val handles = ProcessHandle.allProcesses().toList()
+            val livePids = handles.mapTo(HashSet()) { it.pid() }
 
-            if (needsDiscovery(discoveredAtMs, nowMs, handles.size, processCountAtDiscovery)) {
+            val fullRescan = nowMs - fullScanAtMs >= FULL_RESCAN_TTL_MS
+            val toClassify = pidsToClassify(livePids, knownPids, fullRescan)
+
+            if (toClassify.isNotEmpty()) {
                 val hostPid = ProcessHandle.current().pid()
                 // Taken from FluckEngine rather than hardcoding ~/.boss/boss-chromium, because a
                 // packaged build can run the engine bundled inside the app image instead, and a
@@ -171,8 +205,9 @@ object ProcessFootprint {
                     runCatching {
                         FluckEngine.engineLocations().map { it.toAbsolutePath().toString() }
                     }.getOrElse { emptyList() }
-                ownedPids =
+                val found =
                     handles
+                        .filter { it.pid() in toClassify }
                         .mapNotNull { handle ->
                             val owner =
                                 classify(
@@ -182,10 +217,14 @@ object ProcessFootprint {
                                     engineDirs = engineDirs,
                                 ) ?: return@mapNotNull null
                             handle.pid() to owner
-                        }.toMap()
-                discoveredAtMs = nowMs
-                processCountAtDiscovery = handles.size
+                        }
+                ownedPids = retainLive(ownedPids, livePids, fullRescan) + found
+            } else {
+                ownedPids = retainLive(ownedPids, livePids, fullRescan)
             }
+
+            knownPids = livePids
+            if (fullRescan) fullScanAtMs = nowMs
 
             val owned = ownedPids
             if (owned.isEmpty()) return@runCatching null
@@ -245,8 +284,21 @@ object ProcessFootprint {
         if (pids.isEmpty()) return emptyMap()
         val os = System.getProperty("os.name").orEmpty().lowercase()
         return when {
+            // Plain file reads: `Pss` where the kernel offers it, `VmRSS` on kernels before 4.14.
+            // Unlike the other two platforms this costs no subprocess at all, which is why Linux
+            // pays almost nothing for this feature.
             os.startsWith("linux") -> {
-                pids.mapNotNull { pid -> linuxBytes(pid)?.let { pid to it } }.toMap()
+                pids
+                    .mapNotNull { pid ->
+                        runCatching {
+                            val rollup = File("/proc/$pid/smaps_rollup")
+                            if (rollup.exists()) {
+                                parseProcKb(rollup.readText(), "Pss:")?.times(1024L)
+                            } else {
+                                parseProcKb(File("/proc/$pid/status").readText(), "VmRSS:")?.times(1024L)
+                            }
+                        }.getOrNull()?.let { pid to it }
+                    }.toMap()
             }
 
             os.startsWith("mac") -> {
@@ -278,21 +330,6 @@ object ProcessFootprint {
             }
         }
     }
-
-    /**
-     * `Pss` from smaps_rollup in bytes, falling back to `VmRSS` from status.
-     *
-     * Plain file reads, so unlike the other two platforms this costs no subprocess at all.
-     */
-    private fun linuxBytes(pid: Long): Long? =
-        runCatching {
-            val rollup = File("/proc/$pid/smaps_rollup")
-            if (rollup.exists()) {
-                parseProcKb(rollup.readText(), "Pss:")?.times(1024L)
-            } else {
-                parseProcKb(File("/proc/$pid/status").readText(), "VmRSS:")?.times(1024L)
-            }
-        }.getOrNull()
 
     /** A `<Label>: <n> kB` field from a /proc file, in kB, or null when absent. */
     internal fun parseProcKb(

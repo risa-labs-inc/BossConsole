@@ -4,9 +4,11 @@ import ai.rever.boss.components.buttons.BossActionButton
 import ai.rever.boss.performance.HealthStatus
 import ai.rever.boss.performance.PerformanceHealth
 import ai.rever.boss.performance.PerformanceSnapshot
+import ai.rever.boss.performance.PerformanceState
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.utils.FormatUtils
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 
 /**
  * Compact performance indicator for the status bar.
@@ -35,6 +37,14 @@ fun PerformanceIndicator(
     health: PerformanceHealth,
     onClick: () -> Unit,
 ) {
+    // Before the null-return below, deliberately. Whole-process sampling is gated on this being
+    // registered, and the reading is part of the snapshot, so registering only once a snapshot
+    // exists would be a standoff neither side could break.
+    DisposableEffect(Unit) {
+        PerformanceState.setIndicatorMounted(true)
+        onDispose { PerformanceState.setIndicatorMounted(false) }
+    }
+
     if (snapshot == null) return
 
     val color =

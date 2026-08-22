@@ -106,42 +106,80 @@ class ProcessFootprintTest {
 
     // endregion
 
-    // region sampling cadence
+    // region incremental discovery
 
     /**
-     * The cadence exists for a measured reason: on a machine running 1,227 processes the
-     * ownership scan cost ~95 ms against ~48 ms to measure the dozen pids we own, and running
-     * both every 10 s burnt about 1.5% of a core continuously to draw one status-bar glyph.
+     * The cadence exists for a measured reason: on a machine running 1,219 processes, enumerating
+     * pids costs 0-2 ms, reading every command line costs ~70 ms, and reading a five-pid delta
+     * costs under a millisecond. Reclassifying everything on every tick burnt about 1.5% of a core
+     * continuously to draw one status-bar glyph.
      */
     @Test
-    fun `discovery is skipped while the process set looks unchanged`() {
-        val t0 = 1_000_000L
-        assertEquals(false, ProcessFootprint.needsDiscovery(t0, t0 + 1_000, 1227, countAtDiscovery = 1227))
-        assertEquals(
-            false,
-            ProcessFootprint.needsDiscovery(t0, t0 + ProcessFootprint.DISCOVERY_TTL_MS - 1, 1227, 1227),
-        )
+    fun `a settled machine classifies nothing`() {
+        val known = setOf(1L, 2L, 3L)
+        assertEquals(emptySet(), ProcessFootprint.pidsToClassify(known, known, fullRescan = false))
     }
 
     @Test
-    fun `a changed process count rediscovers immediately`() {
-        // A new renderer or plugin host must not wait out the age ceiling to be counted.
-        val t0 = 1_000_000L
-        assertEquals(true, ProcessFootprint.needsDiscovery(t0, t0 + 1, 1228, countAtDiscovery = 1227))
-        assertEquals(true, ProcessFootprint.needsDiscovery(t0, t0 + 1, 1226, countAtDiscovery = 1227))
+    fun `only pids that appeared since the last tick are classified`() {
+        val live = setOf(1L, 2L, 3L, 99L)
+        val known = setOf(1L, 2L, 3L)
+        assertEquals(setOf(99L), ProcessFootprint.pidsToClassify(live, known, fullRescan = false))
     }
 
     @Test
-    fun `the age ceiling still forces a rediscovery`() {
-        // The count is only a proxy: a simultaneous start and stop leaves it unchanged while
-        // membership has moved underneath. The ceiling is what bounds that error.
-        val t0 = 1_000_000L
-        assertEquals(true, ProcessFootprint.needsDiscovery(t0, t0 + ProcessFootprint.DISCOVERY_TTL_MS, 1227, 1227))
+    fun `a full rescan classifies everything regardless of what is known`() {
+        val live = setOf(1L, 2L, 3L)
+        assertEquals(live, ProcessFootprint.pidsToClassify(live, live, fullRescan = true))
     }
 
     @Test
-    fun `the first call always discovers`() {
-        assertEquals(true, ProcessFootprint.needsDiscovery(0L, 0L, 0, countAtDiscovery = -1))
+    fun `a departed process stops counting on the very next tick`() {
+        // A closed tab's renderer must drop out without waiting for any rescan.
+        val owned = mapOf(1L to ProcessFootprint.Owner.HOST, 42L to ProcessFootprint.Owner.BROWSER)
+        val retained = ProcessFootprint.retainLive(owned, setOf(1L), fullRescan = false)
+        assertEquals(mapOf(1L to ProcessFootprint.Owner.HOST), retained)
+    }
+
+    @Test
+    fun `a full rescan starts from nothing`() {
+        val owned = mapOf(1L to ProcessFootprint.Owner.HOST)
+        assertEquals(emptyMap(), ProcessFootprint.retainLive(owned, setOf(1L), fullRescan = true))
+    }
+
+    // endregion
+
+    // region display gating
+
+    @Test
+    fun `sampling follows the indicator on and off screen`() {
+        assertEquals(false, FootprintDisplay.isOnScreen)
+        FootprintDisplay.setMounted(true)
+        assertEquals(true, FootprintDisplay.isOnScreen)
+        FootprintDisplay.setMounted(false)
+        assertEquals(false, FootprintDisplay.isOnScreen)
+    }
+
+    @Test
+    fun `a second window closing does not switch sampling off for the first`() {
+        FootprintDisplay.setMounted(true)
+        FootprintDisplay.setMounted(true)
+        FootprintDisplay.setMounted(false)
+        assertEquals(true, FootprintDisplay.isOnScreen)
+        FootprintDisplay.setMounted(false)
+        assertEquals(false, FootprintDisplay.isOnScreen)
+    }
+
+    @Test
+    fun `an unpaired dispose cannot latch sampling off`() {
+        // Compose does not promise a dispose for every mount under all teardown paths. Without the
+        // clamp the count goes negative and no later mount can bring it back above zero.
+        FootprintDisplay.setMounted(false)
+        FootprintDisplay.setMounted(false)
+        FootprintDisplay.setMounted(true)
+        assertEquals(true, FootprintDisplay.isOnScreen)
+        FootprintDisplay.setMounted(false)
+        assertEquals(false, FootprintDisplay.isOnScreen)
     }
 
     // endregion

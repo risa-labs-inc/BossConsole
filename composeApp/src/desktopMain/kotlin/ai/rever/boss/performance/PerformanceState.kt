@@ -38,6 +38,10 @@ actual object PerformanceState {
         return settings.showIndicator && settings.enabled
     }
 
+    actual fun setIndicatorMounted(mounted: Boolean) {
+        FootprintDisplay.setMounted(mounted)
+    }
+
     actual fun openPerformancePanel() {
         scope.launch {
             val focusedWindowId = WindowFocusManager.focusedWindowFlow.value
