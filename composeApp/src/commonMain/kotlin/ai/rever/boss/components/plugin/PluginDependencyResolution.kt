@@ -323,6 +323,22 @@ interface MissingDependencyInstaller {
 data class MissingDependencyPrompt(
     val missing: MissingPluginDependency,
     val installer: MissingDependencyInstaller,
+    /**
+     * True when a person asked for this directly, by pressing a control that needs the plugin.
+     *
+     * Such a request is not subject to [PluginDependencyBus.wasDeclined]. That set exists to stop
+     * *automatic* prompts recurring - three consumers of one optional gateway asking one question
+     * three times - and it is the right answer for those. It is the wrong answer for a button:
+     * someone who dismissed the offer and then pressed the control again is asking again, and
+     * answering a click with silence is the exact failure this feature exists to remove.
+     *
+     * Carried on the prompt rather than passed to [PluginDependencyBus.report], because the
+     * decline set is consulted **twice** on the way to a dialog - once when reporting and again
+     * by the window that collects, which re-checks because a prompt can be answered between the
+     * two. A report-time flag suppresses only the first, so the request still died silently at
+     * the collector. The intent has to travel with the prompt to survive that gap.
+     */
+    val userInitiated: Boolean = false,
 )
 
 /**
@@ -428,7 +444,12 @@ open class PluginDependencyBus {
         // Keyed like a decline, not by bare id: an optional prompt already waiting would
         // otherwise swallow a *required* one for the same plugin, and declining the optional
         // dialog would then silence the plugin that actually requires it.
-        if (wasDeclined(prompt.missing) || !queued.add(declineKey(prompt.missing))) return
+        //
+        // A user-initiated prompt skips the decline check only, never the duplicate check, so a
+        // second click while the dialog is already up does not stack another copy of it. See
+        // [MissingDependencyPrompt.userInitiated].
+        val silenced = !prompt.userInitiated && wasDeclined(prompt.missing)
+        if (silenced || !queued.add(declineKey(prompt.missing))) return
         if (prompts.trySend(prompt).isFailure) {
             queued.remove(declineKey(prompt.missing))
             // DROP_OLDEST is silent, and a prompt that never appears is indistinguishable
@@ -444,6 +465,28 @@ open class PluginDependencyBus {
         }
     }
 }
+
+/**
+ * Whether a prompt that reached a window should be put on screen.
+ *
+ * The window re-checks both conditions rather than trusting the report, because a prompt can be
+ * answered in the gap between the two: two dependents of one missing plugin each raise one, and
+ * installing for the first satisfies the second, whose dialog would otherwise claim something
+ * untrue and reinstall what is already loaded.
+ *
+ * Extracted from the collector so the rule is testable. It was not, and that mattered: the first
+ * version of the user-initiated exemption was applied at the report only, the collector went on
+ * silencing the same prompt, and dismissing the offer once left the control dead for the session.
+ * A test written against a *copy* of this expression passed the whole time.
+ *
+ * @param present the dependency is installed and usable now, so there is nothing to offer
+ * @param declined this exact question was dismissed earlier this session
+ */
+fun shouldShowMissingDependency(
+    prompt: MissingDependencyPrompt,
+    present: Boolean,
+    declined: Boolean,
+): Boolean = !present && (prompt.userInitiated || !declined)
 
 /** The bus the host actually uses. */
 object PluginDependencyEventBus : PluginDependencyBus()

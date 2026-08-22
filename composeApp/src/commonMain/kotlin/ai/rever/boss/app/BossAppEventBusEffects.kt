@@ -18,6 +18,7 @@ import ai.rever.boss.components.plugin.DependentRestartEventBus
 import ai.rever.boss.components.plugin.PanelIds
 import ai.rever.boss.components.plugin.PluginDependencyEventBus
 import ai.rever.boss.components.plugin.resolveRegisteredPanelId
+import ai.rever.boss.components.plugin.shouldShowMissingDependency
 import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.components.workspaces.WorkspaceSerializer
 import ai.rever.boss.components.workspaces.applyWorkspace
@@ -216,7 +217,17 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                     withContext(Dispatchers.IO) {
                         prompt.installer.isInstalled(prompt.missing.missingPluginId)
                     }
-                if (present || PluginDependencyEventBus.wasDeclined(prompt.missing)) {
+                // The rule itself lives in `shouldShowMissingDependency`, so it can be tested
+                // against rather than restated here. Notably it exempts a prompt a person asked
+                // for by pressing something: without that, dismissing the offer once left the
+                // control silent for the rest of the session.
+                val show =
+                    shouldShowMissingDependency(
+                        prompt = prompt,
+                        present = present,
+                        declined = PluginDependencyEventBus.wasDeclined(prompt.missing),
+                    )
+                if (!show) {
                     return@collect
                 }
                 // Reset here rather than relying on the previous dialog's exit path having
