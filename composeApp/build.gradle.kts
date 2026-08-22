@@ -992,6 +992,40 @@ compose.desktop {
                     add("--add-opens=java.desktop/sun.awt.X11=ALL-UNNAMED")
                 }
 
+                // Bound the heap instead of letting ergonomics scale it with installed RAM.
+                //
+                // With no -Xmx at all the ceiling is a property of the user's machine rather
+                // than of BOSS: measured, 2 GB on an 8 GB Windows box and 29.97 GB on a 128 GB
+                // Mac. That is not a footprint problem, because G1 commits lazily - a loaded
+                // session measured 299 MB live inside 432 MB committed, about 12% of the
+                // process RSS. It is a blast-radius problem. An unbounded ceiling lets a leak
+                // reach tens of gigabytes of real memory before the JVM will even consider an
+                // OutOfMemoryError, and well before that point Chromium's PartitionAlloc, which
+                // shares this process's malloc, aborts outright with no catchable exception and
+                // no heap dump. A bounded heap turns a machine-wide stall into a diagnosable
+                // crash, and makes GC behaviour and crash reports comparable between users.
+                //
+                // 2 GB, from measurement rather than taste. Eleven independent readings of this
+                // app's live heap - ten crash reports spanning several released versions plus a
+                // running session - peak at 478 MB and average under 300 MB. 2 GB is over 4x
+                // that. It is also not a new number: 25% of 8 GB is exactly what every machine
+                // at or below the Ultra Lite threshold already runs with today, so if it were
+                // too small for real work, the smallest supported configuration would already
+                // be failing on it.
+                //
+                // Expressed as a flat -Xmx because no static flag pair can say
+                // min(percentage, ceiling), and jpackage bakes java-options in as fixed strings
+                // with no hook to compute one per machine. -XX:MaxRAM was tried for this and is
+                // wrong: it *replaces* the physical-memory figure rather than capping it, so
+                // -XX:MaxRAM=16g -XX:MaxRAMPercentage=25 hands an 8 GB machine a 4 GB heap,
+                // half its RAM. Verified on a 128 GB host, where -XX:MaxRAM=512g yields a
+                // 128 GB MaxHeapSize.
+                //
+                // Machines above 8 GB come down to this ceiling; machines below it (a 4 GB box
+                // gets 1 GB today) come up to it. That second direction is the one to revisit
+                // if a very small machine ever reports heap trouble.
+                add("-Xmx2g")
+
                 // Apple Silicon JIT compatibility flags (harmless on other platforms)
                 add("-XX:+IgnoreUnrecognizedVMOptions")
 

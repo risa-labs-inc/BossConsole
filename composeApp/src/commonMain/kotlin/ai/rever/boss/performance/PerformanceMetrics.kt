@@ -85,9 +85,48 @@ data class MemoryMetrics(
     val nonHeapUsedBytes: Long,
     val nonHeapCommittedBytes: Long,
     val memoryPools: List<MemoryPoolInfo> = emptyList(),
+    /**
+     * Physical memory held across every process BOSS owns, or 0 when it could not be read.
+     *
+     * 0 means **unknown**, never "none": this JVM is by definition running and holding memory,
+     * so a zero here is a failed reading and callers must fall back to the heap figures rather
+     * than render it. See `ProcessFootprint` for how it is attributed and how it is biased.
+     *
+     * All six fields below default so that an older exported snapshot still deserialises, and so
+     * that a platform with no footprint reader produces a valid snapshot rather than none.
+     */
+    val footprintBytes: Long = 0L,
+    val footprintHostBytes: Long = 0L,
+    val footprintBrowserBytes: Long = 0L,
+    val footprintPluginBytes: Long = 0L,
+    /** Machine-wide available memory, or 0 when unreadable. See `SystemMemory.availableBytes`. */
+    val systemAvailableBytes: Long = 0L,
+    val systemTotalBytes: Long = 0L,
 ) {
     val heapUsagePercent: Float
         get() = if (heapMaxBytes > 0) (heapUsedBytes.toFloat() / heapMaxBytes) * 100f else 0f
+
+    /** Whether the footprint reading succeeded and may be displayed. */
+    val footprintKnown: Boolean
+        get() = footprintBytes > 0L
+
+    val footprintMB: Float
+        get() = footprintBytes / (1024f * 1024f)
+
+    /**
+     * Free machine memory as a fraction in `0.0..1.0`, or null when either reading failed.
+     *
+     * Null is distinct from 0.0 deliberately and for the same reason as in
+     * `SystemMemory.freeFraction`: an unreadable bean is not evidence of a full machine, and
+     * treating it as one would paint the indicator red on a machine with plenty of room.
+     */
+    val systemAvailableFraction: Double?
+        get() =
+            if (systemTotalBytes <= 0L || systemAvailableBytes <= 0L) {
+                null
+            } else {
+                (systemAvailableBytes.toDouble() / systemTotalBytes.toDouble()).coerceIn(0.0, 1.0)
+            }
 
     val heapUsedMB: Float
         get() = heapUsedBytes / (1024f * 1024f)
@@ -285,12 +324,17 @@ data class PerformanceHealth(
             val memoryPercent = snapshot.memory.heapUsagePercent
             val cpuPercent = snapshot.cpu.processLoadPercent
 
-            val memoryStatus =
+            val heapStatus =
                 when {
                     memoryPercent >= settings.memoryCriticalThresholdPercent -> HealthStatus.CRITICAL
                     memoryPercent >= settings.memoryWarningThresholdPercent -> HealthStatus.WARNING
                     else -> HealthStatus.GOOD
                 }
+
+            // The worst of the two, not a replacement for the heap reading. Heap exhaustion is
+            // still a real way to die and dropping its signal to gain the other would trade one
+            // blind spot for another; this only ever adds a reason to warn.
+            val memoryStatus = maxOf(heapStatus, MemoryPressure.statusFor(snapshot.memory.systemAvailableFraction))
 
             val cpuStatus =
                 when {
@@ -309,4 +353,49 @@ data class PerformanceHealth(
             return PerformanceHealth(memoryStatus, cpuStatus, overall)
         }
     }
+}
+
+/**
+ * When the machine itself, rather than the JVM heap, counts as under memory pressure.
+ *
+ * Lives here in common code so that the status-bar colour and `MemoryPressureWatchdog` cannot
+ * drift apart. That they agree is the point of the feature, not an incidental tidiness: the
+ * watchdog tightens the resource tier and raises an interruptive modal after pressure has been
+ * sustained for a minute, and before this the user got no warning at all - the first sign of a
+ * decision already taken was the dialog. Sharing the critical threshold means the indicator
+ * turns red exactly when the watchdog starts its sustain clock, so the modal arrives as a
+ * confirmation of something the user has been watching rather than as an ambush.
+ */
+object MemoryPressure {
+    /**
+     * At or below this fraction available, the machine is in trouble.
+     *
+     * **Not calibrated against a measured allocation failure**, and inherited as-is from
+     * `MemoryPressureWatchdog.PRESSURE_THRESHOLD`, whose own documentation says the same. The
+     * indicator is the instrument that can finally calibrate it: it puts the number in front of
+     * a user on every session and records it into performance history, so the reading before a
+     * real PartitionAlloc abort becomes recoverable evidence instead of something that has to be
+     * reproduced deliberately.
+     */
+    const val CRITICAL_AVAILABLE_FRACTION = 0.12
+
+    /**
+     * Where to start warning.
+     *
+     * Roughly double the critical fraction, so that on a machine trending downward there is a
+     * visible amber band before red rather than a single step from fine to acting.
+     */
+    const val WARNING_AVAILABLE_FRACTION = 0.25
+
+    /**
+     * Health implied by a free-memory fraction. A null fraction is GOOD, not CRITICAL: unknown
+     * must never be read as pressure.
+     */
+    fun statusFor(availableFraction: Double?): HealthStatus =
+        when {
+            availableFraction == null -> HealthStatus.GOOD
+            availableFraction <= CRITICAL_AVAILABLE_FRACTION -> HealthStatus.CRITICAL
+            availableFraction <= WARNING_AVAILABLE_FRACTION -> HealthStatus.WARNING
+            else -> HealthStatus.GOOD
+        }
 }

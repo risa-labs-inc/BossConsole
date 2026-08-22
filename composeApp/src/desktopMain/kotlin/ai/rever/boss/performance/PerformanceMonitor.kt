@@ -1,5 +1,6 @@
 package ai.rever.boss.performance
 
+import ai.rever.boss.config.SystemMemory
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -293,6 +294,13 @@ object PerformanceMonitor {
                 )
             }
 
+        // Both of these are cached behind their own TTLs (ProcessFootprint.CACHE_TTL_MS and
+        // SystemMemory.CACHE_TTL_MS), so sampling them on every memory tick does not spawn a
+        // subprocess on every memory tick. Zero from either means "unreadable"; MemoryMetrics
+        // maps that to footprintKnown = false and systemAvailableFraction = null rather than to
+        // a number, and the indicator falls back to the heap reading.
+        val footprint = ProcessFootprint.current()
+
         return MemoryMetrics(
             heapUsedBytes = heapUsage.used,
             heapMaxBytes = heapUsage.max,
@@ -300,6 +308,12 @@ object PerformanceMonitor {
             nonHeapUsedBytes = nonHeapUsage.used,
             nonHeapCommittedBytes = nonHeapUsage.committed,
             memoryPools = memoryPools,
+            footprintBytes = footprint?.totalBytes ?: 0L,
+            footprintHostBytes = footprint?.hostBytes ?: 0L,
+            footprintBrowserBytes = footprint?.browserBytes ?: 0L,
+            footprintPluginBytes = footprint?.pluginBytes ?: 0L,
+            systemAvailableBytes = SystemMemory.availableBytes(),
+            systemTotalBytes = SystemMemory.totalPhysicalBytes(),
         )
     }
 

@@ -10,9 +10,24 @@ import androidx.compose.runtime.Composable
 
 /**
  * Compact performance indicator for the status bar.
- * Shows memory and CPU usage with color-coded health status.
  *
- * Format: "256MB/512MB 45%" or "1.5GB/4GB 45%" (memory usage / max, CPU %)
+ * Format: `"3.4GB 45%"` - what BOSS is holding across every process it owns, and process CPU.
+ *
+ * It used to read `"299MB/30GB 45%"`: JVM heap used over the heap ceiling. Both halves of that
+ * were misleading. The numerator counted about an eighth of the memory BOSS was really holding,
+ * omitting the Chromium tree and the plugin host JVMs where every memory incident this app has
+ * had actually occurred. The denominator was not a BOSS number at all but 25% of the user's
+ * installed RAM, so on a large machine the ratio sat near 1% and the colour could not change no
+ * matter what went wrong: reaching amber at 75% of a 30 GB ceiling would have needed 22 GB of
+ * live Kotlin objects.
+ *
+ * So the ratio is gone. A single absolute figure is the honest reading, because there is no
+ * meaningful ceiling to divide by - the limit on what BOSS can hold is the machine's free
+ * memory, which is shared with everything else running and is exactly what now drives the
+ * colour. See `MemoryPressure` for the thresholds and why they are shared with the watchdog.
+ *
+ * Falls back to the old heap ratio when the footprint cannot be read, so a platform without a
+ * reader shows less rather than nothing.
  */
 @Composable
 fun PerformanceIndicator(
@@ -29,9 +44,14 @@ fun PerformanceIndicator(
             HealthStatus.CRITICAL -> BossTheme.colors.alert
         }
 
-    val memoryUsed = FormatUtils.formatMegabytes(snapshot.memory.heapUsedMB, compact = true)
-    val memoryMax = FormatUtils.formatMegabytes(snapshot.memory.heapMaxMB, compact = true)
-    val memoryText = "$memoryUsed/$memoryMax"
+    val memoryText =
+        if (snapshot.memory.footprintKnown) {
+            FormatUtils.formatMegabytes(snapshot.memory.footprintMB, compact = true)
+        } else {
+            val memoryUsed = FormatUtils.formatMegabytes(snapshot.memory.heapUsedMB, compact = true)
+            val memoryMax = FormatUtils.formatMegabytes(snapshot.memory.heapMaxMB, compact = true)
+            "$memoryUsed/$memoryMax"
+        }
     val cpuText = "${snapshot.cpu.processLoadPercent.toInt()}%"
 
     BossActionButton(
