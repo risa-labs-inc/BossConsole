@@ -1,7 +1,6 @@
 package ai.rever.boss.plugin.browser
 
 import ai.rever.boss.plugin.browser.FluckEngine.PrewarmDecision
-import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -24,21 +23,16 @@ class EnginePrewarmGateTest {
     private fun decide(
         prewarmDisabled: Boolean = false,
         force: Boolean = false,
+        engineRunning: Boolean = false,
         engineUsable: Boolean = true,
         profileExists: Boolean = false,
     ) = FluckEngine.prewarmDecision(
         prewarmDisabled = prewarmDisabled,
         force = force,
+        engineRunning = { engineRunning },
         engineUsable = { engineUsable },
         profileExists = { profileExists },
     )
-
-    @AfterTest
-    fun releaseSlot() {
-        // The slot is process-wide state; leaving it claimed would refuse a pre-warm for the rest
-        // of the test JVM and make an unrelated suite fail somewhere else.
-        FluckEngine.releasePrewarmSlot()
-    }
 
     @Test
     fun `a machine that has used the browser pre-warms without being asked twice`() {
@@ -78,13 +72,39 @@ class EnginePrewarmGateTest {
     }
 
     @Test
-    fun `every refusal carries a reason, and none of them is the profile line by default`() {
+    fun `an engine already running settles it before any filesystem work`() {
+        // The steady state: engine up, user switching workspaces. Without this each switch would
+        // stat the engine directories, claim the boot slot and spawn a thread whose only job is to
+        // notice the engine is already there. Both suppliers throw, so reaching either fails.
+        val explode: () -> Boolean = { error("must not be asked") }
+
+        assertEquals(
+            PrewarmDecision.ALREADY_RUNNING,
+            FluckEngine.prewarmDecision(
+                prewarmDisabled = false,
+                force = true,
+                engineRunning = { true },
+                engineUsable = explode,
+                profileExists = explode,
+            ),
+        )
+    }
+
+    @Test
+    fun `every refusal is a distinct decision, so the log cannot say the wrong reason`() {
         // One shared exit used to log "no browser profile on this machine yet" for an opt-out that
         // had nothing to do with the profile, and logged nothing at all when a forced caller was
-        // overruled. The reason travels with the decision so the log cannot drift from it.
-        assertEquals("BOSS_BROWSER_PREWARM opts out", PrewarmDecision.OPTED_OUT.reason)
-        assertEquals("no usable browser engine to warm", PrewarmDecision.NO_USABLE_ENGINE.reason)
-        assertEquals("no browser profile on this machine yet", PrewarmDecision.NEVER_USED_BROWSER.reason)
+        // overruled. Each refusal now carries its own name into the log as a structured field.
+        assertEquals(
+            listOf(
+                PrewarmDecision.OPTED_OUT,
+                PrewarmDecision.ALREADY_RUNNING,
+                PrewarmDecision.NO_USABLE_ENGINE,
+                PrewarmDecision.NEVER_USED_BROWSER,
+            ).distinct().size,
+            4,
+        )
+        assertEquals(PrewarmDecision.OPTED_OUT, decide(prewarmDisabled = true, engineRunning = true))
     }
 
     @Test
@@ -98,6 +118,7 @@ class EnginePrewarmGateTest {
             FluckEngine.prewarmDecision(
                 prewarmDisabled = true,
                 force = false,
+                engineRunning = explode,
                 engineUsable = explode,
                 profileExists = explode,
             ),
@@ -107,6 +128,7 @@ class EnginePrewarmGateTest {
             FluckEngine.prewarmDecision(
                 prewarmDisabled = false,
                 force = true,
+                engineRunning = { false },
                 engineUsable = { true },
                 profileExists = explode,
             ),
@@ -115,6 +137,9 @@ class EnginePrewarmGateTest {
 
     @Test
     fun `the boot slot admits one thread and re-arms when it is released`() {
+        // Claims and releases only what it took, rather than clearing the flag in an @AfterTest:
+        // this is process-wide state, and a blanket release would hand a second boot thread to a
+        // real pre-warm started by any other suite in the same JVM.
         // The slot is what keeps a second thread from parking on engineLock for the whole of
         // somebody else's boot and then logging a "pre-warmed" line for work it did not do.
         assertTrue(FluckEngine.claimPrewarmSlot(), "the first claim must win")
@@ -126,5 +151,6 @@ class EnginePrewarmGateTest {
         // good, including a completed engine download.
         FluckEngine.releasePrewarmSlot()
         assertTrue(FluckEngine.claimPrewarmSlot(), "the slot must re-arm once the boot thread exits")
+        FluckEngine.releasePrewarmSlot()
     }
 }

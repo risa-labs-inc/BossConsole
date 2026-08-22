@@ -1028,7 +1028,9 @@ object FluckEngine {
      * default: it creates the profile directory as a side effect, which would flip the unforced
      * gate on permanently and pre-warm every later launch for a user who never opens a browser.
      *
-     * Called once from app startup after [proactiveCleanupOnStartup]. A pre-warm
+     * Four callers now, which is the entire premise of the [prewarmStarted] slot below: app
+     * startup, either of the two engine-download completions, and a workspace about to apply a
+     * layout that carries a browser tab. A pre-warm
      * failure must not poison user-facing availability (the user never asked for
      * this boot), so it clears the recorded init error — the first real use
      * re-attempts initialization and surfaces its own error through the normal
@@ -1049,15 +1051,20 @@ object FluckEngine {
             prewarmDecision(
                 prewarmDisabled = configIsFalse(ChromiumFlagKeys.PREWARM),
                 force = force,
+                engineRunning = { _engine != null && isEngineHealthy() },
                 engineUsable = { hasUsableEngine(cacheIsHealthy()) },
                 profileExists = { BossDirectories.resolve(BrowserSettings.currentProfile).exists() },
             )
         if (decision != PrewarmDecision.RUN) {
-            // The reason, not a guess at it. One shared exit used to log "no browser profile on
-            // this machine yet" for an opt-out that had nothing to do with the profile, and logged
-            // nothing at all for the most surprising outcome of the three - a caller that knew a
-            // tab was coming, overruled.
-            logger.debug(LogCategory.BROWSER, "Skipping engine pre-warm - ${decision.reason}")
+            // The reason, not a guess at it, and as a field rather than interpolated into the
+            // message. One shared exit used to log "no browser profile on this machine yet" for an
+            // opt-out that had nothing to do with the profile, and logged nothing at all for the
+            // most surprising outcome - a caller that knew a tab was coming, overruled.
+            logger.debug(
+                LogCategory.BROWSER,
+                "Skipping engine pre-warm",
+                mapOf("reason" to decision.name, "forced" to force),
+            )
             return
         }
         // One boot thread at a time. The getter is synchronized, so a second thread would only
@@ -1073,67 +1080,94 @@ object FluckEngine {
             logger.debug(LogCategory.BROWSER, "Engine pre-warm already under way")
             return
         }
-        Thread({
-            try {
-                // A live engine needs no head start, and saying it was pre-warmed here would be
-                // this method claiming credit for a boot somebody else paid for.
-                if (isEngineHealthy() && _engine != null) {
-                    logger.debug(LogCategory.BROWSER, "Engine pre-warm skipped - engine already running")
-                    return@Thread
-                }
-                val startNs = System.nanoTime()
-                engine
-                logger.info(
-                    LogCategory.BROWSER,
-                    "Browser engine pre-warmed",
-                    mapOf(
-                        "durationMs" to (System.nanoTime() - startNs) / 1_000_000,
-                    ),
-                )
-            } catch (e: Throwable) {
-                // Errors (UnsatisfiedLinkError from a broken Chromium bundle, OOM)
-                // deserve visibility; plain Exceptions (transient network/license)
-                // are routine and stay at debug.
-                if (e is Error) {
-                    logger.warn(
-                        LogCategory.BROWSER,
-                        "Engine pre-warm failed with a serious error (lazy init will retry on first use)",
-                        error = e,
-                    )
-                } else {
-                    logger.debug(
-                        LogCategory.BROWSER,
-                        "Engine pre-warm failed (lazy init will retry on first use)",
-                        mapOf(
-                            "error" to (e.message ?: "unknown"),
-                        ),
-                    )
-                }
-                clearInitStateIfErrorIs(e)
-            } finally {
-                // Covers all three exits - booted, skipped as already running, failed. A failed
-                // attempt bought nothing and must not refuse the next caller with a reason to ask
-                // (a download that has just finished); a successful one leaves an engine the
-                // `already running` check above answers for.
-                releasePrewarmSlot()
-            }
-        }, "fluck-engine-prewarm").apply { isDaemon = true }.start()
+        startPrewarmThread()
     }
 
-    /** Whether a pre-warm runs, and if not, the reason a reader of the log needs. */
-    internal enum class PrewarmDecision(
-        val reason: String,
-    ) {
-        RUN("nothing in the way"),
+    /**
+     * Spawn the boot thread that holds the claimed slot.
+     *
+     * Separate from [prewarmInBackground] so the decision and the boot each read as one thing, and
+     * so the slot's two release paths sit next to each other.
+     */
+    private fun startPrewarmThread() {
+        val thread = Thread(::runPrewarmBoot, "fluck-engine-prewarm").apply { isDaemon = true }
+        // The slot's only other release lives inside the thread body, so a start that throws (OOM,
+        // a thread limit) would strand it claimed for the process - no pre-warm ever again,
+        // including the just-finished-download one. The same failure the release-in-finally exists
+        // to prevent, reached through a different door.
+        runCatching { thread.start() }.onFailure {
+            releasePrewarmSlot()
+            throw it
+        }
+    }
 
-        /** BOSS_BROWSER_PREWARM=false. Outranks `force`. */
-        OPTED_OUT("BOSS_BROWSER_PREWARM opts out"),
+    /** The boot itself, on the pre-warm thread, holding the slot for its lifetime. */
+    private fun runPrewarmBoot() {
+        try {
+            // A live engine needs no head start, and saying it was pre-warmed here would be this
+            // method claiming credit for a boot somebody else paid for. The decision above answers
+            // this too, from the caller's thread; this is the backstop for the window between the
+            // slot claim and here.
+            if (isEngineHealthy() && _engine != null) {
+                logger.debug(LogCategory.BROWSER, "Engine pre-warm skipped - engine already running")
+                return
+            }
+            val startNs = System.nanoTime()
+            engine
+            logger.info(
+                LogCategory.BROWSER,
+                "Browser engine pre-warmed",
+                mapOf(
+                    "durationMs" to (System.nanoTime() - startNs) / 1_000_000,
+                ),
+            )
+        } catch (e: Throwable) {
+            // Errors (UnsatisfiedLinkError from a broken Chromium bundle, OOM)
+            // deserve visibility; plain Exceptions (transient network/license)
+            // are routine and stay at debug.
+            if (e is Error) {
+                logger.warn(
+                    LogCategory.BROWSER,
+                    "Engine pre-warm failed with a serious error (lazy init will retry on first use)",
+                    error = e,
+                )
+            } else {
+                logger.debug(
+                    LogCategory.BROWSER,
+                    "Engine pre-warm failed (lazy init will retry on first use)",
+                    mapOf(
+                        "error" to (e.message ?: "unknown"),
+                    ),
+                )
+            }
+            clearInitStateIfErrorIs(e)
+        } finally {
+            // Covers all three exits - booted, skipped as already running, failed. A failed
+            // attempt bought nothing and must not refuse the next caller with a reason to ask
+            // (a download that has just finished); a successful one leaves an engine the
+            // `already running` check answers for.
+            releasePrewarmSlot()
+        }
+    }
+
+    /**
+     * Whether a pre-warm runs, and if not, the reason. Logged by name as a structured field, so a
+     * "why was my first browser tab slow" report can be grepped for the answer.
+     */
+    internal enum class PrewarmDecision {
+        RUN,
+
+        /** BOSS_BROWSER_PREWARM=false. Outranks everything, including `force`. */
+        OPTED_OUT,
+
+        /** An engine is already up; there is no head start left to give. */
+        ALREADY_RUNNING,
 
         /** No engine directory passes the version check, so a boot could only fail. */
-        NO_USABLE_ENGINE("no usable browser engine to warm"),
+        NO_USABLE_ENGINE,
 
         /** This machine has never opened a browser and nobody said one is coming. */
-        NEVER_USED_BROWSER("no browser profile on this machine yet"),
+        NEVER_USED_BROWSER,
     }
 
     /**
@@ -1148,6 +1182,12 @@ object FluckEngine {
      * - **The opt-out outranks [force].** BOSS_BROWSER_PREWARM=false is the user saying no Chromium
      *   boot they did not ask for; a caller knowing a tab is coming does not overrule that, and the
      *   tab boots the engine itself when it gets there.
+     * - **An engine already running settles it before any filesystem work.** Two volatile reads,
+     *   and it keeps the steady state cheap: `applyWorkspace` runs on every window and every
+     *   workspace switch, and without this each one stats the engine directories, claims the boot
+     *   slot and spawns a thread whose only job is to notice the engine is already up. The
+     *   equivalent check inside the boot thread stays as the race backstop between the claim and
+     *   the boot; it just should not be the only one.
      * - **A usable engine outranks [force] too**, and this is not a nicety. Without an engine the
      *   boot walks straight into `getChromiumDir()` throwing, which logs an error and burns an
      *   attempt for nothing. `applyWorkspace` runs on every window and every workspace switch, so
@@ -1158,11 +1198,13 @@ object FluckEngine {
     internal fun prewarmDecision(
         prewarmDisabled: Boolean,
         force: Boolean,
+        engineRunning: () -> Boolean,
         engineUsable: () -> Boolean,
         profileExists: () -> Boolean,
     ): PrewarmDecision =
         when {
             prewarmDisabled -> PrewarmDecision.OPTED_OUT
+            engineRunning() -> PrewarmDecision.ALREADY_RUNNING
             !engineUsable() -> PrewarmDecision.NO_USABLE_ENGINE
             force -> PrewarmDecision.RUN
             profileExists() -> PrewarmDecision.RUN

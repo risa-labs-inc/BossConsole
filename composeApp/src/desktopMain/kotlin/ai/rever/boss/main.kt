@@ -693,17 +693,17 @@ fun main(args: Array<String>) {
     // Skipped when the engine needs downloading: pre-warming against a mismatched
     // directory cannot succeed, and its only effect is to raise the very error
     // the download is about to fix.
-    // Gated on hasUsableEngine, not on !chromiumNeedsDownload: in the
-    // BootAndReport case there is no usable engine AND no download, so the latter
-    // would fire a guaranteed-futile boot that burns an attempt and sets an error
-    // — exactly what the comment above says pre-warming must not do.
-    if (hasUsableEngine) {
-        try {
-            ai.rever.boss.plugin.browser.FluckEngine
-                .prewarmInBackground()
-        } catch (e: Exception) {
-            logger.warn(LogCategory.SYSTEM, "Browser engine pre-warm failed to start", error = e)
-        }
+    // The "is there a usable engine" precondition is no longer applied here. It used to be, for
+    // the BootAndReport case - no usable engine AND no download, where a boot could only burn an
+    // attempt and set an error - and that reasoning still holds; it just belongs in the one gate
+    // every caller passes through. prewarmDecision re-evaluates it, freshly rather than from this
+    // startup-time snapshot, and logs which reason refused the call. Two copies of a precondition
+    // are two things that can disagree.
+    try {
+        ai.rever.boss.plugin.browser.FluckEngine
+            .prewarmInBackground()
+    } catch (e: Exception) {
+        logger.warn(LogCategory.SYSTEM, "Browser engine pre-warm failed to start", error = e)
     }
 
     // Parse CLI arguments if provided

@@ -14,14 +14,15 @@ import ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel
 import ai.rever.boss.plugin.workspace.TabConfig
 import androidx.compose.runtime.Composable
 import com.arkivanov.decompose.ComponentContext
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.yield
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.test.AfterTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -73,32 +74,49 @@ class BrowserEngineWarmupTriggerTest {
     fun `the warm-up is requested before the applier waits for the browser tab type`() {
         val registry = TabRegistry()
         val splitViewState = SplitViewState(registry, windowId = "warmup-test-window")
-        val warmed = AtomicBoolean(false)
+        val warmed = CompletableDeferred<Unit>()
 
         runBlocking {
             // The browser tab type is deliberately NOT registered yet, so applyWorkspace parks in
             // awaitTabTypes - exactly the startup situation. Anything the warm-up hook does after
-            // that wait cannot be observed until the type is registered, so seeing `warmed` flip
+            // that wait cannot be observed until the type is registered, so the warm-up completing
             // while the applier is still parked IS the ordering assertion.
             val applying =
                 launch(Dispatchers.Default) {
                     applyWorkspace(
                         workspace = browserWorkspace(),
                         splitViewState = splitViewState,
-                        warmEngine = { warmed.set(true) },
+                        warmEngine = { warmed.complete(Unit) },
                     )
                 }
 
-            withTimeout(10_000) {
-                while (!warmed.get()) yield()
-            }
-            assertTrue(warmed.get(), "the engine boot must be asked for while the applier is waiting")
-            assertTrue(applying.isActive, "the applier must still be parked on the tab-type wait")
+            // Awaited rather than spun on, so the assertion below does not depend on how long the
+            // registry wait happens to have left when the spin exits.
+            withTimeout(10_000) { warmed.await() }
+            assertFalse(applying.isCompleted, "the applier must still be parked on the tab-type wait")
 
             // Let it finish so the applier does not sit on the bounded wait for the whole timeout.
             registry.registerTabType(FluckTabType) { config, ctx -> StubTabComponent(ctx, config, FluckTabType) }
             applying.join()
         }
+    }
+
+    @Test
+    fun `the workspace hook forces the pre-warm, which is the whole fix`() {
+        // force = true IS the change. A silent regression to the plain prewarmInBackground() call
+        // leaves every other test here green while the feature is gone - the same failure class as
+        // the bug being fixed, a call site that looks right and does nothing.
+        val forced = mutableListOf<Boolean>()
+
+        warmBrowserEngine { forced += it }
+
+        assertEquals(listOf(true), forced)
+    }
+
+    @Test
+    fun `a pre-warm that will not start does not stop a workspace being applied`() {
+        // An optimisation nobody asked for out loud must not be able to fail an apply.
+        warmBrowserEngine { error("engine unavailable") }
     }
 
     @Test

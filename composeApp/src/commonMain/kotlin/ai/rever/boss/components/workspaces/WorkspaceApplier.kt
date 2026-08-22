@@ -115,7 +115,12 @@ suspend fun applyWorkspace(
     // whole cold Chromium boot inside the tab, because the startup pre-warm's gate is "has this
     // machine ever used the browser" and a first install has not.
     if (needsBrowserEngine(requiredTabTypes)) {
-        warmEngine()
+        // On IO, and for the same reason the resolve() above is: every applyWorkspace call site is
+        // a Compose scope, i.e. Main, and the gate this reaches stats the engine directories and
+        // reads two version.txt files before it spawns anything. Milliseconds, but milliseconds on
+        // the UI thread on every window creation and every workspace switch. Still ahead of the
+        // wait below, which is the ordering the whole hook is for.
+        withContext(Dispatchers.IO) { warmEngine() }
     }
 
     splitViewState.tabRegistry.awaitTabTypes(requiredTabTypes)
