@@ -67,12 +67,16 @@ object MemoryPressureWatchdog {
      * to act before the wall. Treat it as provisional until someone reproduces the 5 Aug crash
      * with this watchdog running and records what the number actually was beforehand.
      *
+     * Now an alias of [MemoryPressure.CRITICAL_AVAILABLE_FRACTION] rather than its own literal,
+     * so the status-bar indicator goes red at exactly the moment this clock starts. Change it
+     * there, not here.
+     *
      * It reads [SystemMemory.availableBytes], which is `MemAvailable` on Linux rather than
      * `MemFree`. That distinction matters more than the threshold: `MemFree` excludes the page
      * cache, and a healthy long-running Linux box sits in single digits by that measure. Against
      * `MemFree` almost any threshold produces false positives.
      */
-    internal const val PRESSURE_THRESHOLD = 0.12
+    internal const val PRESSURE_THRESHOLD = MemoryPressure.CRITICAL_AVAILABLE_FRACTION
 
     /** How long pressure must persist before acting. */
     internal const val SUSTAIN_MS = 60_000L

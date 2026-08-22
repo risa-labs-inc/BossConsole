@@ -27,6 +27,16 @@ expect object PerformanceState {
     fun shouldShowIndicator(): Boolean
 
     /**
+     * Report the status-bar indicator entering or leaving the composition.
+     *
+     * Lets the platform skip work nothing can display. Whole-process memory sampling is the only
+     * consumer of this, and it is not free, so a session whose bottom bar is hidden should not pay
+     * for a number it never draws. Driven from the composable's own lifecycle rather than from the
+     * three settings that decide visibility, so it cannot drift from what is actually on screen.
+     */
+    fun setIndicatorMounted(mounted: Boolean)
+
+    /**
      * Open the performance panel.
      */
     fun openPerformancePanel()
