@@ -120,6 +120,25 @@ data class MemoryMetrics(
      * `SystemMemory.freeFraction`: an unreadable bean is not evidence of a full machine, and
      * treating it as one would paint the indicator red on a machine with plenty of room.
      */
+
+    /**
+     * Machine memory in use, or 0 when either reading failed.
+     *
+     * Derived rather than sampled, because "used" has no single definition worth arguing about:
+     * this is simply total minus what `SystemMemory.availableBytes` calls available, so the pair
+     * shown to the user always adds up to the total beside it. On macOS that available figure
+     * counts inactive and purgeable pages as reclaimable, which is the honest answer to "could a
+     * large allocation succeed" and therefore makes this the honest answer to "how much is
+     * genuinely spoken for".
+     */
+    val systemUsedBytes: Long
+        get() =
+            if (systemTotalBytes <= 0L || systemAvailableBytes <= 0L) {
+                0L
+            } else {
+                systemTotalBytes - systemAvailableBytes
+            }
+
     val systemAvailableFraction: Double?
         get() =
             if (systemTotalBytes <= 0L || systemAvailableBytes <= 0L) {
