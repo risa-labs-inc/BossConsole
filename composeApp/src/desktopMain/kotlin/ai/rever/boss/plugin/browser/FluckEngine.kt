@@ -128,6 +128,14 @@ object FluckEngine {
     private var proactiveCleanupDone = false
 
     /**
+     * Whether a pre-warm boot thread is already running. See [prewarmInBackground]: more than one
+     * caller can now ask for the head start, and a second thread would just sit on engineLock for
+     * the duration of the first boot and then claim credit for it. Cleared again when an attempt
+     * fails, so a later caller (a completed engine download, say) still gets its chance.
+     */
+    private val prewarmStarted = AtomicBoolean(false)
+
+    /**
      * Engine generation counter - increments every time the engine is reinitialized.
      * Browser tabs can use this to detect when their browser instance is stale.
      */
@@ -1011,6 +1019,15 @@ object FluckEngine {
      * first real browser use creates the profile, and every launch after that
      * pre-warms. Opt out entirely with BOSS_BROWSER_PREWARM=false.
      *
+     * [force] is for the callers that already know a browser tab is coming, where the
+     * profile-existence gate is answering a question nobody asked. It reads "has this machine
+     * ever used the browser", and on a first install the answer is no for a reason that has
+     * nothing to do with the user's intent - so the pre-warm was skipped on precisely the launch
+     * that pays the most for skipping it, including immediately after the user waited through a
+     * several-hundred-megabyte download OF THE BROWSER ENGINE. Forcing is deliberately not the
+     * default: it creates the profile directory as a side effect, which would flip the unforced
+     * gate on permanently and pre-warm every later launch for a user who never opens a browser.
+     *
      * Called once from app startup after [proactiveCleanupOnStartup]. A pre-warm
      * failure must not poison user-facing availability (the user never asked for
      * this boot), so it clears the recorded init error — the first real use
@@ -1027,11 +1044,25 @@ object FluckEngine {
      * locked by another instance. The two profile notions intentionally differ —
      * the gate only decides whether the head start happens, never correctness.
      */
-    fun prewarmInBackground() {
-        if (configIsFalse(ChromiumFlagKeys.PREWARM)) return
+    fun prewarmInBackground(force: Boolean = false) {
         val profileDir = BossDirectories.resolve(BrowserSettings.currentProfile)
-        if (!profileDir.exists()) {
-            logger.debug(LogCategory.BROWSER, "Skipping engine pre-warm - no browser profile on this machine yet")
+        if (!shouldPrewarm(
+                prewarmDisabled = configIsFalse(ChromiumFlagKeys.PREWARM),
+                profileExists = profileDir.exists(),
+                force = force,
+            )
+        ) {
+            if (!force) {
+                logger.debug(LogCategory.BROWSER, "Skipping engine pre-warm - no browser profile on this machine yet")
+            }
+            return
+        }
+        // One boot thread per process. The getter is synchronized, so a second thread would only
+        // block on engineLock for the whole first boot and then log a "pre-warmed" line for work
+        // it did not do - and now that two call sites can ask (startup, and a browser tab on its
+        // way), that stopped being hypothetical.
+        if (!prewarmStarted.compareAndSet(false, true)) {
+            logger.debug(LogCategory.BROWSER, "Engine pre-warm already under way")
             return
         }
         Thread({
@@ -1065,9 +1096,31 @@ object FluckEngine {
                     )
                 }
                 clearInitStateIfErrorIs(e)
+                // Re-arm: this attempt bought nothing, and the next caller with a reason to ask
+                // (an engine download that has just finished) should not be refused because of it.
+                prewarmStarted.set(false)
             }
         }, "fluck-engine-prewarm").apply { isDaemon = true }.start()
     }
+
+    /**
+     * Whether a pre-warm should run. Pure, so both branches of every input are testable without an
+     * engine, a profile directory or a machine that has never opened a browser.
+     *
+     * The opt-out outranks [force]: BOSS_BROWSER_PREWARM=false is the user saying no Chromium boot
+     * they did not ask for, and a caller knowing a tab is coming does not overrule that - the tab
+     * will boot the engine itself when it gets there.
+     */
+    internal fun shouldPrewarm(
+        prewarmDisabled: Boolean,
+        profileExists: Boolean,
+        force: Boolean,
+    ): Boolean =
+        when {
+            prewarmDisabled -> false
+            force -> true
+            else -> profileExists
+        }
 
     /**
      * Clear the recorded init state ONLY if [expected] is still the recorded
