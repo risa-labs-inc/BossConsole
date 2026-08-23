@@ -58,13 +58,22 @@ private fun extractSplitConfig(
 ): SplitConfig =
     when (node) {
         is SplitNode.Panel -> {
+            // Counted over the tabs that SURVIVE extraction, not off the component's own count.
+            // extractTabConfig drops tabs that must never be persisted (a sidebar-promoted
+            // PanelHostTabInfo), and one of those sitting inside the pinned block would leave a
+            // saved count that points past the last pinned tab on restore.
+            val tabs = node.tabsComponent.tabsState.value.tabs
+            val persisted =
+                tabs.mapIndexedNotNull { index, tab ->
+                    extractTabConfig(tab, defaultWorkingDirectory)?.let { config ->
+                        config to node.tabsComponent.isPinned(index)
+                    }
+                }
             SinglePanel(
                 PanelConfig(
                     id = node.id,
-                    tabs =
-                        node.tabsComponent.tabsState.value.tabs.mapNotNull { tab ->
-                            extractTabConfig(tab, defaultWorkingDirectory)
-                        },
+                    tabs = persisted.map { it.first },
+                    pinnedCount = persisted.count { it.second },
                 ),
             )
         }

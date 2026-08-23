@@ -356,15 +356,44 @@ fun BossTabsComponent.BossMainTabBar(
     val latestTransientInteraction by rememberUpdatedState(onTransientInteraction)
     LaunchedEffect(openMenuCount > 0) { latestTransientInteraction?.invoke(openMenuCount > 0) }
 
-    // Opening a new tab, in one place: three "+" buttons reach it (the top strip's trailing slot,
-    // its legacy in-row placement, the vertical bar's and the rail's) plus the bar's context
-    // menu, and they must not drift on the panel-activation half.
+    // Whether the tab the new-tab dialog is about to create should land pinned. Set by the
+    // Pinned section's "+", cleared as soon as a tab is created or the dialog is dismissed, so it
+    // can never leak into the next unrelated "+".
+    var pinCreatedTab by remember { mutableStateOf(false) }
+
+    // Opening a new tab, in one place: four "+" controls reach it (the top strip's trailing slot,
+    // its legacy in-row placement, the vertical bar's bottom row and the rail's) plus the bar's
+    // context menu, and they must not drift on the panel-activation half.
     val openNewTab = {
+        pinCreatedTab = false
         showNewTabDialog = true
         // Track panel interaction when the plus button is clicked
         if (splitViewState != null && currentPanelId != null) {
             splitViewState.setActivePanel(currentPanelId)
         }
+    }
+
+    // The Pinned section header's "+". Same dialog, but what comes out of it is pinned.
+    val openPinnedTab = {
+        openNewTab()
+        pinCreatedTab = true
+    }
+
+    // Every path out of the new-tab dialog lands here, which is what makes "open it pinned" one
+    // flag rather than a branch in each of the five tab kinds the dialog can produce.
+    val openCreatedTab: (TabInfo) -> Unit = { tabInfo ->
+        val tabIndex = addTab(tabInfo)
+        if (tabIndex >= 0) {
+            if (pinCreatedTab) {
+                pinTab(tabIndex)
+                // pinTab MOVED it, so the index it was added at is stale; it is now last in the
+                // pinned block.
+                selectTab(pinnedCount - 1)
+            } else {
+                selectTab(tabIndex)
+            }
+        }
+        pinCreatedTab = false
     }
 
     // Activating a tab, in one place: a full tab row and a rail dot both do it, and both owe the
@@ -418,6 +447,18 @@ fun BossTabsComponent.BossMainTabBar(
         }
     }
 
+    // Sections exist only once something is pinned, and only in the vertical bar. A panel with
+    // nothing pinned is a plain list with no headers - the common case, and labelling a lone
+    // section "Open" would be noise. The top strip never sections: it has no room for a header,
+    // and pinned tabs are already first in it by the invariant.
+    val sectionsShown = vertical && pinnedCount > 0
+
+    // Lazy-list items that come BEFORE the first tab. Exactly the "PINNED" header, when there is
+    // one - the separator and the "OPEN" header ride inside the first unpinned tab's item rather
+    // than being items of their own. Anything indexing the lazy list rather than the tab model
+    // has to add this, which today is the scroll-to-active effect.
+    val leadingListItems = if (sectionsShown) 1 else 0
+
     // Auto-scroll to active tab when it changes
     LaunchedEffect(tabsState.value.activeIndex) {
         val activeIndex = tabsState.value.activeIndex
@@ -441,7 +482,8 @@ fun BossTabsComponent.BossMainTabBar(
 
             if (!isFullyVisible) {
                 // Scroll to bring the tab fully into view
-                listState.scrollToItem(activeIndex)
+                // Lazy-list index, not tab index: a section header sits above the first tab.
+                listState.scrollToItem(activeIndex + leadingListItems)
             }
         }
     }
@@ -483,6 +525,24 @@ fun BossTabsComponent.BossMainTabBar(
             // output-producing panel. Panel activation on right-click is
             // already handled by the panel's pointerInput press handler;
             // left-click activation by the tab onClick above.
+
+            // Pin / Unpin. First in the menu because it is the one action here that changes
+            // where the tab lives rather than what happens to it, and because it is the only way
+            // to discover pinning - the sidebar shows no Pinned section until something is in it.
+            //
+            // Offered in BOTH orientations even though only the vertical bar draws sections: the
+            // ordering invariant is the model's, not the sidebar's, so pinning from the top strip
+            // still moves the tab to the front and still survives restart.
+            if (isPinned(index)) {
+                add(
+                    ContextMenuItem("Unpin Tab", Icons.Outlined.PushPin, onClick = { unpinTab(index) }),
+                )
+            } else {
+                add(
+                    ContextMenuItem("Pin Tab", Icons.Outlined.PushPin, onClick = { pinTab(index) }),
+                )
+            }
+            add(ContextMenuItem(isDivider = true))
 
             // Split operations (if split state is available)
             if (splitViewState != null && currentPanelId != null) {
@@ -652,9 +712,30 @@ fun BossTabsComponent.BossMainTabBar(
     }
 
     val tabItems: LazyListScope.(tabWidth: Dp?) -> Unit = { tabWidth ->
+        // Sections exist only once something is pinned, and only in the vertical bar. A panel
+        // with nothing pinned is a plain list with no headers - which is the common case, and
+        // labelling a single section "Open" would be noise. The top strip never sections: it has
+        // no room for a header, and pinned tabs are already first in it by the invariant.
+        if (sectionsShown) {
+            item(key = "boss-tab-section-pinned") {
+                SectionHeader(
+                    label = "PINNED",
+                    onAdd = openPinnedTab,
+                    addHint = "New pinned tab",
+                )
+            }
+        }
+
         // Render tab buttons as lazy items
         itemsIndexed(tabsState.value.tabs) { index, config ->
             val isSelected = index == tabsState.value.activeIndex
+
+            // The separator and second header ride on the first UNPINNED tab rather than being
+            // items of their own, so the tab indices itemsIndexed hands out stay the model's own
+            // indices - which the drag bounds registration and every menu action key off.
+            if (sectionsShown && index == pinnedCount) {
+                SectionBreak(onAdd = openNewTab)
+            }
 
             // Show reorder indicator before this tab if it's the drop target
             val showIndicatorBefore =
@@ -662,6 +743,10 @@ fun BossTabsComponent.BossMainTabBar(
                     dropTarget.panelId == currentPanelId &&
                     dropTarget.targetIndex == index
 
+            // Deliberately AFTER the section break: an indicator drawn below the separator is
+            // exactly what dropping there does, which is land the tab unpinned (see
+            // pinnedCountAfterMove). Dropping above the line renders its indicator in an earlier
+            // item, above the separator, and pins.
             if (showIndicatorBefore) {
                 ReorderIndicator(vertical = vertical)
             }
@@ -828,6 +913,7 @@ fun BossTabsComponent.BossMainTabBar(
                 BossTabRail(
                     tabs = tabsState.value.tabs,
                     activeIndex = tabsState.value.activeIndex,
+                    pinnedCount = pinnedCount,
                     onExpand = { onToggleCollapse?.invoke() },
                     onNewTab = openNewTab,
                     onSelect = activateTab,
@@ -865,12 +951,7 @@ fun BossTabsComponent.BossMainTabBar(
                             // trailing reserve; here nothing has to be reserved because nothing is
                             // divided.
                             Divider(color = BossTheme.colors.line)
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                                horizontalArrangement = Arrangement.Center,
-                            ) {
-                                NewTabButton(onClick = openNewTab)
-                            }
+                            NewTabRow(onClick = openNewTab)
                         },
                     ) {
                         tabItems(null)
@@ -950,10 +1031,7 @@ fun BossTabsComponent.BossMainTabBar(
                                 _title = "Loading...",
                                 url = path,
                             )
-                        val tabIndex = addTab(fluckTab)
-                        if (tabIndex >= 0) {
-                            selectTab(tabIndex)
-                        }
+                        openCreatedTab(fluckTab)
                     }
 
                     TabType.FILE -> {
@@ -971,10 +1049,7 @@ fun BossTabsComponent.BossMainTabBar(
                                         .Vector(fileIconInfo.icon, fileIconInfo.color),
                                 filePath = path,
                             )
-                        val tabIndex = addTab(editorTab)
-                        if (tabIndex >= 0) {
-                            selectTab(tabIndex)
-                        }
+                        openCreatedTab(editorTab)
                     }
 
                     TabType.TERMINAL -> {
@@ -990,27 +1065,18 @@ fun BossTabsComponent.BossMainTabBar(
                                 initialCommand = path.ifBlank { null },
                                 workingDirectory = DefaultWorkingDirectory.resolve(projectPath),
                             )
-                        val tabIndex = addTab(terminalTab)
-                        if (tabIndex >= 0) {
-                            selectTab(tabIndex)
-                        }
+                        openCreatedTab(terminalTab)
                     }
 
                     TabType.JUPYTER -> {
                         val jupyterTab = JupyterTabInfo.createUntitled(path)
-                        val tabIndex = addTab(jupyterTab)
-                        if (tabIndex >= 0) {
-                            selectTab(tabIndex)
-                        }
+                        openCreatedTab(jupyterTab)
                     }
                 }
             },
             // Plugin tab types build their own TabInfo; open it the same way.
             onCreateTabInfo = { tabInfo ->
-                val tabIndex = addTab(tabInfo)
-                if (tabIndex >= 0) {
-                    selectTab(tabIndex)
-                }
+                openCreatedTab(tabInfo)
             },
             projectPath = windowProjectState?.selectedProject?.value?.path,
         )
@@ -1572,6 +1638,49 @@ class BossTabsComponent(
     // Expose tab state for UI
     val tabsState: Value<TabsNavigation.TabsState<TabInfo>> = tabsNavigation.state
 
+    // How many of this panel's tabs are pinned. Pinned tabs are ALWAYS the first N - see
+    // TabPinning.kt for why that invariant is the design rather than a Set<String>.
+    private val _pinnedCount = mutableStateOf(0)
+
+    /** Number of leading tabs that are pinned. Tabs `0 until pinnedCount` are the pinned ones. */
+    val pinnedCount: Int get() = _pinnedCount.value
+
+    /** Whether the tab at [index] is pinned. */
+    fun isPinned(index: Int): Boolean = index < pinnedCount
+
+    /**
+     * Pin the tab at [index], moving it to the end of the pinned block.
+     *
+     * Not routed through [moveTab]: that one INFERS pinned-ness from where a drag landed, which is
+     * right for a drag and wrong here, where the user has said which they want.
+     */
+    fun pinTab(index: Int) {
+        val tabs = tabsState.value.tabs
+        if (index !in tabs.indices || isPinned(index)) return
+        tabsNavigation.moveTab(index, pinnedCount)
+        _pinnedCount.value = pinnedCount + 1
+    }
+
+    /** Unpin the tab at [index], moving it to the head of the unpinned block. */
+    fun unpinTab(index: Int) {
+        val tabs = tabsState.value.tabs
+        if (index !in tabs.indices || !isPinned(index)) return
+        // To the LAST pinned slot, so that decrementing the count leaves it first among the
+        // unpinned rather than buried at the bottom of a long list.
+        tabsNavigation.moveTab(index, pinnedCount - 1)
+        _pinnedCount.value = pinnedCount - 1
+    }
+
+    /**
+     * Restore the pinned count for this panel, clamped to the tabs that actually came back.
+     *
+     * One call per panel is the whole of restore, which is what the "pinned tabs are the first N"
+     * invariant buys - see TabPinning.kt.
+     */
+    fun setPinnedCount(count: Int) {
+        _pinnedCount.value = clampPinnedCount(count, tabsState.value.tabs.size)
+    }
+
     // --- Ctrl+Tab tab switching state ---
     // Most-recently-used order of tab ids (most recent first), used by MRU switch mode.
     private val mruTabIds = mutableListOf<String>()
@@ -1960,6 +2069,9 @@ class BossTabsComponent(
             mruTabIds.remove(it.id)
             tabCycleOrder = null
         }
+        // Before the removal, while `index` still refers to the tab being closed. Every
+        // close-many helper funnels through here, so none of them has to know about pinning.
+        _pinnedCount.value = pinnedCountAfterRemove(pinnedCount, index)
         tabsNavigation.removeTab(index)
     }
 
@@ -2125,10 +2237,21 @@ class BossTabsComponent(
     }
 
     // Move a tab from one position to another
+
+    /**
+     * Move a tab, letting pinned-ness follow where it landed.
+     *
+     * This is the drag path: dragging across the sidebar's separator is how a tab gets pinned or
+     * unpinned by direct manipulation, the way it works in Arc. [pinTab]/[unpinTab] are the
+     * explicit path and deliberately do not come through here.
+     */
     fun moveTab(
         fromIndex: Int,
         toIndex: Int,
     ) {
+        val tabs = tabsState.value.tabs
+        if (fromIndex !in tabs.indices || toIndex !in tabs.indices) return
+        _pinnedCount.value = pinnedCountAfterMove(pinnedCount, fromIndex, toIndex)
         tabsNavigation.moveTab(fromIndex, toIndex)
     }
 

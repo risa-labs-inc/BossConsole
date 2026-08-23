@@ -231,6 +231,10 @@ private suspend fun applyWorkspaceNode(
             node.panel.tabs.forEach { tabConfig ->
                 createTabFromWorkspaceConfig(tabConfig, projectPath, splitViewState)?.let { tabsComponent?.addTab(it) }
             }
+            // One call per panel restores the whole pinning state, and it is clamped inside setPinnedCount:
+            // a tab whose type no longer resolves comes back as null above, so fewer tabs can land
+            // than were saved with this count.
+            tabsComponent?.setPinnedCount(node.panel.pinnedCount)
         }
 
         is VerticalSplit -> {
@@ -242,6 +246,10 @@ private suspend fun applyWorkspaceNode(
                     leftNode.panel.tabs.forEach { tabConfig ->
                         createTabFromWorkspaceConfig(tabConfig, projectPath, splitViewState)?.let { tabsComponent?.addTab(it) }
                     }
+                    // One call per panel restores the whole pinning state, and it is clamped inside setPinnedCount:
+                    // a tab whose type no longer resolves comes back as null above, so fewer tabs can land
+                    // than were saved with this count.
+                    tabsComponent?.setPinnedCount(leftNode.panel.pinnedCount)
                 }
 
                 else -> {
@@ -271,6 +279,10 @@ private suspend fun applyWorkspaceNode(
                         rightNode.panel.tabs.drop(1).forEach { tabConfig ->
                             createTabFromWorkspaceConfig(tabConfig, projectPath, splitViewState)?.let { tabsComponent?.addTab(it) }
                         }
+                        // One call per panel restores the whole pinning state, and it is clamped inside setPinnedCount:
+                        // a tab whose type no longer resolves comes back as null above, so fewer tabs can land
+                        // than were saved with this count.
+                        tabsComponent?.setPinnedCount(rightNode.panel.pinnedCount)
                     }
 
                     else -> {
@@ -290,6 +302,10 @@ private suspend fun applyWorkspaceNode(
                     topNode.panel.tabs.forEach { tabConfig ->
                         createTabFromWorkspaceConfig(tabConfig, projectPath, splitViewState)?.let { tabsComponent?.addTab(it) }
                     }
+                    // One call per panel restores the whole pinning state, and it is clamped inside setPinnedCount:
+                    // a tab whose type no longer resolves comes back as null above, so fewer tabs can land
+                    // than were saved with this count.
+                    tabsComponent?.setPinnedCount(topNode.panel.pinnedCount)
                 }
 
                 else -> {
@@ -318,6 +334,10 @@ private suspend fun applyWorkspaceNode(
                         bottomNode.panel.tabs.drop(1).forEach { tabConfig ->
                             createTabFromWorkspaceConfig(tabConfig, projectPath, splitViewState)?.let { tabsComponent?.addTab(it) }
                         }
+                        // One call per panel restores the whole pinning state, and it is clamped inside setPinnedCount:
+                        // a tab whose type no longer resolves comes back as null above, so fewer tabs can land
+                        // than were saved with this count.
+                        tabsComponent?.setPinnedCount(bottomNode.panel.pinnedCount)
                     }
 
                     else -> {

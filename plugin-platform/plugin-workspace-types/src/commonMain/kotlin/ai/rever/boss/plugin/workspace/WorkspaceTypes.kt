@@ -33,12 +33,17 @@ data class TabConfig(
  *
  * @property id Unique identifier for the panel
  * @property tabs List of tab configurations in this panel
+ * @property pinnedCount How many of the leading [tabs] are pinned. Pinned tabs are always the
+ *   first N of a panel, so one integer describes the whole pinning state - see `TabPinning.kt`.
+ *   Defaults to 0, which is what a workspace saved before pinning existed decodes to, and what a
+ *   panel with nothing pinned writes.
  */
 @Immutable
 @Serializable
 data class PanelConfig(
     val id: String,
     val tabs: List<TabConfig>,
+    val pinnedCount: Int = 0,
 )
 
 /**

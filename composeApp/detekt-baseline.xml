@@ -1013,9 +1013,12 @@
     <ID>PackageNaming:TabBarSidebarReveal.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:TabBarSidebarRevealTest.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:TabCycleOverlay.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
+    <ID>PackageNaming:TabPinning.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
+    <ID>PackageNaming:TabPinningTest.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:TabsNavigation.kt$package ai.rever.boss.components.tabs_navigation</ID>
     <ID>PackageNaming:TopOfMindProvider.kt$package ai.rever.boss.components.plugin.panels.left_bottom.TopOfMind</ID>
     <ID>PackageNaming:VerticalTabBarDrawer.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
+    <ID>PackageNaming:VerticalTabBarLayoutTest.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PrintStackTrace:CrashHandler.kt$CrashHandler$e</ID>
     <ID>RethrowCaughtException:FluckEngine.kt$FluckEngine$throw e2</ID>
     <ID>ReturnCount:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$private fun detectContextFromAwtComponent(component: java.awt.Component?): ShortcutContext</ID>

@@ -2,6 +2,7 @@ package ai.rever.boss.components.window_panel.components.main_window_panels
 
 import ai.rever.boss.components.bars.getPanelScrollbarConfig
 import ai.rever.boss.components.bars.lazyListScrollbar
+import ai.rever.boss.components.dividers.SDivider
 import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.HoverTooltipBox
 import ai.rever.boss.components.overlays.TooltipPlacement
@@ -12,10 +13,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -31,17 +36,25 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.Divider
 import androidx.compose.material.Icon
+import androidx.compose.material.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 /**
  * Width of the vertical tab bar when collapsed to its slim icon rail.
@@ -72,6 +85,14 @@ val TAB_BAR_AUTO_COLLAPSE_WIDTH = 520.dp
  * tab has been squeezed to a favicon.
  */
 val VERTICAL_TAB_HEIGHT = 32.dp
+
+/**
+ * Height of a section header row ("Pinned" / "Open"), which also hosts that section's hover "+".
+ */
+private val SECTION_HEADER_HEIGHT = 24.dp
+
+/** Height of the Arc-style "New Tab" row pinned to the bottom of the bar. */
+private val NEW_TAB_ROW_HEIGHT = 32.dp
 
 /** Diameter of one tab's dot on the collapsed rail. */
 private val RAIL_DOT_SIZE = 10.dp
@@ -131,6 +152,128 @@ fun ColumnScope.BossVerticalTabStrip(
 }
 
 /**
+ * One section header in the vertical bar: a quiet label, and a "+" that fades in on hover.
+ *
+ * Arc draws no label above its pinned block - just a separator line. A label is used here for two
+ * reasons: this bar has two sections whose difference is not visually obvious the way a favicon
+ * grid is, and the header is what the per-section "+" hangs off. Both are set small, uppercase and
+ * muted so they read as chrome rather than as content.
+ *
+ * The "+" appears on hover rather than always, so the resting bar stays as quiet as Arc's. It is
+ * still reachable without hovering: the row at the bottom of the bar is always visible, and it is
+ * the same action for the Open section.
+ */
+@Composable
+fun SectionHeader(
+    label: String,
+    onAdd: () -> Unit,
+    addHint: String,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val hovered by interactionSource.collectIsHoveredAsState()
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .height(SECTION_HEADER_HEIGHT)
+                .hoverable(interactionSource)
+                .padding(start = 10.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            color = BossTheme.colors.textSecondary,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.8.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        // Space is reserved whether or not the icon is drawn, so the label does not shift
+        // sideways as the pointer crosses the row.
+        Box(modifier = Modifier.size(SECTION_HEADER_HEIGHT), contentAlignment = Alignment.Center) {
+            if (hovered) {
+                // The whole 20dp box is the target, not the 14dp glyph inside it: a header "+"
+                // that only exists while the pointer is on the row is hard enough to hit without
+                // also being a pixel hunt.
+                HoverTooltipBox(
+                    text = addHint,
+                    placement = TooltipPlacement.END,
+                    modifier =
+                        Modifier
+                            .size(20.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .clickable(onClick = onAdd),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = addHint,
+                        tint = BossTheme.colors.textSecondary,
+                        modifier = Modifier.size(14.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The line between the pinned block and the open one, plus the Open section's own header.
+ *
+ * Arc's equivalent is a single thin rule with no label. The label is kept here because this bar
+ * carries two named sections rather than a favicon grid and a list, and because it is what the
+ * section's "+" hangs off.
+ */
+@Composable
+fun SectionBreak(onAdd: () -> Unit) {
+    Divider(
+        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+        color = BossTheme.colors.line,
+    )
+    SectionHeader(label = "OPEN", onAdd = onAdd, addHint = "New tab")
+}
+
+/**
+ * The always-visible "New Tab" row along the bottom of the bar (Arc and Dia both place it there).
+ *
+ * Full width and left-aligned rather than a centred square button, so it reads as a row of the
+ * list it extends rather than as a floating control - which is the whole difference between this
+ * and the "+" the horizontal strip uses, where a row would have nowhere to sit.
+ */
+@Composable
+fun NewTabRow(onClick: () -> Unit) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val hovered by interactionSource.collectIsHoveredAsState()
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .height(NEW_TAB_ROW_HEIGHT)
+                .hoverable(interactionSource)
+                .background(if (hovered) BossTheme.colors.raised else Color.Transparent)
+                .clickable(onClick = onClick)
+                .padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(
+            imageVector = Icons.Default.Add,
+            contentDescription = null,
+            tint = BossTheme.colors.textSecondary,
+            modifier = Modifier.size(14.dp),
+        )
+        Text(
+            text = "New Tab",
+            color = BossTheme.colors.textSecondary,
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/**
  * The collapsed vertical tab bar: an expand chevron, one dot per tab, and the `+`.
  *
  * A rail is not a narrow tab bar - it is a different control with the same job, which is why it
@@ -148,6 +291,7 @@ fun ColumnScope.BossVerticalTabStrip(
 fun BossTabRail(
     tabs: List<TabInfo>,
     activeIndex: Int,
+    pinnedCount: Int,
     onExpand: () -> Unit,
     onNewTab: () -> Unit,
     onSelect: (Int) -> Unit,
@@ -177,36 +321,23 @@ fun BossTabRail(
         ) {
             tabs.forEachIndexed { index, tab ->
                 val isActive = index == activeIndex
-                // The title is the tooltip, which is the rail's only way to name a tab - so it
-                // is not decoration here the way it is on a labelled tab row, and it has to
-                // survive being drawn over a browser's native surface. HoverTooltipBox is that
-                // guarantee; TooltipArea would not be.
-                HoverTooltipBox(
-                    text = tab.title,
-                    placement = TooltipPlacement.END,
-                    modifier =
-                        Modifier
-                            .size(RAIL_DOT_TOUCH_SIZE)
-                            .clip(RoundedCornerShape(6.dp))
-                            .contextMenu(items = contextMenuItems(index))
-                            .clickable(onClick = { onSelect(index) }),
-                ) {
-                    if (isActive) {
-                        Box(
-                            Modifier
-                                .size(RAIL_ACTIVE_RING_SIZE)
-                                .border(1.5.dp, colors.signal, CircleShape),
-                        )
-                    }
+                // The rail keeps the section break too, as a short rule between the two groups
+                // of dots. Without it the rail is the one place where pinning is invisible, and
+                // the whole point of pinning something is that you can find it again.
+                if (pinnedCount in 1 until tabs.size && index == pinnedCount) {
                     Box(
                         Modifier
-                            .size(RAIL_DOT_SIZE)
-                            .clip(CircleShape)
-                            .background(
-                                if (isActive) colors.signal else colors.textSecondary.copy(alpha = 0.55f),
-                            ),
+                            .fillMaxWidth(0.5f)
+                            .height(1.dp)
+                            .background(colors.line),
                     )
                 }
+                RailDot(
+                    title = tab.title,
+                    isActive = isActive,
+                    onSelect = { onSelect(index) },
+                    contextMenuItems = contextMenuItems(index),
+                )
             }
         }
 
@@ -217,6 +348,43 @@ fun BossTabRail(
             icon = Icons.Default.Add,
             contentDescription = "New Tab",
             onClick = onNewTab,
+        )
+    }
+}
+
+/**
+ * One tab on the collapsed rail: an accent dot, ringed when it is the active tab.
+ *
+ * The title is the tooltip, which is the rail's only way to name a tab - so it is not decoration
+ * here the way it is on a labelled row, and it has to survive being drawn over a browser's native
+ * surface. [HoverTooltipBox] is that guarantee; a plain TooltipArea would not be.
+ */
+@Composable
+private fun RailDot(
+    title: String,
+    isActive: Boolean,
+    onSelect: () -> Unit,
+    contextMenuItems: List<ContextMenuItem>,
+) {
+    val colors = BossTheme.colors
+    HoverTooltipBox(
+        text = title,
+        placement = TooltipPlacement.END,
+        modifier =
+            Modifier
+                .size(RAIL_DOT_TOUCH_SIZE)
+                .clip(RoundedCornerShape(6.dp))
+                .contextMenu(items = contextMenuItems)
+                .clickable(onClick = onSelect),
+    ) {
+        if (isActive) {
+            Box(Modifier.size(RAIL_ACTIVE_RING_SIZE).border(1.5.dp, colors.signal, CircleShape))
+        }
+        Box(
+            Modifier
+                .size(RAIL_DOT_SIZE)
+                .clip(CircleShape)
+                .background(if (isActive) colors.signal else colors.textSecondary.copy(alpha = 0.55f)),
         )
     }
 }
