@@ -2,6 +2,8 @@ package ai.rever.boss.layout
 
 import ai.rever.boss.components.window_panel.components.main_window_panels.NEW_TAB_BUTTON_SIZE
 import ai.rever.boss.focusmode.FocusModeSettings
+import ai.rever.boss.window.TabBarPosition
+import ai.rever.boss.window.TabBarVerticalWidthRange
 import ai.rever.boss.window.WindowAppearanceSettings
 import androidx.compose.ui.unit.dp
 import kotlin.test.Test
@@ -145,6 +147,64 @@ class ChromeMetricsTest {
                 "density $density",
             )
         }
+    }
+
+    // --- vertical tab bar ---
+
+    /** Everything switchable off, and the tab bar moved to the leading edge. */
+    private val leanestVertical = leanest.copy(tabBarPosition = TabBarPosition.LEFT)
+
+    @Test
+    fun `a left tab bar is charged to width instead of height`() {
+        val budget = ChromeMetrics.mainPanelBudget(leanestVertical, focusOff, comfortable)
+
+        // Nothing but the ring left vertically: the tab row moved off that axis entirely.
+        assertEquals(ring, budget.vertical)
+        assertEquals(
+            ring + leanestVertical.tabBarVerticalWidth.dp + comfortable.dividerThickness,
+            budget.horizontal,
+        )
+    }
+
+    @Test
+    fun `moving the tab bar left trades height for width, it does not add both`() {
+        // The regression this guards: charging the bar vertically regardless of position, which
+        // would leave the page paying for a row that is not there AND for the column that is.
+        val top = ChromeMetrics.mainPanelBudget(leanest, focusOff, comfortable)
+        val left = ChromeMetrics.mainPanelBudget(leanestVertical, focusOff, comfortable)
+
+        assertTrue(left.vertical < top.vertical, "a left bar must cost less height, not the same")
+        assertTrue(left.horizontal > top.horizontal, "a left bar must cost width")
+    }
+
+    @Test
+    fun `a collapsed left bar costs only a strip`() {
+        // The rail is deliberately the same width as the window's own icon strips, so a collapsed
+        // tab bar costs exactly what adding one more strip would.
+        val collapsed = leanestVertical.copy(tabBarCollapsed = true)
+        val budget = ChromeMetrics.mainPanelBudget(collapsed, focusOff, comfortable)
+
+        assertEquals(ring + comfortable.stripWidth + comfortable.dividerThickness, budget.horizontal)
+    }
+
+    @Test
+    fun `an out-of-range width cannot be charged`() {
+        // The setting is decoded from a file, and a budget is not the place to discover that.
+        val absurd = leanestVertical.copy(tabBarVerticalWidth = 5000f)
+        val budget = ChromeMetrics.mainPanelBudget(absurd, focusOff, comfortable)
+
+        assertEquals(
+            ring + TabBarVerticalWidthRange.endInclusive.dp + comfortable.dividerThickness,
+            budget.horizontal,
+        )
+    }
+
+    @Test
+    fun `the top position is unchanged by any of this`() {
+        // The default must cost exactly what it did before the bar could move.
+        val budget = ChromeMetrics.mainPanelBudget(macDefaults, focusOff, comfortable)
+        assertEquals(146.dp, budget.vertical)
+        assertEquals(86.dp, budget.horizontal)
     }
 
     @Test

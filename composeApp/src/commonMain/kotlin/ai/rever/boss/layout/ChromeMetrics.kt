@@ -2,6 +2,8 @@ package ai.rever.boss.layout
 
 import ai.rever.boss.focusmode.FocusModeEdge
 import ai.rever.boss.focusmode.FocusModeSettings
+import ai.rever.boss.window.TabBarPosition
+import ai.rever.boss.window.TabBarVerticalWidthRange
 import ai.rever.boss.window.WindowAppearanceSettings
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -87,8 +89,14 @@ object ChromeMetrics {
             vertical += dimens.topBarHeight + divider
         }
 
-        // The tab bar has no switch. It is the one piece of chrome a tabbed browser cannot drop.
-        vertical += dimens.tabBarHeight + divider
+        // The tab bar has no switch, but it does have a SIDE. A tabbed browser cannot drop its tab
+        // row, so it is always charged - just not always to the same axis. In TOP it costs height;
+        // in LEFT it costs width instead and is charged below. Charging it vertically regardless
+        // would overstate the page's loss by the bar's height and understate it by its width, in
+        // the one configuration where the horizontal number is the interesting one.
+        if (appearance.tabBarPosition == TabBarPosition.TOP) {
+            vertical += dimens.tabBarHeight + divider
+        }
 
         if (appearance.showBottomBar && !focusMode.hides(FocusModeEdge.BOTTOM)) {
             vertical += dimens.bottomBarHeight + divider
@@ -106,6 +114,38 @@ object ChromeMetrics {
             horizontal += dimens.stripWidth + divider
         }
 
+        // A LEFT tab bar is a column beside the content, so it comes off the width. BossMainPanel
+        // draws a VDivider between it and the content, matching the strips above.
+        //
+        // Read off the PERSISTED collapse preference, not the live one. A panel narrower than
+        // TAB_BAR_AUTO_COLLAPSE_WIDTH is forced to the rail no matter what the setting says, but
+        // that is a per-panel fact and this budget measures a single full-width panel by
+        // construction - the same reason split view is excluded above. So this is the best case
+        // here too, and a real narrow panel only ever pays LESS than this says.
+        if (appearance.tabBarPosition == TabBarPosition.LEFT) {
+            horizontal += verticalTabBarCost(appearance, dimens) + divider
+        }
+
         return ChromeBudget(vertical = vertical, horizontal = horizontal)
     }
+
+    /**
+     * Width a LEFT tab bar takes off the content: the icon rail when collapsed, else the set width.
+     *
+     * The rail is [ChromeDimens.stripWidth] rather than a constant of its own, so it tracks the
+     * density preset and stays the same width as the window's own icon strips - which it sits
+     * directly beside, and where two adjacent vertical strips of different widths read as a
+     * mistake rather than a hierarchy.
+     */
+    private fun verticalTabBarCost(
+        appearance: WindowAppearanceSettings,
+        dimens: ChromeDimens,
+    ): Dp =
+        if (appearance.tabBarCollapsed) {
+            dimens.stripWidth
+        } else {
+            appearance.tabBarVerticalWidth
+                .coerceIn(TabBarVerticalWidthRange.start, TabBarVerticalWidthRange.endInclusive)
+                .dp
+        }
 }

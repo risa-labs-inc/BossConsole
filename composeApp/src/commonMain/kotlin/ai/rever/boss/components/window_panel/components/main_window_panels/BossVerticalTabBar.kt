@@ -7,6 +7,7 @@ import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.HoverTooltipBox
 import ai.rever.boss.components.overlays.TooltipPlacement
 import ai.rever.boss.components.overlays.contextMenu
+import ai.rever.boss.layout.BossChrome
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
@@ -59,11 +60,14 @@ import androidx.compose.ui.unit.sp
 /**
  * Width of the vertical tab bar when collapsed to its slim icon rail.
  *
- * 40dp to match the window's own left/right icon strips (`VerticalBar(width = 40.dp)` in
- * `BossLeftSideBar`). The rail sits directly beside one of them in the default layout, and two
- * adjacent vertical strips of different widths read as a mistake rather than a hierarchy.
+ * Reads [ChromeDimens.stripWidth] rather than carrying a constant, so it tracks the density
+ * preset alongside every other bar. The rail sits directly beside the window's own icon strip in
+ * the default layout, and two adjacent vertical strips of different widths read as a mistake
+ * rather than a hierarchy - which is the same reason `ChromeMetrics` charges the rail at this
+ * width when it budgets a LEFT bar.
  */
-val TAB_BAR_RAIL_WIDTH = 40.dp
+val tabBarRailWidth: Dp
+    @Composable get() = BossChrome.dimens.stripWidth
 
 /**
  * Panel width below which the vertical bar is FORCED down to the rail, whatever
@@ -455,7 +459,8 @@ fun ReorderIndicator(vertical: Boolean) {
 }
 
 /** Width the vertical bar occupies right now: the rail when collapsed, else the set width. */
+@Composable
 fun verticalTabBarWidth(
     collapsed: Boolean,
     width: Dp,
-): Dp = if (collapsed) TAB_BAR_RAIL_WIDTH else width
+): Dp = if (collapsed) tabBarRailWidth else width
