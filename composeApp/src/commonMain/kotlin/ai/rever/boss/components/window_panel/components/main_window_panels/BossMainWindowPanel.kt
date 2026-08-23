@@ -1022,6 +1022,16 @@ fun BossTabsComponent.BossMainTabBar(
                                 )
                             }
                         },
+                        // The bar's one chrome control rides on this section's header line rather
+                        // than owning a row: pin when this is a hover reveal, collapse when it is
+                        // the real bar. See the onPin KDoc for why never both.
+                        trailing = {
+                            if (onPin != null) {
+                                BossTabBarPinButton(onPin = onPin)
+                            } else {
+                                onToggleCollapse?.let { BossTabBarCollapseButton(onCollapse = it) }
+                            }
+                        },
                     )
                     Divider(color = BossTheme.colors.line)
                 }
@@ -1053,22 +1063,6 @@ fun BossTabsComponent.BossMainTabBar(
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     favoritesShelf()
-                    // Pin OR collapse, never both: a hover-revealed drawer offers the pin, a real
-                    // bar offers the chevron. See the onPin KDoc.
-                    if (onPin != null || onToggleCollapse != null) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                            horizontalArrangement = Arrangement.End,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            if (onPin != null) {
-                                BossTabBarPinButton(onPin = onPin)
-                            } else {
-                                onToggleCollapse?.let { BossTabBarCollapseButton(onCollapse = it) }
-                            }
-                        }
-                        Divider(color = BossTheme.colors.line)
-                    }
 
                     BossVerticalTabStrip(
                         listState = listState,

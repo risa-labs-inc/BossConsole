@@ -99,6 +99,9 @@ private const val FAVORITES_PER_ROW = 4
  *   uses. Null when that cannot be determined, treated as "present" so a wiring gap shows the
  *   quieter message rather than offering an install that would go nowhere.
  * @param apiReachable whether the plugin is actually serving its API right now.
+ * @param trailing the bar's collapse chevron or pin, rendered on the SAME line as this section's
+ *   label. It lived on a row of its own first, which spent a whole line of a narrow bar on one
+ *   16dp glyph; the header this section needed anyway is the natural place for it.
  */
 @Composable
 fun TabBarFavorites(
@@ -108,8 +111,26 @@ fun TabBarFavorites(
     onOpen: (Bookmark) -> Unit,
     onRemove: (Bookmark) -> Unit,
     onInstallPlugin: () -> Unit,
+    trailing: @Composable () -> Unit = {},
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 6.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "FAVORITES",
+                color = BossTheme.colors.textSecondary,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 0.8.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).padding(start = 4.dp),
+            )
+            trailing()
+        }
+
         when {
             pluginInstalled == false -> {
                 FavoritesEmptyState(
