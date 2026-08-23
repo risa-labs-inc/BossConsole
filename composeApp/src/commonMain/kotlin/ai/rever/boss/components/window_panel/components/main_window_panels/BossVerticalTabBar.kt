@@ -44,6 +44,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -89,14 +90,6 @@ val TAB_BAR_AUTO_COLLAPSE_WIDTH = 520.dp
  * tab has been squeezed to a favicon.
  */
 val VERTICAL_TAB_HEIGHT = 32.dp
-
-/**
- * Height of a section header row ("Pinned" / "Open"), which also hosts that section's hover "+".
- */
-private val SECTION_HEADER_HEIGHT = 24.dp
-
-/** Height of the Arc-style "New Tab" row pinned to the bottom of the bar. */
-private val NEW_TAB_ROW_HEIGHT = 32.dp
 
 /** Diameter of one tab's dot on the collapsed rail. */
 private val RAIL_DOT_SIZE = 10.dp
@@ -151,128 +144,6 @@ fun ColumnScope.BossVerticalTabStrip(
         horizontalAlignment = Alignment.CenterHorizontally,
         content = content,
     )
-}
-
-/**
- * One section header in the vertical bar: a quiet label, and a "+" that fades in on hover.
- *
- * Arc draws no label above its pinned block - just a separator line. A label is used here for two
- * reasons: this bar has two sections whose difference is not visually obvious the way a favicon
- * grid is, and the header is what the per-section "+" hangs off. Both are set small, uppercase and
- * muted so they read as chrome rather than as content.
- *
- * The "+" appears on hover rather than always, so the resting bar stays as quiet as Arc's. It is
- * still reachable without hovering: the row at the bottom of the bar is always visible, and it is
- * the same action for the Open section.
- */
-@Composable
-fun SectionHeader(
-    label: String,
-    onAdd: () -> Unit,
-    addHint: String,
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val hovered by interactionSource.collectIsHoveredAsState()
-    Row(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .height(SECTION_HEADER_HEIGHT)
-                .hoverable(interactionSource)
-                .padding(start = 10.dp, end = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = label,
-            color = BossTheme.colors.textSecondary,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.SemiBold,
-            letterSpacing = 0.8.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        // Space is reserved whether or not the icon is drawn, so the label does not shift
-        // sideways as the pointer crosses the row.
-        Box(modifier = Modifier.size(SECTION_HEADER_HEIGHT), contentAlignment = Alignment.Center) {
-            if (hovered) {
-                // The whole 20dp box is the target, not the 14dp glyph inside it: a header "+"
-                // that only exists while the pointer is on the row is hard enough to hit without
-                // also being a pixel hunt.
-                HoverTooltipBox(
-                    text = addHint,
-                    placement = TooltipPlacement.END,
-                    modifier =
-                        Modifier
-                            .size(20.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .clickable(onClick = onAdd),
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = addHint,
-                        tint = BossTheme.colors.textSecondary,
-                        modifier = Modifier.size(14.dp),
-                    )
-                }
-            }
-        }
-    }
-}
-
-/**
- * The line between the pinned block and the open one, plus the Open section's own header.
- *
- * Arc's equivalent is a single thin rule with no label. The label is kept here because this bar
- * carries two named sections rather than a favicon grid and a list, and because it is what the
- * section's "+" hangs off.
- */
-@Composable
-fun SectionBreak(onAdd: () -> Unit) {
-    Divider(
-        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-        color = BossTheme.colors.line,
-    )
-    SectionHeader(label = "OPEN", onAdd = onAdd, addHint = "New tab")
-}
-
-/**
- * The always-visible "New Tab" row along the bottom of the bar (Arc and Dia both place it there).
- *
- * Full width and left-aligned rather than a centred square button, so it reads as a row of the
- * list it extends rather than as a floating control - which is the whole difference between this
- * and the "+" the horizontal strip uses, where a row would have nowhere to sit.
- */
-@Composable
-fun NewTabRow(onClick: () -> Unit) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val hovered by interactionSource.collectIsHoveredAsState()
-    Row(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .height(NEW_TAB_ROW_HEIGHT)
-                .hoverable(interactionSource)
-                .background(if (hovered) BossTheme.colors.raised else Color.Transparent)
-                .clickable(onClick = onClick)
-                .padding(horizontal = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Icon(
-            imageVector = Icons.Default.Add,
-            contentDescription = null,
-            tint = BossTheme.colors.textSecondary,
-            modifier = Modifier.size(14.dp),
-        )
-        Text(
-            text = "New Tab",
-            color = BossTheme.colors.textSecondary,
-            fontSize = 12.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
 }
 
 /**
@@ -403,6 +274,23 @@ fun BossTabBarCollapseButton(onCollapse: () -> Unit) {
         icon = Icons.Default.ChevronLeft,
         contentDescription = "Collapse tab bar",
         onClick = onCollapse,
+    )
+}
+
+/**
+ * The pin a hover-revealed drawer offers in place of the collapse chevron.
+ *
+ * A drawer that exists only because the pointer is resting here is not a bar yet, and offering to
+ * "collapse" it is offering to undo something the user did not do - the pointer leaving already
+ * does that. Pinning is the action that IS missing: it turns the reveal into the real bar, so
+ * whatever you came here to do survives moving the mouse. Ported from BossTerm's `onPin`.
+ */
+@Composable
+fun BossTabBarPinButton(onPin: () -> Unit) {
+    RailIconButton(
+        icon = Icons.Default.PushPin,
+        contentDescription = "Keep sidebar open",
+        onClick = onPin,
     )
 }
 

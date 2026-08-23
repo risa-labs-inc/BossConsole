@@ -125,6 +125,15 @@ class TabBarRevealState internal constructor(
     fun openDrawer() {
         drawerOpen = true
     }
+
+    /**
+     * True while this drawer exists ONLY because the pointer is resting on the sidebar.
+     *
+     * What distinguishes the two kinds of drawer, and so what decides whether the header offers a
+     * pin or a chevron. A chevron-opened drawer on a narrow panel is already as pinned as it can
+     * get, and offering to pin it again would do nothing.
+     */
+    val isTransientReveal: Boolean get() = revealed && !drawerOpen
 }
 
 /**

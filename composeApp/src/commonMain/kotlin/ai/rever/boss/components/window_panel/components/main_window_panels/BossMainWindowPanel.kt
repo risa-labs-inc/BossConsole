@@ -279,6 +279,15 @@ fun BossTabsComponent.BossMainTabBar(
      */
     onToggleCollapse: (() -> Unit)? = null,
     /**
+     * Marks this bar as a transient hover reveal, and pins it when pressed.
+     *
+     * When non-null it REPLACES the collapse chevron, because the two are different offers and
+     * only one makes sense at a time: a drawer that is only here while the pointer is has nothing
+     * to collapse (leaving does that), and what it lacks is a way to stay. Ported from BossTerm's
+     * `onPin`.
+     */
+    onPin: (() -> Unit)? = null,
+    /**
      * Report this bar's rectangle to the drag system.
      *
      * False for a hover-revealed drawer. A drawer is a SECOND bar for a panel that already has
@@ -1044,13 +1053,19 @@ fun BossTabsComponent.BossMainTabBar(
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     favoritesShelf()
-                    onToggleCollapse?.let { toggle ->
+                    // Pin OR collapse, never both: a hover-revealed drawer offers the pin, a real
+                    // bar offers the chevron. See the onPin KDoc.
+                    if (onPin != null || onToggleCollapse != null) {
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                             horizontalArrangement = Arrangement.End,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            BossTabBarCollapseButton(onCollapse = toggle)
+                            if (onPin != null) {
+                                BossTabBarPinButton(onPin = onPin)
+                            } else {
+                                onToggleCollapse?.let { BossTabBarCollapseButton(onCollapse = it) }
+                            }
                         }
                         Divider(color = BossTheme.colors.line)
                     }
@@ -1384,6 +1399,8 @@ fun BossTabsComponent.BossMainPanel(
 
         val dismissDrawer: () -> Unit = { reveal.dismiss(pointerInSidebar) }
 
+        val pinDrawer = rememberPinDrawerAction(reveal, bar, settingsScope)
+
         val toggleCollapse: () -> Unit = {
             if (bar.narrow) {
                 // Nothing to give back: the panel is below the threshold, so the in-flow bar
@@ -1439,6 +1456,7 @@ fun BossTabsComponent.BossMainPanel(
                 reveal = reveal,
                 panelRegion = panelRegion,
                 onDismiss = dismissDrawer,
+                onPin = pinDrawer,
                 panel =
                     DrawerPanelWiring(
                         splitViewState = splitViewState,
@@ -1446,6 +1464,38 @@ fun BossTabsComponent.BossMainPanel(
                         focusRequester = focusRequester,
                     ),
             )
+        }
+    }
+}
+
+/**
+ * Turn a hover reveal into the real bar, or null when there is nothing to pin.
+ *
+ * On a wide panel pinning clears the collapse preference, so the drawer becomes the bar and
+ * survives both the pointer leaving and the next launch. On a narrow one the rail is forced by
+ * width and no setting can undo that, so the best available "stay" is the chevron-opened drawer,
+ * which outlives hover until it is dismissed.
+ *
+ * Null unless this drawer is a transient reveal: a chevron-opened drawer is already as pinned as
+ * it can get, and offering to pin it again would do nothing.
+ */
+@Composable
+private fun rememberPinDrawerAction(
+    reveal: TabBarRevealState,
+    bar: TabBarLayout,
+    scope: kotlinx.coroutines.CoroutineScope,
+): (() -> Unit)? {
+    if (!reveal.isTransientReveal) return null
+    return {
+        if (bar.narrow) {
+            reveal.openDrawer()
+        } else {
+            scope.launch {
+                WindowAppearanceSettingsManager.updateSettings(
+                    WindowAppearanceSettingsManager.currentSettings.value
+                        .copy(tabBarCollapsed = false),
+                )
+            }
         }
     }
 }
@@ -1476,6 +1526,7 @@ private fun BoxScope.RevealedTabBarDrawer(
     reveal: TabBarRevealState,
     panelRegion: IntRect?,
     onDismiss: () -> Unit,
+    onPin: (() -> Unit)?,
     panel: DrawerPanelWiring,
 ) {
     VerticalTabBarDrawer(
@@ -1505,6 +1556,7 @@ private fun BoxScope.RevealedTabBarDrawer(
             // all - the click-catcher behind it is a Compose node, and under HARDWARE the
             // browser's native surface is painted above it, so clicking the page never reaches it.
             onToggleCollapse = onDismiss,
+            onPin = onPin,
             // Picking a tab is finishing with the drawer. Without this it stays open under the
             // pointer that just used it.
             onTabActivated = onDismiss,
