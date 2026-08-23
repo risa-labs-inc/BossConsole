@@ -655,6 +655,24 @@ fun ApplicationScope.BossWindow(
                     )
                 }
 
+                // Tab bar position, as a checkbox rather than the two-item radio the Settings
+                // screen shows: there are exactly two positions, so "on" can only mean Left. Same
+                // global write as the bar toggles above, and for the same reason it needs none of
+                // the MenuActionsHandler per-window routing the items below use.
+                CheckboxItem(
+                    "Vertical Tabs",
+                    checked = appearanceSettings.tabBarPosition == TabBarPosition.LEFT,
+                    onCheckedChange = { left ->
+                        menuScope.launch {
+                            WindowAppearanceSettingsManager.updateSettings(
+                                WindowAppearanceSettingsManager.currentSettings.value.copy(
+                                    tabBarPosition = if (left) TabBarPosition.LEFT else TabBarPosition.TOP,
+                                ),
+                            )
+                        }
+                    },
+                )
+
                 Separator()
 
                 Item(

@@ -5,6 +5,7 @@ import ai.rever.boss.components.bars.horizontal.HorizontalBar
 import ai.rever.boss.components.bars.horizontal.HorizontalBarRow
 import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.components.bars.horizontalScrollWithScrollbar
+import ai.rever.boss.components.bars.vertical.VerticalBar
 import ai.rever.boss.components.bookmarks.Bookmark
 import ai.rever.boss.components.bookmarks.WorkspacePanelTarget
 import ai.rever.boss.components.buttons.BossTabButton
@@ -72,16 +73,23 @@ import ai.rever.boss.window.LocalWindowId
 import ai.rever.boss.window.LocalWindowProjectState
 import ai.rever.boss.window.MenuActionsHandler
 import ai.rever.boss.window.Project
+import ai.rever.boss.window.TabBarPosition
+import ai.rever.boss.window.TabBarVerticalWidthRange
 import ai.rever.boss.window.TabWidthMode
 import ai.rever.boss.window.WindowAppearanceSettingsManager
 import ai.rever.boss.window.WindowOperations
+import ai.rever.boss.window.displayName
 import ai.rever.boss.window.selectProjectInWindow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.Divider
@@ -110,7 +118,10 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
 import com.arkivanov.decompose.ComponentContext
 import com.arkivanov.decompose.DefaultComponentContext
@@ -119,6 +130,7 @@ import com.arkivanov.decompose.value.Value
 import com.arkivanov.essenty.lifecycle.LifecycleRegistry
 import com.arkivanov.essenty.lifecycle.destroy
 import com.arkivanov.essenty.lifecycle.resume
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.time.Clock
 
@@ -137,11 +149,14 @@ private fun BossTabButtonWithFavicon(
     onClose: () -> Unit,
     contextMenuItems: List<ContextMenuItem>,
     tabWidth: Dp?,
+    vertical: Boolean = false,
+    tabHeight: Dp = VERTICAL_TAB_HEIGHT,
     // Drag-related parameters
     tabDragComponent: TabDraggableComponent? = null,
     panelId: String? = null,
     tabIndex: Int = -1,
     onDragEnd: (TabDropResult?) -> Unit = {},
+    onContextMenuVisibilityChange: (Boolean) -> Unit = {},
 ) {
     // Load favicon using shared composable (with error handling and caching)
     val loadedFavicon = rememberFaviconLoader(config)
@@ -186,11 +201,14 @@ private fun BossTabButtonWithFavicon(
         onClose = onClose,
         contextMenuItems = contextMenuItems,
         tabWidth = tabWidth,
+        vertical = vertical,
+        tabHeight = tabHeight,
         tabDragComponent = tabDragComponent,
         tabInfo = config,
         panelId = panelId,
         tabIndex = tabIndex,
         onDragEnd = onDragEnd,
+        onContextMenuVisibilityChange = onContextMenuVisibilityChange,
     )
 }
 
@@ -234,6 +252,56 @@ fun BossTabsComponent.BossMainTabBar(
     focusRequester: FocusRequester? = null,
     tabDragComponent: TabDraggableComponent? = null,
     onTabDropResult: (TabDropResult) -> Unit = {},
+    /**
+     * Render as a vertical bar down the panel's leading edge rather than a strip across its top.
+     *
+     * Passed in rather than read from `WindowAppearanceSettings` here, because the caller has to
+     * know it too - it is what decides whether the panel is a Row or a Column - and a second,
+     * independent read is a second thing that can disagree.
+     */
+    vertical: Boolean = false,
+    /** Width of the vertical bar. Ignored when [vertical] is false. */
+    verticalWidth: Dp = 200.dp,
+    /**
+     * Render this vertical bar as its slim icon rail rather than the full labelled column.
+     *
+     * The rail is a MODE of this composable, not a separate widget beside it, so that the tab
+     * menus, the new-tab dialog and every piece of state behind them are shared. Collapsing must
+     * take away labels, not actions.
+     */
+    collapsed: Boolean = false,
+    /**
+     * Toggle [collapsed]. Null hides the chevron entirely, which is what a top strip (nothing to
+     * collapse) and a transient hover drawer (collapsing it is what the pointer leaving does)
+     * both want.
+     */
+    onToggleCollapse: (() -> Unit)? = null,
+    /**
+     * Report this bar's rectangle to the drag system.
+     *
+     * False for a hover-revealed drawer. A drawer is a SECOND bar for a panel that already has
+     * one registered, and under HARDWARE it lives in its own always-on-top window, where
+     * `boundsInWindow` describes a rectangle in the wrong window entirely. Registering would
+     * therefore overwrite the real bar's bounds with coordinates that mean nothing.
+     */
+    registerBounds: Boolean = true,
+    /**
+     * Reports whether an interaction that outlives a single click is in flight - today, an open
+     * tab context menu.
+     *
+     * All of it is state owned by this composition, so an owner that disposes the bar on its own
+     * schedule (the hover-reveal drawer, which retracts when the pointer leaves) has to keep it
+     * alive while this is true. Otherwise right-clicking a tab in the drawer and moving onto the
+     * menu drops the menu. Null for every owner whose lifetime is not tied to the pointer.
+     */
+    onTransientInteraction: ((Boolean) -> Unit)? = null,
+    /**
+     * Invoked after a tab is activated from this bar, whichever control did it.
+     *
+     * For the hover-reveal drawer, which is finished the moment the user picks something and
+     * would otherwise sit open under the pointer that just used it.
+     */
+    onTabActivated: (() -> Unit)? = null,
 ) {
     val tabsState = tabsState.subscribeAsState()
     var showNewTabDialog by remember { mutableStateOf(false) }
@@ -273,6 +341,45 @@ fun BossTabsComponent.BossMainTabBar(
     // Coroutine scope for edge scroll animation
     val edgeScrollScope = rememberCoroutineScope()
 
+    // Separate scope for the bar's own settings writes (the Tab Bar Position submenu). Kept
+    // apart from the edge-scroll scope so a settings write is never cancelled by a tab bar that
+    // recomposed mid-drag, and so neither reads as the other's concern.
+    val barSettingsScope = rememberCoroutineScope()
+
+    // Current position, read for the submenu's checkmark only - the layout itself is driven by
+    // the `vertical` parameter, which the caller resolved.
+    val tabBarPosition = appearanceSettings.tabBarPosition
+
+    // Menus open right now, counted rather than latched: several tabs can each have had one, and
+    // a single Boolean would be cleared by whichever closed first while another was still up.
+    var openMenuCount by remember { mutableIntStateOf(0) }
+    val latestTransientInteraction by rememberUpdatedState(onTransientInteraction)
+    LaunchedEffect(openMenuCount > 0) { latestTransientInteraction?.invoke(openMenuCount > 0) }
+
+    // Opening a new tab, in one place: three "+" buttons reach it (the top strip's trailing slot,
+    // its legacy in-row placement, the vertical bar's and the rail's) plus the bar's context
+    // menu, and they must not drift on the panel-activation half.
+    val openNewTab = {
+        showNewTabDialog = true
+        // Track panel interaction when the plus button is clicked
+        if (splitViewState != null && currentPanelId != null) {
+            splitViewState.setActivePanel(currentPanelId)
+        }
+    }
+
+    // Activating a tab, in one place: a full tab row and a rail dot both do it, and both owe the
+    // owner an onTabActivated afterwards.
+    val activateTab: (Int) -> Unit = { index ->
+        selectTab(index)
+        // Track this tab interaction for Cmd+R/Cmd+N
+        if (splitViewState != null && currentPanelId != null) {
+            tabsState.value.tabs.getOrNull(index)?.let { tab ->
+                splitViewState.trackTabInteraction(currentPanelId, tab.id)
+            }
+        }
+        onTabActivated?.invoke()
+    }
+
     // Set up edge scroll handler for drag-and-drop
     // Each panel registers its own callback to avoid race conditions with multiple panels
     DisposableEffect(tabDragComponent, currentPanelId) {
@@ -283,7 +390,7 @@ fun BossTabsComponent.BossMainTabBar(
                     val visibleItems = layoutInfo.visibleItemsInfo
 
                     when (direction) {
-                        ScrollDirection.LEFT -> {
+                        ScrollDirection.BACKWARD -> {
                             // Scroll to previous item
                             val firstVisible = visibleItems.firstOrNull()?.index ?: 0
                             if (firstVisible > 0) {
@@ -291,7 +398,7 @@ fun BossTabsComponent.BossMainTabBar(
                             }
                         }
 
-                        ScrollDirection.RIGHT -> {
+                        ScrollDirection.FORWARD -> {
                             // Scroll to next item
                             val lastVisible = visibleItems.lastOrNull()?.index ?: 0
                             val totalItems = tabsState.value.tabs.size
@@ -342,365 +449,484 @@ fun BossTabsComponent.BossMainTabBar(
     // Track drop target for reorder indicator
     val dropTarget = tabDragComponent?.dropTarget
 
-    HorizontalBar(
-        height = BossChrome.dimens.tabBarHeight,
-        backgroundColor = BossTheme.colors.panel,
-    ) {
-        HorizontalBarRow(
-            modifier =
-                Modifier.onGloballyPositioned { coordinates ->
-                    // Register tab bar bounds for drag detection
-                    if (currentPanelId != null && tabDragComponent != null) {
-                        val bounds = coordinates.boundsInWindow()
-                        tabDragComponent.registerTabBarBounds(currentPanelId, bounds)
-                    }
-                },
-        ) {
-            BossLeftTabBar(
-                listState,
-                tabCount = tabsState.value.tabs.size,
-                // Plus button outside the LazyRow but still inside the strip,
-                // sitting directly after the last tab: always in
-                // SHRINK_TO_FIT (immune to the isScrollable race), and in
-                // FIXED mode once the row scrolls (so the button can't
-                // scroll away). Once the tabs fill the strip this lands
-                // flush right, same as before.
-                //
-                // Both gaps belong to the slot, not to the strip Row — see the
-                // reserve rule in BossLeftTabBar's KDoc. NEW_TAB_BUTTON_GAP on
-                // the end side plus the strip's own 8.dp inset reproduces the
-                // 12.dp right margin the pinned-right button used to have.
-                trailingReserve = if (shrinkTabsToFit || isScrollable) NEW_TAB_SLOT_WIDTH else 0.dp,
-                trailing = {
-                    if (shrinkTabsToFit || isScrollable) {
-                        NewTabButton(
-                            modifier = Modifier.padding(horizontal = NEW_TAB_BUTTON_GAP),
-                            onClick = {
-                                showNewTabDialog = true
-                                // Track panel interaction when plus button is clicked
-                                if (splitViewState != null && currentPanelId != null) {
-                                    splitViewState.setActivePanel(currentPanelId)
-                                }
-                            },
+    // Wording that follows the axis: "to the Right" is a lie in a column, and a menu that lies
+    // about direction is worse than one that omits it. BossTerm renames its own Move Tab items
+    // the same way, for the same reason.
+    val closeAfterLabel = if (vertical) "Close Tabs Below" else "Close Tabs to the Right"
+    val closeBeforeLabel = if (vertical) "Close Tabs Above" else "Close Tabs to the Left"
+    val closeAfterIcon = if (vertical) Icons.Outlined.KeyboardArrowDown else Icons.Outlined.ChevronRight
+    val closeBeforeIcon = if (vertical) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.ChevronLeft
+
+    // The tab rows, shared verbatim by both orientations. Only the container around them and two
+    // axis-shaped details inside it - the reorder indicator and the inter-tab divider - differ.
+    // Everything a tab DOES (select, close, drag, its entire context menu) is one body, because
+    // none of it is about which way the bar runs.
+    //
+    // Deliberately not a @Composable: a lazy list's DSL body is not one either. The composable
+    // work happens inside the `itemsIndexed` content lambda, which is exactly where it was
+    // before this was hoisted out of the container.
+    // The per-tab right-click menu, hoisted out of the tab row because the COLLAPSED bar needs
+    // it too: a rail dot is still that tab, and collapsing the bar must take away labels, not
+    // actions. Splitting it in two would have been two menus to keep in step.
+    //
+    // Plain lambda, not @Composable, and that is checked rather than assumed - nothing in here
+    // calls remember or reads a state holder that needs one. It runs during composition on every
+    // tab-bar recomposition, which is the constraint the NOTE below is about.
+    val tabMenuItems: (Int, TabInfo) -> List<ContextMenuItem> = { index, config ->
+        val totalTabs = tabsState.value.tabs.size
+        buildList {
+            // NOTE: Do NOT call trackTabInteraction/setActivePanel here.
+            // buildList runs during composition (every tab-bar
+            // recomposition, e.g. on every terminal output line), so
+            // doing it here flips the active panel away from whichever
+            // split the user is actually in — stealing focus back to the
+            // output-producing panel. Panel activation on right-click is
+            // already handled by the panel's pointerInput press handler;
+            // left-click activation by the tab onClick above.
+
+            // Split operations (if split state is available)
+            if (splitViewState != null && currentPanelId != null) {
+                add(
+                    ContextMenuItem("Split Right", Icons.Outlined.ViewColumn, onClick = {
+                        splitViewState.splitPanel(
+                            panelId = currentPanelId,
+                            orientation = ai.rever.boss.components.window_panel.SplitOrientation.VERTICAL,
+                            tabToMove = config,
                         )
-                    }
-                },
-            ) { tabWidth ->
-                // Render tab buttons as lazy items
-                itemsIndexed(tabsState.value.tabs) { index, config ->
-                    val isSelected = index == tabsState.value.activeIndex
-                    val totalTabs = tabsState.value.tabs.size
-
-                    // Show reorder indicator before this tab if it's the drop target
-                    val showIndicatorBefore =
-                        dropTarget is TabDropTarget.Reorder &&
-                            dropTarget.panelId == currentPanelId &&
-                            dropTarget.targetIndex == index
-
-                    if (showIndicatorBefore) {
-                        Box(
-                            modifier =
-                                Modifier
-                                    .width(3.dp)
-                                    .fillMaxHeight()
-                                    .padding(vertical = 8.dp)
-                                    .background(BossTheme.colors.signal),
+                    }),
+                )
+                add(
+                    ContextMenuItem("Split Down", Icons.Outlined.Splitscreen, onClick = {
+                        splitViewState.splitPanel(
+                            panelId = currentPanelId,
+                            orientation = ai.rever.boss.components.window_panel.SplitOrientation.HORIZONTAL,
+                            tabToMove = config,
                         )
+                    }),
+                )
+                add(ContextMenuItem(isDivider = true))
+            }
+
+            // Reveal the tab's backing file in the OS file manager (file-backed tabs).
+            // Host tab types expose filePath directly. Dynamic plugin tabs (e.g. the
+            // editor-tab plugin's EditorTabData) live in a plugin classloader we can't
+            // reference by type, so fall back to reading a `filePath` getter reflectively
+            // — the same duck-typing the editor-tab plugin uses for host tab types.
+            // The reflected value is assumed absolute: revealInFileManager resolves via
+            // File(path).absolutePath, so a relative path would resolve against the CWD.
+            val revealPath =
+                when (val tab = config) {
+                    is EditorTabInfo -> {
+                        tab.filePath
                     }
 
-                    BossTabButtonWithFavicon(
-                        config = config,
-                        isSelected = isSelected,
-                        isFocused = true, // Tab bars are always considered focused when window is active
-                        tabWidth = if (shrinkTabsToFit) tabWidth else null,
+                    is JupyterTabInfo -> {
+                        tab.filePath
+                    }
+
+                    else -> {
+                        runCatching {
+                            tab.javaClass.getMethod("getFilePath").invoke(tab) as? String
+                        }.getOrNull()
+                    }
+                }?.takeIf { it.isNotBlank() }
+            if (revealPath != null) {
+                add(
+                    ContextMenuItem(revealInFileManagerLabel(), Icons.Outlined.FolderOpen, onClick = {
+                        revealInFileManager(revealPath)
+                    }),
+                )
+                add(ContextMenuItem(isDivider = true))
+            }
+
+            // Bookmark current tab
+            // Deliberate bare snapshot read: subscribes this scope to
+            // recomposition on bookmark-collection changes.
+            @Suppress("UNUSED_EXPRESSION")
+            collections
+
+            val tabConfig = convertTabInfoToTabConfig(config)
+            val existingBookmark = BookmarkAPIAccess.findBookmarkForTab(tabConfig)
+
+            if (existingBookmark != null) {
+                // Tab is already bookmarked - show remove option WITH CONFIRMATION
+                val (collectionId, bookmarkId) = existingBookmark
+                add(
+                    ContextMenuItem("Remove from Bookmarks", Icons.Filled.Star, onClick = {
+                        bookmarkToRemove = Triple(collectionId, bookmarkId, config.title)
+                        showRemoveBookmarkDialog = true
+                    }),
+                )
+            } else {
+                // Tab is not bookmarked - show add option
+                add(
+                    ContextMenuItem("Add to Bookmarks", Icons.Outlined.Star, onClick = {
+                        tabToBookmark = config
+                        showBookmarkDialog = true
+                    }),
+                )
+            }
+
+            // Favorite current workspace
+            val currentWorkspace = workspaceManager.currentWorkspace.value
+            if (currentWorkspace != null) {
+                val isFavorited = BookmarkAPIAccess.isFavorite(currentWorkspace.id)
+                add(
+                    ContextMenuItem(
+                        if (isFavorited) "Unfavorite Workspace" else "Favorite Workspace",
+                        // The icon shows what the action DOES, matching the label: "Unfavorite"
+                        // empties the star, "Favorite" fills it.
+                        if (isFavorited) Icons.Outlined.StarBorder else Icons.Filled.Star,
                         onClick = {
-                            selectTab(index)
-                            // Track this tab interaction for Cmd+R/Cmd+N
-                            if (splitViewState != null && currentPanelId != null) {
-                                splitViewState.trackTabInteraction(currentPanelId, config.id)
+                            if (isFavorited) {
+                                BookmarkAPIAccess.removeFavoriteWorkspace(currentWorkspace.id)
+                            } else {
+                                BookmarkAPIAccess.addFavoriteWorkspace(currentWorkspace.id, currentWorkspace.name)
                             }
                         },
-                        onClose = {
-                            removeTab(index)
-                            // Request focus back to the main panel after closing tab
-                            // This ensures keyboard shortcuts continue to work
-                            focusRequester?.requestFocus()
-                        },
-                        tabDragComponent = tabDragComponent,
-                        panelId = currentPanelId,
-                        tabIndex = index,
-                        onDragEnd = { result ->
-                            // endDrag() already called in BossTabButton, just handle result
-                            result?.let { onTabDropResult(it) }
-                        },
-                        contextMenuItems =
-                            buildList {
-                                // NOTE: Do NOT call trackTabInteraction/setActivePanel here.
-                                // buildList runs during composition (every tab-bar
-                                // recomposition, e.g. on every terminal output line), so
-                                // doing it here flips the active panel away from whichever
-                                // split the user is actually in — stealing focus back to the
-                                // output-producing panel. Panel activation on right-click is
-                                // already handled by the panel's pointerInput press handler;
-                                // left-click activation by the tab onClick above.
+                    ),
+                )
+            }
 
-                                // Split operations (if split state is available)
-                                if (splitViewState != null && currentPanelId != null) {
-                                    add(
-                                        ContextMenuItem("Split Right", Icons.Outlined.ViewColumn, onClick = {
-                                            splitViewState.splitPanel(
-                                                panelId = currentPanelId,
-                                                orientation = ai.rever.boss.components.window_panel.SplitOrientation.VERTICAL,
-                                                tabToMove = config,
-                                            )
-                                        }),
-                                    )
-                                    add(
-                                        ContextMenuItem("Split Down", Icons.Outlined.Splitscreen, onClick = {
-                                            splitViewState.splitPanel(
-                                                panelId = currentPanelId,
-                                                orientation = ai.rever.boss.components.window_panel.SplitOrientation.HORIZONTAL,
-                                                tabToMove = config,
-                                            )
-                                        }),
-                                    )
-                                    add(ContextMenuItem(isDivider = true))
-                                }
+            add(ContextMenuItem(isDivider = true))
 
-                                // Reveal the tab's backing file in the OS file manager (file-backed tabs).
-                                // Host tab types expose filePath directly. Dynamic plugin tabs (e.g. the
-                                // editor-tab plugin's EditorTabData) live in a plugin classloader we can't
-                                // reference by type, so fall back to reading a `filePath` getter reflectively
-                                // — the same duck-typing the editor-tab plugin uses for host tab types.
-                                // The reflected value is assumed absolute: revealInFileManager resolves via
-                                // File(path).absolutePath, so a relative path would resolve against the CWD.
-                                val revealPath =
-                                    when (val tab = config) {
-                                        is EditorTabInfo -> {
-                                            tab.filePath
-                                        }
+            // Open in New Window (if multi-window is supported)
+            if (ai.rever.boss.window.WindowOperations
+                    .isMultiWindowSupported()
+            ) {
+                add(
+                    ContextMenuItem("Open in New Window", Icons.AutoMirrored.Outlined.OpenInNew, onClick = {
+                        ai.rever.boss.window.WindowOperations
+                            .openTabInNewWindow(config)
+                        // Remove tab from current window after opening in new window
+                        removeTab(index)
+                        // Request focus back to the main panel
+                        focusRequester?.requestFocus()
+                    }),
+                )
+                add(ContextMenuItem(isDivider = true))
+            }
 
-                                        is JupyterTabInfo -> {
-                                            tab.filePath
-                                        }
+            // Close current tab
+            add(
+                ContextMenuItem("Close Tab", Icons.Outlined.Close, onClick = {
+                    removeTab(index)
+                    // Request focus back to the main panel
+                    focusRequester?.requestFocus()
+                }),
+            )
 
-                                        else -> {
-                                            runCatching {
-                                                tab.javaClass.getMethod("getFilePath").invoke(tab) as? String
-                                            }.getOrNull()
-                                        }
-                                    }?.takeIf { it.isNotBlank() }
-                                if (revealPath != null) {
-                                    add(
-                                        ContextMenuItem(revealInFileManagerLabel(), Icons.Outlined.FolderOpen, onClick = {
-                                            revealInFileManager(revealPath)
-                                        }),
-                                    )
-                                    add(ContextMenuItem(isDivider = true))
-                                }
+            // Close other tabs (only show if there are other tabs)
+            if (totalTabs > 1) {
+                add(
+                    ContextMenuItem("Close Other Tabs", Icons.Outlined.Clear, onClick = {
+                        closeOtherTabs(index)
+                        // Request focus back to the main panel
+                        focusRequester?.requestFocus()
+                    }),
+                )
+            }
 
-                                // Bookmark current tab
-                                // Deliberate bare snapshot read: subscribes this scope to
-                                // recomposition on bookmark-collection changes.
-                                @Suppress("UNUSED_EXPRESSION")
-                                collections
+            // Close tabs to the right (only show if there are tabs to the right)
+            if (index < totalTabs - 1) {
+                add(
+                    ContextMenuItem(closeAfterLabel, closeAfterIcon, onClick = {
+                        closeTabsToRight(index)
+                        // Request focus back to the main panel
+                        focusRequester?.requestFocus()
+                    }),
+                )
+            }
 
-                                val tabConfig = convertTabInfoToTabConfig(config)
-                                val existingBookmark = BookmarkAPIAccess.findBookmarkForTab(tabConfig)
+            // Close tabs to the left (only show if there are tabs to the left)
+            if (index > 0) {
+                add(
+                    ContextMenuItem(closeBeforeLabel, closeBeforeIcon, onClick = {
+                        closeTabsToLeft(index)
+                        // Request focus back to the main panel
+                        focusRequester?.requestFocus()
+                    }),
+                )
+            }
+        }
+    }
 
-                                if (existingBookmark != null) {
-                                    // Tab is already bookmarked - show remove option WITH CONFIRMATION
-                                    val (collectionId, bookmarkId) = existingBookmark
-                                    add(
-                                        ContextMenuItem("Remove from Bookmarks", Icons.Filled.Star, onClick = {
-                                            bookmarkToRemove = Triple(collectionId, bookmarkId, config.title)
-                                            showRemoveBookmarkDialog = true
-                                        }),
-                                    )
-                                } else {
-                                    // Tab is not bookmarked - show add option
-                                    add(
-                                        ContextMenuItem("Add to Bookmarks", Icons.Outlined.Star, onClick = {
-                                            tabToBookmark = config
-                                            showBookmarkDialog = true
-                                        }),
-                                    )
-                                }
+    val tabItems: LazyListScope.(tabWidth: Dp?) -> Unit = { tabWidth ->
+        // Render tab buttons as lazy items
+        itemsIndexed(tabsState.value.tabs) { index, config ->
+            val isSelected = index == tabsState.value.activeIndex
 
-                                // Favorite current workspace
-                                val currentWorkspace = workspaceManager.currentWorkspace.value
-                                if (currentWorkspace != null) {
-                                    val isFavorited = BookmarkAPIAccess.isFavorite(currentWorkspace.id)
-                                    add(
-                                        ContextMenuItem(
-                                            if (isFavorited) "Unfavorite Workspace" else "Favorite Workspace",
-                                            // The icon shows what the action DOES, matching the label: "Unfavorite"
-                                            // empties the star, "Favorite" fills it.
-                                            if (isFavorited) Icons.Outlined.StarBorder else Icons.Filled.Star,
-                                            onClick = {
-                                                if (isFavorited) {
-                                                    BookmarkAPIAccess.removeFavoriteWorkspace(currentWorkspace.id)
-                                                } else {
-                                                    BookmarkAPIAccess.addFavoriteWorkspace(currentWorkspace.id, currentWorkspace.name)
-                                                }
-                                            },
-                                        ),
-                                    )
-                                }
+            // Show reorder indicator before this tab if it's the drop target
+            val showIndicatorBefore =
+                dropTarget is TabDropTarget.Reorder &&
+                    dropTarget.panelId == currentPanelId &&
+                    dropTarget.targetIndex == index
 
-                                add(ContextMenuItem(isDivider = true))
+            if (showIndicatorBefore) {
+                ReorderIndicator(vertical = vertical)
+            }
 
-                                // Open in New Window (if multi-window is supported)
-                                if (ai.rever.boss.window.WindowOperations
-                                        .isMultiWindowSupported()
-                                ) {
-                                    add(
-                                        ContextMenuItem("Open in New Window", Icons.AutoMirrored.Outlined.OpenInNew, onClick = {
-                                            ai.rever.boss.window.WindowOperations
-                                                .openTabInNewWindow(config)
-                                            // Remove tab from current window after opening in new window
-                                            removeTab(index)
-                                            // Request focus back to the main panel
-                                            focusRequester?.requestFocus()
-                                        }),
-                                    )
-                                    add(ContextMenuItem(isDivider = true))
-                                }
+            BossTabButtonWithFavicon(
+                config = config,
+                isSelected = isSelected,
+                isFocused = true, // Tab bars are always considered focused when window is active
+                // A vertical tab's width is the bar's, so tabWidth is not consulted there at all.
+                tabWidth = if (!vertical && shrinkTabsToFit) tabWidth else null,
+                vertical = vertical,
+                tabHeight = VERTICAL_TAB_HEIGHT,
+                onClick = { activateTab(index) },
+                onClose = {
+                    removeTab(index)
+                    // Request focus back to the main panel after closing tab
+                    // This ensures keyboard shortcuts continue to work
+                    focusRequester?.requestFocus()
+                },
+                tabDragComponent = tabDragComponent,
+                panelId = currentPanelId,
+                tabIndex = index,
+                onDragEnd = { result ->
+                    // endDrag() already called in BossTabButton, just handle result
+                    result?.let { onTabDropResult(it) }
+                },
+                contextMenuItems = tabMenuItems(index, config),
+                onContextMenuVisibilityChange = { open ->
+                    openMenuCount = (openMenuCount + if (open) 1 else -1).coerceAtLeast(0)
+                },
+            )
 
-                                // Close current tab
-                                add(
-                                    ContextMenuItem("Close Tab", Icons.Outlined.Close, onClick = {
-                                        removeTab(index)
-                                        // Request focus back to the main panel
-                                        focusRequester?.requestFocus()
-                                    }),
-                                )
-
-                                // Close other tabs (only show if there are other tabs)
-                                if (totalTabs > 1) {
-                                    add(
-                                        ContextMenuItem("Close Other Tabs", Icons.Outlined.Clear, onClick = {
-                                            closeOtherTabs(index)
-                                            // Request focus back to the main panel
-                                            focusRequester?.requestFocus()
-                                        }),
-                                    )
-                                }
-
-                                // Close tabs to the right (only show if there are tabs to the right)
-                                if (index < totalTabs - 1) {
-                                    add(
-                                        ContextMenuItem("Close Tabs to the Right", Icons.Outlined.ChevronRight, onClick = {
-                                            closeTabsToRight(index)
-                                            // Request focus back to the main panel
-                                            focusRequester?.requestFocus()
-                                        }),
-                                    )
-                                }
-
-                                // Close tabs to the left (only show if there are tabs to the left)
-                                if (index > 0) {
-                                    add(
-                                        ContextMenuItem("Close Tabs to the Left", Icons.Outlined.ChevronLeft, onClick = {
-                                            closeTabsToLeft(index)
-                                            // Request focus back to the main panel
-                                            focusRequester?.requestFocus()
-                                        }),
-                                    )
-                                }
-                            },
+            // Divider after tab (only if not the last tab). It runs ACROSS the tab order, so it
+            // is a vertical line between two side-by-side tabs and a horizontal one between two
+            // stacked ones.
+            //
+            // Horizontal padding is shared with BossTabBar's width budget — change it there, not
+            // here. The vertical bar has no such budget, which is why its divider is free to be
+            // a plain full-width line.
+            if (index < tabsState.value.tabs.size - 1) {
+                if (vertical) {
+                    Divider(
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                        color = BossTheme.colors.line,
                     )
-
-                    // Vertical divider after tab (only if not the last tab).
-                    // Horizontal padding is shared with BossTabBar's width
-                    // budget — change it there, not here.
-                    if (index < tabsState.value.tabs.size - 1) {
-                        VDivider(modifier = Modifier.padding(vertical = 8.dp, horizontal = INTER_TAB_DIVIDER_PADDING))
-                    }
-
-                    // Show reorder indicator after the last tab if dropping at the end
-                    val isLastTab = index == tabsState.value.tabs.size - 1
-                    val showIndicatorAfter =
-                        isLastTab &&
-                            dropTarget is TabDropTarget.Reorder &&
-                            dropTarget.panelId == currentPanelId &&
-                            dropTarget.targetIndex == tabsState.value.tabs.size
-
-                    if (showIndicatorAfter) {
-                        Box(
-                            modifier =
-                                Modifier
-                                    .width(3.dp)
-                                    .fillMaxHeight()
-                                    .padding(vertical = 8.dp)
-                                    .background(BossTheme.colors.signal),
-                        )
-                    }
-                }
-
-                // Legacy FIXED mode keeps its historical "+" placement:
-                // inside the row, hugging the last tab, while everything
-                // fits. This reintroduces the known one-frame glitch when
-                // isScrollable flips mid-drag, but that trade-off is what
-                // FIXED users always had — FIXED means legacy, glitch
-                // included.
-                if (!shrinkTabsToFit && !isScrollable) {
-                    item {
-                        NewTabButton(
-                            onClick = {
-                                showNewTabDialog = true
-                                // Track panel interaction when plus button is clicked
-                                if (splitViewState != null && currentPanelId != null) {
-                                    splitViewState.setActivePanel(currentPanelId)
-                                }
-                            },
-                        )
-                    }
+                } else {
+                    VDivider(modifier = Modifier.padding(vertical = 8.dp, horizontal = INTER_TAB_DIVIDER_PADDING))
                 }
             }
 
-            Spacer(
-                modifier =
-                    Modifier
-                        .fillMaxHeight()
-                        .contextMenu(
-                            items =
-                                buildList {
-                                    add(
-                                        ContextMenuItem("New Tab", Icons.Default.Add, onClick = {
-                                            showNewTabDialog = true
-                                            // Track panel interaction when context menu is used
-                                            if (splitViewState != null && currentPanelId != null) {
-                                                splitViewState.setActivePanel(currentPanelId)
-                                            }
-                                        }),
-                                    )
+            // Show reorder indicator after the last tab if dropping at the end
+            val isLastTab = index == tabsState.value.tabs.size - 1
+            val showIndicatorAfter =
+                isLastTab &&
+                    dropTarget is TabDropTarget.Reorder &&
+                    dropTarget.panelId == currentPanelId &&
+                    dropTarget.targetIndex == tabsState.value.tabs.size
 
-                                    add(ContextMenuItem(isDivider = true))
+            if (showIndicatorAfter) {
+                ReorderIndicator(vertical = vertical)
+            }
+        }
 
-                                    // Favorite current workspace
-                                    val currentWorkspace = workspaceManager.currentWorkspace.value
-                                    if (currentWorkspace != null) {
-                                        val isFavorited = BookmarkAPIAccess.isFavorite(currentWorkspace.id)
-                                        add(
-                                            ContextMenuItem(
-                                                if (isFavorited) "Unfavorite Workspace" else "Favorite Workspace",
-                                                // The icon shows what the action DOES, matching the label: "Unfavorite"
-                                                // empties the star, "Favorite" fills it.
-                                                if (isFavorited) Icons.Outlined.StarBorder else Icons.Filled.Star,
-                                                onClick = {
-                                                    if (isFavorited) {
-                                                        BookmarkAPIAccess.removeFavoriteWorkspace(currentWorkspace.id)
-                                                    } else {
-                                                        BookmarkAPIAccess.addFavoriteWorkspace(currentWorkspace.id, currentWorkspace.name)
-                                                    }
-                                                },
-                                            ),
+        // Legacy FIXED mode keeps its historical "+" placement:
+        // inside the row, hugging the last tab, while everything
+        // fits. This reintroduces the known one-frame glitch when
+        // isScrollable flips mid-drag, but that trade-off is what
+        // FIXED users always had — FIXED means legacy, glitch
+        // included.
+        // `!vertical` first: the vertical bar's "+" is a fixed sibling below the column, never
+        // an item inside it, so this legacy in-row placement has nothing to say there.
+        if (!vertical && !shrinkTabsToFit && !isScrollable) {
+            item {
+                NewTabButton(onClick = openNewTab)
+            }
+        }
+    }
+
+    // Right-click on the bar's own empty chrome (as opposed to on a tab). Hoisted out of the
+    // container below because both orientations offer it and neither owns it - and because the
+    // Tab Bar Position submenu it now carries is the fastest way back for someone who flipped
+    // the bar somewhere it does not suit them.
+    val barContextMenuItems: List<ContextMenuItem> =
+        buildList {
+            add(
+                ContextMenuItem("New Tab", Icons.Default.Add, onClick = openNewTab),
+            )
+
+            add(ContextMenuItem(isDivider = true))
+
+            // Tab bar position. A label-only submenu, so it stays isNativeRepresentable() and
+            // survives the native-NSMenu path on macOS; the checkmark is spelled as a trailing
+            // dot in the label because a native menu item has nowhere else to put one.
+            add(
+                ContextMenuItem(
+                    "Tab Bar Position",
+                    Icons.Outlined.ViewColumn,
+                    subMenu =
+                        TabBarPosition.entries.map { position ->
+                            ContextMenuItem(
+                                if (position == tabBarPosition) "${position.displayName} ✓" else position.displayName,
+                                onClick = {
+                                    barSettingsScope.launch {
+                                        WindowAppearanceSettingsManager.updateSettings(
+                                            WindowAppearanceSettingsManager.currentSettings.value
+                                                .copy(tabBarPosition = position),
                                         )
                                     }
                                 },
-                        ),
+                            )
+                        },
+                ),
             )
+
+            add(ContextMenuItem(isDivider = true))
+
+            // Favorite current workspace
+            val currentWorkspace = workspaceManager.currentWorkspace.value
+            if (currentWorkspace != null) {
+                val isFavorited = BookmarkAPIAccess.isFavorite(currentWorkspace.id)
+                add(
+                    ContextMenuItem(
+                        if (isFavorited) "Unfavorite Workspace" else "Favorite Workspace",
+                        // The icon shows what the action DOES, matching the label: "Unfavorite"
+                        // empties the star, "Favorite" fills it.
+                        if (isFavorited) Icons.Outlined.StarBorder else Icons.Filled.Star,
+                        onClick = {
+                            if (isFavorited) {
+                                BookmarkAPIAccess.removeFavoriteWorkspace(currentWorkspace.id)
+                            } else {
+                                BookmarkAPIAccess.addFavoriteWorkspace(currentWorkspace.id, currentWorkspace.name)
+                            }
+                        },
+                    ),
+                )
+            }
+        }
+
+    if (vertical) {
+        VerticalBar(
+            width = verticalTabBarWidth(collapsed = collapsed, width = verticalWidth),
+            backgroundColor = BossTheme.colors.panel,
+            modifier =
+                Modifier
+                    // On the bar rather than on an empty-space sibling, the way BossLeftSideBar
+                    // does it: the tabs and rail dots carry their own contextMenu and consume the
+                    // press first, so this fires on bare chrome and nowhere else. The top strip
+                    // keeps its Spacer instead, because there the tabs share the row with a
+                    // genuinely empty remainder.
+                    .contextMenu(items = barContextMenuItems)
+                    .onGloballyPositioned { coordinates ->
+                        // Register tab bar bounds for drag detection. `vertical = true` travels
+                        // with the rectangle so reorder, edge scroll and the shifted left drop
+                        // zone all read the same axis off one registration.
+                        if (registerBounds && currentPanelId != null && tabDragComponent != null) {
+                            val bounds = coordinates.boundsInWindow()
+                            tabDragComponent.registerTabBarBounds(currentPanelId, bounds, vertical = true)
+                        }
+                    },
+        ) {
+            if (collapsed) {
+                // The rail is the same bar with its labels taken away, not a lesser one: every
+                // tab is still here, still selectable, and still carries its whole menu.
+                BossTabRail(
+                    tabs = tabsState.value.tabs,
+                    activeIndex = tabsState.value.activeIndex,
+                    onExpand = { onToggleCollapse?.invoke() },
+                    onNewTab = openNewTab,
+                    onSelect = activateTab,
+                    contextMenuItems = { index ->
+                        // Guarded rather than indexed blindly: the rail renders from the same
+                        // snapshot it was passed, but a menu is built on a later frame and a tab
+                        // can close in between.
+                        tabsState.value.tabs
+                            .getOrNull(index)
+                            ?.let { tabMenuItems(index, it) }
+                            .orEmpty()
+                    },
+                )
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    onToggleCollapse?.let { toggle ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            BossTabBarCollapseButton(onCollapse = toggle)
+                        }
+                        Divider(color = BossTheme.colors.line)
+                    }
+
+                    BossVerticalTabStrip(
+                        listState = listState,
+                        trailing = {
+                            // A sibling below the column, so it can never scroll out of reach. The
+                            // horizontal strip reaches the same guarantee through a measured
+                            // trailing reserve; here nothing has to be reserved because nothing is
+                            // divided.
+                            Divider(color = BossTheme.colors.line)
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.Center,
+                            ) {
+                                NewTabButton(onClick = openNewTab)
+                            }
+                        },
+                    ) {
+                        tabItems(null)
+                    }
+                }
+            }
+        }
+    } else {
+        HorizontalBar(
+            height = BossChrome.dimens.tabBarHeight,
+            backgroundColor = BossTheme.colors.panel,
+        ) {
+            HorizontalBarRow(
+                modifier =
+                    Modifier.onGloballyPositioned { coordinates ->
+                        // Register tab bar bounds for drag detection
+                        if (registerBounds && currentPanelId != null && tabDragComponent != null) {
+                            val bounds = coordinates.boundsInWindow()
+                            tabDragComponent.registerTabBarBounds(currentPanelId, bounds, vertical = false)
+                        }
+                    },
+            ) {
+                BossLeftTabBar(
+                    listState,
+                    tabCount = tabsState.value.tabs.size,
+                    // Plus button outside the LazyRow but still inside the strip,
+                    // sitting directly after the last tab: always in
+                    // SHRINK_TO_FIT (immune to the isScrollable race), and in
+                    // FIXED mode once the row scrolls (so the button can't
+                    // scroll away). Once the tabs fill the strip this lands
+                    // flush right, same as before.
+                    //
+                    // Both gaps belong to the slot, not to the strip Row — see the
+                    // reserve rule in BossLeftTabBar's KDoc. NEW_TAB_BUTTON_GAP on
+                    // the end side plus the strip's own 8.dp inset reproduces the
+                    // 12.dp right margin the pinned-right button used to have.
+                    trailingReserve = if (shrinkTabsToFit || isScrollable) NEW_TAB_SLOT_WIDTH else 0.dp,
+                    trailing = {
+                        if (shrinkTabsToFit || isScrollable) {
+                            NewTabButton(
+                                modifier = Modifier.padding(horizontal = NEW_TAB_BUTTON_GAP),
+                                onClick = openNewTab,
+                            )
+                        }
+                    },
+                ) { tabWidth ->
+                    tabItems(tabWidth)
+                }
+
+                Spacer(
+                    modifier =
+                        Modifier
+                            .fillMaxHeight()
+                            .contextMenu(items = barContextMenuItems),
+                )
+            }
         }
     }
 
@@ -867,11 +1093,45 @@ fun BossTabsComponent.BossMainPanel(
     val isActivePanel = activePanelId == currentPanelId
     val panelBorder = BossChrome.dimens.panelBorderThickness
 
-    Column(
+    val settingsScope = rememberCoroutineScope()
+
+    // This panel's own width, measured rather than taken from a BoxWithConstraints.
+    //
+    // BossLeftTabBar's KDoc records what happened the last time a SubcomposeLayout was wrapped
+    // around a lazy list in this tree: every tabCount change thrashed the inner list through
+    // disposeOrReuseStartingFromIndex and pinned the EDT at 100% after ~10 tabs. onSizeChanged
+    // costs one extra frame before the first value arrives, which here means one frame of full
+    // bar in a panel that will end up showing the rail.
+    var panelWidthPx by remember { mutableIntStateOf(0) }
+    val density = LocalDensity.current
+
+    // Which edge, how wide, rail or not. See TabBarLayout.
+    val bar = rememberTabBarLayout(panelWidthPx)
+
+    // The rail/drawer state machine and its timing. See TabBarRevealState.
+    val reveal =
+        rememberTabBarRevealState(
+            railShown = bar.railShown,
+            narrow = bar.narrow,
+            hoverExpand = bar.hoverExpand,
+        )
+    val pointerInSidebar = reveal.pointerInSidebar()
+
+    // This panel's rectangle in dp relative to the window's content pane, for the drawer's
+    // heavyweight overlay window. Null until measured, and the drawer draws nothing while it is:
+    // an unmeasured parent resolves to the SCREEN origin, so the alternative is an always-on-top
+    // bar in the corner of the primary display. Same rule, and the same helper shape, as the
+    // browser find bar's region (see BrowserFindPlacement.findBarRegion).
+    var panelRegion by remember { mutableStateOf<IntRect?>(null) }
+
+    Box(
         modifier =
             modifier
                 .fillMaxSize()
-                .focusRequester(focusRequester)
+                .onSizeChanged { size -> panelWidthPx = size.width }
+                .onGloballyPositioned { coordinates ->
+                    panelRegion = overlayRegionInWindow(coordinates.boundsInWindow(), density.density)
+                }.focusRequester(focusRequester)
                 .onFocusChanged { focusState ->
                     isFocused.value = focusState.isFocused || focusState.hasFocus
                     if ((focusState.isFocused || focusState.hasFocus) && currentPanelId != null) {
@@ -928,14 +1188,6 @@ fun BossTabsComponent.BossMainPanel(
                     if (isActivePanel) MaterialTheme.colors.primary.copy(alpha = 0.5f) else Color.Transparent,
                 ).padding(panelBorder),
     ) {
-        BossMainTabBar(
-            splitViewState = splitViewState,
-            currentPanelId = currentPanelId,
-            focusRequester = focusRequester,
-            tabDragComponent = tabDragComponent,
-            onTabDropResult = onTabDropResult,
-        )
-        Divider(color = BossTheme.colors.line)
         // Expose `isActivePanel` to nested plugin composables via a
         // CompositionLocal. Plugins that embed widgets sensitive to
         // host focus transitions (e.g. the BossTerm-backed terminal-tab
@@ -946,12 +1198,149 @@ fun BossTabsComponent.BossMainPanel(
         // question a shortcut needs. Its default is `true`, so a surface rendered OUTSIDE a managed
         // panel - a sidebar slot, a dialog, a test host - reads as active too, and a window-scoped
         // shortcut broadcast to every collector then has no way to prefer the real one.
-        CompositionLocalProvider(
-            LocalIsPanelActive provides isActivePanel,
-            LocalInMainWindowPanel provides true,
-        ) {
-            BossMainPanelContent(modifier = Modifier.weight(1f).fillMaxWidth())
+        //
+        // A lambda taking the modifier because the content is weighted by whichever of the two
+        // containers below is in play, and RowScope.weight and ColumnScope.weight are different
+        // receivers. The tree it produces is identical either way, which is the point: switching
+        // the bar's edge must not rebuild the panel's content.
+        val panelContent: @Composable (Modifier) -> Unit = { contentModifier ->
+            CompositionLocalProvider(
+                LocalIsPanelActive provides isActivePanel,
+                LocalInMainWindowPanel provides true,
+            ) {
+                BossMainPanelContent(modifier = contentModifier)
+            }
         }
+
+        val dismissDrawer: () -> Unit = { reveal.dismiss(pointerInSidebar) }
+
+        val toggleCollapse: () -> Unit = {
+            if (bar.narrow) {
+                // Nothing to give back: the panel is below the threshold, so the in-flow bar
+                // would be forced straight back to the rail. The chevron opens the drawer here
+                // instead, which is the only shape a full bar can take at this width.
+                reveal.openDrawer()
+            } else {
+                settingsScope.launch {
+                    val current = WindowAppearanceSettingsManager.currentSettings.value
+                    WindowAppearanceSettingsManager.updateSettings(
+                        current.copy(tabBarCollapsed = !current.tabBarCollapsed),
+                    )
+                }
+            }
+        }
+
+        if (bar.vertical) {
+            Row(modifier = Modifier.fillMaxSize()) {
+                Box(modifier = Modifier.hoverable(reveal.railHover, enabled = bar.hoverExpand && bar.railShown)) {
+                    BossMainTabBar(
+                        splitViewState = splitViewState,
+                        currentPanelId = currentPanelId,
+                        focusRequester = focusRequester,
+                        tabDragComponent = tabDragComponent,
+                        onTabDropResult = onTabDropResult,
+                        vertical = true,
+                        verticalWidth = bar.width,
+                        collapsed = bar.railShown,
+                        onToggleCollapse = toggleCollapse,
+                    )
+                }
+                VDivider()
+                panelContent(Modifier.weight(1f).fillMaxHeight())
+            }
+        } else {
+            Column(modifier = Modifier.fillMaxSize()) {
+                BossMainTabBar(
+                    splitViewState = splitViewState,
+                    currentPanelId = currentPanelId,
+                    focusRequester = focusRequester,
+                    tabDragComponent = tabDragComponent,
+                    onTabDropResult = onTabDropResult,
+                )
+                Divider(color = BossTheme.colors.line)
+                panelContent(Modifier.weight(1f).fillMaxWidth())
+            }
+        }
+
+        if (bar.railShown) {
+            RevealedTabBarDrawer(
+                tabsComponent = this@BossMainPanel,
+                bar = bar,
+                reveal = reveal,
+                panelRegion = panelRegion,
+                onDismiss = dismissDrawer,
+                panel =
+                    DrawerPanelWiring(
+                        splitViewState = splitViewState,
+                        currentPanelId = currentPanelId,
+                        focusRequester = focusRequester,
+                    ),
+            )
+        }
+    }
+}
+
+/**
+ * The three things a tab bar needs to know about the panel hosting it.
+ *
+ * Bundled because [RevealedTabBarDrawer] would otherwise carry seven parameters, three of which
+ * are always passed together and never independently.
+ */
+private data class DrawerPanelWiring(
+    val splitViewState: ai.rever.boss.components.window_panel.SplitViewState?,
+    val currentPanelId: String?,
+    val focusRequester: FocusRequester,
+)
+
+/**
+ * The full vertical tab bar, shown over a panel whose in-flow bar is down to its rail.
+ *
+ * A separate composable from `BossMainPanel` because it is a second, differently-wired copy of the
+ * same bar rather than another branch of the panel's layout, and the four things it does
+ * differently from the in-flow one all need saying.
+ */
+@Composable
+private fun BoxScope.RevealedTabBarDrawer(
+    tabsComponent: BossTabsComponent,
+    bar: TabBarLayout,
+    reveal: TabBarRevealState,
+    panelRegion: IntRect?,
+    onDismiss: () -> Unit,
+    panel: DrawerPanelWiring,
+) {
+    VerticalTabBarDrawer(
+        visible = reveal.drawerVisible,
+        hoverSource = reveal.drawerHover,
+        hoverEnabled = bar.hoverExpand,
+        width = bar.width,
+        panelRegion = panelRegion,
+        onDismissOutside = reveal.dismissOutside,
+    ) {
+        tabsComponent.BossMainTabBar(
+            splitViewState = panel.splitViewState,
+            currentPanelId = panel.currentPanelId,
+            focusRequester = panel.focusRequester,
+            // Deliberately no drag component. A drawer is a SECOND bar for a panel that already
+            // has one registered, and under HARDWARE it lives in its own window where these
+            // coordinates mean nothing - so a drag started here could only ever be dropped
+            // somewhere wrong. Withholding it disables the gesture outright (BossTabButton gates
+            // on it being non-null), which is honest.
+            tabDragComponent = null,
+            vertical = true,
+            verticalWidth = bar.width,
+            collapsed = false,
+            // The chevron dismisses the drawer rather than writing tabBarCollapsed: the bar it is
+            // collapsing IS the drawer. It has to exist even though hover already closes this
+            // thing, because a chevron-opened drawer (narrow panel) otherwise has no way out at
+            // all - the click-catcher behind it is a Compose node, and under HARDWARE the
+            // browser's native surface is painted above it, so clicking the page never reaches it.
+            onToggleCollapse = onDismiss,
+            // Picking a tab is finishing with the drawer. Without this it stays open under the
+            // pointer that just used it.
+            onTabActivated = onDismiss,
+            registerBounds = false,
+            onTransientInteraction = reveal::setBusy,
+        )
     }
 }
 

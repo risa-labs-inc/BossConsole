@@ -22,9 +22,26 @@ data class TabBoundInfo(
 )
 
 /**
- * Direction for auto-scroll during tab drag when ghost reaches edge.
+ * A panel's tab bar rectangle together with the axis its tabs run along.
+ *
+ * The axis travels WITH the rectangle rather than being re-derived from its shape, because a
+ * single-tab horizontal bar in a narrow split is taller than it is wide and would be read as
+ * vertical. Every consumer of a bar's geometry - reorder, edge scroll, the shifted left drop
+ * zone - needs the axis, so pairing them is what keeps them from disagreeing.
  */
-enum class ScrollDirection { LEFT, RIGHT }
+data class TabBarBoundInfo(
+    val bounds: Rect,
+    val vertical: Boolean,
+)
+
+/**
+ * Direction for auto-scroll during tab drag when ghost reaches edge.
+ *
+ * Named along the tab ORDER, not the screen: a top bar's BACKWARD is leftwards and a left
+ * bar's is upwards. The axis-named members this replaces were a lie on one of the two
+ * orientations, and the handler that acts on them scrolls a list by index either way.
+ */
+enum class ScrollDirection { BACKWARD, FORWARD }
 
 /**
  * Information about a tab being dragged.
@@ -103,51 +120,140 @@ data class PanelDropZones(
     val centerZone: Rect,
 ) {
     companion object {
+        /**
+         * @param leadingInset width of a VERTICAL tab bar occupying this panel's leading edge,
+         *   in pixels. Every zone is resolved inside the panel rectangle MINUS that strip,
+         *   because the bar is not part of the panel's droppable content: `updateDropTarget`
+         *   tests tab-bar bounds first, so a zone reaching under the bar can never be hit and
+         *   would only mislead the highlight drawn from it. Zero for a top tab bar, which sits
+         *   above the content and so takes nothing off the sides.
+         *
+         *   A bar so wide that nothing is left produces an empty rectangle, and every
+         *   `contains` against it is false - the panel simply offers no split zones, which is
+         *   the honest answer at that size.
+         */
         fun fromBounds(
             bounds: Rect,
             edgeSize: Float = 60f,
+            leadingInset: Float = 0f,
         ): PanelDropZones {
-            val effectiveEdgeSize = minOf(edgeSize, bounds.width / 4, bounds.height / 4)
+            val content =
+                Rect(
+                    left = minOf(bounds.left + leadingInset, bounds.right),
+                    top = bounds.top,
+                    right = bounds.right,
+                    bottom = bounds.bottom,
+                )
+            val effectiveEdgeSize = minOf(edgeSize, content.width / 4, content.height / 4)
 
             return PanelDropZones(
+                // The panel's WHOLE rectangle, inset included: this is the panel's identity for
+                // anything measuring or highlighting it, not a droppable region of its own.
                 panelBounds = bounds,
                 leftZone =
                     Rect(
-                        left = bounds.left,
-                        top = bounds.top + effectiveEdgeSize,
-                        right = bounds.left + effectiveEdgeSize,
-                        bottom = bounds.bottom - effectiveEdgeSize,
+                        left = content.left,
+                        top = content.top + effectiveEdgeSize,
+                        right = content.left + effectiveEdgeSize,
+                        bottom = content.bottom - effectiveEdgeSize,
                     ),
                 rightZone =
                     Rect(
-                        left = bounds.right - effectiveEdgeSize,
-                        top = bounds.top + effectiveEdgeSize,
-                        right = bounds.right,
-                        bottom = bounds.bottom - effectiveEdgeSize,
+                        left = content.right - effectiveEdgeSize,
+                        top = content.top + effectiveEdgeSize,
+                        right = content.right,
+                        bottom = content.bottom - effectiveEdgeSize,
                     ),
                 topZone =
                     Rect(
-                        left = bounds.left + effectiveEdgeSize,
-                        top = bounds.top,
-                        right = bounds.right - effectiveEdgeSize,
-                        bottom = bounds.top + effectiveEdgeSize,
+                        left = content.left + effectiveEdgeSize,
+                        top = content.top,
+                        right = content.right - effectiveEdgeSize,
+                        bottom = content.top + effectiveEdgeSize,
                     ),
                 bottomZone =
                     Rect(
-                        left = bounds.left + effectiveEdgeSize,
-                        top = bounds.bottom - effectiveEdgeSize,
-                        right = bounds.right - effectiveEdgeSize,
-                        bottom = bounds.bottom,
+                        left = content.left + effectiveEdgeSize,
+                        top = content.bottom - effectiveEdgeSize,
+                        right = content.right - effectiveEdgeSize,
+                        bottom = content.bottom,
                     ),
                 centerZone =
                     Rect(
-                        left = bounds.left + effectiveEdgeSize,
-                        top = bounds.top + effectiveEdgeSize,
-                        right = bounds.right - effectiveEdgeSize,
-                        bottom = bounds.bottom - effectiveEdgeSize,
+                        left = content.left + effectiveEdgeSize,
+                        top = content.top + effectiveEdgeSize,
+                        right = content.right - effectiveEdgeSize,
+                        bottom = content.bottom - effectiveEdgeSize,
                     ),
             )
         }
+    }
+}
+
+/**
+ * Index a dragged tab would be INSERTED at, given where the pointer is over the tab bar.
+ *
+ * Pure, and therefore unit-tested (`ReorderIndexTest`) rather than only reachable through a
+ * live drag - the same shape `computeTabWidthPx` has, and for the same reason: this is the one
+ * piece of the drag whose correctness is arithmetic rather than layout.
+ *
+ * [vertical] picks the axis. A top bar orders its tabs left to right and compares x against
+ * each tab's horizontal midpoint; a left bar orders them top to bottom and compares y against
+ * the vertical one. Nothing else about the calculation differs.
+ *
+ * Returns [TabBoundInfo.actualIndex] rather than a position in [tabs]: a lazy list only
+ * registers the tabs it has composed, so a scrolled bar's first REGISTERED tab may be the
+ * list's fifth. Sorting by screen position and reading the index back off the tab that wins is
+ * what survives that.
+ *
+ * Insertion index, so "past the last tab" is `actualIndex + 1` - one beyond the end, which
+ * `endDrag` then adjusts down when the source came from earlier in the list. An empty bar
+ * (nothing composed yet) is 0.
+ */
+internal fun reorderIndexFor(
+    tabs: List<TabBoundInfo>,
+    position: Offset,
+    vertical: Boolean,
+): Int {
+    val ordered = tabs.sortedBy { if (vertical) it.bounds.top else it.bounds.left }
+    val along = if (vertical) position.y else position.x
+    val before =
+        ordered.firstOrNull { info ->
+            val midpoint =
+                if (vertical) {
+                    info.bounds.top + info.bounds.height / 2
+                } else {
+                    info.bounds.left + info.bounds.width / 2
+                }
+            along < midpoint
+        }
+    return before?.actualIndex ?: ordered.lastOrNull()?.let { it.actualIndex + 1 } ?: 0
+}
+
+/**
+ * Which way to auto-scroll [bar] for a pointer at [position], or null for neither.
+ *
+ * Split out of `checkEdgeScroll` so the axis projection - the only part that differs between a
+ * top strip and a left bar - reads as one idea instead of six paired ternaries inline. Along the
+ * tab order the pointer's distance from each end decides; across it, leaving the bar cancels.
+ */
+private fun edgeScrollDirection(
+    bar: TabBarBoundInfo,
+    position: Offset,
+    threshold: Float,
+): ScrollDirection? {
+    val b = bar.bounds
+    val along = if (bar.vertical) position.y else position.x
+    val across = if (bar.vertical) position.x else position.y
+    val acrossRange = if (bar.vertical) b.left..b.right else b.top..b.bottom
+    val alongMin = if (bar.vertical) b.top else b.left
+    val alongMax = if (bar.vertical) b.bottom else b.right
+
+    if (across !in acrossRange) return null
+    return when {
+        along < alongMin + threshold -> ScrollDirection.BACKWARD
+        along > alongMax - threshold -> ScrollDirection.FORWARD
+        else -> null
     }
 }
 
@@ -188,9 +294,9 @@ class TabDraggableComponent {
 
     /**
      * Track tab bar bounds for each panel.
-     * Key: panelId, Value: bounds of the tab bar area
+     * Key: panelId, Value: bounds of the tab bar area and the axis its tabs run along
      */
-    val tabBarBounds = mutableStateMapOf<String, Rect>()
+    val tabBarBounds = mutableStateMapOf<String, TabBarBoundInfo>()
 
     /**
      * Track panel drop zones for split creation.
@@ -219,8 +325,8 @@ class TabDraggableComponent {
 
     /**
      * Distance from tab bar edge (in pixels) to trigger auto-scroll.
-     * When drag position is within this threshold of the left or right edge,
-     * auto-scroll will be triggered.
+     * When drag position is within this threshold of either end of the bar along its tab
+     * order (left/right for a top bar, top/bottom for a left one), auto-scroll is triggered.
      */
     private val edgeScrollThreshold = 60f
 
@@ -326,9 +432,14 @@ class TabDraggableComponent {
         val currentPosition = getCurrentPosition() ?: return
         val dragging = draggingTab ?: return
 
-        // First, check if we're over any tab bar (for reorder or move to panel)
-        for ((panelId, barBounds) in tabBarBounds) {
-            if (barBounds.contains(currentPosition)) {
+        // First, check if we're over any tab bar (for reorder or move to panel).
+        //
+        // Deliberately BEFORE the panel drop zones below: a vertical bar occupies its panel's
+        // leading edge, so without this precedence a drop there would be ambiguous. The zones
+        // are resolved inside the panel minus that strip (see PanelDropZones.fromBounds), so
+        // the two partitions of the panel do not overlap at all.
+        for ((panelId, bar) in tabBarBounds) {
+            if (bar.bounds.contains(currentPosition)) {
                 // We're over a tab bar
                 if (panelId == dragging.sourcePanelId) {
                     // Same panel - calculate reorder position
@@ -381,35 +492,16 @@ class TabDraggableComponent {
 
     /**
      * Calculate the index where a tab would be inserted during reorder.
-     * Uses the actual tab index stored in TabBoundInfo to handle LazyRow virtualization.
      */
     private fun calculateReorderIndex(
         panelId: String,
         position: Offset,
-    ): Int {
-        val relevantTabs =
-            tabBounds.entries
-                .filter { (tabId, _) -> tabId.startsWith("$panelId:") }
-                .sortedBy { it.value.bounds.left }
-
-        if (relevantTabs.isEmpty()) return 0
-
-        for (entry in relevantTabs) {
-            val info = entry.value
-            val midpoint = info.bounds.left + info.bounds.width / 2
-
-            if (position.x < midpoint) {
-                return info.actualIndex // Use actual tab index, not loop index
-            }
-        }
-
-        // Return index after the last visible tab
-        return relevantTabs
-            .lastOrNull()
-            ?.value
-            ?.actualIndex
-            ?.plus(1) ?: 0
-    }
+    ): Int =
+        reorderIndexFor(
+            tabs = tabBounds.entries.filter { (tabId, _) -> tabId.startsWith("$panelId:") }.map { it.value },
+            position = position,
+            vertical = tabBarBounds[panelId]?.vertical == true,
+        )
 
     /**
      * End the drag and return the result, or null if cancelled.
@@ -493,21 +585,9 @@ class TabDraggableComponent {
     private fun checkEdgeScroll() {
         val currentPosition = getCurrentPosition() ?: return
         val dragging = draggingTab ?: return
-        val barBounds = tabBarBounds[dragging.sourcePanelId] ?: return
+        val bar = tabBarBounds[dragging.sourcePanelId] ?: return
 
-        // Check if within vertical bounds of tab bar
-        if (currentPosition.y < barBounds.top || currentPosition.y > barBounds.bottom) return
-
-        val leftEdge = barBounds.left + edgeScrollThreshold
-        val rightEdge = barBounds.right - edgeScrollThreshold
-
-        // Determine scroll direction based on position
-        val direction: ScrollDirection? =
-            when {
-                currentPosition.x < leftEdge -> ScrollDirection.LEFT
-                currentPosition.x > rightEdge -> ScrollDirection.RIGHT
-                else -> null
-            }
+        val direction = edgeScrollDirection(bar, currentPosition, edgeScrollThreshold)
 
         // If at an edge, trigger scroll with throttling
         if (direction != null) {
@@ -545,22 +625,39 @@ class TabDraggableComponent {
 
     /**
      * Register tab bar bounds for a panel.
+     *
+     * @param vertical true when this panel's tabs run down a left bar rather than across a
+     *   top strip. Supplied by the bar itself rather than inferred from [bounds]; see
+     *   [TabBarBoundInfo].
      */
     fun registerTabBarBounds(
         panelId: String,
         bounds: Rect,
+        vertical: Boolean,
     ) {
-        tabBarBounds[panelId] = bounds
+        tabBarBounds[panelId] = TabBarBoundInfo(bounds, vertical)
     }
 
     /**
      * Register panel drop zones for split creation.
+     *
+     * The left zone is pushed in by the width of a VERTICAL tab bar, if this panel has one.
+     * Without that it lands entirely underneath the bar, and since [updateDropTarget] tests
+     * tab-bar bounds first, dropping a tab on a left-positioned panel's leading edge could
+     * only ever mean "move into that panel" - left-split-by-drag would be unreachable there.
+     *
+     * Read from this panel's own registered bar rather than passed in, so the caller does not
+     * have to know a width that the bar has already measured and reported. It is one frame
+     * behind on the very first layout (zones registered before the bar reports), which costs
+     * a mis-placed left zone until the next layout pass and nothing after that.
      */
     fun registerPanelDropZones(
         panelId: String,
         bounds: Rect,
     ) {
-        panelDropZones[panelId] = PanelDropZones.fromBounds(bounds)
+        val bar = tabBarBounds[panelId]
+        val leadingInset = if (bar != null && bar.vertical) bar.bounds.width else 0f
+        panelDropZones[panelId] = PanelDropZones.fromBounds(bounds, leadingInset = leadingInset)
     }
 
     /**

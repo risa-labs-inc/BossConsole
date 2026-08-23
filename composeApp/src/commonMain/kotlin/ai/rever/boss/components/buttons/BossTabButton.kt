@@ -80,6 +80,21 @@ fun BossTabButton(
      */
     tabWidth: Dp? = null,
     /**
+     * Lay this tab out as a row in a LEFT tab bar rather than a column in a TOP one.
+     *
+     * Two things change and nothing else does. The tab fills the bar's width and takes a fixed
+     * [tabHeight] instead of filling the bar's height and taking a computed [tabWidth]; and the
+     * active marker moves from a underline at the bottom to a bar down the leading edge, which
+     * is where a vertical list's selection reads.
+     *
+     * Everything the tab DOES - favicon, title badge, hover/selected close button, middle-click
+     * close, right-click menu, drag gestures and the bounds they register - is shared, because
+     * none of it is about which way the bar runs.
+     */
+    vertical: Boolean = false,
+    /** Fixed row height in [vertical] mode. Ignored otherwise. */
+    tabHeight: Dp = 32.dp,
+    /**
      * Optional marker drawn immediately after the title, before the close button. Used for the
      * plugin build tag, which qualifies the title (this panel is not running the released build) and
      * so belongs beside it rather than out at the tab's edge.
@@ -92,6 +107,16 @@ fun BossTabButton(
     tabIndex: Int = -1,
     onDragStart: () -> Unit = {},
     onDragEnd: (TabDropResult?) -> Unit = {},
+    /**
+     * Reports whether this tab's context menu is open.
+     *
+     * Exists for one owner: the vertical bar's hover-reveal drawer, which is disposed when the
+     * pointer leaves it. A right-click opens the menu in its own popup, the pointer moves off the
+     * drawer to reach it, and the drawer would retract and take the menu's composition with it.
+     * So hover cannot be the only vote on whether the drawer stays. Default no-op, which is what
+     * every owner whose lifetime is not tied to the pointer wants.
+     */
+    onContextMenuVisibilityChange: (Boolean) -> Unit = {},
 ) {
     // BOSS design-system tokens — semantic accessors over BossDesignSystem.kt.
     val colors = BossTheme.colors
@@ -183,6 +208,14 @@ fun BossTabButton(
     // State for context menu
     var showContextMenu by remember { mutableStateOf(false) }
 
+    // Reported on change rather than written from the setter, so a tab disposed with its menu
+    // still open (closing the tab from the menu does exactly that) clears the flag it set.
+    val latestContextMenuVisibility by rememberUpdatedState(onContextMenuVisibilityChange)
+    DisposableEffect(showContextMenu) {
+        latestContextMenuVisibility(showContextMenu)
+        onDispose { if (showContextMenu) latestContextMenuVisibility(false) }
+    }
+
     // Coroutine scope for middle-click close (Issue #328)
     // Using scope.launch because calling onClose directly from pointerInput's
     // awaitPointerEventScope doesn't properly trigger Compose state updates
@@ -230,14 +263,17 @@ fun BossTabButton(
     Box(
         modifier =
             modifier
-                .fillMaxHeight()
                 .let { base ->
-                    if (tabWidth != null) {
+                    when {
+                        // Vertical bar: the bar's width, a fixed row height. There is no width
+                        // to negotiate, so tabWidth is not consulted at all.
+                        vertical -> base.fillMaxWidth().height(tabHeight)
+
                         // Explicit width from the parent (Safari-style shrink-to-fit).
-                        base.width(tabWidth)
-                    } else {
+                        tabWidth != null -> base.fillMaxHeight().width(tabWidth)
+
                         // Legacy sizing: content-driven width clamped to 180–450 dp.
-                        base.width(IntrinsicSize.Min).widthIn(min = 180.dp, max = 450.dp)
+                        else -> base.fillMaxHeight().width(IntrinsicSize.Min).widthIn(min = 180.dp, max = 450.dp)
                     }
                 }.hoverable(interactionSource)
                 .onGloballyPositioned { coordinates ->
@@ -384,10 +420,17 @@ fun BossTabButton(
             Box(
                 modifier =
                     Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .height(4.dp)
-                        .background(
+                        .let { base ->
+                            // The marker runs along the edge the bar is anchored to, so it reads
+                            // as "this row of the list" in a column and "this column of the strip"
+                            // in a row. A bottom underline on a vertical tab would sit between two
+                            // stacked tabs and belong to neither.
+                            if (vertical) {
+                                base.align(Alignment.CenterStart).fillMaxHeight().width(3.dp)
+                            } else {
+                                base.align(Alignment.BottomCenter).fillMaxWidth().height(4.dp)
+                            }
+                        }.background(
                             // Signature element: the active-tab marker wears the amber
                             // signal when focused, and a quiet line when not.
                             color = if (isFocused) colors.signal else colors.line,

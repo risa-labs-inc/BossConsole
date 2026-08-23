@@ -38,8 +38,48 @@ data class WindowAppearanceSettings(
     /**
      * How tabs in the main (top) tab bar are sized.
      * Default: SHRINK_TO_FIT (Safari behaviour)
+     *
+     * Applies to [TabBarPosition.TOP] only. A vertical tab is the bar's width by
+     * definition, so there is no width to budget and nothing to shrink.
      */
     val tabWidthMode: TabWidthMode = TabWidthMode.SHRINK_TO_FIT,
+    /**
+     * Which edge of each main window panel carries its tab bar.
+     *
+     * Global rather than per-panel, like every other field here, so a split's panels all
+     * agree. Each panel still renders its own bar - LEFT means one vertical bar per panel,
+     * not one for the window.
+     *
+     * Default TOP: this is the layout the app has always had, and flipping it for existing
+     * users on upgrade would be a surprise, not a feature.
+     */
+    val tabBarPosition: TabBarPosition = TabBarPosition.TOP,
+    /**
+     * Width in dp of the vertical (left) tab bar, clamped to [TabBarVerticalWidthRange].
+     * Ignored when [tabBarPosition] is TOP.
+     *
+     * A Float rather than a Dp because Dp is not serializable and the settings slider works
+     * in Float anyway; the single conversion happens at the one point of use.
+     */
+    val tabBarVerticalWidth: Float = 200f,
+    /**
+     * Vertical bar collapsed to its slim icon rail, toggled by the bar's own chevron.
+     * Ignored when [tabBarPosition] is TOP, and overridden while a panel is narrow enough
+     * to force the rail (see `TAB_BAR_AUTO_COLLAPSE_WIDTH`).
+     *
+     * Persisted because the chevron is a deliberate posture, not a transient one: someone who
+     * collapsed the bar to reclaim width wants it collapsed again next launch.
+     */
+    val tabBarCollapsed: Boolean = false,
+    /**
+     * Reveal the full vertical bar as an overlay drawer while the pointer rests on the
+     * collapsed rail - whether the rail was forced by a narrow panel or collapsed with the
+     * chevron. The panel content is never resized; the bar floats over it and retracts when
+     * the pointer leaves. Off = the chevron is the only way back.
+     *
+     * Ignored when [tabBarPosition] is TOP.
+     */
+    val tabBarHoverExpand: Boolean = true,
     /**
      * Whether right-click menus are the operating system's own rather than BOSS-drawn.
      *
@@ -71,3 +111,44 @@ enum class TabWidthMode {
      */
     FIXED,
 }
+
+/**
+ * Bounds the vertical tab bar's width setting is clamped to.
+ *
+ * Lives beside the setting rather than beside the bar that renders it, so the settings slider
+ * and the bar cannot disagree about what a valid width is. The floor is roughly two favicons
+ * plus a short title; the ceiling is where a bar stops being chrome and starts being a panel.
+ */
+val TabBarVerticalWidthRange: ClosedFloatingPointRange<Float> = 120f..320f
+
+/**
+ * Which edge of a main window panel its tab bar sits on.
+ *
+ * The two are not symmetric and are not meant to be. TOP is a fixed-height strip whose tabs
+ * share a width budget ([TabWidthMode]); LEFT is a fixed-width column whose tabs are uniform
+ * rows and simply scroll, and which additionally has a collapsed icon rail, a hover-reveal
+ * drawer and an auto-collapse below a narrow-panel threshold. Ported from BossTerm's
+ * `TabBarOrientation`.
+ */
+@Serializable
+enum class TabBarPosition {
+    /** A horizontal strip above the panel content. The layout the app has always had. */
+    TOP,
+
+    /** A vertical column to the left of the panel content. */
+    LEFT,
+}
+
+/**
+ * How this position is worded to the user.
+ *
+ * On the enum rather than private to the Settings screen, because three surfaces now name it -
+ * Settings, the View menu, and the tab bar's own right-click submenu - and three copies of a
+ * label is three chances for them to drift apart.
+ */
+val TabBarPosition.displayName: String
+    get() =
+        when (this) {
+            TabBarPosition.TOP -> "Top"
+            TabBarPosition.LEFT -> "Left"
+        }

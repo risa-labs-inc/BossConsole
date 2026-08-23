@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.runtime.*
@@ -44,6 +45,8 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.arkivanov.decompose.extensions.compose.subscribeAsState
 import kotlinx.coroutines.delay
@@ -1633,6 +1636,16 @@ private fun RenderSplitNode(
                         PanelDropZoneOverlay(
                             panelId = node.id,
                             dropTarget = dropTarget,
+                            // The zones themselves start after a vertical tab bar (see
+                            // PanelDropZones.fromBounds), so the highlight has to as well - a
+                            // left-split band painted over the bar would advertise a drop that
+                            // means something else entirely. Read from the same registration the
+                            // zones were computed from, so the two cannot disagree.
+                            leadingInset =
+                                tabDragComponent.tabBarBounds[node.id]
+                                    ?.takeIf { it.vertical }
+                                    ?.let { with(LocalDensity.current) { it.bounds.width.toDp() } }
+                                    ?: 0.dp,
                         )
                     }
                 }
@@ -1702,6 +1715,7 @@ private fun RenderSplitNode(
 private fun PanelDropZoneOverlay(
     panelId: String,
     dropTarget: TabDropTarget?,
+    leadingInset: Dp = 0.dp,
 ) {
     // Check which zone is highlighted
     val isLeftHighlighted =
@@ -1722,7 +1736,7 @@ private fun PanelDropZoneOverlay(
         dropTarget is TabDropTarget.ExistingPanel &&
             dropTarget.panelId == panelId
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(modifier = Modifier.fillMaxSize().padding(start = leadingInset)) {
         // Left edge highlight
         if (isLeftHighlighted) {
             Box(
