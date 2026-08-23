@@ -1009,6 +1009,7 @@
     <ID>PackageNaming:SkipListDriftTest.kt$package ai.rever.boss.components.plugin.panels.left_top</ID>
     <ID>PackageNaming:SplitView.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:SplitViewStateRegistry.kt$package ai.rever.boss.components.window_panel</ID>
+    <ID>PackageNaming:TabBarFavorites.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:TabBarRevealState.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:TabBarSidebarReveal.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:TabBarSidebarRevealTest.kt$package ai.rever.boss.components.window_panel</ID>

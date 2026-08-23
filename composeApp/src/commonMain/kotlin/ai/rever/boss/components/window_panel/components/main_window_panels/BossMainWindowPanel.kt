@@ -24,6 +24,7 @@ import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.contextMenu
 import ai.rever.boss.components.plugin.DynamicPluginManager
 import ai.rever.boss.components.plugin.LocalPanelPluginIdResolver
+import ai.rever.boss.components.plugin.MissingPluginOffer
 import ai.rever.boss.components.plugin.PluginBuildRegistry
 import ai.rever.boss.components.plugin.PluginBuildTag
 import ai.rever.boss.components.plugin.TabUpdateRegistry
@@ -35,6 +36,7 @@ import ai.rever.boss.components.window_panel.SplitOrientation
 import ai.rever.boss.components.workspaces.PredefinedWorkspaces
 import ai.rever.boss.components.workspaces.TabConfig
 import ai.rever.boss.components.workspaces.applyWorkspace
+import ai.rever.boss.components.workspaces.createTabFromWorkspaceConfig
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.icons.FileIcons
 import ai.rever.boss.keymap.KeymapSettingsManager
@@ -314,6 +316,28 @@ fun BossTabsComponent.BossMainTabBar(
     // Observe collections for reactive context menu updates (gracefully handles missing plugin)
     val collections = rememberBookmarkCollections()
 
+    // Favorites: every bookmark across every collection, flattened. Collections organise the
+    // bookmarks panel; the sidebar grid is a flat "things I go to constantly", so the grouping
+    // is deliberately dropped here rather than rendered as more sections.
+    val favorites = remember(collections) { collections.flatMap { it.bookmarks } }
+
+    // Whether the plugin that owns bookmarks is present at all. Null provider is how
+    // BookmarkAPIAccess reports its absence, and it is the difference between "you have saved
+    // nothing" and "you have nowhere to save it".
+    //
+    // Keyed on the manager's OBSERVABLE plugin states rather than read bare. getProvider() is a
+    // plain registry lookup, so on its own this would still say "not installed" after the Install
+    // button had finished - the shelf would sit on its offer until some unrelated recomposition
+    // happened to refresh it, which is the same class of failure as a button that does nothing.
+    val pluginStates =
+        DynamicPluginManager
+            .anyActiveManager()
+            ?.pluginStates
+            ?.collectAsState()
+            ?.value
+    val bookmarksInstalled =
+        remember(pluginStates) { BookmarkAPIAccess.getProvider() != null }
+
     // Remove bookmark dialog state
     var showRemoveBookmarkDialog by remember { mutableStateOf(false) }
     var bookmarkToRemove by remember { mutableStateOf<Triple<String, String, String>?>(null) }
@@ -394,6 +418,34 @@ fun BossTabsComponent.BossMainTabBar(
             }
         }
         pinCreatedTab = false
+    }
+
+    // Opening a favourite. Routed through the WORKSPACE converter rather than a second
+    // TabConfig -> TabInfo mapping of its own: a bookmark stores exactly the TabConfig a
+    // workspace does, and that function already knows how to rebuild every tab type from one,
+    // favicon cache included. A private copy here would be a second mapping to keep in step with
+    // every new tab type.
+    val openBookmark: (ai.rever.boss.plugin.bookmark.Bookmark) -> Unit = { bookmark ->
+        val projectPath =
+            windowProjectState
+                ?.selectedProject
+                ?.value
+                ?.path
+                .orEmpty()
+        val resolved = DefaultWorkingDirectory.resolve(projectPath)
+        val tabInfo =
+            splitViewState?.let { state ->
+                createTabFromWorkspaceConfig(bookmark.tabConfig, resolved, state)
+            }
+        if (tabInfo != null) {
+            openCreatedTab(tabInfo)
+        } else {
+            bossMainWindowPanelLogger.warn(
+                LogCategory.UI,
+                "Favourite could not be opened",
+                mapOf("type" to bookmark.tabConfig.type, "title" to bookmark.tabConfig.title),
+            )
+        }
     }
 
     // Activating a tab, in one place: a full tab row and a rail dot both do it, and both owe the
@@ -716,6 +768,16 @@ fun BossTabsComponent.BossMainTabBar(
         // with nothing pinned is a plain list with no headers - which is the common case, and
         // labelling a single section "Open" would be noise. The top strip never sections: it has
         // no room for a header, and pinned tabs are already first in it by the invariant.
+        // "New Tab" sits ABOVE the tabs, directly under the bar's header - where Arc puts it,
+        // under the space name and its rule and before the first tab. It is the one row whose
+        // position should not depend on how many tabs there are, and at the top it never scrolls
+        // away, which is what a bottom-anchored slot was reaching for the hard way.
+        if (vertical) {
+            item(key = "boss-tab-new-row") {
+                NewTabRow(onClick = openNewTab)
+            }
+        }
+
         if (sectionsShown) {
             item(key = "boss-tab-section-pinned") {
                 SectionHeader(
@@ -816,8 +878,8 @@ fun BossTabsComponent.BossMainTabBar(
         // isScrollable flips mid-drag, but that trade-off is what
         // FIXED users always had — FIXED means legacy, glitch
         // included.
-        // `!vertical` first: the vertical bar's "+" is a fixed sibling below the column, never
-        // an item inside it, so this legacy in-row placement has nothing to say there.
+        // Legacy FIXED mode keeps the horizontal strip's historical "+" placement: inside the
+        // row, hugging the last tab, while everything fits.
         if (!vertical && !shrinkTabsToFit && !isScrollable) {
             item {
                 NewTabButton(onClick = openNewTab)
@@ -907,6 +969,32 @@ fun BossTabsComponent.BossMainTabBar(
                         }
                     },
         ) {
+            // Favorites sits ABOVE the bar's own chrome, outside the scrolling column: it is a
+            // fixed shelf, not the head of the tab list, which is where Arc puts it too. The rail
+            // has no room for it and drops it entirely.
+            val favoritesShelf: @Composable () -> Unit = {
+                if (!collapsed) {
+                    TabBarFavorites(
+                        bookmarks = favorites,
+                        pluginInstalled = bookmarksInstalled,
+                        onOpen = { bookmark -> openBookmark(bookmark) },
+                        // The grid is flat, but removal needs the owning collection, so it is
+                        // looked up here where the collections are still in scope rather than
+                        // making every consumer of the grid carry a pair around.
+                        onRemove = { bookmark ->
+                            collections
+                                .firstOrNull { collection ->
+                                    collection.bookmarks.any { it.id == bookmark.id }
+                                }?.let { BookmarkAPIAccess.removeBookmark(it.id, bookmark.id) }
+                        },
+                        onInstallPlugin = {
+                            MissingPluginOffer.offerIfMissing(BOOKMARKS_PLUGIN_ID)
+                        },
+                    )
+                    Divider(color = BossTheme.colors.line)
+                }
+            }
+
             if (collapsed) {
                 // The rail is the same bar with its labels taken away, not a lesser one: every
                 // tab is still here, still selectable, and still carries its whole menu.
@@ -932,6 +1020,7 @@ fun BossTabsComponent.BossMainTabBar(
                     modifier = Modifier.fillMaxSize(),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
+                    favoritesShelf()
                     onToggleCollapse?.let { toggle ->
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -945,14 +1034,6 @@ fun BossTabsComponent.BossMainTabBar(
 
                     BossVerticalTabStrip(
                         listState = listState,
-                        trailing = {
-                            // A sibling below the column, so it can never scroll out of reach. The
-                            // horizontal strip reaches the same guarantee through a measured
-                            // trailing reserve; here nothing has to be reserved because nothing is
-                            // divided.
-                            Divider(color = BossTheme.colors.line)
-                            NewTabRow(onClick = openNewTab)
-                        },
                     ) {
                         tabItems(null)
                     }

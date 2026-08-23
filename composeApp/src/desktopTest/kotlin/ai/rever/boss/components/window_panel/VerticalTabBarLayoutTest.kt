@@ -43,17 +43,16 @@ class VerticalTabBarLayoutTest {
     @get:Rule
     val rule = createComposeRule()
 
-    /** Taller than the strip, so the list genuinely overflows and has somewhere to scroll. */
-    private val tabCount = 30
+    /** Short enough that the whole list fits, so placement is about order, not scrolling. */
+    private val tabCount = 3
 
-    private fun strip(trailing: @Composable () -> Unit) {
+    private fun strip(tabs: Int = tabCount) {
         rule.setContent {
             Column(modifier = Modifier.size(200.dp, 300.dp).testTag("bar")) {
-                BossVerticalTabStrip(
-                    listState = rememberLazyListState(),
-                    trailing = trailing,
-                ) {
-                    items((1..tabCount).toList()) { n ->
+                BossVerticalTabStrip(listState = rememberLazyListState()) {
+                    // The order the real bar builds: New Tab first, then the tabs.
+                    item { NewTabRow(onClick = {}) }
+                    items((1..tabs).toList()) { n ->
                         Box(
                             modifier =
                                 Modifier
@@ -70,46 +69,49 @@ class VerticalTabBarLayoutTest {
     }
 
     @Test
-    fun `the new tab row sits below the scrolling list, not inside it`() {
-        strip { NewTabRow(onClick = {}) }
+    fun `the new tab row sits above the tabs`() {
+        strip()
 
         val row = rule.onNodeWithText("New Tab").getBoundsInRoot()
-        val bar = rule.onNodeWithTag("bar").getBoundsInRoot()
-
-        // Bottom-anchored: the row's lower edge is the bar's lower edge.
-        assertEquals(bar.bottom.value, row.bottom.value, 0.5f)
-
-        // And it is BELOW every tab the list is showing - which is the difference between a
-        // trailing sibling and a last item, and the whole reason it cannot scroll away. With 30
-        // tabs in a 300dp bar the list is overflowing, so a last-item placement would put this
-        // off-screen entirely.
         val firstTab = rule.onNodeWithTag("tab-1").getBoundsInRoot()
-        assertTrue(
-            firstTab.bottom.value <= row.top.value,
-            "New Tab row at ${row.top} overlaps the tab list ending at ${firstTab.bottom}",
-        )
+
+        // Arc's placement: under the bar's header and its rule, BEFORE the first tab. Both
+        // earlier attempts at this are what the assertion is really guarding - pinned to the
+        // bar's floor, and tucked under the LAST tab.
+        assertEquals(row.bottom.value, firstTab.top.value, 0.5f)
     }
 
     @Test
-    fun `the new tab row survives scrolling the list`() {
-        strip { NewTabRow(onClick = {}) }
-        val before = rule.onNodeWithText("New Tab").getBoundsInRoot()
-
-        rule.onNodeWithTag("tab-1").performMouseInput { moveTo(center) }
-        rule.onNodeWithTag("bar").performMouseInput {
-            // Far enough to move the list well past its first screenful.
-            scroll(20f)
-        }
-        rule.waitForIdle()
-
-        rule.onNodeWithText("New Tab").assertIsDisplayed()
-        assertEquals(
-            before.bottom.value,
+    fun `the new tab row does not move as tabs are added`() {
+        strip(tabs = 1)
+        val withOne =
             rule
                 .onNodeWithText("New Tab")
                 .getBoundsInRoot()
-                .bottom.value,
-            0.5f,
+                .top.value
+
+        strip(tabs = 3)
+        val withThree =
+            rule
+                .onNodeWithText("New Tab")
+                .getBoundsInRoot()
+                .top.value
+
+        // Its whole point at the top is that its position does not depend on how many tabs there
+        // are. Below the last tab it moved with every open and close.
+        assertEquals(withOne, withThree, 0.5f)
+    }
+
+    @Test
+    fun `the new tab row is not anchored to the bottom of the bar`() {
+        strip()
+
+        val bar = rule.onNodeWithTag("bar").getBoundsInRoot()
+        val row = rule.onNodeWithText("New Tab").getBoundsInRoot()
+
+        assertTrue(
+            row.bottom.value < bar.bottom.value - 100f,
+            "New Tab row at ${row.bottom} is pinned to the bar floor at ${bar.bottom}",
         )
     }
 

@@ -571,6 +571,14 @@ fun main(args: Array<String>) {
         ai.rever.boss.components.overlays
             .HeavyweightModal(properties, onDismiss, modalContent)
     }
+    // Lets host UI in commonMain offer to install a plugin it needs. The installer is built in
+    // desktopMain because resolving and downloading a plugin is a desktop concern; see
+    // MissingPluginOffer for why the seam exists at all.
+    ai.rever.boss.components.plugin.MissingPluginOffer.installerFactory = { manager ->
+        ai.rever.boss.plugin.MissingDependencyReporter
+            .installerFor(manager)
+    }
+
     ai.rever.boss.components.overlays.OverlayConfig.heavyweightTooltip = { text ->
         ai.rever.boss.components.overlays.SwingTooltip
             .show(text)

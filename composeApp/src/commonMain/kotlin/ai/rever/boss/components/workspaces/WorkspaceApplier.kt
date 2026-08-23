@@ -362,7 +362,7 @@ private fun getFirstTab(workspaceConfig: SplitConfig): TabConfig? =
  *   is none - already through `DefaultWorkingDirectory.resolve`, once, in [applyWorkspace].
  *   Never empty, which is why the terminal branch below has no null case left.
  */
-private fun createTabFromWorkspaceConfig(
+internal fun createTabFromWorkspaceConfig(
     tabConfig: TabConfig,
     resolvedProjectPath: String,
     splitViewState: SplitViewState,

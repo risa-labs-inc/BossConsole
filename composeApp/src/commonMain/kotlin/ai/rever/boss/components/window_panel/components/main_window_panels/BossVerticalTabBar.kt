@@ -124,18 +124,17 @@ private val RAIL_BUTTON_SIZE = NEW_TAB_BUTTON_SIZE
  * here a tab's width IS the bar's width, so there is no budget, no measured trailing reserve
  * and no integer-pixel rounding to get wrong. What is left is a [LazyColumn] that scrolls.
  *
- * The `+` is a sibling BELOW the column rather than a trailing item inside it, so it cannot
- * scroll out of reach - the same guarantee [BossLeftTabBar]'s trailing slot provides, reached
- * more simply because nothing here has to reserve space for it.
+ * The "New Tab" row is the last ITEM of this list rather than a slot beneath it, so it sits
+ * directly under the last tab and moves with it. That is Arc's placement, and it is why this
+ * takes no trailing slot: the horizontal strip needs one because its "+" must survive the row
+ * scrolling sideways, and here the row is meant to travel with the list.
  *
  * @param listState scroll state, shared with the drag system's edge-scroll callback.
- * @param trailing rendered under the column, outside the scrollable area.
- * @param content the tab rows.
+ * @param content the tab rows, and the New Tab row after them.
  */
 @Composable
 fun ColumnScope.BossVerticalTabStrip(
     listState: LazyListState,
-    trailing: @Composable () -> Unit = {},
     content: LazyListScope.() -> Unit,
 ) {
     LazyColumn(
@@ -152,7 +151,6 @@ fun ColumnScope.BossVerticalTabStrip(
         horizontalAlignment = Alignment.CenterHorizontally,
         content = content,
     )
-    trailing()
 }
 
 /**
