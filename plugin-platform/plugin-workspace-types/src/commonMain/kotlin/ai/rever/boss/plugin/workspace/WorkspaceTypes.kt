@@ -37,14 +37,29 @@ data class TabConfig(
  *   first N of a panel, so one integer describes the whole pinning state - see `TabPinning.kt`.
  *   Defaults to 0, which is what a workspace saved before pinning existed decodes to, and what a
  *   panel with nothing pinned writes.
+ *
+ * **`@JvmOverloads` is load-bearing, not decoration.** This module is published, and plugins
+ * compile against it. A Kotlin default does NOT preserve the old constructor in bytecode: adding
+ * `pinnedCount` rewrote the primary constructor from `(String, List)` to `(String, List, int)`
+ * plus a synthetic `$default`, so every already-built plugin calling the two-argument form linked
+ * against a constructor that no longer existed. `BinaryCompatibilityValidator` rejects the
+ * *entire* plugin for that, and the host then disables it - which is how adding this field
+ * silently disabled the bookmarks plugin on a machine that had it. `@JvmOverloads` emits the
+ * two-argument constructor as a real overload, so old plugins keep linking.
+ *
+ * The same hazard applies to any future field here, and to `copy()`, which `@JvmOverloads` does
+ * NOT cover - a plugin calling `copy(id, tabs)` would break the same way with no fix short of a
+ * plugin rebuild. Prefer adding nothing to these types; see `PanelConfigBinaryCompatTest`.
  */
 @Immutable
 @Serializable
-data class PanelConfig(
-    val id: String,
-    val tabs: List<TabConfig>,
-    val pinnedCount: Int = 0,
-)
+data class PanelConfig
+    @JvmOverloads
+    constructor(
+        val id: String,
+        val tabs: List<TabConfig>,
+        val pinnedCount: Int = 0,
+    )
 
 /**
  * Represents a split layout configuration.

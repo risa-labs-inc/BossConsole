@@ -335,7 +335,14 @@ fun BossTabsComponent.BossMainTabBar(
             ?.pluginStates
             ?.collectAsState()
             ?.value
+    // Two DIFFERENT questions, and conflating them is what made the Install button a no-op:
+    // whether the plugin is installed (what the Install button's own predicate answers, so the
+    // shelf and the button can never disagree), and whether it is actually serving its API right
+    // now. A plugin rejected by BinaryCompatibilityValidator is installed and enabled and NOT
+    // running, which is exactly the gap the first version fell into.
     val bookmarksInstalled =
+        remember(pluginStates) { MissingPluginOffer.isInstalled(BOOKMARKS_PLUGIN_ID) }
+    val bookmarksApiReachable =
         remember(pluginStates) { BookmarkAPIAccess.getProvider() != null }
 
     // Remove bookmark dialog state
@@ -977,6 +984,7 @@ fun BossTabsComponent.BossMainTabBar(
                     TabBarFavorites(
                         bookmarks = favorites,
                         pluginInstalled = bookmarksInstalled,
+                        apiReachable = bookmarksApiReachable,
                         onOpen = { bookmark -> openBookmark(bookmark) },
                         // The grid is flat, but removal needs the owning collection, so it is
                         // looked up here where the collections are still in scope rather than
@@ -987,8 +995,23 @@ fun BossTabsComponent.BossMainTabBar(
                                     collection.bookmarks.any { it.id == bookmark.id }
                                 }?.let { BookmarkAPIAccess.removeBookmark(it.id, bookmark.id) }
                         },
+                        // Never a silent click: if the offer declines to raise a prompt, say so
+                        // in the log rather than leaving a button that does nothing and reports
+                        // nothing. The shelf only shows this button when the plugin is absent, so
+                        // reaching the else branch means those two disagreed - which is the bug
+                        // worth finding, not swallowing.
                         onInstallPlugin = {
-                            MissingPluginOffer.offerIfMissing(BOOKMARKS_PLUGIN_ID)
+                            if (!MissingPluginOffer.offerIfMissing(BOOKMARKS_PLUGIN_ID)) {
+                                bossMainWindowPanelLogger.warn(
+                                    LogCategory.UI,
+                                    "Install Bookmarks raised no prompt",
+                                    mapOf(
+                                        "pluginId" to BOOKMARKS_PLUGIN_ID,
+                                        "installed" to bookmarksInstalled.toString(),
+                                        "apiReachable" to bookmarksApiReachable.toString(),
+                                    ),
+                                )
+                            }
                         },
                     )
                     Divider(color = BossTheme.colors.line)

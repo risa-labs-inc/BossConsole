@@ -58,28 +58,55 @@ private const val FAVORITES_PER_ROW = 5
  * through the same prompt the install-time dependency flow uses, so it arrives with a working
  * Install button instead of sending the user to hunt in the Toolbox.
  *
- * Three states, and the difference between the last two matters: no plugin (offer to install it),
- * plugin but nothing saved (say how to save one), and tiles.
+ * FOUR states, and the third is the one that cost a round of "the button does nothing":
+ *
+ * | plugin | API reachable | shown |
+ * |---|---|---|
+ * | absent | - | offer to install it |
+ * | installed | no | say it is not running, and do NOT offer to install it again |
+ * | installed | yes, nothing saved | say how to save one |
+ * | installed | yes, saved | the tiles |
+ *
+ * The middle row is not hypothetical: a plugin whose jar fails BinaryCompatibilityValidator is
+ * installed, enabled, and disabled at load, so its API is unreachable while every "is it
+ * installed" check says yes. Offering Install there raises no prompt - the installer correctly
+ * reports it present - and the click does nothing, says nothing and logs nothing.
  *
  * @param bookmarks every bookmark across every collection, already flattened by the caller.
- * @param pluginInstalled whether the bookmarks plugin is present.
+ * @param pluginInstalled whether the plugin is present, by the same predicate the Install button
+ *   uses. Null when that cannot be determined, treated as "present" so a wiring gap shows the
+ *   quieter message rather than offering an install that would go nowhere.
+ * @param apiReachable whether the plugin is actually serving its API right now.
  */
 @Composable
 fun TabBarFavorites(
     bookmarks: List<Bookmark>,
-    pluginInstalled: Boolean,
+    pluginInstalled: Boolean?,
+    apiReachable: Boolean,
     onOpen: (Bookmark) -> Unit,
     onRemove: (Bookmark) -> Unit,
     onInstallPlugin: () -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 6.dp)) {
         when {
-            !pluginInstalled -> {
+            pluginInstalled == false -> {
                 FavoritesEmptyState(
                     headline = "Add Favorites",
                     body = "Bookmarks keep your most used pages one click away",
                     actionLabel = "Install Bookmarks",
                     onAction = onInstallPlugin,
+                )
+            }
+
+            !apiReachable -> {
+                FavoritesEmptyState(
+                    headline = "Bookmarks unavailable",
+                    // No action button. The fix is a plugin update or a look at the log, neither
+                    // of which this shelf can do, and an Install button here would be the silent
+                    // no-op that made this state worth distinguishing at all.
+                    body = "The Bookmarks plugin is installed but not running. Check the Toolbox",
+                    actionLabel = null,
+                    onAction = {},
                 )
             }
 

@@ -76,6 +76,24 @@ object MissingPluginOffer {
         return true
     }
 
+    /**
+     * Whether [pluginId] is present and usable, by the SAME definition [offerIfMissing] uses.
+     *
+     * Exposed so a caller can gate its UI on the one predicate the Install button also asks. When
+     * a caller gates on something else - "can I reach this plugin's API right now" is the tempting
+     * one - the two disagree exactly when the plugin is installed but not running, and the button
+     * that appears in that state does nothing at all: this returns true, so no offer is raised,
+     * and the caller never hears why. That is a real failure this code has already produced, with
+     * the bookmarks plugin sitting installed-and-disabled behind an Install button.
+     *
+     * Null means the question cannot be answered here (no manager, no injected factory), which is
+     * different from "no" and callers should treat it as such rather than defaulting either way.
+     */
+    fun isInstalled(pluginId: String): Boolean? =
+        installerFactory
+            ?.let { factory -> DynamicPluginManager.anyActiveManager()?.let(factory) }
+            ?.isInstalled(pluginId)
+
     /** What the host calls itself when it is the thing missing a dependency. */
     private const val HOST_DEPENDENT_ID = "ai.rever.boss"
 }
