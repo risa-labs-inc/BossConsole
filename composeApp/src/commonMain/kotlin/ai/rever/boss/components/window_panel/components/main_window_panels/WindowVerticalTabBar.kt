@@ -172,6 +172,10 @@ fun WindowVerticalTabBar(
     onPin: (() -> Unit)? = null,
     tabDragComponent: TabDraggableComponent? = null,
     registerBounds: Boolean = true,
+    /** One pane is filling the window, so the map is the way back to all of them. */
+    zoomed: Boolean = false,
+    /** Put the split back. */
+    onExitZoom: () -> Unit = {},
     /**
      * Window chrome to sit at the foot of the bar, above the split map.
      *
@@ -235,6 +239,8 @@ fun WindowVerticalTabBar(
                 onStripBounds = { stripBounds = it },
                 tabDragComponent = tabDragComponent.takeIf { registerBounds },
                 footer = footer,
+                zoomed = zoomed,
+                onExitZoom = onExitZoom,
             )
         }
     }
@@ -382,6 +388,8 @@ private fun ExpandedGroups(
     onStripBounds: (Rect) -> Unit,
     tabDragComponent: TabDraggableComponent?,
     footer: @Composable () -> Unit,
+    zoomed: Boolean,
+    onExitZoom: () -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -438,7 +446,7 @@ private fun ExpandedGroups(
 
         // The one place that shows the whole arrangement at once, which is what makes a four-way
         // split legible rather than a run of headers to read in order.
-        SplitMap(groups = groups)
+        SplitMap(groups = groups, zoomed = zoomed, onExitZoom = onExitZoom)
     }
 }
 

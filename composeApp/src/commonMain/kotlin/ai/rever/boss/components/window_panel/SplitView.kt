@@ -1750,8 +1750,6 @@ fun SplitViewPanel(
             splitTree(Modifier.fillMaxSize())
         }
 
-        ZoomExitButton(splitViewState = splitViewState, contentRegion = contentRegion)
-
         if (bar.vertical && bar.railShown) {
             WindowRevealedTabBarDrawer(
                 splitViewState = splitViewState,
@@ -1801,72 +1799,6 @@ private fun SplitOrZoomedPane(
 }
 
 /**
- * The way out of a zoomed pane, floating over its bottom-left corner.
- *
- * An OverlayCorner rather than a Box in the scene, and that is not a preference.
- * Under HARDWARE_ACCELERATED a browser tab is Chromium's own native window composited ABOVE the
- * Compose scene, so a button drawn in place would be invisible over precisely the panes people
- * zoom into. This is the same primitive the tab bar's hover drawer, the find bar and the tab
- * tooltip each had to be rebuilt on for that reason.
- *
- * Bottom LEFT because the bottom right is where a page puts its own controls and where the status
- * bar's own text runs; the left corner is the quietest part of a pane.
- *
- * Nothing is drawn before [contentRegion] is measured: an unmeasured parent resolves to the
- * SCREEN origin, so the alternative is an always-on-top button in the corner of the display.
- */
-@Composable
-private fun BoxScope.ZoomExitButton(
-    splitViewState: SplitViewState,
-    contentRegion: IntRect?,
-) {
-    if (splitViewState.zoomedPanelId == null) return
-    val region = contentRegion ?: return
-    val colors = BossTheme.colors
-
-    OverlayCorner(
-        alignment = Alignment.BottomStart,
-        initialSize = ZOOM_EXIT_SIZE,
-        inset = ZOOM_EXIT_INSET,
-        regionInWindow = region,
-    ) {
-        Surface(
-            color = colors.raised,
-            shape = RoundedCornerShape(BossTheme.radius.button),
-            elevation = 4.dp,
-        ) {
-            Row(
-                modifier =
-                    Modifier
-                        .clickable(onClick = splitViewState::exitZoom)
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.CloseFullscreen,
-                    contentDescription = "Exit full screen",
-                    tint = colors.textSecondary,
-                    modifier = Modifier.size(14.dp),
-                )
-                Text(
-                    text = "Exit Full Screen",
-                    color = colors.textPrimary,
-                    fontSize = 12.sp,
-                    maxLines = 1,
-                )
-            }
-        }
-    }
-}
-
-/** Upper bound for the exit button's window. Content-sized inside; this only has to fit it. */
-private val ZOOM_EXIT_SIZE = DpSize(180.dp, 44.dp)
-
-/** How far the exit button sits off the pane's corner. */
-private val ZOOM_EXIT_INSET = DpSize(12.dp, 12.dp)
-
-/**
  * The window bar beside the split tree.
  *
  * The bar's own hoverable wrapper lives here rather than inside the bar, because what it enables
@@ -1903,6 +1835,8 @@ private fun WindowBarRow(
                 onToggleCollapse = rememberToggleCollapseAction(bar, reveal),
                 tabDragComponent = tabDragComponent,
                 footer = footer,
+                zoomed = splitViewState.zoomedPanelId != null,
+                onExitZoom = splitViewState::exitZoom,
             )
         }
         VDivider()

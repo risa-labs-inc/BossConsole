@@ -6,6 +6,7 @@ import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -66,7 +67,11 @@ private val PANE_GAP = 1.dp
  * clicking it would go where the user already is.
  */
 @Composable
-internal fun SplitMap(groups: List<TabBarGroup>) {
+internal fun SplitMap(
+    groups: List<TabBarGroup>,
+    zoomed: Boolean = false,
+    onExitZoom: () -> Unit = {},
+) {
     if (groups.size < 2) return
 
     // Measured rather than taken from a BoxWithConstraints: that is a SubcomposeLayout, and this
@@ -83,7 +88,12 @@ internal fun SplitMap(groups: List<TabBarGroup>) {
                 .padding(MAP_INSET)
                 .aspectRatio(MAP_ASPECT)
                 .clip(RoundedCornerShape(4.dp))
-                .border(1.dp, colors.line, RoundedCornerShape(4.dp))
+                // Zoomed, the WHOLE map is the way back - so it wears the signal border and takes
+                // the click itself. A floating button over the pane would have had to be a
+                // heavyweight overlay window to be visible over a browser at all; the map is
+                // sidebar chrome, which nothing is composited above.
+                .border(1.dp, if (zoomed) colors.signal else colors.line, RoundedCornerShape(4.dp))
+                .then(if (zoomed) Modifier.clickable(onClick = onExitZoom) else Modifier)
                 .onSizeChanged { sizePx = it },
     ) {
         if (sizePx == IntSize.Zero) return@Box
@@ -101,8 +111,28 @@ internal fun SplitMap(groups: List<TabBarGroup>) {
                                 height = ((glyph.bottom - glyph.top) * sizePx.height).toDp(),
                             ).padding(PANE_GAP),
                 ) {
-                    MapPane(group = group)
+                    // Not interactive while zoomed: the map has one job then, and a pane that
+                    // swallowed the click would leave parts of its own frame meaning "back" and
+                    // parts meaning something else.
+                    MapPane(group = group, interactive = !zoomed)
                 }
+            }
+        }
+
+        // Written across the map rather than floating over the pane. The map already shows the
+        // arrangement you are going back to, so the words only have to name the action.
+        if (zoomed) {
+            Box(
+                modifier = Modifier.fillMaxSize().background(colors.ink.copy(alpha = EXIT_SCRIM_ALPHA)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "Exit Full Screen",
+                    color = colors.textPrimary,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
             }
         }
     }
@@ -120,7 +150,10 @@ internal fun SplitMap(groups: List<TabBarGroup>) {
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MapPane(group: TabBarGroup) {
+private fun MapPane(
+    group: TabBarGroup,
+    interactive: Boolean,
+) {
     val colors = BossTheme.colors
     val interactionSource = remember { MutableInteractionSource() }
     val hovered by interactionSource.collectIsHoveredAsState()
@@ -133,9 +166,9 @@ private fun MapPane(group: TabBarGroup) {
         }
 
     HoverTooltipBox(
-        text = "Go to ${group.label} - double-click for full screen",
+        text = if (interactive) "Go to ${group.label} - double-click for full screen" else group.label,
         placement = TooltipPlacement.END,
-        modifier = Modifier.fillMaxSize().hoverable(interactionSource),
+        modifier = Modifier.fillMaxSize().hoverable(interactionSource, enabled = interactive),
     ) {
         Box(
             modifier =
@@ -143,12 +176,18 @@ private fun MapPane(group: TabBarGroup) {
                     .fillMaxSize()
                     .clip(RoundedCornerShape(2.dp))
                     .background(fill)
-                    .combinedClickable(
-                        onClick = {
-                            group.activate()
-                            group.hoverGroup()
+                    .then(
+                        if (!interactive) {
+                            Modifier
+                        } else {
+                            Modifier.combinedClickable(
+                                onClick = {
+                                    group.activate()
+                                    group.hoverGroup()
+                                },
+                                onDoubleClick = group.zoom,
+                            )
                         },
-                        onDoubleClick = group.zoom,
                     ),
             contentAlignment = Alignment.Center,
         ) {
@@ -171,3 +210,6 @@ private const val MAP_HOVER_ALPHA = 0.55f
 
 /** At rest: enough to read as a region, quiet enough that the active one is obvious. */
 private const val MAP_IDLE_ALPHA = 0.5f
+
+/** How far the panes are dimmed behind "Exit Full Screen", so the words stay readable over them. */
+private const val EXIT_SCRIM_ALPHA = 0.72f
