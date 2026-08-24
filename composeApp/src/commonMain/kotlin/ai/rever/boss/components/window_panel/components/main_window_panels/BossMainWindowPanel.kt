@@ -419,8 +419,6 @@ fun BossTabsComponent.rememberTabBarState(
     var selectedTabType by remember { mutableStateOf<TabType?>(null) }
     // Per-window project state for terminal working directory
     val windowProjectState = LocalWindowProjectState.current
-    var showBookmarkDialog by remember { mutableStateOf(false) }
-    var tabToBookmark by remember { mutableStateOf<TabInfo?>(null) }
 
     // Observe collections for reactive context menu updates (gracefully handles missing plugin)
     val collections = rememberBookmarkCollections()
@@ -453,11 +451,6 @@ fun BossTabsComponent.rememberTabBarState(
         remember(pluginStates) { MissingPluginOffer.isInstalled(BOOKMARKS_PLUGIN_ID) }
     val bookmarksApiReachable =
         remember(pluginStates) { BookmarkAPIAccess.getProvider() != null }
-
-    // Remove bookmark dialog state
-    var showRemoveBookmarkDialog by remember { mutableStateOf(false) }
-    var bookmarkToRemove by remember { mutableStateOf<Triple<String, String, String>?>(null) }
-    // Triple = (collectionId, bookmarkId, tabTitle)
 
     // LazyListState for tab bar scrolling. Remembered unconditionally even when the caller
     // supplies one: a remember that appears only on some compositions is a positional slot that
@@ -665,14 +658,6 @@ fun BossTabsComponent.rememberTabBarState(
     // Track drop target for reorder indicator
     val dropTarget = tabDragComponent?.dropTarget
 
-    // Wording that follows the axis: "to the Right" is a lie in a column, and a menu that lies
-    // about direction is worse than one that omits it. BossTerm renames its own Move Tab items
-    // the same way, for the same reason.
-    val closeAfterLabel = if (vertical) "Close Tabs Below" else "Close Tabs to the Right"
-    val closeBeforeLabel = if (vertical) "Close Tabs Above" else "Close Tabs to the Left"
-    val closeAfterIcon = if (vertical) Icons.Outlined.KeyboardArrowDown else Icons.Outlined.ChevronRight
-    val closeBeforeIcon = if (vertical) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.ChevronLeft
-
     // The tab rows, shared verbatim by both orientations. Only the container around them and two
     // axis-shaped details inside it - the reorder indicator and the inter-tab divider - differ.
     // Everything a tab DOES (select, close, drag, its entire context menu) is one body, because
@@ -688,202 +673,17 @@ fun BossTabsComponent.rememberTabBarState(
     // Plain lambda, not @Composable, and that is checked rather than assumed - nothing in here
     // calls remember or reads a state holder that needs one. It runs during composition on every
     // tab-bar recomposition, which is the constraint the NOTE below is about.
-    val tabMenuItems: (Int, TabInfo) -> List<ContextMenuItem> = { index, config ->
-        val totalTabs = tabsState.value.tabs.size
-        buildList {
-            // NOTE: Do NOT call trackTabInteraction/setActivePanel here.
-            // buildList runs during composition (every tab-bar
-            // recomposition, e.g. on every terminal output line), so
-            // doing it here flips the active panel away from whichever
-            // split the user is actually in — stealing focus back to the
-            // output-producing panel. Panel activation on right-click is
-            // already handled by the panel's pointerInput press handler;
-            // left-click activation by the tab onClick above.
-
-            // Pin / Unpin. First in the menu because it is the one action here that changes
-            // where the tab lives rather than what happens to it, and because it is the only way
-            // to discover pinning - the sidebar shows no Pinned section until something is in it.
-            //
-            // Offered in BOTH orientations even though only the vertical bar draws sections: the
-            // ordering invariant is the model's, not the sidebar's, so pinning from the top strip
-            // still moves the tab to the front and still survives restart.
-            if (isPinned(index)) {
-                add(
-                    ContextMenuItem("Unpin Tab", Icons.Outlined.PushPin, onClick = { unpinTab(index) }),
-                )
-            } else {
-                add(
-                    ContextMenuItem("Pin Tab", Icons.Outlined.PushPin, onClick = { pinTab(index) }),
-                )
-            }
-            add(ContextMenuItem(isDivider = true))
-
-            // Split operations (if split state is available)
-            if (splitViewState != null && currentPanelId != null) {
-                add(
-                    ContextMenuItem("Split Right", Icons.Outlined.ViewColumn, onClick = {
-                        splitViewState.splitPanel(
-                            panelId = currentPanelId,
-                            orientation = ai.rever.boss.components.window_panel.SplitOrientation.VERTICAL,
-                            tabToMove = config,
-                        )
-                    }),
-                )
-                add(
-                    ContextMenuItem("Split Down", Icons.Outlined.Splitscreen, onClick = {
-                        splitViewState.splitPanel(
-                            panelId = currentPanelId,
-                            orientation = ai.rever.boss.components.window_panel.SplitOrientation.HORIZONTAL,
-                            tabToMove = config,
-                        )
-                    }),
-                )
-                add(ContextMenuItem(isDivider = true))
-            }
-
-            // Reveal the tab's backing file in the OS file manager (file-backed tabs).
-            // Host tab types expose filePath directly. Dynamic plugin tabs (e.g. the
-            // editor-tab plugin's EditorTabData) live in a plugin classloader we can't
-            // reference by type, so fall back to reading a `filePath` getter reflectively
-            // — the same duck-typing the editor-tab plugin uses for host tab types.
-            // The reflected value is assumed absolute: revealInFileManager resolves via
-            // File(path).absolutePath, so a relative path would resolve against the CWD.
-            val revealPath =
-                when (val tab = config) {
-                    is EditorTabInfo -> {
-                        tab.filePath
-                    }
-
-                    is JupyterTabInfo -> {
-                        tab.filePath
-                    }
-
-                    else -> {
-                        runCatching {
-                            tab.javaClass.getMethod("getFilePath").invoke(tab) as? String
-                        }.getOrNull()
-                    }
-                }?.takeIf { it.isNotBlank() }
-            if (revealPath != null) {
-                add(
-                    ContextMenuItem(revealInFileManagerLabel(), Icons.Outlined.FolderOpen, onClick = {
-                        revealInFileManager(revealPath)
-                    }),
-                )
-                add(ContextMenuItem(isDivider = true))
-            }
-
-            // Bookmark current tab
-            // Deliberate bare snapshot read: subscribes this scope to
-            // recomposition on bookmark-collection changes.
-            @Suppress("UNUSED_EXPRESSION")
-            collections
-
-            val tabConfig = convertTabInfoToTabConfig(config)
-            val existingBookmark = BookmarkAPIAccess.findBookmarkForTab(tabConfig)
-
-            if (existingBookmark != null) {
-                // Tab is already bookmarked - show remove option WITH CONFIRMATION
-                val (collectionId, bookmarkId) = existingBookmark
-                add(
-                    ContextMenuItem("Remove from Bookmarks", Icons.Filled.Star, onClick = {
-                        bookmarkToRemove = Triple(collectionId, bookmarkId, config.title)
-                        showRemoveBookmarkDialog = true
-                    }),
-                )
-            } else {
-                // Tab is not bookmarked - show add option
-                add(
-                    ContextMenuItem("Add to Bookmarks", Icons.Outlined.Star, onClick = {
-                        tabToBookmark = config
-                        showBookmarkDialog = true
-                    }),
-                )
-            }
-
-            // Favorite current workspace
-            val currentWorkspace = workspaceManager.currentWorkspace.value
-            if (currentWorkspace != null) {
-                val isFavorited = BookmarkAPIAccess.isFavorite(currentWorkspace.id)
-                add(
-                    ContextMenuItem(
-                        if (isFavorited) "Unfavorite Workspace" else "Favorite Workspace",
-                        // The icon shows what the action DOES, matching the label: "Unfavorite"
-                        // empties the star, "Favorite" fills it.
-                        if (isFavorited) Icons.Outlined.StarBorder else Icons.Filled.Star,
-                        onClick = {
-                            if (isFavorited) {
-                                BookmarkAPIAccess.removeFavoriteWorkspace(currentWorkspace.id)
-                            } else {
-                                BookmarkAPIAccess.addFavoriteWorkspace(currentWorkspace.id, currentWorkspace.name)
-                            }
-                        },
-                    ),
-                )
-            }
-
-            add(ContextMenuItem(isDivider = true))
-
-            // Open in New Window (if multi-window is supported)
-            if (ai.rever.boss.window.WindowOperations
-                    .isMultiWindowSupported()
-            ) {
-                add(
-                    ContextMenuItem("Open in New Window", Icons.AutoMirrored.Outlined.OpenInNew, onClick = {
-                        ai.rever.boss.window.WindowOperations
-                            .openTabInNewWindow(config)
-                        // Remove tab from current window after opening in new window
-                        removeTab(index)
-                        // Request focus back to the main panel
-                        focusRequester?.requestFocus()
-                    }),
-                )
-                add(ContextMenuItem(isDivider = true))
-            }
-
-            // Close current tab
-            add(
-                ContextMenuItem("Close Tab", Icons.Outlined.Close, onClick = {
-                    removeTab(index)
-                    // Request focus back to the main panel
-                    focusRequester?.requestFocus()
-                }),
-            )
-
-            // Close other tabs (only show if there are other tabs)
-            if (totalTabs > 1) {
-                add(
-                    ContextMenuItem("Close Other Tabs", Icons.Outlined.Clear, onClick = {
-                        closeOtherTabs(index)
-                        // Request focus back to the main panel
-                        focusRequester?.requestFocus()
-                    }),
-                )
-            }
-
-            // Close tabs to the right (only show if there are tabs to the right)
-            if (index < totalTabs - 1) {
-                add(
-                    ContextMenuItem(closeAfterLabel, closeAfterIcon, onClick = {
-                        closeTabsToRight(index)
-                        // Request focus back to the main panel
-                        focusRequester?.requestFocus()
-                    }),
-                )
-            }
-
-            // Close tabs to the left (only show if there are tabs to the left)
-            if (index > 0) {
-                add(
-                    ContextMenuItem(closeBeforeLabel, closeBeforeIcon, onClick = {
-                        closeTabsToLeft(index)
-                        // Request focus back to the main panel
-                        focusRequester?.requestFocus()
-                    }),
-                )
-            }
-        }
-    }
+    // The per-tab right-click menu and the dialogs behind it. See TabMenuState.kt for why this
+    // is its own holder rather than built here: the pane strips need the same menu, and they have
+    // no tab bar state to take it from.
+    val tabMenu =
+        rememberTabMenuState(
+            splitViewState = splitViewState,
+            currentPanelId = currentPanelId,
+            focusRequester = focusRequester,
+            vertical = vertical,
+        )
+    val tabMenuItems = tabMenu.items
 
     // Which tabs actually become rows, paired with their index in the panel.
     //
@@ -999,8 +799,7 @@ fun BossTabsComponent.rememberTabBarState(
                     // this composition. Everything else is a move and goes to the window.
                     when (result) {
                         is TabDropResult.Bookmark -> {
-                            tabToBookmark = result.tabInfo
-                            showBookmarkDialog = true
+                            tabMenu.bookmarkTab(result.tabInfo)
                         }
 
                         null -> {}
@@ -1214,65 +1013,7 @@ fun BossTabsComponent.rememberTabBarState(
                 )
             }
 
-            // Bookmark dialog (gracefully handles missing bookmarks plugin)
-            if (showBookmarkDialog && tabToBookmark != null) {
-                val dialogCollections = rememberBookmarkCollections()
-                val workspaces by workspaceManager.workspaces.collectAsState()
-                BookmarkDialog(
-                    tabTitle = tabToBookmark!!.title,
-                    collections = dialogCollections,
-                    workspaces = workspaces,
-                    onDismiss = {
-                        showBookmarkDialog = false
-                        tabToBookmark = null
-                    },
-                    onConfirm = { collectionIds, workspacePanelMap ->
-                        val tabConfig = convertTabInfoToTabConfig(tabToBookmark!!)
-                        val workspace = workspaceManager.currentWorkspace.value
-
-                        // Convert workspacePanelMap to list of WorkspacePanelTarget
-                        val targetWorkspaces =
-                            workspacePanelMap.map { (workspaceName, panelId) ->
-                                WorkspacePanelTarget(workspaceName = workspaceName, panelId = panelId)
-                            }
-
-                        // Create bookmark for each selected collection
-                        collectionIds.forEach { collectionId ->
-                            val bookmark =
-                                Bookmark(
-                                    tabConfig = tabConfig,
-                                    workspaceName = workspace?.name ?: "Unknown",
-                                    targetWorkspaces = targetWorkspaces,
-                                )
-                            val collection = dialogCollections.find { it.id == collectionId }
-                            if (collection != null) {
-                                BookmarkAPIAccess.addBookmark(collection.name, bookmark)
-                            }
-                        }
-
-                        showBookmarkDialog = false
-                        tabToBookmark = null
-                    },
-                )
-            }
-
-            // Remove bookmark confirmation dialog
-            if (showRemoveBookmarkDialog && bookmarkToRemove != null) {
-                RemoveBookmarkConfirmationDialog(
-                    bookmarkTitle = bookmarkToRemove!!.third,
-                    onDismiss = {
-                        showRemoveBookmarkDialog = false
-                        bookmarkToRemove = null
-                    },
-                    onConfirm = {
-                        bookmarkToRemove?.let { (collectionId, bookmarkId, _) ->
-                            BookmarkAPIAccess.removeBookmark(collectionId, bookmarkId)
-                        }
-                        showRemoveBookmarkDialog = false
-                        bookmarkToRemove = null
-                    },
-                )
-            }
+            tabMenu.dialogs()
         },
         leadingListItems = leadingListItems,
         renderedTabCount = renderedTabs.size,
@@ -1414,6 +1155,27 @@ fun BossTabsComponent.BossMainPanel(
     // Null outside a managed window, which is the only case that cannot ask for a tab.
     val paneWindowId = LocalWindowId.current
 
+    // The favicon strip's right-click menu, and the dialogs two of its entries raise. Built
+    // whether or not the strip is drawn: it is a remember, and one that appears and disappears as
+    // the window is split and unsplit is a slot that moves.
+    val paneTabMenu =
+        rememberTabMenuState(
+            splitViewState = splitViewState,
+            currentPanelId = currentPanelId,
+            focusRequester = focusRequester,
+            vertical = true,
+        )
+
+    // Read here rather than passed down like `showTabBar`.
+    //
+    // That one is passed because SplitViewPanel needs the same answer - it is what decides
+    // whether the window draws the bar - and two independent reads are two things that can
+    // disagree. Nothing else consults this one: the strip is drawn in exactly this place, so
+    // there is no second reader to keep in step.
+    val showPaneStrip by remember {
+        derivedStateOf { WindowAppearanceSettingsManager.currentSettings.value.showPaneTabStrip }
+    }
+
     // Track the active panel state to force recomposition
     val activePanelId by splitViewState?.activePanelIdState ?: remember { mutableStateOf("") }
     val isActivePanel = activePanelId == currentPanelId
@@ -1511,11 +1273,20 @@ fun BossTabsComponent.BossMainPanel(
             // same tree either way.
             //
             // What the panel does still draw is a favicon strip. See PaneIndicatedContent.
+            //
+            // The split condition is ANDed with the setting rather than replaced by it: with one
+            // pane the vertical bar already lists every tab with its name, so the strip would be
+            // the same information twice however the setting is set. Turning it on cannot make
+            // that case worth drawing.
             PaneIndicatedContent(
+                // The strip's tabs carry the same right-click menu their sidebar rows do. Built
+                // here rather than borrowed from the window bar: the bar's per-pane state belongs
+                // to the bar's composition, and reaching into it would point a panel at a sibling.
+                tabMenuItems = paneTabMenu.items,
                 tabs = paneTabs.tabs,
                 activeIndex = paneTabs.activeIndex,
                 pinnedCount = pinnedCount,
-                showStrip = (splitViewState?.getAllPanels()?.size ?: 1) > 1,
+                showStrip = showPaneStrip && (splitViewState?.getAllPanels()?.size ?: 1) > 1,
                 onSelect = { index ->
                     currentPanelId?.let { splitViewState?.setActivePanel(it) }
                     selectTab(index)
@@ -1523,6 +1294,9 @@ fun BossTabsComponent.BossMainPanel(
                 onNewTab = paneNewTabAction(paneWindowId, currentPanelId, splitViewState),
                 content = panelContent,
             )
+            // Without these, Add to Bookmarks and Remove from Bookmarks are menu entries that
+            // silently do nothing: both raise a dialog rather than acting on their own.
+            paneTabMenu.dialogs()
             return@Box
         }
 
@@ -2576,7 +2350,7 @@ class BossTabsComponent(
 /**
  * Convert TabInfo to TabConfig for bookmark storage
  */
-private fun convertTabInfoToTabConfig(tabInfo: TabInfo): TabConfig =
+internal fun convertTabInfoToTabConfig(tabInfo: TabInfo): TabConfig =
     when (tabInfo) {
         is FluckTabInfo -> {
             TabConfig(

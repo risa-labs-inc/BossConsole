@@ -140,6 +140,7 @@
     <ID>CyclomaticComplexMethod:SplitView.kt$SplitViewState$private fun removePanel( node: SplitNode, targetPanelId: String, ): SplitNode</ID>
     <ID>CyclomaticComplexMethod:SupabaseServiceBridge.kt$SupabaseServiceBridge$override suspend fun select(request: SupabaseSelectRequest): SupabaseJsonResponse</ID>
     <ID>CyclomaticComplexMethod:TabDropHandler.kt$internal fun handleTabDropResult( result: TabDropResult, splitViewState: SplitViewState, )</ID>
+    <ID>CyclomaticComplexMethod:TabMenuState.kt$@Composable fun BossTabsComponent.rememberTabMenuState( splitViewState: SplitViewState? = null, currentPanelId: String? = null, focusRequester: FocusRequester? = null, vertical: Boolean = false, ): TabMenuState</ID>
     <ID>CyclomaticComplexMethod:TerminalLinkOpener.kt$private fun openTerminalLinkInternal( url: String, mode: TerminalLinkOpenMode, splitViewState: SplitViewState, validSourcePanelId: String, isFile: Boolean, fileLine: Int = 0, fileColumn: Int = 0, scope: CoroutineScope, windowId: String? = null, )</ID>
     <ID>CyclomaticComplexMethod:TopOfMindDialog.kt$@Composable fun TopOfMindDialog( splitViewState: SplitViewState? = null, // Kept for backward compatibility but not used workspaceManager: WorkspaceManager, onDismiss: () -&gt; Unit, onTabSelect: (ActiveTab) -&gt; Unit, )</ID>
     <ID>CyclomaticComplexMethod:TopOfMindDialog.kt$@Composable private fun ActiveTabDialogItem( activeTab: ActiveTab, isSelected: Boolean, onTabClick: () -&gt; Unit, )</ID>
@@ -391,6 +392,7 @@
     <ID>LongMethod:StartupSettings.kt$@Composable fun StartupSettingsSection()</ID>
     <ID>LongMethod:TabDraggingOverlay.kt$@Composable fun TabDraggableComponent.TabDraggingOverlay()</ID>
     <ID>LongMethod:TabDropHandler.kt$internal fun handleTabDropResult( result: TabDropResult, splitViewState: SplitViewState, )</ID>
+    <ID>LongMethod:TabMenuState.kt$@Composable fun BossTabsComponent.rememberTabMenuState( splitViewState: SplitViewState? = null, currentPanelId: String? = null, focusRequester: FocusRequester? = null, vertical: Boolean = false, ): TabMenuState</ID>
     <ID>LongMethod:TerminalLinkOpenDialog.kt$@Composable fun TerminalLinkOpenDialog( url: String, hasTabs: Boolean, hasSplits: Boolean, onDismiss: () -&gt; Unit, onOpenLink: (mode: TerminalLinkOpenMode, rememberChoice: Boolean) -&gt; Unit, )</ID>
     <ID>LongMethod:TerminalLinkOpener.kt$private fun openTerminalLinkInternal( url: String, mode: TerminalLinkOpenMode, splitViewState: SplitViewState, validSourcePanelId: String, isFile: Boolean, fileLine: Int = 0, fileColumn: Int = 0, scope: CoroutineScope, windowId: String? = null, )</ID>
     <ID>LongMethod:TopOfMindDialog.kt$@Composable fun TopOfMindDialog( splitViewState: SplitViewState? = null, // Kept for backward compatibility but not used workspaceManager: WorkspaceManager, onDismiss: () -&gt; Unit, onTabSelect: (ActiveTab) -&gt; Unit, )</ID>
@@ -1024,6 +1026,7 @@
     <ID>PackageNaming:TabFaviconChip.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:TabGroupExpansion.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:TabGroupExpansionTest.kt$package ai.rever.boss.components.window_panel</ID>
+    <ID>PackageNaming:TabMenuState.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:TabPinning.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:TabPinningTest.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:TabsNavigation.kt$package ai.rever.boss.components.tabs_navigation</ID>

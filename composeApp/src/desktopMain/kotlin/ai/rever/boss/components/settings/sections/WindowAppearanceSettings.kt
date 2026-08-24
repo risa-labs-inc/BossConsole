@@ -193,6 +193,27 @@ private fun ColumnScope.VerticalTabBarRows(
                 "Off means the chevron is the only way back",
         enabled = enabled,
     )
+
+    SettingsToggle(
+        label = "Pane Tab Strip",
+        checked = settings.showPaneTabStrip,
+        onCheckedChange = { showStrip ->
+            coroutineScope.launch {
+                WindowAppearanceSettingsManager.updateSettings(
+                    settings.copy(showPaneTabStrip = showStrip),
+                )
+            }
+        },
+        description =
+            "In a split window, show each pane's own tabs as a row of favicons across the top " +
+                "of that pane. The left bar collapses panes you are not working in, so without " +
+                "this, switching a background pane's tab means opening its group in the bar. " +
+                "An unsplit window never shows it either way",
+        // Alongside the other vertical-bar rows, and disabled with them: the strip only exists
+        // because the LEFT bar collapses panes. In Top position every pane already draws its own
+        // full strip, so a toggle that appeared to work here would control nothing.
+        enabled = enabled,
+    )
 }
 
 /**

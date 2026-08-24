@@ -81,6 +81,23 @@ data class WindowAppearanceSettings(
      */
     val tabBarHoverExpand: Boolean = true,
     /**
+     * Show each pane's own tabs as a narrow favicon strip across the top of that pane.
+     *
+     * Only ever drawn in LEFT position, and only once the window is SPLIT - both conditions
+     * survive this setting rather than being replaced by it. In TOP position each pane already
+     * draws its own full strip; with one pane the vertical bar lists every tab with its name, so
+     * the strip would be the same information twice. This subtracts from those cases, it does not
+     * add to them.
+     *
+     * It exists because the window bar collapses panes the user is not working in, so without it
+     * switching a background pane's tab means going to the sidebar, opening that pane's group and
+     * reading names. Off for anyone who would rather have the pixels and make that trip.
+     *
+     * Default on: that is what the split window has done since the strip existed, and turning it
+     * off on upgrade would take away a control people are already using.
+     */
+    val showPaneTabStrip: Boolean = true,
+    /**
      * Whether right-click menus are the operating system's own rather than BOSS-drawn.
      *
      * On macOS this renders a real NSMenu: system appearance and metrics, native keyboard

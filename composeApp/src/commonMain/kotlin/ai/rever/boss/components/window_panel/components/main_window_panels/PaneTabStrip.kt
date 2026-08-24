@@ -1,5 +1,6 @@
 package ai.rever.boss.components.window_panel.components.main_window_panels
 
+import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.HoverTooltipBox
 import ai.rever.boss.components.overlays.TooltipPlacement
 import ai.rever.boss.components.window_panel.SplitViewState
@@ -68,6 +69,14 @@ internal fun PaneTabStrip(
     pinnedCount: Int,
     onSelect: (Int) -> Unit,
     onNewTab: (() -> Unit)?,
+    /**
+     * The tab's own right-click menu - the same one its row in the sidebar carries.
+     *
+     * This strip exists so a pane's tabs can be reached without going to the sidebar. Without the
+     * menu it sends you back there for pin, split, bookmark and close, which is exactly the trip
+     * it was meant to save.
+     */
+    tabMenuItems: (Int, TabInfo) -> List<ContextMenuItem>,
 ) {
     if (tabs.isEmpty()) return
 
@@ -114,6 +123,7 @@ internal fun PaneTabStrip(
                     tab = tab,
                     isActive = index == activeIndex,
                     onClick = { onSelect(index) },
+                    contextMenuItems = tabMenuItems(index, tab),
                 )
             }
         }
@@ -178,6 +188,7 @@ internal fun PaneIndicatedContent(
     showStrip: Boolean,
     onSelect: (Int) -> Unit,
     onNewTab: (() -> Unit)?,
+    tabMenuItems: (Int, TabInfo) -> List<ContextMenuItem>,
     content: @Composable (Modifier) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
@@ -188,6 +199,7 @@ internal fun PaneIndicatedContent(
                 pinnedCount = pinnedCount,
                 onSelect = onSelect,
                 onNewTab = onNewTab,
+                tabMenuItems = tabMenuItems,
             )
             Divider(color = BossTheme.colors.line)
         }
