@@ -60,7 +60,7 @@ sqlite-jdbc = "3.53.2.1"
 # gRPC + Protobuf for IPC
 grpc = "1.83.1"
 grpc-kotlin = "1.5.0"
-protobuf = "4.35.1"
+protobuf = "4.36.0"
 protobuf-gradle-plugin = "0.10.0"
 graalvm-native-plugin = "1.1.9"
 # IntelliJ PSI for code navigation
