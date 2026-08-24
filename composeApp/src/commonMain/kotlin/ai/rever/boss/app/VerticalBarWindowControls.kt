@@ -1,6 +1,6 @@
 package ai.rever.boss.app
 
-import ai.rever.boss.components.bars.horizontal.BossActionButtonWithLogo
+import ai.rever.boss.components.buttons.BossActionButton
 import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.WorkspaceButton
 import ai.rever.boss.components.workspaces.WorkspaceManager
@@ -14,6 +14,8 @@ import androidx.compose.material.Divider
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import compose.icons.FeatherIcons
+import compose.icons.feathericons.Folder
 
 /**
  * The project and workspace pickers, at the foot of the vertical tab bar.
@@ -43,10 +45,14 @@ internal fun VerticalBarWindowControls(
 
     Divider(color = BossTheme.colors.line)
     Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 6.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        BossActionButtonWithLogo(
+        BossActionButton(
+            // A folder rather than the top bar's project LOGO tile. That tile is 28dp of solid
+            // colour built to anchor a wide bar; down a 200dp column it is the loudest thing on
+            // screen and it is decoration.
+            leftIcon = FeatherIcons.Folder,
             // A project with no path is no project: the button then offers the action rather than
             // naming the empty one, which is what the top bar's copy does too.
             text = if (project.path.isEmpty()) "Open Project" else project.name,
@@ -54,8 +60,13 @@ internal fun VerticalBarWindowControls(
             // project dialog instead - the same one the File menu and the dashboard open - rather
             // than standing up a second recent-projects menu with its own remove and rename
             // dialogs behind it. One control, one window-level dialog.
-            contextMenuItems = emptyList(),
-            hintText = "Open a project",
+            //
+            // Null, not emptyList: a non-null list makes the button open a menu on click, and an
+            // empty one would open an empty menu on top of the dialog.
+            contextMenuItems = null,
+            hintText = if (project.path.isEmpty()) "Open a project" else project.path,
+            maxTextWidth = LABEL_MAX_WIDTH,
+            compact = true,
             onClick = onOpenProject,
         )
         WorkspaceButton(
@@ -63,6 +74,15 @@ internal fun VerticalBarWindowControls(
             workspaceManager = workspaceManager,
             getCurrentWorkspace = getCurrentWorkspace,
             onShowTopOfMind = onShowTopOfMind,
+            compact = true,
         )
     }
 }
+
+/**
+ * How wide a project or workspace name may get before it truncates.
+ *
+ * The bar is 200dp and these rows carry an icon and a chevron either side of the label, so
+ * without a cap a long project name pushes the chevron off the end of its own button.
+ */
+private val LABEL_MAX_WIDTH = 130.dp

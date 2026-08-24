@@ -43,6 +43,8 @@ fun WorkspaceButton(
     workspaceManager: WorkspaceManager,
     getCurrentWorkspace: (() -> LayoutWorkspace)? = null,
     onShowTopOfMind: (() -> Unit)? = null,
+    /** Sized for the vertical tab bar rather than the top bar. See BossActionButton. */
+    compact: Boolean = false,
 ) {
     val currentWorkspace by workspaceManager.currentWorkspace.collectAsState()
     val workspaces by workspaceManager.workspaces.collectAsState()
@@ -178,6 +180,7 @@ fun WorkspaceButton(
         Box {
             BossActionButton(
                 leftIcon = FeatherIcons.Briefcase,
+                compact = compact,
                 text =
                     currentWorkspace?.let { workspace ->
                         if (workspace.name != "Current") workspace.name else "Default"

@@ -80,6 +80,14 @@ fun BossActionButton(
     hintText: String? = null,
     showHintWithDelay: Boolean = true,
     hintDirection: Panel = bottom,
+    /**
+     * Sized for a narrow column rather than the top bar.
+     *
+     * The vertical tab bar is 200dp wide and its own rows are 24dp of 10sp text; a control built
+     * for a 40dp horizontal bar sits in it like furniture in the wrong room. Opt-in, so the top
+     * bar - where every one of these numbers was chosen - is untouched.
+     */
+    compact: Boolean = false,
     onClick: () -> Unit = {},
 ) {
     // Resolved icon color - use iconColor if provided, otherwise fall back to color
@@ -237,7 +245,7 @@ fun BossActionButton(
         Text(
             text = text,
             color = if (isActive) color else color.copy(alpha = 0.8f),
-            fontSize = fontSize,
+            fontSize = if (compact) COMPACT_FONT_SIZE else fontSize,
             fontWeight = if (isActive) FontWeight.Medium else FontWeight.Normal,
             textAlign = TextAlign.Center,
             maxLines = 1,
@@ -249,7 +257,7 @@ fun BossActionButton(
     @Composable
     fun MainIcon(
         icon: ImageVector = Icons.Outlined.KeyboardArrowDown,
-        size: Dp = 16.dp,
+        size: Dp = if (compact) COMPACT_ICON_SIZE else 16.dp,
     ) {
         Icon(
             imageVector = icon,
@@ -262,10 +270,14 @@ fun BossActionButton(
     var _leftLogo = leftLogo
     var _contentPadding = contentPadding
 
+    // A leading slot sets the padding, because the numbers differ between a logo and an icon and
+    // no caller was picking them. Compact keeps that arrangement and only tightens it.
     leftLogo?.let {
-        _contentPadding = PaddingValues(vertical = 2.dp, horizontal = 10.dp)
+        _contentPadding =
+            if (compact) COMPACT_PADDING else PaddingValues(vertical = 2.dp, horizontal = 10.dp)
     } ?: leftIcon?.let {
-        _contentPadding = PaddingValues(vertical = 6.dp, horizontal = 10.dp)
+        _contentPadding =
+            if (compact) COMPACT_PADDING else PaddingValues(vertical = 6.dp, horizontal = 10.dp)
         _leftLogo = { MainIcon(it) }
     }
 
@@ -317,7 +329,7 @@ fun BossActionButton(
     ) {
         if (_leftLogo != null) {
             _leftLogo()
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(if (compact) COMPACT_GAP else 8.dp))
             MainText()
             MainIcon()
         } else if (imageVector != null) {
@@ -327,3 +339,15 @@ fun BossActionButton(
         }
     }
 }
+
+/** Text size in [BossActionButton]'s compact mode, matching the vertical bar's own rows. */
+private val COMPACT_FONT_SIZE = 11.sp
+
+/** Leading icon and chevron in compact mode. */
+private val COMPACT_ICON_SIZE = 13.dp
+
+/** Padding in compact mode: enough to click, little enough to read as a row rather than a button. */
+private val COMPACT_PADDING = PaddingValues(vertical = 3.dp, horizontal = 6.dp)
+
+/** Gap between the leading slot and the label in compact mode. */
+private val COMPACT_GAP = 6.dp
