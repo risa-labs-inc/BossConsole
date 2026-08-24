@@ -9,29 +9,35 @@ import kotlin.test.assertTrue
 /**
  * Pins when a pane draws its favicon strip.
  *
- * The strip was split-only, on the reasoning that a single pane's tabs are already listed by name
+ * The strip is split-only, on the reasoning that a single pane's tabs are already listed by name
  * in the sidebar. That holds only while the sidebar is EXPANDED, and it collapses to the rail on
- * its own when a panel is narrow, so a one-pane window could reach a state with no tab titles
- * anywhere. The pane count is a preference now rather than a rule, and the default changed with
- * it - which is exactly the kind of thing worth pinning, because both the old and the new
- * behaviour look reasonable in a screenshot.
+ * its own when a panel is narrow, so a one-pane window can reach a state with no tab titles
+ * anywhere - which is why the pane count is a preference rather than a rule.
+ *
+ * The DEFAULT is the load-bearing part. Leaving it split-only is what makes the setting purely
+ * additive: no install changes behaviour, and nothing needs migrating. Flipping it would be a
+ * silent behaviour change for everyone, and both settings look perfectly reasonable in a
+ * screenshot, so it is pinned here rather than left to be noticed.
  */
 class PaneTabStripVisibilityTest {
     private val defaults = WindowAppearanceSettings()
 
     @Test
-    fun `by default an unsplit window shows the strip`() {
-        assertTrue(defaults.stripShownFor(1), "this is the default that changed")
+    fun `by default the strip needs a split`() {
+        // Purely additive: this is what every build before the setting existed did, so an
+        // upgrade changes nothing on its own.
+        assertTrue(defaults.paneTabStripOnlyWhenSplit, "the default must stay split-only")
+        assertFalse(defaults.stripShownFor(1))
         assertTrue(defaults.stripShownFor(2))
+        assertTrue(defaults.stripShownFor(4))
     }
 
     @Test
-    fun `the setting brings the old split-only behaviour back`() {
-        val onlyWhenSplit = defaults.copy(paneTabStripOnlyWhenSplit = true)
+    fun `switching it off puts the strip in an unsplit window too`() {
+        val always = defaults.copy(paneTabStripOnlyWhenSplit = false)
 
-        assertFalse(onlyWhenSplit.stripShownFor(1))
-        assertTrue(onlyWhenSplit.stripShownFor(2))
-        assertTrue(onlyWhenSplit.stripShownFor(4))
+        assertTrue(always.stripShownFor(1))
+        assertTrue(always.stripShownFor(2))
     }
 
     @Test
@@ -49,7 +55,7 @@ class PaneTabStripVisibilityTest {
     fun `an unmeasured window counts as one pane`() {
         // splitViewState is nullable at the call site, and null there means there is no split
         // view at all - which is one pane, not zero and not "unknown".
-        assertTrue(defaults.stripShownFor(null))
-        assertFalse(defaults.copy(paneTabStripOnlyWhenSplit = true).stripShownFor(null))
+        assertFalse(defaults.stripShownFor(null))
+        assertTrue(defaults.copy(paneTabStripOnlyWhenSplit = false).stripShownFor(null))
     }
 }

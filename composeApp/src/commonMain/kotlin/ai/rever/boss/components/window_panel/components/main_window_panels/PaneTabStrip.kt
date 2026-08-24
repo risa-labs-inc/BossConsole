@@ -72,8 +72,8 @@ private val PINNED_RULE_HEIGHT = 14.dp
  * no chip is: a chip consumes the press for its own menu, and the row checks for that before
  * opening a second one on top of it.
  *
- * Drawn whenever the bar is vertical, split or not - and whether the pane count matters at all
- * is itself a setting. See `WindowAppearanceSettings.paneTabStripOnlyWhenSplit`.
+ * For a split window by default, and for an unsplit one too if asked. Whether the pane count
+ * gates it is a setting rather than a rule - see `WindowAppearanceSettings.paneTabStripOnlyWhenSplit`.
  */
 @Composable
 internal fun PaneTabStrip(

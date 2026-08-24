@@ -242,9 +242,9 @@ private fun ColumnScope.PaneTabStripRows(
             }
         },
         description =
-            "Hide the strip while the window has a single pane. Off by default: the bar can " +
-                "collapse to the rail even with one pane, and then nothing else on screen names " +
-                "that pane's tabs",
+            "Hide the strip while the window has a single pane, where the bar can list every " +
+                "tab by name. Switch it off if you want the strip there too: the bar collapses " +
+                "to the rail even with one pane, and then nothing else on screen names its tabs",
         // Disabled when the strip itself is off, not only when the bar is horizontal - a row
         // qualifying something switched off is a control with nothing to control.
         enabled = enabled && settings.showPaneTabStrip,

@@ -122,11 +122,13 @@ data class WindowAppearanceSettings(
      * bar is hidden by default now. A one-pane window could therefore reach a state with no tab
      * titles anywhere on screen, which is the state the strip exists to prevent.
      *
-     * So the pane count is a preference rather than a rule, and it defaults OFF: the strip shows
-     * whenever it is switched on. Turn this on to get the original behaviour back and keep the
-     * pixels in an unsplit window.
+     * So the pane count is a preference rather than a rule - but it stays ON by default, which
+     * makes this purely additive: every install keeps the behaviour it already had, and anyone
+     * who wants the strip in an unsplit window can switch this off. That is also why no
+     * [WindowAppearanceMigrations] step is needed for it. A file written before this field
+     * existed decodes to the default, and the default is what that build already did.
      */
-    val paneTabStripOnlyWhenSplit: Boolean = false,
+    val paneTabStripOnlyWhenSplit: Boolean = true,
     /**
      * Whether right-click menus are the operating system's own rather than BOSS-drawn.
      *
