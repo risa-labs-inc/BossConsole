@@ -271,7 +271,12 @@ internal fun BossAppDialogs(state: BossAppState) {
                         ?: state.tabsComponent
                 target.addTab(tab)
             } else {
-                splitViewState.splitPanel(split.panelId, split.orientation, tabToMove = tab)
+                splitViewState.splitPanel(
+                    split.panelId,
+                    split.direction.orientation,
+                    tabToMove = tab,
+                    placeBefore = split.direction.placeBefore,
+                )
             }
         }
 
@@ -284,6 +289,20 @@ internal fun BossAppDialogs(state: BossAppState) {
                 state.focusRequester.requestFocus()
             },
             tabRegistry = state.tabRegistry,
+            // The dialog is a VIEW over the pending split rather than an owner of the choice:
+            // the split map sets one before opening this, and the picker has to come up showing
+            // the direction that was clicked rather than resetting it to "this pane".
+            splitDirection = splitViewState.pendingSplit?.direction,
+            onSplitDirectionChange = { direction ->
+                if (direction == null) {
+                    splitViewState.cancelPendingSplit()
+                } else {
+                    // The pane the tab would otherwise have landed in - see `place` above, which
+                    // adds to the active component. Splitting anything else would put the new
+                    // pane somewhere the user was not looking.
+                    splitViewState.requestSplitWithNewTab(splitViewState.activePanelId, direction)
+                }
+            },
             onCreateTab = { type, path ->
 
                 when (type) {

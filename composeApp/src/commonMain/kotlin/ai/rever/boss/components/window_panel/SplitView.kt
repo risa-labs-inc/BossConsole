@@ -108,12 +108,44 @@ sealed class SplitNode {
 /** A split that has been asked for and is waiting on the tab that will fill it. */
 data class PendingSplit(
     val panelId: String,
-    val orientation: SplitOrientation,
+    val direction: SplitDirection,
 )
 
 enum class SplitOrientation {
     HORIZONTAL, // Split top/bottom
     VERTICAL, // Split left/right
+}
+
+/**
+ * Which side of a pane the NEW pane goes on.
+ *
+ * [SplitOrientation] says only which way the divider runs. For a long time that was the whole
+ * answer, because a new pane always went second - to the right, or below - and the two menu
+ * entries that could ask for one were worded to match ("Split Right", "Split Down").
+ *
+ * The split map's four regions ask for the other two, so the side is now part of the request
+ * rather than implied by it. [placeBefore] is the whole difference: the new pane takes the
+ * left or top half and the original moves over.
+ */
+enum class SplitDirection(
+    val orientation: SplitOrientation,
+    val placeBefore: Boolean,
+) {
+    LEFT(SplitOrientation.VERTICAL, placeBefore = true),
+    RIGHT(SplitOrientation.VERTICAL, placeBefore = false),
+    UP(SplitOrientation.HORIZONTAL, placeBefore = true),
+    DOWN(SplitOrientation.HORIZONTAL, placeBefore = false),
+    ;
+
+    /** How this direction is worded to the user. */
+    val displayName: String
+        get() =
+            when (this) {
+                LEFT -> "Left"
+                RIGHT -> "Right"
+                UP -> "Above"
+                DOWN -> "Below"
+            }
 }
 
 /**
@@ -231,9 +263,9 @@ class SplitViewState(
     /** Ask for a tab, then split [panelId] and put that tab in the new pane. */
     fun requestSplitWithNewTab(
         panelId: String,
-        orientation: SplitOrientation,
+        direction: SplitDirection,
     ) {
-        pendingSplit = PendingSplit(panelId, orientation)
+        pendingSplit = PendingSplit(panelId, direction)
     }
 
     /**
@@ -728,6 +760,13 @@ class SplitViewState(
         orientation: SplitOrientation,
         tabToMove: TabInfo? = null,
         detachedTab: BossTabsComponent.DetachedTab? = null,
+        /**
+         * Put the new pane in the left or top half, moving the original over.
+         *
+         * Defaults to false, which is what every caller did before the split map could ask for
+         * a direction: the original keeps its side and the new pane goes second.
+         */
+        placeBefore: Boolean = false,
     ): String {
         // Mutually exclusive by contract: passing both would adopt the live component AND
         // add a copy of the same tab, duplicating it across the two panels.
@@ -847,6 +886,7 @@ class SplitViewState(
                 panelId,
                 orientation,
                 newPanelNode,
+                placeBefore,
             )
 
         return newPanelId
@@ -857,23 +897,25 @@ class SplitViewState(
         targetPanelId: String,
         orientation: SplitOrientation,
         newPanel: SplitNode.Panel,
+        placeBefore: Boolean,
     ): SplitNode =
         when (node) {
             is SplitNode.Panel -> {
                 if (node.id == targetPanelId) {
-                    // Replace this panel with a split
+                    // Replace this panel with a split. The original keeps all its tabs either
+                    // way; placeBefore only decides which half it ends up in.
                     when (orientation) {
                         SplitOrientation.VERTICAL -> {
                             SplitNode.VerticalSplit(
-                                left = node, // Original panel keeps all tabs
-                                right = newPanel,
+                                left = if (placeBefore) newPanel else node,
+                                right = if (placeBefore) node else newPanel,
                             )
                         }
 
                         SplitOrientation.HORIZONTAL -> {
                             SplitNode.HorizontalSplit(
-                                top = node, // Original panel keeps all tabs
-                                bottom = newPanel,
+                                top = if (placeBefore) newPanel else node,
+                                bottom = if (placeBefore) node else newPanel,
                             )
                         }
                     }
@@ -884,15 +926,15 @@ class SplitViewState(
 
             is SplitNode.VerticalSplit -> {
                 SplitNode.VerticalSplit(
-                    left = replacePanelWithSplit(node.left, targetPanelId, orientation, newPanel),
-                    right = replacePanelWithSplit(node.right, targetPanelId, orientation, newPanel),
+                    left = replacePanelWithSplit(node.left, targetPanelId, orientation, newPanel, placeBefore),
+                    right = replacePanelWithSplit(node.right, targetPanelId, orientation, newPanel, placeBefore),
                 )
             }
 
             is SplitNode.HorizontalSplit -> {
                 SplitNode.HorizontalSplit(
-                    top = replacePanelWithSplit(node.top, targetPanelId, orientation, newPanel),
-                    bottom = replacePanelWithSplit(node.bottom, targetPanelId, orientation, newPanel),
+                    top = replacePanelWithSplit(node.top, targetPanelId, orientation, newPanel, placeBefore),
+                    bottom = replacePanelWithSplit(node.bottom, targetPanelId, orientation, newPanel, placeBefore),
                 )
             }
         }

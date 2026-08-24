@@ -8,6 +8,7 @@ import ai.rever.boss.components.plugin.panels.left_top.ProjectState
 import ai.rever.boss.components.plugin.panels.left_top.directoryHasChildren
 import ai.rever.boss.components.plugin.panels.left_top.scanDirectory
 import ai.rever.boss.components.plugin.panels.left_top.scanDirectoryWithDepth
+import ai.rever.boss.components.window_panel.SplitDirection
 import ai.rever.boss.icons.FileIcons
 import ai.rever.boss.platform.rememberDirectoryPicker
 import ai.rever.boss.platform.rememberFilePicker
@@ -201,6 +202,17 @@ fun NewTabDialog(
     onCreateTabInfo: ((TabInfo) -> Unit)? = null,
     projectPath: String? = null,
     windowId: String? = null,
+    /**
+     * Where the new tab goes: null for the pane it would land in anyway, or the side a new pane
+     * should be created on.
+     *
+     * Hoisted rather than owned here because the split map opens this dialog with a direction
+     * already chosen - clicking a trapezoid IS asking for a tab in that direction - and a picker
+     * that reset itself to "this pane" would throw that away in front of the user.
+     */
+    splitDirection: SplitDirection? = null,
+    /** Null when this caller cannot split (no split view to split), which hides the picker. */
+    onSplitDirectionChange: ((SplitDirection?) -> Unit)? = null,
 ) {
     val availableTypes = TabType.entries.filter { tabRegistry.isRegistered(it.tabTypeId) }
     // Plugin-registered tab types that opted into the dialog (newTabSpec).
@@ -1307,6 +1319,18 @@ fun NewTabDialog(
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    // On the same line as Cancel and Create, and to their left, because it
+                    // qualifies the button next to it rather than the tab type above: "create
+                    // this, over there". A row of its own would have read as another property of
+                    // the tab, alongside its URL or its command.
+                    if (onSplitDirectionChange != null) {
+                        SplitDirectionPicker(
+                            selected = splitDirection,
+                            onSelect = onSplitDirectionChange,
+                        )
+                        Spacer(modifier = Modifier.weight(1f))
+                    }
+
                     TextButton(
                         onClick = onDismiss,
                         colors =

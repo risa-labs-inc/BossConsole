@@ -172,9 +172,9 @@ class PaneZoomTest {
     @Test
     fun `asking to split records which pane and which way`() {
         val s = state()
-        s.requestSplitWithNewTab("main", SplitOrientation.HORIZONTAL)
+        s.requestSplitWithNewTab("main", SplitDirection.DOWN)
 
-        assertEquals(PendingSplit("main", SplitOrientation.HORIZONTAL), s.pendingSplit)
+        assertEquals(PendingSplit("main", SplitDirection.DOWN), s.pendingSplit)
     }
 
     @Test
@@ -182,9 +182,9 @@ class PaneZoomTest {
         // The next ordinary New Tab must not land in a second new pane. A dialog dismissed and
         // reopened later would otherwise split on a tab nobody asked to be split.
         val s = state()
-        s.requestSplitWithNewTab("main", SplitOrientation.VERTICAL)
+        s.requestSplitWithNewTab("main", SplitDirection.RIGHT)
 
-        assertEquals(PendingSplit("main", SplitOrientation.VERTICAL), s.consumePendingSplit())
+        assertEquals(PendingSplit("main", SplitDirection.RIGHT), s.consumePendingSplit())
         assertNull(s.consumePendingSplit())
         assertNull(s.pendingSplit)
     }
@@ -192,7 +192,7 @@ class PaneZoomTest {
     @Test
     fun `abandoning the dialog forgets the split`() {
         val s = state()
-        s.requestSplitWithNewTab("main", SplitOrientation.VERTICAL)
+        s.requestSplitWithNewTab("main", SplitDirection.RIGHT)
         s.cancelPendingSplit()
 
         assertNull(s.consumePendingSplit())

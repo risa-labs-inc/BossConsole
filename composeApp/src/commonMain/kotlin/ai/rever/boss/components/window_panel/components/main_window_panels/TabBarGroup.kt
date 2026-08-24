@@ -1,6 +1,6 @@
 package ai.rever.boss.components.window_panel.components.main_window_panels
 
-import ai.rever.boss.components.window_panel.SplitOrientation
+import ai.rever.boss.components.window_panel.SplitDirection
 import androidx.compose.runtime.Stable
 
 /**
@@ -50,7 +50,7 @@ class TabBarGroup
         /** Give this pane a name, or clear it with a blank string. */
         internal val rename: (String) -> Unit = {},
         /** Split this pane, side by side or stacked. */
-        internal val split: (SplitOrientation) -> Unit = {},
+        internal val split: (SplitDirection) -> Unit = {},
         /**
          * The pointer reached one of this pane's chrome rows, making it the open one.
          *

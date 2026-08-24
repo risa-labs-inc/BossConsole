@@ -137,8 +137,8 @@ fun rememberWindowTabGroups(
                 // Asks for a tab FIRST, then splits with it. A split that made an empty pane
                 // would have it closed again about 50ms later by checkAndCloseEmptyPanels, so the
                 // menu entry appeared to do nothing at all. See SplitViewState.pendingSplit.
-                split = { orientation ->
-                    splitViewState.requestSplitWithNewTab(panel.id, orientation)
+                split = { direction ->
+                    splitViewState.requestSplitWithNewTab(panel.id, direction)
                     paneWindowId?.let { MenuActionsHandler.triggerNewTab(it) }
                 },
                 newTab = state.openNewTab,

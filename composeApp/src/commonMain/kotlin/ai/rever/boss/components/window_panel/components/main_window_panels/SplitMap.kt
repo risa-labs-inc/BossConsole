@@ -4,7 +4,7 @@ import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.HoverTooltipBox
 import ai.rever.boss.components.overlays.TooltipPlacement
 import ai.rever.boss.components.overlays.contextMenu
-import ai.rever.boss.components.window_panel.SplitOrientation
+import ai.rever.boss.components.window_panel.SplitDirection
 import ai.rever.boss.plugin.ui.BossAlertDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -74,8 +74,10 @@ private val PANE_GAP = 1.dp
  * Drawn from the panes' MEASURED rectangles, like the header glyphs, so it is right for any
  * arrangement and follows a divider as it is dragged.
  *
- * Not drawn for a single pane: a map of one region is a filled square that says nothing and
- * clicking it would go where the user already is.
+ * A window with ONE pane gets [SplitCreatorMap] instead: the same frame, turned into four places
+ * to put a second pane. A map of one region would be a filled square that says nothing, and
+ * clicking it would go where the user already is - but leaving the space empty until the first
+ * split meant it was blank at the one moment it could have done the most.
  */
 @Composable
 internal fun SplitMap(
@@ -83,7 +85,10 @@ internal fun SplitMap(
     zoomed: Boolean = false,
     onExitZoom: () -> Unit = {},
 ) {
-    if (groups.size < 2) return
+    if (groups.size < 2) {
+        groups.firstOrNull()?.let { SplitCreatorMap(it) }
+        return
+    }
 
     // Measured rather than taken from a BoxWithConstraints: that is a SubcomposeLayout, and this
     // sits at the foot of a column whose sibling is a lazy list. See BossMainPanel's note on what
@@ -200,14 +205,14 @@ private fun paneMenuItems(
             ContextMenuItem(
                 text = "Split Right",
                 icon = Icons.Outlined.ViewColumn,
-                onClick = { group.split(SplitOrientation.VERTICAL) },
+                onClick = { group.split(SplitDirection.RIGHT) },
             ),
         )
         add(
             ContextMenuItem(
                 text = "Split Down",
                 icon = Icons.Outlined.Splitscreen,
-                onClick = { group.split(SplitOrientation.HORIZONTAL) },
+                onClick = { group.split(SplitDirection.DOWN) },
             ),
         )
         add(ContextMenuItem(isDivider = true))

@@ -32,6 +32,7 @@ import ai.rever.boss.components.plugin.providers.publishSystemEvent
 import ai.rever.boss.components.plugin.tab_types.PanelHostTabInfo
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
 import ai.rever.boss.components.tabs_navigation.TabsNavigation
+import ai.rever.boss.components.window_panel.SplitDirection
 import ai.rever.boss.components.window_panel.SplitOrientation
 import ai.rever.boss.components.workspaces.PredefinedWorkspaces
 import ai.rever.boss.components.workspaces.TabConfig
@@ -527,6 +528,29 @@ fun BossTabsComponent.rememberTabBarState(
         pinCreatedTab = false
     }
 
+    // What the NEW TAB DIALOG does with the tab it just built, as opposed to what
+    // openCreatedTab does with any tab at all.
+    //
+    // Separate because openCreatedTab is also how a FAVOURITE opens (see openBookmark below),
+    // and a pending split belongs to the dialog that asked for it. Sharing one path would let a
+    // favourite opened while the dialog is up land in a new pane instead.
+    val placeNewTab: (TabInfo) -> Unit = { tabInfo ->
+        val split = splitViewState?.consumePendingSplit()
+        if (split == null) {
+            openCreatedTab(tabInfo)
+        } else {
+            // Pinning does not travel: the tab is the only one in a pane of its own, and a
+            // pinned block of one is a rule drawn under nothing.
+            pinCreatedTab = false
+            splitViewState.splitPanel(
+                split.panelId,
+                split.direction.orientation,
+                tabToMove = tabInfo,
+                placeBefore = split.direction.placeBefore,
+            )
+        }
+    }
+
     // Opening a favourite. Routed through the WORKSPACE converter rather than a second
     // TabConfig -> TabInfo mapping of its own: a bookmark stores exactly the TabConfig a
     // workspace does, and that function already knows how to rebuild every tab type from one,
@@ -886,9 +910,29 @@ fun BossTabsComponent.rememberTabBarState(
                     onDismiss = {
                         showNewTabDialog = false
                         selectedTabType = null
+                        // A split asked for and then abandoned must not fire on the next
+                        // ordinary New Tab.
+                        splitViewState?.cancelPendingSplit()
                     },
                     tabRegistry = tabRegistry,
                     initialTabType = selectedTabType,
+                    // The same option the window's own New Tab offers. A picker that appeared in
+                    // one new-tab dialog and not the other would read as a bug in whichever one
+                    // the user reached first.
+                    splitDirection = splitViewState?.pendingSplit?.direction,
+                    onSplitDirectionChange =
+                        splitViewState?.let { state ->
+                            { direction: SplitDirection? ->
+                                if (direction == null) {
+                                    state.cancelPendingSplit()
+                                } else {
+                                    // THIS pane, not the active one: this dialog belongs to a
+                                    // particular pane's "+", and splitting anything else would
+                                    // put the new pane where the user was not pointing.
+                                    state.requestSplitWithNewTab(currentPanelId ?: state.activePanelId, direction)
+                                }
+                            }
+                        },
                     onCreateTab = { type, path ->
                         when (type) {
                             TabType.URL -> {
@@ -900,7 +944,7 @@ fun BossTabsComponent.rememberTabBarState(
                                         _title = "Loading...",
                                         url = path,
                                     )
-                                openCreatedTab(fluckTab)
+                                placeNewTab(fluckTab)
                             }
 
                             TabType.FILE -> {
@@ -918,7 +962,7 @@ fun BossTabsComponent.rememberTabBarState(
                                                 .Vector(fileIconInfo.icon, fileIconInfo.color),
                                         filePath = path,
                                     )
-                                openCreatedTab(editorTab)
+                                placeNewTab(editorTab)
                             }
 
                             TabType.TERMINAL -> {
@@ -934,18 +978,18 @@ fun BossTabsComponent.rememberTabBarState(
                                         initialCommand = path.ifBlank { null },
                                         workingDirectory = DefaultWorkingDirectory.resolve(projectPath),
                                     )
-                                openCreatedTab(terminalTab)
+                                placeNewTab(terminalTab)
                             }
 
                             TabType.JUPYTER -> {
                                 val jupyterTab = JupyterTabInfo.createUntitled(path)
-                                openCreatedTab(jupyterTab)
+                                placeNewTab(jupyterTab)
                             }
                         }
                     },
                     // Plugin tab types build their own TabInfo; open it the same way.
                     onCreateTabInfo = { tabInfo ->
-                        openCreatedTab(tabInfo)
+                        placeNewTab(tabInfo)
                     },
                     projectPath = windowProjectState?.selectedProject?.value?.path,
                 )
