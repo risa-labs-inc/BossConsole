@@ -313,6 +313,14 @@ fun BossActionButton(
         modifier =
             modifier
                 .defaultMinSize(minHeight = 2.dp, minWidth = 2.dp)
+                // A FIXED height, not a smaller minimum.
+                //
+                // This is a Material TextButton, and Material sizes its content Row with
+                // defaultMinSize(MinHeight = 36.dp) from the inside. The defaultMinSize above is
+                // not enough to undo that - measured on screen, compact rows still came out 36dp
+                // tall, which is half again the height of the bar's own rows. A fixed height sets
+                // min == max, which the inner minimum cannot argue with.
+                .then(if (compact) Modifier.height(COMPACT_ROW_HEIGHT) else Modifier)
                 .run {
                     if (imageVector != null) {
                         size(28.dp).hoverable(interactionSource)
@@ -347,7 +355,10 @@ private val COMPACT_FONT_SIZE = 11.sp
 private val COMPACT_ICON_SIZE = 13.dp
 
 /** Padding in compact mode: enough to click, little enough to read as a row rather than a button. */
-private val COMPACT_PADDING = PaddingValues(vertical = 3.dp, horizontal = 6.dp)
+private val COMPACT_PADDING = PaddingValues(vertical = 1.dp, horizontal = 6.dp)
 
 /** Gap between the leading slot and the label in compact mode. */
 private val COMPACT_GAP = 6.dp
+
+/** Row height in compact mode, matching the vertical bar's group headers and summary rows. */
+private val COMPACT_ROW_HEIGHT = 24.dp

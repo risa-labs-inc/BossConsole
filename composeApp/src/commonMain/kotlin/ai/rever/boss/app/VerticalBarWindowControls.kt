@@ -45,8 +45,11 @@ internal fun VerticalBarWindowControls(
 
     Divider(color = BossTheme.colors.line)
     Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
+        // Tight on purpose. These are two rows of a narrow bar, not a toolbar: the padding that
+        // reads as breathing room across a 1500dp top bar reads as dead space down a 200dp one,
+        // and there is a split map below them competing for the same inches.
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(0.dp),
     ) {
         BossActionButton(
             // A folder rather than the top bar's project LOGO tile. That tile is 28dp of solid
