@@ -49,6 +49,20 @@ class TabBarGroup
         internal val hoverGroup: () -> Unit = {},
     ) {
         /**
+         * The tabs this pane holds but is not drawing a row for, with their model indices.
+         *
+         * What the summary row shows as favicons. Empty when the pane is open, since then every
+         * tab already has a row of its own with its name on it.
+         */
+        internal val hiddenTabs: List<IndexedValue<ai.rever.boss.plugin.api.TabInfo>>
+            get() =
+                if (expanded) {
+                    emptyList()
+                } else {
+                    state.tabs.withIndex().filter { it.index != state.activeIndex }
+                }
+
+        /**
          * Rows this group adds beyond its tabs and its own leading rows: the "n more" line.
          *
          * Absent when the group is open, and absent when collapsing would hide nothing - a pane

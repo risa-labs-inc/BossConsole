@@ -1400,6 +1400,12 @@ fun BossTabsComponent.BossMainPanel(
     val focusRequester = rememberPanelFocusRequester(splitViewState, currentPanelId)
     val isFocused = remember { mutableStateOf(false) }
 
+    // Subscribed, and unconditionally: the favicon strip below is drawn only when the window is
+    // split, but a bare `tabsState.value` read would not recompose it when a tab is added,
+    // closed or switched - and subscribing inside that branch would be a remember that appears
+    // and disappears as the window is split and unsplit.
+    val paneTabs by tabsState.subscribeAsState()
+
     // Track the active panel state to force recomposition
     val activePanelId by splitViewState?.activePanelIdState ?: remember { mutableStateOf("") }
     val isActivePanel = activePanelId == currentPanelId
@@ -1495,7 +1501,18 @@ fun BossTabsComponent.BossMainPanel(
             // else is skipped along with it - the border ring, the focus wiring and
             // LocalIsPanelActive above are all this panel's own, and the content below is the
             // same tree either way.
-            panelContent(Modifier.fillMaxSize())
+            //
+            // What the panel does still draw is a favicon strip. See PaneIndicatedContent.
+            PaneIndicatedContent(
+                tabs = paneTabs.tabs,
+                activeIndex = paneTabs.activeIndex,
+                showStrip = (splitViewState?.getAllPanels()?.size ?: 1) > 1,
+                onSelect = { index ->
+                    currentPanelId?.let { splitViewState?.setActivePanel(it) }
+                    selectTab(index)
+                },
+                content = panelContent,
+            )
             return@Box
         }
 

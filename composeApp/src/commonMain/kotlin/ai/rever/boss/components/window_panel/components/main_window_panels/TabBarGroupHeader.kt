@@ -12,6 +12,7 @@ import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -27,6 +28,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,7 +50,19 @@ private val GROUP_HEADER_HEIGHT = 24.dp
 private val SUMMARY_ROW_HEIGHT = 24.dp
 
 /** Indented to sit under the pane's tabs rather than beside its header. */
-private val SUMMARY_ROW_INDENT = 12.dp
+private val SUMMARY_ROW_INDENT = 8.dp
+
+/** Chips are smaller here than in a pane's own strip: this row is chrome, not the tab bar. */
+private val SUMMARY_CHIP_SIZE = 18.dp
+
+/**
+ * How many favicons fit before the row starts counting instead.
+ *
+ * Eight 18dp chips plus the chevron is about a 200dp bar's width. Past that the row would either
+ * wrap - changing its height, which the window bar's item arithmetic depends on - or clip marks
+ * without saying it had.
+ */
+private const val MAX_SUMMARY_CHIPS = 8
 
 /** The little split diagram. Wider than tall, because a window is. */
 private val GLYPH_WIDTH = 16.dp
@@ -168,21 +182,26 @@ private fun GroupHeaderRow(
 }
 
 /**
- * The line standing in for a collapsed pane's other tabs.
+ * The row standing in for a collapsed pane's other tabs.
  *
- * Says how many there are and opens them when clicked. It is deliberately a row rather than a
- * caption: it is the thing you click, and a count with no affordance would read as a statement
- * about the pane instead of a way into it.
+ * Favicons rather than a count. "7 more tabs" said how many there were and nothing about what
+ * they were, so finding one meant opening the pane and reading names; a row of marks is
+ * recognisable at a glance and each one goes straight to its tab.
+ *
+ * The chevron is what opens the pane, so the row keeps a target that is about the pane rather
+ * than about one tab in it - and hovering anywhere here opens it too, exactly as hovering the
+ * header does.
  */
 @Composable
 internal fun TabGroupSummaryRow(group: TabBarGroup) {
     val colors = BossTheme.colors
     val interactionSource = remember { MutableInteractionSource() }
     val hovered by interactionSource.collectIsHoveredAsState()
-    val hidden = group.state.tabs.size - group.state.renderedTabCount
+    val hidden = group.hiddenTabs
 
-    // Hovering here opens the pane, exactly as hovering its header does. Reaching for the count
-    // is reaching for what it stands for, and making the user click first was a step for nothing.
+    // Hovering here opens the pane, exactly as hovering its header does. Reaching for the row of
+    // marks is reaching for what they stand for, and making the user click first was a step for
+    // nothing.
     //
     // Opening removes this row, which leaves the pointer over one of the tabs it just revealed -
     // and that is fine, because the choice is sticky. See TabGroupExpansion.
@@ -195,24 +214,46 @@ internal fun TabGroupSummaryRow(group: TabBarGroup) {
                 .height(SUMMARY_ROW_HEIGHT)
                 .hoverable(interactionSource)
                 .background(if (hovered) colors.raised else Color.Transparent)
-                .clickable(onClick = group.toggleExpanded)
-                .padding(start = SUMMARY_ROW_INDENT, end = 10.dp),
+                .padding(start = SUMMARY_ROW_INDENT, end = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Icon(
             imageVector = Icons.Default.KeyboardArrowDown,
-            contentDescription = null,
+            contentDescription = "Show all tabs",
             tint = colors.textSecondary,
-            modifier = Modifier.size(12.dp),
+            modifier =
+                Modifier
+                    .size(14.dp)
+                    .clickable(onClick = group.toggleExpanded),
         )
-        Text(
-            text = if (hidden == 1) "1 more tab" else "$hidden more tabs",
-            color = colors.textSecondary,
-            fontSize = 11.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Spacer(Modifier.size(2.dp))
+
+        // Capped rather than wrapped, so the row stays exactly one lazy item tall - the window
+        // bar counts items to find where the next pane's rows start, and a row whose height
+        // depends on the tab count would put that arithmetic at the mercy of the bar's width.
+        hidden.take(MAX_SUMMARY_CHIPS).forEach { (index, tab) ->
+            key(tab.id) {
+                TabFaviconChip(
+                    tab = tab,
+                    isActive = false,
+                    size = SUMMARY_CHIP_SIZE,
+                    onClick = {
+                        group.activate()
+                        group.state.activateTab(index)
+                    },
+                )
+            }
+        }
+        if (hidden.size > MAX_SUMMARY_CHIPS) {
+            Text(
+                text = "+${hidden.size - MAX_SUMMARY_CHIPS}",
+                color = colors.textSecondary,
+                fontSize = 10.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
