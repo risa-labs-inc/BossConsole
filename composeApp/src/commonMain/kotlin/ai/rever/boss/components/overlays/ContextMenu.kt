@@ -741,6 +741,25 @@ private fun SubMenuContent(
 fun Modifier.contextMenu(
     enabled: Boolean = true,
     items: List<ContextMenuItem>,
+): Modifier = contextMenu(enabled) { items }
+
+/**
+ * [contextMenu] for a menu that is expensive to build, e.g. one derived from several registries.
+ *
+ * [items] is composed only while the menu is actually open, so a caller that would otherwise hold
+ * flow subscriptions for a menu nobody has asked for pays nothing until the right-click. That is not
+ * a micro-optimisation where the caller is repeated: the sidebar rail attaches one of these to every
+ * plugin icon, and the eager form cost five `collectAsState` subscriptions per icon and re-queried
+ * every plugin's contributed items on every plugin load, for panels the user had never opened.
+ *
+ * The catch, for anyone writing a provider: it is composed inside the open-menu branch, so anything
+ * remembered in it dies when the menu closes - including a `rememberCoroutineScope`, which the menu
+ * closing on the very click that launched the work would then cancel. Work started from a menu row
+ * has to be owned by something that outlives the menu.
+ */
+fun Modifier.contextMenu(
+    enabled: Boolean = true,
+    items: @Composable () -> List<ContextMenuItem>,
 ): Modifier =
     composed {
         var showMenu by remember { mutableStateOf(false) }
@@ -751,7 +770,7 @@ fun Modifier.contextMenu(
 
         if (showMenu && enabled) {
             ContextMenu(
-                items = items,
+                items = items(),
                 offset = menuPosition,
                 onDismissRequest = { showMenu = false },
             )

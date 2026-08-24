@@ -22,12 +22,15 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performMouseInput
 import androidx.compose.ui.test.rightClick
 import org.junit.After
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
 
 /**
  * What right-clicking a plugin's icon in the sidebar rail offers.
@@ -100,7 +103,7 @@ class SidebarIconMenuTest {
         windowId: String? = WINDOW,
         pluginId: String? = null,
         uninstallable: Boolean = true,
-    ) {
+    ): BossDraggableComponent {
         val model = BossDraggableComponent(PanelRegistry())
         val item = SidebarItem(PANEL, Icons.Default.Extension, LABEL)
         compose.setContent {
@@ -114,6 +117,7 @@ class SidebarIconMenuTest {
                 }
             }
         }
+        return model
     }
 
     private fun openMenu() {
@@ -122,7 +126,7 @@ class SidebarIconMenuTest {
 
     @Test
     fun `the icon's menu offers the plugin's own actions, not only the sidebar's`() {
-        showIcon()
+        showIcon(pluginId = PLUGIN)
         openMenu()
 
         compose.onNodeWithText("Reload Panel").assertExists()
@@ -185,8 +189,36 @@ class SidebarIconMenuTest {
     }
 
     @Test
+    fun `a panel with no resolvable plugin is offered no plugin rows`() {
+        // Every one of them routes through the owning plugin, and the handlers give up quietly when
+        // it cannot be resolved - so the rows would be present and inert. Only the sidebar's own
+        // row and Open as Tab, which needs no plugin, are left.
+        showIcon(pluginId = null)
+        openMenu()
+
+        compose.onNodeWithText("Reload Panel").assertDoesNotExist()
+        compose.onNodeWithText("Check for Updates").assertDoesNotExist()
+        compose.onNodeWithText("Uninstall Plugin").assertDoesNotExist()
+        compose.onNodeWithText("Open as Tab").assertExists()
+    }
+
+    @Test
+    fun `Open as Tab focuses the tab already hosting the panel instead of promoting a second`() {
+        // requestOpenAsTab's guard, at the new call site: addTab does not dedupe on TabInfo.id, so a
+        // second promote would leave two tabs rendering one cached panel component.
+        val model = showIcon(pluginId = PLUGIN)
+        model.markHostedAsTab(PANEL)
+        openMenu()
+
+        compose.onNodeWithText("Open as Tab").performClick()
+
+        assertEquals(PANEL, model.pendingFocusHostedTab)
+        assertNull(model.pendingPromoteToTab, "a second promote would double-compose the panel")
+    }
+
+    @Test
     fun `the sidebar's own row survives, after the plugin's`() {
-        showIcon()
+        showIcon(pluginId = PLUGIN)
         openMenu()
 
         compose.onNodeWithText("Sidebar settings").assertExists()
@@ -196,7 +228,7 @@ class SidebarIconMenuTest {
     fun `no Minimize row, since the menu opens just as often with the panel closed`() {
         // The icon's own click already toggles the panel. A Minimize row would be the only item in
         // this menu that silently does nothing for the state the rail is most often in.
-        showIcon()
+        showIcon(pluginId = PLUGIN)
         openMenu()
 
         compose.onNodeWithText("Minimize").assertDoesNotExist()

@@ -27,8 +27,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.graphics.vector.ImageVector
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -66,9 +68,11 @@ data class PanelMenuActions(
  * keeps the two from drifting - each registry is collected rather than read once, so a hot reload,
  * an update landing or a role change re-derives both at the same moment.
  *
- * Everything is left out when there is no panel to act on, or no window to route through:
- * `LocalWindowId` is null outside a tracked window, and every one of these actions is addressed to
- * one.
+ * Everything is left out when there is no panel to act on, no window to route through, or no plugin
+ * behind the panel. All three are load-bearing: `LocalWindowId` is null outside a tracked window,
+ * and every handler in `BossAppMenuActionEffects` resolves the panel's plugin and gives up silently
+ * when it cannot - so a panel with no resolvable plugin would otherwise show Reload Panel and Check
+ * for Updates as rows that do nothing at all, which is what this file's own rule rules out.
  */
 @Composable
 fun panelMenuActions(panelId: PanelId?): PanelMenuActions {
@@ -86,14 +90,14 @@ fun panelMenuActions(panelId: PanelId?): PanelMenuActions {
     val evolver = evolverActions(pluginId)
     val buildInfo = pluginId?.let { pluginBuilds[it] }
 
-    if (panelId == null || windowId == null) {
+    if (panelId == null || windowId == null || pluginId == null) {
         return PanelMenuActions(pluginId = pluginId, buildInfo = buildInfo)
     }
 
     return PanelMenuActions(
         pluginId = pluginId,
         buildInfo = buildInfo,
-        updateAvailable = pluginId?.let { availableUpdates[it] },
+        updateAvailable = availableUpdates[pluginId],
         installStoreVersion =
             if (buildInfo?.isTagged == true) {
                 { MenuActionsHandler.triggerInstallStoreVersion(windowId, panelId) }
@@ -110,15 +114,22 @@ fun panelMenuActions(panelId: PanelId?): PanelMenuActions {
         checkForUpdates = { MenuActionsHandler.triggerCheckPluginUpdates(windowId, panelId) },
         openEvolver = evolver.openEvolver,
         reportIssue = evolver.reportIssue,
-        uninstallPlugin =
-            if (pluginId != null) {
-                { MenuActionsHandler.triggerUninstallPlugin(windowId, panelId) }
-            } else {
-                null
-            },
-        uninstallEnabled = pluginId != null && uninstallable(pluginId),
+        uninstallPlugin = { MenuActionsHandler.triggerUninstallPlugin(windowId, panelId) },
+        uninstallEnabled = uninstallable(pluginId),
     )
 }
+
+private val menuLogger = BossLogger.forComponent("PanelMenu")
+
+/**
+ * Where work started from a menu row runs.
+ *
+ * NOT a `rememberCoroutineScope`: the menu is composed only while it is open (see the deferred
+ * `Modifier.contextMenu`), and it closes on the very click that starts this work - so a scope owned
+ * by the menu would cancel the MCP call before it returned, and the row would do nothing with no
+ * error to show for it. Supervised, so one failed dispatch cannot take the next one down with it.
+ */
+private val menuActionScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
 /** The two Tool Evolver rows, which are gated differently from everything else. */
 private data class EvolverActions(
@@ -137,13 +148,11 @@ private data class EvolverActions(
 @Composable
 private fun evolverActions(pluginId: String?): EvolverActions {
     val registeredMcpTools by McpToolRegistryImpl.tools.collectAsState()
-    val menuScope = rememberCoroutineScope()
-    val logger = remember { BossLogger.forComponent("PanelMenu") }
 
     if (pluginId == null) return EvolverActions()
 
     val dispatch: (String?, String) -> Unit = { section, failLabel ->
-        menuScope.launch {
+        menuActionScope.launch {
             val args =
                 buildJsonObject {
                     put(EvolverContract.ARG_PLUGIN_ID, pluginId)
@@ -151,7 +160,7 @@ private fun evolverActions(pluginId: String?): EvolverActions {
                 }.toString()
             val result = McpToolRegistryImpl.invoke(EvolverContract.OPEN_TOOL, args)
             if (result.isError) {
-                logger.warn(
+                menuLogger.warn(
                     LogCategory.UI,
                     "$failLabel failed",
                     mapOf("pluginId" to pluginId, "error" to result.text),

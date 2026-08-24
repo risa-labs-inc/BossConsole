@@ -17,14 +17,21 @@ import kotlin.test.assertTrue
  * window that appears AFTER the press takes no mouse events at all (the source window holds the
  * implicit grab), so that gap bought nothing and cost ~27px of visible detachment.
  *
- * The other property is the CLAMP, which keeps the ghost on the monitor the pointer is on rather
- * than spilling over a taskbar or onto the wrong display. It is the one thing allowed to move the
- * ghost off its hotspot.
+ * The other property is the CLAMP, which keeps a ghost at the edge of the desktop from hanging half
+ * off it. It is the one thing allowed to move the ghost off its hotspot, so it is asked only when
+ * the ghost would land where no display is - spilling onto the next monitor, or over a dock, costs
+ * nothing and is left alone.
  */
 class HeavyweightGhostPlacementTest {
     private companion object {
-        /** A single 1920x1080 monitor at the origin with a 25px menu bar. */
-        val SINGLE = listOf(intArrayOf(0, 25, 1920, 1055))
+        /**
+         * A single 1920x1080 monitor at the origin.
+         *
+         * Full bounds, not the working area: a ghost is an always-on-top overlay following the
+         * pointer, so a dock or a menu bar is somewhere it may pass over, not somewhere there is no
+         * screen. See screenRects.
+         */
+        val SINGLE = listOf(intArrayOf(0, 0, 1920, 1080))
 
         /** The same, plus a second monitor to its right whose origin is NOT (0, 0). */
         val DUAL = SINGLE + listOf(intArrayOf(1920, 0, 1280, 800))
@@ -78,7 +85,7 @@ class HeavyweightGhostPlacementTest {
     }
 
     @Test
-    fun `at the right edge the ghost is pulled back onto the screen`() {
+    fun `at the right edge of the desktop the ghost is pulled back onto the screen`() {
         // The clamp wins over the hotspot here: half a ghost hanging off the display is worse than
         // a ghost the pointer is no longer centred on.
         val placed = place(1900, 400)
@@ -86,15 +93,15 @@ class HeavyweightGhostPlacementTest {
     }
 
     @Test
-    fun `at the bottom edge it is pulled up clear of the menu-bar-adjusted floor`() {
-        val placed = place(600, 1070)
-        assertEquals(25 + 1055 - GHOST_H, placed.second)
+    fun `at the bottom edge it is pulled up clear of the floor`() {
+        val placed = place(600, 1075)
+        assertEquals(1080 - GHOST_H, placed.second)
     }
 
     @Test
     fun `an edge that still fits is left exactly on the hotspot`() {
-        // Only clamp when it is actually needed: 25 + 1055 = 1080 is the floor, and a cursor at 1000
-        // leaves room for the half of the card that hangs below it.
+        // Only clamp when it is actually needed: a cursor at 1000 leaves room for the half of the
+        // card that hangs below it.
         val placed = place(600, 1000)
         assertEquals(1000 - HOT_Y, placed.second)
     }
@@ -125,12 +132,22 @@ class HeavyweightGhostPlacementTest {
     }
 
     @Test
+    fun `the seam holds along the top of the displays too, not only mid-screen`() {
+        // The trap that a mid-screen seam case cannot see: with the WORKING area as the coverage
+        // test, a card whose left corners reached into the strip a menu bar occupies counted as off
+        // the desktop, so it was pulled fully onto the cursor's monitor - the seam artifact back
+        // again, in a band along the top of every display.
+        val placed = place(1930, 30, DUAL)
+        assertEquals(Pair(1930 - HOT_X, 30 - HOT_Y), placed)
+    }
+
+    @Test
     fun `a pointer on no known monitor is pulled back onto one, not left off-screen`() {
         // Monitors can be unplugged mid-drag, and the coordinates are then off every rect we cached.
         // Without the clamp the ghost would sit thousands of pixels off-screen, invisible for the
         // rest of the drag.
         val placed = place(-5000, -5000, DUAL)
-        assertEquals(Pair(0, 25), placed)
+        assertEquals(Pair(0, 0), placed)
     }
 
     @Test

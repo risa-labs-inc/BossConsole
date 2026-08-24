@@ -25,7 +25,6 @@ import androidx.compose.ui.window.rememberWindowState
 import java.awt.GraphicsEnvironment
 import java.awt.MouseInfo
 import java.awt.Rectangle
-import java.awt.Toolkit
 
 /**
  * Heavyweight drag-ghost host for HARDWARE_ACCELERATED browser mode.
@@ -114,6 +113,13 @@ fun HeavyweightGhost(
  * frame on top of the frame the cursor read is already old. Both callbacks run on the EDT, which is
  * where `setLocation` has to be called from. The state is the fallback for the frames before the
  * window exists.
+ *
+ * That leaves two things that can place this window, so they must not disagree: Compose installs a
+ * `componentMoved` listener that writes the moved position straight back into [state], which keeps
+ * it in step with every `setLocation` here. It is worth knowing that this is what makes the split
+ * safe - if that write-back ever goes away, anything that re-applies [WindowState.position] would
+ * teleport the ghost back to where the drag started, and this loop would only correct it on the
+ * next pointer move.
  */
 @Composable
 private fun FollowCursor(
@@ -163,19 +169,22 @@ private fun placeGhost(
 
 /**
  * Where a ghost of [size] goes for a cursor at ([cursorX], [cursorY]): hung off the pointer by
- * [hotspot], and pulled back onto a monitor if that would put it somewhere there is no screen.
+ * [hotspot], and pulled back onto a monitor only if that would hang it off the edge of the desktop.
  *
- * The clamp exists for the edges of the desktop - a dock, a taskbar, the outside of the rightmost
- * display - and it is the one thing allowed to move the ghost off its hotspot. So it is asked only
- * when the ghost would actually land off-screen: **a ghost that fits inside the union of the
+ * The clamp is the one thing allowed to move the ghost off its hotspot, and it exists for exactly
+ * one case: a ghost half outside every display is half invisible for the rest of the drag. So it is
+ * asked only when the ghost would actually land there. **A ghost that fits inside the union of the
  * monitors is left exactly on the pointer**, which is what keeps a drag across the seam between two
  * displays from yanking the card up to its hotspot's width sideways and snapping it back on the
  * other side. Clamping to the monitor the cursor happens to be on cannot tell the two cases apart -
- * spilling onto the next display is free, spilling onto a dock is what this is for.
+ * spilling onto the next display is free.
  *
  * Coverage is tested by the ghost's corners rather than by area: monitors are rectangles laid out in
  * a grid, so a rectangle whose four corners are all on some screen spans at worst a seam between
- * them, which is exactly the case being allowed.
+ * them, which is exactly the case being allowed. And it is tested against [screenRects], which is
+ * full display bounds rather than working areas - a reserved strip is still a place with a screen
+ * under it, and treating a dock or a menu bar as "no screen" put the seam artifact back in a band
+ * along the top and bottom of every display.
  *
  * Pure so the placement can be pinned by a test, which is the only part of this reachable without a
  * display.
@@ -243,8 +252,16 @@ private fun pinInside(
 ): Int = at.coerceIn(origin, (origin + available - extent).coerceAtLeast(origin))
 
 /**
- * Every monitor's working area as `[x, y, width, height]`, i.e. bounds minus insets (taskbar, dock,
- * menu bar). Read once per ghost: monitors do not come and go mid-drag.
+ * Every monitor's FULL bounds as `[x, y, width, height]`. Read once per ghost: monitors do not come
+ * and go mid-drag.
+ *
+ * Bounds rather than the working area (bounds minus dock, taskbar and menu bar), which is what this
+ * used to subtract. A working area answers "where may a window be placed", and a drag ghost is not
+ * being placed - it is a transient always-on-top overlay tracking the pointer, and the pointer goes
+ * over the dock like anything else. Subtracting the insets made those reserved strips read as "no
+ * screen here", so a ghost whose far corner reached into the menu-bar strip of the display next
+ * door was treated as off the desktop and yanked back onto the cursor's monitor: the seam artifact
+ * this is meant to avoid, restored in a band the height of a menu bar. See [clampGhostToScreens].
  */
 private fun screenRects(): List<IntArray> =
     runCatching {
@@ -253,12 +270,6 @@ private fun screenRects(): List<IntArray> =
             .screenDevices
             .map { device ->
                 val bounds: Rectangle = device.defaultConfiguration.bounds
-                val insets = Toolkit.getDefaultToolkit().getScreenInsets(device.defaultConfiguration)
-                intArrayOf(
-                    bounds.x + insets.left,
-                    bounds.y + insets.top,
-                    bounds.width - insets.left - insets.right,
-                    bounds.height - insets.top - insets.bottom,
-                )
+                intArrayOf(bounds.x, bounds.y, bounds.width, bounds.height)
             }
     }.getOrDefault(emptyList())

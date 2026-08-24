@@ -83,11 +83,12 @@ object PanelMenuRegistryImpl : AccessGatedRegistry {
      *
      * Called wherever a panel menu is BUILT, which is not the same as opened -
      * matching what `PanelMenuContribution.items` already promises callers. The
-     * panel header builds one per composition, and since BossConsole#253 so does
-     * every sidebar rail icon, including panels that have never been opened. Each
-     * is memoised on (panelId, contributions, access), so this runs on plugin
-     * lifecycle and role changes rather than per frame - but `items()` must stay
-     * cheap, and is now called more often than "when a menu opens" suggested.
+     * panel header builds one per composition whether or not anyone opens it;
+     * the sidebar rail icon builds one only while its right-click menu is up,
+     * which is why that menu is passed to `Modifier.contextMenu` as a provider
+     * rather than a list. Each is memoised on (panelId, contributions, access),
+     * so this runs on plugin lifecycle and role changes rather than per frame.
+     * `items()` must still be cheap.
      */
     fun itemsFor(panelId: PanelId): List<Pair<PanelMenuContribution, PanelMenuItem>> {
         val access = _access.value
