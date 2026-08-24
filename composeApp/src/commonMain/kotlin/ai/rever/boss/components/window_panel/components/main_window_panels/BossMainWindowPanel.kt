@@ -1406,6 +1406,9 @@ fun BossTabsComponent.BossMainPanel(
     // and disappears as the window is split and unsplit.
     val paneTabs by tabsState.subscribeAsState()
 
+    // Null outside a managed window, which is the only case that cannot ask for a tab.
+    val paneWindowId = LocalWindowId.current
+
     // Track the active panel state to force recomposition
     val activePanelId by splitViewState?.activePanelIdState ?: remember { mutableStateOf("") }
     val isActivePanel = activePanelId == currentPanelId
@@ -1511,6 +1514,7 @@ fun BossTabsComponent.BossMainPanel(
                     currentPanelId?.let { splitViewState?.setActivePanel(it) }
                     selectTab(index)
                 },
+                onNewTab = paneNewTabAction(paneWindowId, currentPanelId, splitViewState),
                 content = panelContent,
             )
             return@Box

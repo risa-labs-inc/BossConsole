@@ -1,22 +1,40 @@
 package ai.rever.boss.components.window_panel.components.main_window_panels
 
+import ai.rever.boss.components.overlays.HoverTooltipBox
+import ai.rever.boss.components.overlays.TooltipPlacement
+import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.window.MenuActionsHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Divider
+import androidx.compose.material.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
 /** Height of the strip. Deliberately close to the chip it holds: this is an indicator, not a bar. */
@@ -42,6 +60,7 @@ internal fun PaneTabStrip(
     tabs: List<TabInfo>,
     activeIndex: Int,
     onSelect: (Int) -> Unit,
+    onNewTab: (() -> Unit)?,
 ) {
     if (tabs.isEmpty()) return
 
@@ -74,6 +93,48 @@ internal fun PaneTabStrip(
                 onClick = { onSelect(index) },
             )
         }
+
+        // Inside the scrolling row, straight after the last tab, rather than pinned to the end of
+        // the strip. This row holds a handful of icons and rarely scrolls at all; where it does,
+        // a "+" that travels with the tabs is where the eye already is, and one welded to the
+        // right edge would sit over them.
+        if (onNewTab != null) {
+            item(key = "pane-strip-new-tab") {
+                NewTabChip(onClick = onNewTab)
+            }
+        }
+    }
+}
+
+/** The "+" at the end of a pane's strip. Opens a tab in THAT pane, whichever one it belongs to. */
+@Composable
+private fun NewTabChip(onClick: () -> Unit) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val hovered by interactionSource.collectIsHoveredAsState()
+    val colors = BossTheme.colors
+
+    HoverTooltipBox(
+        text = "New tab in this pane",
+        placement = TooltipPlacement.END,
+        modifier = Modifier.size(FAVICON_CHIP_SIZE),
+    ) {
+        Box(
+            modifier =
+                Modifier
+                    .size(FAVICON_CHIP_SIZE)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(if (hovered) colors.raised else Color.Transparent)
+                    .hoverable(interactionSource)
+                    .clickable(onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Default.Add,
+                contentDescription = "New tab in this pane",
+                tint = if (hovered) colors.textPrimary else colors.textSecondary,
+                modifier = Modifier.size(12.dp),
+            )
+        }
     }
 }
 
@@ -91,13 +152,35 @@ internal fun PaneIndicatedContent(
     activeIndex: Int,
     showStrip: Boolean,
     onSelect: (Int) -> Unit,
+    onNewTab: (() -> Unit)?,
     content: @Composable (Modifier) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         if (showStrip) {
-            PaneTabStrip(tabs = tabs, activeIndex = activeIndex, onSelect = onSelect)
+            PaneTabStrip(tabs = tabs, activeIndex = activeIndex, onSelect = onSelect, onNewTab = onNewTab)
             Divider(color = BossTheme.colors.line)
         }
         content(Modifier.weight(1f).fillMaxWidth())
+    }
+}
+
+/**
+ * What a pane's "+" does, or null when there is no window to ask.
+ *
+ * Activates the pane and then asks the WINDOW for a tab. The window's new-tab dialog adds to
+ * whichever panel is active (see BossAppDialogs), so making this pane active first is what aims
+ * it - and it reuses the one dialog the menu bar, the keyboard shortcut and the sidebar's "+"
+ * already go through. A second copy of that tab-type flow inside the panel would be a second
+ * thing to keep in step with every new tab type.
+ */
+internal fun paneNewTabAction(
+    windowId: String?,
+    panelId: String?,
+    splitViewState: SplitViewState?,
+): (() -> Unit)? {
+    if (windowId == null) return null
+    return {
+        if (panelId != null) splitViewState?.setActivePanel(panelId)
+        MenuActionsHandler.triggerNewTab(windowId)
     }
 }
