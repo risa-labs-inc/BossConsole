@@ -3,14 +3,9 @@ package ai.rever.boss.components.window_panel.components.side_panel
 import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.components.model.BossDraggableComponent
 import ai.rever.boss.components.plugin.DynamicPluginManager
-import ai.rever.boss.components.plugin.LocalPanelPluginIdResolver
-import ai.rever.boss.components.plugin.LocalPluginUninstallable
-import ai.rever.boss.components.plugin.PluginBuildRegistry
-import ai.rever.boss.components.plugin.PluginUpdateRegistry
+import ai.rever.boss.components.plugin.rememberPanelMenuActions
 import ai.rever.boss.components.registery.PanelComponentStore
 import ai.rever.boss.components.window_panel.components.BossPanelTopBar
-import ai.rever.boss.mcp.EvolverContract
-import ai.rever.boss.mcp.McpToolRegistryImpl
 import ai.rever.boss.plugin.api.Panel
 import ai.rever.boss.plugin.sandbox.PanelSandboxRegistry
 import ai.rever.boss.plugin.sandbox.ui.PluginCrashRegistry
@@ -19,7 +14,6 @@ import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.LocalWindowId
-import ai.rever.boss.window.MenuActionsHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.hoverable
@@ -30,7 +24,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material.Divider
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -43,8 +36,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import kotlinx.coroutines.launch
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 
 @Composable
 fun BossDraggableComponent.SidePanel(
@@ -76,87 +67,9 @@ fun BossDraggableComponent.SidePanel(
         val title = component?.panelInfo?.displayName ?: "Default title" // getPanelTitle(panel)
         val windowId = LocalWindowId.current
 
-        // Plugin update availability for this panel's owning plugin (host-compatible updates only).
-        val pluginId = pluginContentId?.let { LocalPanelPluginIdResolver.current(it) }
-        val availableUpdates by PluginUpdateRegistry.updates.collectAsState()
-        val updateForPlugin = pluginId?.let { availableUpdates[it] }
-
-        // Which build this panel's plugin is running. Collected (not read once) so the tag appears
-        // the moment a hot reload lands, without the panel having to be reopened.
-        val pluginBuilds by PluginBuildRegistry.builds.collectAsState()
-        val buildForPlugin = pluginId?.let { pluginBuilds[it] }
-        val installStoreVersion: (() -> Unit)? =
-            if (pluginContentId != null && windowId != null && buildForPlugin?.isTagged == true) {
-                { MenuActionsHandler.triggerInstallStoreVersion(windowId, pluginContentId) }
-            } else {
-                null
-            }
-
-        // Uninstall is offered for every plugin panel and disabled for the ones the manager refuses
-        // to unload, so a system plugin shows why the action is unavailable instead of hiding it.
-        val uninstallable = LocalPluginUninstallable.current
-        val uninstallPlugin: (() -> Unit)? =
-            if (pluginContentId != null && windowId != null && pluginId != null) {
-                { MenuActionsHandler.triggerUninstallPlugin(windowId, pluginContentId) }
-            } else {
-                null
-            }
-        val uninstallEnabled = pluginId != null && uninstallable(pluginId)
-        val checkForUpdates: (() -> Unit)? =
-            if (pluginContentId != null && windowId != null) {
-                { MenuActionsHandler.triggerCheckPluginUpdates(windowId, pluginContentId) }
-            } else {
-                null
-            }
-
-        // Tool Evolver menu items, gated via the (RBAC-filtered) MCP registry —
-        // no compile-time coupling to the plugin. "Report Issue" shows whenever the
-        // plugin is active (evolver_open is ungated). "Open Evolver" shows only when
-        // the permission-gated evolver_evolve tool is exposed — i.e. the current
-        // user may evolve (holds the permission, or is admin). Both dispatch
-        // evolver_open with the right section.
-        val registeredMcpTools by McpToolRegistryImpl.tools.collectAsState()
-        val menuScope = rememberCoroutineScope()
-        val evolverLogger = remember { BossLogger.forComponent("SidePanel") }
-        val evolverOpenAvailable =
-            pluginId != null &&
-                registeredMcpTools.any { it.definition.name == EvolverContract.OPEN_TOOL }
-        val evolveAvailable =
-            pluginId != null &&
-                registeredMcpTools.any { it.definition.name == EvolverContract.EVOLVE_TOOL }
-        val dispatchEvolverOpen: (String?, String) -> Unit = { section, failLabel ->
-            val id = pluginId
-            if (id != null) {
-                menuScope.launch {
-                    val args =
-                        buildJsonObject {
-                            put(EvolverContract.ARG_PLUGIN_ID, id)
-                            if (section != null) put(EvolverContract.ARG_SECTION, section)
-                        }.toString()
-                    val result = McpToolRegistryImpl.invoke(EvolverContract.OPEN_TOOL, args)
-                    if (result.isError) {
-                        evolverLogger.warn(
-                            LogCategory.UI,
-                            "$failLabel failed",
-                            mapOf("pluginId" to id, "error" to result.text),
-                        )
-                        StatusMessageManager.showMessage("$failLabel failed: ${result.text}", durationMs = 5000)
-                    }
-                }
-            }
-        }
-        val openEvolver: (() -> Unit)? =
-            if (evolveAvailable) {
-                { dispatchEvolverOpen(null, "Open Evolver") }
-            } else {
-                null
-            }
-        val reportIssue: (() -> Unit)? =
-            if (evolverOpenAvailable) {
-                { dispatchEvolverOpen(EvolverContract.SECTION_ISSUE, "Report Issue") }
-            } else {
-                null
-            }
+        // Everything this panel's menu can do, resolved once and shared with the sidebar rail's
+        // icon menu - see rememberPanelMenuActions.
+        val actions = rememberPanelMenuActions(pluginContentId)
 
         // Drag the panel by its header: reorder/move between sidebar slots, or drop on
         // the central area to open it as a main tab. Reuses the sidebar drag system.
@@ -183,36 +96,23 @@ fun BossDraggableComponent.SidePanel(
         BossPanelTopBar(
             title = title,
             isHovered = isHovered,
-            onReloadPlugin =
-                pluginContentId?.let { panelId ->
-                    windowId?.let { wId ->
-                        {
-                            // Clear the sandbox's consecutive-error count first: a reload replaces
-                            // the code that was failing, so carrying its error tally over would
-                            // leave a freshly loaded plugin one fault away from being quarantined.
-                            // This was the only thing the removed "Restart Panel" item did that
-                            // reloading did not, and it is the half worth keeping.
-                            PanelSandboxRegistry.getSandbox(panelId)?.resetHealth()
-                            MenuActionsHandler.triggerReloadPlugin(wId, panelId)
-                        }
-                    }
-                },
+            onReloadPlugin = actions.reloadPanel,
             onOpenAsTab =
                 pluginContentId?.let { panelId ->
                     { requestPromoteToTab(panelId) }
                 },
-            onCheckForUpdates = checkForUpdates,
-            onOpenEvolver = openEvolver,
-            onReportIssue = reportIssue,
-            onUninstallPlugin = uninstallPlugin,
-            uninstallEnabled = uninstallEnabled,
+            onCheckForUpdates = actions.checkForUpdates,
+            onOpenEvolver = actions.openEvolver,
+            onReportIssue = actions.reportIssue,
+            onUninstallPlugin = actions.uninstallPlugin,
+            uninstallEnabled = actions.uninstallEnabled,
             onMinimize = {
                 setPanelVisible(panel, false)
             },
-            updateAvailable = updateForPlugin,
-            onUpdateClick = checkForUpdates,
-            buildInfo = buildForPlugin,
-            onBuildTagClick = installStoreVersion,
+            updateAvailable = actions.updateAvailable,
+            onUpdateClick = actions.checkForUpdates,
+            buildInfo = actions.buildInfo,
+            onBuildTagClick = actions.installStoreVersion,
             panelId = pluginContentId,
             windowId = windowId,
             dragModifier = headerDragModifier,
