@@ -40,8 +40,13 @@ import kotlinx.coroutines.flow.map
 
 private val windowVerticalTabBarLogger = BossLogger.forComponent("WindowVerticalTabBar")
 
-/** Breathing room above and below the rule that divides one pane's tabs from the next. */
-private val GROUP_RULE_PADDING = 6.dp
+/**
+ * Space above the rule that divides one pane's tabs from the next.
+ *
+ * Larger than the gap around the divider between two tabs, for the same reason that rule runs
+ * full bleed while the tab one is inset: the difference is what tells the two divisions apart.
+ */
+internal val GROUP_RULE_GAP = 10.dp
 
 /**
  * Build one [TabBarGroup] per pane, in the order the panes are laid out on screen.
@@ -66,7 +71,17 @@ fun rememberWindowTabGroups(
     val activePanelId by splitViewState.activePanelIdState
     val several = panels.size > 1
 
-    return panels.map { panel ->
+    // Every pane's measured rectangle, normalised against the area they cover between them. Read
+    // here rather than inside a group because the answer for one pane depends on all of them.
+    val glyphs =
+        panels
+            .mapNotNull { panel -> splitViewState.getPanelBounds(panel.id)?.let { panel.id to it } }
+            .let { measured ->
+                val all = measured.map { it.second }
+                measured.mapNotNull { (id, bounds) -> paneGlyphFor(bounds, all)?.let { id to it } }.toMap()
+            }
+
+    return panels.mapIndexed { index, panel ->
         key(panel.id) {
             // A lone pane is the pane being worked in, whatever the active id says. Without
             // that clause a stale or not-yet-set activePanelId would render the only bar in the
@@ -92,7 +107,14 @@ fun rememberWindowTabGroups(
                         isActiveGroup = isActive,
                     )
                 }
-            TabBarGroup(panelId = panel.id, state = state, isActive = isActive)
+            TabBarGroup(
+                panelId = panel.id,
+                state = state,
+                isActive = isActive,
+                glyph = glyphs[panel.id],
+                label = paneLabel(index, glyphs[panel.id]),
+                activate = { splitViewState.setActivePanel(panel.id) },
+            )
         }
     }
 }
@@ -266,15 +288,19 @@ private fun KeepActiveTabVisible(
     lead: TabBarGroup,
     listState: LazyListState,
 ) {
-    val itemCounts = groups.map { it.state.listItemCount }
+    val itemCounts = groups.listItemCounts()
     val leadIndex = groups.indexOfFirst { it.panelId == lead.panelId }
     val activeIndex = lead.state.activeIndex
 
     LaunchedEffect(lead.panelId, activeIndex, itemCounts) {
         if (leadIndex < 0 || activeIndex < 0 || activeIndex >= lead.state.tabs.size) return@LaunchedEffect
-        // List index, not tab index: the pane's own leading rows sit above its first tab, and
-        // every earlier pane's rows and rules sit above those.
-        val target = groupStartIndex(itemCounts, leadIndex) + lead.state.leadingListItems + activeIndex
+        // List index, not tab index: this pane's header and its own leading rows sit above its
+        // first tab, and every earlier pane's rows sit above those.
+        val target =
+            groupStartIndex(itemCounts, leadIndex) +
+                groups.groupChromeItems() +
+                lead.state.leadingListItems +
+                activeIndex
 
         val layoutInfo = listState.layoutInfo
         val item = layoutInfo.visibleItemsInfo.find { it.index == target }
@@ -307,18 +333,12 @@ private fun ExpandedGroups(
             modifier = Modifier.onGloballyPositioned { coordinates -> onStripBounds(coordinates.boundsInWindow()) },
         ) {
             groups.forEachIndexed { index, group ->
-                if (index > 0) {
-                    // Unlabelled, because a panel id is not a name and there is nothing truthful
-                    // to write here. BossTerm separates its pane clusters the same way. Which
-                    // group is live is said by the amber marker on its active tab, not a heading.
-                    item(key = "boss-tab-group-rule:${group.panelId}") {
-                        Divider(
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 6.dp, vertical = GROUP_RULE_PADDING),
-                            color = BossTheme.colors.line,
-                        )
+                // One header per group, including the first: without one on the first group the
+                // reader has a labelled second pane and an unlabelled first, and has to infer
+                // that the rows above the rule are the other one.
+                if (groups.size > 1) {
+                    item(key = "boss-tab-group-header:${group.panelId}") {
+                        TabBarGroupHeader(group = group, showRule = index > 0)
                     }
                 }
                 group.state.items(this, null)
@@ -387,7 +407,7 @@ private fun RegisterGroupBounds(
     tabDragComponent: TabDraggableComponent,
 ) {
     val panelIds = groups.map { it.panelId }
-    val itemCounts = groups.map { it.state.listItemCount }
+    val itemCounts = groups.listItemCounts()
 
     LaunchedEffect(tabDragComponent, strip, railBounds, leadPanelId, panelIds, itemCounts) {
         if (strip == null) {
@@ -425,88 +445,4 @@ private fun RegisterGroupBounds(
     DisposableEffect(tabDragComponent, panelIds) {
         onDispose { panelIds.forEach { tabDragComponent.unregisterTabBarBounds(it) } }
     }
-}
-
-/**
- * The shared list index the group at [groupIndex] starts at.
- *
- * A rule item precedes every group but the first, and belongs to neither of the two it divides.
- * One definition, because the drop-target partition and the scroll-to-active effect both index
- * the same column and an off-by-one between them is invisible until a drag or a click lands in
- * the wrong place.
- */
-internal fun groupStartIndex(
-    itemCounts: List<Int>,
-    groupIndex: Int,
-): Int {
-    var cursor = 0
-    for (i in 0 until groupIndex) {
-        if (i > 0) cursor++
-        cursor += itemCounts[i]
-    }
-    return if (groupIndex > 0) cursor + 1 else cursor
-}
-
-/**
- * Where each group's rows actually landed, in window coordinates.
- *
- * Null for a group with nothing laid out - scrolled far enough out of view that the list is not
- * measuring it. That group simply cannot be dropped on, which is the honest answer: it is not on
- * screen to aim at.
- */
-internal fun groupSpans(
-    info: LazyListLayoutInfo,
-    strip: Rect,
-    panelIds: List<String>,
-    itemCounts: List<Int>,
-): List<Pair<String, ClosedFloatingPointRange<Float>?>> =
-    panelIds.mapIndexed { index, panelId ->
-        val first = groupStartIndex(itemCounts, index)
-        val last = first + itemCounts[index] - 1
-
-        val visible = info.visibleItemsInfo.filter { it.index in first..last }
-        val span =
-            if (visible.isEmpty()) {
-                null
-            } else {
-                val top = strip.top + (visible.minOf { it.offset } - info.viewportStartOffset).toFloat()
-                val bottom = strip.top + (visible.maxOf { it.offset + it.size } - info.viewportStartOffset).toFloat()
-                top..maxOf(top, bottom)
-            }
-        panelId to span
-    }
-
-/**
- * Carve a shared bar into one rectangle per group, leaving no gap between them.
- *
- * Boundaries sit at the midpoint of the space between two groups, and the first and last groups
- * run to the ends of the bar. The gaps matter: the rule between two groups, and the empty
- * remainder under the last one, are places a tab can be dropped, and every pixel of the bar has
- * to mean something. Extending the ends is also what keeps the single-group case identical to
- * what it was - one group, and its rectangle is the whole bar.
- *
- * Groups with no measured span are left out entirely rather than given an empty rectangle,
- * because [TabDraggableComponent] treats a registered rectangle as a live target.
- */
-internal fun splitBarAmongGroups(
-    strip: Rect,
-    spans: List<Pair<String, ClosedFloatingPointRange<Float>?>>,
-): Map<String, Rect> {
-    val laid = spans.mapNotNull { (panelId, span) -> span?.let { panelId to it } }
-    if (laid.isEmpty()) return emptyMap()
-
-    var top = strip.top
-    return laid
-        .mapIndexed { index, (panelId, span) ->
-            val next = laid.getOrNull(index + 1)?.second
-            val bottom =
-                if (next == null) {
-                    strip.bottom
-                } else {
-                    ((span.endInclusive + next.start) / 2f).coerceIn(strip.top, strip.bottom)
-                }
-            val rect = Rect(strip.left, top, strip.right, maxOf(top, bottom))
-            top = maxOf(top, bottom)
-            panelId to rect
-        }.toMap()
 }

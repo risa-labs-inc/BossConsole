@@ -1001,6 +1001,8 @@
     <ID>PackageNaming:JsDialogNotifier.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
     <ID>PackageNaming:LLMModelFetcher.kt$package ai.rever.boss.components.plugin.panels.right_top</ID>
     <ID>PackageNaming:LLMSettings.kt$package ai.rever.boss.components.plugin.panels.right_top</ID>
+    <ID>PackageNaming:PaneGlyph.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
+    <ID>PackageNaming:PaneGlyphTest.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:PanelHostTab.kt$package ai.rever.boss.components.plugin.tab_types</ID>
     <ID>PackageNaming:PromoteSidebarToTab.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:SecretChangeNotifier.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
@@ -1010,6 +1012,7 @@
     <ID>PackageNaming:SplitViewStateRegistry.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:TabBarFavorites.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:TabBarGroup.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
+    <ID>PackageNaming:TabBarGroupHeader.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:TabBarRevealState.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:TabBarSections.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:TabBarSidebarReveal.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
@@ -1021,6 +1024,7 @@
     <ID>PackageNaming:TopOfMindProvider.kt$package ai.rever.boss.components.plugin.panels.left_bottom.TopOfMind</ID>
     <ID>PackageNaming:VerticalTabBarDrawer.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:VerticalTabBarLayoutTest.kt$package ai.rever.boss.components.window_panel</ID>
+    <ID>PackageNaming:WindowTabBarGroupLayout.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:WindowTabBarGroupsTest.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:WindowVerticalTabBar.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PrintStackTrace:CrashHandler.kt$CrashHandler$e</ID>

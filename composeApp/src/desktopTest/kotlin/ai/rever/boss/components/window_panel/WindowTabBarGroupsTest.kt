@@ -56,20 +56,19 @@ class WindowTabBarGroupsTest {
 
     @Test
     fun `the first group starts at the top of the list`() {
-        assertEquals(0, groupStartIndex(listOf(3, 4), 0))
+        assertEquals(0, groupStartIndex(listOf(4, 5), 0))
     }
 
     @Test
-    fun `later groups start after the rule that precedes them`() {
-        // p1's 3 rows, then the rule, then p2 - so p2 begins at 4, not 3.
-        assertEquals(4, groupStartIndex(listOf(3, 4), 1))
-        // p2's 4 rows and its own preceding rule, then p3's rule: 4 + 4 + 1.
-        assertEquals(9, groupStartIndex(listOf(3, 4, 2), 2))
+    fun `later groups start after everything the earlier ones own`() {
+        // Counts include each group's own header, so this is a plain prefix sum.
+        assertEquals(4, groupStartIndex(listOf(4, 5), 1))
+        assertEquals(9, groupStartIndex(listOf(4, 5, 3), 2))
     }
 
     @Test
-    fun `an empty group still costs its rule`() {
-        assertEquals(1, groupStartIndex(listOf(0, 1), 1))
+    fun `a group with only its header still takes a row`() {
+        assertEquals(1, groupStartIndex(listOf(1, 2), 1))
     }
 
     @Test
@@ -77,8 +76,8 @@ class WindowTabBarGroupsTest {
         // The two callers - the drop-target partition and the scroll-to-active effect - must
         // index the same column, and an off-by-one between them is invisible until a click or a
         // drag lands in the wrong pane.
-        val counts = listOf(3, 3)
-        val info = layout((0..6).map { item(it, offset = it * 32) })
+        val counts = listOf(4, 4)
+        val info = layout((0..7).map { item(it, offset = it * 32) })
         val spans = groupSpans(info, strip, listOf("p1", "p2"), counts)
         val secondGroupTop = strip.top + groupStartIndex(counts, 1) * 32f
         assertEquals(secondGroupTop, spans[1].second?.start)
@@ -87,8 +86,8 @@ class WindowTabBarGroupsTest {
     // ---- groupSpans: which list indices belong to which pane ----------------
 
     @Test
-    fun `one group owns the whole list and no rule precedes it`() {
-        // 1 New Tab row + 2 tabs.
+    fun `one group owns the whole list and draws no header`() {
+        // A lone group has no header: 1 New Tab row + 2 tabs.
         val info = layout((0..2).map { item(it, offset = it * 32) })
         val spans = groupSpans(info, strip, listOf("p1"), listOf(3))
 
@@ -97,25 +96,23 @@ class WindowTabBarGroupsTest {
     }
 
     @Test
-    fun `a rule between two groups belongs to neither`() {
-        // p1 owns indices 0..2, index 3 is the rule, p2 owns 4..6.
-        val info = layout((0..6).map { item(it, offset = it * 32) })
-        val spans = groupSpans(info, strip, listOf("p1", "p2"), listOf(3, 3))
+    fun `two groups own contiguous, non-overlapping ranges`() {
+        // p1 owns indices 0..3 (its header and 3 rows), p2 owns 4..7.
+        val info = layout((0..7).map { item(it, offset = it * 32) })
+        val spans = groupSpans(info, strip, listOf("p1", "p2"), listOf(4, 4))
 
-        // p1 ends at the top of the rule, p2 starts at its bottom - the rule's own 32px is in
-        // neither span, which is what leaves splitBarAmongGroups a gap to halve.
-        assertEquals(100f..196f, spans[0].second)
-        assertEquals(100f + 128f..100f + 224f, spans[1].second)
+        assertEquals(100f..228f, spans[0].second)
+        assertEquals(100f + 128f..100f + 256f, spans[1].second)
     }
 
     @Test
     fun `a group scrolled out of the list has no span at all`() {
         // Only p2's items are laid out; p1 has scrolled off the top.
-        val info = layout((4..6).map { item(it, offset = (it - 4) * 32) }, viewportStart = 0)
-        val spans = groupSpans(info, strip, listOf("p1", "p2"), listOf(3, 3))
+        val info = layout((4..7).map { item(it, offset = (it - 4) * 32) }, viewportStart = 0)
+        val spans = groupSpans(info, strip, listOf("p1", "p2"), listOf(4, 4))
 
         assertEquals(null, spans[0].second)
-        assertEquals(100f..196f, spans[1].second)
+        assertEquals(100f..228f, spans[1].second)
     }
 
     @Test
