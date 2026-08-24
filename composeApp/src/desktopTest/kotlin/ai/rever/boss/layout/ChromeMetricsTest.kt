@@ -25,11 +25,26 @@ class ChromeMetricsTest {
     private val airHeight = 931.dp
     private val airWidth = 1470.dp
 
-    /** macOS defaults: title bar on, all four bars on, focus mode off. */
-    private val macDefaults = WindowAppearanceSettings(showTitleBar = true)
+    /**
+     * The classic chrome: title bar on, all four bars on, tabs across the top, focus mode off.
+     *
+     * Spelled out rather than taken from WindowAppearanceSettings(). It used to BE the default,
+     * and when the default moved to a hidden top bar and a left tab bar these fixtures silently
+     * changed meaning underneath ten tests - including one comparing "top" against "left" that
+     * was suddenly comparing left against left and still passing its first assertion.
+     *
+     * What these tests measure is the arithmetic of a configuration, not which configuration
+     * ships. The shipped one is asserted once, separately, below.
+     */
+    private val classicMac =
+        WindowAppearanceSettings(
+            showTitleBar = true,
+            showTopBar = true,
+            tabBarPosition = TabBarPosition.TOP,
+        )
 
-    /** Windows/Linux defaults, which differ only in the title bar. */
-    private val nonMacDefaults = WindowAppearanceSettings(showTitleBar = false)
+    /** The same, on Windows and Linux, which differ only in the title bar. */
+    private val classicNonMac = classicMac.copy(showTitleBar = false)
 
     private val focusOff = FocusModeSettings(enabled = false)
 
@@ -46,11 +61,14 @@ class ChromeMetricsTest {
             showBottomBar = false,
             showLeftStrip = false,
             showRightStrip = false,
+            // Explicit, because this is the TOP-position baseline the left-position tests below
+            // compare against. Taking it from the default made that comparison vacuous.
+            tabBarPosition = TabBarPosition.TOP,
         )
 
     @Test
-    fun `shipped macOS defaults cost 146dp and leave the page 84 percent`() {
-        val budget = ChromeMetrics.mainPanelBudget(macDefaults, focusOff, comfortable)
+    fun `the classic macOS chrome costs 146dp and leaves the page 84 percent`() {
+        val budget = ChromeMetrics.mainPanelBudget(classicMac, focusOff, comfortable)
 
         // 27 title (26+1) + 41 top (40+1) + 43 tab (42+1) + 31 bottom (30+1) + 4 ring
         assertEquals(146.dp, budget.vertical)
@@ -61,11 +79,29 @@ class ChromeMetricsTest {
     }
 
     @Test
-    fun `Windows and Linux defaults save the title row`() {
-        val budget = ChromeMetrics.mainPanelBudget(nonMacDefaults, focusOff, comfortable)
+    fun `the classic chrome on Windows and Linux saves the title row`() {
+        val budget = ChromeMetrics.mainPanelBudget(classicNonMac, focusOff, comfortable)
 
         assertEquals(119.dp, budget.vertical)
         assertEquals(86.dp, budget.horizontal)
+    }
+
+    @Test
+    fun `the shipped defaults spend less height and more width than the classic chrome`() {
+        // What a fresh install actually gets: no top bar, tabs down the left. The trade is the
+        // point - the row the tab bar occupied and the top bar above it both leave the vertical
+        // axis, and a 200dp column arrives on the horizontal one.
+        val shippedMac = WindowAppearanceSettings(showTitleBar = true)
+        val shipped = ChromeMetrics.mainPanelBudget(shippedMac, focusOff, comfortable)
+
+        // 27 title (26+1) + 31 bottom (30+1) + 4 ring. No top bar, and no tab row.
+        assertEquals(62.dp, shipped.vertical)
+        // 41 per strip (40+1) + 4 ring + 200 bar + 1 divider.
+        assertEquals(287.dp, shipped.horizontal)
+
+        val classic = ChromeMetrics.mainPanelBudget(classicMac, focusOff, comfortable)
+        assertTrue(shipped.vertical < classic.vertical, "the shipped chrome must cost less height")
+        assertTrue(shipped.horizontal > classic.horizontal, "and it pays for that in width")
     }
 
     @Test
@@ -82,8 +118,8 @@ class ChromeMetricsTest {
 
     @Test
     fun `compact density is worth 20dp of height over comfortable`() {
-        val comfortable = ChromeMetrics.mainPanelBudget(macDefaults, focusOff, ChromeDimens.Comfortable)
-        val compact = ChromeMetrics.mainPanelBudget(macDefaults, focusOff, ChromeDimens.Compact)
+        val comfortable = ChromeMetrics.mainPanelBudget(classicMac, focusOff, ChromeDimens.Comfortable)
+        val compact = ChromeMetrics.mainPanelBudget(classicMac, focusOff, ChromeDimens.Compact)
 
         assertEquals(20.dp, comfortable.vertical - compact.vertical)
         // 4 off each strip, 8 across both.
@@ -101,7 +137,7 @@ class ChromeMetricsTest {
                 hideBottomBar = true,
             )
 
-        val budget = ChromeMetrics.mainPanelBudget(macDefaults, focusOn, comfortable)
+        val budget = ChromeMetrics.mainPanelBudget(classicMac, focusOn, comfortable)
 
         // Title row survives: it answers to the appearance preference, not to focus mode.
         assertEquals(27.dp + 43.dp + ring, budget.vertical)
@@ -120,8 +156,8 @@ class ChromeMetricsTest {
             )
 
         assertEquals(
-            ChromeMetrics.mainPanelBudget(macDefaults, focusOff, comfortable),
-            ChromeMetrics.mainPanelBudget(macDefaults, idle, comfortable),
+            ChromeMetrics.mainPanelBudget(classicMac, focusOff, comfortable),
+            ChromeMetrics.mainPanelBudget(classicMac, idle, comfortable),
         )
     }
 
@@ -202,14 +238,14 @@ class ChromeMetricsTest {
     @Test
     fun `the top position is unchanged by any of this`() {
         // The default must cost exactly what it did before the bar could move.
-        val budget = ChromeMetrics.mainPanelBudget(macDefaults, focusOff, comfortable)
+        val budget = ChromeMetrics.mainPanelBudget(classicMac, focusOff, comfortable)
         assertEquals(146.dp, budget.vertical)
         assertEquals(86.dp, budget.horizontal)
     }
 
     @Test
     fun `a degenerate window size reports zero rather than dividing by zero`() {
-        val budget = ChromeMetrics.mainPanelBudget(macDefaults, focusOff, comfortable)
+        val budget = ChromeMetrics.mainPanelBudget(classicMac, focusOff, comfortable)
 
         assertEquals(0f, budget.verticalFractionOf(0.dp))
         assertEquals(0f, budget.horizontalFractionOf((-10).dp))
@@ -217,7 +253,7 @@ class ChromeMetricsTest {
 
     @Test
     fun `chrome taller than the window clamps to zero rather than going negative`() {
-        val budget = ChromeMetrics.mainPanelBudget(macDefaults, focusOff, comfortable)
+        val budget = ChromeMetrics.mainPanelBudget(classicMac, focusOff, comfortable)
 
         assertEquals(0f, budget.verticalFractionOf(100.dp))
     }

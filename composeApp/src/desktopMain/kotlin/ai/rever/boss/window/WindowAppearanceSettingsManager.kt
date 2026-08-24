@@ -48,8 +48,21 @@ actual object WindowAppearanceSettingsManager {
         try {
             if (settingsFile.exists()) {
                 val content = settingsFile.readText()
-                val settings = json.decodeFromString<WindowAppearanceSettings>(content)
-                _currentSettings.value = settings
+                val loaded = json.decodeFromString<WindowAppearanceSettings>(content)
+                // A file written by an older build may need moving to this one's defaults. See
+                // WindowAppearanceMigrations - changing the defaults alone would reach new
+                // installs only, because this manager writes the whole object on every save.
+                val migrated = WindowAppearanceMigrations.migrate(loaded)
+                _currentSettings.value = migrated ?: loaded
+                if (migrated != null) {
+                    // Written back immediately, so the step is not re-applied on every launch -
+                    // and so a value the user changes afterwards is never overwritten by it.
+                    runCatching {
+                        settingsFile.writeText(json.encodeToString(WindowAppearanceSettings.serializer(), migrated))
+                    }.onFailure { e ->
+                        logger.warn(LogCategory.SYSTEM, "Could not write migrated settings", error = e)
+                    }
+                }
                 logger.debug(LogCategory.SYSTEM, "Loaded settings", mapOf("path" to settingsFile.absolutePath))
             } else {
                 // First run - create default settings file with platform-specific defaults
@@ -97,6 +110,11 @@ actual object WindowAppearanceSettingsManager {
         val os = System.getProperty("os.name").lowercase()
         val isMacOS = os.contains("mac")
         // Show title bar on macOS, hide on Linux/Windows
-        return WindowAppearanceSettings(showTitleBar = isMacOS)
+        // Stamped current: a fresh file is already on this build's defaults and must not be
+        // migrated on the next launch as though it were an older one.
+        return WindowAppearanceSettings(
+            showTitleBar = isMacOS,
+            settingsVersion = WindowAppearanceSettings.CURRENT_SETTINGS_VERSION,
+        )
     }
 }

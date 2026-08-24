@@ -18,13 +18,17 @@ import kotlin.test.assertTrue
  */
 class BarContextMenuMappingTest {
     @Test
-    fun `every bar starts visible`() {
-        // The default that makes these fields safe to add to an existing settings file: the manager
-        // decodes with ignoreUnknownKeys, so an absent key must mean "shown" or an upgrade would
-        // silently strip a user's chrome.
+    fun `every bar but the top one starts visible`() {
+        // The three strips default to shown, which is what makes those fields safe to add to an
+        // existing settings file: the manager decodes with ignoreUnknownKeys, so an absent key
+        // means "shown" and an upgrade cannot silently strip a user's chrome.
+        //
+        // The TOP bar is the exception and deliberately so - see WindowAppearanceMigrations, which
+        // is what moves existing files rather than letting a decode default do it silently.
         val defaults = WindowAppearanceSettings()
 
-        ChromeBar.entries.forEach { bar ->
+        assertFalse(defaults.isBarVisible(ChromeBar.TOP), "the top bar now defaults to hidden")
+        ChromeBar.entries.filter { it != ChromeBar.TOP }.forEach { bar ->
             assertTrue(defaults.isBarVisible(bar), "${bar.name} should default to visible")
         }
     }
@@ -32,7 +36,7 @@ class BarContextMenuMappingTest {
     @Test
     fun `hiding a bar round-trips through the same field it reads`() {
         ChromeBar.entries.forEach { bar ->
-            val hidden = WindowAppearanceSettings().withBarVisible(bar, visible = false)
+            val hidden = allVisible().withBarVisible(bar, visible = false)
 
             assertFalse(hidden.isBarVisible(bar), "${bar.name} should read back hidden")
             assertTrue(hidden.withBarVisible(bar, visible = true).isBarVisible(bar))
@@ -43,8 +47,12 @@ class BarContextMenuMappingTest {
     fun `hiding one bar leaves the other three alone`() {
         // The wrong-field bug: writing showBottomBar from ChromeBar.TOP passes a single-bar test
         // and is caught here.
+        //
+        // Starts from all-visible explicitly rather than from the defaults. What this asserts is
+        // that each ChromeBar reads and writes its OWN field, which is true whatever the product
+        // happens to default to - and leaning on the defaults made it fail the day one changed.
         ChromeBar.entries.forEach { bar ->
-            val hidden = WindowAppearanceSettings().withBarVisible(bar, visible = false)
+            val hidden = allVisible().withBarVisible(bar, visible = false)
 
             ChromeBar.entries.filter { it != bar }.forEach { other ->
                 assertTrue(
@@ -79,4 +87,13 @@ class BarContextMenuMappingTest {
         // defines this rule, so a future doc-wide guard cannot flag the assertion that enforces it.
         assertTrue(names.none { it.contains('\u2014') }, "no em-dashes in user-visible strings")
     }
+
+    /** Every bar shown, whatever the product defaults to. The starting point these tests mean. */
+    private fun allVisible() =
+        WindowAppearanceSettings(
+            showTopBar = true,
+            showBottomBar = true,
+            showLeftStrip = true,
+            showRightStrip = true,
+        )
 }

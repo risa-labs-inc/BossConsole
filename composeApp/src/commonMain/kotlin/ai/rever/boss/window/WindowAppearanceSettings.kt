@@ -22,13 +22,16 @@ data class WindowAppearanceSettings(
      * The scaffold requires both to agree, so a bar shows when this is true and focus mode is not
      * currently clearing it.
      *
-     * All four default to `true` on every platform, which is what makes them safe to add to an
-     * existing settings file: the manager decodes with `ignoreUnknownKeys`, so an absent key reads
-     * back as "shown" and nobody's chrome disappears on upgrade. That is why these need none of the
-     * `FocusModeSettings.decodeWithDefaults` machinery, which exists only because *its* defaults
-     * differ per platform.
+     * The other three default to `true` on every platform, which is what made them safe to add to
+     * an existing settings file: the manager decodes with `ignoreUnknownKeys`, so an absent key
+     * reads back as "shown" and nobody's chrome disappeared on upgrade.
+     *
+     * THIS one no longer does. The top bar is off by default now, so a file written before the
+     * key existed would decode as hidden and lose a bar its owner never asked to lose. That is
+     * what [settingsVersion] and [WindowAppearanceMigrations] are for: the migration decides
+     * deliberately, once, instead of a decode default deciding silently.
      */
-    val showTopBar: Boolean = true,
+    val showTopBar: Boolean = false,
     /** Whether the status bar at the bottom of the window is on screen. See [showTopBar]. */
     val showBottomBar: Boolean = true,
     /** Whether the left icon strip is on screen. See [showTopBar]. */
@@ -53,7 +56,16 @@ data class WindowAppearanceSettings(
      * Default TOP: this is the layout the app has always had, and flipping it for existing
      * users on upgrade would be a surprise, not a feature.
      */
-    val tabBarPosition: TabBarPosition = TabBarPosition.TOP,
+    val tabBarPosition: TabBarPosition = TabBarPosition.LEFT,
+    /**
+     * Schema version of this file, used to apply one-time migrations to installs that already
+     * have a settings file written by an older build.
+     *
+     * Deliberately 0, not [CURRENT_SETTINGS_VERSION]: a missing key decodes to the default, and
+     * every file written before this field existed is missing it. The manager stamps the current
+     * version when it writes.
+     */
+    val settingsVersion: Int = 0,
     /**
      * Width in dp of the vertical (left) tab bar, clamped to [TabBarVerticalWidthRange].
      * Ignored when [tabBarPosition] is TOP.
@@ -109,7 +121,49 @@ data class WindowAppearanceSettings(
      * and Linux stay on the drawn menus.
      */
     val useNativeContextMenus: Boolean = true,
-)
+) {
+    companion object {
+        /** Bump when a step is added to [WindowAppearanceMigrations.migrate]. */
+        const val CURRENT_SETTINGS_VERSION = 1
+    }
+}
+
+/**
+ * One-time migrations for [WindowAppearanceSettings] files written by older builds.
+ *
+ * Kept in commonMain and pure, so it is directly testable - the same shape, and for the same
+ * reason, as `WorkspaceSettingsMigrations`.
+ */
+object WindowAppearanceMigrations {
+    /**
+     * Returns the settings to use, or null when the file is already current.
+     *
+     * **0 -> 1: the left tab bar and the hidden top bar become the defaults.** A file sitting on
+     * what every build before this one shipped - top bar shown, tabs across the top - is moved to
+     * them. Any other combination is left exactly as it is.
+     *
+     * It shares the limitation `WorkspaceSettingsMigrations` documents: a file records *what* the
+     * value is, never *who* set it, so an install sitting on the old shipped default cannot be
+     * told apart from someone who chose that same value deliberately. Both are moved once, on
+     * purpose, and everything else is preserved. The step runs at most once, because the migrated
+     * file records the new version.
+     *
+     * Changing the DEFAULT alone would not have done this. The manager writes the whole object on
+     * every save, so an existing file names both values explicitly and would keep them for ever -
+     * the new defaults would reach new installs only, which is not what "by default" means to
+     * somebody who already has BOSS open.
+     */
+    fun migrate(loaded: WindowAppearanceSettings): WindowAppearanceSettings? {
+        if (loaded.settingsVersion >= WindowAppearanceSettings.CURRENT_SETTINGS_VERSION) return null
+
+        val onOldShippedDefaults = loaded.showTopBar && loaded.tabBarPosition == TabBarPosition.TOP
+        return loaded.copy(
+            showTopBar = if (onOldShippedDefaults) false else loaded.showTopBar,
+            tabBarPosition = if (onOldShippedDefaults) TabBarPosition.LEFT else loaded.tabBarPosition,
+            settingsVersion = WindowAppearanceSettings.CURRENT_SETTINGS_VERSION,
+        )
+    }
+}
 
 /**
  * Sizing behaviour for top tabs in the main tab bar.
