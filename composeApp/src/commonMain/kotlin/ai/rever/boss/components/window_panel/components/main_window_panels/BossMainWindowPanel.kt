@@ -92,6 +92,7 @@ import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.Divider
@@ -247,8 +248,73 @@ private fun NewTabButton(
     }
 }
 
+/**
+ * Everything one panel's tab bar needs, separated from the container that draws it.
+ *
+ * Exists because a WINDOW-level vertical bar has to put several panels' tabs inside ONE
+ * `LazyColumn`, and a lazy list's items can only be produced inside its own content lambda. So
+ * the per-panel state has to be hoisted ABOVE that list and handed down as items, rather than
+ * each panel bringing its own container - which is exactly what made a split grow a second bar.
+ *
+ * Deliberately NOT `remember`ed. It is a bundle of lambdas over values that change every
+ * composition (the drop target, the width mode, the tab list), so a remembered instance would
+ * capture the first frame's and never update. The MUTABLE state inside [rememberTabBarState] is
+ * remembered individually, which is what actually needs to survive.
+ */
+@Stable
+class TabBarState
+    // A state bundle, not a call site: every field is passed by name and each one is a
+    // distinct thing a container needs. Grouping them into sub-holders to satisfy the count
+    // would add indirection at every use without making anything clearer.
+    @Suppress("LongParameterList")
+    internal constructor(
+        /** The tab rows, spliced into whichever list is drawing them. */
+        val items: LazyListScope.(tabWidth: Dp?) -> Unit,
+        /** Right-click menu for the bar's own empty chrome. */
+        val barContextMenuItems: List<ContextMenuItem>,
+        /** Open the new-tab dialog for this panel. */
+        val openNewTab: () -> Unit,
+        /** Open it such that what comes out is pinned. */
+        val openPinnedTab: () -> Unit,
+        /** This panel's tabs, already subscribed. */
+        val tabs: List<TabInfo>,
+        /** Index of this panel's active tab. */
+        val activeIndex: Int,
+        /** How many leading tabs are pinned. */
+        val pinnedCount: Int,
+        /** Per-tab right-click menu, shared by the full rows and the collapsed rail's dots. */
+        val tabMenuItems: (Int, TabInfo) -> List<ContextMenuItem>,
+        /** Select a tab in this panel. */
+        val activateTab: (Int) -> Unit,
+        /** Bookmarks for the Favorites shelf, flattened across collections. */
+        val favorites: List<ai.rever.boss.plugin.bookmark.Bookmark>,
+        /** Remove a favourite, resolving its owning collection. */
+        val removeFavorite: (ai.rever.boss.plugin.bookmark.Bookmark) -> Unit,
+        /** Open a favourite as a tab in this panel. */
+        val openFavorite: (ai.rever.boss.plugin.bookmark.Bookmark) -> Unit,
+        /** Whether the bookmarks plugin is installed, by the Install button's own predicate. */
+        val bookmarksInstalled: Boolean?,
+        /** Whether that plugin is actually serving its API. */
+        val bookmarksApiReachable: Boolean,
+        /** Safari-style shrink-to-fit, which only the top strip consults. */
+        val shrinkTabsToFit: Boolean,
+        /** This panel's dialogs. Must stay mounted wherever the bar is drawn. */
+        val dialogs: @Composable () -> Unit,
+        /** Lazy-list items that precede the first tab, for anything indexing the list. */
+        val leadingListItems: Int,
+        /** Scroll state for this panel's rows. */
+        val listState: LazyListState,
+    )
+
+/**
+ * Build a panel's [TabBarState].
+ *
+ * This is the whole of what `BossMainTabBar` used to do before it drew anything, moved out
+ * verbatim so that both containers - the top strip and the window-level vertical bar - can share
+ * it without either owning the other's layout.
+ */
 @Composable
-fun BossTabsComponent.BossMainTabBar(
+fun BossTabsComponent.rememberTabBarState(
     splitViewState: ai.rever.boss.components.window_panel.SplitViewState? = null,
     currentPanelId: String? = null,
     focusRequester: FocusRequester? = null,
@@ -262,40 +328,6 @@ fun BossTabsComponent.BossMainTabBar(
      * independent read is a second thing that can disagree.
      */
     vertical: Boolean = false,
-    /** Width of the vertical bar. Ignored when [vertical] is false. */
-    verticalWidth: Dp = 200.dp,
-    /**
-     * Render this vertical bar as its slim icon rail rather than the full labelled column.
-     *
-     * The rail is a MODE of this composable, not a separate widget beside it, so that the tab
-     * menus, the new-tab dialog and every piece of state behind them are shared. Collapsing must
-     * take away labels, not actions.
-     */
-    collapsed: Boolean = false,
-    /**
-     * Toggle [collapsed]. Null hides the chevron entirely, which is what a top strip (nothing to
-     * collapse) and a transient hover drawer (collapsing it is what the pointer leaving does)
-     * both want.
-     */
-    onToggleCollapse: (() -> Unit)? = null,
-    /**
-     * Marks this bar as a transient hover reveal, and pins it when pressed.
-     *
-     * When non-null it REPLACES the collapse chevron, because the two are different offers and
-     * only one makes sense at a time: a drawer that is only here while the pointer is has nothing
-     * to collapse (leaving does that), and what it lacks is a way to stay. Ported from BossTerm's
-     * `onPin`.
-     */
-    onPin: (() -> Unit)? = null,
-    /**
-     * Report this bar's rectangle to the drag system.
-     *
-     * False for a hover-revealed drawer. A drawer is a SECOND bar for a panel that already has
-     * one registered, and under HARDWARE it lives in its own always-on-top window, where
-     * `boundsInWindow` describes a rectangle in the wrong window entirely. Registering would
-     * therefore overwrite the real bar's bounds with coordinates that mean nothing.
-     */
-    registerBounds: Boolean = true,
     /**
      * Reports whether an interaction that outlives a single click is in flight - today, an open
      * tab context menu.
@@ -313,7 +345,7 @@ fun BossTabsComponent.BossMainTabBar(
      * would otherwise sit open under the pointer that just used it.
      */
     onTabActivated: (() -> Unit)? = null,
-) {
+): TabBarState {
     val tabsState = tabsState.subscribeAsState()
     var showNewTabDialog by remember { mutableStateOf(false) }
     var selectedTabType by remember { mutableStateOf<TabType?>(null) }
@@ -963,6 +995,249 @@ fun BossTabsComponent.BossMainTabBar(
             }
         }
 
+    return TabBarState(
+        items = tabItems,
+        barContextMenuItems = barContextMenuItems,
+        openNewTab = openNewTab,
+        openPinnedTab = openPinnedTab,
+        tabs = tabsState.value.tabs,
+        activeIndex = tabsState.value.activeIndex,
+        pinnedCount = pinnedCount,
+        tabMenuItems = tabMenuItems,
+        activateTab = activateTab,
+        favorites = favorites,
+        removeFavorite = { bookmark ->
+            collections
+                .firstOrNull { collection -> collection.bookmarks.any { it.id == bookmark.id } }
+                ?.let { BookmarkAPIAccess.removeBookmark(it.id, bookmark.id) }
+        },
+        openFavorite = openBookmark,
+        bookmarksInstalled = bookmarksInstalled,
+        bookmarksApiReachable = bookmarksApiReachable,
+        shrinkTabsToFit = shrinkTabsToFit,
+        dialogs = {
+            // New Tab Dialog
+            if (showNewTabDialog) {
+                NewTabDialog(
+                    onDismiss = {
+                        showNewTabDialog = false
+                        selectedTabType = null
+                    },
+                    tabRegistry = tabRegistry,
+                    initialTabType = selectedTabType,
+                    onCreateTab = { type, path ->
+                        when (type) {
+                            TabType.URL -> {
+                                val timestamp = Clock.System.now().toEpochMilliseconds()
+                                val fluckTab =
+                                    ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo(
+                                        id = "fluck-$timestamp",
+                                        typeId = FluckTabType.typeId,
+                                        _title = "Loading...",
+                                        url = path,
+                                    )
+                                openCreatedTab(fluckTab)
+                            }
+
+                            TabType.FILE -> {
+                                val timestamp = Clock.System.now().toEpochMilliseconds()
+                                val fileName = path.extractFileName().ifEmpty { "untitled.txt" }
+                                val fileIconInfo = FileIcons.forFile(fileName)
+                                val editorTab =
+                                    EditorTabInfo(
+                                        id = "editor-$timestamp",
+                                        title = fileName,
+                                        typeId = CodeEditorTabType.typeId,
+                                        icon = fileIconInfo.icon,
+                                        tabIcon =
+                                            ai.rever.boss.plugin.api.TabIcon
+                                                .Vector(fileIconInfo.icon, fileIconInfo.color),
+                                        filePath = path,
+                                    )
+                                openCreatedTab(editorTab)
+                            }
+
+                            TabType.TERMINAL -> {
+                                val timestamp = Clock.System.now().toEpochMilliseconds()
+                                // Get current project path for terminal working directory (per-window)
+                                val projectPath = windowProjectState?.selectedProject?.value?.path ?: ""
+                                val terminalTab =
+                                    TerminalTabInfo(
+                                        id = "terminal-$timestamp",
+                                        typeId = ai.rever.boss.plugin.tab.terminal.TerminalTabType.typeId,
+                                        title = "Terminal",
+                                        icon = ai.rever.boss.plugin.tab.terminal.TerminalTabType.icon,
+                                        initialCommand = path.ifBlank { null },
+                                        workingDirectory = DefaultWorkingDirectory.resolve(projectPath),
+                                    )
+                                openCreatedTab(terminalTab)
+                            }
+
+                            TabType.JUPYTER -> {
+                                val jupyterTab = JupyterTabInfo.createUntitled(path)
+                                openCreatedTab(jupyterTab)
+                            }
+                        }
+                    },
+                    // Plugin tab types build their own TabInfo; open it the same way.
+                    onCreateTabInfo = { tabInfo ->
+                        openCreatedTab(tabInfo)
+                    },
+                    projectPath = windowProjectState?.selectedProject?.value?.path,
+                )
+            }
+
+            // Bookmark dialog (gracefully handles missing bookmarks plugin)
+            if (showBookmarkDialog && tabToBookmark != null) {
+                val dialogCollections = rememberBookmarkCollections()
+                val workspaces by workspaceManager.workspaces.collectAsState()
+                BookmarkDialog(
+                    tabTitle = tabToBookmark!!.title,
+                    collections = dialogCollections,
+                    workspaces = workspaces,
+                    onDismiss = {
+                        showBookmarkDialog = false
+                        tabToBookmark = null
+                    },
+                    onConfirm = { collectionIds, workspacePanelMap ->
+                        val tabConfig = convertTabInfoToTabConfig(tabToBookmark!!)
+                        val workspace = workspaceManager.currentWorkspace.value
+
+                        // Convert workspacePanelMap to list of WorkspacePanelTarget
+                        val targetWorkspaces =
+                            workspacePanelMap.map { (workspaceName, panelId) ->
+                                WorkspacePanelTarget(workspaceName = workspaceName, panelId = panelId)
+                            }
+
+                        // Create bookmark for each selected collection
+                        collectionIds.forEach { collectionId ->
+                            val bookmark =
+                                Bookmark(
+                                    tabConfig = tabConfig,
+                                    workspaceName = workspace?.name ?: "Unknown",
+                                    targetWorkspaces = targetWorkspaces,
+                                )
+                            val collection = dialogCollections.find { it.id == collectionId }
+                            if (collection != null) {
+                                BookmarkAPIAccess.addBookmark(collection.name, bookmark)
+                            }
+                        }
+
+                        showBookmarkDialog = false
+                        tabToBookmark = null
+                    },
+                )
+            }
+
+            // Remove bookmark confirmation dialog
+            if (showRemoveBookmarkDialog && bookmarkToRemove != null) {
+                RemoveBookmarkConfirmationDialog(
+                    bookmarkTitle = bookmarkToRemove!!.third,
+                    onDismiss = {
+                        showRemoveBookmarkDialog = false
+                        bookmarkToRemove = null
+                    },
+                    onConfirm = {
+                        bookmarkToRemove?.let { (collectionId, bookmarkId, _) ->
+                            BookmarkAPIAccess.removeBookmark(collectionId, bookmarkId)
+                        }
+                        showRemoveBookmarkDialog = false
+                        bookmarkToRemove = null
+                    },
+                )
+            }
+        },
+        leadingListItems = leadingListItems,
+        listState = listState,
+    )
+}
+
+@Composable
+fun BossTabsComponent.BossMainTabBar(
+    splitViewState: ai.rever.boss.components.window_panel.SplitViewState? = null,
+    currentPanelId: String? = null,
+    focusRequester: FocusRequester? = null,
+    tabDragComponent: TabDraggableComponent? = null,
+    onTabDropResult: (TabDropResult) -> Unit = {},
+    /**
+     * Render as a vertical bar down the panel's leading edge rather than a strip across its top.
+     *
+     * Passed in rather than read from `WindowAppearanceSettings` here, because the caller has to
+     * know it too - it is what decides whether the panel is a Row or a Column - and a second,
+     * independent read is a second thing that can disagree.
+     */
+    vertical: Boolean = false,
+    /** Width of the vertical bar. Ignored when [vertical] is false. */
+    verticalWidth: Dp = 200.dp,
+    /**
+     * Render this vertical bar as its slim icon rail rather than the full labelled column.
+     *
+     * The rail is a MODE of this composable, not a separate widget beside it, so that the tab
+     * menus, the new-tab dialog and every piece of state behind them are shared. Collapsing must
+     * take away labels, not actions.
+     */
+    collapsed: Boolean = false,
+    /**
+     * Toggle [collapsed]. Null hides the chevron entirely, which is what a top strip (nothing to
+     * collapse) and a transient hover drawer (collapsing it is what the pointer leaving does)
+     * both want.
+     */
+    onToggleCollapse: (() -> Unit)? = null,
+    /**
+     * Marks this bar as a transient hover reveal, and pins it when pressed.
+     *
+     * When non-null it REPLACES the collapse chevron, because the two are different offers and
+     * only one makes sense at a time: a drawer that is only here while the pointer is has nothing
+     * to collapse (leaving does that), and what it lacks is a way to stay. Ported from BossTerm's
+     * `onPin`.
+     */
+    onPin: (() -> Unit)? = null,
+    /**
+     * Report this bar's rectangle to the drag system.
+     *
+     * False for a hover-revealed drawer. A drawer is a SECOND bar for a panel that already has
+     * one registered, and under HARDWARE it lives in its own always-on-top window, where
+     * `boundsInWindow` describes a rectangle in the wrong window entirely. Registering would
+     * therefore overwrite the real bar's bounds with coordinates that mean nothing.
+     */
+    registerBounds: Boolean = true,
+    /**
+     * Reports whether an interaction that outlives a single click is in flight - today, an open
+     * tab context menu.
+     *
+     * All of it is state owned by this composition, so an owner that disposes the bar on its own
+     * schedule (the hover-reveal drawer, which retracts when the pointer leaves) has to keep it
+     * alive while this is true. Otherwise right-clicking a tab in the drawer and moving onto the
+     * menu drops the menu. Null for every owner whose lifetime is not tied to the pointer.
+     */
+    onTransientInteraction: ((Boolean) -> Unit)? = null,
+    /**
+     * Invoked after a tab is activated from this bar, whichever control did it.
+     *
+     * For the hover-reveal drawer, which is finished the moment the user picks something and
+     * would otherwise sit open under the pointer that just used it.
+     */
+    onTabActivated: (() -> Unit)? = null,
+) {
+    val state =
+        rememberTabBarState(
+            splitViewState = splitViewState,
+            currentPanelId = currentPanelId,
+            focusRequester = focusRequester,
+            tabDragComponent = tabDragComponent,
+            onTabDropResult = onTabDropResult,
+            vertical = vertical,
+            onTransientInteraction = onTransientInteraction,
+            onTabActivated = onTabActivated,
+        )
+
+    // Legacy FIXED mode only, and only the top strip reads it: whether the row scrolls decides
+    // where its "+" sits. Derived here rather than on the state because it is a property of THIS
+    // container's layout, not of the panel.
+    val isScrollable by remember(state.listState) {
+        derivedStateOf { state.listState.canScrollForward || state.listState.canScrollBackward }
+    }
+
     if (vertical) {
         VerticalBar(
             width = verticalTabBarWidth(collapsed = collapsed, width = verticalWidth),
@@ -974,7 +1249,7 @@ fun BossTabsComponent.BossMainTabBar(
                     // press first, so this fires on bare chrome and nowhere else. The top strip
                     // keeps its Spacer instead, because there the tabs share the row with a
                     // genuinely empty remainder.
-                    .contextMenu(items = barContextMenuItems)
+                    .contextMenu(items = state.barContextMenuItems)
                     .onGloballyPositioned { coordinates ->
                         // Register tab bar bounds for drag detection. `vertical = true` travels
                         // with the rectangle so reorder, edge scroll and the shifted left drop
@@ -991,19 +1266,11 @@ fun BossTabsComponent.BossMainTabBar(
             val favoritesShelf: @Composable () -> Unit = {
                 if (!collapsed) {
                     TabBarFavorites(
-                        bookmarks = favorites,
-                        pluginInstalled = bookmarksInstalled,
-                        apiReachable = bookmarksApiReachable,
-                        onOpen = { bookmark -> openBookmark(bookmark) },
-                        // The grid is flat, but removal needs the owning collection, so it is
-                        // looked up here where the collections are still in scope rather than
-                        // making every consumer of the grid carry a pair around.
-                        onRemove = { bookmark ->
-                            collections
-                                .firstOrNull { collection ->
-                                    collection.bookmarks.any { it.id == bookmark.id }
-                                }?.let { BookmarkAPIAccess.removeBookmark(it.id, bookmark.id) }
-                        },
+                        bookmarks = state.favorites,
+                        pluginInstalled = state.bookmarksInstalled,
+                        apiReachable = state.bookmarksApiReachable,
+                        onOpen = state.openFavorite,
+                        onRemove = state.removeFavorite,
                         // Never a silent click: if the offer declines to raise a prompt, say so
                         // in the log rather than leaving a button that does nothing and reports
                         // nothing. The shelf only shows this button when the plugin is absent, so
@@ -1016,8 +1283,8 @@ fun BossTabsComponent.BossMainTabBar(
                                     "Install Bookmarks raised no prompt",
                                     mapOf(
                                         "pluginId" to BOOKMARKS_PLUGIN_ID,
-                                        "installed" to bookmarksInstalled.toString(),
-                                        "apiReachable" to bookmarksApiReachable.toString(),
+                                        "installed" to state.bookmarksInstalled.toString(),
+                                        "apiReachable" to state.bookmarksApiReachable.toString(),
                                     ),
                                 )
                             }
@@ -1041,19 +1308,19 @@ fun BossTabsComponent.BossMainTabBar(
                 // The rail is the same bar with its labels taken away, not a lesser one: every
                 // tab is still here, still selectable, and still carries its whole menu.
                 BossTabRail(
-                    tabs = tabsState.value.tabs,
-                    activeIndex = tabsState.value.activeIndex,
-                    pinnedCount = pinnedCount,
+                    tabs = state.tabs,
+                    activeIndex = state.activeIndex,
+                    pinnedCount = state.pinnedCount,
                     onExpand = { onToggleCollapse?.invoke() },
-                    onNewTab = openNewTab,
-                    onSelect = activateTab,
+                    onNewTab = state.openNewTab,
+                    onSelect = state.activateTab,
                     contextMenuItems = { index ->
                         // Guarded rather than indexed blindly: the rail renders from the same
                         // snapshot it was passed, but a menu is built on a later frame and a tab
                         // can close in between.
-                        tabsState.value.tabs
+                        state.tabs
                             .getOrNull(index)
-                            ?.let { tabMenuItems(index, it) }
+                            ?.let { state.tabMenuItems(index, it) }
                             .orEmpty()
                     },
                 )
@@ -1065,9 +1332,9 @@ fun BossTabsComponent.BossMainTabBar(
                     favoritesShelf()
 
                     BossVerticalTabStrip(
-                        listState = listState,
+                        listState = state.listState,
                     ) {
-                        tabItems(null)
+                        state.items(this, null)
                     }
                 }
             }
@@ -1088,8 +1355,8 @@ fun BossTabsComponent.BossMainTabBar(
                     },
             ) {
                 BossLeftTabBar(
-                    listState,
-                    tabCount = tabsState.value.tabs.size,
+                    state.listState,
+                    tabCount = state.tabs.size,
                     // Plus button outside the LazyRow but still inside the strip,
                     // sitting directly after the last tab: always in
                     // SHRINK_TO_FIT (immune to the isScrollable race), and in
@@ -1101,159 +1368,30 @@ fun BossTabsComponent.BossMainTabBar(
                     // reserve rule in BossLeftTabBar's KDoc. NEW_TAB_BUTTON_GAP on
                     // the end side plus the strip's own 8.dp inset reproduces the
                     // 12.dp right margin the pinned-right button used to have.
-                    trailingReserve = if (shrinkTabsToFit || isScrollable) NEW_TAB_SLOT_WIDTH else 0.dp,
+                    trailingReserve = if (state.shrinkTabsToFit || isScrollable) NEW_TAB_SLOT_WIDTH else 0.dp,
                     trailing = {
-                        if (shrinkTabsToFit || isScrollable) {
+                        if (state.shrinkTabsToFit || isScrollable) {
                             NewTabButton(
                                 modifier = Modifier.padding(horizontal = NEW_TAB_BUTTON_GAP),
-                                onClick = openNewTab,
+                                onClick = state.openNewTab,
                             )
                         }
                     },
                 ) { tabWidth ->
-                    tabItems(tabWidth)
+                    state.items(this, tabWidth)
                 }
 
                 Spacer(
                     modifier =
                         Modifier
                             .fillMaxHeight()
-                            .contextMenu(items = barContextMenuItems),
+                            .contextMenu(items = state.barContextMenuItems),
                 )
             }
         }
     }
 
-    // New Tab Dialog
-    if (showNewTabDialog) {
-        NewTabDialog(
-            onDismiss = {
-                showNewTabDialog = false
-                selectedTabType = null
-            },
-            tabRegistry = tabRegistry,
-            initialTabType = selectedTabType,
-            onCreateTab = { type, path ->
-                when (type) {
-                    TabType.URL -> {
-                        val timestamp = Clock.System.now().toEpochMilliseconds()
-                        val fluckTab =
-                            ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo(
-                                id = "fluck-$timestamp",
-                                typeId = FluckTabType.typeId,
-                                _title = "Loading...",
-                                url = path,
-                            )
-                        openCreatedTab(fluckTab)
-                    }
-
-                    TabType.FILE -> {
-                        val timestamp = Clock.System.now().toEpochMilliseconds()
-                        val fileName = path.extractFileName().ifEmpty { "untitled.txt" }
-                        val fileIconInfo = FileIcons.forFile(fileName)
-                        val editorTab =
-                            EditorTabInfo(
-                                id = "editor-$timestamp",
-                                title = fileName,
-                                typeId = CodeEditorTabType.typeId,
-                                icon = fileIconInfo.icon,
-                                tabIcon =
-                                    ai.rever.boss.plugin.api.TabIcon
-                                        .Vector(fileIconInfo.icon, fileIconInfo.color),
-                                filePath = path,
-                            )
-                        openCreatedTab(editorTab)
-                    }
-
-                    TabType.TERMINAL -> {
-                        val timestamp = Clock.System.now().toEpochMilliseconds()
-                        // Get current project path for terminal working directory (per-window)
-                        val projectPath = windowProjectState?.selectedProject?.value?.path ?: ""
-                        val terminalTab =
-                            TerminalTabInfo(
-                                id = "terminal-$timestamp",
-                                typeId = ai.rever.boss.plugin.tab.terminal.TerminalTabType.typeId,
-                                title = "Terminal",
-                                icon = ai.rever.boss.plugin.tab.terminal.TerminalTabType.icon,
-                                initialCommand = path.ifBlank { null },
-                                workingDirectory = DefaultWorkingDirectory.resolve(projectPath),
-                            )
-                        openCreatedTab(terminalTab)
-                    }
-
-                    TabType.JUPYTER -> {
-                        val jupyterTab = JupyterTabInfo.createUntitled(path)
-                        openCreatedTab(jupyterTab)
-                    }
-                }
-            },
-            // Plugin tab types build their own TabInfo; open it the same way.
-            onCreateTabInfo = { tabInfo ->
-                openCreatedTab(tabInfo)
-            },
-            projectPath = windowProjectState?.selectedProject?.value?.path,
-        )
-    }
-
-    // Bookmark dialog (gracefully handles missing bookmarks plugin)
-    if (showBookmarkDialog && tabToBookmark != null) {
-        val dialogCollections = rememberBookmarkCollections()
-        val workspaces by workspaceManager.workspaces.collectAsState()
-        BookmarkDialog(
-            tabTitle = tabToBookmark!!.title,
-            collections = dialogCollections,
-            workspaces = workspaces,
-            onDismiss = {
-                showBookmarkDialog = false
-                tabToBookmark = null
-            },
-            onConfirm = { collectionIds, workspacePanelMap ->
-                val tabConfig = convertTabInfoToTabConfig(tabToBookmark!!)
-                val workspace = workspaceManager.currentWorkspace.value
-
-                // Convert workspacePanelMap to list of WorkspacePanelTarget
-                val targetWorkspaces =
-                    workspacePanelMap.map { (workspaceName, panelId) ->
-                        WorkspacePanelTarget(workspaceName = workspaceName, panelId = panelId)
-                    }
-
-                // Create bookmark for each selected collection
-                collectionIds.forEach { collectionId ->
-                    val bookmark =
-                        Bookmark(
-                            tabConfig = tabConfig,
-                            workspaceName = workspace?.name ?: "Unknown",
-                            targetWorkspaces = targetWorkspaces,
-                        )
-                    val collection = dialogCollections.find { it.id == collectionId }
-                    if (collection != null) {
-                        BookmarkAPIAccess.addBookmark(collection.name, bookmark)
-                    }
-                }
-
-                showBookmarkDialog = false
-                tabToBookmark = null
-            },
-        )
-    }
-
-    // Remove bookmark confirmation dialog
-    if (showRemoveBookmarkDialog && bookmarkToRemove != null) {
-        RemoveBookmarkConfirmationDialog(
-            bookmarkTitle = bookmarkToRemove!!.third,
-            onDismiss = {
-                showRemoveBookmarkDialog = false
-                bookmarkToRemove = null
-            },
-            onConfirm = {
-                bookmarkToRemove?.let { (collectionId, bookmarkId, _) ->
-                    BookmarkAPIAccess.removeBookmark(collectionId, bookmarkId)
-                }
-                showRemoveBookmarkDialog = false
-                bookmarkToRemove = null
-            },
-        )
-    }
+    state.dialogs()
 }
 
 @Composable
