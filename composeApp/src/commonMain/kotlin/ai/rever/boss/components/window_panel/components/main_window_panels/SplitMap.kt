@@ -4,6 +4,7 @@ import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.HoverTooltipBox
 import ai.rever.boss.components.overlays.TooltipPlacement
 import ai.rever.boss.components.overlays.contextMenu
+import ai.rever.boss.components.window_panel.SplitOrientation
 import ai.rever.boss.plugin.ui.BossAlertDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -28,6 +29,8 @@ import androidx.compose.material.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
+import androidx.compose.material.icons.outlined.Splitscreen
+import androidx.compose.material.icons.outlined.ViewColumn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -186,6 +189,24 @@ private fun paneMenuItems(
     onRename: () -> Unit,
 ): List<ContextMenuItem> =
     buildList {
+        // Splitting first, because it is the one that makes another pane - the other two are about
+        // the pane you right-clicked. Same wording and same icons as a tab's own Split entries, so
+        // the two menus do not describe the same operation two different ways.
+        add(
+            ContextMenuItem(
+                text = "Split Right",
+                icon = Icons.Outlined.ViewColumn,
+                onClick = { group.split(SplitOrientation.VERTICAL) },
+            ),
+        )
+        add(
+            ContextMenuItem(
+                text = "Split Down",
+                icon = Icons.Outlined.Splitscreen,
+                onClick = { group.split(SplitOrientation.HORIZONTAL) },
+            ),
+        )
+        add(ContextMenuItem(isDivider = true))
         add(
             ContextMenuItem(
                 text = "Rename Pane",

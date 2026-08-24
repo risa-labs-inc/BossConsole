@@ -4,6 +4,7 @@ import ai.rever.boss.plugin.api.TabRegistry
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /**
  * Showing one pane alone, from a double-click on the split map.
@@ -127,5 +128,39 @@ class PaneZoomTest {
         s.closePanel(second)
 
         assertNull(s.panelName(second))
+    }
+
+    // ---- splitting a pane from its own menu ---------------------------------
+
+    @Test
+    fun `splitting a pane adds one and leaves the original`() {
+        // The pane menu's split takes no tab: it splits the PANE, so the new one starts empty.
+        // Splitting from a tab's own menu is the other gesture, and that one moves the tab.
+        val s = state()
+        s.splitPanel("main", SplitOrientation.VERTICAL)
+
+        val panels = s.getAllPanels()
+        assertEquals(2, panels.size)
+        assertTrue(panels.any { it.id == "main" }, "the pane being split must survive it")
+    }
+
+    @Test
+    fun `a pane split both ways ends up with three`() {
+        val s = state()
+        s.splitPanel("main", SplitOrientation.VERTICAL)
+        s.splitPanel("main", SplitOrientation.HORIZONTAL)
+
+        assertEquals(3, s.getAllPanels().size)
+    }
+
+    @Test
+    fun `splitting the zoomed pane leaves the zoom on the pane that was split`() {
+        // The new pane is not what the user was looking at, and zoom follows the ACTIVE pane -
+        // so a split that silently moved the zoom would hide the pane they just split.
+        val s = state()
+        s.zoomPanel("main")
+        s.splitPanel("main", SplitOrientation.VERTICAL)
+
+        assertEquals("main", s.zoomedPanelId)
     }
 }

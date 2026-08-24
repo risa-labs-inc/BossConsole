@@ -131,6 +131,9 @@ fun rememberWindowTabGroups(
                 activate = { splitViewState.setActivePanel(panel.id) },
                 zoom = { splitViewState.zoomPanel(panel.id) },
                 rename = { name -> splitViewState.renamePanel(panel.id, name) },
+                // No tab travels with it: this splits the PANE, so the new one starts empty.
+                // Splitting from a tab's own menu is the other gesture and moves that tab.
+                split = { orientation -> splitViewState.splitPanel(panel.id, orientation) },
                 newTab = state.openNewTab,
                 // Only offered where there is a split to undo. closePanel refuses to remove a
                 // lone panel anyway, so a button for it would be one that does nothing.
