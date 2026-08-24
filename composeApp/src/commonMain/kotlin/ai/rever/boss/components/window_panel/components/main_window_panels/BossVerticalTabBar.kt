@@ -117,23 +117,27 @@ private val RAIL_BUTTON_SIZE = NEW_TAB_BUTTON_SIZE
  * here a tab's width IS the bar's width, so there is no budget, no measured trailing reserve
  * and no integer-pixel rounding to get wrong. What is left is a [LazyColumn] that scrolls.
  *
- * The "New Tab" row is the last ITEM of this list rather than a slot beneath it, so it sits
- * directly under the last tab and moves with it. That is Arc's placement, and it is why this
- * takes no trailing slot: the horizontal strip needs one because its "+" must survive the row
- * scrolling sideways, and here the row is meant to travel with the list.
+
+ * The "New Tab" row is the FIRST item of this list rather than a slot beneath it, directly under
+ * the bar's header - which is where Arc puts it, and the one row whose position should not depend
+ * on how many tabs there are. That is also why this takes no trailing slot: the horizontal strip
+ * needs one because its "+" must survive the row scrolling sideways, and here nothing scrolls
+ * away from the top.
  *
- * @param listState scroll state, shared with the drag system's edge-scroll callback.
- * @param content the tab rows, and the New Tab row after them.
+ * @param listState scroll state, shared with the drag system's edge-scroll callback. A window-level
+ *   bar passes one state for several panes' rows, which is what makes them one column.
+ * @param content the tab rows, and for a window bar the rules between one pane's and the next's.
  */
 @Composable
 fun ColumnScope.BossVerticalTabStrip(
     listState: LazyListState,
+    modifier: Modifier = Modifier,
     content: LazyListScope.() -> Unit,
 ) {
     LazyColumn(
         state = listState,
         modifier =
-            Modifier
+            modifier
                 .weight(1f)
                 .fillMaxWidth()
                 .lazyListScrollbar(
@@ -154,21 +158,21 @@ fun ColumnScope.BossVerticalTabStrip(
  * a title, so a tab is a dot; identity comes from the tooltip and from the ring on the active
  * one. Ported from BossTerm's `TabBar` collapsed branch.
  *
- * The dots carry the same [contextMenuItems] the full tabs do, so collapsing the bar never
- * takes an action away - only the labels that named them.
+ * The dots carry the same context menus the full tabs do, so collapsing the bar never takes an
+ * action away - only the labels that named them.
  *
- * @param onSelect invoked with the tab's index.
- * @param contextMenuItems per-tab menu, built by the caller exactly as for a full tab row.
+ * Every pane's dots are here, in pane order, divided by the same rule the expanded bar uses. A
+ * collapsed bar that showed only the active pane would be the duplicate-bar problem again, in
+ * miniature: the user would have to activate a pane to find out what was in it.
+ *
+ * @param groups one per pane, from `rememberWindowTabGroups`.
+ * @param onNewTab the "+" at the foot, which opens a tab in the pane that owns the bar's chrome.
  */
 @Composable
 fun BossTabRail(
-    tabs: List<TabInfo>,
-    activeIndex: Int,
-    pinnedCount: Int,
+    groups: List<TabBarGroup>,
     onExpand: () -> Unit,
     onNewTab: () -> Unit,
-    onSelect: (Int) -> Unit,
-    contextMenuItems: (Int) -> List<ContextMenuItem>,
 ) {
     val colors = BossTheme.colors
     Column(
@@ -192,25 +196,18 @@ fun BossTabRail(
             verticalArrangement = Arrangement.spacedBy(RAIL_DOT_GAP),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            tabs.forEachIndexed { index, tab ->
-                val isActive = index == activeIndex
-                // The rail keeps the section break too, as a short rule between the two groups
-                // of dots. Without it the rail is the one place where pinning is invisible, and
-                // the whole point of pinning something is that you can find it again.
-                if (pinnedCount in 1 until tabs.size && index == pinnedCount) {
+            groups.forEachIndexed { groupIndex, group ->
+                // The rule between panes is wider than the one between a pane's pinned and open
+                // dots, so the two divisions cannot be mistaken for each other at this size.
+                if (groupIndex > 0) {
                     Box(
                         Modifier
-                            .fillMaxWidth(0.5f)
+                            .fillMaxWidth(0.7f)
                             .height(1.dp)
                             .background(colors.line),
                     )
                 }
-                RailDot(
-                    title = tab.title,
-                    isActive = isActive,
-                    onSelect = { onSelect(index) },
-                    contextMenuItems = contextMenuItems(index),
-                )
+                RailGroupDots(group = group, showPinnedRule = groups.size == 1)
             }
         }
 
@@ -221,6 +218,48 @@ fun BossTabRail(
             icon = Icons.Default.Add,
             contentDescription = "New Tab",
             onClick = onNewTab,
+        )
+    }
+}
+
+/**
+ * One pane's dots on the rail.
+ *
+ * @param showPinnedRule whether to keep the short rule between this pane's pinned and open dots.
+ *   Dropped once the rail holds several panes, for the same reason the expanded bar drops its
+ *   section headers there: two kinds of divider at this size read as one arbitrary one.
+ */
+@Composable
+private fun RailGroupDots(
+    group: TabBarGroup,
+    showPinnedRule: Boolean,
+) {
+    val colors = BossTheme.colors
+    val tabs = group.state.tabs
+    val pinnedCount = group.state.pinnedCount
+    tabs.forEachIndexed { index, tab ->
+        // Guarded rather than indexed blindly: the rail renders from the same snapshot it was
+        // passed, but a menu is built on a later frame and a tab can close in between.
+        val menuItems = tabs.getOrNull(index)?.let { group.state.tabMenuItems(index, it) }.orEmpty()
+
+        // The rail keeps the section break too, as a short rule between the two groups of dots.
+        // Without it the rail is the one place where pinning is invisible, and the whole point of
+        // pinning something is that you can find it again.
+        if (showPinnedRule && pinnedCount in 1 until tabs.size && index == pinnedCount) {
+            Box(
+                Modifier
+                    .fillMaxWidth(0.5f)
+                    .height(1.dp)
+                    .background(colors.line),
+            )
+        }
+        RailDot(
+            title = tab.title,
+            // Ringed only in the pane the user is working in: with several panes on the rail,
+            // one ring per pane would be several claims to be the current tab.
+            isActive = index == group.state.activeIndex && group.isActive,
+            onSelect = { group.state.activateTab(index) },
+            contextMenuItems = menuItems,
         )
     }
 }

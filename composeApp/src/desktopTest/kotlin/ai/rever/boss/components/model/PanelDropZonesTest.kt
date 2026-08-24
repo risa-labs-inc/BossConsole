@@ -96,4 +96,61 @@ class PanelDropZonesTest {
         assertEquals(225f, z.leftZone.right)
         assertEquals(narrow.right, z.rightZone.right)
     }
+
+    /**
+     * The regression the window-level tab bar would otherwise have shipped.
+     *
+     * `registerPanelDropZones` used to take the inset from the bar's WIDTH. One bar for the whole
+     * window is registered against every panel and covers none of them, so every panel would have
+     * lost 200px of its left edge to a bar sitting outside the split tree - and with it the
+     * left-split-by-drag gesture on all of them at once.
+     */
+    @Test
+    fun `a bar outside the panel takes nothing off it`() {
+        val drag = TabDraggableComponent()
+        // The window bar: to the LEFT of the panel, ending where the panel begins.
+        drag.registerTabBarBounds(
+            panelId = "p1",
+            bounds = Rect(left = -200f, top = 0f, right = 0f, bottom = 800f),
+            vertical = true,
+        )
+        drag.registerPanelDropZones("p1", panel)
+
+        val z = drag.panelDropZones.getValue("p1")
+        assertEquals(0f, z.leftZone.left)
+        assertTrue(z.leftZone.contains(Offset(10f, panel.height / 2)))
+    }
+
+    @Test
+    fun `a bar inside the panel still pushes its left zone past itself`() {
+        val drag = TabDraggableComponent()
+        drag.registerTabBarBounds(
+            panelId = "p1",
+            bounds = Rect(left = 0f, top = 0f, right = barWidth, bottom = 800f),
+            vertical = true,
+        )
+        drag.registerPanelDropZones("p1", panel)
+
+        val z = drag.panelDropZones.getValue("p1")
+        assertEquals(barWidth, z.leftZone.left)
+        assertFalse(z.leftZone.contains(Offset(10f, panel.height / 2)))
+    }
+
+    @Test
+    fun `a top strip takes nothing off the sides whatever it overlaps`() {
+        val drag = TabDraggableComponent()
+        drag.registerTabBarBounds(
+            panelId = "p1",
+            bounds = Rect(left = 0f, top = 0f, right = 1000f, bottom = 36f),
+            vertical = false,
+        )
+        drag.registerPanelDropZones("p1", panel)
+
+        assertEquals(
+            0f,
+            drag.panelDropZones
+                .getValue("p1")
+                .leftZone.left,
+        )
+    }
 }

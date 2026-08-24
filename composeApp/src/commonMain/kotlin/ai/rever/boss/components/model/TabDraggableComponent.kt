@@ -32,6 +32,17 @@ data class TabBoundInfo(
 data class TabBarBoundInfo(
     val bounds: Rect,
     val vertical: Boolean,
+    /**
+     * The rectangle whose ENDS mean "scroll" - the whole scrolling list, which is not always
+     * this bar's own rectangle.
+     *
+     * A window-level bar registers one slice of itself per pane, so a pane's [bounds] end where
+     * the next pane's begin. Taking the edge-scroll trigger from those would auto-scroll the
+     * list whenever a drag approached the rule between two panes, which is precisely where the
+     * user is aiming when moving a tab from one pane to the other. Defaults to [bounds], which
+     * is right whenever a bar is the whole of its own list.
+     */
+    val scrollBounds: Rect = bounds,
 )
 
 /**
@@ -242,7 +253,7 @@ private fun edgeScrollDirection(
     position: Offset,
     threshold: Float,
 ): ScrollDirection? {
-    val b = bar.bounds
+    val b = bar.scrollBounds
     val along = if (bar.vertical) position.y else position.x
     val across = if (bar.vertical) position.x else position.y
     val acrossRange = if (bar.vertical) b.left..b.right else b.top..b.bottom
@@ -634,20 +645,41 @@ class TabDraggableComponent {
         panelId: String,
         bounds: Rect,
         vertical: Boolean,
+        scrollBounds: Rect = bounds,
     ) {
-        tabBarBounds[panelId] = TabBarBoundInfo(bounds, vertical)
+        tabBarBounds[panelId] = TabBarBoundInfo(bounds, vertical, scrollBounds)
+    }
+
+    /**
+     * Forget a panel's tab bar rectangle while keeping everything else about the panel.
+     *
+     * For a bar that stops showing a panel's tabs without the panel going anywhere: a
+     * window-level bar collapsed to its rail, or a group scrolled out of the list entirely. A
+     * rectangle left behind would keep claiming a piece of the screen for tabs that are not
+     * drawn there any more, and [updateDropTarget] tests these before anything else.
+     */
+    fun unregisterTabBarBounds(panelId: String) {
+        tabBarBounds.remove(panelId)
     }
 
     /**
      * Register panel drop zones for split creation.
      *
-     * The left zone is pushed in by the width of a VERTICAL tab bar, if this panel has one.
-     * Without that it lands entirely underneath the bar, and since [updateDropTarget] tests
-     * tab-bar bounds first, dropping a tab on a left-positioned panel's leading edge could
-     * only ever mean "move into that panel" - left-split-by-drag would be unreachable there.
+     * The left zone is pushed in by however much of a VERTICAL tab bar actually covers this
+     * panel's leading edge. Without that it lands entirely underneath the bar, and since
+     * [updateDropTarget] tests tab-bar bounds first, dropping a tab on a left-positioned
+     * panel's leading edge could only ever mean "move into that panel" - left-split-by-drag
+     * would be unreachable there.
+     *
+     * Measured as the OVERLAP of the bar over the panel rather than taken as the bar's width,
+     * because a bar is not always inside the panel whose tabs it lists. A window-level bar
+     * lists every panel's tabs and sits outside the split tree entirely, so it covers none of
+     * them and every panel keeps its full left zone; taking the width there would shrink each
+     * panel's leading edge by a bar that is nowhere near it. One rule, and it is the geometry
+     * itself, so the two cases cannot disagree.
      *
      * Read from this panel's own registered bar rather than passed in, so the caller does not
-     * have to know a width that the bar has already measured and reported. It is one frame
+     * have to know a rectangle the bar has already measured and reported. It is one frame
      * behind on the very first layout (zones registered before the bar reports), which costs
      * a mis-placed left zone until the next layout pass and nothing after that.
      */
@@ -656,7 +688,12 @@ class TabDraggableComponent {
         bounds: Rect,
     ) {
         val bar = tabBarBounds[panelId]
-        val leadingInset = if (bar != null && bar.vertical) bar.bounds.width else 0f
+        val leadingInset =
+            if (bar != null && bar.vertical) {
+                (bar.bounds.right - bounds.left).coerceIn(0f, bounds.width)
+            } else {
+                0f
+            }
         panelDropZones[panelId] = PanelDropZones.fromBounds(bounds, leadingInset = leadingInset)
     }
 

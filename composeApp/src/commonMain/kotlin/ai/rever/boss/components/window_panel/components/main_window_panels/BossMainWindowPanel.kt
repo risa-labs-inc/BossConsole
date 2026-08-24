@@ -304,7 +304,14 @@ class TabBarState
         val leadingListItems: Int,
         /** Scroll state for this panel's rows. */
         val listState: LazyListState,
-    )
+    ) {
+        /**
+         * How many lazy-list items this group contributes, tabs and its own leading rows alike.
+         *
+         * A window bar adds these up to know where each group starts in the shared column.
+         */
+        val listItemCount: Int get() = leadingListItems + tabs.size
+    }
 
 /**
  * Build a panel's [TabBarState].
@@ -345,6 +352,39 @@ fun BossTabsComponent.rememberTabBarState(
      * would otherwise sit open under the pointer that just used it.
      */
     onTabActivated: (() -> Unit)? = null,
+    /**
+     * The list these rows will actually live in, when that list is not this panel's own.
+     *
+     * A window-level bar splices several panels' rows into ONE column, and everything here that
+     * scrolls - the drag edge-scroll, the keep-the-active-tab-visible effect - has to move that
+     * column rather than a state nothing is attached to. Null means "you are the only group in
+     * your list", which is the top strip and the single-panel case.
+     */
+    sharedListState: LazyListState? = null,
+    /**
+     * Whether this panel may scroll the list to keep its own active tab in view.
+     *
+     * False for a group in a shared list: a background pane changing tabs would otherwise yank
+     * the viewport away from the pane the user is looking at. The owner of a shared list runs
+     * one such effect, for the active pane only.
+     */
+    autoScrollToActive: Boolean = true,
+    /**
+     * Whether a pinned block may carry its PINNED / OPEN headers.
+     *
+     * False once the bar holds more than one group. The group rules already divide the column,
+     * and a second kind of divider inside each of them turns the bar into mostly headers. Pinned
+     * tabs stay first either way - that is the invariant, not the labels.
+     */
+    showSections: Boolean = true,
+    /**
+     * Whether this group belongs to the pane the user is working in.
+     *
+     * Only the active pane's selected tab wears the amber marker; every other group's shows the
+     * quiet line. With one bar for several panes this is the only thing saying which pane a click
+     * will land in - see BossTabButton's isFocused.
+     */
+    isActiveGroup: Boolean = true,
 ): TabBarState {
     val tabsState = tabsState.subscribeAsState()
     var showNewTabDialog by remember { mutableStateOf(false) }
@@ -391,8 +431,11 @@ fun BossTabsComponent.rememberTabBarState(
     var bookmarkToRemove by remember { mutableStateOf<Triple<String, String, String>?>(null) }
     // Triple = (collectionId, bookmarkId, tabTitle)
 
-    // LazyListState for tab bar scrolling
-    val listState = rememberLazyListState()
+    // LazyListState for tab bar scrolling. Remembered unconditionally even when the caller
+    // supplies one: a remember that appears only on some compositions is a positional slot that
+    // moves, and this call site is shared by every container.
+    val ownListState = rememberLazyListState()
+    val listState = sharedListState ?: ownListState
 
     // Tab sizing behaviour (Settings → Window Appearance → Tab Bar).
     // SHRINK_TO_FIT passes the computed per-tab width down to each button;
@@ -528,9 +571,11 @@ fun BossTabsComponent.rememberTabBarState(
                         }
 
                         ScrollDirection.FORWARD -> {
-                            // Scroll to next item
+                            // Scroll to next item. Counted off the LIST, not off this panel's
+                            // tabs: the two are the same number only when this panel is the
+                            // whole list, and in a window bar it is one group of several.
                             val lastVisible = visibleItems.lastOrNull()?.index ?: 0
-                            val totalItems = tabsState.value.tabs.size
+                            val totalItems = layoutInfo.totalItemsCount
                             if (lastVisible < totalItems - 1) {
                                 listState.animateScrollToItem(lastVisible + 1)
                             }
@@ -551,18 +596,19 @@ fun BossTabsComponent.rememberTabBarState(
     // nothing pinned is a plain list with no headers - the common case, and labelling a lone
     // section "Open" would be noise. The top strip never sections: it has no room for a header,
     // and pinned tabs are already first in it by the invariant.
-    val sectionsShown = vertical && pinnedCount > 0
+    val sectionsShown = vertical && pinnedCount > 0 && showSections
 
-    // Lazy-list items that come BEFORE the first tab. Exactly the "PINNED" header, when there is
-    // one - the separator and the "OPEN" header ride inside the first unpinned tab's item rather
-    // than being items of their own. Anything indexing the lazy list rather than the tab model
-    // has to add this, which today is the scroll-to-active effect.
-    val leadingListItems = if (sectionsShown) 1 else 0
+    // Lazy-list items that come BEFORE this group's first tab: the vertical bar's "New Tab" row,
+    // and the "PINNED" header when there is one. The separator and the "OPEN" header ride inside
+    // the first unpinned tab's item rather than being items of their own. Anything indexing the
+    // lazy list rather than the tab model has to add this - the scroll-to-active effect below,
+    // and a window bar working out where each group starts.
+    val leadingListItems = (if (vertical) 1 else 0) + (if (sectionsShown) 1 else 0)
 
     // Auto-scroll to active tab when it changes
-    LaunchedEffect(tabsState.value.activeIndex) {
+    LaunchedEffect(tabsState.value.activeIndex, autoScrollToActive) {
         val activeIndex = tabsState.value.activeIndex
-        if (activeIndex >= 0 && activeIndex < tabsState.value.tabs.size) {
+        if (autoScrollToActive && activeIndex >= 0 && activeIndex < tabsState.value.tabs.size) {
             // Only scroll if the tab is not fully visible
             val layoutInfo = listState.layoutInfo
             val visibleItems = layoutInfo.visibleItemsInfo
@@ -811,6 +857,10 @@ fun BossTabsComponent.rememberTabBarState(
         }
     }
 
+    // Namespace for this group's fixed item keys. The component's identity rather than the panel
+    // id, because a bar can be built without one and two key-less groups would then collide.
+    val itemKeyScope = currentPanelId ?: this.hashCode().toString()
+
     val tabItems: LazyListScope.(tabWidth: Dp?) -> Unit = { tabWidth ->
         // Sections exist only once something is pinned, and only in the vertical bar. A panel
         // with nothing pinned is a plain list with no headers - which is the common case, and
@@ -821,13 +871,16 @@ fun BossTabsComponent.rememberTabBarState(
         // position should not depend on how many tabs there are, and at the top it never scrolls
         // away, which is what a bottom-anchored slot was reaching for the hard way.
         if (vertical) {
-            item(key = "boss-tab-new-row") {
+            // Keys carry the panel id because a window bar splices several groups into ONE list,
+            // and a LazyColumn throws on a duplicate key. The tab items below are keyed
+            // positionally by the list itself, so only these fixed ones need it.
+            item(key = "boss-tab-new-row:$itemKeyScope") {
                 NewTabRow(onClick = openNewTab)
             }
         }
 
         if (sectionsShown) {
-            item(key = "boss-tab-section-pinned") {
+            item(key = "boss-tab-section-pinned:$itemKeyScope") {
                 SectionHeader(
                     label = "PINNED",
                     onAdd = openPinnedTab,
@@ -864,7 +917,10 @@ fun BossTabsComponent.rememberTabBarState(
             BossTabButtonWithFavicon(
                 config = config,
                 isSelected = isSelected,
-                isFocused = true, // Tab bars are always considered focused when window is active
+                // Focused means "a click here lands where the user is working". With one bar per
+                // panel that is always true; with one bar for several panes only the active
+                // pane's group can say it.
+                isFocused = isActiveGroup,
                 // A vertical tab's width is the bar's, so tabWidth is not consulted there at all.
                 tabWidth = if (!vertical && shrinkTabsToFit) tabWidth else null,
                 vertical = vertical,
@@ -1152,6 +1208,13 @@ fun BossTabsComponent.rememberTabBarState(
     )
 }
 
+/**
+ * The tab strip across the top of a panel.
+ *
+ * Top position only. The LEFT position is drawn once for the whole window by
+ * [ai.rever.boss.components.window_panel.components.main_window_panels.WindowVerticalTabBar],
+ * which lists every panel's tabs as its own group - a split there adds a group, not a second bar.
+ */
 @Composable
 fun BossTabsComponent.BossMainTabBar(
     splitViewState: ai.rever.boss.components.window_panel.SplitViewState? = null,
@@ -1159,65 +1222,6 @@ fun BossTabsComponent.BossMainTabBar(
     focusRequester: FocusRequester? = null,
     tabDragComponent: TabDraggableComponent? = null,
     onTabDropResult: (TabDropResult) -> Unit = {},
-    /**
-     * Render as a vertical bar down the panel's leading edge rather than a strip across its top.
-     *
-     * Passed in rather than read from `WindowAppearanceSettings` here, because the caller has to
-     * know it too - it is what decides whether the panel is a Row or a Column - and a second,
-     * independent read is a second thing that can disagree.
-     */
-    vertical: Boolean = false,
-    /** Width of the vertical bar. Ignored when [vertical] is false. */
-    verticalWidth: Dp = 200.dp,
-    /**
-     * Render this vertical bar as its slim icon rail rather than the full labelled column.
-     *
-     * The rail is a MODE of this composable, not a separate widget beside it, so that the tab
-     * menus, the new-tab dialog and every piece of state behind them are shared. Collapsing must
-     * take away labels, not actions.
-     */
-    collapsed: Boolean = false,
-    /**
-     * Toggle [collapsed]. Null hides the chevron entirely, which is what a top strip (nothing to
-     * collapse) and a transient hover drawer (collapsing it is what the pointer leaving does)
-     * both want.
-     */
-    onToggleCollapse: (() -> Unit)? = null,
-    /**
-     * Marks this bar as a transient hover reveal, and pins it when pressed.
-     *
-     * When non-null it REPLACES the collapse chevron, because the two are different offers and
-     * only one makes sense at a time: a drawer that is only here while the pointer is has nothing
-     * to collapse (leaving does that), and what it lacks is a way to stay. Ported from BossTerm's
-     * `onPin`.
-     */
-    onPin: (() -> Unit)? = null,
-    /**
-     * Report this bar's rectangle to the drag system.
-     *
-     * False for a hover-revealed drawer. A drawer is a SECOND bar for a panel that already has
-     * one registered, and under HARDWARE it lives in its own always-on-top window, where
-     * `boundsInWindow` describes a rectangle in the wrong window entirely. Registering would
-     * therefore overwrite the real bar's bounds with coordinates that mean nothing.
-     */
-    registerBounds: Boolean = true,
-    /**
-     * Reports whether an interaction that outlives a single click is in flight - today, an open
-     * tab context menu.
-     *
-     * All of it is state owned by this composition, so an owner that disposes the bar on its own
-     * schedule (the hover-reveal drawer, which retracts when the pointer leaves) has to keep it
-     * alive while this is true. Otherwise right-clicking a tab in the drawer and moving onto the
-     * menu drops the menu. Null for every owner whose lifetime is not tied to the pointer.
-     */
-    onTransientInteraction: ((Boolean) -> Unit)? = null,
-    /**
-     * Invoked after a tab is activated from this bar, whichever control did it.
-     *
-     * For the hover-reveal drawer, which is finished the moment the user picks something and
-     * would otherwise sit open under the pointer that just used it.
-     */
-    onTabActivated: (() -> Unit)? = null,
 ) {
     val state =
         rememberTabBarState(
@@ -1226,172 +1230,87 @@ fun BossTabsComponent.BossMainTabBar(
             focusRequester = focusRequester,
             tabDragComponent = tabDragComponent,
             onTabDropResult = onTabDropResult,
-            vertical = vertical,
-            onTransientInteraction = onTransientInteraction,
-            onTabActivated = onTabActivated,
+            vertical = false,
         )
 
-    // Legacy FIXED mode only, and only the top strip reads it: whether the row scrolls decides
-    // where its "+" sits. Derived here rather than on the state because it is a property of THIS
-    // container's layout, not of the panel.
+    // Legacy FIXED mode only: whether the row scrolls decides where its "+" sits. Derived here
+    // rather than on the state because it is a property of THIS container's layout, not of the
+    // panel.
     val isScrollable by remember(state.listState) {
         derivedStateOf { state.listState.canScrollForward || state.listState.canScrollBackward }
     }
 
-    if (vertical) {
-        VerticalBar(
-            width = verticalTabBarWidth(collapsed = collapsed, width = verticalWidth),
-            backgroundColor = BossTheme.colors.panel,
+    HorizontalBar(
+        height = BossChrome.dimens.tabBarHeight,
+        backgroundColor = BossTheme.colors.panel,
+    ) {
+        HorizontalBarRow(
             modifier =
-                Modifier
-                    // On the bar rather than on an empty-space sibling, the way BossLeftSideBar
-                    // does it: the tabs and rail dots carry their own contextMenu and consume the
-                    // press first, so this fires on bare chrome and nowhere else. The top strip
-                    // keeps its Spacer instead, because there the tabs share the row with a
-                    // genuinely empty remainder.
-                    .contextMenu(items = state.barContextMenuItems)
-                    .onGloballyPositioned { coordinates ->
-                        // Register tab bar bounds for drag detection. `vertical = true` travels
-                        // with the rectangle so reorder, edge scroll and the shifted left drop
-                        // zone all read the same axis off one registration.
-                        if (registerBounds && currentPanelId != null && tabDragComponent != null) {
-                            val bounds = coordinates.boundsInWindow()
-                            tabDragComponent.registerTabBarBounds(currentPanelId, bounds, vertical = true)
-                        }
-                    },
-        ) {
-            // Favorites sits ABOVE the bar's own chrome, outside the scrolling column: it is a
-            // fixed shelf, not the head of the tab list, which is where Arc puts it too. The rail
-            // has no room for it and drops it entirely.
-            val favoritesShelf: @Composable () -> Unit = {
-                if (!collapsed) {
-                    TabBarFavorites(
-                        bookmarks = state.favorites,
-                        pluginInstalled = state.bookmarksInstalled,
-                        apiReachable = state.bookmarksApiReachable,
-                        onOpen = state.openFavorite,
-                        onRemove = state.removeFavorite,
-                        // Never a silent click: if the offer declines to raise a prompt, say so
-                        // in the log rather than leaving a button that does nothing and reports
-                        // nothing. The shelf only shows this button when the plugin is absent, so
-                        // reaching the else branch means those two disagreed - which is the bug
-                        // worth finding, not swallowing.
-                        onInstallPlugin = {
-                            if (!MissingPluginOffer.offerIfMissing(BOOKMARKS_PLUGIN_ID)) {
-                                bossMainWindowPanelLogger.warn(
-                                    LogCategory.UI,
-                                    "Install Bookmarks raised no prompt",
-                                    mapOf(
-                                        "pluginId" to BOOKMARKS_PLUGIN_ID,
-                                        "installed" to state.bookmarksInstalled.toString(),
-                                        "apiReachable" to state.bookmarksApiReachable.toString(),
-                                    ),
-                                )
-                            }
-                        },
-                        // The bar's one chrome control rides on this section's header line rather
-                        // than owning a row: pin when this is a hover reveal, collapse when it is
-                        // the real bar. See the onPin KDoc for why never both.
-                        trailing = {
-                            if (onPin != null) {
-                                BossTabBarPinButton(onPin = onPin)
-                            } else {
-                                onToggleCollapse?.let { BossTabBarCollapseButton(onCollapse = it) }
-                            }
-                        },
-                    )
-                    Divider(color = BossTheme.colors.line)
-                }
-            }
-
-            if (collapsed) {
-                // The rail is the same bar with its labels taken away, not a lesser one: every
-                // tab is still here, still selectable, and still carries its whole menu.
-                BossTabRail(
-                    tabs = state.tabs,
-                    activeIndex = state.activeIndex,
-                    pinnedCount = state.pinnedCount,
-                    onExpand = { onToggleCollapse?.invoke() },
-                    onNewTab = state.openNewTab,
-                    onSelect = state.activateTab,
-                    contextMenuItems = { index ->
-                        // Guarded rather than indexed blindly: the rail renders from the same
-                        // snapshot it was passed, but a menu is built on a later frame and a tab
-                        // can close in between.
-                        state.tabs
-                            .getOrNull(index)
-                            ?.let { state.tabMenuItems(index, it) }
-                            .orEmpty()
-                    },
-                )
-            } else {
-                Column(
-                    modifier = Modifier.fillMaxSize(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    favoritesShelf()
-
-                    BossVerticalTabStrip(
-                        listState = state.listState,
-                    ) {
-                        state.items(this, null)
+                Modifier.onGloballyPositioned { coordinates ->
+                    // Register tab bar bounds for drag detection
+                    if (currentPanelId != null && tabDragComponent != null) {
+                        val bounds = coordinates.boundsInWindow()
+                        tabDragComponent.registerTabBarBounds(currentPanelId, bounds, vertical = false)
                     }
-                }
-            }
-        }
-    } else {
-        HorizontalBar(
-            height = BossChrome.dimens.tabBarHeight,
-            backgroundColor = BossTheme.colors.panel,
+                },
         ) {
-            HorizontalBarRow(
-                modifier =
-                    Modifier.onGloballyPositioned { coordinates ->
-                        // Register tab bar bounds for drag detection
-                        if (registerBounds && currentPanelId != null && tabDragComponent != null) {
-                            val bounds = coordinates.boundsInWindow()
-                            tabDragComponent.registerTabBarBounds(currentPanelId, bounds, vertical = false)
-                        }
-                    },
-            ) {
-                BossLeftTabBar(
-                    state.listState,
-                    tabCount = state.tabs.size,
-                    // Plus button outside the LazyRow but still inside the strip,
-                    // sitting directly after the last tab: always in
-                    // SHRINK_TO_FIT (immune to the isScrollable race), and in
-                    // FIXED mode once the row scrolls (so the button can't
-                    // scroll away). Once the tabs fill the strip this lands
-                    // flush right, same as before.
-                    //
-                    // Both gaps belong to the slot, not to the strip Row — see the
-                    // reserve rule in BossLeftTabBar's KDoc. NEW_TAB_BUTTON_GAP on
-                    // the end side plus the strip's own 8.dp inset reproduces the
-                    // 12.dp right margin the pinned-right button used to have.
-                    trailingReserve = if (state.shrinkTabsToFit || isScrollable) NEW_TAB_SLOT_WIDTH else 0.dp,
-                    trailing = {
-                        if (state.shrinkTabsToFit || isScrollable) {
-                            NewTabButton(
-                                modifier = Modifier.padding(horizontal = NEW_TAB_BUTTON_GAP),
-                                onClick = state.openNewTab,
-                            )
-                        }
-                    },
-                ) { tabWidth ->
-                    state.items(this, tabWidth)
-                }
-
-                Spacer(
-                    modifier =
-                        Modifier
-                            .fillMaxHeight()
-                            .contextMenu(items = state.barContextMenuItems),
-                )
+            BossLeftTabBar(
+                state.listState,
+                tabCount = state.tabs.size,
+                // Plus button outside the LazyRow but still inside the strip,
+                // sitting directly after the last tab: always in
+                // SHRINK_TO_FIT (immune to the isScrollable race), and in
+                // FIXED mode once the row scrolls (so the button can't
+                // scroll away). Once the tabs fill the strip this lands
+                // flush right, same as before.
+                //
+                // Both gaps belong to the slot, not to the strip Row — see the
+                // reserve rule in BossLeftTabBar's KDoc. NEW_TAB_BUTTON_GAP on
+                // the end side plus the strip's own 8.dp inset reproduces the
+                // 12.dp right margin the pinned-right button used to have.
+                trailingReserve = if (state.shrinkTabsToFit || isScrollable) NEW_TAB_SLOT_WIDTH else 0.dp,
+                trailing = {
+                    if (state.shrinkTabsToFit || isScrollable) {
+                        NewTabButton(
+                            modifier = Modifier.padding(horizontal = NEW_TAB_BUTTON_GAP),
+                            onClick = state.openNewTab,
+                        )
+                    }
+                },
+            ) { tabWidth ->
+                state.items(this, tabWidth)
             }
+
+            Spacer(
+                modifier =
+                    Modifier
+                        .fillMaxHeight()
+                        .contextMenu(items = state.barContextMenuItems),
+            )
         }
     }
 
     state.dialogs()
+}
+
+/**
+ * The focus requester a panel attaches, shared with whoever else needs to focus that panel.
+ *
+ * A window-level tab bar is outside every panel and gives focus back to one after closing a tab
+ * from a menu, so the instance cannot be a local `remember` here any more. A panel with no id to
+ * share one under - the unmanaged case - keeps its own.
+ */
+@Composable
+private fun rememberPanelFocusRequester(
+    splitViewState: ai.rever.boss.components.window_panel.SplitViewState?,
+    currentPanelId: String?,
+): FocusRequester {
+    val own = remember { FocusRequester() }
+    return if (currentPanelId != null && splitViewState != null) {
+        splitViewState.focusRequesterFor(currentPanelId)
+    } else {
+        own
+    }
 }
 
 @Composable
@@ -1401,8 +1320,16 @@ fun BossTabsComponent.BossMainPanel(
     currentPanelId: String? = null,
     tabDragComponent: TabDraggableComponent? = null,
     onTabDropResult: (TabDropResult) -> Unit = {},
+    /**
+     * Whether this panel draws its own tab bar.
+     *
+     * False in LEFT position, where `SplitViewPanel` draws one bar for the whole window and this
+     * panel's tabs are a group inside it. The panel keeps everything else it owns - its border
+     * ring, its focus handling, `LocalIsPanelActive` - because none of that was ever the bar's.
+     */
+    showTabBar: Boolean = true,
 ) {
-    val focusRequester = remember { FocusRequester() }
+    val focusRequester = rememberPanelFocusRequester(splitViewState, currentPanelId)
     val isFocused = remember { mutableStateOf(false) }
 
     // Track the active panel state to force recomposition
@@ -1410,45 +1337,11 @@ fun BossTabsComponent.BossMainPanel(
     val isActivePanel = activePanelId == currentPanelId
     val panelBorder = BossChrome.dimens.panelBorderThickness
 
-    val settingsScope = rememberCoroutineScope()
-
-    // This panel's own width, measured rather than taken from a BoxWithConstraints.
-    //
-    // BossLeftTabBar's KDoc records what happened the last time a SubcomposeLayout was wrapped
-    // around a lazy list in this tree: every tabCount change thrashed the inner list through
-    // disposeOrReuseStartingFromIndex and pinned the EDT at 100% after ~10 tabs. onSizeChanged
-    // costs one extra frame before the first value arrives, which here means one frame of full
-    // bar in a panel that will end up showing the rail.
-    var panelWidthPx by remember { mutableIntStateOf(0) }
-    val density = LocalDensity.current
-
-    // Which edge, how wide, rail or not. See TabBarLayout.
-    val bar = rememberTabBarLayout(panelWidthPx)
-
-    // The rail/drawer state machine and its timing. See TabBarRevealState.
-    val reveal =
-        rememberTabBarRevealState(
-            railShown = bar.railShown,
-            narrow = bar.narrow,
-            hoverExpand = bar.hoverExpand,
-        )
-    val pointerInSidebar = reveal.pointerInSidebar()
-
-    // This panel's rectangle in dp relative to the window's content pane, for the drawer's
-    // heavyweight overlay window. Null until measured, and the drawer draws nothing while it is:
-    // an unmeasured parent resolves to the SCREEN origin, so the alternative is an always-on-top
-    // bar in the corner of the primary display. Same rule, and the same helper shape, as the
-    // browser find bar's region (see BrowserFindPlacement.findBarRegion).
-    var panelRegion by remember { mutableStateOf<IntRect?>(null) }
-
     Box(
         modifier =
             modifier
                 .fillMaxSize()
-                .onSizeChanged { size -> panelWidthPx = size.width }
-                .onGloballyPositioned { coordinates ->
-                    panelRegion = overlayRegionInWindow(coordinates.boundsInWindow(), density.density)
-                }.focusRequester(focusRequester)
+                .focusRequester(focusRequester)
                 .onFocusChanged { focusState ->
                     isFocused.value = focusState.isFocused || focusState.hasFocus
                     if ((focusState.isFocused || focusState.hasFocus) && currentPanelId != null) {
@@ -1529,73 +1422,25 @@ fun BossTabsComponent.BossMainPanel(
             }
         }
 
-        val dismissDrawer: () -> Unit = { reveal.dismiss(pointerInSidebar) }
-
-        val pinDrawer = rememberPinDrawerAction(reveal, bar, settingsScope)
-
-        val toggleCollapse: () -> Unit = {
-            if (bar.narrow) {
-                // Nothing to give back: the panel is below the threshold, so the in-flow bar
-                // would be forced straight back to the rail. The chevron opens the drawer here
-                // instead, which is the only shape a full bar can take at this width.
-                reveal.openDrawer()
-            } else {
-                settingsScope.launch {
-                    val current = WindowAppearanceSettingsManager.currentSettings.value
-                    WindowAppearanceSettingsManager.updateSettings(
-                        current.copy(tabBarCollapsed = !current.tabBarCollapsed),
-                    )
-                }
-            }
+        if (!showTabBar) {
+            // The window draws one bar for every panel, and this is that position: LEFT. Nothing
+            // else is skipped along with it - the border ring, the focus wiring and
+            // LocalIsPanelActive above are all this panel's own, and the content below is the
+            // same tree either way.
+            panelContent(Modifier.fillMaxSize())
+            return@Box
         }
 
-        if (bar.vertical) {
-            Row(modifier = Modifier.fillMaxSize()) {
-                Box(modifier = Modifier.hoverable(reveal.railHover, enabled = bar.hoverExpand && bar.railShown)) {
-                    BossMainTabBar(
-                        splitViewState = splitViewState,
-                        currentPanelId = currentPanelId,
-                        focusRequester = focusRequester,
-                        tabDragComponent = tabDragComponent,
-                        onTabDropResult = onTabDropResult,
-                        vertical = true,
-                        verticalWidth = bar.width,
-                        collapsed = bar.railShown,
-                        onToggleCollapse = toggleCollapse,
-                    )
-                }
-                VDivider()
-                panelContent(Modifier.weight(1f).fillMaxHeight())
-            }
-        } else {
-            Column(modifier = Modifier.fillMaxSize()) {
-                BossMainTabBar(
-                    splitViewState = splitViewState,
-                    currentPanelId = currentPanelId,
-                    focusRequester = focusRequester,
-                    tabDragComponent = tabDragComponent,
-                    onTabDropResult = onTabDropResult,
-                )
-                Divider(color = BossTheme.colors.line)
-                panelContent(Modifier.weight(1f).fillMaxWidth())
-            }
-        }
-
-        if (bar.railShown) {
-            RevealedTabBarDrawer(
-                tabsComponent = this@BossMainPanel,
-                bar = bar,
-                reveal = reveal,
-                panelRegion = panelRegion,
-                onDismiss = dismissDrawer,
-                onPin = pinDrawer,
-                panel =
-                    DrawerPanelWiring(
-                        splitViewState = splitViewState,
-                        currentPanelId = currentPanelId,
-                        focusRequester = focusRequester,
-                    ),
+        Column(modifier = Modifier.fillMaxSize()) {
+            BossMainTabBar(
+                splitViewState = splitViewState,
+                currentPanelId = currentPanelId,
+                focusRequester = focusRequester,
+                tabDragComponent = tabDragComponent,
+                onTabDropResult = onTabDropResult,
             )
+            Divider(color = BossTheme.colors.line)
+            panelContent(Modifier.weight(1f).fillMaxWidth())
         }
     }
 }
@@ -1612,11 +1457,11 @@ fun BossTabsComponent.BossMainPanel(
  * it can get, and offering to pin it again would do nothing.
  */
 @Composable
-private fun rememberPinDrawerAction(
+fun rememberPinDrawerAction(
     reveal: TabBarRevealState,
     bar: TabBarLayout,
-    scope: kotlinx.coroutines.CoroutineScope,
 ): (() -> Unit)? {
+    val scope = rememberCoroutineScope()
     if (!reveal.isTransientReveal) return null
     return {
         if (bar.narrow) {
@@ -1633,68 +1478,29 @@ private fun rememberPinDrawerAction(
 }
 
 /**
- * The three things a tab bar needs to know about the panel hosting it.
+ * Collapse the vertical tab bar to its rail, or give it back.
  *
- * Bundled because [RevealedTabBarDrawer] would otherwise carry seven parameters, three of which
- * are always passed together and never independently.
- */
-private data class DrawerPanelWiring(
-    val splitViewState: ai.rever.boss.components.window_panel.SplitViewState?,
-    val currentPanelId: String?,
-    val focusRequester: FocusRequester,
-)
-
-/**
- * The full vertical tab bar, shown over a panel whose in-flow bar is down to its rail.
- *
- * A separate composable from `BossMainPanel` because it is a second, differently-wired copy of the
- * same bar rather than another branch of the panel's layout, and the four things it does
- * differently from the in-flow one all need saying.
+ * On a wide window that is the `tabBarCollapsed` preference, which persists. On one already too
+ * narrow for a full bar the preference can change nothing, so the chevron opens the hover drawer
+ * instead - the only shape a full bar can take at that width.
  */
 @Composable
-private fun BoxScope.RevealedTabBarDrawer(
-    tabsComponent: BossTabsComponent,
+fun rememberToggleCollapseAction(
     bar: TabBarLayout,
     reveal: TabBarRevealState,
-    panelRegion: IntRect?,
-    onDismiss: () -> Unit,
-    onPin: (() -> Unit)?,
-    panel: DrawerPanelWiring,
-) {
-    VerticalTabBarDrawer(
-        visible = reveal.drawerVisible,
-        hoverSource = reveal.drawerHover,
-        hoverEnabled = bar.hoverExpand,
-        width = bar.width,
-        panelRegion = panelRegion,
-        onDismissOutside = reveal.dismissOutside,
-    ) {
-        tabsComponent.BossMainTabBar(
-            splitViewState = panel.splitViewState,
-            currentPanelId = panel.currentPanelId,
-            focusRequester = panel.focusRequester,
-            // Deliberately no drag component. A drawer is a SECOND bar for a panel that already
-            // has one registered, and under HARDWARE it lives in its own window where these
-            // coordinates mean nothing - so a drag started here could only ever be dropped
-            // somewhere wrong. Withholding it disables the gesture outright (BossTabButton gates
-            // on it being non-null), which is honest.
-            tabDragComponent = null,
-            vertical = true,
-            verticalWidth = bar.width,
-            collapsed = false,
-            // The chevron dismisses the drawer rather than writing tabBarCollapsed: the bar it is
-            // collapsing IS the drawer. It has to exist even though hover already closes this
-            // thing, because a chevron-opened drawer (narrow panel) otherwise has no way out at
-            // all - the click-catcher behind it is a Compose node, and under HARDWARE the
-            // browser's native surface is painted above it, so clicking the page never reaches it.
-            onToggleCollapse = onDismiss,
-            onPin = onPin,
-            // Picking a tab is finishing with the drawer. Without this it stays open under the
-            // pointer that just used it.
-            onTabActivated = onDismiss,
-            registerBounds = false,
-            onTransientInteraction = reveal::setBusy,
-        )
+): () -> Unit {
+    val scope = rememberCoroutineScope()
+    return {
+        if (bar.narrow) {
+            reveal.openDrawer()
+        } else {
+            scope.launch {
+                val current = WindowAppearanceSettingsManager.currentSettings.value
+                WindowAppearanceSettingsManager.updateSettings(
+                    current.copy(tabBarCollapsed = !current.tabBarCollapsed),
+                )
+            }
+        }
     }
 }
 

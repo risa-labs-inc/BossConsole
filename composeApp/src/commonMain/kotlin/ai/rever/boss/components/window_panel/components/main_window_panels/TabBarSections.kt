@@ -132,11 +132,15 @@ fun SectionBreak(onAdd: () -> Unit) {
 }
 
 /**
- * The always-visible "New Tab" row along the bottom of the bar (Arc and Dia both place it there).
+ * The "New Tab" row at the head of the bar, directly under its header - which is where Arc puts
+ * it, before the first tab rather than after the last.
  *
  * Full width and left-aligned rather than a centred square button, so it reads as a row of the
  * list it extends rather than as a floating control - which is the whole difference between this
  * and the "+" the horizontal strip uses, where a row would have nowhere to sit.
+ *
+ * A window bar draws one per pane, at the head of that pane's group, so "+" always adds a tab to
+ * the pane whose rows it sits among.
  */
 @Composable
 fun NewTabRow(onClick: () -> Unit) {
