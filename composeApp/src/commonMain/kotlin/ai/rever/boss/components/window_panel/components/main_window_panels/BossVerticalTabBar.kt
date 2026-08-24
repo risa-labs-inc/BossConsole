@@ -91,17 +91,17 @@ val TAB_BAR_AUTO_COLLAPSE_WIDTH = 520.dp
  */
 val VERTICAL_TAB_HEIGHT = 32.dp
 
-/** Diameter of one tab's dot on the collapsed rail. */
-private val RAIL_DOT_SIZE = 10.dp
+/**
+ * Side of one tab's favicon on the collapsed rail.
+ *
+ * Larger than the same chip elsewhere, because on the rail it IS the tab - there is no title
+ * beside it to read, so the mark has to carry the whole identity. It still fits the rail's own
+ * width with room to spare.
+ */
+private val RAIL_CHIP_SIZE = 24.dp
 
-/** Diameter of the ring drawn around the ACTIVE tab's rail dot. */
-private val RAIL_ACTIVE_RING_SIZE = 18.dp
-
-/** Hit target around a rail dot. Larger than the dot so the click is not a pixel hunt. */
-private val RAIL_DOT_TOUCH_SIZE = 24.dp
-
-/** Vertical gap between rail dots. */
-private val RAIL_DOT_GAP = 6.dp
+/** Vertical gap between rail tabs. */
+private val RAIL_ITEM_GAP = 6.dp
 
 /**
  * Size of the chevron / "+" buttons that top and tail the rail, matching
@@ -151,17 +151,20 @@ fun ColumnScope.BossVerticalTabStrip(
 }
 
 /**
- * The collapsed vertical tab bar: an expand chevron, one dot per tab, and the `+`.
+ * The collapsed vertical tab bar: an expand chevron, one favicon per tab, and the `+`.
  *
  * A rail is not a narrow tab bar - it is a different control with the same job, which is why it
  * is its own composable rather than [BossVerticalTabStrip] under a width. There is no room for
- * a title, so a tab is a dot; identity comes from the tooltip and from the ring on the active
- * one. Ported from BossTerm's `TabBar` collapsed branch.
+ * a title, so a tab is its favicon - the one mark that names a page without words, and the same
+ * mark the expanded bar and each pane's own strip already use. A tab with no favicon falls back
+ * to its type icon and then to a dot, so the rail always has one mark per tab. The tooltip is
+ * what spells the title out. Ported from BossTerm's `TabBar` collapsed branch, which used a plain
+ * accent dot - recognisable as "a tab", but not as WHICH tab.
  *
- * The dots carry the same context menus the full tabs do, so collapsing the bar never takes an
+ * They carry the same context menus the full tabs do, so collapsing the bar never takes an
  * action away - only the labels that named them.
  *
- * Every pane's dots are here, in pane order, divided by the same rule the expanded bar uses. A
+ * Every pane's tabs are here, in pane order, divided by the same rule the expanded bar uses. A
  * collapsed bar that showed only the active pane would be the duplicate-bar problem again, in
  * miniature: the user would have to activate a pane to find out what was in it.
  *
@@ -188,17 +191,17 @@ fun BossTabRail(
         Box(Modifier.fillMaxWidth(0.6f).height(1.dp).background(colors.line))
         Spacer(Modifier.height(6.dp))
 
-        // A plain verticalScroll rather than a LazyColumn: a dot is 24dp of nothing, so
+        // A plain verticalScroll rather than a LazyColumn: a rail tab is 24dp of icon, so
         // virtualising them buys less than the subcomposition costs, and the rail is the case
         // where the whole list is meant to be visible at once.
         Column(
             modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(RAIL_DOT_GAP),
+            verticalArrangement = Arrangement.spacedBy(RAIL_ITEM_GAP),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             groups.forEachIndexed { groupIndex, group ->
                 // The rule between panes is wider than the one between a pane's pinned and open
-                // dots, so the two divisions cannot be mistaken for each other at this size.
+                // tabs, so the two divisions cannot be mistaken for each other at this size.
                 if (groupIndex > 0) {
                     Box(
                         Modifier
@@ -223,9 +226,9 @@ fun BossTabRail(
 }
 
 /**
- * One pane's dots on the rail.
+ * One pane's tabs on the rail.
  *
- * @param showPinnedRule whether to keep the short rule between this pane's pinned and open dots.
+ * @param showPinnedRule whether to keep the short rule between this pane's pinned and open tabs.
  *   Dropped once the rail holds several panes, for the same reason the expanded bar drops its
  *   section headers there: two kinds of divider at this size read as one arbitrary one.
  */
@@ -242,7 +245,7 @@ private fun RailGroupDots(
         // passed, but a menu is built on a later frame and a tab can close in between.
         val menuItems = tabs.getOrNull(index)?.let { group.state.tabMenuItems(index, it) }.orEmpty()
 
-        // The rail keeps the section break too, as a short rule between the two groups of dots.
+        // The rail keeps the section break too, as a short rule between the two groups.
         // Without it the rail is the one place where pinning is invisible, and the whole point of
         // pinning something is that you can find it again.
         if (showPinnedRule && pinnedCount in 1 until tabs.size && index == pinnedCount) {
@@ -253,50 +256,15 @@ private fun RailGroupDots(
                     .background(colors.line),
             )
         }
-        RailDot(
-            title = tab.title,
-            // Ringed only in the pane the user is working in: with several panes on the rail,
-            // one ring per pane would be several claims to be the current tab.
+        TabFaviconChip(
+            tab = tab,
+            // Marked only in the pane the user is working in: with several panes on the rail, one
+            // mark per pane would be several claims to be the current tab.
             isActive = index == group.state.activeIndex && group.isActive,
-            onSelect = { group.state.activateTab(index) },
+            onClick = { group.state.activateTab(index) },
+            size = RAIL_CHIP_SIZE,
+            // The rail's contract: taking the labels away must not take the actions with them.
             contextMenuItems = menuItems,
-        )
-    }
-}
-
-/**
- * One tab on the collapsed rail: an accent dot, ringed when it is the active tab.
- *
- * The title is the tooltip, which is the rail's only way to name a tab - so it is not decoration
- * here the way it is on a labelled row, and it has to survive being drawn over a browser's native
- * surface. [HoverTooltipBox] is that guarantee; a plain TooltipArea would not be.
- */
-@Composable
-private fun RailDot(
-    title: String,
-    isActive: Boolean,
-    onSelect: () -> Unit,
-    contextMenuItems: List<ContextMenuItem>,
-) {
-    val colors = BossTheme.colors
-    HoverTooltipBox(
-        text = title,
-        placement = TooltipPlacement.END,
-        modifier =
-            Modifier
-                .size(RAIL_DOT_TOUCH_SIZE)
-                .clip(RoundedCornerShape(6.dp))
-                .contextMenu(items = contextMenuItems)
-                .clickable(onClick = onSelect),
-    ) {
-        if (isActive) {
-            Box(Modifier.size(RAIL_ACTIVE_RING_SIZE).border(1.5.dp, colors.signal, CircleShape))
-        }
-        Box(
-            Modifier
-                .size(RAIL_DOT_SIZE)
-                .clip(CircleShape)
-                .background(if (isActive) colors.signal else colors.textSecondary.copy(alpha = 0.55f)),
         )
     }
 }

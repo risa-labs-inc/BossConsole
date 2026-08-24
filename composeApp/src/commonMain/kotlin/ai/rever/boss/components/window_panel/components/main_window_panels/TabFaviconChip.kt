@@ -1,8 +1,10 @@
 package ai.rever.boss.components.window_panel.components.main_window_panels
 
 import ai.rever.boss.components.common.rememberFaviconLoader
+import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.HoverTooltipBox
 import ai.rever.boss.components.overlays.TooltipPlacement
+import ai.rever.boss.components.overlays.contextMenu
 import ai.rever.boss.plugin.api.TabIcon
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.ui.BossTheme
@@ -58,6 +60,14 @@ internal fun TabFaviconChip(
     // END rather than TOP: a strip at the top of a pane has the window's own chrome above it,
     // and a tooltip placed there would open off the pane entirely.
     placement: TooltipPlacement = TooltipPlacement.END,
+    /**
+     * The tab's own right-click menu, where the surface showing it owes one.
+     *
+     * The collapsed rail does: taking the labels away must not take the actions with them, which
+     * is the rail's whole contract. The favicon rows inside an expanded bar do not - the full
+     * row for that tab is a few pixels away and already carries it.
+     */
+    contextMenuItems: List<ContextMenuItem> = emptyList(),
 ) {
     val colors = BossTheme.colors
     val interactionSource = remember { MutableInteractionSource() }
@@ -84,6 +94,7 @@ internal fun TabFaviconChip(
                     .clip(RoundedCornerShape(4.dp))
                     .background(background)
                     .hoverable(interactionSource)
+                    .then(if (contextMenuItems.isEmpty()) Modifier else Modifier.contextMenu(items = contextMenuItems))
                     .clickable(onClick = onClick),
             contentAlignment = Alignment.Center,
         ) {
