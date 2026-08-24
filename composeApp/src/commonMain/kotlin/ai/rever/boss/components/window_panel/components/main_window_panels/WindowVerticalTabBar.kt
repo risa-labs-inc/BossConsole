@@ -9,6 +9,8 @@ import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.window.LocalWindowId
+import ai.rever.boss.window.MenuActionsHandler
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -71,6 +73,7 @@ fun rememberWindowTabGroups(
 ): List<TabBarGroup> {
     // Reading rootNode through getAllPanels() subscribes this composition to the split tree, so
     // splitting or closing a pane adds or drops a group without anything else being told.
+    val paneWindowId = LocalWindowId.current
     val panels = splitViewState.getAllPanels()
     val activePanelId by splitViewState.activePanelIdState
     val several = panels.size > 1
@@ -131,9 +134,13 @@ fun rememberWindowTabGroups(
                 activate = { splitViewState.setActivePanel(panel.id) },
                 zoom = { splitViewState.zoomPanel(panel.id) },
                 rename = { name -> splitViewState.renamePanel(panel.id, name) },
-                // No tab travels with it: this splits the PANE, so the new one starts empty.
-                // Splitting from a tab's own menu is the other gesture and moves that tab.
-                split = { orientation -> splitViewState.splitPanel(panel.id, orientation) },
+                // Asks for a tab FIRST, then splits with it. A split that made an empty pane
+                // would have it closed again about 50ms later by checkAndCloseEmptyPanels, so the
+                // menu entry appeared to do nothing at all. See SplitViewState.pendingSplit.
+                split = { orientation ->
+                    splitViewState.requestSplitWithNewTab(panel.id, orientation)
+                    paneWindowId?.let { MenuActionsHandler.triggerNewTab(it) }
+                },
                 newTab = state.openNewTab,
                 // Only offered where there is a split to undo. closePanel refuses to remove a
                 // lone panel anyway, so a button for it would be one that does nothing.

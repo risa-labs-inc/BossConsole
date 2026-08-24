@@ -105,6 +105,12 @@ sealed class SplitNode {
     ) : SplitNode()
 }
 
+/** A split that has been asked for and is waiting on the tab that will fill it. */
+data class PendingSplit(
+    val panelId: String,
+    val orientation: SplitOrientation,
+)
+
 enum class SplitOrientation {
     HORIZONTAL, // Split top/bottom
     VERTICAL, // Split left/right
@@ -206,6 +212,41 @@ class SplitViewState(
         name: String,
     ) {
         if (name.isBlank()) panelNames.remove(panelId) else panelNames[panelId] = name.trim()
+    }
+
+    /**
+     * A split waiting on the tab that will fill it.
+     *
+     * Splitting a pane cannot make an EMPTY one: `checkAndCloseEmptyPanels` closes a panel with no
+     * tabs about 50ms later, so the split would appear to do nothing at all. So the pane menu asks
+     * for a tab FIRST and the split happens with that tab in hand, through
+     * `splitPanel(tabToMove = ...)` - the new pane is never empty for even a frame.
+     *
+     * Held here rather than in BossAppState because both ends already have the split state: the
+     * map that requests it and the dialog that fulfils it.
+     */
+    var pendingSplit by mutableStateOf<PendingSplit?>(null)
+        private set
+
+    /** Ask for a tab, then split [panelId] and put that tab in the new pane. */
+    fun requestSplitWithNewTab(
+        panelId: String,
+        orientation: SplitOrientation,
+    ) {
+        pendingSplit = PendingSplit(panelId, orientation)
+    }
+
+    /**
+     * Take the pending split, if there is one. Returns null when the next tab is an ordinary one.
+     *
+     * Consumed rather than read, so a dialog dismissed and reopened later does not split on a tab
+     * nobody asked to be split.
+     */
+    fun consumePendingSplit(): PendingSplit? = pendingSplit.also { pendingSplit = null }
+
+    /** Forget a split that was asked for and then abandoned. */
+    fun cancelPendingSplit() {
+        pendingSplit = null
     }
 
     /** Show this pane alone. */

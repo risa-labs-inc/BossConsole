@@ -42,6 +42,7 @@ import ai.rever.boss.keymap.model.KeymapActions
 import ai.rever.boss.platform.rememberDirectoryPicker
 import ai.rever.boss.plugin.api.Panel.Companion.left
 import ai.rever.boss.plugin.api.Panel.Companion.top
+import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.sandbox.notification.ToastMessage
 import ai.rever.boss.plugin.sandbox.notification.ToastType
 import ai.rever.boss.plugin.tab.codeeditor.EditorTabInfo
@@ -252,19 +253,38 @@ internal fun BossAppDialogs(state: BossAppState) {
 
     // Show new tab dialog
     if (state.showNewTabDialog) {
+        // Where a tab this dialog creates goes: into a NEW pane when it was opened by a pane's
+        // "Split Right" / "Split Down", otherwise into the active one. Declared once, above the
+        // dialog, so the plugin tab types below take the same route as the built-in ones - they
+        // used to resolve their own target and would have ignored a pending split.
+        //
+        // Splitting first and filling afterwards is not an option. checkAndCloseEmptyPanels closes
+        // a panel with no tabs about 50ms later, so a split that made an empty pane would appear
+        // to do nothing at all - which is exactly what the pane menu's split did until this
+        // existed.
+        val place: (TabInfo) -> Unit = { tab ->
+            val split = splitViewState.consumePendingSplit()
+            if (split == null) {
+                val target =
+                    splitViewState.getActiveTabsComponent()
+                        ?: splitViewState.getLastInteractedTabComponent()
+                        ?: state.tabsComponent
+                target.addTab(tab)
+            } else {
+                splitViewState.splitPanel(split.panelId, split.orientation, tabToMove = tab)
+            }
+        }
+
         NewTabDialog(
             onDismiss = {
                 state.showNewTabDialog = false
                 state.newTabDialogInitialType = null
+                // A split asked for and then abandoned must not fire on the next ordinary New Tab.
+                splitViewState.cancelPendingSplit()
                 state.focusRequester.requestFocus()
             },
             tabRegistry = state.tabRegistry,
             onCreateTab = { type, path ->
-                // Get the active panel component first, fallback to last interacted, then original
-                val targetComponent =
-                    splitViewState.getActiveTabsComponent()
-                        ?: splitViewState.getLastInteractedTabComponent()
-                        ?: state.tabsComponent
 
                 when (type) {
                     TabType.URL -> {
@@ -275,7 +295,7 @@ internal fun BossAppDialogs(state: BossAppState) {
                                 _title = "Loading...",
                                 url = path,
                             )
-                        targetComponent.addTab(tab)
+                        place(tab)
                     }
 
                     TabType.FILE -> {
@@ -292,7 +312,7 @@ internal fun BossAppDialogs(state: BossAppState) {
                                         .Vector(fileIconInfo.icon, fileIconInfo.color),
                                 filePath = path,
                             )
-                        targetComponent.addTab(tab)
+                        place(tab)
                     }
 
                     TabType.TERMINAL -> {
@@ -305,12 +325,12 @@ internal fun BossAppDialogs(state: BossAppState) {
                                 title = "Terminal",
                                 workingDirectory = DefaultWorkingDirectory.resolve(projectPath),
                             )
-                        targetComponent.addTab(tab)
+                        place(tab)
                     }
 
                     TabType.JUPYTER -> {
                         val tab = JupyterTabInfo.createUntitled(path)
-                        targetComponent.addTab(tab)
+                        place(tab)
                     }
                 }
                 // Reset the initial type after tab creation
@@ -320,11 +340,7 @@ internal fun BossAppDialogs(state: BossAppState) {
             // Plugin tab types build their own TabInfo; open it in the
             // same target component as the built-in types.
             onCreateTabInfo = { tabInfo ->
-                val targetComponent =
-                    splitViewState.getActiveTabsComponent()
-                        ?: splitViewState.getLastInteractedTabComponent()
-                        ?: state.tabsComponent
-                targetComponent.addTab(tabInfo)
+                place(tabInfo)
                 state.newTabDialogInitialType = null
             },
             projectPath =

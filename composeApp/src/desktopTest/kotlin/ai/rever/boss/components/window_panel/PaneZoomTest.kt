@@ -134,8 +134,6 @@ class PaneZoomTest {
 
     @Test
     fun `splitting a pane adds one and leaves the original`() {
-        // The pane menu's split takes no tab: it splits the PANE, so the new one starts empty.
-        // Splitting from a tab's own menu is the other gesture, and that one moves the tab.
         val s = state()
         s.splitPanel("main", SplitOrientation.VERTICAL)
 
@@ -162,5 +160,41 @@ class PaneZoomTest {
         s.splitPanel("main", SplitOrientation.VERTICAL)
 
         assertEquals("main", s.zoomedPanelId)
+    }
+
+    // ---- a split waits for the tab that will fill it -------------------------
+
+    @Test
+    fun `nothing is pending until a split is asked for`() {
+        assertNull(state().pendingSplit)
+    }
+
+    @Test
+    fun `asking to split records which pane and which way`() {
+        val s = state()
+        s.requestSplitWithNewTab("main", SplitOrientation.HORIZONTAL)
+
+        assertEquals(PendingSplit("main", SplitOrientation.HORIZONTAL), s.pendingSplit)
+    }
+
+    @Test
+    fun `the pending split is consumed, not merely read`() {
+        // The next ordinary New Tab must not land in a second new pane. A dialog dismissed and
+        // reopened later would otherwise split on a tab nobody asked to be split.
+        val s = state()
+        s.requestSplitWithNewTab("main", SplitOrientation.VERTICAL)
+
+        assertEquals(PendingSplit("main", SplitOrientation.VERTICAL), s.consumePendingSplit())
+        assertNull(s.consumePendingSplit())
+        assertNull(s.pendingSplit)
+    }
+
+    @Test
+    fun `abandoning the dialog forgets the split`() {
+        val s = state()
+        s.requestSplitWithNewTab("main", SplitOrientation.VERTICAL)
+        s.cancelPendingSplit()
+
+        assertNull(s.consumePendingSplit())
     }
 }
