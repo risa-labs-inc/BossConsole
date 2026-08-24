@@ -207,9 +207,12 @@ fun WindowVerticalTabBar(
         modifier =
             Modifier
                 .hoverable(barInteraction)
-                // On the bar rather than on an empty-space sibling, the way BossLeftSideBar does
-                // it: the tabs and rail dots carry their own contextMenu and consume the press
-                // first, so this fires on bare chrome and nowhere else.
+                // The whole bar, which is what the collapsed rail and the strips of chrome above
+                // and below the tab list rely on. The tab list carries its own copy - see
+                // ExpandedGroups - because that is where most of the bare chrome actually is.
+                //
+                // Fires on bare chrome and nowhere else: tabs and rail dots consume on the INITIAL
+                // pass, and contextMenu skips a press already claimed.
                 .contextMenu(items = lead.state.barContextMenuItems)
                 .onGloballyPositioned { coordinates -> railBounds = coordinates.boundsInWindow() },
     ) {
@@ -392,7 +395,23 @@ private fun ExpandedGroups(
 
         BossVerticalTabStrip(
             listState = listState,
-            modifier = Modifier.onGloballyPositioned { coordinates -> onStripBounds(coordinates.boundsInWindow()) },
+            modifier =
+                Modifier
+                    // The bar's own menu, on the scrolling column as well as on the bar behind it.
+                    //
+                    // Most of a vertical bar is the empty space below the last tab, and that space
+                    // belongs to this list rather than to the bar - so reaching the bar's menu from
+                    // it meant the press travelling up through the list, the column and the bar Box
+                    // untouched. Nothing in that chain consumes today, but the same assumption was
+                    // written down once before and was false: the comment on the bar root said
+                    // children consume first when the modifier it relied on was not checking. The
+                    // nearest handler to the space being clicked is the one that cannot be broken
+                    // by something appearing in between.
+                    //
+                    // A tab still wins: tabs consume on the INITIAL pass, and contextMenu skips a
+                    // press already claimed - so this fires on bare chrome and nowhere else.
+                    .contextMenu(items = lead.state.barContextMenuItems)
+                    .onGloballyPositioned { coordinates -> onStripBounds(coordinates.boundsInWindow()) },
         ) {
             groups.forEachIndexed { index, group ->
                 // One header per group, including the first: without one on the first group the
