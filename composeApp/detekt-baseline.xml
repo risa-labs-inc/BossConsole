@@ -1008,6 +1008,7 @@
     <ID>PackageNaming:SecretChangeNotifier.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
     <ID>PackageNaming:SidePanel.kt$package ai.rever.boss.components.window_panel.components.side_panel</ID>
     <ID>PackageNaming:SkipListDriftTest.kt$package ai.rever.boss.components.plugin.panels.left_top</ID>
+    <ID>PackageNaming:SplitMap.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:SplitView.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:SplitViewStateRegistry.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:TabBarFavorites.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>

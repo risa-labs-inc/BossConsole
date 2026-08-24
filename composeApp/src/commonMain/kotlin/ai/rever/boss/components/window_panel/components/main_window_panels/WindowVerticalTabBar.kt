@@ -386,6 +386,11 @@ private fun ExpandedGroups(
                 }
             }
         }
+
+        // Pinned to the foot of the bar: the strip above takes weight(1f), so this is what is
+        // left. It is the one place that shows the whole arrangement at once, which is what makes
+        // a four-way split legible rather than a run of headers to read in order.
+        SplitMap(groups = groups)
     }
 }
 

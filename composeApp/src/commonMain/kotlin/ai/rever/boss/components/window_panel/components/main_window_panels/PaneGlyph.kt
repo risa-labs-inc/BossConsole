@@ -118,3 +118,37 @@ private fun cornerName(glyph: PaneGlyph): String? =
         glyph.touchesBottom && glyph.touchesRight -> "Bottom right"
         else -> null
     }
+
+/**
+ * Which pane a point in the split map falls in, as an index into [glyphs].
+ *
+ * Falls back to the pane whose centre is nearest when the point is in none of them, so a click
+ * that lands on a divider - or a rounding hair outside every rectangle - still goes somewhere.
+ * A map you can click and have nothing happen is worse than one that picks the obvious neighbour.
+ *
+ * Null only when there is nothing to pick.
+ */
+internal fun paneAt(
+    glyphs: List<PaneGlyph?>,
+    x: Float,
+    y: Float,
+): Int? {
+    val present = glyphs.withIndex().filter { it.value != null }
+    if (present.isEmpty()) return null
+    val hit = present.firstOrNull { (_, glyph) -> glyph!!.contains(x, y) }
+    return (hit ?: present.minByOrNull { (_, glyph) -> glyph!!.distanceFromCentre(x, y) })?.index
+}
+
+private fun PaneGlyph.contains(
+    x: Float,
+    y: Float,
+): Boolean = x >= left && x <= right && y >= top && y <= bottom
+
+private fun PaneGlyph.distanceFromCentre(
+    x: Float,
+    y: Float,
+): Float {
+    val dx = (left + right) / 2f - x
+    val dy = (top + bottom) / 2f - y
+    return dx * dx + dy * dy
+}

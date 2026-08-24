@@ -1,5 +1,6 @@
 package ai.rever.boss.components.window_panel
 
+import ai.rever.boss.components.window_panel.components.main_window_panels.paneAt
 import ai.rever.boss.components.window_panel.components.main_window_panels.paneGlyphFor
 import ai.rever.boss.components.window_panel.components.main_window_panels.paneLabel
 import kotlin.test.Test
@@ -139,5 +140,57 @@ class PaneGlyphTest {
     @Test
     fun `no glyph still yields a usable name`() {
         assertEquals("Pane 2", paneLabel(1, null))
+    }
+
+    // ---- paneAt: clicking the split map --------------------------------------
+
+    private fun glyphsOf(all: List<PanelBounds>) = all.map { paneGlyphFor(it, all) }
+
+    @Test
+    fun `a click inside a pane picks that pane`() {
+        val glyphs = glyphsOf(listOf(leftPane, rightPane))
+        assertEquals(0, paneAt(glyphs, x = 0.25f, y = 0.5f))
+        assertEquals(1, paneAt(glyphs, x = 0.75f, y = 0.5f))
+    }
+
+    @Test
+    fun `a click on the divider picks the nearest pane rather than nothing`() {
+        // Real panes do not tile the area exactly - a divider and each pane's border ring sit
+        // between them. A map you can click and have nothing happen is worse than one that picks
+        // the obvious neighbour.
+        val all = listOf(bounds(0f, 0f, 495f, 800f), bounds(505f, 0f, 495f, 800f))
+        val glyphs = glyphsOf(all)
+        assertEquals(0, paneAt(glyphs, x = 0.499f, y = 0.5f))
+        assertEquals(1, paneAt(glyphs, x = 0.501f, y = 0.5f))
+    }
+
+    @Test
+    fun `a click outside every pane still lands somewhere`() {
+        val glyphs = glyphsOf(listOf(topPane, bottomPane))
+        assertEquals(0, paneAt(glyphs, x = -0.2f, y = -0.2f))
+        assertEquals(1, paneAt(glyphs, x = 1.4f, y = 1.4f))
+    }
+
+    @Test
+    fun `a nested split routes clicks to the right quarter`() {
+        val all =
+            listOf(
+                bounds(0f, 0f, 500f, 800f),
+                bounds(500f, 0f, 500f, 400f),
+                bounds(500f, 400f, 500f, 400f),
+            )
+        val glyphs = glyphsOf(all)
+        assertEquals(0, paneAt(glyphs, x = 0.2f, y = 0.9f))
+        assertEquals(1, paneAt(glyphs, x = 0.8f, y = 0.2f))
+        assertEquals(2, paneAt(glyphs, x = 0.8f, y = 0.8f))
+    }
+
+    @Test
+    fun `panes with no measured rectangle are never picked`() {
+        // An unmeasured pane has no region on the map, so it cannot be the answer - not even as
+        // the nearest one, which would send the user to a pane the map never drew.
+        val glyphs = listOf(null, paneGlyphFor(rightPane, listOf(leftPane, rightPane)))
+        assertEquals(1, paneAt(glyphs, x = 0.1f, y = 0.1f))
+        assertNull(paneAt(listOf(null, null), x = 0.5f, y = 0.5f))
     }
 }
