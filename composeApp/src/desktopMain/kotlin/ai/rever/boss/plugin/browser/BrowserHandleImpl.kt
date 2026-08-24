@@ -2225,6 +2225,21 @@ internal class BrowserHandleImpl(
 
     override fun addTitleListener(listener: (String) -> Unit) {
         titleListeners.add(listener)
+        // Replay the title Chromium has already reported.
+        //
+        // TitleChanged is an EVENT, so a listener that arrives after it fired hears nothing, and
+        // a tab whose page loaded before its listener was attached keeps whatever placeholder it
+        // was created with - "Loading..." - for the rest of its life. That is not a rare window:
+        // a cached page fires TitleChanged almost immediately, and session restore attaches
+        // listeners for many tabs while those tabs are already loading.
+        //
+        // Blank is skipped for the same reason updateTitle skips it: about:blank reports an empty
+        // title, and replaying that would blank a tab rather than leave it alone.
+        val title = lastKnownTitle
+        if (title.isNotBlank()) {
+            runCatching { listener(title) }
+                .onFailure { logger.warn(LogCategory.BROWSER, "Title listener threw on replay", error = it) }
+        }
     }
 
     override fun removeTitleListener(listener: (String) -> Unit) {
@@ -2321,6 +2336,11 @@ internal class BrowserHandleImpl(
 
     override fun addLoadingListener(listener: (Boolean) -> Unit) {
         loadingListeners.add(listener)
+        // Same replay, same reason as addTitleListener: a listener attached after loading
+        // finished would otherwise sit at its initial assumption forever. Unlike the title there
+        // is no "blank" to skip - false is a real, useful answer.
+        runCatching { listener(_isLoading) }
+            .onFailure { logger.warn(LogCategory.BROWSER, "Loading listener threw on replay", error = it) }
     }
 
     override fun removeLoadingListener(listener: (Boolean) -> Unit) {
