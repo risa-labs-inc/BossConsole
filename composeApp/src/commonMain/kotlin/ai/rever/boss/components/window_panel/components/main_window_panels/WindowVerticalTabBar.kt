@@ -105,6 +105,8 @@ fun rememberWindowTabGroups(
                         autoScrollToActive = false,
                         showSections = !several,
                         isActiveGroup = isActive,
+                        // The header carries this pane's "+" once there is a header to carry it.
+                        showNewTabRow = !several,
                     )
                 }
             TabBarGroup(
@@ -114,6 +116,10 @@ fun rememberWindowTabGroups(
                 glyph = glyphs[panel.id],
                 label = paneLabel(index, glyphs[panel.id]),
                 activate = { splitViewState.setActivePanel(panel.id) },
+                newTab = state.openNewTab,
+                // Only offered where there is a split to undo. closePanel refuses to remove a
+                // lone panel anyway, so a button for it would be one that does nothing.
+                close = if (several) ({ splitViewState.closePanel(panel.id) }) else null,
             )
         }
     }

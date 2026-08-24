@@ -16,17 +16,24 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Divider
+import androidx.compose.material.Icon
 import androidx.compose.material.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -103,8 +110,63 @@ internal fun TabBarGroupHeader(
                 letterSpacing = 0.8.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
             )
+            // The pane's own two actions, on the pane's own row. They were a separate full-width
+            // "New Tab" row per group, which cost a row of chrome per pane and still had nowhere
+            // to put "close this pane".
+            HeaderAction(
+                icon = Icons.Default.Add,
+                description = "New tab in ${group.label}",
+                tint = colors.textSecondary,
+                onClick = group.newTab,
+            )
+            group.close?.let { close ->
+                HeaderAction(
+                    icon = Icons.Outlined.Close,
+                    description = "Close ${group.label}",
+                    tint = colors.textSecondary,
+                    onClick = close,
+                )
+            }
         }
+    }
+}
+
+/**
+ * One icon button on a group header.
+ *
+ * Always drawn, not revealed on hover the way a section header's "+" is: those are a shortcut for
+ * something the bar offers elsewhere too, while closing a pane is offered nowhere else in the bar
+ * at all. A control that only exists once you are already pointing at it cannot be found by
+ * someone looking for it.
+ */
+@Composable
+private fun HeaderAction(
+    icon: ImageVector,
+    description: String,
+    tint: Color,
+    onClick: () -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val hovered by interactionSource.collectIsHoveredAsState()
+    HoverTooltipBox(
+        text = description,
+        placement = TooltipPlacement.END,
+        modifier =
+            Modifier
+                .size(GROUP_HEADER_HEIGHT)
+                .hoverable(interactionSource)
+                .clip(RoundedCornerShape(4.dp))
+                .background(if (hovered) BossTheme.colors.raised else Color.Transparent)
+                .clickable(onClick = onClick),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = description,
+            tint = if (hovered) BossTheme.colors.textPrimary else tint,
+            modifier = Modifier.size(12.dp),
+        )
     }
 }
 

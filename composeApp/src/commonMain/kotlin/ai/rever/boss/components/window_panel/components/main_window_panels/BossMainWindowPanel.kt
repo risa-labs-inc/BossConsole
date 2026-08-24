@@ -385,6 +385,14 @@ fun BossTabsComponent.rememberTabBarState(
      * will land in - see BossTabButton's isFocused.
      */
     isActiveGroup: Boolean = true,
+    /**
+     * Whether this group draws its own full-width "New Tab" row.
+     *
+     * False once the bar holds more than one group: the group header is already a row, and it
+     * carries this pane's "+" alongside its name. Two rows of chrome per pane, times four panes,
+     * was most of a bar.
+     */
+    showNewTabRow: Boolean = true,
 ): TabBarState {
     val tabsState = tabsState.subscribeAsState()
     var showNewTabDialog by remember { mutableStateOf(false) }
@@ -603,7 +611,7 @@ fun BossTabsComponent.rememberTabBarState(
     // the first unpinned tab's item rather than being items of their own. Anything indexing the
     // lazy list rather than the tab model has to add this - the scroll-to-active effect below,
     // and a window bar working out where each group starts.
-    val leadingListItems = (if (vertical) 1 else 0) + (if (sectionsShown) 1 else 0)
+    val leadingListItems = (if (vertical && showNewTabRow) 1 else 0) + (if (sectionsShown) 1 else 0)
 
     // Auto-scroll to active tab when it changes
     LaunchedEffect(tabsState.value.activeIndex, autoScrollToActive) {
@@ -870,7 +878,7 @@ fun BossTabsComponent.rememberTabBarState(
         // under the space name and its rule and before the first tab. It is the one row whose
         // position should not depend on how many tabs there are, and at the top it never scrolls
         // away, which is what a bottom-anchored slot was reaching for the hard way.
-        if (vertical) {
+        if (vertical && showNewTabRow) {
             // Keys carry the panel id because a window bar splices several groups into ONE list,
             // and a LazyColumn throws on a duplicate key. The tab items below are keyed
             // positionally by the list itself, so only these fixed ones need it.
