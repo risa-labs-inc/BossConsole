@@ -298,9 +298,9 @@ internal fun overlayCornerIsHeavyweight(): Boolean = routeOverlayHeavyweight(Ove
  * title-bar height), which reading the cursor avoids entirely.
  *
  * [hotspot] is the same placement stated in the only terms the heavyweight path can use: where the
- * POINTER sits inside the ghost, measured from its top-left. It must agree with [windowOffset] - the
- * two are one decision expressed twice, and a caller that changes one without the other gets a ghost
- * that jumps when the browser's rendering mode changes.
+ * POINTER sits inside the ghost, measured from its top-left. Both callers derive [windowOffset] from
+ * it rather than stating the placement twice: expressed twice they drift, and the drift is visible
+ * only in whichever rendering mode the person changing it is not running.
  */
 @Composable
 fun OverlayGhost(

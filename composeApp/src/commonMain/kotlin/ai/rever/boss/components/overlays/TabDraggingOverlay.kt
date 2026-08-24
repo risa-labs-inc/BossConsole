@@ -44,17 +44,13 @@ fun TabDraggableComponent.TabDraggingOverlay() {
 
     val currentPosition = startPosition + delta
 
-    // Offset to position the ghost tab with its left edge near the cursor
-    val density = LocalDensity.current
-    val tabWidthPx = with(density) { GHOST_WIDTH.toPx() }
-    val tabHeightPx = with(density) { GHOST_HEIGHT.toPx() }
-
-    // Position slightly offset from cursor so user can see where they're dropping
-    val offsetPosition =
-        Offset(
-            currentPosition.x - tabWidthPx / 4,
-            currentPosition.y - tabHeightPx / 2,
-        )
+    // Where the pointer sits inside the ghost card: a quarter in from the leading edge, vertically
+    // centred, so the drop point is visible beside it. Both paths take it from this one value -
+    // stated twice, they drift, and the drift shows up only in whichever rendering mode you are not
+    // in.
+    val hotspot = DpOffset(GHOST_WIDTH / 4, GHOST_HEIGHT / 2)
+    val hotspotPx = with(LocalDensity.current) { Offset(hotspot.x.toPx(), hotspot.y.toPx()) }
+    val offsetPosition = currentPosition - hotspotPx
 
     // OverlayGhost puts the ghost in its own cursor-tracking window under HARDWARE, where the
     // browser's native surface would otherwise paint over it - so the ghost used to vanish for
@@ -62,9 +58,7 @@ fun TabDraggableComponent.TabDraggingOverlay() {
     // it has always been.
     OverlayGhost(
         size = DpSize(GHOST_WIDTH, GHOST_HEIGHT),
-        // The same placement offsetPosition above expresses, from the ghost's corner instead of the
-        // cursor's: a quarter in from the leading edge, vertically centred.
-        hotspot = DpOffset(GHOST_WIDTH / 4, GHOST_HEIGHT / 2),
+        hotspot = hotspot,
         windowOffset = { IntOffset(offsetPosition.x.toInt(), offsetPosition.y.toInt()) },
     ) {
         Box(

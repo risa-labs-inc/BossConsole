@@ -2,13 +2,12 @@ package ai.rever.boss.components.buttons
 
 import ai.rever.boss.components.model.BossDraggableComponent
 import ai.rever.boss.components.overlays.contextMenu
+import ai.rever.boss.components.plugin.panelMenuActions
 import ai.rever.boss.components.plugin.panelMenuItems
-import ai.rever.boss.components.plugin.rememberPanelMenuActions
 import ai.rever.boss.components.sidebar.rememberSidebarSettingsMenuItems
 import ai.rever.boss.plugin.api.Panel
 import ai.rever.boss.plugin.api.Panel.Companion.opposite
 import ai.rever.boss.plugin.api.SidebarItem
-import ai.rever.boss.window.LocalWindowId
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
@@ -48,8 +47,9 @@ fun BossDraggableComponent.DraggableActionButton(
     val panelMenu =
         panelMenuItems(
             panelId = item.pluginContentId,
-            windowId = LocalWindowId.current,
-            actions = rememberPanelMenuActions(item.pluginContentId),
+            actions = panelMenuActions(item.pluginContentId),
+            // currentItem, not item: a native menu on macOS is an OS window that outlives the
+            // composition that opened it, so the row acts on whatever the icon stands for by then.
             onOpenAsTab = { requestOpenAsTab(currentItem.pluginContentId) },
             // No Minimize row: the icon's own click already toggles the panel, and this menu opens
             // just as often while the panel is closed, where minimising means nothing.

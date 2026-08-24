@@ -2,11 +2,11 @@ package ai.rever.boss.components.window_panel.components
 
 import ai.rever.boss.components.buttons.BossActionButton
 import ai.rever.boss.components.overlays.ContextMenu
+import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.contextMenu
-import ai.rever.boss.components.plugin.AvailablePluginUpdate
 import ai.rever.boss.components.plugin.PanelMenuActions
-import ai.rever.boss.components.plugin.PluginBuildInfo
 import ai.rever.boss.components.plugin.PluginBuildTag
+import ai.rever.boss.components.plugin.panelMenuActions
 import ai.rever.boss.components.plugin.panelMenuItems
 import ai.rever.boss.layout.BossChrome
 import ai.rever.boss.plugin.api.PanelId
@@ -43,20 +43,17 @@ private val UpdateBadgeColor: Color get() = BossThemeColors.SuccessColor
 fun BossPanelTopBar(
     title: String?,
     isHovered: Boolean,
-    onReloadPlugin: (() -> Unit)? = null,
+    /**
+     * What this panel's plugin can be told to do, from [panelMenuActions].
+     *
+     * One parameter rather than ten pass-throughs, because unpacking it here and repacking it for
+     * the menu is the drift this type exists to remove: a field added to [PanelMenuActions] would
+     * reach the rail and silently not the header until someone threaded another argument.
+     */
+    actions: PanelMenuActions = PanelMenuActions(),
     onOpenAsTab: (() -> Unit)? = null,
-    onCheckForUpdates: (() -> Unit)? = null,
-    onOpenEvolver: (() -> Unit)? = null,
-    onReportIssue: (() -> Unit)? = null,
-    onUninstallPlugin: (() -> Unit)? = null,
-    uninstallEnabled: Boolean = true,
     onMinimize: () -> Unit,
-    updateAvailable: AvailablePluginUpdate? = null,
-    onUpdateClick: (() -> Unit)? = null,
-    buildInfo: PluginBuildInfo? = null,
-    onBuildTagClick: (() -> Unit)? = null,
     panelId: PanelId? = null,
-    windowId: String? = null,
     dragModifier: Modifier = Modifier,
     content: (@Composable () -> Unit)? = null,
 ) {
@@ -65,19 +62,7 @@ fun BossPanelTopBar(
     val menuItems =
         panelMenuItems(
             panelId = panelId,
-            windowId = windowId,
-            actions =
-                PanelMenuActions(
-                    buildInfo = buildInfo,
-                    updateAvailable = updateAvailable,
-                    installStoreVersion = onBuildTagClick,
-                    reloadPanel = onReloadPlugin,
-                    checkForUpdates = onCheckForUpdates,
-                    openEvolver = onOpenEvolver,
-                    reportIssue = onReportIssue,
-                    uninstallPlugin = onUninstallPlugin,
-                    uninstallEnabled = uninstallEnabled,
-                ),
+            actions = actions,
             onOpenAsTab = onOpenAsTab,
             onMinimize = onMinimize,
         )
@@ -121,85 +106,114 @@ fun BossPanelTopBar(
             // Next to the name, not out at the edge: the tag qualifies which build of this panel you
             // are looking at, so it belongs with the thing it qualifies. Not hover-gated - a panel
             // running unreleased code should say so whether or not the pointer is over it.
-            if (buildInfo?.isTagged == true) {
+            if (actions.buildInfo?.isTagged == true) {
                 Spacer(modifier = Modifier.width(6.dp))
                 PluginBuildTag(
-                    info = buildInfo,
-                    onClick = onBuildTagClick,
+                    info = actions.buildInfo,
+                    onClick = actions.installStoreVersion,
                 )
             }
         }
 
-        // "Update available" badge — always visible (not hover-gated) when a compatible update
-        // exists for this plugin. Clicking it prompts to update.
-        if (updateAvailable != null) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
+        UpdateBadge(actions)
+
+        HeaderControls(
+            isHovered = isHovered,
+            menuItems = menuItems,
+            onMinimize = onMinimize,
+            content = content,
+        )
+    }
+}
+
+/**
+ * The "update available" badge, shown whenever a host-compatible update exists for this panel's
+ * plugin.
+ *
+ * Not hover-gated, unlike the controls beside it: an update the user can take is worth saying while
+ * the pointer is elsewhere. Clicking it goes to the same place "Check for Updates" does.
+ */
+@Composable
+private fun RowScope.UpdateBadge(actions: PanelMenuActions) {
+    val updateAvailable = actions.updateAvailable ?: return
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier =
+            Modifier
+                .padding(end = 4.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .clickable { actions.checkForUpdates?.invoke() }
+                .padding(horizontal = 6.dp, vertical = 2.dp),
+    ) {
+        Icon(
+            imageVector = Icons.Outlined.Upgrade,
+            contentDescription = "Update available: v${updateAvailable.currentVersion} → v${updateAvailable.newVersion}",
+            tint = UpdateBadgeColor,
+            modifier = Modifier.size(14.dp),
+        )
+        Spacer(modifier = Modifier.width(3.dp))
+        Text(
+            text = "Update",
+            color = UpdateBadgeColor,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+        )
+    }
+}
+
+/**
+ * The trailing controls: the caller's own [content], the "…" kebab and Minimize.
+ *
+ * Hover-gated as a group, and the kebab keeps the group up while its menu is open - otherwise moving
+ * the pointer into the menu takes the button that opened it away.
+ */
+@Composable
+private fun RowScope.HeaderControls(
+    isHovered: Boolean,
+    menuItems: List<ContextMenuItem>,
+    onMinimize: () -> Unit,
+    content: (@Composable () -> Unit)?,
+) {
+    var showMenu by remember { mutableStateOf(false) }
+    val buttonHeightRef = remember { intArrayOf(0) }
+
+    AnimatedVisibility(
+        visible = isHovered || showMenu,
+        enter = fadeIn(),
+        exit = fadeOut(),
+    ) {
+        Row(modifier = Modifier.padding(end = 2.dp)) {
+            content?.invoke()
+
+            // More button - opens the same menu as right-click
+            Box(
                 modifier =
-                    Modifier
-                        .padding(end = 4.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .clickable { onUpdateClick?.invoke() }
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                    Modifier.onGloballyPositioned { coordinates ->
+                        buttonHeightRef[0] = coordinates.size.height
+                    },
             ) {
-                Icon(
-                    imageVector = Icons.Outlined.Upgrade,
-                    contentDescription = "Update available: v${updateAvailable.currentVersion} → v${updateAvailable.newVersion}",
-                    tint = UpdateBadgeColor,
-                    modifier = Modifier.size(14.dp),
-                )
-                Spacer(modifier = Modifier.width(3.dp))
-                Text(
-                    text = "Update",
-                    color = UpdateBadgeColor,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium,
-                )
-            }
-        }
-
-        // State for dropdown menu (moved outside AnimatedVisibility to be accessible in condition)
-        var showMenu by remember { mutableStateOf(false) }
-        val buttonHeightRef = remember { intArrayOf(0) }
-
-        AnimatedVisibility(
-            visible = isHovered || showMenu, // Keep visible while menu is open
-            enter = fadeIn(),
-            exit = fadeOut(),
-        ) {
-            Row(modifier = Modifier.padding(end = 2.dp)) {
-                content?.invoke()
-
-                // More button — opens the same menu as right-click
-                Box(
-                    modifier =
-                        Modifier.onGloballyPositioned { coordinates ->
-                            buttonHeightRef[0] = coordinates.size.height
-                        },
-                ) {
-                    BossActionButton(
-                        imageVector = Icons.Outlined.MoreVert,
-                        text = "More",
-                        color = BossThemeColors.TextPrimary,
-                        onClick = { showMenu = true },
-                    )
-
-                    if (showMenu) {
-                        ContextMenu(
-                            items = menuItems,
-                            offset = IntOffset(0, buttonHeightRef[0]),
-                            onDismissRequest = { showMenu = false },
-                        )
-                    }
-                }
-
                 BossActionButton(
-                    imageVector = Icons.Outlined.Remove,
-                    text = "Minimize",
+                    imageVector = Icons.Outlined.MoreVert,
+                    text = "More",
                     color = BossThemeColors.TextPrimary,
-                    onClick = onMinimize,
+                    onClick = { showMenu = true },
                 )
+
+                if (showMenu) {
+                    ContextMenu(
+                        items = menuItems,
+                        offset = IntOffset(0, buttonHeightRef[0]),
+                        onDismissRequest = { showMenu = false },
+                    )
+                }
             }
+
+            BossActionButton(
+                imageVector = Icons.Outlined.Remove,
+                text = "Minimize",
+                color = BossThemeColors.TextPrimary,
+                onClick = onMinimize,
+            )
         }
     }
 }

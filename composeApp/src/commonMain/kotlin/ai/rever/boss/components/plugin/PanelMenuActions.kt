@@ -57,6 +57,9 @@ data class PanelMenuActions(
  * The actions available for [panelId], derived from the plugin registries and the current user's
  * RBAC snapshot.
  *
+ * Not a `remember`, deliberately and by name: the callbacks close over this composition's panel and
+ * window, so they are rebuilt each pass and nothing downstream should key on their identity.
+ *
  * Lives here rather than in the panel header because the header is no longer the only place that
  * offers them: the sidebar rail's icon is the same plugin, and right-clicking it has to reach the
  * same menu whether or not the panel is currently showing. Resolving it in one composable is what
@@ -68,7 +71,7 @@ data class PanelMenuActions(
  * one.
  */
 @Composable
-fun rememberPanelMenuActions(panelId: PanelId?): PanelMenuActions {
+fun panelMenuActions(panelId: PanelId?): PanelMenuActions {
     val windowId = LocalWindowId.current
     val pluginId = panelId?.let { LocalPanelPluginIdResolver.current(it) }
 
@@ -80,7 +83,7 @@ fun rememberPanelMenuActions(panelId: PanelId?): PanelMenuActions {
     // Uninstall is offered for every plugin panel and disabled for the ones the manager refuses to
     // unload, so a system plugin shows why the action is unavailable instead of hiding it.
     val uninstallable = LocalPluginUninstallable.current
-    val evolver = rememberEvolverActions(pluginId)
+    val evolver = evolverActions(pluginId)
     val buildInfo = pluginId?.let { pluginBuilds[it] }
 
     if (panelId == null || windowId == null) {
@@ -132,7 +135,7 @@ private data class EvolverActions(
  * (holds the permission, or is admin). Both dispatch evolver_open with the right section.
  */
 @Composable
-private fun rememberEvolverActions(pluginId: String?): EvolverActions {
+private fun evolverActions(pluginId: String?): EvolverActions {
     val registeredMcpTools by McpToolRegistryImpl.tools.collectAsState()
     val menuScope = rememberCoroutineScope()
     val logger = remember { BossLogger.forComponent("PanelMenu") }
@@ -187,12 +190,15 @@ private fun rememberEvolverActions(pluginId: String?): EvolverActions {
 @Composable
 fun panelMenuItems(
     panelId: PanelId?,
-    windowId: String?,
     actions: PanelMenuActions,
     onOpenAsTab: (() -> Unit)? = null,
     onMinimize: (() -> Unit)? = null,
     trailingItems: List<ContextMenuItem> = emptyList(),
 ): List<ContextMenuItem> {
+    // The window is read here rather than taken as a parameter: [panelMenuActions] reads the same
+    // local for the built-in rows, and two sources for one window is a way for the built-ins and the
+    // contributed rows to end up addressed at different windows with nothing to catch it.
+    val windowId = LocalWindowId.current
     val contributions by PanelMenuRegistryImpl.contributions.collectAsState()
     val access by PanelMenuRegistryImpl.access.collectAsState()
     val pluginEntries =
@@ -222,9 +228,10 @@ fun panelMenuItems(
         addContributedRows(pluginEntries, panelId, windowId)
         onMinimize?.let { add(row("Minimize", Icons.Outlined.Remove, it)) }
         if (trailingItems.isNotEmpty()) {
-            // Only a separator when there is something to separate: a panel that offers no actions
-            // of its own would otherwise open its menu with a divider as the first row.
-            if (isNotEmpty()) add(ContextMenuItem(isDivider = true))
+            // Only a separator when there is something to separate, and never a second one: a panel
+            // that offers no actions of its own would otherwise open its menu with a divider as the
+            // first row, and one that ends in a divider would show two rules in a row.
+            if (isNotEmpty() && !last().isDivider) add(ContextMenuItem(isDivider = true))
             addAll(trailingItems)
         }
     }
@@ -262,16 +269,24 @@ private fun MutableList<ContextMenuItem>.addBuildRows(actions: PanelMenuActions)
     add(ContextMenuItem(isDivider = true))
 }
 
-/** The plugin's own contributed rows, after the built-ins and behind a divider. */
+/**
+ * The plugin's own contributed rows, after the built-ins and behind a divider.
+ *
+ * The disabled ones are dropped BEFORE the divider is decided. Deciding on `entries` and skipping
+ * inside the loop leaves a contribution whose items are all disabled adding a divider with nothing
+ * under it - and on the rail that divider then satisfies the "is there anything to separate" guard
+ * for the trailing rows, so the menu shows two rules in a row and then "Sidebar settings".
+ */
 private fun MutableList<ContextMenuItem>.addContributedRows(
     entries: List<Pair<PanelMenuContribution, PanelMenuItem>>,
     panelId: PanelId?,
     windowId: String?,
 ) {
-    if (entries.isEmpty() || panelId == null) return
+    if (panelId == null) return
+    val visible = entries.filter { (_, item) -> item.enabled }
+    if (visible.isEmpty()) return
     add(ContextMenuItem(isDivider = true))
-    for ((contribution, item) in entries) {
-        if (!item.enabled) continue
+    for ((contribution, item) in visible) {
         add(
             row(item.label, item.icon, {
                 PanelMenuRegistryImpl.onItemClick(contribution, panelId, item.id, windowId)

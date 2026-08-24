@@ -1,6 +1,7 @@
 package ai.rever.boss.components.window_panel.components
 
 import ai.rever.boss.components.overlays.NativeContextMenuTestOverride
+import ai.rever.boss.components.plugin.PanelMenuActions
 import ai.rever.boss.components.plugin.PluginBuildInfo
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -70,12 +71,15 @@ class BossPanelTopBarMenuTest {
             BossPanelTopBar(
                 title = TITLE,
                 isHovered = true,
-                onReloadPlugin = { reloaded++ },
-                onUninstallPlugin = { uninstalled++ },
-                uninstallEnabled = uninstallEnabled,
+                actions =
+                    PanelMenuActions(
+                        buildInfo = buildInfo,
+                        installStoreVersion = if (withTagAction) ({ tagClicked++ }) else null,
+                        reloadPanel = { reloaded++ },
+                        uninstallPlugin = { uninstalled++ },
+                        uninstallEnabled = uninstallEnabled,
+                    ),
                 onMinimize = {},
-                buildInfo = buildInfo,
-                onBuildTagClick = if (withTagAction) ({ tagClicked++ }) else null,
             )
         }
     }

@@ -101,10 +101,19 @@ class HeavyweightGhostPlacementTest {
 
     @Test
     fun `the ghost is clamped to the monitor the pointer is on, not the primary one`() {
-        // The trap: clamping against the primary screen's rect would drag a ghost on the second
-        // monitor back to x < 1920, i.e. onto the wrong display entirely.
-        val placed = place(2000, 300, DUAL)
-        assertTrue(placed.first >= 1920, "ghost jumped back to the primary monitor: $placed")
+        // The trap: clamping against the primary screen's rect would drag a ghost near the second
+        // monitor's right edge back to x < 1920, i.e. onto the wrong display entirely.
+        val placed = place(3190, 300, DUAL)
+        assertEquals(1920 + 1280 - GHOST_W, placed.first)
+    }
+
+    @Test
+    fun `crossing the seam between two monitors leaves the ghost on the pointer`() {
+        // The card is 180 wide and carried 45 in, so clamping to whichever monitor the cursor is on
+        // would yank it up to 45px sideways at the seam and snap it back on the other side - for a
+        // spill that costs nothing, since the next display is right there. It is left alone.
+        val placed = place(1930, 300, DUAL)
+        assertEquals(Pair(1930 - HOT_X, 300 - HOT_Y), placed)
     }
 
     @Test

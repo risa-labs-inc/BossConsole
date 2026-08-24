@@ -1,5 +1,6 @@
 package ai.rever.boss.components.window_panel.components
 
+import ai.rever.boss.components.plugin.PanelMenuActions
 import ai.rever.boss.components.plugin.PluginBuildInfo
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.width
@@ -73,9 +74,8 @@ class BossPanelTopBarLayoutTest {
                 BossPanelTopBar(
                     title = title,
                     isHovered = true,
+                    actions = PanelMenuActions(buildInfo = buildInfo, installStoreVersion = {}),
                     onMinimize = {},
-                    buildInfo = buildInfo,
-                    onBuildTagClick = {},
                 )
             }
         }

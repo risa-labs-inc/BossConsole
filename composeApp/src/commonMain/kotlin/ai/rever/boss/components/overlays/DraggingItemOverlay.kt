@@ -32,20 +32,19 @@ fun BossDraggableComponent.DraggingItemOverlay() {
         // Calculate the current absolute position
         val currentPosition = startPosition + delta
 
-        // Calculate the offset to center the ghost icon on the pointer
-        val iconSizePx = with(LocalDensity.current) { GHOST_ICON_SIZE.toPx() }
-        val centeredOffset = Offset(currentPosition.x - iconSizePx / 2, currentPosition.y - iconSizePx / 2)
+        // Centred on the pointer: the icon is being carried, so the pointer holds its middle. The
+        // two paths take it from the same value rather than each doing the arithmetic - stated
+        // twice, they drift, and the drift shows up only in whichever rendering mode you are not in.
+        val hotspot = DpOffset(GHOST_ICON_SIZE / 2, GHOST_ICON_SIZE / 2)
+        val hotspotPx = with(LocalDensity.current) { Offset(hotspot.x.toPx(), hotspot.y.toPx()) }
 
         // Under HARDWARE the browser's native surface paints over the Compose scene, so this ghost
         // disappeared as soon as the drag crossed a page. OverlayGhost gives it its own
         // cursor-tracking window there; on OFF_SCREEN it is the same offset Box as before.
         OverlayGhost(
             size = DpSize(GHOST_ICON_SIZE, GHOST_ICON_SIZE),
-            // Centred on the pointer: the icon is being carried, so the pointer holds its middle.
-            // Same statement as centeredOffset below, in the units the ghost's own window needs.
-            hotspot = DpOffset(GHOST_ICON_SIZE / 2, GHOST_ICON_SIZE / 2),
-            // Position the ghost based on calculated absolute position, centered
-            windowOffset = { centeredOffset.round() },
+            hotspot = hotspot,
+            windowOffset = { (currentPosition - hotspotPx).round() },
         ) {
             Box(
                 modifier = Modifier.alpha(0.7f), // Apply transparency

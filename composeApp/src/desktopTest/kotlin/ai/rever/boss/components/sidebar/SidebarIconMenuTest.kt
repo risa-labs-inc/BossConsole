@@ -3,9 +3,16 @@ package ai.rever.boss.components.sidebar
 import ai.rever.boss.components.buttons.DraggableActionButton
 import ai.rever.boss.components.model.BossDraggableComponent
 import ai.rever.boss.components.overlays.NativeContextMenuTestOverride
+import ai.rever.boss.components.plugin.LocalPanelPluginIdResolver
+import ai.rever.boss.components.plugin.LocalPluginUninstallable
+import ai.rever.boss.components.plugin.PluginBuildInfo
+import ai.rever.boss.components.plugin.PluginBuildRegistry
+import ai.rever.boss.components.plugin.registries.PanelMenuRegistryImpl
 import ai.rever.boss.plugin.api.Panel.Companion.left
 import ai.rever.boss.plugin.api.Panel.Companion.top
 import ai.rever.boss.plugin.api.PanelId
+import ai.rever.boss.plugin.api.PanelMenuContribution
+import ai.rever.boss.plugin.api.PanelMenuItem
 import ai.rever.boss.plugin.api.PanelRegistry
 import ai.rever.boss.plugin.api.SidebarItem
 import ai.rever.boss.window.LocalWindowId
@@ -26,9 +33,10 @@ import org.junit.Test
  * What right-clicking a plugin's icon in the sidebar rail offers.
  *
  * The rail icon is the only handle a plugin has while its panel is closed, and it used to offer a
- * one-item menu ("Sidebar settings") - reloading, updating or opening a plugin meant opening its
- * panel first just to reach the header's "…" kebab. These pin that the icon now opens the panel's
- * own menu, and that the sidebar's row is still there behind it.
+ * one-item menu ("Sidebar settings") - reloading, updating or uninstalling a plugin meant opening
+ * its panel first just to reach the header's "…" kebab. These pin that the icon now opens the
+ * panel's own menu, including the rows that only exist for a resolvable plugin, and that the
+ * sidebar's own row is still there behind it.
  */
 class SidebarIconMenuTest {
     @get:Rule
@@ -37,6 +45,9 @@ class SidebarIconMenuTest {
     private companion object {
         const val LABEL = "Probe"
         const val WINDOW = "window-1"
+        const val PLUGIN = "ai.rever.boss.plugin.dynamic.probe"
+        const val CONTRIBUTION = "$PLUGIN:menu"
+        val PANEL = PanelId("probe", 1)
     }
 
     /**
@@ -50,15 +61,54 @@ class SidebarIconMenuTest {
     }
 
     @After
-    fun clearOverride() {
+    fun clearRegistries() {
         NativeContextMenuTestOverride.enabled = null
+        PluginBuildRegistry.reset()
+        PanelMenuRegistryImpl.unregister(CONTRIBUTION)
     }
 
-    private fun showIcon(windowId: String? = WINDOW) {
+    /** A build that is not the released one, so the version rows apply. */
+    private fun localBuild() =
+        PluginBuildInfo(
+            pluginId = PLUGIN,
+            displayName = LABEL,
+            version = "1.0.3",
+            signedBytes = false,
+            storeSourced = false,
+            reloadStamp = null,
+        )
+
+    /** A contribution whose items this test controls, targeting this panel only. */
+    private fun contribute(vararg items: PanelMenuItem) {
+        PanelMenuRegistryImpl.register(
+            object : PanelMenuContribution {
+                override val contributionId = CONTRIBUTION
+                override val targetPanels = setOf(PANEL.panelId)
+
+                override fun items(panelId: PanelId) = items.toList()
+
+                override fun onItemClick(
+                    panelId: PanelId,
+                    itemId: String,
+                    windowId: String?,
+                ) = Unit
+            },
+        )
+    }
+
+    private fun showIcon(
+        windowId: String? = WINDOW,
+        pluginId: String? = null,
+        uninstallable: Boolean = true,
+    ) {
         val model = BossDraggableComponent(PanelRegistry())
-        val item = SidebarItem(PanelId("probe", 1), Icons.Default.Extension, LABEL)
+        val item = SidebarItem(PANEL, Icons.Default.Extension, LABEL)
         compose.setContent {
-            CompositionLocalProvider(LocalWindowId provides windowId) {
+            CompositionLocalProvider(
+                LocalWindowId provides windowId,
+                LocalPanelPluginIdResolver provides { pluginId },
+                LocalPluginUninstallable provides { uninstallable },
+            ) {
                 with(model) {
                     DraggableActionButton(item = item, slot = left.top.top)
                 }
@@ -78,6 +128,60 @@ class SidebarIconMenuTest {
         compose.onNodeWithText("Reload Panel").assertExists()
         compose.onNodeWithText("Check for Updates").assertExists()
         compose.onNodeWithText("Open as Tab").assertExists()
+    }
+
+    @Test
+    fun `a resolvable plugin brings its uninstall row to the rail`() {
+        // Everything gated on the OWNING PLUGIN rather than on the panel: without a resolver the
+        // menu still has rows, so asserting only the ones above would pass with this half missing.
+        showIcon(pluginId = PLUGIN)
+        openMenu()
+
+        compose.onNodeWithText("Uninstall Plugin").assertExists()
+    }
+
+    @Test
+    fun `an unremovable plugin's uninstall row is still shown, not hidden`() {
+        // Same rule as the header: hiding it for a system plugin reads as the feature missing. That
+        // it is inert is asserted where the flag is visible, in PanelMenuItemsTest - the drawn row
+        // greys out rather than carrying disabled semantics.
+        showIcon(pluginId = PLUGIN, uninstallable = false)
+        openMenu()
+
+        compose.onNodeWithText("Uninstall Plugin").assertExists()
+    }
+
+    @Test
+    fun `a local build brings both version rows to the rail`() {
+        PluginBuildRegistry.put(localBuild())
+        showIcon(pluginId = PLUGIN)
+        openMenu()
+
+        compose.onNodeWithText("Version 1.0.3-debug").assertExists()
+        compose.onNodeWithText("Install Store Version").assertExists()
+    }
+
+    @Test
+    fun `the plugin's contributed rows reach the rail too`() {
+        contribute(PanelMenuItem(id = "diagnose", label = "Run Diagnostics"))
+        showIcon(pluginId = PLUGIN)
+        openMenu()
+
+        compose.onNodeWithText("Run Diagnostics").assertExists()
+    }
+
+    @Test
+    fun `a contribution with nothing enabled contributes no row`() {
+        // The divider used to be decided before the disabled items were dropped, so an all-disabled
+        // contribution left a rule with nothing under it - and on the rail that rule then counted as
+        // "something to separate", so the menu ended in two rules and then "Sidebar settings". The
+        // divider count itself is asserted in PanelMenuItemsTest, where the list is visible.
+        contribute(PanelMenuItem(id = "diagnose", label = "Run Diagnostics", enabled = false))
+        showIcon(pluginId = PLUGIN)
+        openMenu()
+
+        compose.onNodeWithText("Run Diagnostics").assertDoesNotExist()
+        compose.onNodeWithText("Sidebar settings").assertExists()
     }
 
     @Test

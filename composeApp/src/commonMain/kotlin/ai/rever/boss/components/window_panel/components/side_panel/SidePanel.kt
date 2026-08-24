@@ -3,7 +3,7 @@ package ai.rever.boss.components.window_panel.components.side_panel
 import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.components.model.BossDraggableComponent
 import ai.rever.boss.components.plugin.DynamicPluginManager
-import ai.rever.boss.components.plugin.rememberPanelMenuActions
+import ai.rever.boss.components.plugin.panelMenuActions
 import ai.rever.boss.components.registery.PanelComponentStore
 import ai.rever.boss.components.window_panel.components.BossPanelTopBar
 import ai.rever.boss.plugin.api.Panel
@@ -13,7 +13,6 @@ import ai.rever.boss.plugin.sandbox.ui.PluginErrorBoundary
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
-import ai.rever.boss.window.LocalWindowId
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.hoverable
@@ -65,11 +64,10 @@ fun BossDraggableComponent.SidePanel(
                 .hoverable(interactionSource),
     ) {
         val title = component?.panelInfo?.displayName ?: "Default title" // getPanelTitle(panel)
-        val windowId = LocalWindowId.current
 
         // Everything this panel's menu can do, resolved once and shared with the sidebar rail's
-        // icon menu - see rememberPanelMenuActions.
-        val actions = rememberPanelMenuActions(pluginContentId)
+        // icon menu - see panelMenuActions.
+        val actions = panelMenuActions(pluginContentId)
 
         // Drag the panel by its header: reorder/move between sidebar slots, or drop on
         // the central area to open it as a main tab. Reuses the sidebar drag system.
@@ -96,25 +94,15 @@ fun BossDraggableComponent.SidePanel(
         BossPanelTopBar(
             title = title,
             isHovered = isHovered,
-            onReloadPlugin = actions.reloadPanel,
+            actions = actions,
             onOpenAsTab =
                 pluginContentId?.let { panelId ->
                     { requestPromoteToTab(panelId) }
                 },
-            onCheckForUpdates = actions.checkForUpdates,
-            onOpenEvolver = actions.openEvolver,
-            onReportIssue = actions.reportIssue,
-            onUninstallPlugin = actions.uninstallPlugin,
-            uninstallEnabled = actions.uninstallEnabled,
             onMinimize = {
                 setPanelVisible(panel, false)
             },
-            updateAvailable = actions.updateAvailable,
-            onUpdateClick = actions.checkForUpdates,
-            buildInfo = actions.buildInfo,
-            onBuildTagClick = actions.installStoreVersion,
             panelId = pluginContentId,
-            windowId = windowId,
             dragModifier = headerDragModifier,
         )
         Divider(color = BossTheme.colors.line)

@@ -163,12 +163,19 @@ private fun placeGhost(
 
 /**
  * Where a ghost of [size] goes for a cursor at ([cursorX], [cursorY]): hung off the pointer by
- * [hotspot], and inside the working area of whichever monitor the pointer is on.
+ * [hotspot], and pulled back onto a monitor if that would put it somewhere there is no screen.
  *
- * The clamp is the whole of the screen handling now, and it is what keeps a ghost near an edge from
- * spilling onto a taskbar, a dock, or the next display. It is allowed to move the pointer off the
- * hotspot, which is the right trade: an offset ghost is worse than an exactly-placed one, and both
- * are far better than one that is half off the screen.
+ * The clamp exists for the edges of the desktop - a dock, a taskbar, the outside of the rightmost
+ * display - and it is the one thing allowed to move the ghost off its hotspot. So it is asked only
+ * when the ghost would actually land off-screen: **a ghost that fits inside the union of the
+ * monitors is left exactly on the pointer**, which is what keeps a drag across the seam between two
+ * displays from yanking the card up to its hotspot's width sideways and snapping it back on the
+ * other side. Clamping to the monitor the cursor happens to be on cannot tell the two cases apart -
+ * spilling onto the next display is free, spilling onto a dock is what this is for.
+ *
+ * Coverage is tested by the ghost's corners rather than by area: monitors are rectangles laid out in
+ * a grid, so a rectangle whose four corners are all on some screen spans at worst a seam between
+ * them, which is exactly the case being allowed.
  *
  * Pure so the placement can be pinned by a test, which is the only part of this reachable without a
  * display.
@@ -182,14 +189,34 @@ internal fun clampGhostToScreens(
 ): Pair<Int, Int> {
     val x = cursorX - hotspot.x
     val y = cursorY - hotspot.y
+    // Nothing known to clamp against, or nothing to clamp: the ghost stays on the pointer.
+    if (screens.isEmpty() || screens.covers(x, y, size)) return Pair(x, y)
+
     val screen =
         screens.firstOrNull { it.contains(cursorX, cursorY) }
-            ?: screens.firstOrNull()
-            ?: return Pair(x, y)
+            ?: screens.first()
     return Pair(
         pinInside(x, size.width, screen[0], screen[2]),
         pinInside(y, size.height, screen[1], screen[3]),
     )
+}
+
+/** Whether every corner of the ghost at ([x], [y]) sits on some monitor's working area. */
+private fun List<IntArray>.covers(
+    x: Int,
+    y: Int,
+    size: IntSize,
+): Boolean {
+    // The far edges are exclusive, matching contains(): a ghost ending exactly on the boundary is
+    // inside, and one pixel past it is not.
+    val corners =
+        listOf(
+            x to y,
+            x + size.width - 1 to y,
+            x to y + size.height - 1,
+            x + size.width - 1 to y + size.height - 1,
+        )
+    return corners.all { (cx, cy) -> any { it.contains(cx, cy) } }
 }
 
 /** Whether this `[x, y, width, height]` rect holds the point ([x], [y]). */
