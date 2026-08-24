@@ -49,7 +49,10 @@ internal fun VerticalBarWindowControls(
         // reads as breathing room across a 1500dp top bar reads as dead space down a 200dp one,
         // and there is a split map below them competing for the same inches.
         modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
-        verticalArrangement = Arrangement.spacedBy(0.dp),
+        // Not zero. Two 24dp rows flush against each other put their click targets in direct
+        // contact, and a click a pixel off the one you meant activates the other - which for
+        // these two means opening the wrong thing entirely, a project dialog or a workspace menu.
+        verticalArrangement = Arrangement.spacedBy(ROW_GAP),
     ) {
         BossActionButton(
             // A folder rather than the top bar's project LOGO tile. That tile is 28dp of solid
@@ -89,3 +92,6 @@ internal fun VerticalBarWindowControls(
  * without a cap a long project name pushes the chevron off the end of its own button.
  */
 private val LABEL_MAX_WIDTH = 130.dp
+
+/** Air between the two rows: enough that a click near the boundary cannot land on the other. */
+private val ROW_GAP = 4.dp

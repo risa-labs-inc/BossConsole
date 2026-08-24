@@ -126,16 +126,23 @@ fun BossActionButton(
     // State for hover popup - use class-level state holder to survive recomposition
     val hoverState = remember { HoverPopupState() }
 
+    // Beside, not below, once these are rows of a narrow column.
+    //
+    // The default puts the hover hint directly under the button - which in a stacked column is
+    // directly over the NEXT button. Under HARDWARE that hint is a native window, so it does not
+    // merely look wrong: it sits in front of a control the user is about to click.
+    val resolvedHintDirection = if (compact) right else hintDirection
+
     fun computeHoverPopupPosition(): IntOffset =
         IntOffset(
             buttonPositionRef[0].toInt() +
-                when (hintDirection) {
+                when (resolvedHintDirection) {
                     right -> buttonSizeRef[0]
                     left -> -hintPopupSizeRef[0]
                     else -> (buttonSizeRef[0] - hintPopupSizeRef[0]) / 2
                 },
             buttonPositionRef[1].toInt() +
-                when (hintDirection) {
+                when (resolvedHintDirection) {
                     top -> -hintPopupSizeRef[1]
                     bottom -> buttonSizeRef[1]
                     else -> 0
