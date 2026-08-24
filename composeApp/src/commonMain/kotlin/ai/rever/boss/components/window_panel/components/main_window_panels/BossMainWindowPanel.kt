@@ -1152,7 +1152,7 @@ fun BossTabsComponent.BossMainPanel(
     //
     // That one is passed because SplitViewPanel needs the same answer - it is what decides
     // whether the window draws the bar - and two independent reads are two things that can
-    // disagree. Nothing else consults this one: the strip is drawn in exactly this place, so
+    // disagree. Nothing else consults these: the strip is drawn in exactly this place, so
     // there is no second reader to keep in step.
     //
     // collectAsState, NOT `derivedStateOf { currentSettings.value }`. A MutableStateFlow's
@@ -1160,7 +1160,6 @@ fun BossTabsComponent.BossMainPanel(
     // computes once, caches forever, and being inside a `remember` is never rebuilt either.
     // The Settings toggle then writes a value nothing ever reads again.
     val paneAppearance by WindowAppearanceSettingsManager.currentSettings.collectAsState()
-    val showPaneStrip = paneAppearance.showPaneTabStrip
 
     // Track the active panel state to force recomposition
     val activePanelId by splitViewState?.activePanelIdState ?: remember { mutableStateOf("") }
@@ -1274,7 +1273,7 @@ fun BossTabsComponent.BossMainPanel(
                 tabs = paneTabs.tabs,
                 activeIndex = paneTabs.activeIndex,
                 pinnedCount = pinnedCount,
-                showStrip = showPaneStrip && (splitViewState?.getAllPanels()?.size ?: 1) > 1,
+                showStrip = paneAppearance.stripShownFor(splitViewState?.getAllPanels()?.size),
                 onSelect = { index ->
                     currentPanelId?.let { splitViewState?.setActivePanel(it) }
                     selectTab(index)

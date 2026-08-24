@@ -1005,6 +1005,7 @@
     <ID>PackageNaming:PaneGlyph.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:PaneGlyphTest.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:PaneTabStrip.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
+    <ID>PackageNaming:PaneTabStripVisibilityTest.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:PaneZoomTest.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:PanelHostTab.kt$package ai.rever.boss.components.plugin.tab_types</ID>
     <ID>PackageNaming:PromoteSidebarToTab.kt$package ai.rever.boss.components.window_panel</ID>

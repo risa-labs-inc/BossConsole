@@ -194,6 +194,23 @@ private fun ColumnScope.VerticalTabBarRows(
         enabled = enabled,
     )
 
+    PaneTabStripRows(settings = settings, coroutineScope = coroutineScope, enabled = enabled)
+}
+
+/**
+ * The strip's own two rows: whether it is drawn, and whether the pane count gates it.
+ *
+ * Their own composable because [VerticalTabBarRows] is at detekt's length ceiling. They must stay
+ * ABOVE the next `SettingsSection` in this file: `SettingsSearchIndexDriftTest` attributes a label
+ * to whichever section precedes it textually, so a helper placed at the end of the file indexes
+ * its rows under the last group on the page.
+ */
+@Composable
+private fun ColumnScope.PaneTabStripRows(
+    settings: ai.rever.boss.window.WindowAppearanceSettings,
+    coroutineScope: kotlinx.coroutines.CoroutineScope,
+    enabled: Boolean,
+) {
     SettingsToggle(
         label = "Pane Tab Strip",
         checked = settings.showPaneTabStrip,
@@ -205,14 +222,32 @@ private fun ColumnScope.VerticalTabBarRows(
             }
         },
         description =
-            "In a split window, show each pane's own tabs as a row of favicons across the top " +
-                "of that pane. The left bar collapses panes you are not working in, so without " +
-                "this, switching a background pane's tab means opening its group in the bar. " +
-                "An unsplit window never shows it either way",
+            "Show each pane's own tabs as a row of favicons across the top of that pane. The " +
+                "left bar hides names when it collapses a pane you are not working in, and when " +
+                "it collapses itself to the rail, so this is where a pane's tabs stay reachable",
         // Alongside the other vertical-bar rows, and disabled with them: the strip only exists
         // because the LEFT bar collapses panes. In Top position every pane already draws its own
         // full strip, so a toggle that appeared to work here would control nothing.
         enabled = enabled,
+    )
+
+    SettingsToggle(
+        label = "Only in Split Windows",
+        checked = settings.paneTabStripOnlyWhenSplit,
+        onCheckedChange = { onlyWhenSplit ->
+            coroutineScope.launch {
+                WindowAppearanceSettingsManager.updateSettings(
+                    settings.copy(paneTabStripOnlyWhenSplit = onlyWhenSplit),
+                )
+            }
+        },
+        description =
+            "Hide the strip while the window has a single pane. Off by default: the bar can " +
+                "collapse to the rail even with one pane, and then nothing else on screen names " +
+                "that pane's tabs",
+        // Disabled when the strip itself is off, not only when the bar is horizontal - a row
+        // qualifying something switched off is a control with nothing to control.
+        enabled = enabled && settings.showPaneTabStrip,
     )
 }
 

@@ -10,6 +10,7 @@ import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.window.MenuActionsHandler
+import ai.rever.boss.window.WindowAppearanceSettings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
@@ -71,8 +72,8 @@ private val PINNED_RULE_HEIGHT = 14.dp
  * no chip is: a chip consumes the press for its own menu, and the row checks for that before
  * opening a second one on top of it.
  *
- * Only for a window that is actually split. With one pane the sidebar already lists every tab
- * with its name, and this would be the same information twice.
+ * Drawn whenever the bar is vertical, split or not - and whether the pane count matters at all
+ * is itself a setting. See `WindowAppearanceSettings.paneTabStripOnlyWhenSplit`.
  */
 @Composable
 internal fun PaneTabStrip(
@@ -211,10 +212,8 @@ private fun NewTabChip(onClick: () -> Unit) {
 /**
  * A panel's content, under the favicon strip that stands in for its tab bar.
  *
- * @param showStrip only once the window is split. The window bar collapses panes the user is not
- *   working in, so without the strip, switching a background pane's tab meant going to the
- *   sidebar, opening that pane's group and reading names. With ONE pane the sidebar already lists
- *   every tab with its name, and this would say the same thing twice.
+ * @param showStrip the Settings toggle, and nothing else. See [PaneTabStrip] for why the pane
+ *   count is no longer part of the answer.
  */
 @Composable
 internal fun PaneIndicatedContent(
@@ -251,6 +250,17 @@ internal fun PaneIndicatedContent(
         content(Modifier.weight(1f).fillMaxWidth())
     }
 }
+
+/**
+ * Whether a pane draws its favicon strip, given how many panes the window has.
+ *
+ * The pane count is a preference rather than a rule - see
+ * [WindowAppearanceSettings.paneTabStripOnlyWhenSplit] for why it stopped being one. A named
+ * predicate rather than an expression at the call site, because that call site is already at
+ * detekt's complexity ceiling and because this is worth being able to test on its own.
+ */
+internal fun WindowAppearanceSettings.stripShownFor(paneCount: Int?): Boolean =
+    showPaneTabStrip && (!paneTabStripOnlyWhenSplit || (paneCount ?: 1) > 1)
 
 /**
  * What a pane's "+" does, or null when there is no window to ask.

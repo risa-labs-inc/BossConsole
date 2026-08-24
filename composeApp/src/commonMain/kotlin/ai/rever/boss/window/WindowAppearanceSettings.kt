@@ -99,20 +99,34 @@ data class WindowAppearanceSettings(
     /**
      * Show each pane's own tabs as a narrow favicon strip across the top of that pane.
      *
-     * Only ever drawn in LEFT position, and only once the window is SPLIT - both conditions
-     * survive this setting rather than being replaced by it. In TOP position each pane already
-     * draws its own full strip; with one pane the vertical bar lists every tab with its name, so
-     * the strip would be the same information twice. This subtracts from those cases, it does not
-     * add to them.
+     * Only ever drawn in LEFT position, which survives this setting rather than being replaced
+     * by it: in TOP position each pane already draws its own full strip. This subtracts from that
+     * case, it does not add to it.
      *
-     * It exists because the window bar collapses panes the user is not working in, so without it
-     * switching a background pane's tab means going to the sidebar, opening that pane's group and
-     * reading names. Off for anyone who would rather have the pixels and make that trip.
+     * It exists because the vertical bar hides tab names in two ways - it collapses panes the
+     * user is not working in, and it collapses itself to the rail when a panel is narrow or the
+     * chevron says so. Either way the strip is where a pane's own tabs stay reachable. Off for
+     * anyone who would rather have the pixels.
      *
      * Default on: that is what the split window has done since the strip existed, and turning it
      * off on upgrade would take away a control people are already using.
      */
     val showPaneTabStrip: Boolean = true,
+    /**
+     * Restrict [showPaneTabStrip] to windows that actually have a split.
+     *
+     * The strip was split-only when it was written, on the reasoning that a single pane's tabs
+     * are already listed BY NAME in the sidebar, so a row of favicons says the same thing with
+     * less in it. That reasoning holds only while the sidebar is expanded - it collapses to the
+     * rail on its own when a panel is narrow, the chevron collapses it deliberately, and the top
+     * bar is hidden by default now. A one-pane window could therefore reach a state with no tab
+     * titles anywhere on screen, which is the state the strip exists to prevent.
+     *
+     * So the pane count is a preference rather than a rule, and it defaults OFF: the strip shows
+     * whenever it is switched on. Turn this on to get the original behaviour back and keep the
+     * pixels in an unsplit window.
+     */
+    val paneTabStripOnlyWhenSplit: Boolean = false,
     /**
      * Whether right-click menus are the operating system's own rather than BOSS-drawn.
      *
