@@ -372,10 +372,8 @@ internal fun BossAppScaffold(
                 // Switching workspaces, in one place: the top bar offers it and so does the
                 // vertical tab bar's foot when the top bar is off. Two copies of "preserve, load,
                 // apply" is two places for that order to drift, and the order is the whole of why
-                // switching away and back does not lose a layout.
-                // Switching workspaces, in one place: the top bar offers it and so does the
-                // vertical tab bar's foot when the top bar is off. See WorkspaceSwitch.kt
-                // for why a switch is two decisions rather than one.
+                // switching away and back does not lose a layout. See WorkspaceSwitch.kt for why
+                // a switch is two decisions rather than one.
                 val workspaceSwitch = rememberWorkspaceSwitch(state, splitViewState)
                 val applyWorkspaceAndPreserve = workspaceSwitch.request
                 WorkspaceSwitchPrompt(state, workspaceSwitch)

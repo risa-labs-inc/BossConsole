@@ -40,6 +40,30 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.focus.FocusRequester
 import com.arkivanov.decompose.extensions.compose.subscribeAsState
+import java.lang.reflect.Method
+import java.util.Optional
+import java.util.concurrent.ConcurrentHashMap
+
+/**
+ * The `getFilePath` getter for a tab class, resolved once per class.
+ *
+ * These menus are built during composition for every visible row, and the bar recomposes on
+ * every terminal output line - so the previous `getMethod(...)` inside a `runCatching` threw and
+ * caught a `NoSuchMethodException`, stack trace filled in, for every browser and terminal tab on
+ * screen, every time. The vertical bar made that worse by showing many more rows at once, across
+ * every pane.
+ *
+ * A miss is cached as much as a hit, which is the point: the tab types that do NOT have the
+ * getter are the common case and the expensive one. Keyed by [Class], so a plugin classloader
+ * being swapped gives its new classes new entries rather than stale methods.
+ */
+private val filePathGetters = ConcurrentHashMap<Class<*>, Optional<Method>>()
+
+private fun filePathGetter(type: Class<*>): Method? =
+    filePathGetters
+        .computeIfAbsent(type) {
+            Optional.ofNullable(runCatching { it.getMethod("getFilePath") }.getOrNull())
+        }.orElse(null)
 
 /**
  * A panel's per-tab right-click menu, and the dialogs it opens.
@@ -66,6 +90,15 @@ class TabMenuState internal constructor(
     val dialogs: @Composable () -> Unit,
     /** Open the bookmark dialog for a tab directly, without going through the menu. */
     val bookmarkTab: (TabInfo) -> Unit,
+    /**
+     * Whether one of [dialogs] is on screen right now.
+     *
+     * A lambda rather than a `Boolean` so the caller's read happens in ITS composition and
+     * subscribes to the snapshot state, instead of freezing whatever was true when this holder
+     * was built. The hover-revealed drawer needs it: that drawer unmounts its whole content when
+     * the pointer leaves, dialogs included, so it has to know a dialog it raised is still open.
+     */
+    val anyDialogOpen: () -> Boolean,
 )
 
 /**
@@ -173,9 +206,9 @@ fun BossTabsComponent.rememberTabMenuState(
                     }
 
                     else -> {
-                        runCatching {
-                            tab.javaClass.getMethod("getFilePath").invoke(tab) as? String
-                        }.getOrNull()
+                        filePathGetter(tab.javaClass)?.let { getter ->
+                            runCatching { getter.invoke(tab) as? String }.getOrNull()
+                        }
                     }
                 }?.takeIf { it.isNotBlank() }
             if (revealPath != null) {
@@ -301,6 +334,7 @@ fun BossTabsComponent.rememberTabMenuState(
 
     return TabMenuState(
         items = tabMenuItems,
+        anyDialogOpen = { showBookmarkDialog || showRemoveBookmarkDialog },
         bookmarkTab = { tab ->
             tabToBookmark = tab
             showBookmarkDialog = true

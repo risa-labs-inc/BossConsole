@@ -488,9 +488,9 @@ fun BossTabsComponent.rememberTabBarState(
 
     // Menus open right now, counted rather than latched: several tabs can each have had one, and
     // a single Boolean would be cleared by whichever closed first while another was still up.
+    // Reported further down, once the menu holder that owns the other half of the answer exists.
     var openMenuCount by remember { mutableIntStateOf(0) }
     val latestTransientInteraction by rememberUpdatedState(onTransientInteraction)
-    LaunchedEffect(openMenuCount > 0) { latestTransientInteraction?.invoke(openMenuCount > 0) }
 
     // Whether the tab the new-tab dialog is about to create should land pinned. Set by the
     // Pinned section's "+", cleared as soon as a tab is created or the dialog is dismissed, so it
@@ -658,24 +658,13 @@ fun BossTabsComponent.rememberTabBarState(
     // Track drop target for reorder indicator
     val dropTarget = tabDragComponent?.dropTarget
 
-    // The tab rows, shared verbatim by both orientations. Only the container around them and two
-    // axis-shaped details inside it - the reorder indicator and the inter-tab divider - differ.
-    // Everything a tab DOES (select, close, drag, its entire context menu) is one body, because
-    // none of it is about which way the bar runs.
-    //
-    // Deliberately not a @Composable: a lazy list's DSL body is not one either. The composable
-    // work happens inside the `itemsIndexed` content lambda, which is exactly where it was
-    // before this was hoisted out of the container.
-    // The per-tab right-click menu, hoisted out of the tab row because the COLLAPSED bar needs
-    // it too: a rail dot is still that tab, and collapsing the bar must take away labels, not
-    // actions. Splitting it in two would have been two menus to keep in step.
-    //
-    // Plain lambda, not @Composable, and that is checked rather than assumed - nothing in here
-    // calls remember or reads a state holder that needs one. It runs during composition on every
-    // tab-bar recomposition, which is the constraint the NOTE below is about.
     // The per-tab right-click menu and the dialogs behind it. See TabMenuState.kt for why this
     // is its own holder rather than built here: the pane strips need the same menu, and they have
     // no tab bar state to take it from.
+    //
+    // Hoisted out of the tab row because the COLLAPSED bar needs it too: a rail dot is still that
+    // tab, and collapsing the bar must take away labels, not actions. Splitting it in two would
+    // have been two menus to keep in step.
     val tabMenu =
         rememberTabMenuState(
             splitViewState = splitViewState,
@@ -684,6 +673,15 @@ fun BossTabsComponent.rememberTabBarState(
             vertical = vertical,
         )
     val tabMenuItems = tabMenu.items
+
+    // "Busy" means every reason this bar must not be taken off screen under the pointer, not an
+    // open menu alone. The hover-revealed drawer unmounts its content wholesale when the pointer
+    // leaves - dialogs included, since they are mounted inside it - so a dialog raised from in
+    // there vanished mid-typing the moment the pointer moved to it. Both of the other two get
+    // there: a pane header's "+" opens the new-tab dialog, and a tab's own menu opens the
+    // bookmark ones.
+    val barBusy = openMenuCount > 0 || showNewTabDialog || tabMenu.anyDialogOpen()
+    LaunchedEffect(barBusy) { latestTransientInteraction?.invoke(barBusy) }
 
     // Which tabs actually become rows, paired with their index in the panel.
     //
@@ -1172,9 +1170,13 @@ fun BossTabsComponent.BossMainPanel(
     // whether the window draws the bar - and two independent reads are two things that can
     // disagree. Nothing else consults this one: the strip is drawn in exactly this place, so
     // there is no second reader to keep in step.
-    val showPaneStrip by remember {
-        derivedStateOf { WindowAppearanceSettingsManager.currentSettings.value.showPaneTabStrip }
-    }
+    //
+    // collectAsState, NOT `derivedStateOf { currentSettings.value }`. A MutableStateFlow's
+    // `.value` is not a snapshot read, so that derivation has an empty dependency set: it
+    // computes once, caches forever, and being inside a `remember` is never rebuilt either.
+    // The Settings toggle then writes a value nothing ever reads again.
+    val paneAppearance by WindowAppearanceSettingsManager.currentSettings.collectAsState()
+    val showPaneStrip = paneAppearance.showPaneTabStrip
 
     // Track the active panel state to force recomposition
     val activePanelId by splitViewState?.activePanelIdState ?: remember { mutableStateOf("") }

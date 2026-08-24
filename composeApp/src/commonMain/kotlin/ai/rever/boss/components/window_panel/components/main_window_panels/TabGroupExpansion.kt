@@ -57,6 +57,19 @@ class TabGroupExpansion internal constructor() {
     fun barExited() {
         hovered = null
     }
+
+    /**
+     * Forget panes that no longer exist.
+     *
+     * Both maps here are keyed by panel id and neither is told when a pane closes, so without
+     * this a long session accumulates ids for panes that are gone - and a new pane handed a
+     * recycled id would come up pinned open for no reason the user could see.
+     * [SplitViewState.closePanel] drops its `panelNames` entry for the same reason.
+     */
+    fun retainOnly(panelIds: Set<String>) {
+        pinned.retainAll(panelIds)
+        if (hovered !in panelIds) hovered = null
+    }
 }
 
 @Composable

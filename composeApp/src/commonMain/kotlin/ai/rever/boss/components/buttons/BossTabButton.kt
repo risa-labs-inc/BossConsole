@@ -241,9 +241,18 @@ fun BossTabButton(
 
     // Reported on change rather than written from the setter, so a tab disposed with its menu
     // still open (closing the tab from the menu does exactly that) clears the flag it set.
+    // Strictly paired: one `true` when the menu opens, one `false` when that same effect is
+    // disposed - whether because the menu closed or because the row left composition.
+    //
+    // Reporting `showContextMenu` unconditionally instead looks equivalent and is not. The
+    // listener counts these as deltas, so the `false` every row emits on its FIRST composition
+    // decrements a count it never incremented: a menu open in the hover drawer was cancelled by
+    // any other row mounting - a scroll of the shared column, or a background pane opening a tab
+    // - which retracted the drawer and took the open menu with it. Closing a menu reported
+    // `false` twice for the same reason (once from onDispose, once from the re-run body).
     val latestContextMenuVisibility by rememberUpdatedState(onContextMenuVisibilityChange)
     DisposableEffect(showContextMenu) {
-        latestContextMenuVisibility(showContextMenu)
+        if (showContextMenu) latestContextMenuVisibility(true)
         onDispose { if (showContextMenu) latestContextMenuVisibility(false) }
     }
 

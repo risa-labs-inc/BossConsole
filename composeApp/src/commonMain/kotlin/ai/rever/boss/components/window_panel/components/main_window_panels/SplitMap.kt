@@ -91,8 +91,12 @@ internal fun SplitMap(
     var sizePx by remember { mutableStateOf(IntSize.Zero) }
 
     // The pane whose name is being edited, or null. Held here rather than per pane so the dialog
-    // outlives the menu that opened it.
-    var renaming by remember { mutableStateOf<TabBarGroup?>(null) }
+    // outlives the menu that opened it - but held BY ID and re-resolved against the current
+    // groups, never as a captured TabBarGroup. A pane can be closed underneath an open dialog,
+    // and confirming a captured one wrote a name for a panel that closePanel had already cleaned
+    // up. Re-resolving makes the dialog close with its pane instead.
+    var renamingId by remember { mutableStateOf<String?>(null) }
+    val renaming = renamingId?.let { id -> groups.find { it.panelId == id } }
     val density = LocalDensity.current
     val colors = BossTheme.colors
 
@@ -132,7 +136,7 @@ internal fun SplitMap(
                     MapPane(
                         group = group,
                         interactive = !zoomed,
-                        onRename = { renaming = group },
+                        onRename = { renamingId = group.panelId },
                     )
                 }
             }
@@ -146,10 +150,10 @@ internal fun SplitMap(
     renaming?.let { group ->
         RenamePaneDialog(
             currentName = group.label,
-            onDismiss = { renaming = null },
+            onDismiss = { renamingId = null },
             onRename = { name ->
                 group.rename(name)
-                renaming = null
+                renamingId = null
             },
         )
     }

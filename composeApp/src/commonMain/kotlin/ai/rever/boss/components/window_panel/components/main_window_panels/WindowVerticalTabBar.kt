@@ -204,6 +204,12 @@ fun WindowVerticalTabBar(
 
     KeepActiveTabVisible(groups = groups, lead = lead, listState = listState)
 
+    // Panes come and go and the expansion state is keyed by panel id, but nothing tells it when
+    // one closes. Without this it accumulates ids for panes that are gone, and a pane handed a
+    // recycled id would come up pinned open for no reason the user could see.
+    val livePanelIds = groups.map { it.panelId }
+    LaunchedEffect(livePanelIds) { expansion.retainOnly(livePanelIds.toSet()) }
+
     // The strip's own rectangle, which is what the groups are carved out of. Measured on the
     // scrolling column rather than on the whole bar so the Favorites shelf above it is not
     // offered as somewhere to drop a tab.

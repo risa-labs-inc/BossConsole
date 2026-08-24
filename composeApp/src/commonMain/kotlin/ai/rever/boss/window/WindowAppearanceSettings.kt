@@ -49,12 +49,16 @@ data class WindowAppearanceSettings(
     /**
      * Which edge of each main window panel carries its tab bar.
      *
-     * Global rather than per-panel, like every other field here, so a split's panels all
-     * agree. Each panel still renders its own bar - LEFT means one vertical bar per panel,
-     * not one for the window.
+     * Global rather than per-panel, like every other field here, so a split's panels all agree.
      *
-     * Default TOP: this is the layout the app has always had, and flipping it for existing
-     * users on upgrade would be a surprise, not a feature.
+     * The two positions differ in more than the edge. TOP renders one horizontal strip per
+     * panel, as it always has. LEFT renders ONE vertical bar for the whole window, with each
+     * pane spliced into it as a group - a horizontal strip has no room for groups, which is why
+     * only one of the two was changed.
+     *
+     * Default LEFT, with [WindowAppearanceMigrations] moving installs already sitting on the
+     * TOP-and-visible-top-bar combination this shipped with. Every other saved choice is left
+     * alone.
      */
     val tabBarPosition: TabBarPosition = TabBarPosition.LEFT,
     /**
@@ -152,6 +156,13 @@ object WindowAppearanceMigrations {
      * every save, so an existing file names both values explicitly and would keep them for ever -
      * the new defaults would reach new installs only, which is not what "by default" means to
      * somebody who already has BOSS open.
+     *
+     * One thing this reasons over that it cannot actually see: it tests decoded VALUES, not what
+     * the file said. A key that is absent decodes to the field's default, so a file written
+     * before [WindowAppearanceSettings.showTopBar] existed is indistinguishable here from one
+     * where somebody hid the bar deliberately. That is harmless for this step, because both
+     * belong on the new defaults anyway - but a future step that needs "absent" to differ from
+     * "false" cannot get it from this signature, and will need the field to be nullable.
      */
     fun migrate(loaded: WindowAppearanceSettings): WindowAppearanceSettings? {
         if (loaded.settingsVersion >= WindowAppearanceSettings.CURRENT_SETTINGS_VERSION) return null

@@ -1462,7 +1462,7 @@ class SplitViewState(
         _currentWorkspaceId = workspaceId
     }
 
-/**
+    /**
      * Stop running the workspace this window is showing, instead of preserving it.
      *
      * The opposite of [preserveCurrentState] and the other half of a switch. Two things have to
