@@ -131,7 +131,7 @@ fun rememberWindowTabGroups(
                 close = if (several) ({ splitViewState.closePanel(panel.id) }) else null,
                 expanded = expanded,
                 toggleExpanded = { expansion.togglePinned(panel.id) },
-                hoverHeader = { expansion.hover(panel.id) },
+                hoverGroup = { expansion.hover(panel.id) },
             )
         }
     }

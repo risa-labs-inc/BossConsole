@@ -38,8 +38,15 @@ class TabBarGroup
         internal val expanded: Boolean = true,
         /** Open this pane up, or close it again, from a click on its summary row. */
         internal val toggleExpanded: () -> Unit = {},
-        /** The pointer reached this pane's header, making it the open one. */
-        internal val hoverHeader: () -> Unit = {},
+        /**
+         * The pointer reached one of this pane's chrome rows, making it the open one.
+         *
+         * Its header and its "n more tabs" row both, since both are places someone lands while
+         * looking for what is in this pane. Its tab rows deliberately do not: those are click
+         * targets for switching tab, and passing over one on the way somewhere else should not
+         * re-arrange the bar.
+         */
+        internal val hoverGroup: () -> Unit = {},
     ) {
         /**
          * Rows this group adds beyond its tabs and its own leading rows: the "n more" line.

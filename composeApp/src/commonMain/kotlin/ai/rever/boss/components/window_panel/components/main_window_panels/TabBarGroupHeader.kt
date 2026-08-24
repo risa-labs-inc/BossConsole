@@ -86,7 +86,7 @@ internal fun TabBarGroupHeader(
     // TabGroupExpansion for why that collapses the group the moment the pointer moves onto it.
     val headerHover = remember { MutableInteractionSource() }
     val headerHovered by headerHover.collectIsHoveredAsState()
-    LaunchedEffect(headerHovered) { if (headerHovered) group.hoverHeader() }
+    LaunchedEffect(headerHovered) { if (headerHovered) group.hoverGroup() }
 
     Column(modifier = Modifier.fillMaxWidth()) {
         if (showRule) {
@@ -180,6 +180,13 @@ internal fun TabGroupSummaryRow(group: TabBarGroup) {
     val interactionSource = remember { MutableInteractionSource() }
     val hovered by interactionSource.collectIsHoveredAsState()
     val hidden = group.state.tabs.size - group.state.renderedTabCount
+
+    // Hovering here opens the pane, exactly as hovering its header does. Reaching for the count
+    // is reaching for what it stands for, and making the user click first was a step for nothing.
+    //
+    // Opening removes this row, which leaves the pointer over one of the tabs it just revealed -
+    // and that is fine, because the choice is sticky. See TabGroupExpansion.
+    LaunchedEffect(hovered) { if (hovered) group.hoverGroup() }
 
     Row(
         modifier =
