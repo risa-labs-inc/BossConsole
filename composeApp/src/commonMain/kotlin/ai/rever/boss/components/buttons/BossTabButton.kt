@@ -235,6 +235,10 @@ fun BossTabButton(
     // State for context menu
     var showContextMenu by remember { mutableStateOf(false) }
 
+    // Read by the long-lived pointer handler below, which must not restart when these change.
+    val currentMenuItems by rememberUpdatedState(contextMenuItems)
+    val currentOnClose by rememberUpdatedState(onClose)
+
     // Reported on change rather than written from the setter, so a tab disposed with its menu
     // still open (closing the tab from the menu does exactly that) clears the flag it set.
     val latestContextMenuVisibility by rememberUpdatedState(onContextMenuVisibilityChange)
@@ -342,8 +346,18 @@ fun BossTabButton(
                         val bounds = coordinates.boundsInWindow()
                         tabDragComponent.registerTabBounds(compositeTabId, bounds, tabIndex)
                     }
-                }.pointerInput(contextMenuItems) {
+                }.pointerInput(Unit) {
                     // Handle right-click for context menu and middle-click to close (Issue #328)
+                    //
+                    // Keyed on Unit, and the two things it needs are read through
+                    // rememberUpdatedState instead.
+                    //
+                    // It used to be keyed on contextMenuItems, which is a fresh list of freshly
+                    // built lambdas on every composition - so the key differed every time and
+                    // this coroutine was cancelled and restarted on every recomposition of the
+                    // tab (hover, favicon load, any tab-state change). A right-click landing in
+                    // that gap found no handler here, went unconsumed, and the tab bar's own
+                    // menu answered it instead. That is the "sometimes the wrong menu" bug.
                     awaitPointerEventScope {
                         while (true) {
                             val event = awaitPointerEvent(PointerEventPass.Initial)
@@ -353,10 +367,10 @@ fun BossTabButton(
                                 if (awtEvent?.button == 2) {
                                     // Launch on the composable's coroutine scope to properly trigger state updates
                                     closeScope.launch {
-                                        onClose()
+                                        currentOnClose()
                                     }
                                     event.changes.forEach { it.consume() }
-                                } else if (awtEvent?.button == 3 && contextMenuItems.isNotEmpty()) {
+                                } else if (awtEvent?.button == 3 && currentMenuItems.isNotEmpty()) {
                                     // Right-click (button 3): show context menu
                                     showContextMenu = true
                                     event.changes.forEach { it.consume() }
