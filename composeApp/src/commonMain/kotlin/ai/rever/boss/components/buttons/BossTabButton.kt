@@ -59,6 +59,20 @@ import androidx.compose.ui.window.PopupProperties
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+/**
+ * Fill behind the selected tab in the pane being worked in.
+ *
+ * Enough amber to find without scanning, little enough that a column of tabs does not become a
+ * column of colour. The marker beside it is the saturated version of the same statement.
+ */
+private const val SELECTED_FILL_ALPHA = 0.16f
+
+/** Fill behind the selected tab of a pane that is not the active one. Present, but not amber. */
+private const val INACTIVE_FILL_ALPHA = 0.35f
+
+/** Fill under the pointer. Below the selected fill, so hovering the selected tab does not flatten it. */
+private const val HOVER_FILL_ALPHA = 0.55f
+
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun BossTabButton(
@@ -260,6 +274,29 @@ fun BossTabButton(
         }
     }
 
+    // The tab's own surface, in order: selected in the pane being worked in, selected in a
+    // background pane, merely under the pointer, none of those.
+    //
+    // A 3dp marker on its own was not enough to find the selected tab at a glance, especially
+    // down a vertical bar where every row is the same width and the marker is a sliver at the
+    // far edge. The fill is what the eye lands on; the marker says which pane it belongs to.
+    //
+    // The second case is neutral rather than amber because the amber is a claim about where the
+    // user IS, and two panes both making it is the confusion the marker's own focused/unfocused
+    // split already exists to avoid.
+    //
+    // ALPHA over the theme's colours rather than a fixed wash: this row is drawn on `panel` in
+    // the tab bar and could be drawn on another surface elsewhere, and a tint composited over
+    // whatever is behind it is right in both places, in either theme. signalWash is the fixed
+    // amber-on-ink equivalent and would be a hair off wherever ink is not what is underneath.
+    val tabSurface =
+        when {
+            isSelected && isFocused -> colors.signal.copy(alpha = SELECTED_FILL_ALPHA)
+            isSelected -> colors.lineStrong.copy(alpha = INACTIVE_FILL_ALPHA)
+            isHovered -> colors.raised.copy(alpha = HOVER_FILL_ALPHA)
+            else -> Color.Transparent
+        }
+
     Box(
         modifier =
             modifier
@@ -275,7 +312,11 @@ fun BossTabButton(
                         // Legacy sizing: content-driven width clamped to 180–450 dp.
                         else -> base.fillMaxHeight().width(IntrinsicSize.Min).widthIn(min = 180.dp, max = 450.dp)
                     }
-                }.hoverable(interactionSource)
+                }
+                // Under the content and under the marker, which is drawn last so it stays a hard
+                // edge against the fill rather than being tinted by it.
+                .background(color = tabSurface, shape = RoundedCornerShape(radii.input))
+                .hoverable(interactionSource)
                 .onGloballyPositioned { coordinates ->
                     val pos = coordinates.positionInParent()
                     buttonPositionRef[0] = pos.x
