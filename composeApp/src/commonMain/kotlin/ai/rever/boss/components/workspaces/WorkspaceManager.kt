@@ -23,6 +23,52 @@ class WorkspaceManager {
     private val _workspaces = MutableStateFlow<List<LayoutWorkspace>>(emptyList())
     val workspaces: StateFlow<List<LayoutWorkspace>> = _workspaces.asStateFlow()
 
+    /**
+     * Every workspace each open window is RUNNING, by window id.
+     *
+     * A set per window, not a single id, because a window runs several workspaces at once.
+     * Switching does not tear the old one down - `SplitViewState.preserveCurrentState` keeps its
+     * whole split tree, live tab components and all - so a workspace you have switched away from
+     * is still going, and its tabs still appear in `collectAllTabs`.
+     *
+     * [currentWorkspace] answers none of this. It is one value on a manager every window shares:
+     * with two windows on different workspaces it names whichever loaded last, and it never knew
+     * about the ones running behind the one on screen.
+     */
+    private val _windowWorkspaces = MutableStateFlow<Map<String, Set<String>>>(emptyMap())
+    val windowWorkspaces: StateFlow<Map<String, Set<String>>> = _windowWorkspaces.asStateFlow()
+
+    /** Every workspace running anywhere, across every open window. */
+    val liveWorkspaceIds: Set<String> get() =
+        _windowWorkspaces.value.values
+            .flatten()
+            .toSet()
+
+    /**
+     * Record every workspace [windowId] is running.
+     *
+     * Called by the window itself, which is the only thing that knows - the live set lives in
+     * that window's SplitViewState. There is no single place inside this manager to hook:
+     * `loadWorkspace` is reached from restore, from menu actions, from plugins and from the
+     * workspace button, and only some of those know which window they are acting for.
+     */
+    fun setWindowWorkspaces(
+        windowId: String,
+        workspaceIds: Set<String>,
+    ) {
+        _windowWorkspaces.value =
+            if (workspaceIds.isEmpty()) {
+                _windowWorkspaces.value - windowId
+            } else {
+                _windowWorkspaces.value + (windowId to workspaceIds)
+            }
+    }
+
+    /** Forget a window, on close. Without this its workspace stays marked active for ever. */
+    fun releaseWindow(windowId: String) {
+        _windowWorkspaces.value = _windowWorkspaces.value - windowId
+    }
+
     private val fileManager = WorkspaceFileManager()
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 

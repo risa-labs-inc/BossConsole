@@ -358,6 +358,17 @@ internal fun BossAppScaffold(
                     )
                 }
 
+                // Tell the manager every workspace THIS window is running, so the workspace menu
+                // can mark them all rather than only the one on screen. Read from the window's
+                // own split state, which is where the live ones actually are - the manager's
+                // currentWorkspace is one value shared by every window and knows about neither
+                // the others' nor the ones running behind this one.
+                val liveWorkspaceIds = splitViewState.liveWorkspaceIds
+                DisposableEffect(state.windowId, liveWorkspaceIds) {
+                    workspaceManager.setWindowWorkspaces(state.windowId, liveWorkspaceIds)
+                    onDispose { workspaceManager.releaseWindow(state.windowId) }
+                }
+
                 // Switching workspaces, in one place: the top bar offers it and so does the
                 // vertical tab bar's foot when the top bar is off. Two copies of "preserve, load,
                 // apply" is two places for that order to drift, and the order is the whole of why

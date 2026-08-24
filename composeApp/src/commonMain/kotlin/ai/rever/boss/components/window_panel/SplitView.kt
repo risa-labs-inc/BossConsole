@@ -53,6 +53,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.runtime.*
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -165,10 +168,26 @@ class SplitViewState(
     // Maintains order of recently activated panels (most recent first, limited to last 10)
     private val _panelActivationHistory = mutableListOf("main")
 
-    // Track preserved workspace states
-    private val preservedWorkspaceStates = mutableMapOf<String, PreservedWorkspaceState>()
-    private var _currentWorkspaceId: String? = null
+    // Track preserved workspace states.
+    //
+    // A state MAP rather than a plain one: these keys are what `liveWorkspaceIds` reports, and
+    // that is read from composition. A plain map would leave the workspace menu marking whatever
+    // was true when it last happened to recompose.
+    private val preservedWorkspaceStates = mutableStateMapOf<String, PreservedWorkspaceState>()
+    private var _currentWorkspaceId by mutableStateOf<String?>(null)
     val currentWorkspaceId: String? get() = _currentWorkspaceId
+
+    /**
+     * Every workspace this window is actually running, displayed or not.
+     *
+     * Switching workspaces does not tear the old one down: `preserveCurrentState` keeps its whole
+     * split tree, and those are live BossTabsComponents with live tabs - which is why
+     * `collectAllTabs` walks the preserved states too. So one window runs several workspaces at
+     * once and shows one of them, and "which workspaces are running" is this set, not the single
+     * id of the one on screen.
+     */
+    val liveWorkspaceIds: Set<String>
+        get() = preservedWorkspaceStates.keys + setOfNotNull(_currentWorkspaceId)
 
     // Data class to hold preserved state
     data class PreservedWorkspaceState(

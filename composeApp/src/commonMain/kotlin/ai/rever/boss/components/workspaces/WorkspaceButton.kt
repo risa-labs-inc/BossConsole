@@ -7,6 +7,7 @@ import ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Circle
+import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.RestartAlt
@@ -48,6 +49,13 @@ fun WorkspaceButton(
 ) {
     val currentWorkspace by workspaceManager.currentWorkspace.collectAsState()
     val workspaces by workspaceManager.workspaces.collectAsState()
+
+    // Every workspace running anywhere - in this window behind the one on screen, or in another
+    // window. The menu could previously mark exactly one, so everything else looked equally idle
+    // whether it was running or not.
+    val windowWorkspaces by workspaceManager.windowWorkspaces.collectAsState()
+    val running =
+        remember(windowWorkspaces) { windowWorkspaces.values.flatten().toSet() }
 
     var showSaveDialog by remember { mutableStateOf(false) }
     var showOpenDialog by remember { mutableStateOf(false) }
@@ -146,16 +154,31 @@ fun WorkspaceButton(
         buildList {
             // Workspaces at the top
             workspaces.forEach { workspace ->
-                // Check if this is the currently active workspace (in memory / top of mind)
+                // Three states, not two: the workspace on screen here, one that is running
+                // somewhere - behind this one, or in another window - and one that is not running
+                // at all. The middle state had no mark, so a workspace whose tabs were live
+                // looked exactly like one that had never been opened.
                 val isCurrentWorkspace = currentWorkspace?.id == workspace.id
+                val isRunning = !isCurrentWorkspace && workspace.id in running
 
                 add(
                     ContextMenuItem(
                         text = workspace.name,
                         icon = null,
-                        // Show green dot only for currently active workspace
-                        trailingIcon = if (isCurrentWorkspace) Icons.Filled.Circle else null,
-                        trailingIconColor = if (isCurrentWorkspace) BossTheme.colors.ok else null, // Green color
+                        // Filled for this window, outlined for another's: the same mark at two
+                        // strengths says "running" once and "yours" only on the one that is.
+                        trailingIcon =
+                            when {
+                                isCurrentWorkspace -> Icons.Filled.Circle
+                                isRunning -> Icons.Outlined.Circle
+                                else -> null
+                            },
+                        trailingIconColor =
+                            when {
+                                isCurrentWorkspace -> BossTheme.colors.ok
+                                isRunning -> BossTheme.colors.textSecondary
+                                else -> null
+                            },
                         onClick = {
                             workspaceManager.loadWorkspace(workspace)
                             onOpenWorkspace(workspace)
