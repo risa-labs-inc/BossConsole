@@ -5,6 +5,7 @@ import ai.rever.boss.components.model.PanelDropZones
 import ai.rever.boss.components.model.TabDraggableComponent
 import ai.rever.boss.components.model.TabDropResult
 import ai.rever.boss.components.model.TabDropTarget
+import ai.rever.boss.components.overlays.OverlayCorner
 import ai.rever.boss.components.plugin.disposePluginBrowsers
 import ai.rever.boss.components.plugin.tab_types.PanelHostTabInfo
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
@@ -41,19 +42,30 @@ import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.WindowProjectStateRegistry
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.Icon
+import androidx.compose.material.Surface
+import androidx.compose.material.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CloseFullscreen
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.runtime.*
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -67,8 +79,10 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.arkivanov.decompose.extensions.compose.subscribeAsState
 import kotlinx.coroutines.delay
 import kotlin.random.Random
@@ -156,6 +170,31 @@ class SplitViewState(
     // panel, so the requester has to live somewhere both can reach.
     private val panelFocusRequesters = mutableMapOf<String, FocusRequester>()
 
+    /**
+     * The pane shown alone, filling the split area, or null when the split is laid out normally.
+     *
+     * Zoom hides panes; it does not close them. The split tree is untouched, so exiting restores
+     * the arrangement exactly - and every pane's tabs go on existing while zoomed, which is what
+     * lets the window bar keep listing them.
+     *
+     * It follows the active pane rather than pinning one: activating another pane while zoomed
+     * shows that one. Otherwise clicking a tab in another pane's group would appear to do
+     * nothing, which is the same complaint the single bar was built to answer.
+     */
+    var zoomedPanelId by mutableStateOf<String?>(null)
+        private set
+
+    /** Show this pane alone. */
+    fun zoomPanel(panelId: String) {
+        setActivePanel(panelId)
+        zoomedPanelId = panelId
+    }
+
+    /** Put the split back. */
+    fun exitZoom() {
+        zoomedPanelId = null
+    }
+
     // Track active panel for file operations
     private var _activePanelId = mutableStateOf("main")
     val activePanelId: String get() = _activePanelId.value
@@ -236,6 +275,8 @@ class SplitViewState(
     private val activePanelDebounceMs = 50L
 
     fun setActivePanel(panelId: String) {
+        // Zoom follows. See zoomedPanelId for why it is not a pinned pane.
+        if (zoomedPanelId != null) zoomedPanelId = panelId
         // Skip if already active
         if (panelId == _activePanelId.value) return
 
@@ -799,6 +840,9 @@ class SplitViewState(
         findPanel(panelId)?.let { panel ->
             panel.tabsComponent.clearAllTabs()
         }
+
+        // A zoomed pane that is being closed cannot stay zoomed onto nothing.
+        if (zoomedPanelId == panelId) zoomedPanelId = null
 
         _rootNode.value = removePanel(_rootNode.value, panelId)
 
@@ -1682,8 +1726,7 @@ fun SplitViewPanel(
     ) {
         val splitTree: @Composable (Modifier) -> Unit = { treeModifier ->
             Box(modifier = treeModifier) {
-                RenderSplitNode(
-                    node = splitViewState.rootNode,
+                SplitOrZoomedPane(
                     splitViewState = splitViewState,
                     tabDragComponent = tabDragComponent,
                     onTabDropResult = onTabDropResult,
@@ -1707,6 +1750,8 @@ fun SplitViewPanel(
             splitTree(Modifier.fillMaxSize())
         }
 
+        ZoomExitButton(splitViewState = splitViewState, contentRegion = contentRegion)
+
         if (bar.vertical && bar.railShown) {
             WindowRevealedTabBarDrawer(
                 splitViewState = splitViewState,
@@ -1718,6 +1763,108 @@ fun SplitViewPanel(
         }
     }
 }
+
+/**
+ * The window's panes: all of them in their split, or one of them filling the area.
+ *
+ * A zoomed pane is rendered DIRECTLY rather than through the split tree. The tree is left exactly
+ * as it was, so exiting restores the arrangement with nothing having to remember it.
+ */
+@Composable
+private fun SplitOrZoomedPane(
+    splitViewState: SplitViewState,
+    tabDragComponent: TabDraggableComponent?,
+    onTabDropResult: (TabDropResult) -> Unit,
+    showPanelTabBar: Boolean,
+) {
+    val zoomed = splitViewState.zoomedPanelId?.let { splitViewState.getPanel(it) }
+    if (zoomed == null) {
+        RenderSplitNode(
+            node = splitViewState.rootNode,
+            splitViewState = splitViewState,
+            tabDragComponent = tabDragComponent,
+            onTabDropResult = onTabDropResult,
+            showPanelTabBar = showPanelTabBar,
+        )
+        return
+    }
+
+    key(zoomed.id) {
+        zoomed.tabsComponent.BossMainPanel(
+            splitViewState = splitViewState,
+            currentPanelId = zoomed.id,
+            tabDragComponent = tabDragComponent,
+            onTabDropResult = onTabDropResult,
+            showTabBar = showPanelTabBar,
+        )
+    }
+}
+
+/**
+ * The way out of a zoomed pane, floating over its bottom-left corner.
+ *
+ * An OverlayCorner rather than a Box in the scene, and that is not a preference.
+ * Under HARDWARE_ACCELERATED a browser tab is Chromium's own native window composited ABOVE the
+ * Compose scene, so a button drawn in place would be invisible over precisely the panes people
+ * zoom into. This is the same primitive the tab bar's hover drawer, the find bar and the tab
+ * tooltip each had to be rebuilt on for that reason.
+ *
+ * Bottom LEFT because the bottom right is where a page puts its own controls and where the status
+ * bar's own text runs; the left corner is the quietest part of a pane.
+ *
+ * Nothing is drawn before [contentRegion] is measured: an unmeasured parent resolves to the
+ * SCREEN origin, so the alternative is an always-on-top button in the corner of the display.
+ */
+@Composable
+private fun BoxScope.ZoomExitButton(
+    splitViewState: SplitViewState,
+    contentRegion: IntRect?,
+) {
+    if (splitViewState.zoomedPanelId == null) return
+    val region = contentRegion ?: return
+    val colors = BossTheme.colors
+
+    OverlayCorner(
+        alignment = Alignment.BottomStart,
+        initialSize = ZOOM_EXIT_SIZE,
+        inset = ZOOM_EXIT_INSET,
+        regionInWindow = region,
+    ) {
+        Surface(
+            color = colors.raised,
+            shape = RoundedCornerShape(BossTheme.radius.button),
+            elevation = 4.dp,
+        ) {
+            Row(
+                modifier =
+                    Modifier
+                        .clickable(onClick = splitViewState::exitZoom)
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.CloseFullscreen,
+                    contentDescription = "Exit full screen",
+                    tint = colors.textSecondary,
+                    modifier = Modifier.size(14.dp),
+                )
+                Text(
+                    text = "Exit Full Screen",
+                    color = colors.textPrimary,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+/** Upper bound for the exit button's window. Content-sized inside; this only has to fit it. */
+private val ZOOM_EXIT_SIZE = DpSize(180.dp, 44.dp)
+
+/** How far the exit button sits off the pane's corner. */
+private val ZOOM_EXIT_INSET = DpSize(12.dp, 12.dp)
 
 /**
  * The window bar beside the split tree.

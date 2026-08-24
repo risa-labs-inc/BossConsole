@@ -1,0 +1,84 @@
+package ai.rever.boss.components.window_panel
+
+import ai.rever.boss.plugin.api.TabRegistry
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
+
+/**
+ * Showing one pane alone, from a double-click on the split map.
+ *
+ * Zoom hides panes, it does not close them: the split tree is untouched, so exiting restores the
+ * arrangement without anything having to remember it. What the state has to get right is the two
+ * ways a zoom can go stale - the user activating a different pane, and the zoomed pane closing.
+ */
+class PaneZoomTest {
+    private fun state(): SplitViewState = SplitViewState(TabRegistry(), windowId = "w1")
+
+    @Test
+    fun `a window starts unzoomed`() {
+        assertNull(state().zoomedPanelId)
+    }
+
+    @Test
+    fun `zooming shows that pane and makes it active`() {
+        val s = state()
+        s.zoomPanel("main")
+
+        assertEquals("main", s.zoomedPanelId)
+        assertEquals("main", s.activePanelId)
+    }
+
+    @Test
+    fun `exiting leaves the pane active`() {
+        // Exiting is about the layout, not about where the user is. Sending them back to whatever
+        // pane was active before they zoomed would undo a navigation they did on purpose.
+        val s = state()
+        s.zoomPanel("main")
+        s.exitZoom()
+
+        assertNull(s.zoomedPanelId)
+        assertEquals("main", s.activePanelId)
+    }
+
+    @Test
+    fun `zoom follows the pane the user activates`() {
+        // Otherwise clicking a tab in another pane's group while zoomed appears to do nothing -
+        // the same complaint the single tab bar was built to answer.
+        val s = state()
+        s.zoomPanel("main")
+        s.setActivePanel("other")
+
+        assertEquals("other", s.zoomedPanelId)
+    }
+
+    @Test
+    fun `activating a pane while unzoomed does not start a zoom`() {
+        val s = state()
+        s.setActivePanel("other")
+
+        assertNull(s.zoomedPanelId)
+    }
+
+    @Test
+    fun `closing the zoomed pane exits zoom rather than zooming onto nothing`() {
+        val s = state()
+        s.splitPanel("main", SplitOrientation.VERTICAL)
+        val second = s.getAllPanels().last().id
+        s.zoomPanel(second)
+        s.closePanel(second)
+
+        assertNull(s.zoomedPanelId)
+    }
+
+    @Test
+    fun `closing a pane that is not zoomed leaves the zoom alone`() {
+        val s = state()
+        s.splitPanel("main", SplitOrientation.VERTICAL)
+        val second = s.getAllPanels().last().id
+        s.zoomPanel("main")
+        s.closePanel(second)
+
+        assertEquals("main", s.zoomedPanelId)
+    }
+}

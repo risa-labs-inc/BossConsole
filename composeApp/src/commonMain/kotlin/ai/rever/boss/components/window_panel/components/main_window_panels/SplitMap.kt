@@ -3,9 +3,10 @@ package ai.rever.boss.components.window_panel.components.main_window_panels
 import ai.rever.boss.components.overlays.HoverTooltipBox
 import ai.rever.boss.components.overlays.TooltipPlacement
 import ai.rever.boss.plugin.ui.BossTheme
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -112,7 +113,12 @@ internal fun SplitMap(groups: List<TabBarGroup>) {
  *
  * Clicking goes to that pane AND opens its tabs, because arriving somewhere and still having to
  * hover to see what is there would be two gestures for one intention.
+ *
+ * Double-clicking shows it alone. That is what double-click already means for a pane in every
+ * window manager worth copying, and the map is the one place in BOSS where a pane is a thing you
+ * can point at rather than a region of the screen you are already inside.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MapPane(group: TabBarGroup) {
     val colors = BossTheme.colors
@@ -127,7 +133,7 @@ private fun MapPane(group: TabBarGroup) {
         }
 
     HoverTooltipBox(
-        text = "Go to ${group.label}",
+        text = "Go to ${group.label} - double-click for full screen",
         placement = TooltipPlacement.END,
         modifier = Modifier.fillMaxSize().hoverable(interactionSource),
     ) {
@@ -137,10 +143,13 @@ private fun MapPane(group: TabBarGroup) {
                     .fillMaxSize()
                     .clip(RoundedCornerShape(2.dp))
                     .background(fill)
-                    .clickable {
-                        group.activate()
-                        group.hoverGroup()
-                    },
+                    .combinedClickable(
+                        onClick = {
+                            group.activate()
+                            group.hoverGroup()
+                        },
+                        onDoubleClick = group.zoom,
+                    ),
             contentAlignment = Alignment.Center,
         ) {
             Text(

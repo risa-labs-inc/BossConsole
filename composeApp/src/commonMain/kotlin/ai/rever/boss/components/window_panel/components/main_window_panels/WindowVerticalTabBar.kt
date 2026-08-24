@@ -128,6 +128,7 @@ fun rememberWindowTabGroups(
                 glyph = glyphs[panel.id],
                 label = paneLabel(index, glyphs[panel.id]),
                 activate = { splitViewState.setActivePanel(panel.id) },
+                zoom = { splitViewState.zoomPanel(panel.id) },
                 newTab = state.openNewTab,
                 // Only offered where there is a split to undo. closePanel refuses to remove a
                 // lone panel anyway, so a button for it would be one that does nothing.

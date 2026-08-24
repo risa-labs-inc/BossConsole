@@ -38,6 +38,8 @@ class TabBarGroup
         internal val expanded: Boolean = true,
         /** Open this pane up, or close it again, from a click on its summary row. */
         internal val toggleExpanded: () -> Unit = {},
+        /** Show this pane alone, filling the split area. From a double-click on the map. */
+        internal val zoom: () -> Unit = {},
         /**
          * The pointer reached one of this pane's chrome rows, making it the open one.
          *
