@@ -1,6 +1,8 @@
 package ai.rever.boss.components.window_panel.components.main_window_panels
 
 import ai.rever.boss.components.common.rememberFaviconLoader
+import ai.rever.boss.components.model.TabDraggableComponent
+import ai.rever.boss.components.model.TabDropResult
 import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.HoverTooltipBox
 import ai.rever.boss.components.overlays.TooltipPlacement
@@ -11,6 +13,7 @@ import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -20,13 +23,19 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -68,11 +77,32 @@ internal fun TabFaviconChip(
      * row for that tab is a few pixels away and already carries it.
      */
     contextMenuItems: List<ContextMenuItem> = emptyList(),
+    /**
+     * The drag system, so a tab can be picked up from here.
+     *
+     * The chip does NOT register its bounds. A tab already has bounds registered by its row in the
+     * window bar, under the same "panelId:tabId" key, and a second surface writing that key would
+     * have reorder computing an insert position from whichever of the two laid out last. So this
+     * starts drags and never receives them: the bar's rows and the panes' drop zones stay the
+     * only places a tab can land.
+     */
+    tabDragComponent: TabDraggableComponent? = null,
+    /** The panel this tab belongs to, for the drag. */
+    panelId: String? = null,
+    /** The tab's index in that panel, for the drag. */
+    tabIndex: Int = -1,
+    /** The drop, once the pointer is released. */
+    onDragEnd: (TabDropResult?) -> Unit = {},
 ) {
     val colors = BossTheme.colors
     val interactionSource = remember { MutableInteractionSource() }
     val hovered by interactionSource.collectIsHoveredAsState()
     val loaded = rememberFaviconLoader(tab)
+
+    val dragEnabled = tabDragComponent != null && panelId != null && tabIndex >= 0
+    // Where this chip sits in the window, so a drag can start from an absolute point. The ghost
+    // follows the pointer, and the pointer is in window coordinates.
+    var windowPosition by remember { mutableStateOf(Offset.Zero) }
     val icon = loaded ?: tab.tabIcon
 
     val background =
@@ -95,7 +125,33 @@ internal fun TabFaviconChip(
                     .background(background)
                     .hoverable(interactionSource)
                     .then(if (contextMenuItems.isEmpty()) Modifier else Modifier.contextMenu(items = contextMenuItems))
-                    .clickable(onClick = onClick),
+                    .onGloballyPositioned { coordinates -> windowPosition = coordinates.positionInWindow() }
+                    .then(
+                        if (!dragEnabled) {
+                            Modifier
+                        } else {
+                            Modifier.pointerInput(tab, panelId, tabIndex) {
+                                detectDragGestures(
+                                    onDragStart = { offset ->
+                                        tabDragComponent.startDragging(
+                                            tabInfo = tab,
+                                            panelId = panelId,
+                                            index = tabIndex,
+                                            startPosition = windowPosition + offset,
+                                        )
+                                    },
+                                    onDrag = { change, dragAmount ->
+                                        change.consume()
+                                        tabDragComponent.updateDrag(dragAmount)
+                                    },
+                                    // Cleaned up first either way: a result that throws must not
+                                    // leave a ghost stuck to the pointer.
+                                    onDragEnd = { onDragEnd(tabDragComponent.endDrag()) },
+                                    onDragCancel = { tabDragComponent.cancelDrag() },
+                                )
+                            }
+                        },
+                    ).clickable(onClick = onClick),
             contentAlignment = Alignment.Center,
         ) {
             TabGlyph(icon = icon, tab = tab, isActive = isActive)

@@ -1,5 +1,7 @@
 package ai.rever.boss.components.window_panel.components.main_window_panels
 
+import ai.rever.boss.components.model.TabDraggableComponent
+import ai.rever.boss.components.model.TabDropResult
 import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.HoverTooltipBox
 import ai.rever.boss.components.overlays.TooltipPlacement
@@ -55,9 +57,13 @@ private val PINNED_RULE_HEIGHT = 14.dp
  * pane's own tabs where the pane is.
  *
  * It is an indicator rather than a tab bar, and the difference is the point: no titles, no close
- * buttons, no reordering, 24dp instead of 36. Names live in the sidebar, which has room for them.
- * That is also why bringing this back does not undo the one-bar change - what read badly was two
- * 200dp columns of titles, not a row of marks.
+ * buttons, no reorder indicator of its own, 24dp instead of 36. Names live in the sidebar, which
+ * has room for them. That is also why bringing this back does not undo the one-bar change - what
+ * read badly was two 200dp columns of titles, not a row of marks.
+ *
+ * A tab can be DRAGGED out of it, though. It cannot be dropped back into it: the chips register no
+ * bounds, so every landing place is still the bar's rows or a pane's own drop zones. See
+ * TabFaviconChip for why a second surface must not register bounds for tabs the bar already has.
  *
  * Only for a window that is actually split. With one pane the sidebar already lists every tab
  * with its name, and this would be the same information twice.
@@ -77,6 +83,18 @@ internal fun PaneTabStrip(
      * it was meant to save.
      */
     tabMenuItems: (Int, TabInfo) -> List<ContextMenuItem>,
+    /**
+     * The drag system, so a tab can be picked up from the strip.
+     *
+     * The strip is where a pane's tabs are while the bar has that pane collapsed, so without this
+     * the only way to move one is to open that pane's group in the sidebar first - the trip the
+     * strip exists to save.
+     */
+    tabDragComponent: TabDraggableComponent?,
+    /** This pane, for the drag. */
+    panelId: String?,
+    /** The drop, once the pointer is released. */
+    onTabDropResult: (TabDropResult) -> Unit,
 ) {
     if (tabs.isEmpty()) return
 
@@ -124,6 +142,10 @@ internal fun PaneTabStrip(
                     isActive = index == activeIndex,
                     onClick = { onSelect(index) },
                     contextMenuItems = tabMenuItems(index, tab),
+                    tabDragComponent = tabDragComponent,
+                    panelId = panelId,
+                    tabIndex = index,
+                    onDragEnd = { result -> result?.let(onTabDropResult) },
                 )
             }
         }
@@ -189,6 +211,9 @@ internal fun PaneIndicatedContent(
     onSelect: (Int) -> Unit,
     onNewTab: (() -> Unit)?,
     tabMenuItems: (Int, TabInfo) -> List<ContextMenuItem>,
+    tabDragComponent: TabDraggableComponent?,
+    panelId: String?,
+    onTabDropResult: (TabDropResult) -> Unit,
     content: @Composable (Modifier) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
@@ -200,6 +225,9 @@ internal fun PaneIndicatedContent(
                 onSelect = onSelect,
                 onNewTab = onNewTab,
                 tabMenuItems = tabMenuItems,
+                tabDragComponent = tabDragComponent,
+                panelId = panelId,
+                onTabDropResult = onTabDropResult,
             )
             Divider(color = BossTheme.colors.line)
         }

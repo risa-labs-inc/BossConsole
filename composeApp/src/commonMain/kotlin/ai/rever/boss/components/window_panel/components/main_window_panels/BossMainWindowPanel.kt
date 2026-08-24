@@ -1292,6 +1292,9 @@ fun BossTabsComponent.BossMainPanel(
                     selectTab(index)
                 },
                 onNewTab = paneNewTabAction(paneWindowId, currentPanelId, splitViewState),
+                tabDragComponent = tabDragComponent,
+                panelId = currentPanelId,
+                onTabDropResult = onTabDropResult,
                 content = panelContent,
             )
             // Without these, Add to Bookmarks and Remove from Bookmarks are menu entries that
