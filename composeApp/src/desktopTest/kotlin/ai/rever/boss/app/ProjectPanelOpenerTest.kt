@@ -1,103 +1,30 @@
 package ai.rever.boss.app
 
-import ai.rever.boss.components.events.PanelEventBus
-import ai.rever.boss.components.plugin.PanelIds
-import ai.rever.boss.utils.SystemUtils
-import kotlinx.coroutines.async
-import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.take
-import kotlinx.coroutines.flow.toList
-import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.coroutines.yield
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Windows comes up as a plain browser, so nothing may open a panel there on its
- * own - not Codebase, not Run Configurations, and not a plugin panel behind
- * either of them.
+ * Selecting a project opens no panel by itself.
  *
- * The platform branch is driven explicitly through the `autoOpen` parameter so
- * both halves run on every CI leg; the host-resolved value is asserted
- * separately, since that is the only check that this OS is wired to the right
- * branch at all.
+ * The host used to open Codebase and Run Configurations whenever a project was selected -
+ * everywhere except Windows, which came up bare. Picking a project is not a request for a
+ * particular layout, and the two panels landed on top of whatever was already open. Every panel
+ * is still one sidebar click, menu item, deep link or CLI command away; only the automatic open
+ * is gone, and it is gone on every platform rather than one.
+ *
+ * A source guard rather than a behavioural test, because these effects only run inside a composed
+ * window: nothing observable happens for a test to assert the absence of. What can be asserted is
+ * that no startup effect asks the bus to open a panel, which is the only way one could come back.
  */
 class ProjectPanelOpenerTest {
-    /** Unique per case: [PanelEventBus] replays its last open event to new collectors. */
-    private fun windowId(case: String) = "test-window-$case"
-
     @Test
-    fun `non-windows opens codebase and run configurations`() =
-        runTest {
-            val window = windowId("auto-open")
-            val collected =
-                async {
-                    withTimeoutOrNull(TIMEOUT_MS) {
-                        PanelEventBus.panelOpenEvents
-                            .filter { it.sourceWindowId == window }
-                            .take(2)
-                            .toList()
-                    }
-                }
-            // Let the collector subscribe before emitting: replay is 1, so a late
-            // subscriber would miss the first of the two events.
-            yield()
+    fun `startup effects open no panel on their own`() {
+        val text = startupEffects.readText()
 
-            openProjectPanels(window, autoOpen = true)
-
-            val events = assertNotNull(collected.await(), "expected both panels to open")
-            assertEquals(listOf(PanelIds.CODEBASE, PanelIds.RUN_CONFIGURATIONS), events.map { it.panelId })
-        }
-
-    @Test
-    fun `windows opens nothing`() =
-        runTest {
-            val window = windowId("suppressed")
-            val collected =
-                async {
-                    withTimeoutOrNull(TIMEOUT_MS) {
-                        PanelEventBus.panelOpenEvents.first { it.sourceWindowId == window }
-                    }
-                }
-            yield()
-
-            openProjectPanels(window, autoOpen = false)
-
-            assertNull(collected.await(), "no panel may open by itself on Windows")
-        }
-
-    @Test
-    fun `the policy suppresses auto-open on windows only`() {
-        assertTrue(StartupPanelPolicy.autoOpensProjectPanelsFor(isWindows = false))
-        assertFalse(StartupPanelPolicy.autoOpensProjectPanelsFor(isWindows = true))
-    }
-
-    @Test
-    fun `host resolution follows this platform`() {
-        assertEquals(!SystemUtils.isWindows, StartupPanelPolicy.autoOpensProjectPanels)
-    }
-
-    /**
-     * The three startup effects that open project panels must keep routing
-     * through [openProjectPanels]. A fourth call site written straight against
-     * the bus would open panels on Windows again and no behavioural test would
-     * catch it, because those effects only run inside a composed window.
-     */
-    @Test
-    fun `startup effects never open a panel directly`() {
-        val source = File(repoRoot, "composeApp/src/commonMain/kotlin/ai/rever/boss/app/BossAppStartupEffects.kt")
-        assertTrue(source.isFile, "source moved: ${source.absolutePath}")
-        val text = source.readText()
-
-        // Code lines only: a KDoc or comment naming the call is not a call, and this guard
-        // firing on prose would be a false positive nobody could fix except by rewording.
+        // Code lines only: a KDoc or comment naming the call is not a call, and this guard firing
+        // on prose would be a false positive nobody could fix except by rewording.
         val code =
             text
                 .lines()
@@ -107,19 +34,37 @@ class ProjectPanelOpenerTest {
         assertEquals(
             0,
             Regex("""PanelEventBus\.openPanel\(""").findAll(code).count(),
-            "BossAppStartupEffects must open project panels via openProjectPanels(), " +
-                "so the Windows suppression cannot be bypassed",
+            "selecting a project must not open a panel: every panel is a click, menu item, " +
+                "deep link or CLI command away, and an automatic open lands on top of whatever " +
+                "the user already has arranged",
         )
-        assertTrue(code.contains("openProjectPanels("), "the opener seam disappeared from BossAppStartupEffects")
+    }
+
+    @Test
+    fun `the opener seam is gone rather than merely unused`() {
+        // Left behind, it is an invitation to call it again - and its name reads like something
+        // the host is meant to do on startup.
+        assertTrue(
+            !File(repoRoot, "composeApp/src/commonMain/kotlin/ai/rever/boss/app/StartupPanelPolicy.kt").exists(),
+            "StartupPanelPolicy.kt is back: the auto-open policy has no second value to choose between",
+        )
+        assertEquals(
+            0,
+            Regex("""openProjectPanels""").findAll(startupEffects.readText()).count(),
+            "BossAppStartupEffects calls an opener that no longer exists as a policy",
+        )
     }
 
     private companion object {
-        const val TIMEOUT_MS = 2_000L
-
         /** Same repo-root walk as WindowsArm64SourceIsolationTest - the test CWD is not pinned. */
         val repoRoot: File =
             generateSequence(File("").absoluteFile) { it.parentFile }
                 .firstOrNull { File(it, "composeApp/build.gradle.kts").isFile }
                 ?: error("could not locate the repository root from ${File("").absolutePath}")
+
+        val startupEffects: File
+            get() =
+                File(repoRoot, "composeApp/src/commonMain/kotlin/ai/rever/boss/app/BossAppStartupEffects.kt")
+                    .also { assertTrue(it.isFile, "source moved: ${it.absolutePath}") }
     }
 }

@@ -185,22 +185,11 @@ internal fun BossAppStartupEffects(state: BossAppState) {
         val pendingProject = consumePendingInitialProject(windowId)
         if (pendingProject != null) {
             windowProjectState.selectProject(pendingProject)
-            openProjectPanels(windowId)
         }
     }
 
     // Collect window-specific project state reactively (used by multiple effects below)
     val selectedProject by windowProjectState.selectedProject.collectAsState()
-
-    // Open CodeBase and RunConfigurations panels if a project is selected at startup
-    // Note: Pending project is handled in the LaunchedEffect above, this handles
-    // existing window project state (e.g., when restored from workspace)
-    LaunchedEffect(windowProjectState) {
-        val initialProject = windowProjectState.selectedProject.value
-        if (initialProject.path.isNotEmpty()) {
-            openProjectPanels(windowId)
-        }
-    }
 
     // Register resource count providers for performance monitoring
     // Use DisposableEffect to clean up on disposal and prevent memory leaks
@@ -371,13 +360,6 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                     workspaceManager.loadWorkspace(choice.workspace)
                 }
             }
-        }
-    }
-
-    // Open CodeBase and RunConfigurations panels when project is selected (reactive architecture)
-    LaunchedEffect(selectedProject.path, windowId) {
-        if (selectedProject.path.isNotEmpty()) {
-            openProjectPanels(windowId)
         }
     }
 
