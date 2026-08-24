@@ -23,6 +23,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -61,6 +62,9 @@ fun TabDraggableComponent.TabDraggingOverlay() {
     // it has always been.
     OverlayGhost(
         size = DpSize(GHOST_WIDTH, GHOST_HEIGHT),
+        // The same placement offsetPosition above expresses, from the ghost's corner instead of the
+        // cursor's: a quarter in from the leading edge, vertically centred.
+        hotspot = DpOffset(GHOST_WIDTH / 4, GHOST_HEIGHT / 2),
         windowOffset = { IntOffset(offsetPosition.x.toInt(), offsetPosition.y.toInt()) },
     ) {
         Box(

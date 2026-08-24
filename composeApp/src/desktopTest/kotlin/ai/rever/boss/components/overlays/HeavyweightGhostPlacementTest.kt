@@ -2,24 +2,24 @@ package ai.rever.boss.components.overlays
 
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
  * Where a heavyweight drag ghost's window is placed.
  *
- * Two properties matter and only one of them is cosmetic.
+ * The property that matters is that THE POINTER SITS ON THE HOTSPOT: a drag ghost is the thing the
+ * pointer is carrying, so its own window has to land exactly where the lightweight ghost draws
+ * itself in Compose coordinates. It used to be pushed 16px below-right of the cursor instead, to
+ * keep the pointer outside a window that has no click-through - measured on macOS, an always-on-top
+ * window that appears AFTER the press takes no mouse events at all (the source window holds the
+ * implicit grab), so that gap bought nothing and cost ~27px of visible detachment.
  *
- * The load-bearing one is that the POINTER STAYS OUTSIDE THE GHOST. A non-focusable AWT window still
- * receives mouse events, and the JVM has no portable click-through, so a ghost window under the
- * pointer swallows the drag that is moving it: the ghost follows the cursor and the drop never lands.
- * That is why the placement flips to the other side of the cursor at a screen edge instead of being
- * pulled back across it, and why nearly every case below re-asserts the invariant.
- *
- * The other is the CLAMP, which keeps the ghost on the monitor the pointer is on rather than spilling
- * over a taskbar or onto the wrong display.
+ * The other property is the CLAMP, which keeps the ghost on the monitor the pointer is on rather
+ * than spilling over a taskbar or onto the wrong display. It is the one thing allowed to move the
+ * ghost off its hotspot.
  */
 class HeavyweightGhostPlacementTest {
     private companion object {
@@ -29,58 +29,74 @@ class HeavyweightGhostPlacementTest {
         /** The same, plus a second monitor to its right whose origin is NOT (0, 0). */
         val DUAL = SINGLE + listOf(intArrayOf(1920, 0, 1280, 800))
 
+        /** A tab card, carried a quarter in from its leading edge and vertically centred. */
         const val GHOST_W = 180
         const val GHOST_H = 32
+        const val HOT_X = GHOST_W / 4
+        const val HOT_Y = GHOST_H / 2
     }
 
     private fun place(
         x: Int,
         y: Int,
         screens: List<IntArray> = SINGLE,
-    ) = clampGhostToScreens(cursorX = x, cursorY = y, width = GHOST_W, height = GHOST_H, screens = screens)
-
-    /** The invariant the gap exists for: a pointer inside the ghost eats its own drag. */
-    private fun assertPointerOutside(
-        cursorX: Int,
-        cursorY: Int,
-        placed: Pair<Int, Int>,
-    ) {
-        val (gx, gy) = placed
-        val inside = cursorX >= gx && cursorX < gx + GHOST_W && cursorY >= gy && cursorY < gy + GHOST_H
-        assertFalse(inside, "pointer ($cursorX, $cursorY) landed inside the ghost at $placed")
-    }
+    ) = clampGhostToScreens(
+        cursorX = x,
+        cursorY = y,
+        size = IntSize(GHOST_W, GHOST_H),
+        hotspot = IntOffset(HOT_X, HOT_Y),
+        screens = screens,
+    )
 
     @Test
-    fun `mid-screen, the ghost sits below-right of the cursor`() {
+    fun `mid-screen, the pointer lands exactly on the ghost's hotspot`() {
         val placed = place(600, 400)
-        assertTrue(placed.first > 600 && placed.second > 400, "expected below-right, got $placed")
-        assertPointerOutside(600, 400, placed)
+        assertEquals(Pair(600 - HOT_X, 400 - HOT_Y), placed)
     }
 
     @Test
-    fun `at the right edge it flips to the cursor's left rather than sliding under it`() {
-        // This is the case a plain clamp gets wrong. Clamping to (1920 - 180) = 1740 with the cursor at
-        // 1900 puts the pointer inside the ghost, which would stall the drag in the last 180px of the
-        // screen. Flipping puts the ghost entirely left of the cursor instead.
+    fun `a carried ghost holds the pointer inside itself, which is the point of the hotspot`() {
+        // The reversal, stated as a test: this is exactly what the old gap existed to prevent, and
+        // what makes the ghost read as being carried rather than trailing behind the cursor.
+        val (gx, gy) = place(600, 400)
+        val inside = 600 >= gx && 600 < gx + GHOST_W && 400 >= gy && 400 < gy + GHOST_H
+        assertTrue(inside, "pointer should sit on the ghost it is dragging")
+    }
+
+    @Test
+    fun `a centred icon ghost is centred on the cursor`() {
+        // The sidebar rail's ghost: 22dp square, carried by its middle.
+        val placed =
+            clampGhostToScreens(
+                cursorX = 600,
+                cursorY = 400,
+                size = IntSize(22, 22),
+                hotspot = IntOffset(11, 11),
+                screens = SINGLE,
+            )
+        assertEquals(Pair(589, 389), placed)
+    }
+
+    @Test
+    fun `at the right edge the ghost is pulled back onto the screen`() {
+        // The clamp wins over the hotspot here: half a ghost hanging off the display is worse than
+        // a ghost the pointer is no longer centred on.
         val placed = place(1900, 400)
-        assertTrue(placed.first + GHOST_W <= 1900, "ghost should end left of the cursor, got $placed")
-        assertTrue(placed.first >= 0, "ghost should stay on screen, got $placed")
-        assertPointerOutside(1900, 400, placed)
+        assertEquals(1920 - GHOST_W, placed.first)
     }
 
     @Test
-    fun `at the bottom edge it flips above the cursor, clear of the menu-bar-adjusted floor`() {
+    fun `at the bottom edge it is pulled up clear of the menu-bar-adjusted floor`() {
         val placed = place(600, 1070)
-        assertTrue(placed.second + GHOST_H <= 1070, "ghost should end above the cursor, got $placed")
-        assertPointerOutside(600, 1070, placed)
+        assertEquals(25 + 1055 - GHOST_H, placed.second)
     }
 
     @Test
-    fun `a bottom edge that still fits below the cursor is left below it`() {
-        // Only flip when it is actually needed: 25 + 1055 = 1080 is the floor, and a cursor at 1000
-        // leaves room for 16 + 32 underneath.
+    fun `an edge that still fits is left exactly on the hotspot`() {
+        // Only clamp when it is actually needed: 25 + 1055 = 1080 is the floor, and a cursor at 1000
+        // leaves room for the half of the card that hangs below it.
         val placed = place(600, 1000)
-        assertEquals(1016, placed.second)
+        assertEquals(1000 - HOT_Y, placed.second)
     }
 
     @Test
@@ -89,42 +105,52 @@ class HeavyweightGhostPlacementTest {
         // monitor back to x < 1920, i.e. onto the wrong display entirely.
         val placed = place(2000, 300, DUAL)
         assertTrue(placed.first >= 1920, "ghost jumped back to the primary monitor: $placed")
-        assertPointerOutside(2000, 300, placed)
     }
 
     @Test
     fun `the second monitor's own origin is respected, not treated as zero`() {
         // Cursor at the second monitor's top-left. An axis computed from width/height without adding
-        // the monitor's origin would place the ghost at (16, 16) on the PRIMARY screen.
+        // the monitor's origin would place the ghost on the PRIMARY screen.
         val placed = place(1920, 0, DUAL)
-        assertEquals(Pair(1936, 16), placed)
+        assertEquals(Pair(1920, 0), placed)
     }
 
     @Test
     fun `a pointer on no known monitor is pulled back onto one, not left off-screen`() {
         // Monitors can be unplugged mid-drag, and the coordinates are then off every rect we cached.
-        // The near-edge half of the fit test is what catches this: a cursor far to the LEFT satisfies
-        // "does not run past the right edge" trivially, so testing only the far edge would leave the
-        // ghost thousands of pixels off-screen and invisible for the rest of the drag.
+        // Without the clamp the ghost would sit thousands of pixels off-screen, invisible for the
+        // rest of the drag.
         val placed = place(-5000, -5000, DUAL)
         assertEquals(Pair(0, 25), placed)
     }
 
     @Test
     fun `a ghost larger than the monitor pins inside it instead of inverting the range`() {
-        // Neither the offset nor the flip fits, so both axes fall through to the clamp. coerceIn throws
-        // on an inverted range, and an exception here would take the whole drag gesture down with it.
-        // 100 wide cannot hold 180, so x pins to the origin; 60 tall can hold 32, so y pins to 60 - 32.
+        // coerceIn throws on an inverted range, and an exception here would take the whole drag
+        // gesture down with it. 100 wide cannot hold 180, so x pins to the origin.
         val tiny = listOf(intArrayOf(0, 0, 100, 60))
-        val placed = clampGhostToScreens(cursorX = 50, cursorY = 30, width = GHOST_W, height = GHOST_H, screens = tiny)
-        assertEquals(Pair(0, 28), placed)
+        val placed =
+            clampGhostToScreens(
+                cursorX = 50,
+                cursorY = 30,
+                size = IntSize(GHOST_W, GHOST_H),
+                hotspot = IntOffset(HOT_X, HOT_Y),
+                screens = tiny,
+            )
+        assertEquals(Pair(0, 14), placed)
     }
 
     @Test
-    fun `with no monitors at all it still returns the offset point`() {
+    fun `with no monitors at all it still hangs the ghost off the pointer`() {
         val placed =
-            clampGhostToScreens(cursorX = 40, cursorY = 60, width = GHOST_W, height = GHOST_H, screens = emptyList())
-        assertEquals(Pair(56, 76), placed)
+            clampGhostToScreens(
+                cursorX = 40,
+                cursorY = 60,
+                size = IntSize(GHOST_W, GHOST_H),
+                hotspot = IntOffset(HOT_X, HOT_Y),
+                screens = emptyList(),
+            )
+        assertEquals(Pair(40 - HOT_X, 60 - HOT_Y), placed)
     }
 }
 

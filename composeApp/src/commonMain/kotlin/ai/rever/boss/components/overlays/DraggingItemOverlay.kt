@@ -10,6 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.round
@@ -40,6 +41,9 @@ fun BossDraggableComponent.DraggingItemOverlay() {
         // cursor-tracking window there; on OFF_SCREEN it is the same offset Box as before.
         OverlayGhost(
             size = DpSize(GHOST_ICON_SIZE, GHOST_ICON_SIZE),
+            // Centred on the pointer: the icon is being carried, so the pointer holds its middle.
+            // Same statement as centeredOffset below, in the units the ghost's own window needs.
+            hotspot = DpOffset(GHOST_ICON_SIZE / 2, GHOST_ICON_SIZE / 2),
             // Position the ghost based on calculated absolute position, centered
             windowOffset = { centeredOffset.round() },
         ) {

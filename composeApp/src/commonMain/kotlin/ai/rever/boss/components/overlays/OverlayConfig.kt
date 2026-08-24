@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
@@ -122,15 +123,17 @@ object OverlayConfig {
 
     /**
      * Platform-injected heavyweight GHOST renderer - a **content-sized**, non-focusable window of
-     * [size] that follows the cursor, offset by a gap so the pointer never lands on it.
+     * [size] that follows the cursor, with the pointer sitting at `hotspot` inside it.
      *
-     * The gap is load-bearing rather than cosmetic: the JVM has no portable click-through, so a
-     * ghost sitting under the cursor would swallow the drag that is moving it. Null until injected;
-     * callers fall back to drawing in place.
+     * The hotspot is what keeps the two paths agreeing about where a ghost is: the lightweight one
+     * positions itself in the caller's own coordinates, so without it the heavyweight ghost drifts
+     * off the pointer by however far the caller's own offset would have moved it. Null until
+     * injected; callers fall back to drawing in place.
      */
     var heavyweightGhost: (
         @Composable (
             size: DpSize,
+            hotspot: DpOffset,
             content: @Composable () -> Unit,
         ) -> Unit
     )? = null
@@ -293,16 +296,22 @@ internal fun overlayCornerIsHeavyweight(): Boolean = routeOverlayHeavyweight(Ove
  * ghost's own window has to be placed in SCREEN coordinates, and converting from a Compose offset
  * means going through the content pane rather than the window (via the window it is off by the
  * title-bar height), which reading the cursor avoids entirely.
+ *
+ * [hotspot] is the same placement stated in the only terms the heavyweight path can use: where the
+ * POINTER sits inside the ghost, measured from its top-left. It must agree with [windowOffset] - the
+ * two are one decision expressed twice, and a caller that changes one without the other gets a ghost
+ * that jumps when the browser's rendering mode changes.
  */
 @Composable
 fun OverlayGhost(
     size: DpSize,
+    hotspot: DpOffset,
     windowOffset: () -> IntOffset,
     content: @Composable () -> Unit,
 ) {
     val hw = OverlayConfig.heavyweightGhost
     if (routeOverlayHeavyweight(hw != null) && hw != null) {
-        hw(size) { content() }
+        hw(size, hotspot) { content() }
     } else {
         Box(modifier = Modifier.offset { windowOffset() }) { content() }
     }

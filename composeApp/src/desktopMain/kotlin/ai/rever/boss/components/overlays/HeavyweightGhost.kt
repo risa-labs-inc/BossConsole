@@ -5,30 +5,27 @@ import ai.rever.boss.window.BossWindowIcon
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPosition
+import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.rememberWindowState
 import java.awt.GraphicsEnvironment
 import java.awt.MouseInfo
 import java.awt.Rectangle
 import java.awt.Toolkit
-
-/**
- * How far from the cursor the ghost sits - below-right normally, above-left at a screen edge (see
- * [clampGhostToScreens]).
- *
- * NOT cosmetic. A non-focusable AWT window still receives mouse events, and the JVM has no portable
- * click-through, so a ghost drawn under the pointer would swallow the drag that is moving it and the
- * drop would never land. The gap keeps the pointer outside the window for the whole drag. It also
- * matches [SwingTooltip], which places itself off the cursor for the same reason.
- */
-private const val GHOST_GAP_PX = 16
 
 /**
  * Heavyweight drag-ghost host for HARDWARE_ACCELERATED browser mode.
@@ -42,6 +39,18 @@ private const val GHOST_GAP_PX = 16
  * parent-sized ghost window would cover the whole app and eat the pointer events that constitute the
  * drag, ending it the moment it began.
  *
+ * [hotspot] is where the POINTER sits inside the ghost, so this window lands exactly where the
+ * lightweight ghost does: centred under the cursor for the sidebar icon, a quarter in from the
+ * leading edge for a tab card. It used to be placed 16px below-right of the cursor instead, on the
+ * theory that a window under the pointer would swallow the drag that is moving it (the JVM has no
+ * portable click-through, and a non-focusable AWT window still receives mouse events). Measured on
+ * macOS, that is not what happens for a ghost of this kind: the press that starts the drag lands on
+ * the source window first and takes the implicit mouse grab, after which a 22x22 always-on-top
+ * window centred on the cursor receives NOTHING - every drag event and the release still go to the
+ * source. The gap only mattered for a ghost that is already up when the button goes down, which
+ * neither of ours is (both appear after a long press or a drag threshold). What the gap did do was
+ * park the ghost ~27px diagonally off the pointer, which reads as an icon that is not being carried.
+ *
  * Position is read from [MouseInfo] on the frame clock rather than from the caller's Compose
  * coordinates. Two reasons: the cursor is authoritative for something that follows the cursor, and
  * converting window coordinates to screen coordinates has to go through the CONTENT PANE rather than
@@ -51,6 +60,7 @@ private const val GHOST_GAP_PX = 16
 @Composable
 fun HeavyweightGhost(
     size: DpSize,
+    hotspot: DpOffset,
     content: @Composable () -> Unit,
 ) {
     val screens = remember { screenRects() }
@@ -58,42 +68,16 @@ fun HeavyweightGhost(
     // the frame loop below correct it shows the ghost at the top-left corner for one frame, which
     // reads as a flicker at the start of every drag.
     val initial =
-        remember(size, screens) {
+        remember(size, hotspot, screens) {
             val cursor = runCatching { MouseInfo.getPointerInfo()?.location }.getOrNull()
-            clampGhostToScreens(
-                cursorX = cursor?.x ?: 0,
-                cursorY = cursor?.y ?: 0,
-                width = size.width.value.toInt(),
-                height = size.height.value.toInt(),
-                screens = screens,
-            )
+            placeGhost(cursor?.x ?: 0, cursor?.y ?: 0, size, hotspot, screens)
         }
     val state =
         rememberWindowState(size = size, position = WindowPosition(initial.first.dp, initial.second.dp))
 
-    // Drive from the frame clock, not from recomposition: the ghost has to keep up with the pointer
-    // whether or not anything it reads has changed, and the caller's drag state lives in a different
-    // subtree. Only assign when the point actually moves - each assignment is a native setLocation,
-    // and a still pointer should cost nothing.
-    LaunchedEffect(size) {
-        var last: Pair<Int, Int>? = initial
-        while (true) {
-            withFrameNanos { }
-            val cursor = runCatching { MouseInfo.getPointerInfo()?.location }.getOrNull() ?: continue
-            val placed =
-                clampGhostToScreens(
-                    cursorX = cursor.x,
-                    cursorY = cursor.y,
-                    width = size.width.value.toInt(),
-                    height = size.height.value.toInt(),
-                    screens = screens,
-                )
-            if (placed != last) {
-                last = placed
-                state.position = WindowPosition(placed.first.dp, placed.second.dp)
-            }
-        }
-    }
+    // The AWT window, once it exists. See FollowCursor for why it is moved directly.
+    var awtWindow by remember { mutableStateOf<java.awt.Window?>(null) }
+    FollowCursor(size, hotspot, screens, initial, state) { awtWindow }
 
     Window(
         onCloseRequest = {},
@@ -107,6 +91,10 @@ fun HeavyweightGhost(
     ) {
         EnsureOverlayWindowTransparent(window, kind = "ghost")
         ApplyBossWindowIcon(window)
+        DisposableEffect(window) {
+            awtWindow = window
+            onDispose { awtWindow = null }
+        }
         Box(modifier = Modifier.fillMaxSize()) {
             content()
         }
@@ -114,14 +102,73 @@ fun HeavyweightGhost(
 }
 
 /**
- * Where a ghost of [width] x [height] goes for a cursor at ([cursorX], [cursorY]): offset from the
- * pointer, and inside the working area of whichever monitor the pointer is on.
+ * Keeps the ghost window on the cursor for as long as it is composed.
  *
- * Below-right by default. When that would spill off an edge the ghost **flips to the other side of
- * the cursor** rather than being pulled back across it - pulling back is what a plain clamp does, and
- * near the right edge it slides the window under the pointer, which is exactly the state
- * [GHOST_GAP_PX] exists to prevent. Flipping keeps the pointer outside the ghost on every edge, so
- * the gap guarantee holds everywhere and not just mid-screen.
+ * Driven from the frame clock, not from recomposition: the ghost has to keep up with the pointer
+ * whether or not anything it reads has changed, and the caller's drag state lives in a different
+ * subtree. Only assigns when the point actually moves - each assignment is a native setLocation,
+ * and a still pointer should cost nothing.
+ *
+ * [window] is moved directly rather than through [WindowState.position]: assigning snapshot state
+ * inside `withFrameNanos` is only applied by the NEXT frame, so the ghost trailed the pointer by a
+ * frame on top of the frame the cursor read is already old. Both callbacks run on the EDT, which is
+ * where `setLocation` has to be called from. The state is the fallback for the frames before the
+ * window exists.
+ */
+@Composable
+private fun FollowCursor(
+    size: DpSize,
+    hotspot: DpOffset,
+    screens: List<IntArray>,
+    initial: Pair<Int, Int>,
+    state: WindowState,
+    window: () -> java.awt.Window?,
+) {
+    LaunchedEffect(size, hotspot) {
+        var last: Pair<Int, Int>? = initial
+        while (true) {
+            withFrameNanos { }
+            val cursor = runCatching { MouseInfo.getPointerInfo()?.location }.getOrNull() ?: continue
+            val placed = placeGhost(cursor.x, cursor.y, size, hotspot, screens)
+            if (placed != last) {
+                last = placed
+                val awt = window()
+                if (awt != null) {
+                    awt.setLocation(placed.first, placed.second)
+                } else {
+                    state.position = WindowPosition(placed.first.dp, placed.second.dp)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * [clampGhostToScreens] in the units the caller has: dp, which AWT reports 1:1 as logical pixels.
+ */
+private fun placeGhost(
+    cursorX: Int,
+    cursorY: Int,
+    size: DpSize,
+    hotspot: DpOffset,
+    screens: List<IntArray>,
+): Pair<Int, Int> =
+    clampGhostToScreens(
+        cursorX = cursorX,
+        cursorY = cursorY,
+        size = IntSize(size.width.value.toInt(), size.height.value.toInt()),
+        hotspot = IntOffset(hotspot.x.value.toInt(), hotspot.y.value.toInt()),
+        screens = screens,
+    )
+
+/**
+ * Where a ghost of [size] goes for a cursor at ([cursorX], [cursorY]): hung off the pointer by
+ * [hotspot], and inside the working area of whichever monitor the pointer is on.
+ *
+ * The clamp is the whole of the screen handling now, and it is what keeps a ghost near an edge from
+ * spilling onto a taskbar, a dock, or the next display. It is allowed to move the pointer off the
+ * hotspot, which is the right trade: an offset ghost is worse than an exactly-placed one, and both
+ * are far better than one that is half off the screen.
  *
  * Pure so the placement can be pinned by a test, which is the only part of this reachable without a
  * display.
@@ -129,17 +176,19 @@ fun HeavyweightGhost(
 internal fun clampGhostToScreens(
     cursorX: Int,
     cursorY: Int,
-    width: Int,
-    height: Int,
+    size: IntSize,
+    hotspot: IntOffset,
     screens: List<IntArray>,
 ): Pair<Int, Int> {
+    val x = cursorX - hotspot.x
+    val y = cursorY - hotspot.y
     val screen =
         screens.firstOrNull { it.contains(cursorX, cursorY) }
             ?: screens.firstOrNull()
-            ?: return Pair(cursorX + GHOST_GAP_PX, cursorY + GHOST_GAP_PX)
+            ?: return Pair(x, y)
     return Pair(
-        flipOrClamp(cursorX, width, screen[0], screen[2]),
-        flipOrClamp(cursorY, height, screen[1], screen[3]),
+        pinInside(x, size.width, screen[0], screen[2]),
+        pinInside(y, size.height, screen[1], screen[3]),
     )
 }
 
@@ -150,35 +199,21 @@ private fun IntArray.contains(
 ): Boolean = x >= this[0] && x < this[0] + this[2] && y >= this[1] && y < this[1] + this[3]
 
 /**
- * One axis of the placement: [cursor] + gap, flipped to `cursor - gap - extent` when that does not
- * fit, and clamped only if NEITHER side does.
+ * One axis of the placement: [at], kept inside `[origin, origin + available]` for an extent of
+ * [extent].
  *
- * Both candidates are tested against both ends of the range, not just the far one. A cursor that is
- * outside the monitor entirely - which happens when a display is unplugged mid-drag and the cached
- * rects no longer describe where the pointer is - otherwise passes the far-edge test trivially and
- * the ghost is placed thousands of pixels off-screen, invisible for the rest of the drag.
- *
- * The final `coerceIn` is the neither-side-fits case, i.e. a ghost bigger than the monitor. It uses
- * `coerceAtLeast(origin)` on the upper bound because an inverted range makes `coerceIn` throw, and an
- * exception here would take the whole drag gesture down with it.
+ * The `coerceAtLeast(origin)` on the upper bound is the ghost-bigger-than-the-monitor case: an
+ * inverted range makes `coerceIn` throw, and an exception here would take the whole drag gesture
+ * down with it. A cursor that is outside the monitor entirely - which happens when a display is
+ * unplugged mid-drag and the cached rects no longer describe where the pointer is - is pulled back
+ * onto the monitor by the same clamp rather than being left thousands of pixels off-screen.
  */
-private fun flipOrClamp(
-    cursor: Int,
+private fun pinInside(
+    at: Int,
     extent: Int,
     origin: Int,
     available: Int,
-): Int {
-    val limit = origin + available
-
-    fun fits(candidate: Int) = candidate >= origin && candidate + extent <= limit
-    val after = cursor + GHOST_GAP_PX
-    val before = cursor - GHOST_GAP_PX - extent
-    return when {
-        fits(after) -> after
-        fits(before) -> before
-        else -> after.coerceIn(origin, (limit - extent).coerceAtLeast(origin))
-    }
-}
+): Int = at.coerceIn(origin, (origin + available - extent).coerceAtLeast(origin))
 
 /**
  * Every monitor's working area as `[x, y, width, height]`, i.e. bounds minus insets (taskbar, dock,

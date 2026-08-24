@@ -591,9 +591,9 @@ fun main(args: Array<String>) {
         ai.rever.boss.components.overlays
             .HeavyweightHud(alignment, hudContent)
     }
-    ai.rever.boss.components.overlays.OverlayConfig.heavyweightGhost = { size, ghostContent ->
+    ai.rever.boss.components.overlays.OverlayConfig.heavyweightGhost = { size, hotspot, ghostContent ->
         ai.rever.boss.components.overlays
-            .HeavyweightGhost(size, ghostContent)
+            .HeavyweightGhost(size, hotspot, ghostContent)
     }
     ai.rever.boss.components.overlays.OverlayConfig.heavyweightCorner = {
         alignment,
