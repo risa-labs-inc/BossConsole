@@ -17,7 +17,6 @@ import ai.rever.boss.components.window_panel.components.main_window_panels.Windo
 import ai.rever.boss.components.window_panel.components.main_window_panels.WindowVerticalTabBar
 import ai.rever.boss.components.window_panel.components.main_window_panels.createBossAppContext
 import ai.rever.boss.components.window_panel.components.main_window_panels.overlayRegionInWindow
-import ai.rever.boss.components.window_panel.components.main_window_panels.pointerInSidebar
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberPinDrawerAction
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberTabBarLayout
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberTabBarRevealState
@@ -1601,6 +1600,8 @@ fun SplitViewPanel(
     modifier: Modifier = Modifier,
     tabDragComponent: TabDraggableComponent? = null,
     onTabDropResult: (TabDropResult) -> Unit = {},
+    /** Window chrome for the foot of the vertical bar. Ignored in TOP position, which has none. */
+    verticalBarFooter: @Composable () -> Unit = {},
 ) {
     val density = LocalDensity.current
 
@@ -1621,8 +1622,6 @@ fun SplitViewPanel(
             narrow = bar.narrow,
             hoverExpand = bar.hoverExpand,
         )
-    val pointerInSidebar = reveal.pointerInSidebar()
-
     // This area's rectangle in dp relative to the window's content pane, for the drawer's
     // heavyweight overlay window. Null until measured, and the drawer draws nothing while it is.
     var contentRegion by remember { mutableStateOf<IntRect?>(null) }
@@ -1663,6 +1662,7 @@ fun SplitViewPanel(
                 reveal = reveal,
                 tabDragComponent = tabDragComponent,
                 onTabDropResult = onTabDropResult,
+                footer = verticalBarFooter,
                 splitTree = splitTree,
             )
         } else {
@@ -1675,7 +1675,6 @@ fun SplitViewPanel(
                 bar = bar,
                 reveal = reveal,
                 contentRegion = contentRegion,
-                onDismiss = { reveal.dismiss(pointerInSidebar) },
                 onPin = rememberPinDrawerAction(reveal, bar),
             )
         }
@@ -1695,6 +1694,7 @@ private fun WindowBarRow(
     reveal: TabBarRevealState,
     tabDragComponent: TabDraggableComponent?,
     onTabDropResult: (TabDropResult) -> Unit,
+    footer: @Composable () -> Unit,
     splitTree: @Composable (Modifier) -> Unit,
 ) {
     val listState = rememberLazyListState()
@@ -1717,6 +1717,7 @@ private fun WindowBarRow(
                 collapsed = bar.railShown,
                 onToggleCollapse = rememberToggleCollapseAction(bar, reveal),
                 tabDragComponent = tabDragComponent,
+                footer = footer,
             )
         }
         VDivider()

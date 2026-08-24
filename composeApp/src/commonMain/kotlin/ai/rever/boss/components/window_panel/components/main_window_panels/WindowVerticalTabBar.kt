@@ -171,6 +171,14 @@ fun WindowVerticalTabBar(
     onPin: (() -> Unit)? = null,
     tabDragComponent: TabDraggableComponent? = null,
     registerBounds: Boolean = true,
+    /**
+     * Window chrome to sit at the foot of the bar, above the split map.
+     *
+     * A slot rather than parameters, because what goes here - today the project and workspace
+     * pickers, when the top bar is not on screen to hold them - is nothing a tab bar should know
+     * about. It measures panes and lists tabs; whoever composes the window knows about projects.
+     */
+    footer: @Composable () -> Unit = {},
 ) {
     // The pane the user is working in owns the bar's shared chrome: its bar menu, its Favorites
     // shelf, and where a favourite opens. Falling back to the first group keeps every one of
@@ -222,6 +230,7 @@ fun WindowVerticalTabBar(
                 onPin = onPin,
                 onStripBounds = { stripBounds = it },
                 tabDragComponent = tabDragComponent.takeIf { registerBounds },
+                footer = footer,
             )
         }
     }
@@ -259,9 +268,14 @@ fun BoxScope.WindowRevealedTabBarDrawer(
     bar: TabBarLayout,
     reveal: TabBarRevealState,
     contentRegion: IntRect?,
-    onDismiss: () -> Unit,
     onPin: (() -> Unit)?,
 ) {
+    // Built here rather than taken as a parameter: dismissing a drawer is the drawer's own
+    // business, and the pointer state it needs is a composable read the caller had to make on the
+    // drawer's behalf. Nothing outside dismisses this.
+    val pointerInSidebar = reveal.pointerInSidebar()
+    val onDismiss: () -> Unit = { reveal.dismiss(pointerInSidebar) }
+
     VerticalTabBarDrawer(
         visible = reveal.drawerVisible,
         hoverSource = reveal.drawerHover,
@@ -363,6 +377,7 @@ private fun ExpandedGroups(
     onPin: (() -> Unit)?,
     onStripBounds: (Rect) -> Unit,
     tabDragComponent: TabDraggableComponent?,
+    footer: @Composable () -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -397,9 +412,12 @@ private fun ExpandedGroups(
             }
         }
 
-        // Pinned to the foot of the bar: the strip above takes weight(1f), so this is what is
-        // left. It is the one place that shows the whole arrangement at once, which is what makes
-        // a four-way split legible rather than a run of headers to read in order.
+        // Everything below the strip is pinned to the foot of the bar, because the strip above
+        // takes weight(1f) and this is what is left.
+        footer()
+
+        // The one place that shows the whole arrangement at once, which is what makes a four-way
+        // split legible rather than a run of headers to read in order.
         SplitMap(groups = groups)
     }
 }
