@@ -26,6 +26,7 @@ import androidx.compose.material.Surface
 import androidx.compose.material.Text
 import androidx.compose.material.TextButton
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Diversity2
 import androidx.compose.runtime.*
@@ -73,6 +74,9 @@ private const val INACTIVE_FILL_ALPHA = 0.35f
 /** Fill under the pointer. Below the selected fill, so hovering the selected tab does not flatten it. */
 private const val HOVER_FILL_ALPHA = 0.55f
 
+/** The pin glyph on a pinned tab. Smaller than the close beside it: it is a state, not a button. */
+private val PIN_INDICATOR_SIZE = 10.dp
+
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun BossTabButton(
@@ -81,6 +85,15 @@ fun BossTabButton(
     iconPainter: Painter? = null,
     tabIcon: TabIcon? = null,
     isSelected: Boolean = false,
+    /**
+     * This tab is pinned.
+     *
+     * Pinning already puts a tab first in its panel and, in a bar showing one pane, under a
+     * "PINNED" heading. Neither survives contact with a split: several panes' pinned blocks run
+     * together down one column, and the headings are dropped there because the rules between
+     * panes are already doing that job. So the tab itself has to say it.
+     */
+    isPinned: Boolean = false,
     isFocused: Boolean = true,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
@@ -443,6 +456,20 @@ fun BossTabButton(
                     softWrap = false,
                 )
                 titleBadge?.invoke()
+
+                // Always drawn, unlike the close icon beside it: a tab is pinned whether or not
+                // the pointer is anywhere near it, and an indicator you have to hover to see
+                // cannot answer "which of these are pinned" at a glance - which is the only
+                // question it exists for.
+                if (isPinned) {
+                    Icon(
+                        imageVector = Icons.Filled.PushPin,
+                        contentDescription = "Pinned",
+                        tint = colors.textSecondary,
+                        modifier = Modifier.size(PIN_INDICATOR_SIZE),
+                    )
+                }
+
                 // Only show close icon when needed to save space
                 if (isSelected || isHovered) {
                     Icon(

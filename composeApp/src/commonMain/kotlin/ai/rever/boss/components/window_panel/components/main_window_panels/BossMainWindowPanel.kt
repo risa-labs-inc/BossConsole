@@ -148,6 +148,7 @@ private fun BossTabButtonWithFavicon(
     config: TabInfo,
     isSelected: Boolean,
     isFocused: Boolean,
+    isPinned: Boolean,
     onClick: () -> Unit,
     onClose: () -> Unit,
     contextMenuItems: List<ContextMenuItem>,
@@ -200,6 +201,7 @@ private fun BossTabButtonWithFavicon(
             },
         isSelected = isSelected,
         isFocused = isFocused,
+        isPinned = isPinned,
         onClick = onClick,
         onClose = onClose,
         contextMenuItems = contextMenuItems,
@@ -972,6 +974,9 @@ fun BossTabsComponent.rememberTabBarState(
                 // panel that is always true; with one bar for several panes only the active
                 // pane's group can say it.
                 isFocused = isActiveGroup,
+                // The invariant, not a per-tab flag: pinned tabs are exactly the leading ones.
+                // See TabPinning for what keeps that true across moves and closes.
+                isPinned = index < pinnedCount,
                 // A vertical tab's width is the bar's, so tabWidth is not consulted there at all.
                 tabWidth = if (!vertical && shrinkTabsToFit) tabWidth else null,
                 vertical = vertical,
@@ -1509,6 +1514,7 @@ fun BossTabsComponent.BossMainPanel(
             PaneIndicatedContent(
                 tabs = paneTabs.tabs,
                 activeIndex = paneTabs.activeIndex,
+                pinnedCount = pinnedCount,
                 showStrip = (splitViewState?.getAllPanels()?.size ?: 1) > 1,
                 onSelect = { index ->
                     currentPanelId?.let { splitViewState?.setActivePanel(it) }

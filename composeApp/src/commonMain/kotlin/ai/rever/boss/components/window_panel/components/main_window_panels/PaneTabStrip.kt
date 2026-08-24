@@ -15,10 +15,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -40,6 +42,10 @@ import androidx.compose.ui.unit.dp
 /** Height of the strip. Deliberately close to the chip it holds: this is an indicator, not a bar. */
 private val PANE_STRIP_HEIGHT = 24.dp
 
+/** The short rule dividing a pane's pinned tabs from the rest. Shorter than a chip, so it reads
+ * as a divider between them rather than as one more thing in the row. */
+private val PINNED_RULE_HEIGHT = 14.dp
+
 /**
  * Every tab in one pane, as favicons, across the top of that pane.
  *
@@ -59,6 +65,7 @@ private val PANE_STRIP_HEIGHT = 24.dp
 internal fun PaneTabStrip(
     tabs: List<TabInfo>,
     activeIndex: Int,
+    pinnedCount: Int,
     onSelect: (Int) -> Unit,
     onNewTab: (() -> Unit)?,
 ) {
@@ -87,11 +94,28 @@ internal fun PaneTabStrip(
             items = tabs.withIndex().toList(),
             key = { (_, tab) -> tab.id },
         ) { (index, tab) ->
-            TabFaviconChip(
-                tab = tab,
-                isActive = index == activeIndex,
-                onClick = { onSelect(index) },
-            )
+            // The rule between the pinned block and the rest, exactly as the rail draws it. A
+            // chip has no room for a pin glyph of its own, so here "pinned" means "before the
+            // rule" - the same thing it means on the rail and under the sidebar's PINNED heading.
+            val opensUnpinnedBlock = pinnedCount in 1 until tabs.size && index == pinnedCount
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                if (opensUnpinnedBlock) {
+                    Box(
+                        Modifier
+                            .width(1.dp)
+                            .height(PINNED_RULE_HEIGHT)
+                            .background(BossTheme.colors.line),
+                    )
+                }
+                TabFaviconChip(
+                    tab = tab,
+                    isActive = index == activeIndex,
+                    onClick = { onSelect(index) },
+                )
+            }
         }
 
         // Inside the scrolling row, straight after the last tab, rather than pinned to the end of
@@ -150,6 +174,7 @@ private fun NewTabChip(onClick: () -> Unit) {
 internal fun PaneIndicatedContent(
     tabs: List<TabInfo>,
     activeIndex: Int,
+    pinnedCount: Int,
     showStrip: Boolean,
     onSelect: (Int) -> Unit,
     onNewTab: (() -> Unit)?,
@@ -157,7 +182,13 @@ internal fun PaneIndicatedContent(
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         if (showStrip) {
-            PaneTabStrip(tabs = tabs, activeIndex = activeIndex, onSelect = onSelect, onNewTab = onNewTab)
+            PaneTabStrip(
+                tabs = tabs,
+                activeIndex = activeIndex,
+                pinnedCount = pinnedCount,
+                onSelect = onSelect,
+                onNewTab = onNewTab,
+            )
             Divider(color = BossTheme.colors.line)
         }
         content(Modifier.weight(1f).fillMaxWidth())
