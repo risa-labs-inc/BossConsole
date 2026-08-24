@@ -1,7 +1,10 @@
 package ai.rever.boss.components.window_panel.components.main_window_panels
 
+import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.HoverTooltipBox
 import ai.rever.boss.components.overlays.TooltipPlacement
+import ai.rever.boss.components.overlays.contextMenu
+import ai.rever.boss.plugin.ui.BossAlertDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -19,7 +22,12 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.OutlinedTextField
 import androidx.compose.material.Text
+import androidx.compose.material.TextButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -78,6 +86,10 @@ internal fun SplitMap(
     // sits at the foot of a column whose sibling is a lazy list. See BossMainPanel's note on what
     // that cost the last time. One frame with no panes drawn is the whole price.
     var sizePx by remember { mutableStateOf(IntSize.Zero) }
+
+    // The pane whose name is being edited, or null. Held here rather than per pane so the dialog
+    // outlives the menu that opened it.
+    var renaming by remember { mutableStateOf<TabBarGroup?>(null) }
     val density = LocalDensity.current
     val colors = BossTheme.colors
 
@@ -114,28 +126,115 @@ internal fun SplitMap(
                     // Not interactive while zoomed: the map has one job then, and a pane that
                     // swallowed the click would leave parts of its own frame meaning "back" and
                     // parts meaning something else.
-                    MapPane(group = group, interactive = !zoomed)
+                    MapPane(
+                        group = group,
+                        interactive = !zoomed,
+                        onRename = { renaming = group },
+                    )
                 }
             }
         }
 
         // Written across the map rather than floating over the pane. The map already shows the
         // arrangement you are going back to, so the words only have to name the action.
-        if (zoomed) {
-            Box(
-                modifier = Modifier.fillMaxSize().background(colors.ink.copy(alpha = EXIT_SCRIM_ALPHA)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = "Exit Full Screen",
-                    color = colors.textPrimary,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                )
-            }
+        if (zoomed) ExitZoomOverlay()
+    }
+
+    renaming?.let { group ->
+        RenamePaneDialog(
+            currentName = group.label,
+            onDismiss = { renaming = null },
+            onRename = { name ->
+                group.rename(name)
+                renaming = null
+            },
+        )
+    }
+}
+
+/**
+ * "Exit Full Screen", written across the map.
+ *
+ * The map already shows the arrangement you are going back to, so the words only have to name the
+ * action. The scrim is what keeps them readable over the panes behind them.
+ */
+@Composable
+private fun ExitZoomOverlay() {
+    val colors = BossTheme.colors
+    Box(
+        modifier = Modifier.fillMaxSize().background(colors.ink.copy(alpha = EXIT_SCRIM_ALPHA)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = "Exit Full Screen",
+            color = colors.textPrimary,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
+    }
+}
+
+/**
+ * Right-click on a pane: the two things you can do TO a pane, as opposed to what is in it.
+ *
+ * They live on the map because that is the one place in BOSS where a pane is a thing you can
+ * point at; everywhere else it is the region you are already inside.
+ */
+private fun paneMenuItems(
+    group: TabBarGroup,
+    onRename: () -> Unit,
+): List<ContextMenuItem> =
+    buildList {
+        add(
+            ContextMenuItem(
+                text = "Rename Pane",
+                icon = Icons.Outlined.DriveFileRenameOutline,
+                onClick = onRename,
+            ),
+        )
+        // Only where there is a split to undo. closePanel refuses to remove a lone panel, so an
+        // entry for it would be one that does nothing.
+        group.close?.let { close ->
+            add(ContextMenuItem(isDivider = true))
+            add(ContextMenuItem(text = "Close Pane", icon = Icons.Outlined.Close, onClick = close))
         }
     }
+
+/**
+ * Naming a pane.
+ *
+ * Blank clears the name and puts the pane back to its position - which is why the field starts on
+ * the current label rather than empty: the quickest way to undo a rename is to clear what is
+ * already there, and that only reads as "undo" if you can see what you are clearing.
+ */
+@Composable
+private fun RenamePaneDialog(
+    currentName: String,
+    onDismiss: () -> Unit,
+    onRename: (String) -> Unit,
+) {
+    var name by remember { mutableStateOf(currentName) }
+
+    BossAlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename Pane") },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("Pane name") },
+                placeholder = { Text("Leave blank to use its position") },
+                singleLine = true,
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onRename(name) }) { Text("Rename") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
 }
 
 /**
@@ -153,10 +252,13 @@ internal fun SplitMap(
 private fun MapPane(
     group: TabBarGroup,
     interactive: Boolean,
+    onRename: () -> Unit,
 ) {
     val colors = BossTheme.colors
     val interactionSource = remember { MutableInteractionSource() }
     val hovered by interactionSource.collectIsHoveredAsState()
+
+    val menuItems = paneMenuItems(group, onRename)
 
     val fill =
         when {
@@ -180,13 +282,15 @@ private fun MapPane(
                         if (!interactive) {
                             Modifier
                         } else {
-                            Modifier.combinedClickable(
-                                onClick = {
-                                    group.activate()
-                                    group.hoverGroup()
-                                },
-                                onDoubleClick = group.zoom,
-                            )
+                            Modifier
+                                .contextMenu(items = menuItems)
+                                .combinedClickable(
+                                    onClick = {
+                                        group.activate()
+                                        group.hoverGroup()
+                                    },
+                                    onDoubleClick = group.zoom,
+                                )
                         },
                     ),
             contentAlignment = Alignment.Center,

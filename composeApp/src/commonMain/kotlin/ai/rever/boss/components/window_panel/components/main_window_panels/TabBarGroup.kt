@@ -21,7 +21,13 @@ class TabBarGroup
         val isActive: Boolean,
         /** This pane's rectangle as a fraction of the split area, for the header glyph. */
         internal val glyph: PaneGlyph? = null,
-        /** "Left", "Top", or "Pane 3" when no honest word fits. See [paneLabel]. */
+        /**
+         * What to call this pane: the name someone gave it, or where it sits.
+         *
+         * See [paneLabel] for the derived half. A name replaces it rather than joining it -
+         * "Logs" is what the user chose to call that pane, and appending "(Bottom right)" would
+         * put the thing they replaced back on screen.
+         */
         internal val label: String = "",
         /** Make this pane the active one, for a click on its header. */
         internal val activate: () -> Unit = {},
@@ -40,6 +46,8 @@ class TabBarGroup
         internal val toggleExpanded: () -> Unit = {},
         /** Show this pane alone, filling the split area. From a double-click on the map. */
         internal val zoom: () -> Unit = {},
+        /** Give this pane a name, or clear it with a blank string. */
+        internal val rename: (String) -> Unit = {},
         /**
          * The pointer reached one of this pane's chrome rows, making it the open one.
          *

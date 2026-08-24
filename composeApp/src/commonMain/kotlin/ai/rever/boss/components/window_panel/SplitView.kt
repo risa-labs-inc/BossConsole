@@ -184,6 +184,30 @@ class SplitViewState(
     var zoomedPanelId by mutableStateOf<String?>(null)
         private set
 
+    /**
+     * Names the user has given panes, by id.
+     *
+     * A pane has no name of its own: what the map and the group headers show is derived from
+     * where it sits - "Left", "Top right", "Pane 3" - which is true but says nothing about what
+     * is in it. This overrides that for panes someone has bothered to name.
+     *
+     * Held in the window rather than in the split tree, and so NOT persisted: PanelConfig is a
+     * published serialized type and adding a field to it is an ABI change for every plugin that
+     * holds one. A name therefore lasts as long as the window does. See renamePanel.
+     */
+    private val panelNames = mutableStateMapOf<String, String>()
+
+    /** The name someone gave this pane, or null to fall back to its position. */
+    fun panelName(panelId: String): String? = panelNames[panelId]
+
+    /** Name a pane, or clear the name with a blank string. */
+    fun renamePanel(
+        panelId: String,
+        name: String,
+    ) {
+        if (name.isBlank()) panelNames.remove(panelId) else panelNames[panelId] = name.trim()
+    }
+
     /** Show this pane alone. */
     fun zoomPanel(panelId: String) {
         setActivePanel(panelId)
@@ -843,6 +867,9 @@ class SplitViewState(
 
         // A zoomed pane that is being closed cannot stay zoomed onto nothing.
         if (zoomedPanelId == panelId) zoomedPanelId = null
+        // Ids are not reused, but a name outliving its pane is a leak with a user-visible tail:
+        // it would reappear if one ever were.
+        panelNames.remove(panelId)
 
         _rootNode.value = removePanel(_rootNode.value, panelId)
 

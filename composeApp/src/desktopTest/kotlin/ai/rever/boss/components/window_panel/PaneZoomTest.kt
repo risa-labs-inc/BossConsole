@@ -81,4 +81,51 @@ class PaneZoomTest {
 
         assertEquals("main", s.zoomedPanelId)
     }
+
+    // ---- naming a pane -------------------------------------------------------
+
+    @Test
+    fun `a pane has no name until someone gives it one`() {
+        // Its label falls back to where it sits, which paneLabel derives from geometry.
+        assertNull(state().panelName("main"))
+    }
+
+    @Test
+    fun `a named pane keeps its name`() {
+        val s = state()
+        s.renamePanel("main", "Logs")
+
+        assertEquals("Logs", s.panelName("main"))
+    }
+
+    @Test
+    fun `a blank name clears it rather than storing empty`() {
+        // Clearing is how you get back to the derived position, so the field starting on the
+        // current label makes "select all, delete" the undo.
+        val s = state()
+        s.renamePanel("main", "Logs")
+        s.renamePanel("main", "   ")
+
+        assertNull(s.panelName("main"))
+    }
+
+    @Test
+    fun `surrounding space is not part of the name`() {
+        val s = state()
+        s.renamePanel("main", "  Logs  ")
+
+        assertEquals("Logs", s.panelName("main"))
+    }
+
+    @Test
+    fun `closing a pane forgets its name`() {
+        // Ids are not reused, but a name outliving its pane is a leak with a user-visible tail.
+        val s = state()
+        s.splitPanel("main", SplitOrientation.VERTICAL)
+        val second = s.getAllPanels().last().id
+        s.renamePanel(second, "Logs")
+        s.closePanel(second)
+
+        assertNull(s.panelName(second))
+    }
 }
