@@ -11,8 +11,10 @@ import androidx.compose.runtime.setValue
 /**
  * Which pane in the window bar is showing all its tabs.
  *
- * Every pane is collapsed to its current tab by default, so a four-way split costs four headers
- * and four rows instead of twenty. One pane at a time opens up.
+ * A pane the user is not working in collapses to its current tab, so a four-way split costs a few
+ * rows rather than twenty. This tracks the ones that are open ANYWAY - the active pane is always
+ * open and is not asked about here, because that is a fact about the split rather than something
+ * hovering or clicking decided.
  *
  * **Hover is sticky, and that is the whole design.** The obvious reading - expand while the
  * pointer is over the group - collapses the group the instant the pointer moves down onto the

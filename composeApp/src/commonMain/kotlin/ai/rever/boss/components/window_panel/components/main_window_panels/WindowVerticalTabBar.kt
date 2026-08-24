@@ -91,7 +91,10 @@ fun rememberWindowTabGroups(
             // that clause a stale or not-yet-set activePanelId would render the only bar in the
             // window with the quiet marker instead of the amber one, which is the common case.
             val isActive = panel.id == activePanelId || !several
-            val expanded = !several || expansion.isExpanded(panel.id)
+            // The pane being worked in is always open. Collapsing it hid the tabs of the one
+            // place the user is actually switching between, so every tab change there began with
+            // a hover - and the row it collapsed to was the tab they were already on.
+            val expanded = !several || isActive || expansion.isExpanded(panel.id)
             val state =
                 with(panel.tabsComponent) {
                     rememberTabBarState(
