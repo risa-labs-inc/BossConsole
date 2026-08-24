@@ -221,6 +221,7 @@ fun WindowVerticalTabBar(
                 onToggleCollapse = onToggleCollapse,
                 onPin = onPin,
                 onStripBounds = { stripBounds = it },
+                tabDragComponent = tabDragComponent.takeIf { registerBounds },
             )
         }
     }
@@ -361,12 +362,18 @@ private fun ExpandedGroups(
     onToggleCollapse: (() -> Unit)?,
     onPin: (() -> Unit)?,
     onStripBounds: (Rect) -> Unit,
+    tabDragComponent: TabDraggableComponent?,
 ) {
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        WindowTabBarFavorites(lead = lead, onToggleCollapse = onToggleCollapse, onPin = onPin)
+        WindowTabBarFavorites(
+            lead = lead,
+            onToggleCollapse = onToggleCollapse,
+            onPin = onPin,
+            tabDragComponent = tabDragComponent,
+        )
 
         BossVerticalTabStrip(
             listState = listState,
@@ -403,6 +410,7 @@ private fun WindowTabBarFavorites(
     lead: TabBarGroup,
     onToggleCollapse: (() -> Unit)?,
     onPin: (() -> Unit)?,
+    tabDragComponent: TabDraggableComponent?,
 ) {
     TabBarFavorites(
         bookmarks = lead.state.favorites,
@@ -427,6 +435,7 @@ private fun WindowTabBarFavorites(
         },
         // The bar's one chrome control rides on this section's header line rather than owning a
         // row: pin when this is a hover reveal, collapse when it is the real bar.
+        tabDragComponent = tabDragComponent,
         trailing = {
             if (onPin != null) {
                 BossTabBarPinButton(onPin = onPin)

@@ -91,6 +91,14 @@ sealed class TabDropTarget {
     data class ExistingPanel(
         val panelId: String,
     ) : TabDropTarget()
+
+    /**
+     * The Favorites shelf at the head of the vertical bar.
+     *
+     * The only drop that does not move the tab anywhere: it stays where it is and gets
+     * bookmarked. Carries no id because there is one shelf per window.
+     */
+    data object Favorites : TabDropTarget()
 }
 
 /**
@@ -116,6 +124,18 @@ sealed class TabDropResult {
         val sourceIndex: Int,
         val targetPanelId: String,
         val orientation: SplitOrientation,
+    ) : TabDropResult()
+
+    /**
+     * Bookmark the dragged tab, leaving it open where it is.
+     *
+     * The source panel is carried so the panel that started the drag is the one that asks which
+     * collections to file it under - the shelf is window-level, but the tab is not.
+     */
+    data class Bookmark(
+        val tabInfo: TabInfo,
+        val sourcePanelId: String,
+        val sourceIndex: Int,
     ) : TabDropResult()
 }
 
@@ -310,6 +330,15 @@ class TabDraggableComponent {
     val tabBarBounds = mutableStateMapOf<String, TabBarBoundInfo>()
 
     /**
+     * The Favorites shelf's rectangle, or null when no bar is drawing one.
+     *
+     * A single rectangle rather than a per-panel map: there is one shelf for the window, sitting
+     * above the tab list rather than inside any panel's bar.
+     */
+    var favoritesBounds by mutableStateOf<Rect?>(null)
+        private set
+
+    /**
      * Track panel drop zones for split creation.
      * Key: panelId, Value: drop zone bounds
      */
@@ -439,66 +468,80 @@ class TabDraggableComponent {
     /**
      * Update the drop target based on current position.
      */
+
+    /**
+     * Update the drop target based on current position.
+     *
+     * A precedence chain, written as one: the Favorites shelf, then any tab bar, then a panel's
+     * split zones. The order is load-bearing rather than incidental - a vertical bar occupies its
+     * panel's leading edge, so without tab bars beating zones a drop there would be ambiguous,
+     * and the zones are resolved inside the panel MINUS that strip (see PanelDropZones.fromBounds)
+     * so the two partitions do not overlap at all.
+     */
     private fun updateDropTarget() {
         val currentPosition = getCurrentPosition() ?: return
         val dragging = draggingTab ?: return
 
-        // First, check if we're over any tab bar (for reorder or move to panel).
-        //
-        // Deliberately BEFORE the panel drop zones below: a vertical bar occupies its panel's
-        // leading edge, so without this precedence a drop there would be ambiguous. The zones
-        // are resolved inside the panel minus that strip (see PanelDropZones.fromBounds), so
-        // the two partitions of the panel do not overlap at all.
-        for ((panelId, bar) in tabBarBounds) {
-            if (bar.bounds.contains(currentPosition)) {
-                // We're over a tab bar
-                if (panelId == dragging.sourcePanelId) {
-                    // Same panel - calculate reorder position
-                    val reorderIndex = calculateReorderIndex(panelId, currentPosition)
-                    dropTarget = TabDropTarget.Reorder(panelId, reorderIndex)
-                } else {
-                    // Different panel - move to that panel
-                    dropTarget = TabDropTarget.ExistingPanel(panelId)
-                }
-                return
-            }
+        dropTarget =
+            favoritesTargetAt(currentPosition)
+                ?: tabBarTargetAt(currentPosition, dragging)
+                ?: splitZoneTargetAt(currentPosition, dragging)
+    }
+
+    /**
+     * The Favorites shelf, if the pointer is over it.
+     *
+     * First in the chain. The shelf sits above the tab list rather than inside it, so today it
+     * overlaps nothing below - but asking here makes that a property of this function rather than
+     * of a layout that is free to change.
+     */
+    private fun favoritesTargetAt(position: Offset): TabDropTarget? =
+        TabDropTarget.Favorites.takeIf { favoritesBounds?.contains(position) == true }
+
+    /** Reorder within the dragged tab's own bar, or move into another panel's. */
+    private fun tabBarTargetAt(
+        position: Offset,
+        dragging: DraggingTabInfo,
+    ): TabDropTarget? {
+        val over = tabBarBounds.entries.firstOrNull { (_, bar) -> bar.bounds.contains(position) } ?: return null
+        val panelId = over.key
+        return if (panelId == dragging.sourcePanelId) {
+            TabDropTarget.Reorder(panelId, calculateReorderIndex(panelId, position))
+        } else {
+            TabDropTarget.ExistingPanel(panelId)
         }
+    }
 
-        // Check panel drop zones for split creation
+    /** A panel edge, which splits it, or its centre, which moves the tab into it. */
+    private fun splitZoneTargetAt(
+        position: Offset,
+        dragging: DraggingTabInfo,
+    ): TabDropTarget? {
         for ((panelId, zones) in panelDropZones) {
-            when {
-                zones.leftZone.contains(currentPosition) -> {
-                    dropTarget = TabDropTarget.SplitPanel(panelId, SplitOrientation.VERTICAL)
-                    return
-                }
+            val target =
+                when {
+                    zones.leftZone.contains(position) || zones.rightZone.contains(position) -> {
+                        TabDropTarget.SplitPanel(panelId, SplitOrientation.VERTICAL)
+                    }
 
-                zones.rightZone.contains(currentPosition) -> {
-                    dropTarget = TabDropTarget.SplitPanel(panelId, SplitOrientation.VERTICAL)
-                    return
-                }
+                    zones.topZone.contains(position) || zones.bottomZone.contains(position) -> {
+                        TabDropTarget.SplitPanel(panelId, SplitOrientation.HORIZONTAL)
+                    }
 
-                zones.topZone.contains(currentPosition) -> {
-                    dropTarget = TabDropTarget.SplitPanel(panelId, SplitOrientation.HORIZONTAL)
-                    return
-                }
+                    // The centre means "add to this panel", and only for a panel that is not
+                    // already the tab's own - dropping a tab into where it lives is a no-op, and
+                    // claiming it would stop a later panel underneath from being considered.
+                    zones.centerZone.contains(position) && panelId != dragging.sourcePanelId -> {
+                        TabDropTarget.ExistingPanel(panelId)
+                    }
 
-                zones.bottomZone.contains(currentPosition) -> {
-                    dropTarget = TabDropTarget.SplitPanel(panelId, SplitOrientation.HORIZONTAL)
-                    return
-                }
-
-                zones.centerZone.contains(currentPosition) -> {
-                    // Center means add to existing panel
-                    if (panelId != dragging.sourcePanelId) {
-                        dropTarget = TabDropTarget.ExistingPanel(panelId)
-                        return
+                    else -> {
+                        null
                     }
                 }
-            }
+            if (target != null) return target
         }
-
-        // No valid drop target
-        dropTarget = null
+        return null
     }
 
     /**
@@ -568,6 +611,14 @@ class TabDraggableComponent {
                     sourceIndex = dragging.sourceIndex,
                     targetPanelId = target.panelId,
                     orientation = target.orientation,
+                )
+            }
+
+            is TabDropTarget.Favorites -> {
+                TabDropResult.Bookmark(
+                    tabInfo = dragging.tabInfo,
+                    sourcePanelId = dragging.sourcePanelId,
+                    sourceIndex = dragging.sourceIndex,
                 )
             }
 
@@ -663,6 +714,17 @@ class TabDraggableComponent {
     }
 
     /**
+     * Register the Favorites shelf, or clear it with null.
+     *
+     * Clearing matters: the shelf is not drawn on the collapsed rail or in the top strip, and a
+     * rectangle left behind from an earlier layout would claim an area now showing tabs - and it
+     * is tested before them.
+     */
+    fun registerFavoritesBounds(bounds: Rect?) {
+        favoritesBounds = bounds
+    }
+
+    /**
      * Register panel drop zones for split creation.
      *
      * The left zone is pushed in by however much of a VERTICAL tab bar actually covers this
@@ -704,6 +766,7 @@ class TabDraggableComponent {
         tabBounds.clear()
         tabBarBounds.clear()
         panelDropZones.clear()
+        favoritesBounds = null
     }
 
     /**

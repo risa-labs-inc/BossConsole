@@ -987,8 +987,23 @@ fun BossTabsComponent.rememberTabBarState(
                 panelId = currentPanelId,
                 tabIndex = index,
                 onDragEnd = { result ->
-                    // endDrag() already called in BossTabButton, just handle result
-                    result?.let { onTabDropResult(it) }
+                    // endDrag() already called in BossTabButton, just handle result.
+                    //
+                    // A drop on Favorites is the one result this panel keeps: it does not move
+                    // the tab anywhere, it files it, and the dialog that asks where lives in
+                    // this composition. Everything else is a move and goes to the window.
+                    when (result) {
+                        is TabDropResult.Bookmark -> {
+                            tabToBookmark = result.tabInfo
+                            showBookmarkDialog = true
+                        }
+
+                        null -> {}
+
+                        else -> {
+                            onTabDropResult(result)
+                        }
+                    }
                 },
                 contextMenuItems = tabMenuItems(index, config),
                 onContextMenuVisibilityChange = { open ->

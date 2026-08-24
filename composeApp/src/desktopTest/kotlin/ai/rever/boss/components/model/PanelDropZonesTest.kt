@@ -5,6 +5,7 @@ import androidx.compose.ui.geometry.Rect
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -152,5 +153,43 @@ class PanelDropZonesTest {
                 .getValue("p1")
                 .leftZone.left,
         )
+    }
+
+    /**
+     * The Favorites shelf is a drop target, and it is tested before the tab bars.
+     *
+     * It sits above the tab list rather than inside it, so today it overlaps nothing - but the
+     * precedence is what makes that a property of the drop logic rather than of a layout that is
+     * free to change.
+     */
+    @Test
+    fun `the favorites shelf claims a drop over it`() {
+        val drag = TabDraggableComponent()
+        val shelf = Rect(left = 0f, top = 0f, right = 200f, bottom = 120f)
+        drag.registerFavoritesBounds(shelf)
+        drag.registerTabBarBounds("p1", Rect(0f, 120f, 200f, 900f), vertical = true)
+
+        assertEquals(shelf, drag.favoritesBounds)
+    }
+
+    @Test
+    fun `clearing the shelf stops it claiming anything`() {
+        // The shelf is not drawn on the collapsed rail or in the top strip. A rectangle left
+        // behind from an earlier layout would claim an area now showing tabs - and it is tested
+        // before them, so it would win.
+        val drag = TabDraggableComponent()
+        drag.registerFavoritesBounds(Rect(0f, 0f, 200f, 120f))
+        drag.registerFavoritesBounds(null)
+
+        assertNull(drag.favoritesBounds)
+    }
+
+    @Test
+    fun `clearing all bounds clears the shelf too`() {
+        val drag = TabDraggableComponent()
+        drag.registerFavoritesBounds(Rect(0f, 0f, 200f, 120f))
+        drag.clearBounds()
+
+        assertNull(drag.favoritesBounds)
     }
 }

@@ -2,6 +2,8 @@ package ai.rever.boss.components.window_panel.components.main_window_panels
 
 import ai.rever.boss.cache.loadFaviconFromCache
 import ai.rever.boss.cache.loadHighQualityFavicon
+import ai.rever.boss.components.model.TabDraggableComponent
+import ai.rever.boss.components.model.TabDropTarget
 import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.HoverTooltipBox
 import ai.rever.boss.components.overlays.TooltipPlacement
@@ -29,6 +31,7 @@ import androidx.compose.material.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,6 +40,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -103,6 +109,33 @@ private const val FAVORITES_PER_ROW = 4
  *   label. It lived on a row of its own first, which spent a whole line of a narrow bar on one
  *   16dp glyph; the header this section needed anyway is the natural place for it.
  */
+
+/**
+ * The section's label line, which also hosts the bar's one chrome control.
+ *
+ * @param trailing the collapse chevron or the pin, on the SAME line as the label. It lived on a
+ *   row of its own first, which spent a whole line of a narrow bar on one 16dp glyph.
+ */
+@Composable
+private fun FavoritesHeader(trailing: @Composable () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "FAVORITES",
+            color = BossTheme.colors.textSecondary,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.8.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).padding(start = 4.dp),
+        )
+        trailing()
+    }
+}
+
 @Composable
 fun TabBarFavorites(
     bookmarks: List<Bookmark>,
@@ -112,24 +145,35 @@ fun TabBarFavorites(
     onRemove: (Bookmark) -> Unit,
     onInstallPlugin: () -> Unit,
     trailing: @Composable () -> Unit = {},
+    /**
+     * The drag system, so a tab can be dropped here to bookmark it.
+     *
+     * Null for a bar that is not a drop target - the hover-reveal drawer, whose coordinates
+     * belong to another window entirely. The shelf then registers nothing and offers nothing,
+     * which is the honest answer: a drop there could only land somewhere wrong.
+     */
+    tabDragComponent: TabDraggableComponent? = null,
 ) {
-    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 6.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "FAVORITES",
-                color = BossTheme.colors.textSecondary,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.SemiBold,
-                letterSpacing = 0.8.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f).padding(start = 4.dp),
-            )
-            trailing()
-        }
+    // Dropping a tab here bookmarks it, leaving it open where it is. The shelf is the only drop
+    // in the bar that does not move the tab, which is why it reads as a shelf rather than as
+    // another place tabs live.
+    val isDropTarget = tabDragComponent?.dropTarget is TabDropTarget.Favorites
+    val borderColor = if (isDropTarget) BossTheme.colors.signal else Color.Transparent
+
+    DisposableEffect(tabDragComponent) {
+        onDispose { tabDragComponent?.registerFavoritesBounds(null) }
+    }
+
+    Column(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .onGloballyPositioned { coordinates ->
+                    tabDragComponent?.registerFavoritesBounds(coordinates.boundsInWindow())
+                }.border(1.dp, borderColor, RoundedCornerShape(4.dp))
+                .padding(horizontal = 6.dp, vertical = 6.dp),
+    ) {
+        FavoritesHeader(trailing = trailing)
 
         when {
             pluginInstalled == false -> {

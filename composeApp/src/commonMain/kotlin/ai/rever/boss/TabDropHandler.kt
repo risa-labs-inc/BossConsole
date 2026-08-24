@@ -99,5 +99,12 @@ internal fun handleTabDropResult(
                 )
             }
         }
+
+        is TabDropResult.Bookmark -> {
+            // Handled where the bookmark dialog lives, which is the tab bar of the panel that
+            // started the drag - this function moves tabs between panels and has no way to ask
+            // which collections to file one under. Named rather than folded into an else, so a
+            // new result type has to decide what it does here instead of silently doing nothing.
+        }
     }
 }
