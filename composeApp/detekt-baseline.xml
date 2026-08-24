@@ -966,8 +966,10 @@
     <ID>NestedBlockDepth:WorkspaceApplier.kt$private suspend fun applyWorkspaceNode( node: SplitConfig, splitViewState: SplitViewState, currentPanelId: String, projectPath: String, )</ID>
     <ID>NestedBlockDepth:main.kt$fun main(args: Array&lt;String&gt;)</ID>
     <ID>NestedBlockDepth:main.kt$private fun extractPty4jNatives(targetDir: File)</ID>
+    <ID>PackageNaming:BarMenuItemsTest.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:TabMenuVisibilityReportTest.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:BookmarksDialogProviderImpl.kt$package ai.rever.boss.components.plugin.panels.left_top</ID>
+    <ID>PackageNaming:BarMenuItems.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:BossMainWindowPanel.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:BossPanelTopBar.kt$package ai.rever.boss.components.window_panel.components</ID>
     <ID>PackageNaming:BossPanelTopBarLayoutTest.kt$package ai.rever.boss.components.window_panel.components</ID>

@@ -477,11 +477,6 @@ fun BossTabsComponent.rememberTabBarState(
     // Coroutine scope for edge scroll animation
     val edgeScrollScope = rememberCoroutineScope()
 
-    // Separate scope for the bar's own settings writes (the Tab Bar Position submenu). Kept
-    // apart from the edge-scroll scope so a settings write is never cancelled by a tab bar that
-    // recomposed mid-drag, and so neither reads as the other's concern.
-    val barSettingsScope = rememberCoroutineScope()
-
     // Current position, read for the submenu's checkmark only - the layout itself is driven by
     // the `vertical` parameter, which the caller resolved.
     val tabBarPosition = appearanceSettings.tabBarPosition
@@ -859,65 +854,10 @@ fun BossTabsComponent.rememberTabBarState(
         }
     }
 
-    // Right-click on the bar's own empty chrome (as opposed to on a tab). Hoisted out of the
-    // container below because both orientations offer it and neither owns it - and because the
-    // Tab Bar Position submenu it now carries is the fastest way back for someone who flipped
-    // the bar somewhere it does not suit them.
-    val barContextMenuItems: List<ContextMenuItem> =
-        buildList {
-            add(
-                ContextMenuItem("New Tab", Icons.Default.Add, onClick = openNewTab),
-            )
-
-            add(ContextMenuItem(isDivider = true))
-
-            // Tab bar position. A label-only submenu, so it stays isNativeRepresentable() and
-            // survives the native-NSMenu path on macOS; the checkmark is spelled as a trailing
-            // dot in the label because a native menu item has nowhere else to put one.
-            add(
-                ContextMenuItem(
-                    "Tab Bar Position",
-                    Icons.Outlined.ViewColumn,
-                    subMenu =
-                        TabBarPosition.entries.map { position ->
-                            ContextMenuItem(
-                                if (position == tabBarPosition) "${position.displayName} ✓" else position.displayName,
-                                onClick = {
-                                    barSettingsScope.launch {
-                                        WindowAppearanceSettingsManager.updateSettings(
-                                            WindowAppearanceSettingsManager.currentSettings.value
-                                                .copy(tabBarPosition = position),
-                                        )
-                                    }
-                                },
-                            )
-                        },
-                ),
-            )
-
-            add(ContextMenuItem(isDivider = true))
-
-            // Favorite current workspace
-            val currentWorkspace = workspaceManager.currentWorkspace.value
-            if (currentWorkspace != null) {
-                val isFavorited = BookmarkAPIAccess.isFavorite(currentWorkspace.id)
-                add(
-                    ContextMenuItem(
-                        if (isFavorited) "Unfavorite Workspace" else "Favorite Workspace",
-                        // The icon shows what the action DOES, matching the label: "Unfavorite"
-                        // empties the star, "Favorite" fills it.
-                        if (isFavorited) Icons.Outlined.StarBorder else Icons.Filled.Star,
-                        onClick = {
-                            if (isFavorited) {
-                                BookmarkAPIAccess.removeFavoriteWorkspace(currentWorkspace.id)
-                            } else {
-                                BookmarkAPIAccess.addFavoriteWorkspace(currentWorkspace.id, currentWorkspace.name)
-                            }
-                        },
-                    ),
-                )
-            }
-        }
+    // Right-click on the bar's own empty chrome (as opposed to on a tab). Built by
+    // rememberBarMenuItems because the favicon strip across each pane owes the same menu on ITS
+    // empty space, and that strip has no TabBarState to borrow one from.
+    val barContextMenuItems: List<ContextMenuItem> = rememberBarMenuItems(openNewTab = openNewTab)
 
     return TabBarState(
         items = tabItems,
@@ -1280,6 +1220,8 @@ fun BossTabsComponent.BossMainPanel(
             // pane the vertical bar already lists every tab with its name, so the strip would be
             // the same information twice however the setting is set. Turning it on cannot make
             // that case worth drawing.
+            // One action for both: the "+" at the end of the strip and the menu's "New Tab".
+            val paneNewTab = paneNewTabAction(paneWindowId, currentPanelId, splitViewState)
             PaneIndicatedContent(
                 // The strip's tabs carry the same right-click menu their sidebar rows do. Built
                 // here rather than borrowed from the window bar: the bar's per-pane state belongs
@@ -1293,7 +1235,11 @@ fun BossTabsComponent.BossMainPanel(
                     currentPanelId?.let { splitViewState?.setActivePanel(it) }
                     selectTab(index)
                 },
-                onNewTab = paneNewTabAction(paneWindowId, currentPanelId, splitViewState),
+                onNewTab = paneNewTab,
+                // The strip's empty space offers what the vertical bar's does, this pane's "+"
+                // included - so "New Tab" from a background pane's strip lands in THAT pane
+                // rather than in whichever one the bar happens to lead.
+                menuItems = rememberBarMenuItems(openNewTab = { paneNewTab?.invoke() }),
                 tabDragComponent = tabDragComponent,
                 panelId = currentPanelId,
                 onTabDropResult = onTabDropResult,

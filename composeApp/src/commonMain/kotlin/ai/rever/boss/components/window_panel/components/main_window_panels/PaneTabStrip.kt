@@ -5,6 +5,7 @@ import ai.rever.boss.components.model.TabDropResult
 import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.HoverTooltipBox
 import ai.rever.boss.components.overlays.TooltipPlacement
+import ai.rever.boss.components.overlays.contextMenu
 import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.ui.BossTheme
@@ -65,6 +66,11 @@ private val PINNED_RULE_HEIGHT = 14.dp
  * bounds, so every landing place is still the bar's rows or a pane's own drop zones. See
  * TabFaviconChip for why a second surface must not register bounds for tabs the bar already has.
  *
+ * Its own empty space carries the same menu the vertical bar's does, including the entry that
+ * hides this strip - see [rememberBarMenuItems]. That menu is on the ROW, so it opens only where
+ * no chip is: a chip consumes the press for its own menu, and the row checks for that before
+ * opening a second one on top of it.
+ *
  * Only for a window that is actually split. With one pane the sidebar already lists every tab
  * with its name, and this would be the same information twice.
  */
@@ -95,6 +101,13 @@ internal fun PaneTabStrip(
     panelId: String?,
     /** The drop, once the pointer is released. */
     onTabDropResult: (TabDropResult) -> Unit,
+    /**
+     * The strip's own right-click menu, for the space between the chips and the end of the row.
+     *
+     * The same menu the vertical bar offers on its empty space, so the two surfaces cannot come
+     * to mean different things, and the way to hide this strip is on the strip itself.
+     */
+    menuItems: List<ContextMenuItem>,
 ) {
     if (tabs.isEmpty()) return
 
@@ -112,7 +125,8 @@ internal fun PaneTabStrip(
             Modifier
                 .fillMaxWidth()
                 .height(PANE_STRIP_HEIGHT)
-                .background(BossTheme.colors.panel),
+                .background(BossTheme.colors.panel)
+                .contextMenu(items = menuItems),
         contentPadding = PaddingValues(horizontal = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -214,6 +228,8 @@ internal fun PaneIndicatedContent(
     tabDragComponent: TabDraggableComponent?,
     panelId: String?,
     onTabDropResult: (TabDropResult) -> Unit,
+    /** The strip's own right-click menu. See [PaneTabStrip]. */
+    menuItems: List<ContextMenuItem>,
     content: @Composable (Modifier) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
@@ -228,6 +244,7 @@ internal fun PaneIndicatedContent(
                 tabDragComponent = tabDragComponent,
                 panelId = panelId,
                 onTabDropResult = onTabDropResult,
+                menuItems = menuItems,
             )
             Divider(color = BossTheme.colors.line)
         }
