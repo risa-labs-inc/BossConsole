@@ -21,6 +21,7 @@ import ai.rever.boss.components.window_panel.components.main_window_panels.point
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberPinDrawerAction
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberTabBarLayout
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberTabBarRevealState
+import ai.rever.boss.components.window_panel.components.main_window_panels.rememberTabGroupExpansion
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberToggleCollapseAction
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberWindowTabGroups
 import ai.rever.boss.icons.FileIcons
@@ -1697,10 +1698,12 @@ private fun WindowBarRow(
     splitTree: @Composable (Modifier) -> Unit,
 ) {
     val listState = rememberLazyListState()
+    val expansion = rememberTabGroupExpansion()
     val groups =
         rememberWindowTabGroups(
             splitViewState = splitViewState,
             listState = listState,
+            expansion = expansion,
             tabDragComponent = tabDragComponent,
             onTabDropResult = onTabDropResult,
         )
@@ -1709,6 +1712,7 @@ private fun WindowBarRow(
             WindowVerticalTabBar(
                 groups = groups,
                 listState = listState,
+                expansion = expansion,
                 width = bar.width,
                 collapsed = bar.railShown,
                 onToggleCollapse = rememberToggleCollapseAction(bar, reveal),

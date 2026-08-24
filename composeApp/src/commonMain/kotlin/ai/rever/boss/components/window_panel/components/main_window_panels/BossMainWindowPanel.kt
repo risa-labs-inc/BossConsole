@@ -93,7 +93,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.Divider
 import androidx.compose.material.Icon
@@ -302,15 +302,21 @@ class TabBarState
         val dialogs: @Composable () -> Unit,
         /** Lazy-list items that precede the first tab, for anything indexing the list. */
         val leadingListItems: Int,
+        /** Tab rows this group actually emits - all of them, or just the active one. */
+        val renderedTabCount: Int,
+        /** Whether this group is showing its active tab alone. */
+        val collapsedToActiveTab: Boolean,
         /** Scroll state for this panel's rows. */
         val listState: LazyListState,
     ) {
         /**
          * How many lazy-list items this group contributes, tabs and its own leading rows alike.
          *
-         * A window bar adds these up to know where each group starts in the shared column.
+         * Counted off [renderedTabCount], not [tabs]: a collapsed group holds five tabs and emits
+         * one row, and a window bar adding these up to find where the next group starts would be
+         * four rows out for every collapsed pane before it.
          */
-        val listItemCount: Int get() = leadingListItems + tabs.size
+        val listItemCount: Int get() = leadingListItems + renderedTabCount
     }
 
 /**
@@ -393,6 +399,18 @@ fun BossTabsComponent.rememberTabBarState(
      * was most of a bar.
      */
     showNewTabRow: Boolean = true,
+    /**
+     * Render only this panel's ACTIVE tab, leaving the rest for its owner to summarise.
+     *
+     * Four panes with five tabs each is twenty rows, and nineteen of them are about somewhere the
+     * user is not looking. Collapsed, a pane costs its header, its current tab, and a line saying
+     * how many others there are.
+     *
+     * The tabs that are not rendered keep their model indices: what changes is which rows are
+     * emitted, not what a row means. Every menu action, drag registration and reorder still keys
+     * off the tab's own index in the panel.
+     */
+    collapseToActiveTab: Boolean = false,
 ): TabBarState {
     val tabsState = tabsState.subscribeAsState()
     var showNewTabDialog by remember { mutableStateOf(false) }
@@ -865,6 +883,24 @@ fun BossTabsComponent.rememberTabBarState(
         }
     }
 
+    // Which tabs actually become rows, paired with their index in the panel.
+    //
+    // Collapsed, that is the active tab alone. An empty list when there is no active tab - a
+    // panel mid-close - rather than a guessed first tab, so a collapsed group shows its header
+    // and nothing under it instead of naming a tab that is not current.
+    val renderedTabs =
+        remember(tabsState.value.tabs, tabsState.value.activeIndex, collapseToActiveTab) {
+            val tabs = tabsState.value.tabs
+            if (!collapseToActiveTab) {
+                tabs.withIndex().map { it.index to it.value }
+            } else {
+                tabs
+                    .getOrNull(tabsState.value.activeIndex)
+                    ?.let { listOf(tabsState.value.activeIndex to it) }
+                    .orEmpty()
+            }
+        }
+
     // Namespace for this group's fixed item keys. The component's identity rather than the panel
     // id, because a bar can be built without one and two key-less groups would then collide.
     val itemKeyScope = currentPanelId ?: this.hashCode().toString()
@@ -897,8 +933,15 @@ fun BossTabsComponent.rememberTabBarState(
             }
         }
 
-        // Render tab buttons as lazy items
-        itemsIndexed(tabsState.value.tabs) { index, config ->
+        // Render tab buttons as lazy items.
+        //
+        // The model index travels WITH the tab rather than being the position in this list,
+        // because a collapsed group emits one row out of many and every consumer downstream -
+        // menus, drag bounds, reorder - means the tab's index in the panel.
+        items(
+            items = renderedTabs,
+            key = { (index, config) -> "$itemKeyScope:${config.id}:$index" },
+        ) { (index, config) ->
             val isSelected = index == tabsState.value.activeIndex
 
             // The separator and second header ride on the first UNPINNED tab rather than being
@@ -1212,6 +1255,8 @@ fun BossTabsComponent.rememberTabBarState(
             }
         },
         leadingListItems = leadingListItems,
+        renderedTabCount = renderedTabs.size,
+        collapsedToActiveTab = collapseToActiveTab,
         listState = listState,
     )
 }

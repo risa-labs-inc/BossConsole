@@ -22,8 +22,10 @@ import androidx.compose.material.Icon
 import androidx.compose.material.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -41,6 +43,12 @@ import androidx.compose.ui.unit.sp
 
 /** Height of a group header row, matching the section headers it sits alongside. */
 private val GROUP_HEADER_HEIGHT = 24.dp
+
+/** Height of the "n more tabs" row. Shorter than a tab, because it is chrome rather than content. */
+private val SUMMARY_ROW_HEIGHT = 24.dp
+
+/** Indented to sit under the pane's tabs rather than beside its header. */
+private val SUMMARY_ROW_INDENT = 12.dp
 
 /** The little split diagram. Wider than tall, because a window is. */
 private val GLYPH_WIDTH = 16.dp
@@ -74,6 +82,12 @@ internal fun TabBarGroupHeader(
     // read as the same statement rather than two competing ones.
     val tint = if (group.isActive) colors.signalText else colors.textSecondary
 
+    // Hovering the header is what chooses the open pane. It does not expand-while-hovered: see
+    // TabGroupExpansion for why that collapses the group the moment the pointer moves onto it.
+    val headerHover = remember { MutableInteractionSource() }
+    val headerHovered by headerHover.collectIsHoveredAsState()
+    LaunchedEffect(headerHovered) { if (headerHovered) group.hoverHeader() }
+
     Column(modifier = Modifier.fillMaxWidth()) {
         if (showRule) {
             // FULL BLEED, where the divider between two tabs is inset by 8dp. On screen an inset
@@ -83,53 +97,115 @@ internal fun TabBarGroupHeader(
                 color = colors.line,
             )
         }
-        Row(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .height(GROUP_HEADER_HEIGHT)
-                    .hoverable(interactionSource)
-                    .background(if (hovered) colors.raised else Color.Transparent)
-                    .clickable(onClick = group.activate)
-                    .padding(horizontal = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        GroupHeaderRow(group = group, tint = tint, hovered = hovered, hover = headerHover, press = interactionSource)
+    }
+}
+
+/**
+ * The header's one line: the split diagram, the pane's name, and its two actions.
+ *
+ * Its own composable because the hover it carries is two different things at once - a press
+ * target that tints the row, and the signal that chooses which pane is open - and reading them
+ * side by side is what makes it obvious they are not the same interaction.
+ */
+@Composable
+private fun GroupHeaderRow(
+    group: TabBarGroup,
+    tint: Color,
+    hovered: Boolean,
+    hover: MutableInteractionSource,
+    press: MutableInteractionSource,
+) {
+    val colors = BossTheme.colors
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .height(GROUP_HEADER_HEIGHT)
+                .hoverable(hover)
+                .hoverable(press)
+                .background(if (hovered) colors.raised else Color.Transparent)
+                .clickable(onClick = group.activate)
+                .padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        HoverTooltipBox(
+            text = "Go to this pane",
+            placement = TooltipPlacement.END,
+            modifier = Modifier.size(width = GLYPH_WIDTH, height = GLYPH_HEIGHT),
         ) {
-            HoverTooltipBox(
-                text = "Go to this pane",
-                placement = TooltipPlacement.END,
-                modifier = Modifier.size(width = GLYPH_WIDTH, height = GLYPH_HEIGHT),
-            ) {
-                SplitPositionGlyph(glyph = group.glyph, tint = tint, outline = colors.line)
-            }
-            Text(
-                text = group.label,
-                color = tint,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.SemiBold,
-                letterSpacing = 0.8.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            // The pane's own two actions, on the pane's own row. They were a separate full-width
-            // "New Tab" row per group, which cost a row of chrome per pane and still had nowhere
-            // to put "close this pane".
-            HeaderAction(
-                icon = Icons.Default.Add,
-                description = "New tab in ${group.label}",
-                tint = colors.textSecondary,
-                onClick = group.newTab,
-            )
-            group.close?.let { close ->
-                HeaderAction(
-                    icon = Icons.Outlined.Close,
-                    description = "Close ${group.label}",
-                    tint = colors.textSecondary,
-                    onClick = close,
-                )
-            }
+            SplitPositionGlyph(glyph = group.glyph, tint = tint, outline = colors.line)
         }
+        Text(
+            text = group.label,
+            color = tint,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.8.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        // The pane's own two actions, on the pane's own row. They were a separate full-width
+        // "New Tab" row per group, which cost a row of chrome per pane and still had nowhere
+        // to put "close this pane".
+        HeaderAction(
+            icon = Icons.Default.Add,
+            description = "New tab in ${group.label}",
+            tint = colors.textSecondary,
+            onClick = group.newTab,
+        )
+        group.close?.let { close ->
+            HeaderAction(
+                icon = Icons.Outlined.Close,
+                description = "Close ${group.label}",
+                tint = colors.textSecondary,
+                onClick = close,
+            )
+        }
+    }
+}
+
+/**
+ * The line standing in for a collapsed pane's other tabs.
+ *
+ * Says how many there are and opens them when clicked. It is deliberately a row rather than a
+ * caption: it is the thing you click, and a count with no affordance would read as a statement
+ * about the pane instead of a way into it.
+ */
+@Composable
+internal fun TabGroupSummaryRow(group: TabBarGroup) {
+    val colors = BossTheme.colors
+    val interactionSource = remember { MutableInteractionSource() }
+    val hovered by interactionSource.collectIsHoveredAsState()
+    val hidden = group.state.tabs.size - group.state.renderedTabCount
+
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .height(SUMMARY_ROW_HEIGHT)
+                .hoverable(interactionSource)
+                .background(if (hovered) colors.raised else Color.Transparent)
+                .clickable(onClick = group.toggleExpanded)
+                .padding(start = SUMMARY_ROW_INDENT, end = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Icon(
+            imageVector = Icons.Default.KeyboardArrowDown,
+            contentDescription = null,
+            tint = colors.textSecondary,
+            modifier = Modifier.size(12.dp),
+        )
+        Text(
+            text = if (hidden == 1) "1 more tab" else "$hidden more tabs",
+            color = colors.textSecondary,
+            fontSize = 11.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

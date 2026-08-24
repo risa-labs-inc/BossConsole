@@ -9,6 +9,9 @@ import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -60,6 +63,7 @@ internal val GROUP_RULE_GAP = 10.dp
 fun rememberWindowTabGroups(
     splitViewState: SplitViewState,
     listState: LazyListState,
+    expansion: TabGroupExpansion,
     tabDragComponent: TabDraggableComponent? = null,
     onTabDropResult: (TabDropResult) -> Unit = {},
     onTabActivated: (() -> Unit)? = null,
@@ -87,6 +91,7 @@ fun rememberWindowTabGroups(
             // that clause a stale or not-yet-set activePanelId would render the only bar in the
             // window with the quiet marker instead of the amber one, which is the common case.
             val isActive = panel.id == activePanelId || !several
+            val expanded = !several || expansion.isExpanded(panel.id)
             val state =
                 with(panel.tabsComponent) {
                     rememberTabBarState(
@@ -107,6 +112,10 @@ fun rememberWindowTabGroups(
                         isActiveGroup = isActive,
                         // The header carries this pane's "+" once there is a header to carry it.
                         showNewTabRow = !several,
+                        // A lone pane is the whole bar and is meant to be read: collapsing it
+                        // would hide the tabs the vertical bar exists to show. Collapsing is for
+                        // the case where several panes' lists together outrun the bar.
+                        collapseToActiveTab = several && !expanded,
                     )
                 }
             TabBarGroup(
@@ -120,6 +129,9 @@ fun rememberWindowTabGroups(
                 // Only offered where there is a split to undo. closePanel refuses to remove a
                 // lone panel anyway, so a button for it would be one that does nothing.
                 close = if (several) ({ splitViewState.closePanel(panel.id) }) else null,
+                expanded = expanded,
+                toggleExpanded = { expansion.togglePinned(panel.id) },
+                hoverHeader = { expansion.hover(panel.id) },
             )
         }
     }
@@ -149,6 +161,7 @@ fun rememberWindowTabGroups(
 fun WindowVerticalTabBar(
     groups: List<TabBarGroup>,
     listState: LazyListState,
+    expansion: TabGroupExpansion,
     width: Dp,
     collapsed: Boolean = false,
     onToggleCollapse: (() -> Unit)? = null,
@@ -171,11 +184,18 @@ fun WindowVerticalTabBar(
     // The whole bar, which is what the rail registers - a rail has no list to carve up.
     var railBounds by remember { mutableStateOf<Rect?>(null) }
 
+    // Leaving the bar drops the hover choice. Tracked on the bar rather than per group because
+    // that is the only boundary the sticky-hover model cares about - see TabGroupExpansion.
+    val barInteraction = remember { MutableInteractionSource() }
+    val barHovered by barInteraction.collectIsHoveredAsState()
+    LaunchedEffect(barHovered) { if (!barHovered) expansion.barExited() }
+
     VerticalBar(
         width = verticalTabBarWidth(collapsed = collapsed, width = width),
         backgroundColor = BossTheme.colors.panel,
         modifier =
             Modifier
+                .hoverable(barInteraction)
                 // On the bar rather than on an empty-space sibling, the way BossLeftSideBar does
                 // it: the tabs and rail dots carry their own contextMenu and consume the press
                 // first, so this fires on bare chrome and nowhere else.
@@ -247,10 +267,15 @@ fun BoxScope.WindowRevealedTabBarDrawer(
         onDismissOutside = reveal.dismissOutside,
     ) {
         val listState = rememberLazyListState()
+        // The drawer's own expansion state, not the in-flow bar's: it is a second bar with its
+        // own composition, and sharing the choice would have hovering one of them re-arrange the
+        // other behind it.
+        val expansion = rememberTabGroupExpansion()
         val groups =
             rememberWindowTabGroups(
                 splitViewState = splitViewState,
                 listState = listState,
+                expansion = expansion,
                 // Deliberately no drag component. A drawer is a SECOND bar for panels that
                 // already have one registered, and under HARDWARE it lives in its own window
                 // where these coordinates mean nothing - so a drag started here could only ever
@@ -265,6 +290,7 @@ fun BoxScope.WindowRevealedTabBarDrawer(
         WindowVerticalTabBar(
             groups = groups,
             listState = listState,
+            expansion = expansion,
             width = bar.width,
             collapsed = false,
             // The chevron dismisses the drawer rather than writing tabBarCollapsed: the bar it is
@@ -302,11 +328,16 @@ private fun KeepActiveTabVisible(
         if (leadIndex < 0 || activeIndex < 0 || activeIndex >= lead.state.tabs.size) return@LaunchedEffect
         // List index, not tab index: this pane's header and its own leading rows sit above its
         // first tab, and every earlier pane's rows sit above those.
+        //
+        // A COLLAPSED group emits its active tab as its only tab row, so that row is at offset
+        // zero whatever the tab's index in the panel happens to be. Adding the index there would
+        // aim past the end of the group and scroll to some later pane's rows.
+        val offsetInGroup = if (lead.state.collapsedToActiveTab) 0 else activeIndex
         val target =
             groupStartIndex(itemCounts, leadIndex) +
                 groups.groupChromeItems() +
                 lead.state.leadingListItems +
-                activeIndex
+                offsetInGroup
 
         val layoutInfo = listState.layoutInfo
         val item = layoutInfo.visibleItemsInfo.find { it.index == target }
@@ -348,6 +379,11 @@ private fun ExpandedGroups(
                     }
                 }
                 group.state.items(this, null)
+                if (group.summaryRows > 0) {
+                    item(key = "boss-tab-group-more:${group.panelId}") {
+                        TabGroupSummaryRow(group = group)
+                    }
+                }
             }
         }
     }

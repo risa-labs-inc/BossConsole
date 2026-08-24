@@ -20,7 +20,10 @@ import androidx.compose.ui.geometry.Rect
  * group - and a caller that forgot that would index the column one row out for every pane after
  * the first.
  */
-internal fun List<TabBarGroup>.listItemCounts(): List<Int> = map { groupChromeItems() + it.state.listItemCount }
+internal fun List<TabBarGroup>.listItemCounts(): List<Int> {
+    val chrome = groupChromeItems()
+    return map { chrome + it.state.listItemCount + it.summaryRows }
+}
 
 /** Rows a group draws before its own: its header, and only when the bar holds more than one. */
 internal fun List<TabBarGroup>.groupChromeItems(): Int = if (size > 1) 1 else 0

@@ -34,4 +34,19 @@ class TabBarGroup
          * exist to be undone. The header is not drawn there either, so this is belt and braces.
          */
         internal val close: (() -> Unit)? = null,
-    )
+        /** Show every tab, rather than the current one plus a count. */
+        internal val expanded: Boolean = true,
+        /** Open this pane up, or close it again, from a click on its summary row. */
+        internal val toggleExpanded: () -> Unit = {},
+        /** The pointer reached this pane's header, making it the open one. */
+        internal val hoverHeader: () -> Unit = {},
+    ) {
+        /**
+         * Rows this group adds beyond its tabs and its own leading rows: the "n more" line.
+         *
+         * Absent when the group is open, and absent when collapsing would hide nothing - a pane
+         * with one tab is already showing all of them, and "0 more" is a row that says nothing.
+         */
+        internal val summaryRows: Int
+            get() = if (!expanded && state.tabs.size > state.renderedTabCount) 1 else 0
+    }
