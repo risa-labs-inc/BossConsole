@@ -19,6 +19,7 @@ import ai.rever.boss.components.window_panel.components.main_window_panels.BossT
 import ai.rever.boss.components.window_panel.components.main_window_panels.TabCycleOverlayData
 import ai.rever.boss.components.window_panel.rememberSplitViewState
 import ai.rever.boss.components.wizard.plugin.WizardPluginInfo
+import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.services.FileHandlerService
 import ai.rever.boss.services.TerminalHandlerService
@@ -82,6 +83,15 @@ internal class BossAppState(
     var showTopOfMindDialog by mutableStateOf(false)
     var showGlobalSearchDialog by mutableStateOf(false)
     var showProjectDialog by mutableStateOf(false)
+
+    /**
+     * The workspace a switch is waiting on an answer for, or null.
+     *
+     * Set when [ai.rever.boss.components.workspaces.WorkspaceSwitchAction.ASK] is in force and
+     * there is a workspace to keep or close; the switch itself does not happen until the dialog
+     * is answered. Null while nothing is being asked.
+     */
+    var pendingWorkspaceSwitch by mutableStateOf<LayoutWorkspace?>(null)
     var showNewProjectDialog by mutableStateOf(false)
     var showCloneProjectDialog by mutableStateOf(false)
     var projectToOpen by mutableStateOf<Project?>(null)

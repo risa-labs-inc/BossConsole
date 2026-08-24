@@ -15,6 +15,11 @@ data class WorkspaceSettings(
      */
     val defaultWorkspaceId: String = ASK_WORKSPACE_ID,
     /**
+     * What happens to the workspace you are leaving when you switch to another one:
+     * [SWITCH_ASK], [SWITCH_KEEP] or [SWITCH_CLOSE].
+     */
+    val onWorkspaceSwitch: String = SWITCH_ASK,
+    /**
      * Schema version of this file, used to apply one-time migrations to installs
      * that already have a settings file written by an older build.
      *
@@ -43,6 +48,23 @@ data class WorkspaceSettings(
          * nothing is applied until someone picks.
          */
         const val ASK_WORKSPACE_ID = "ask"
+
+        /**
+         * Ask, on each switch, whether to keep the workspace being left running.
+         *
+         * The default, because the choice has a cost that is invisible either way. Keeping a
+         * workspace running keeps its whole split tree alive - live tab components, and for
+         * browser tabs live Chromium - and nothing on screen said so; closing it throws away
+         * state that took work to arrange. Neither is safe to pick on someone's behalf, and
+         * "Don't ask again" turns this into whichever they chose.
+         */
+        const val SWITCH_ASK = "ask"
+
+        /** Keep it running, so switching back is instant. What every build before this one did. */
+        const val SWITCH_KEEP = "keep"
+
+        /** Close it, freeing its tabs. Switching back rebuilds the workspace from its layout. */
+        const val SWITCH_CLOSE = "close"
 
         /**
          * Bump when a migration is added to [WorkspaceSettingsMigrations.migrate].
@@ -166,6 +188,37 @@ fun WorkspaceSettings.resolveOnProjectSelection(): ProjectSelectionWorkspace =
     }
 
 /**
+ * What to do with the workspace being left, when switching to another.
+ *
+ * Three answers rather than a boolean, because "ask" is a real answer and not the absence of
+ * one - same reason [ProjectSelectionWorkspace] has an [ProjectSelectionWorkspace.Ask] member.
+ */
+enum class WorkspaceSwitchAction {
+    /** Put the choice in front of the user. */
+    ASK,
+
+    /** Preserve it: its tabs stay live and switching back is instant. */
+    KEEP,
+
+    /** Tear it down: its tabs close, and switching back rebuilds from the saved layout. */
+    CLOSE,
+}
+
+/**
+ * Resolve [WorkspaceSettings.onWorkspaceSwitch] into what should actually happen.
+ *
+ * An unrecognised value resolves to [WorkspaceSwitchAction.ASK] rather than silently keeping or
+ * closing: a settings file written by a build this one does not know about must not decide, on
+ * its own, to throw away someone's tabs.
+ */
+fun WorkspaceSettings.resolveOnWorkspaceSwitch(): WorkspaceSwitchAction =
+    when (onWorkspaceSwitch) {
+        WorkspaceSettings.SWITCH_KEEP -> WorkspaceSwitchAction.KEEP
+        WorkspaceSettings.SWITCH_CLOSE -> WorkspaceSwitchAction.CLOSE
+        else -> WorkspaceSwitchAction.ASK
+    }
+
+/**
  * Manager for workspace settings.
  * Handles persistence and retrieval of workspace configuration.
  */
@@ -189,6 +242,9 @@ expect object WorkspaceSettingsManager {
      * Update the default workspace ID.
      */
     suspend fun setDefaultWorkspaceId(workspaceId: String)
+
+    /** Update what happens to the workspace being left on a switch. */
+    suspend fun setOnWorkspaceSwitch(behaviour: String)
 
     /**
      * The workspace to apply on its own, or null when the setting is

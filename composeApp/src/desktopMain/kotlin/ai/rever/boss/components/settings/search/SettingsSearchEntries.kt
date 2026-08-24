@@ -253,6 +253,7 @@ private fun runnerEntries() =
 private fun workspaceEntries() =
     section(SettingsSection.WORKSPACE) {
         group("Default Workspace")
+        group("When Switching Workspaces")
         group("About Workspaces")
     }
 

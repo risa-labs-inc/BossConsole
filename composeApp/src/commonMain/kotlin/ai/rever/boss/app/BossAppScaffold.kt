@@ -373,20 +373,12 @@ internal fun BossAppScaffold(
                 // vertical tab bar's foot when the top bar is off. Two copies of "preserve, load,
                 // apply" is two places for that order to drift, and the order is the whole of why
                 // switching away and back does not lose a layout.
-                val applyWorkspaceAndPreserve: (LayoutWorkspace) -> Unit = { workspace ->
-                    coroutineScope.launch {
-                        // Preserve current state before switching
-                        val currentWorkspace = workspaceManager.currentWorkspace.value
-                        if (currentWorkspace != null && currentWorkspace.id.isNotEmpty()) {
-                            splitViewState.preserveCurrentState(currentWorkspace.id, currentWorkspace.name)
-                        }
-
-                        // First load the workspace to reset dirty state
-                        workspaceManager.loadWorkspace(workspace)
-                        // Then apply it to the UI (which will try to restore preserved state)
-                        applyWorkspace(workspace, splitViewState, state.windowProjectState)
-                    }
-                }
+                // Switching workspaces, in one place: the top bar offers it and so does the
+                // vertical tab bar's foot when the top bar is off. See WorkspaceSwitch.kt
+                // for why a switch is two decisions rather than one.
+                val workspaceSwitch = rememberWorkspaceSwitch(state, splitViewState)
+                val applyWorkspaceAndPreserve = workspaceSwitch.request
+                WorkspaceSwitchPrompt(state, workspaceSwitch)
 
                 // Top bar - hidden in focus mode with smooth expand/shrink animation, and switched
                 // off outright by the appearance preference. Both have to agree for a bar to show:

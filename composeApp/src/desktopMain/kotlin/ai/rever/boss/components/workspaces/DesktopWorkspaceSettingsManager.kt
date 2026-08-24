@@ -114,6 +114,18 @@ actual object WorkspaceSettingsManager {
         )
     }
 
+    actual suspend fun setOnWorkspaceSwitch(behaviour: String) {
+        // Same version stamp as setDefaultWorkspaceId, for the same reason: an explicit choice
+        // must not be rewritten by a migration on the next launch.
+        updateSettings(
+            _currentSettings.value.copy(
+                onWorkspaceSwitch = behaviour,
+                settingsVersion =
+                    maxOf(_currentSettings.value.settingsVersion, WorkspaceSettings.CURRENT_SETTINGS_VERSION),
+            ),
+        )
+    }
+
     // Delegates rather than repeating the lookup: "ask" and "none" both mean "no workspace
     // to apply on my own", and a second copy of that rule is how they would come to disagree.
     actual fun getDefaultWorkspace(): LayoutWorkspace? =

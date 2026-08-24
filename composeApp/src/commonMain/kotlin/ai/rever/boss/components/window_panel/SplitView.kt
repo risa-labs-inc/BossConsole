@@ -1350,6 +1350,25 @@ class SplitViewState(
         _currentWorkspaceId = workspaceId
     }
 
+/**
+     * Stop running the workspace this window is showing, instead of preserving it.
+     *
+     * The opposite of [preserveCurrentState] and the other half of a switch. Two things have to
+     * happen, and neither is implied by simply applying the next workspace over the top:
+     *
+     * - Its tabs are CLEARED. Applying a workspace replaces the root node, which drops the
+     *   reference to the old tree but disposes nothing - so its browsers would keep running with
+     *   nothing on screen pointing at them, which is the memory this is meant to free.
+     * - Any state preserved for it on an EARLIER visit is dropped. Otherwise closing a workspace
+     *   you had previously kept would leave that older copy behind, and switching back would
+     *   restore a layout from two visits ago.
+     */
+    fun closeCurrentWorkspace() {
+        val currentId = _currentWorkspaceId ?: return
+        preservedWorkspaceStates.remove(currentId)
+        getAllPanels().forEach { panel -> panel.tabsComponent.clearAllTabs() }
+    }
+
     fun restorePreservedState(workspaceId: String): Boolean {
         // Check if we have a preserved state for this workspace
         val preservedState = preservedWorkspaceStates[workspaceId]

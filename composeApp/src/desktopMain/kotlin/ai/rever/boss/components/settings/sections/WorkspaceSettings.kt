@@ -32,54 +32,28 @@ fun WorkspaceSettings() {
     val settings by WorkspaceSettingsManager.currentSettings.collectAsState()
     val coroutineScope = rememberCoroutineScope()
 
-    val workspaceOptions =
-        buildList {
-            // Order matters: this is the list a first-run user reads top-down, and the two
-            // "no layout applied" answers belong together above the layouts themselves.
-            add(
-                WorkspaceOption(
-                    id = WorkspaceSettings.ASK_WORKSPACE_ID,
-                    name = "Ask",
-                    description = "Start with no workspace, then ask which one when a project is selected",
-                ),
-            )
-            add(
-                WorkspaceOption(
-                    id = WorkspaceSettings.NO_WORKSPACE_ID,
-                    name = "None",
-                    description = "Never apply a workspace, and never ask",
-                ),
-            )
-            PredefinedWorkspaces.allWorkspaces.forEach { workspace ->
-                add(
-                    WorkspaceOption(
-                        id = workspace.id,
-                        name = workspace.name,
-                        description = workspace.description,
-                    ),
-                )
-            }
-        }
-
     Column(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        // The titles stay literal here, inside SettingsSection, because that is what the settings
+        // search index is built from - see SettingsSearchIndexDriftTest. Hiding one behind a
+        // wrapper made "Default Workspace" unfindable, and an indexed setting that navigates and
+        // then highlights nothing reads as the search being broken.
         SettingsSection(title = "Default Workspace") {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                workspaceOptions.forEach { option ->
-                    WorkspaceOptionItem(
-                        title = option.name,
-                        description = option.description,
-                        selected = settings.defaultWorkspaceId == option.id,
-                        onClick = {
-                            coroutineScope.launch {
-                                WorkspaceSettingsManager.setDefaultWorkspaceId(option.id)
-                            }
-                        },
-                    )
-                }
-            }
+            WorkspaceOptionList(
+                options = defaultWorkspaceOptions(),
+                selectedId = settings.defaultWorkspaceId,
+                onSelect = { id -> coroutineScope.launch { WorkspaceSettingsManager.setDefaultWorkspaceId(id) } },
+            )
+        }
+
+        SettingsSection(title = "When Switching Workspaces") {
+            WorkspaceOptionList(
+                options = switchOptions(),
+                selectedId = settings.onWorkspaceSwitch,
+                onSelect = { id -> coroutineScope.launch { WorkspaceSettingsManager.setOnWorkspaceSwitch(id) } },
+            )
         }
 
         SettingsSection(title = "About Workspaces") {
@@ -89,6 +63,85 @@ fun WorkspaceSettings() {
                 NoteItem(text = "Browser tabs use {gitRemoteUrl} to open the project's GitHub page")
                 NoteItem(text = "Save custom workspaces via the Workspace button in the top bar")
             }
+        }
+    }
+}
+
+/**
+ * What can happen when a project is selected.
+ *
+ * Order matters: this is the list a first-run user reads top-down, and the two "no layout
+ * applied" answers belong together above the layouts themselves.
+ */
+private fun defaultWorkspaceOptions(): List<WorkspaceOption> =
+    buildList {
+        // Order matters: this is the list a first-run user reads top-down, and the two
+        // "no layout applied" answers belong together above the layouts themselves.
+        add(
+            WorkspaceOption(
+                id = WorkspaceSettings.ASK_WORKSPACE_ID,
+                name = "Ask",
+                description = "Start with no workspace, then ask which one when a project is selected",
+            ),
+        )
+        add(
+            WorkspaceOption(
+                id = WorkspaceSettings.NO_WORKSPACE_ID,
+                name = "None",
+                description = "Never apply a workspace, and never ask",
+            ),
+        )
+        PredefinedWorkspaces.allWorkspaces.forEach { workspace ->
+            add(
+                WorkspaceOption(
+                    id = workspace.id,
+                    name = workspace.name,
+                    description = workspace.description,
+                ),
+            )
+        }
+    }
+
+/**
+ * What happens to the workspace you leave when switching.
+ *
+ * Here as well as in the switch dialog, because "Don't ask again" is a decision someone has to be
+ * able to take back - and the dialog it silences is the only other place it appears.
+ */
+private fun switchOptions(): List<WorkspaceOption> =
+    listOf(
+        WorkspaceOption(
+            id = WorkspaceSettings.SWITCH_ASK,
+            name = "Ask",
+            description = "Ask whether to keep the workspace you are leaving running",
+        ),
+        WorkspaceOption(
+            id = WorkspaceSettings.SWITCH_KEEP,
+            name = "Keep running",
+            description = "Leave its tabs open in the background, so switching back is instant",
+        ),
+        WorkspaceOption(
+            id = WorkspaceSettings.SWITCH_CLOSE,
+            name = "Close it",
+            description = "Close its tabs, and rebuild the workspace from its layout next time",
+        ),
+    )
+
+/** One group of mutually exclusive options. Both sections here are exactly that. */
+@Composable
+private fun WorkspaceOptionList(
+    options: List<WorkspaceOption>,
+    selectedId: String,
+    onSelect: (String) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        options.forEach { option ->
+            WorkspaceOptionItem(
+                title = option.name,
+                description = option.description,
+                selected = selectedId == option.id,
+                onClick = { onSelect(option.id) },
+            )
         }
     }
 }
