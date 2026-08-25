@@ -404,21 +404,40 @@ val downloadBundledPlugins =
                     val jarFileName = jarUrl.substringAfterLast("/")
                     val destFile = File(bundledPluginsDir, jarFileName)
 
+                    // Clean up other versions of THIS plugin.
+                    //
+                    // `startsWith(artifactPrefix)` is not a plugin-name boundary.
+                    // "boss-plugin-terminal" is a prefix of
+                    // "boss-plugin-terminal-tab-2.5.59.jar", and terminal is
+                    // processed one entry after terminal-tab in the list above --
+                    // so this deleted the 35 MB terminal plugin it had just
+                    // downloaded, logged it as an "old version", and finished
+                    // green. terminal-tab is absent from every shipped bundle.
+                    //
+                    // A plugin JAR is `<prefix>-<version>.jar`, so requiring the
+                    // version separator (a hyphen followed by a digit) is what
+                    // makes the prefix a boundary: "-tab-2.5.59.jar" does not
+                    // start with a digit, "-1.0.10.jar" does. A stale
+                    // `-thin.jar` still matches and is still cleaned up.
+                    //
+                    // Runs BEFORE the already-have-it check, and never touches
+                    // the file about to be kept: a directory left holding both
+                    // the real JAR and a thin one from before the previous
+                    // commit needs the thin one gone even on a no-op run.
+                    val ownVersionedJar = Regex("""^${Regex.escape(artifactPrefix)}-\d.*\.jar$""")
+                    bundledPluginsDir
+                        .listFiles()
+                        ?.filter { ownVersionedJar.matches(it.name) && it.name != jarFileName }
+                        ?.forEach { oldFile ->
+                            logger.lifecycle("🗑️  Removing old version: ${oldFile.name}")
+                            oldFile.delete()
+                        }
+
                     // Check if we already have this version
                     if (destFile.exists()) {
                         logger.lifecycle("✅ $jarFileName already exists (version: $tagName)")
                         continue
                     }
-
-                    // Clean up old versions of this plugin
-                    bundledPluginsDir
-                        .listFiles()
-                        ?.filter {
-                            it.name.startsWith(artifactPrefix) && it.name.endsWith(".jar")
-                        }?.forEach { oldFile ->
-                            logger.lifecycle("🗑️  Removing old version: ${oldFile.name}")
-                            oldFile.delete()
-                        }
 
                     // Download the JAR using curl
                     logger.lifecycle("⬇️  Downloading $jarFileName...")
