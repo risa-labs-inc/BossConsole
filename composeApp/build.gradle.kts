@@ -724,7 +724,6 @@ kotlin {
 
             // Compose Icons dependencies
             implementation(libs.compose.icons.feather)
-            implementation(libs.compose.icons.fontawesome)
             implementation(libs.compose.icons.simpleicons)
 
             // Supabase dependencies
