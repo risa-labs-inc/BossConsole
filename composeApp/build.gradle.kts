@@ -334,6 +334,11 @@ val downloadBundledPlugins =
         // UP-TO-DATE: the prune below never runs and a newer release is never
         // picked up.
         outputs.upToDateWhen { false }
+        // Read at configuration time so the doLast lambda does not call
+        // System.getenv under the configuration cache. `prepareBundledPluginsResources`
+        // only reaches this task when CI == "true", so in the path that produces a
+        // release this is always set; a developer invoking the task by hand is not.
+        val ciProvider = providers.environmentVariable("CI")
 
         doLast {
             val bundledPluginsDir = destDir.get().asFile
@@ -450,6 +455,37 @@ val downloadBundledPlugins =
                     logger.lifecycle("✅ Downloaded $jarFileName (version: $tagName, size: ${destFile.length()} bytes)")
                 } catch (e: Exception) {
                     logger.warn("⚠️  Failed to download bundled plugin from $repo: ${e.message}")
+                }
+            }
+
+            // Every path out of the loop above is a warn-and-continue: a release
+            // whose GitHub call 403s, whose repo has no release yet, or whose
+            // asset regex matches nothing produces a log line and a green build.
+            // That is how a missing terminal-tab and a thin fluck-browser both
+            // shipped for months -- nothing ever asserted the directory was
+            // complete. So assert it here.
+            val landed = bundledPluginsDir.listFiles()?.map { it.name }.orEmpty()
+            val missing =
+                bundledPlugins
+                    .map { (_, artifactPrefix) -> artifactPrefix }
+                    .filter { artifactPrefix ->
+                        val versioned = Regex("""^${Regex.escape(artifactPrefix)}-\d.*\.jar$""")
+                        landed.none { versioned.matches(it) }
+                    }
+
+            if (missing.isEmpty()) {
+                logger.lifecycle("✅ All ${bundledPlugins.size} bundled plugins present")
+            } else {
+                val summary =
+                    "Bundled plugins missing after download: ${missing.joinToString(", ")} " +
+                        "(present: ${landed.sorted().joinToString(", ").ifEmpty { "none" }})"
+                // On CI this is a release about to go out without plugins it
+                // promises, which is worse than a failed build. Locally it stays
+                // a warning: a developer may legitimately have no network.
+                if (ciProvider.orNull == "true") {
+                    error(summary)
+                } else {
+                    logger.warn("⚠️  $summary")
                 }
             }
         }
