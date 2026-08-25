@@ -3,9 +3,6 @@ package ai.rever.boss.components.plugin.providers
 import ai.rever.boss.components.events.FileEventBus
 import ai.rever.boss.components.events.RunEventBus
 import ai.rever.boss.components.plugin.language.EditorLanguages
-import ai.rever.boss.components.plugin.tab_types.CodeEditorUI
-import ai.rever.boss.components.plugin.tab_types.readFileContentSafe
-import ai.rever.boss.components.plugin.tab_types.writeFileContent
 import ai.rever.boss.font.FontManager
 import ai.rever.boss.plugin.api.EditorContentProvider
 import ai.rever.boss.plugin.api.FileReadResult
@@ -17,12 +14,14 @@ import ai.rever.boss.plugin.run.RunConfigurationType
 import ai.rever.boss.run.MainFunctionDetectorProvider
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
-import ai.rever.boss.components.plugin.tab_types.FileReadResult as InternalFileReadResult
 
 private val logger = BossLogger.forComponent("EditorContentProvider")
 
@@ -36,11 +35,13 @@ private val logger = BossLogger.forComponent("EditorContentProvider")
  * the plugin's bundled BossEditor now — those interface methods fall back to
  * their plugin-api defaults here.
  *
- * CodeEditorContent only backs the basic shared fallback editor; the editor-tab
- * plugin renders its own BossEditor and doesn't call it. Note the fallback is
- * effectively VIEW-ONLY: CodeEditorUI has no save/modified/run-gutter wiring,
- * so the onSaveRequested/onModifiedStateChange/onRunFunction callbacks are
- * accepted but discarded.
+ * CodeEditorContent is required by the interface but has no caller: the
+ * editor-tab plugin renders its own BossEditor, and no plugin in the workspace
+ * invokes it. It used to render the host's own CodeEditorUI, which was worse
+ * than nothing -- that editor accepted onSaveRequested, onModifiedStateChange
+ * and onRunFunction and then discarded all three, so anything that HAD called
+ * it would have got an editor that silently refused to save. It now renders a
+ * line saying where the editor actually lives.
  */
 class EditorContentProviderImpl : EditorContentProvider {
     @Composable
@@ -58,14 +59,9 @@ class EditorContentProviderImpl : EditorContentProvider {
         onNavigate: ((filePath: String, line: Int, column: Int) -> Unit)?,
         showRunGutter: Boolean,
     ) {
-        CodeEditorUI(
-            content = content,
-            onContentChange = onContentChange,
-            language = language,
-            filePath = filePath,
-            projectPath = projectPath,
-            modifier = modifier,
-        )
+        Box(modifier, contentAlignment = Alignment.Center) {
+            Text("The code editor is provided by the Code Editor plugin.")
+        }
     }
 
     override fun readFileContent(
@@ -73,10 +69,10 @@ class EditorContentProviderImpl : EditorContentProvider {
         maxSize: Long,
     ): FileReadResult =
         when (val result = readFileContentSafe(filePath, maxSize)) {
-            is InternalFileReadResult.Success -> FileReadResult.Success(result.content)
-            is InternalFileReadResult.FileTooLarge -> FileReadResult.FileTooLarge(result.sizeBytes, result.maxSizeBytes)
-            is InternalFileReadResult.Error -> FileReadResult.Error(result.message)
-            is InternalFileReadResult.FileNotFound -> FileReadResult.FileNotFound
+            is FileReadOutcome.Success -> FileReadResult.Success(result.content)
+            is FileReadOutcome.FileTooLarge -> FileReadResult.FileTooLarge(result.sizeBytes, result.maxSizeBytes)
+            is FileReadOutcome.Error -> FileReadResult.Error(result.message)
+            is FileReadOutcome.FileNotFound -> FileReadResult.FileNotFound
         }
 
     override fun writeFileContent(
@@ -88,8 +84,10 @@ class EditorContentProviderImpl : EditorContentProvider {
      * Language id for [filePath], as reported to plugins and to the
      * `editor_detect_language` MCP tool.
      *
-     * Delegates to [EditorLanguages] so this and the built-in editor tab cannot
-     * give different answers for the same file.
+     * Delegates to [EditorLanguages], whose mapping the editor-tab plugin
+     * duplicates in its own `LanguageDetection` -- a separate artifact, so it
+     * cannot share this one. EditorLanguageDetectionTest guards the pair
+     * against drift.
      */
     override fun detectLanguage(filePath: String): String = EditorLanguages.detect(filePath)
 

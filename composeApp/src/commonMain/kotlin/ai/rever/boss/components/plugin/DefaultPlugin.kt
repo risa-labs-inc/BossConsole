@@ -132,7 +132,6 @@ import ai.rever.boss.components.plugin.panels.right_top.BrowserIntegration as In
 import ai.rever.boss.plugin.api.BrowserIntegration as ApiBrowserIntegration
 
 // DYNAMIC: Tab type registrations moved to dynamic plugins
-// import ai.rever.boss.components.plugin.tab_types.registerCodeEditor
 // import ai.rever.boss.components.plugin.tab_types.registerTerminalTab
 
 /**
@@ -923,7 +922,6 @@ class DefaultPlugin(
 
         // DYNAMIC: Tab types moved to dynamic plugins loaded from ~/.boss/plugins/
         // registerFluck() // DYNAMIC: fluck-browser plugin
-        // registerCodeEditor() // DYNAMIC: editor-tab plugin
         // registerTerminalTab() // DYNAMIC: terminal-tab plugin
 
         // ============================================================

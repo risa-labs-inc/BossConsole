@@ -164,7 +164,6 @@
     <ID>ExplicitGarbageCollectionCall:PerformanceMonitor.kt$PerformanceMonitor$gc()</ID>
     <ID>ForbiddenComment:BossTopBar.kt$// TODO: #91 - BossTopRunBar function (currently disabled)</ID>
     <ID>ForbiddenComment:BossTopBar.kt$// TODO: #93 - Lanager functionality (currently disabled - plugin removed)</ID>
-    <ID>ForbiddenComment:CodeEditor.kt$CodeEditorTabComponent$/* TODO: Update EditorTabInfo.isModified */</ID>
     <ID>ForbiddenComment:FluckEngine.kt$FluckEngine$// TODO: Implement if needed</ID>
     <ID>ForbiddenComment:FluckEngine.kt$FluckEngine$// TODO: Show user warning dialog (for now, just proceed)</ID>
     <ID>ForbiddenComment:PluginStateBridge.kt$PluginStateBridge$// TODO: Implement actual JSON Merge Patch for delta state.</ID>
@@ -245,7 +244,6 @@
     <ID>LongMethod:CloneProjectDialog.kt$@Composable private fun ConfigurationStep( onDismiss: () -&gt; Unit, onClone: (url: String, directory: String) -&gt; Unit, )</ID>
     <ID>LongMethod:CloneProjectDialog.kt$@Composable private fun ErrorStep( message: String, onRetry: () -&gt; Unit, onClose: () -&gt; Unit, )</ID>
     <ID>LongMethod:CoBrowseScripts.kt$CoBrowseScripts$fun applyControl(payloadJsonLiteral: String): String</ID>
-    <ID>LongMethod:CodeEditor.kt$@Composable fun CodeEditorUI( content: String, onContentChange: (String) -&gt; Unit, language: String = "kotlin", filePath: String = "", projectPath: String = "", modifier: Modifier = Modifier, )</ID>
     <ID>LongMethod:CollectionSelectionDialog.kt$@Composable fun CollectionSelectionDialog( title: String, collections: List&lt;BookmarkCollection&gt;, excludeCollectionId: String? = null, mode: CollectionSelectionMode = CollectionSelectionMode.COPY, onDismiss: () -&gt; Unit, onConfirm: (selectedCollectionIds: Set&lt;String&gt;) -&gt; Unit, )</ID>
     <ID>LongMethod:CommitDialog.kt$@Composable fun CommitDialog( onDismiss: () -&gt; Unit, onCommitSuccess: (String) -&gt; Unit = {}, )</ID>
     <ID>LongMethod:ConfirmationDialog.kt$@Composable fun ConfirmationDialog( title: String, message: String, icon: ImageVector? = null, iconTint: Color = BossTheme.colors.warn, confirmText: String = "Confirm", confirmColor: Color = BossTheme.colors.alert, // destructive onDismiss: () -&gt; Unit, onConfirm: () -&gt; Unit, )</ID>
@@ -980,10 +978,8 @@
     <ID>PackageNaming:BrowserIntegration.kt$package ai.rever.boss.components.plugin.panels.right_top</ID>
     <ID>PackageNaming:BrowserSecretIntegrationViewModel.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
     <ID>PackageNaming:CodeBase.kt$package ai.rever.boss.components.plugin.panels.left_top</ID>
-    <ID>PackageNaming:CodeEditor.kt$package ai.rever.boss.components.plugin.tab_types</ID>
     <ID>PackageNaming:ComputeTabWidthPxTest.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:DesktopBrowserAccessor.kt$package ai.rever.boss.components.plugin.panels.right_top</ID>
-    <ID>PackageNaming:DesktopCodeEditor.kt$package ai.rever.boss.components.plugin.tab_types</ID>
     <ID>PackageNaming:DesktopFileScanner.kt$package ai.rever.boss.components.plugin.panels.left_top</ID>
     <ID>PackageNaming:DesktopFileScannerTest.kt$package ai.rever.boss.components.plugin.panels.left_top</ID>
     <ID>PackageNaming:DesktopFluckTabComponent.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
@@ -995,7 +991,6 @@
     <ID>PackageNaming:DownloadManager.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
     <ID>PackageNaming:DownloadSettings.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
     <ID>PackageNaming:DownloadState.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
-    <ID>PackageNaming:EditorSyntaxColors.kt$package ai.rever.boss.components.plugin.tab_types</ID>
     <ID>PackageNaming:EmptyContentScreen.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:FileIndexCache.kt$package ai.rever.boss.components.plugin.panels.left_top</ID>
     <ID>PackageNaming:Fluck.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
@@ -1206,7 +1201,6 @@
     <ID>TooGenericExceptionCaught:CoBrowseRtcPeerImpl.kt$CoBrowseRtcProviderImpl$e: Throwable</ID>
     <ID>TooGenericExceptionCaught:CoBrowseScripts.kt$CoBrowseScripts$e: Exception</ID>
     <ID>TooGenericExceptionCaught:CodeBase.kt$ProjectState$e: Exception</ID>
-    <ID>TooGenericExceptionCaught:CodeEditor.kt$e: Exception</ID>
     <ID>TooGenericExceptionCaught:ConfigLoader.kt$ConfigLoader$e: Exception</ID>
     <ID>TooGenericExceptionCaught:CoreAuthService.kt$CoreAuthService$e: Exception</ID>
     <ID>TooGenericExceptionCaught:CrashHandler.kt$CrashHandler$e: Exception</ID>
@@ -1224,7 +1218,6 @@
     <ID>TooGenericExceptionCaught:DefaultPlugin.kt$DefaultPlugin$e: Exception</ID>
     <ID>TooGenericExceptionCaught:DesktopBrowserAccessor.kt$DesktopBrowserIntegration$e: Exception</ID>
     <ID>TooGenericExceptionCaught:DesktopBrowserAccessor.kt$e: Exception</ID>
-    <ID>TooGenericExceptionCaught:DesktopCodeEditor.kt$e: Exception</ID>
     <ID>TooGenericExceptionCaught:DesktopDirectoryPickerProviderImpl.kt$DirectoryPickerProviderImpl$e: Exception</ID>
     <ID>TooGenericExceptionCaught:DesktopFilePicker.kt$DesktopDirectoryPicker$e: Exception</ID>
     <ID>TooGenericExceptionCaught:DesktopFileScanner.kt$e: Exception</ID>
@@ -1254,6 +1247,7 @@
     <ID>TooGenericExceptionCaught:DynamicPluginManager.kt$DynamicPluginManager$t: Throwable</ID>
     <ID>TooGenericExceptionCaught:DynamicPluginManager.kt$DynamicPluginManager.Companion$t: Throwable</ID>
     <ID>TooGenericExceptionCaught:EditorContentProviderImpl.kt$EditorContentProviderImpl$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:EditorFileIo.kt$e: Exception</ID>
     <ID>TooGenericExceptionCaught:EmailAuthService.kt$EmailAuthService$e: Exception</ID>
     <ID>TooGenericExceptionCaught:FallbackUpdateSource.kt$FallbackUpdateSource$e: Exception</ID>
     <ID>TooGenericExceptionCaught:FaviconCache.kt$FaviconCache$e: Exception</ID>
@@ -1390,13 +1384,11 @@
     <ID>TooManyFunctions:CLIInstaller.kt$CLIInstaller</ID>
     <ID>TooManyFunctions:ChromiumAutoDownloader.kt$ChromiumAutoDownloader</ID>
     <ID>TooManyFunctions:ChromiumFlagsSection.kt$ai.rever.boss.components.settings.sections.ChromiumFlagsSection.kt</ID>
-    <ID>TooManyFunctions:CodeEditor.kt$ai.rever.boss.components.plugin.tab_types.CodeEditor.kt</ID>
     <ID>TooManyFunctions:CommonConditions.kt$Conditions</ID>
     <ID>TooManyFunctions:CrashHandler.kt$CrashHandler</ID>
     <ID>TooManyFunctions:DeepLinkHandler.kt$DeepLinkHandler</ID>
     <ID>TooManyFunctions:DefaultPlugin.kt$ApiActiveTabsProviderAdapter : ActiveTabsProvider</ID>
     <ID>TooManyFunctions:DefaultPlugin.kt$DefaultPlugin : PluginContext</ID>
-    <ID>TooManyFunctions:DesktopCodeEditor.kt$ai.rever.boss.components.plugin.tab_types.DesktopCodeEditor.kt</ID>
     <ID>TooManyFunctions:DesktopGitService.kt$GitService</ID>
     <ID>TooManyFunctions:DesktopMainFunctionDetector.kt$DesktopMainFunctionDetector : MainFunctionDetector</ID>
     <ID>TooManyFunctions:DesktopRunConfigurationManager.kt$RunConfigurationManager</ID>
@@ -1445,7 +1437,6 @@
     <ID>TooManyFunctions:WindowManager.kt$WindowManager</ID>
     <ID>TooManyFunctions:WorkspaceManager.kt$WorkspaceManager</ID>
     <ID>UnusedParameter:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$matcher: KeymapMatcher</ID>
-    <ID>UnusedParameter:CodeEditor.kt$projectPath: String</ID>
     <ID>UnusedParameter:Dashboard.kt$onActivatePlugin: (String) -&gt; Unit</ID>
     <ID>UnusedParameter:Dashboard.kt$onNewTerminal: () -&gt; Unit</ID>
     <ID>UnusedParameter:KeymapValidator.kt$KeymapValidator$settings: KeymapSettings</ID>
@@ -1528,11 +1519,6 @@
     <ID>WildcardImport:CloneProjectDialog.kt$import androidx.compose.foundation.layout.*</ID>
     <ID>WildcardImport:CloneProjectDialog.kt$import androidx.compose.material.*</ID>
     <ID>WildcardImport:CloneProjectDialog.kt$import androidx.compose.runtime.*</ID>
-    <ID>WildcardImport:CodeEditor.kt$import androidx.compose.foundation.layout.*</ID>
-    <ID>WildcardImport:CodeEditor.kt$import androidx.compose.material.*</ID>
-    <ID>WildcardImport:CodeEditor.kt$import androidx.compose.runtime.*</ID>
-    <ID>WildcardImport:CodeEditor.kt$import androidx.compose.ui.text.*</ID>
-    <ID>WildcardImport:CodeEditor.kt$import androidx.compose.ui.text.input.*</ID>
     <ID>WildcardImport:CollectionSelectionDialog.kt$import androidx.compose.foundation.layout.*</ID>
     <ID>WildcardImport:CollectionSelectionDialog.kt$import androidx.compose.material.*</ID>
     <ID>WildcardImport:CollectionSelectionDialog.kt$import androidx.compose.runtime.*</ID>
