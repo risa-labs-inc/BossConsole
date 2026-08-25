@@ -10,7 +10,9 @@ import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Properties
+import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
 import javax.inject.Inject
 
 // Detect Windows ARM64 — microkernel modules excluded (no protoc binaries)
@@ -1430,6 +1432,156 @@ tasks.register("extractJcefNatives") {
     }
 }
 
+// Remove natives for platforms this package will never run on.
+//
+// Two third-party jars ship every platform's binaries in a single artifact and
+// leave it to the loader to pick one at runtime. That is the right call for a
+// library on Maven Central and the wrong one for a jar inside a signed, per-
+// platform desktop bundle, where the other platforms' copies are bytes every
+// user downloads, stores and code-signs for nothing.
+//
+//   skiko-awt-runtime-macos-arm64  publishes BOTH macOS dylibs (arm64 + x64) in
+//     the artifact named for arm64. The Compose plugin extracts the one this
+//     build needs to `app/libskiko-macos-arm64.dylib` and removes it from the
+//     jar -- leaving the jar holding nothing but the 22 MB x86_64 dylib, which
+//     an arm64-only bundle can never load. 9.4 MB of the packaged app.
+//
+//   sqlite-jdbc  ships ~20 builds: Linux ppc64/riscv64/armv6/armv7/x86/musl,
+//     FreeBSD, Windows x86/arm, and both Macs. Exactly one is loadable in any
+//     given package; the other ~10 MB is dead in all of them.
+//
+// This runs on the built app image, before the macOS re-sign in
+// extractCLIToAppResources, so the signature covers the trimmed jars.
+tasks.register("stripForeignPlatformNatives") {
+    description = "Strips other platforms' native binaries out of skiko and sqlite-jdbc in the app image"
+    group = "build"
+
+    // Configuration cache: capture everything the action needs at configuration
+    // time. The doLast lambda must not reach the enclosing script object nor
+    // call Task.project at execution time -- same rule as extractCLIToAppResources.
+    val appDirProvider = layout.buildDirectory.dir("compose/binaries/main/app")
+    val osName = System.getProperty("os.name").lowercase()
+    val osArch = System.getProperty("os.arch").lowercase()
+
+    // The build host is the target: Compose packages for the platform it runs
+    // on, and release.yml gives each platform its own runner.
+    val skikoToken =
+        when {
+            osName.contains("mac") -> "macos"
+            osName.contains("win") -> "windows"
+            else -> "linux"
+        } + "-" + if (osArch == "aarch64" || osArch == "arm64") "arm64" else "x64"
+
+    val sqliteOs =
+        when {
+            osName.contains("mac") -> "Mac"
+            osName.contains("win") -> "Windows"
+            else -> "Linux"
+        }
+    val sqliteArch = if (osArch == "aarch64" || osArch == "arm64") "aarch64" else "x86_64"
+
+    doLast {
+        val appDir = appDirProvider.get().asFile
+        if (!appDir.isDirectory) {
+            println("ℹ️  No app image at ${appDir.absolutePath} - nothing to strip")
+            return@doLast
+        }
+
+        // Rewrites a jar keeping only the entries `keep` accepts. Local to the
+        // action so it captures nothing from the build script. Returns the bytes
+        // saved, or 0 if the jar was left alone.
+        fun rewriteJar(
+            jar: File,
+            keep: (String) -> Boolean,
+        ): Long {
+            val before = jar.length()
+            val temp = File(jar.parentFile, "${jar.name}.stripping")
+            var dropped = 0
+            ZipFile(jar).use { zip ->
+                ZipOutputStream(temp.outputStream().buffered()).use { out ->
+                    for (entry in zip.entries()) {
+                        if (!keep(entry.name)) {
+                            dropped++
+                            continue
+                        }
+                        // Copying the ZipEntry preserves the method, and for a
+                        // STORED entry also the size and CRC the writer demands.
+                        out.putNextEntry(ZipEntry(entry))
+                        zip.getInputStream(entry).use { it.copyTo(out) }
+                        out.closeEntry()
+                    }
+                }
+            }
+            if (dropped == 0) {
+                temp.delete()
+                return 0
+            }
+            check(temp.renameTo(jar) || (jar.delete() && temp.renameTo(jar))) {
+                "Could not replace ${jar.absolutePath} with the stripped jar"
+            }
+            return before - jar.length()
+        }
+
+        var saved = 0L
+
+        // skiko: keep the native for this platform, drop the rest. The matching
+        // one is usually already gone (Compose extracts it next to the jar), so
+        // its absence is expected and must not be treated as a mis-detection.
+        val skikoNative = Regex("""(?:lib)?skiko-(?:macos|linux|windows)-(?:arm64|x64)\.(?:dylib|so|dll)(?:\.sha256)?$""")
+        appDir
+            .walkTopDown()
+            .filter { it.isFile && it.name.startsWith("skiko-awt-runtime-") && it.name.endsWith(".jar") }
+            .forEach { jar ->
+                val freed =
+                    rewriteJar(jar) { name ->
+                        val leaf = name.substringAfterLast('/')
+                        !skikoNative.matches(leaf) || leaf.contains(skikoToken)
+                    }
+                if (freed > 0) {
+                    saved += freed
+                    println("🧹 ${jar.name}: freed ${freed / 1024} KB of non-$skikoToken skiko natives")
+                }
+            }
+
+        // sqlite-jdbc: keep org/sqlite/native/<OS>/<arch>/, drop the other ~19.
+        // On Linux keep the musl build of the same arch too -- it is ~1 MB and
+        // covers a glibc-built package installed on a musl system.
+        val keepPrefixes =
+            buildList {
+                add("org/sqlite/native/$sqliteOs/$sqliteArch/")
+                if (sqliteOs == "Linux") add("org/sqlite/native/Linux-Musl/$sqliteArch/")
+            }
+        appDir
+            .walkTopDown()
+            .filter { it.isFile && it.name.startsWith("sqlite-jdbc-") && it.name.endsWith(".jar") }
+            .forEach { jar ->
+                // Refuse to strip a jar that does not contain the native we
+                // believe this platform needs: that means the OS/arch mapping is
+                // wrong, and stripping would leave a jar with no loadable native
+                // at all. Leaving it whole costs 10 MB; getting it wrong breaks
+                // every SQLite read on the platform.
+                val hasOurs =
+                    ZipFile(jar).use { zip ->
+                        zip.entries().asSequence().any { e -> keepPrefixes.any { e.name.startsWith(it) } }
+                    }
+                if (!hasOurs) {
+                    println("⚠️  ${jar.name}: no native under ${keepPrefixes.first()} - leaving it intact")
+                    return@forEach
+                }
+                val freed =
+                    rewriteJar(jar) { name ->
+                        !name.startsWith("org/sqlite/native/") || keepPrefixes.any { name.startsWith(it) }
+                    }
+                if (freed > 0) {
+                    saved += freed
+                    println("🧹 ${jar.name}: freed ${freed / 1024} KB of non-$sqliteOs/$sqliteArch SQLite natives")
+                }
+            }
+
+        println("✅ Foreign-platform natives stripped: ${saved / 1024 / 1024} MB freed")
+    }
+}
+
 // Extract CLI script to app bundle Resources for Homebrew installation
 tasks.register("extractCLIToAppResources") {
     description = "Extracts CLI script to BOSS.app/Contents/Resources for Homebrew binary stanza"
@@ -1891,11 +2043,15 @@ afterEvaluate {
         // Ensure bundled plugins are prepared
         dependsOn("prepareBundledPluginsResources")
 
-        // Task chain: createDistributable → signPty4jBinaries → extractCLIToAppResources.
-        // Both finalizers are wired unconditionally so the signing decision is NOT
-        // needed at configuration time (keeps the keychain scan lazy): when signing
-        // is disabled, signPty4jBinaries skips itself via its own onlyIf and the
-        // CLI extraction still runs.
+        // Every platform trims the app image; only macOS signs it afterwards.
+        finalizedBy("stripForeignPlatformNatives")
+
+        // Task chain: createDistributable → stripForeignPlatformNatives →
+        // signPty4jBinaries → extractCLIToAppResources.
+        // The signing finalizers are wired unconditionally so the signing decision
+        // is NOT needed at configuration time (keeps the keychain scan lazy): when
+        // signing is disabled, signPty4jBinaries skips itself via its own onlyIf
+        // and the CLI extraction still runs.
         if (isMacOS) {
             finalizedBy("signPty4jBinaries", "extractCLIToAppResources")
             println(
@@ -1904,9 +2060,15 @@ afterEvaluate {
         }
     }
 
-    // signPty4jBinaries runs after createDistributable, then triggers extractCLIToAppResources
-    tasks.findByName("signPty4jBinaries")?.apply {
+    // The strip must land before anything signs or packages the image, or the
+    // signature seals jars that are about to change underneath it.
+    tasks.findByName("stripForeignPlatformNatives")?.apply {
         mustRunAfter("createDistributable")
+    }
+
+    // signPty4jBinaries runs after the image is trimmed, then triggers extractCLIToAppResources
+    tasks.findByName("signPty4jBinaries")?.apply {
+        mustRunAfter("createDistributable", "stripForeignPlatformNatives")
         if (isMacOS) {
             finalizedBy("extractCLIToAppResources")
             println("📝 signPty4jBinaries will be finalized by extractCLIToAppResources")
@@ -1918,7 +2080,7 @@ afterEvaluate {
     // is skipped — so it needs no config-time signing check.
     tasks.findByName("extractCLIToAppResources")?.apply {
         dependsOn("generateVersionedCLIScripts")
-        mustRunAfter("signPty4jBinaries")
+        mustRunAfter("signPty4jBinaries", "stripForeignPlatformNatives")
         println("📝 extractCLIToAppResources will depend on generateVersionedCLIScripts")
     }
 
@@ -1928,6 +2090,12 @@ afterEvaluate {
             mustRunAfter("signPty4jBinaries", "extractCLIToAppResources")
             println("📝 packageDmg will run after PTY4J signing and CLI extraction")
         }
+    }
+
+    // Linux and Windows have no signing step to order against, so they need the
+    // strip wired to their packaging tasks directly.
+    listOf("packageDeb", "packageRpm", "packageMsi", "packageAppImage").forEach { name ->
+        tasks.findByName(name)?.mustRunAfter("stripForeignPlatformNatives")
     }
 
     // Linux: Fix .desktop file after DEB packaging to add StartupWMClass
