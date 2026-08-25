@@ -1116,7 +1116,8 @@ compose.desktop {
             // `du -sh composeApp/build/compose/tmp/main/runtime`):
             //
             //     includeAllModules = true    141 MB
-            //     the list below              124 MB   (-17 MB)
+            //     tooling dropped             124 MB   (-17 MB)
+            //     jdk.localedata dropped       91 MB   (-50 MB)
             //
             // The list below is the module set the old image actually contained,
             // minus that tooling. It is deliberately NOT a jdeps-minimal list:
@@ -1190,8 +1191,9 @@ compose.desktop {
                 // The zip FileSystemProvider. Plugin jars are read through it,
                 // and it is discovered by ServiceLoader.
                 "jdk.zipfs",
-                // Locale data beyond CLDR root + en.
-                "jdk.localedata",
+                // NOT included: jdk.localedata, 33 MB of CLDR data for locales
+                // this app has no text in. See the commit that removed it for
+                // the exact blast radius (three date labels).
             )
 
             windows {
