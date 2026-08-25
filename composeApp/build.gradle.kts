@@ -1100,15 +1100,99 @@ compose.desktop {
             copyright = "© 2024 Risa Labs Inc. All rights reserved."
             vendor = "Risa Labs Inc."
 
-            // Bundle a complete, self-contained JVM
-            includeAllModules = true
-
-            // Note: When includeAllModules is true, the modules() call is redundant
-            // as all modules will be included. If you want to optimize size later,
-            // set includeAllModules = false and specify only required modules:
-            // modules("java.base", "java.desktop", "java.logging", "java.net.http",
-            //         "java.sql", "java.prefs", "java.scripting", "jdk.unsupported",
-            //         "java.naming", "java.xml", "java.management", "jdk.crypto.ec")
+            // Bundle a self-contained JVM that can run the app and nothing else.
+            //
+            // This was `includeAllModules = true`, which jlinks the ENTIRE JDK into
+            // every package. That is not "a complete JVM" in any sense a user
+            // benefits from -- it is a JVM plus the toolchain for producing Java
+            // software, shipped to people who are running an app. The bundled
+            // runtime carried javadoc, jshell, the JDI debugger, jdeps, jlink,
+            // jpackage itself, the HotSpot serviceability agent and the JDWP
+            // debug agent -- none of which any code path in BOSS can reach,
+            // because the tools that use them are command-line entry points and
+            // jpackage strips `bin/` from the image anyway.
+            //
+            // Measured on macOS arm64 (`./gradlew :composeApp:createRuntimeImage`,
+            // `du -sh composeApp/build/compose/tmp/main/runtime`):
+            //
+            //     includeAllModules = true    141 MB
+            //     the list below              124 MB   (-17 MB)
+            //
+            // The list below is the module set the old image actually contained,
+            // minus that tooling. It is deliberately NOT a jdeps-minimal list:
+            // jdeps only sees static references, so a minimal list silently drops
+            // whatever is reached through ServiceLoader or reflection (crypto
+            // providers, charsets, the zip filesystem, JNDI backends) and the
+            // failure shows up at runtime on a user's machine, not in CI.
+            //
+            // `java.se` is the aggregator for every `java.*` module, so no
+            // platform API can go missing here -- only `jdk.*` implementation
+            // modules are enumerated, and only ones with a runtime consumer.
+            includeAllModules = false
+            modules(
+                // Every java.* module, as one aggregator. Costs a few unused
+                // modules (java.rmi, java.transaction.xa) and buys the guarantee
+                // that nothing in the platform API disappears.
+                "java.se",
+                // Not part of java.se. Kept because the passkey/credential paths
+                // probe for smartcard providers.
+                "java.smartcardio",
+                // Screen-reader support on Windows and Linux.
+                "jdk.accessibility",
+                // Attaching to a JVM: the performance/diagnostics MCP tools and
+                // the plugin host supervisor. jdk.internal.jvmstat is its backend.
+                "jdk.attach",
+                "jdk.internal.jvmstat",
+                // Non-ASCII charsets. A terminal emulator and an editor both
+                // decode files in encodings outside the java.base default set.
+                "jdk.charsets",
+                // javac. Kept conservatively: the editor-tab plugin embeds the
+                // Kotlin compiler, whose Java-interop path can ask for
+                // ToolProvider.getSystemJavaCompiler(). Dropping this module
+                // (and the 7.9 MB lib/ct.sym that rides with it) is worth another
+                // 14 MB once Kotlin analysis in the editor is confirmed to work
+                // without it.
+                "jdk.compiler",
+                // TLS. Both are ServiceLoader-discovered security providers, so
+                // nothing references them statically -- exactly the class of
+                // module a jdeps-minimal list would drop.
+                "jdk.crypto.cryptoki",
+                "jdk.crypto.ec",
+                // Dynamic call sites (jsr223 / invokedynamic linkage).
+                "jdk.dynalink",
+                // com.sun.net.httpserver -- the local MCP endpoint and the OAuth
+                // loopback listener.
+                "jdk.httpserver",
+                // Flight Recorder, and the JMX/JFR management surface behind the
+                // performance snapshot tools.
+                "jdk.jfr",
+                "jdk.management",
+                "jdk.management.agent",
+                "jdk.management.jfr",
+                // JavaScript <-> JVM bridging for the embedded browser.
+                "jdk.jsobject",
+                // JNDI backends, reached by name, never by reference.
+                "jdk.naming.dns",
+                "jdk.naming.rmi",
+                // Socket options and mmap modes used by the IPC layer.
+                "jdk.net",
+                "jdk.nio.mapmode",
+                // RandomGenerator implementations beyond java.util.Random.
+                "jdk.random",
+                // JAAS login modules, also ServiceLoader-discovered.
+                "jdk.security.auth",
+                "jdk.security.jgss",
+                // sun.misc.Unsafe -- netty and protobuf both require it.
+                "jdk.unsupported",
+                "jdk.unsupported.desktop",
+                // org.w3c.dom.* extensions used by the XML paths.
+                "jdk.xml.dom",
+                // The zip FileSystemProvider. Plugin jars are read through it,
+                // and it is discovered by ServiceLoader.
+                "jdk.zipfs",
+                // Locale data beyond CLDR root + en.
+                "jdk.localedata",
+            )
 
             windows {
                 menuGroup = "BOSS"
@@ -1181,7 +1265,7 @@ compose.desktop {
 
                 // Note: bundleJRE is not a valid property in current Compose Desktop
                 // The JVM is automatically bundled when creating native distributions
-                // Use includeAllModules = true above to ensure all JVM modules are included
+                // See the modules() list above for which JVM modules go into it
 
                 // Code signing configuration
                 signing {
