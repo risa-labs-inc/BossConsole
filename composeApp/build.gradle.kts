@@ -373,15 +373,34 @@ val downloadBundledPlugins =
                     val tagNameMatch = Regex(""""tag_name"\s*:\s*"([^"]+)"""").find(responseText)
                     val tagName = tagNameMatch?.groupValues?.get(1) ?: "unknown"
 
-                    // Find the JAR download URL (look for browser_download_url ending in .jar)
-                    val jarUrlMatch = Regex(""""browser_download_url"\s*:\s*"([^"]+$artifactPrefix[^"]*\.jar)"""").find(responseText)
+                    // Find the JAR download URL.
+                    //
+                    // `findAll` + the `-thin.jar` filter, not `find`: a plugin
+                    // release publishes BOTH `<prefix>-<version>.jar` (what
+                    // buildPluginJar produces, with the plugin's dependencies
+                    // bundled) and `<prefix>-<version>-thin.jar` (the module's
+                    // bare `:jar` output, which is given that classifier purely
+                    // so it stops clobbering the real one). Whichever GitHub
+                    // happens to list first won here, and for fluck-browser that
+                    // was the thin one -- every shipped bundle through 9.4.33
+                    // contains `boss-plugin-fluck-browser-1.2.24-thin.jar`,
+                    // 1 MB of a 4 MB plugin, missing everything it needs to run.
+                    //
+                    // This is exactly PluginStoreSetup.pickPluginJarUrl, which
+                    // the host uses for the same decision and which
+                    // PluginStoreSetupMinVersionGateTest already guards against
+                    // picking a thin JAR. The two pickers must not disagree.
+                    val jarUrl =
+                        Regex(""""browser_download_url"\s*:\s*"([^"]+${Regex.escape(artifactPrefix)}[^"]*\.jar)"""")
+                            .findAll(responseText)
+                            .map { it.groupValues[1] }
+                            .firstOrNull { !it.endsWith("-thin.jar") }
 
-                    if (jarUrlMatch == null) {
+                    if (jarUrl == null) {
                         logger.warn("⚠️  No JAR asset found in release for $repo")
                         continue
                     }
 
-                    val jarUrl = jarUrlMatch.groupValues[1]
                     val jarFileName = jarUrl.substringAfterLast("/")
                     val destFile = File(bundledPluginsDir, jarFileName)
 
