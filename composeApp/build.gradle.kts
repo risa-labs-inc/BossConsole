@@ -299,7 +299,17 @@ val downloadBundledPlugins =
                     "risa-labs-inc/boss-plugin-terminal-tab" to "boss-plugin-terminal-tab",
                     "risa-labs-inc/boss-plugin-terminal" to "boss-plugin-terminal",
                     "risa-labs-inc/boss-plugin-fluck-browser" to "boss-plugin-fluck-browser",
-                    "risa-labs-inc/boss-plugin-editor-tab" to "boss-plugin-editor-tab",
+                    // NOT editor-tab. It is 64.7 MB, a quarter of the whole
+                    // download, and bundling buys almost nothing: the host's
+                    // ensureSystemPluginsInstalled() fetches it from the
+                    // plugin's latest GitHub release before load when it is not
+                    // on disk, which is already how every developer build and
+                    // every install of BOSS gets it (copyBundledPluginsLocal
+                    // below has never copied it either). Bundling only covered a
+                    // first launch with no network, and it went stale fast: the
+                    // seed is frozen at BOSS build time while editor-tab shipped
+                    // five releases in two days, so a bundled JAR below the
+                    // host's minVersion floor is replaced on startup anyway.
                     "risa-labs-inc/boss-plugin-plugin-manager" to "boss-plugin-plugin-manager",
                     "risa-labs-inc/boss-plugin-bookmarks" to "boss-plugin-bookmarks",
                 )
@@ -538,7 +548,14 @@ val copyPluginManagerToDev =
 
 // Task to prepare bundled plugins for app resources (used by native distributions)
 val prepareBundledPluginsResources =
-    tasks.register<Copy>("prepareBundledPluginsResources") {
+    // Sync, not Copy: Copy only ever ADDS to its destination, so a plugin
+    // dropped from the bundled list kept shipping out of a warm build
+    // directory -- the JAR stayed in bundled-plugins-resources forever and
+    // jpackage kept picking it up. Removing editor-tab from the list above
+    // appeared to do nothing until the directory was deleted by hand. CI
+    // starts clean so no release was wrong, but anyone testing a change to
+    // that list locally was reading a stale answer.
+    tasks.register<Sync>("prepareBundledPluginsResources") {
         group = "build"
         description = "Prepares bundled plugins in app resources structure for native distribution"
 
