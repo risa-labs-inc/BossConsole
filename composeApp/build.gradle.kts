@@ -296,7 +296,13 @@ val downloadBundledPlugins =
             val bundledPlugins =
                 listOf(
                     "risa-labs-inc/boss-plugin-api" to "boss-plugin-api",
-                    "risa-labs-inc/boss-plugin-terminal-tab" to "boss-plugin-terminal-tab",
+                    // NOT terminal-tab. At 35.1 MB it is the largest thing left
+                    // here, and it is the one plugin whose unbundled behaviour is
+                    // not a prediction: the prefix-collision bug deleted it from
+                    // every shipped build for months, the terminal worked anyway
+                    // via ensureSystemPluginsInstalled(), and nobody filed a bug.
+                    // Bundling it back would ship 35 MB to restore a state no
+                    // user has ever been in.
                     "risa-labs-inc/boss-plugin-terminal" to "boss-plugin-terminal",
                     "risa-labs-inc/boss-plugin-fluck-browser" to "boss-plugin-fluck-browser",
                     // NOT editor-tab. It is 64.7 MB, a quarter of the whole
