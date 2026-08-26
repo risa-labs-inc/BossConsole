@@ -334,10 +334,18 @@ val downloadBundledPlugins =
         // UP-TO-DATE: the prune below never runs and a newer release is never
         // picked up.
         outputs.upToDateWhen { false }
-        // Read at configuration time so the doLast lambda does not call
-        // System.getenv under the configuration cache. `prepareBundledPluginsResources`
-        // only reaches this task when CI == "true", so in the path that produces a
-        // release this is always set; a developer invoking the task by hand is not.
+
+        // A Provider, not a captured value: `ciProvider.orNull` below is read at
+        // EXECUTION time, and what makes that configuration-cache safe is that
+        // Gradle tracks a Provider read as an input -- not that the value was
+        // captured early. (The sibling gate on `prepareBundledPluginsResources`
+        // still uses System.getenv at configuration time; the two agree today by
+        // different mechanisms, and only that one decides whether this task is in
+        // the graph at all.)
+        //
+        // `prepareBundledPluginsResources` only routes here when CI == "true", so
+        // the release path always has it set; a developer invoking this task by
+        // hand does not.
         val ciProvider = providers.environmentVariable("CI")
 
         doLast {
@@ -483,7 +491,7 @@ val downloadBundledPlugins =
                 // promises, which is worse than a failed build. Locally it stays
                 // a warning: a developer may legitimately have no network.
                 if (ciProvider.orNull == "true") {
-                    error(summary)
+                    throw GradleException(summary)
                 } else {
                     logger.warn("⚠️  $summary")
                 }
