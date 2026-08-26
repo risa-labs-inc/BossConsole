@@ -287,38 +287,74 @@ val downloadBundledPlugins =
         val destDir = layout.buildDirectory.dir("bundled-plugins")
         outputs.dir(destDir)
 
+        // List of bundled plugins to download from GitHub releases.
+        // These are core plugins that ship with BossConsole.
+        //
+        // Declared at CONFIGURATION time, not inside doLast, so it can be a task
+        // input. As a literal inside the action it was invisible to Gradle:
+        // editing it did not invalidate anything, the task went UP-TO-DATE on a
+        // warm build directory and never ran, and the JAR of a plugin removed
+        // from the list stayed in `build/bundled-plugins` forever. Switching
+        // prepareBundledPluginsResources to Sync fixed the hop after this one;
+        // this is the hop itself. Verified: with editor-tab removed from the
+        // list and a stale JAR planted in the output directory, the task
+        // reported UP-TO-DATE and 64.7 MB shipped anyway.
+        val bundledPlugins =
+            listOf(
+                "risa-labs-inc/boss-plugin-api" to "boss-plugin-api",
+                // NOT terminal-tab. At 35.1 MB it is the largest thing left
+                // here, and it is the one plugin whose unbundled behaviour is
+                // not a prediction: the prefix-collision bug deleted it from
+                // every shipped build for months, the terminal worked anyway
+                // via ensureSystemPluginsInstalled(), and nobody filed a bug.
+                // Bundling it back would ship 35 MB to restore a state no
+                // user has ever been in.
+                "risa-labs-inc/boss-plugin-terminal" to "boss-plugin-terminal",
+                "risa-labs-inc/boss-plugin-fluck-browser" to "boss-plugin-fluck-browser",
+                // NOT editor-tab. It is 64.7 MB, a quarter of the whole
+                // download, and bundling buys almost nothing: the host's
+                // ensureSystemPluginsInstalled() fetches it from the
+                // plugin's latest GitHub release before load when it is not
+                // on disk, which is already how every developer build and
+                // every install of BOSS gets it (copyBundledPluginsLocal
+                // below has never copied it either). Bundling only covered a
+                // first launch with no network, and it went stale fast: the
+                // seed is frozen at BOSS build time while editor-tab shipped
+                // five releases in two days, so a bundled JAR below the
+                // host's minVersion floor is replaced on startup anyway.
+                "risa-labs-inc/boss-plugin-plugin-manager" to "boss-plugin-plugin-manager",
+                "risa-labs-inc/boss-plugin-bookmarks" to "boss-plugin-bookmarks",
+            )
+
+        inputs.property("bundledPlugins", bundledPlugins.map { (repo, prefix) -> "$repo|$prefix" })
+
+        // The real input is "the latest release of each of those repos", which
+        // Gradle cannot see. Three sibling tasks in this file opt out for the
+        // same reason. Without it a second invocation in one workspace is
+        // UP-TO-DATE: the prune below never runs and a newer release is never
+        // picked up.
+        outputs.upToDateWhen { false }
+
         doLast {
             val bundledPluginsDir = destDir.get().asFile
             bundledPluginsDir.mkdirs()
 
-            // List of bundled plugins to download from GitHub releases
-            // These are core plugins that ship with BossConsole
-            val bundledPlugins =
-                listOf(
-                    "risa-labs-inc/boss-plugin-api" to "boss-plugin-api",
-                    // NOT terminal-tab. At 35.1 MB it is the largest thing left
-                    // here, and it is the one plugin whose unbundled behaviour is
-                    // not a prediction: the prefix-collision bug deleted it from
-                    // every shipped build for months, the terminal worked anyway
-                    // via ensureSystemPluginsInstalled(), and nobody filed a bug.
-                    // Bundling it back would ship 35 MB to restore a state no
-                    // user has ever been in.
-                    "risa-labs-inc/boss-plugin-terminal" to "boss-plugin-terminal",
-                    "risa-labs-inc/boss-plugin-fluck-browser" to "boss-plugin-fluck-browser",
-                    // NOT editor-tab. It is 64.7 MB, a quarter of the whole
-                    // download, and bundling buys almost nothing: the host's
-                    // ensureSystemPluginsInstalled() fetches it from the
-                    // plugin's latest GitHub release before load when it is not
-                    // on disk, which is already how every developer build and
-                    // every install of BOSS gets it (copyBundledPluginsLocal
-                    // below has never copied it either). Bundling only covered a
-                    // first launch with no network, and it went stale fast: the
-                    // seed is frozen at BOSS build time while editor-tab shipped
-                    // five releases in two days, so a bundled JAR below the
-                    // host's minVersion floor is replaced on startup anyway.
-                    "risa-labs-inc/boss-plugin-plugin-manager" to "boss-plugin-plugin-manager",
-                    "risa-labs-inc/boss-plugin-bookmarks" to "boss-plugin-bookmarks",
-                )
+            // Drop JARs belonging to no listed plugin. The per-plugin cleanup
+            // further down only fires for prefixes still in the list, so nothing
+            // ever removed the JAR of a plugin that LEFT it -- which is the whole
+            // bug above. Boundary-aware for the reason the collision fix gives:
+            // `boss-plugin-terminal` is a prefix of
+            // `boss-plugin-terminal-tab-2.5.59.jar`, so a bare startsWith would
+            // keep a de-listed terminal-tab alive under terminal's entry.
+            val listedJar =
+                bundledPlugins.map { (_, prefix) -> Regex("""^${Regex.escape(prefix)}-\d.*\.jar$""") }
+            bundledPluginsDir
+                .listFiles()
+                ?.filter { it.name.endsWith(".jar") && listedJar.none { re -> re.matches(it.name) } }
+                ?.forEach { orphan ->
+                    logger.lifecycle("🗑️  Removing JAR for a plugin no longer bundled: ${orphan.name}")
+                    orphan.delete()
+                }
 
             for ((repo, artifactPrefix) in bundledPlugins) {
                 try {
