@@ -21,7 +21,9 @@ class EditorFileIoTest {
     private val provider = EditorContentProviderImpl()
 
     private fun tempFile(name: String): File =
-        File.createTempFile("editor-file-io-", "-$name").also { it.deleteOnExit() }
+        File
+            .createTempFile("editor-file-io-", "-$name")
+            .also { it.deleteOnExit() }
 
     @Test
     fun `write then read round-trips`() {
