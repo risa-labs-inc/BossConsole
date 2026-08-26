@@ -25,8 +25,19 @@ expect fun readFileContentSafe(
     maxSize: Long = 100 * 1024 * 1024, // 100 MB default
 ): FileReadOutcome
 
-/** Writes [content] to [filePath], creating parent directories. */
-expect fun writeFileContent(
+/**
+ * Writes [content] to [filePath], creating parent directories.
+ *
+ * Named `...Safe` for the same reason [readFileContentSafe] is, and it is not
+ * cosmetic: `EditorContentProviderImpl` overrides a plugin-api member called
+ * `writeFileContent(String, String): Boolean`, and Kotlin resolves a member of
+ * the implicit receiver ahead of a top-level function -- explicit import or
+ * not. A top-level of that exact name and signature is therefore unreachable
+ * from the one class that needs it, and the override silently calls itself.
+ * That is not hypothetical: `editor_write_file` stack-overflowed on every call
+ * until EditorFileIoTest caught it.
+ */
+expect fun writeFileContentSafe(
     filePath: String,
     content: String,
 ): Boolean

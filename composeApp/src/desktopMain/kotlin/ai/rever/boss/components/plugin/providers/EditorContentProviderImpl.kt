@@ -78,7 +78,7 @@ class EditorContentProviderImpl : EditorContentProvider {
     override fun writeFileContent(
         filePath: String,
         content: String,
-    ): Boolean = writeFileContent(filePath, content)
+    ): Boolean = writeFileContentSafe(filePath, content)
 
     /**
      * Language id for [filePath], as reported to plugins and to the

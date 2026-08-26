@@ -33,7 +33,7 @@ actual fun readFileContentSafe(
         FileReadOutcome.Error(e.message ?: "Unknown error reading file")
     }
 
-actual fun writeFileContent(
+actual fun writeFileContentSafe(
     filePath: String,
     content: String,
 ): Boolean =
