@@ -995,7 +995,6 @@
     <ID>PackageNaming:FileIndexCache.kt$package ai.rever.boss.components.plugin.panels.left_top</ID>
     <ID>PackageNaming:Fluck.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
     <ID>PackageNaming:FluckView.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
-    <ID>PackageNaming:GutterRunIcon.kt$package ai.rever.boss.components.plugin.tab_types</ID>
     <ID>PackageNaming:JsDialogNotifier.kt$package ai.rever.boss.components.plugin.tab_types.fluck</ID>
     <ID>PackageNaming:LLMModelFetcher.kt$package ai.rever.boss.components.plugin.panels.right_top</ID>
     <ID>PackageNaming:LLMSettings.kt$package ai.rever.boss.components.plugin.panels.right_top</ID>
