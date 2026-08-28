@@ -34,6 +34,9 @@ internal object BrowserSwipeNavScript {
     /** Property the host pushes navigability onto. Matched by the script. */
     const val STATE_PROPERTY: String = "__bossSwipeNavState"
 
+    /** Property the host pushes the presentation onto. Matched by the script. */
+    const val STYLE_PROPERTY: String = "__bossSwipeNavStyle"
+
     /** Lazily-loaded gesture script (cached for the process lifetime). */
     val source: String by lazy { loadResource("/browser/swipe-nav.js") }
 
@@ -60,6 +63,15 @@ internal object BrowserSwipeNavScript {
         canGoBack: Boolean,
         canGoForward: Boolean,
     ): String = "window.$STATE_PROPERTY = { back: $canGoBack, forward: $canGoForward };"
+
+    /**
+     * Statement that sets the presentation.
+     *
+     * Pushed on every navigation AND whenever the setting changes, because a page already open
+     * would otherwise keep drawing a chevron the user has just switched away from until they
+     * happened to navigate. The value is an enum's own name, so there is nothing to escape.
+     */
+    fun styleUpdate(style: SwipeNavStyle): String = "window.$STYLE_PROPERTY = '${style.settingValue}';"
 
     private fun loadResource(path: String): String =
         try {

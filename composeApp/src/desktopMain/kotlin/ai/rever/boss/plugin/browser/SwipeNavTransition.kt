@@ -32,11 +32,26 @@ internal const val SLIDE_DURATION_MS = 220
  */
 private const val INCOMING_PARALLAX = 0.28f
 
+/** Floor for the settle, so a release a hair from either end is still a movement, not a jump. */
+private const val MIN_SETTLE_MS = 60
+
+/** Where a tracked transition is in its life. */
+internal enum class SwipePhase {
+    /** Following the finger. Progress is whatever the page last reported. */
+    TRACKING,
+
+    /** The gesture committed; run out to 1 and navigate. */
+    COMMITTING,
+
+    /** The gesture was abandoned; run back to 0 and put the page back. */
+    CANCELLING,
+}
+
 /** One page transition in flight. */
 internal data class SwipeTransition(
     /** The page being arrived at, captured when it was last left. Null if it was never captured. */
     val incoming: ImageBitmap?,
-    /** The page being left, captured at the moment the gesture committed. */
+    /** The page being left, captured when the gesture was recognised. */
     val outgoing: ImageBitmap?,
     val direction: SwipeNavDirection,
 ) {
@@ -64,26 +79,38 @@ internal data class SwipeTransition(
  *
  * Both pages are frozen images for the duration, which is also what Safari does - a page cannot be
  * live while it is sliding, because the one arriving has not loaded yet.
+ *
+ * **[tracked] is the finger, not an animation.** While the phase is [SwipePhase.TRACKING] this
+ * draws exactly where the page says the gesture is, with no easing of its own: an animation
+ * chasing a live value is what makes a tracked gesture feel like rubber. Easing is only for the
+ * settle at the end, once the finger has stopped having an opinion.
  */
 @Composable
 internal fun SwipeSlide(
     transition: SwipeTransition,
-    onFinished: () -> Unit,
+    phase: SwipePhase,
+    tracked: Float,
+    onSettled: (SwipePhase) -> Unit,
 ) {
-    val progress = remember(transition) { Animatable(0f) }
+    val settle = remember(transition) { Animatable(0f) }
     var paneWidthPx by remember(transition) { mutableStateOf(0f) }
+    var settling by remember(transition) { mutableStateOf(false) }
 
-    LaunchedEffect(transition, paneWidthPx) {
-        // Waiting for a measured width matters: starting at 0 would play the whole animation in the
-        // first frame, before layout, and the transition would be a flicker.
-        if (paneWidthPx <= 0f) return@LaunchedEffect
-        progress.animateTo(1f, tween(SLIDE_DURATION_MS, easing = FastOutSlowInEasing))
-        onFinished()
+    LaunchedEffect(transition, phase, paneWidthPx) {
+        if (paneWidthPx <= 0f || phase == SwipePhase.TRACKING) return@LaunchedEffect
+        val target = if (phase == SwipePhase.COMMITTING) 1f else 0f
+        settle.snapTo(tracked)
+        settling = true
+        // Proportional to the distance left, so releasing just short of the commit point does not
+        // take as long as releasing at the very start. A fixed duration reads as sticky there.
+        val remaining = kotlin.math.abs(target - tracked).coerceAtLeast(0.05f)
+        val duration = (SLIDE_DURATION_MS * remaining).toInt().coerceAtLeast(MIN_SETTLE_MS)
+        settle.animateTo(target, tween(duration, easing = FastOutSlowInEasing))
+        onSettled(phase)
     }
 
-    // Going back, the page on top moves right and the one behind follows it in from the left.
     val sign = if (transition.direction == SwipeNavDirection.BACK) 1f else -1f
-    val eased = progress.value
+    val position = if (settling) settle.value else tracked
 
     Box(
         modifier =
@@ -103,7 +130,7 @@ internal fun SwipeSlide(
                 modifier =
                     Modifier
                         .fillMaxSize()
-                        .graphicsLayer { translationX = -sign * paneWidthPx * INCOMING_PARALLAX * (1f - eased) },
+                        .graphicsLayer { translationX = -sign * paneWidthPx * INCOMING_PARALLAX * (1f - position) },
             )
         }
         transition.outgoing?.let { frame ->
@@ -115,7 +142,7 @@ internal fun SwipeSlide(
                     Modifier
                         .fillMaxSize()
                         .graphicsLayer {
-                            translationX = sign * paneWidthPx * eased
+                            translationX = sign * paneWidthPx * position
                             // A soft edge so the moving page reads as being above the other one
                             // rather than as a cut between two images.
                             shadowElevation = 24f

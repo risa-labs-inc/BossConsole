@@ -61,6 +61,9 @@ function newPage(js, options = {}) {
   const listeners = {};
   const navigated = [];
   const registrations = [];
+  const progressCalls = [];
+  let cancels = 0;
+  const rafQueue = [];
   let clockMs = 1000;
   let preventedDefaults = 0;
 
@@ -166,7 +169,18 @@ function newPage(js, options = {}) {
   };
   sandbox.window.top = options.subframe ? {} : sandbox.window;
   sandbox.document = sandbox.window.document;
-  sandbox.window[hostProps.bridge] = { navigate: (d) => navigated.push(d) };
+  sandbox.window.requestAnimationFrame = (fn) => {
+    rafQueue.push(fn);
+    return rafQueue.length;
+  };
+  sandbox.window[hostProps.bridge] = {
+    navigate: (d) => navigated.push(d),
+    progress: (d, v) => progressCalls.push([d, Number(v.toFixed(3))]),
+    cancel: () => {
+      cancels += 1;
+    },
+  };
+  if (options.style) sandbox.window.__bossSwipeNavStyle = options.style;
   if (options.state !== null) {
     sandbox.window[hostProps.state] = options.state || { back: true, forward: true };
   }
@@ -218,6 +232,14 @@ function newPage(js, options = {}) {
     liveOverlays: () => body.children.length,
     preventedDefaults: () => preventedDefaults,
     installed: () => (listeners.wheel || []).length,
+    progressCalls,
+    cancels: () => cancels,
+    // Run the frame callbacks the script queued. Progress is rAF-throttled, so nothing is reported
+    // until a frame happens - which is the behaviour under test, not an artefact of the harness.
+    frame: () => {
+      const due = rafQueue.splice(0, rafQueue.length);
+      due.forEach((fn) => fn());
+    },
   };
 }
 
@@ -353,6 +375,53 @@ console.log('\ngestures that must not navigate');
 {
   const p = newPage(js, { subframe: true });
   check('a subframe installs nothing at all', p.installed() === 0, p.installed());
+}
+
+console.log('\nthe slide style');
+{
+  const p = newPage(js, { style: 'slide' });
+  p.swipe(6, -10);
+  check('reports nothing until a frame happens', p.progressCalls.length === 0, p.progressCalls.length);
+  p.frame();
+  check('then reports once', p.progressCalls.length === 1, p.progressCalls.length);
+  eq('with the direction and how far along', p.progressCalls[0][0], 'back');
+  check('progress between 0 and 1', p.progressCalls[0][1] > 0 && p.progressCalls[0][1] < 1, p.progressCalls[0][1]);
+  check('and draws no chevron of its own', p.liveOverlays() === 0, p.liveOverlays());
+}
+{
+  // Many events, one frame: the throttle is the whole point, since every call is an IPC round trip
+  // during the one gesture that has to stay smooth.
+  const p = newPage(js, { style: 'slide' });
+  p.swipe(30, -1);
+  p.frame();
+  check('a burst of events is one report', p.progressCalls.length === 1, p.progressCalls.length);
+}
+{
+  const p = newPage(js, { style: 'slide' });
+  p.swipe(12, -10);
+  eq('a committed slide still navigates', p.navigated, ['back']);
+}
+{
+  const p = newPage(js, { style: 'slide' });
+  p.swipe(6, -10);
+  p.frame();
+  p.settle();
+  check('a lifted finger cancels, so the host slides back', p.cancels() === 1, p.cancels());
+}
+{
+  const p = newPage(js, { style: 'slide' });
+  const carousel = p.element({ scrollWidth: 1200, clientWidth: 400, scrollLeft: 300, overflowX: 'auto' });
+  p.swipe(12, -10, 0, carousel);
+  check('a gesture the page took never starts one', p.cancels() === 0, p.cancels());
+  p.frame();
+  check('and reports no progress', p.progressCalls.length === 0, p.progressCalls.length);
+}
+{
+  const p = newPage(js);
+  p.swipe(6, -10);
+  p.frame();
+  check('the chevron style reports no progress', p.progressCalls.length === 0, p.progressCalls.length);
+  check('and draws its chevron', p.liveOverlays() === 1, p.liveOverlays());
 }
 
 console.log('\nthe affordance');

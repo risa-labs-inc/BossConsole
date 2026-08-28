@@ -28,6 +28,10 @@ internal enum class SwipeNavDirection { BACK, FORWARD }
  */
 internal class BrowserSwipeNavBridge(
     private val onNavigate: (SwipeNavDirection) -> Unit,
+    /** How far a slide has been dragged, 0..1. Only called while that style is selected. */
+    private val onProgress: (SwipeNavDirection, Float) -> Unit = { _, _ -> },
+    /** The gesture ended without committing, so whatever was drawn should slide back. */
+    private val onCancel: () -> Unit = {},
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) {
     private val logger = BossLogger.forComponent("BrowserSwipeNavBridge")
@@ -49,6 +53,45 @@ internal class BrowserSwipeNavBridge(
             // Never propagate into the page's JS thread: a throw here surfaces in the site's own
             // console and can break its JS. Error is deliberately NOT included, so a fatal process
             // condition still escapes.
+            reportFailure(e)
+        }
+    }
+
+    /**
+     * How far the finger has dragged, reported at most once per animation frame by the page.
+     *
+     * Only the host can draw this style - it owns the two page images - so the page sends the one
+     * thing it knows. Clamped here rather than trusted: the value crosses from a page that is free
+     * to send anything, and a translation driven by a wild number would throw the frame off screen.
+     */
+    @JsAccessible
+    fun progress(
+        direction: String?,
+        value: Double,
+    ) {
+        try {
+            val parsed = parseSwipeNavDirection(direction) ?: return
+            if (value.isNaN()) return
+            onProgress(parsed, value.coerceIn(0.0, 1.0).toFloat())
+        } catch (e: LinkageError) {
+            reportFailure(e)
+        } catch (
+            @Suppress("TooGenericExceptionCaught") e: Exception,
+        ) {
+            reportFailure(e)
+        }
+    }
+
+    /** The gesture was abandoned or the fingers lifted. */
+    @JsAccessible
+    fun cancel() {
+        try {
+            onCancel()
+        } catch (e: LinkageError) {
+            reportFailure(e)
+        } catch (
+            @Suppress("TooGenericExceptionCaught") e: Exception,
+        ) {
             reportFailure(e)
         }
     }

@@ -97,6 +97,48 @@ class BrowserSwipeNavTest {
     }
 
     @Test
+    fun `progress is clamped rather than trusted`() {
+        // The value crosses from a page free to send anything, and a translation driven by a wild
+        // number throws the frame off screen rather than failing loudly.
+        val seen = mutableListOf<Float>()
+        val bridge = BrowserSwipeNavBridge(onNavigate = {}, onProgress = { _, v -> seen += v })
+        bridge.progress("back", -3.0)
+        bridge.progress("back", 0.5)
+        bridge.progress("back", 42.0)
+        assertEquals(listOf(0f, 0.5f, 1f), seen)
+    }
+
+    @Test
+    fun `progress with no usable direction is dropped`() {
+        val seen = mutableListOf<Float>()
+        val bridge = BrowserSwipeNavBridge(onNavigate = {}, onProgress = { _, v -> seen += v })
+        bridge.progress("sideways", 0.5)
+        bridge.progress(null, 0.5)
+        bridge.progress("back", Double.NaN)
+        assertTrue(seen.isEmpty(), seen.toString())
+    }
+
+    @Test
+    fun `a throwing progress or cancel handler never escapes into the page`() {
+        val bridge =
+            BrowserSwipeNavBridge(
+                onNavigate = {},
+                onProgress = { _, _ -> error("boom") },
+                onCancel = { error("boom") },
+            )
+        bridge.progress("back", 0.5)
+        bridge.cancel()
+    }
+
+    @Test
+    fun `the style is pushed on the property the script reads`() {
+        assertEquals(
+            "window.${BrowserSwipeNavScript.STYLE_PROPERTY} = 'slide';",
+            BrowserSwipeNavScript.styleUpdate(SwipeNavStyle.SLIDE),
+        )
+    }
+
+    @Test
     fun `a throwing handler never escapes into the page`() {
         val bridge = BrowserSwipeNavBridge(onNavigate = { error("handler blew up") })
         bridge.navigate("back")
@@ -155,6 +197,10 @@ class BrowserSwipeNavTest {
         assertTrue(
             source.contains(BrowserSwipeNavScript.STATE_PROPERTY),
             "the packaged script does not name ${BrowserSwipeNavScript.STATE_PROPERTY}",
+        )
+        assertTrue(
+            source.contains(BrowserSwipeNavScript.STYLE_PROPERTY),
+            "the packaged script does not name ${BrowserSwipeNavScript.STYLE_PROPERTY}",
         )
     }
 }
