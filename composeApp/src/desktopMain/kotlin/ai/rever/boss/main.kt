@@ -306,11 +306,11 @@ fun main(args: Array<String>) {
     ai.rever.boss.config.ChromiumFlagsSettingsManager
         .applyToSystemProperties()
 
-    // The swipe style, published for the browser PLUGIN rather than for a ConfigLoader read site.
+    // The swipe setting, published for the browser PLUGIN rather than for a ConfigLoader read site.
     // It runs in this process but in another repo, and PluginContext.settingsProvider only opens
     // the Settings window - it reads nothing - so a system property is the only channel the two
-    // halves of this gesture share. Unlike the flags above this one is republished whenever the
-    // setting changes, because it is read per gesture and must not need a relaunch.
+    // halves of this gesture share. Republished whenever the setting changes, because it is read
+    // per gesture and must not need a relaunch.
     ai.rever.boss.config.SwipeNavSettingsManager
         .publish()
 

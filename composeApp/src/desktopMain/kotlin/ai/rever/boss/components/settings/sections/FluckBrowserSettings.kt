@@ -11,7 +11,6 @@ import ai.rever.boss.components.settings.shared.SettingsTheme.TextPrimary
 import ai.rever.boss.components.settings.shared.SettingsTheme.TextSecondary
 import ai.rever.boss.components.settings.shared.SettingsToggle
 import ai.rever.boss.config.SwipeNavSettingsManager
-import ai.rever.boss.config.SwipeNavStyle
 import ai.rever.boss.plugin.browser.BrowserSettings
 import ai.rever.boss.plugin.browser.BrowserSettingsManager
 import ai.rever.boss.plugin.ui.BossAlertDialog
@@ -34,19 +33,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
-
-/**
- * Display names for [SwipeNavStyle], kept beside the control that shows them.
- *
- * A map rather than a `when`, so the dropdown's options and the reverse lookup from the chosen
- * label are the same list and cannot disagree about what a label means.
- */
-private val swipeStyleLabels =
-    linkedMapOf(
-        SwipeNavStyle.OFF to "Off",
-        SwipeNavStyle.CHEVRON to "Chevron",
-        SwipeNavStyle.SLIDE to "Slide",
-    )
 
 @Composable
 fun FluckBrowserSettings() {
@@ -97,25 +83,20 @@ fun FluckBrowserSettings() {
         if (SystemUtils.isMacOS) {
             SettingsSection(title = "Trackpad") {
                 val envOverride = SwipeNavSettingsManager.envOverride()
-                var style by remember { mutableStateOf(SwipeNavSettingsManager.current()) }
-                SettingsDropdown(
-                    label = "Two-finger swipe",
-                    options = swipeStyleLabels.values.toList(),
-                    selectedOption = swipeStyleLabels.getValue(style),
-                    onOptionSelected = { label ->
-                        swipeStyleLabels.entries.firstOrNull { it.value == label }?.key?.let {
-                            style = it
-                            SwipeNavSettingsManager.set(it)
-                        }
+                var swipeEnabled by remember { mutableStateOf(SwipeNavSettingsManager.isEnabled()) }
+                SettingsToggle(
+                    label = "Two-finger swipe navigation",
+                    checked = swipeEnabled,
+                    onCheckedChange = {
+                        swipeEnabled = it
+                        SwipeNavSettingsManager.set(it)
                     },
                     // Disabled rather than silently ignored: a user with the variable exported
                     // would otherwise watch this control do nothing and conclude it is broken.
                     enabled = envOverride == null,
                     description =
                         envOverride?.let { "Set by ${SwipeNavSettingsManager.KEY}=$it in the environment" }
-                            ?: "Swipe right to go back, left to go forward. " +
-                            "Slide animates the pages; it holds a downscaled image of the last two " +
-                            "pages per tab, so it costs a few megabytes each.",
+                            ?: "Swipe right with two fingers to go back, left to go forward.",
                 )
             }
         }

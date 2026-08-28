@@ -1,7 +1,6 @@
 package ai.rever.boss.plugin.browser
 
 import ai.rever.boss.config.SwipeNavSettingsManager
-import ai.rever.boss.config.SwipeNavStyle
 import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -13,9 +12,8 @@ import ai.rever.boss.utils.logging.LogCategory
  * `HARDWARE_ACCELERATED` rendering mode the browser is a native surface layered over the window
  * rather than a component in the Compose scene, so Compose never sees the wheel (the same fact
  * [shouldAllowPinch] documents at length). Chromium's own overscroll history navigation is already
- * switched on in `BrowserServiceImpl` and does nothing for a trackpad in EITHER rendering mode -
- * measured, see the note at that call site; it is a touchscreen feature. What is left is the
- * renderer: it sees every wheel event, because that is how pages scroll.
+ * switched on in `BrowserServiceImpl`, but it is an Aura feature and does not exist on the Mac
+ * port. What is left is the renderer: it sees every wheel event, because that is how pages scroll.
  *
  * So the gesture is detected in the page and reported back through [BrowserSwipeNavBridge]. That
  * placement is not only a workaround - it is also where the question "would this scroll have gone
@@ -34,9 +32,6 @@ internal object BrowserSwipeNavScript {
     /** Property the host pushes navigability onto. Matched by the script. */
     const val STATE_PROPERTY: String = "__bossSwipeNavState"
 
-    /** Property the host pushes the presentation onto. Matched by the script. */
-    const val STYLE_PROPERTY: String = "__bossSwipeNavStyle"
-
     /** Lazily-loaded gesture script (cached for the process lifetime). */
     val source: String by lazy { loadResource("/browser/swipe-nav.js") }
 
@@ -47,7 +42,7 @@ internal object BrowserSwipeNavScript {
      * trackpad swipe means back/forward there and nothing in particular on Windows or Linux, where
      * it is an ordinary horizontal scroll that users expect to scroll.
      */
-    fun isEnabled(): Boolean = swipeNavEnabled(SystemUtils.isMacOS, SwipeNavSettingsManager.current())
+    fun isEnabled(): Boolean = swipeNavEnabled(SystemUtils.isMacOS, SwipeNavSettingsManager.isEnabled())
 
     /**
      * Statement that sets the direction availability the script gates on.
@@ -63,15 +58,6 @@ internal object BrowserSwipeNavScript {
         canGoBack: Boolean,
         canGoForward: Boolean,
     ): String = "window.$STATE_PROPERTY = { back: $canGoBack, forward: $canGoForward };"
-
-    /**
-     * Statement that sets the presentation.
-     *
-     * Pushed on every navigation AND whenever the setting changes, because a page already open
-     * would otherwise keep drawing a chevron the user has just switched away from until they
-     * happened to navigate. The value is an enum's own name, so there is nothing to escape.
-     */
-    fun styleUpdate(style: SwipeNavStyle): String = "window.$STYLE_PROPERTY = '${style.settingValue}';"
 
     private fun loadResource(path: String): String =
         try {
@@ -98,5 +84,5 @@ internal object BrowserSwipeNavScript {
  */
 internal fun swipeNavEnabled(
     isMac: Boolean,
-    style: SwipeNavStyle,
-): Boolean = isMac && style != SwipeNavStyle.OFF
+    enabled: Boolean,
+): Boolean = isMac && enabled

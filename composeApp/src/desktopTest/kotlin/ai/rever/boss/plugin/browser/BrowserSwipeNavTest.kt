@@ -1,7 +1,6 @@
 package ai.rever.boss.plugin.browser
 
-import ai.rever.boss.config.SwipeNavStyle
-import ai.rever.boss.config.parseSwipeNavStyle
+import ai.rever.boss.config.parseSwipeNavEnabled
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -21,39 +20,30 @@ class BrowserSwipeNavTest {
 
     @Test
     fun `on by default on macOS`() {
-        assertTrue(swipeNavEnabled(isMac = true, style = SwipeNavStyle.CHEVRON))
-        assertTrue(swipeNavEnabled(isMac = true, style = SwipeNavStyle.SLIDE))
+        assertTrue(swipeNavEnabled(isMac = true, enabled = true))
     }
 
     @Test
-    fun `off everywhere else, whatever the style says`() {
-        assertFalse(swipeNavEnabled(isMac = false, style = SwipeNavStyle.CHEVRON))
-        assertFalse(swipeNavEnabled(isMac = false, style = SwipeNavStyle.SLIDE))
+    fun `off everywhere else`() {
+        assertFalse(swipeNavEnabled(isMac = false, enabled = true))
     }
 
     @Test
-    fun `the off style turns it off`() {
-        assertFalse(swipeNavEnabled(isMac = true, style = SwipeNavStyle.OFF))
-    }
-
-    @Test
-    fun `every style spelling the setting writes round-trips`() {
-        for (style in SwipeNavStyle.entries) {
-            assertEquals(style, parseSwipeNavStyle(style.settingValue), style.name)
-        }
+    fun `the setting turns it off`() {
+        assertFalse(swipeNavEnabled(isMac = true, enabled = false))
     }
 
     /**
-     * The key shipped as an on/off switch before it grew a third state, so someone has `true` or
-     * `false` exported. Dropping those spellings would silently change what their shell says.
+     * The key was documented as an env-var on/off switch before it had a Settings row, so someone
+     * has one of these exported. Dropping a spelling would silently change what their shell says.
      */
     @Test
-    fun `legacy boolean spellings still parse`() {
+    fun `every documented spelling still parses`() {
         for (value in listOf("false", "0", "no", "off", "FALSE", " off ")) {
-            assertEquals(SwipeNavStyle.OFF, parseSwipeNavStyle(value), value)
+            assertEquals(false, parseSwipeNavEnabled(value), value)
         }
         for (value in listOf("true", "1", "yes", "on", "TRUE")) {
-            assertEquals(SwipeNavStyle.CHEVRON, parseSwipeNavStyle(value), value)
+            assertEquals(true, parseSwipeNavEnabled(value), value)
         }
     }
 
@@ -63,9 +53,9 @@ class BrowserSwipeNavTest {
      */
     @Test
     fun `an unparseable value is no opinion, not off`() {
-        assertNull(parseSwipeNavStyle("maybe"))
-        assertNull(parseSwipeNavStyle(""))
-        assertNull(parseSwipeNavStyle(null))
+        assertNull(parseSwipeNavEnabled("maybe"))
+        assertNull(parseSwipeNavEnabled(""))
+        assertNull(parseSwipeNavEnabled(null))
     }
 
     // --- What the bridge accepts from a page -------------------------------------------------
@@ -94,48 +84,6 @@ class BrowserSwipeNavTest {
         bridge.navigate(null)
         bridge.navigate("forward")
         assertEquals(listOf(SwipeNavDirection.BACK, SwipeNavDirection.FORWARD), seen)
-    }
-
-    @Test
-    fun `progress is clamped rather than trusted`() {
-        // The value crosses from a page free to send anything, and a translation driven by a wild
-        // number throws the frame off screen rather than failing loudly.
-        val seen = mutableListOf<Float>()
-        val bridge = BrowserSwipeNavBridge(onNavigate = {}, onProgress = { _, v -> seen += v })
-        bridge.progress("back", -3.0)
-        bridge.progress("back", 0.5)
-        bridge.progress("back", 42.0)
-        assertEquals(listOf(0f, 0.5f, 1f), seen)
-    }
-
-    @Test
-    fun `progress with no usable direction is dropped`() {
-        val seen = mutableListOf<Float>()
-        val bridge = BrowserSwipeNavBridge(onNavigate = {}, onProgress = { _, v -> seen += v })
-        bridge.progress("sideways", 0.5)
-        bridge.progress(null, 0.5)
-        bridge.progress("back", Double.NaN)
-        assertTrue(seen.isEmpty(), seen.toString())
-    }
-
-    @Test
-    fun `a throwing progress or cancel handler never escapes into the page`() {
-        val bridge =
-            BrowserSwipeNavBridge(
-                onNavigate = {},
-                onProgress = { _, _ -> error("boom") },
-                onCancel = { error("boom") },
-            )
-        bridge.progress("back", 0.5)
-        bridge.cancel()
-    }
-
-    @Test
-    fun `the style is pushed on the property the script reads`() {
-        assertEquals(
-            "window.${BrowserSwipeNavScript.STYLE_PROPERTY} = 'slide';",
-            BrowserSwipeNavScript.styleUpdate(SwipeNavStyle.SLIDE),
-        )
     }
 
     @Test
@@ -197,10 +145,6 @@ class BrowserSwipeNavTest {
         assertTrue(
             source.contains(BrowserSwipeNavScript.STATE_PROPERTY),
             "the packaged script does not name ${BrowserSwipeNavScript.STATE_PROPERTY}",
-        )
-        assertTrue(
-            source.contains(BrowserSwipeNavScript.STYLE_PROPERTY),
-            "the packaged script does not name ${BrowserSwipeNavScript.STYLE_PROPERTY}",
         )
     }
 }

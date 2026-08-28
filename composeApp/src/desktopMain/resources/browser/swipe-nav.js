@@ -49,9 +49,6 @@
     // Set once the navigation has fired, so one continuous swipe navigates exactly once.
     var committed = false;
     var direction = 0;
-    // True once the host has been told a slide is under way, so it is told exactly once when the
-    // gesture ends - whether that end is a commit, an abandon or a lifted finger.
-    var tracking = false;
     // Ends the gesture when the fingers lift.
     //
     // The gap check at the top of onWheel cannot do this on its own: it only runs when a NEXT
@@ -62,65 +59,6 @@
 
     function state() {
         return w.__bossSwipeNavState || null;
-    }
-
-    // 'chevron' draws the puck below; 'slide' hands progress to the host, which animates the two
-    // pages itself because only it can capture them. Pushed by the host beside the state, and read
-    // per gesture so changing the setting does not need a reload.
-    function style() {
-        return w.__bossSwipeNavStyle === 'slide' ? 'slide' : 'chevron';
-    }
-
-    // Progress is reported at most once per animation frame. Every call crosses the renderer's IPC
-    // boundary into the host, and a trackpad can emit events faster than the screen refreshes, so
-    // an unthrottled stream buys nothing visible and costs round trips during the one gesture that
-    // has to stay smooth.
-    var progressPending = null;
-    var progressScheduled = false;
-
-    function flushProgress() {
-        progressScheduled = false;
-        var pending = progressPending;
-        progressPending = null;
-        if (!pending) {
-            return;
-        }
-        var bridge = w.__bossSwipeNav;
-        if (!bridge || typeof bridge.progress !== 'function') {
-            return;
-        }
-        try {
-            bridge.progress(pending.dir < 0 ? 'back' : 'forward', pending.value);
-        } catch (e) {
-            // A host that predates the tracking protocol has no progress method. The commit call
-            // still works, so the gesture degrades to firing at the end rather than breaking.
-        }
-    }
-
-    function reportProgress(dir, value) {
-        progressPending = { dir: dir, value: value };
-        if (progressScheduled) {
-            return;
-        }
-        progressScheduled = true;
-        if (typeof w.requestAnimationFrame === 'function') {
-            w.requestAnimationFrame(flushProgress);
-        } else {
-            w.setTimeout(flushProgress, 16);
-        }
-    }
-
-    function reportCancel() {
-        progressPending = null;
-        var bridge = w.__bossSwipeNav;
-        if (!bridge || typeof bridge.cancel !== 'function') {
-            return;
-        }
-        try {
-            bridge.cancel();
-        } catch (e) {
-            // Same as above: an older host simply never started a transition to cancel.
-        }
     }
 
     function available(dir) {
@@ -305,10 +243,6 @@
         if (host) {
             hideAffordance(direction);
         }
-        if (tracking) {
-            tracking = false;
-            reportCancel();
-        }
         accumX = 0;
         accumY = 0;
         eventCount = 0;
@@ -323,12 +257,6 @@
         rejected = true;
         if (host) {
             hideAffordance(direction);
-        }
-        // Only if this gesture actually started one. Cancelling unconditionally would tell the host
-        // to slide back on every rejected horizontal scroll, including ones it never drew.
-        if (tracking) {
-            tracking = false;
-            reportCancel();
         }
     }
 
@@ -414,19 +342,11 @@
         }
 
         var progress = Math.abs(accumX) / COMMIT_PX;
-        if (style() === 'slide') {
-            // The host owns the picture in this style: it has the two page images and this does
-            // not, so all the page can usefully send is how far the finger has gone.
-            tracking = true;
-            reportProgress(direction, progress > 1 ? 1 : progress);
-        } else {
-            showAffordance(direction);
-            trackAffordance(direction, progress);
-        }
+        showAffordance(direction);
+        trackAffordance(direction, progress);
 
         if (progress >= 1) {
             committed = true;
-            tracking = false;
             hideAffordance(direction);
             navigate(direction);
         }

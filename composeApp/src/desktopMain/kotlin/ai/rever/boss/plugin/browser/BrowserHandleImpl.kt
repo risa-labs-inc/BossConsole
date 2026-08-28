@@ -5,8 +5,6 @@ import ai.rever.boss.components.overlays.OverlayCorner
 import ai.rever.boss.components.overlays.overlayCornerIsHeavyweight
 import ai.rever.boss.components.window_panel.components.main_window_panels.LocalInMainWindowPanel
 import ai.rever.boss.config.JxBrowserConfig
-import ai.rever.boss.config.SwipeNavSettingsManager
-import ai.rever.boss.config.SwipeNavStyle
 import ai.rever.boss.dashboard.RecentBrowserPagesManager
 import ai.rever.boss.plugin.api.BrowserNavigationType
 import ai.rever.boss.plugin.api.LocalIsPanelActive
@@ -34,7 +32,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
@@ -308,26 +305,7 @@ internal class BrowserHandleImpl(
     @Volatile private var lastSwipeNavAt = 0L
 
     /** Receives committed two-finger swipes from the page. See [BrowserSwipeNavScript]. */
-    private val swipeNavBridge =
-        BrowserSwipeNavBridge(
-            onNavigate = ::onSwipeNavigate,
-            onProgress = ::onSwipeProgress,
-            onCancel = ::onSwipeCancel,
-        )
-
-    // Frames of pages this tab has been on, for the slide transition. Only populated while that
-    // style is selected, so a user on the chevron pays neither the capture nor the memory.
-    private val pageSnapshots = PageSnapshots()
-
-    // The transition in flight, read by Content(). Compose state rather than @Volatile because the
-    // composition is its only reader and it must recompose when it changes.
-    private var activeTransition by mutableStateOf<SwipeTransition?>(null)
-    private var transitionPhase by mutableStateOf(SwipePhase.TRACKING)
-    private var transitionProgress by mutableStateOf(0f)
-
-    // Guards the one-shot preparation. Progress arrives every frame from a JxBrowser thread, and
-    // without this each of those would start its own capture.
-    private val preparingTransition = AtomicBoolean(false)
+    private val swipeNavBridge = BrowserSwipeNavBridge(onNavigate = ::onSwipeNavigate)
 
     private val disposed = AtomicBoolean(false)
 
@@ -783,7 +761,6 @@ internal class BrowserHandleImpl(
         // unaffected: it's applied per tab on navigation via ZoomSettingsProvider.
         try {
             browser.zoom().mode(ZoomMode.PER_BROWSER)
-            watchSwipeStyle()
         } catch (e: Exception) {
             logger.warn(LogCategory.BROWSER, "Could not set per-browser zoom mode", error = e)
         }
@@ -1204,10 +1181,6 @@ internal class BrowserHandleImpl(
                             ensureActive()
                             rendererPid.onCommit(pid)
                             if (injectTarget != null) injectPageHelpers(injectTarget)
-                            // After injection rather than before: this is a several-megabyte
-                            // copy and the page helpers are what the user can actually notice
-                            // waiting for.
-                            captureCurrentPage()
                         }
                     pageInjectJob.getAndSet(followUp)?.cancel()
                 }
@@ -1787,7 +1760,6 @@ internal class BrowserHandleImpl(
                     canGoForward = browser.navigation().canGoForward(),
                 ),
             )
-            frame.executeJavaScript<Any?>(BrowserSwipeNavScript.styleUpdate(SwipeNavSettingsManager.current()))
             frame.executeJavaScript<Any?>(BrowserSwipeNavScript.source)
         } catch (e: Exception) {
             // The exception CLASS, not its message, for the reason the collector above gives.
@@ -1800,146 +1772,21 @@ internal class BrowserHandleImpl(
     }
 
     /**
-     * Keep an already-open page's copy of the style current.
-     *
-     * Without this the page keeps whatever was pushed at its last navigation, so switching from
-     * chevron to slide leaves the tab you are looking at still drawing a chevron until you happen
-     * to navigate - which is exactly the tab you would test the change on.
-     */
-    private fun watchSwipeStyle() {
-        pageEventScope.launch {
-            SwipeNavSettingsManager.settings.collect {
-                if (!isValid || !BrowserSwipeNavScript.isEnabled()) return@collect
-                val statement = BrowserSwipeNavScript.styleUpdate(SwipeNavSettingsManager.current())
-                pageInjectScope.launch(pageInjectDispatcher) {
-                    runCatching { browser.mainFrame().ifPresent { it.executeJavaScript<Any?>(statement) } }
-                }
-            }
-        }
-    }
-
-    /**
      * A committed two-finger swipe, arriving from the page's JS thread.
      *
      * Posted onto [pageInjectScope] rather than acted on here: [BrowserSwipeNavBridge] promises the
-     * renderer it will not block, and `goBack()` is a round trip into the browser - as is the page
-     * capture the slide style needs.
+     * renderer it will not block, and `goBack()` is a round trip into the browser.
      */
     private fun onSwipeNavigate(direction: SwipeNavDirection) {
         val now = System.currentTimeMillis()
         if (!isValid || !shouldAcceptSwipeNav(now, lastSwipeNavAt)) return
         lastSwipeNavAt = now
-        // A tracked slide is already on screen; it only has to run out and navigate when it lands.
-        // Everything else navigates straight away, which is the chevron's behaviour.
-        if (activeTransition != null) {
-            transitionPhase = SwipePhase.COMMITTING
-            return
-        }
-        pageInjectScope.launch(pageInjectDispatcher) { navigate(direction) }
-    }
-
-    /**
-     * How far the finger has dragged, arriving from the page every animation frame.
-     *
-     * The first report of a gesture is what prepares the transition, not the commit: a slide that
-     * only appeared at the end would not be tracking anything. Preparation is one capture and one
-     * lookup, done off this thread, and [preparingTransition] makes it happen once - the reports
-     * keep coming while it runs.
-     */
-    private fun onSwipeProgress(
-        direction: SwipeNavDirection,
-        value: Float,
-    ) {
-        if (!isValid) return
-        transitionProgress = value
-        if (activeTransition != null || !preparingTransition.compareAndSet(false, true)) return
         pageInjectScope.launch(pageInjectDispatcher) {
-            val transition = buildTransition(direction)
-            withContext(Dispatchers.Main) {
-                if (transition != null && preparingTransition.get()) {
-                    transitionPhase = SwipePhase.TRACKING
-                    activeTransition = transition
-                } else {
-                    // Nothing to draw - most often because this page was never captured, which is
-                    // every first swipe after the style is switched on. The gesture still works;
-                    // it just commits without a picture.
-                    preparingTransition.set(false)
-                }
+            when (direction) {
+                SwipeNavDirection.BACK -> goBack()
+                SwipeNavDirection.FORWARD -> goForward()
             }
         }
-    }
-
-    /** The gesture was abandoned, so the page slides back and the live view returns. */
-    private fun onSwipeCancel() {
-        if (activeTransition == null) {
-            preparingTransition.set(false)
-            return
-        }
-        transitionPhase = SwipePhase.CANCELLING
-    }
-
-    /** The settle animation finished. Commit navigates; a cancel just puts the live view back. */
-    private fun onTransitionSettled(phase: SwipePhase) {
-        val direction = activeTransition?.direction
-        activeTransition = null
-        transitionProgress = 0f
-        transitionPhase = SwipePhase.TRACKING
-        preparingTransition.set(false)
-        if (phase == SwipePhase.COMMITTING && direction != null) {
-            pageInjectScope.launch(pageInjectDispatcher) { navigate(direction) }
-        }
-    }
-
-    private fun navigate(direction: SwipeNavDirection) {
-        when (direction) {
-            SwipeNavDirection.BACK -> goBack()
-            SwipeNavDirection.FORWARD -> goForward()
-        }
-    }
-
-    /**
-     * Assemble the two frames for a slide, or null if it cannot be drawn.
-     *
-     * The incoming page has to have been captured on the way out ([captureCurrentPage]); the
-     * outgoing one is captured here, at the moment of the gesture, because it is on screen. A
-     * missing frame means no transition and a plain navigation - never a half-drawn one.
-     *
-     * Runs on [pageInjectDispatcher]: `browser.bitmap()` is a blocking round trip.
-     */
-    private fun buildTransition(direction: SwipeNavDirection): SwipeTransition? =
-        runCatching {
-            val navigation = browser.navigation()
-            val targetIndex =
-                when (direction) {
-                    SwipeNavDirection.BACK -> navigation.currentEntryIndex() - 1
-                    SwipeNavDirection.FORWARD -> navigation.currentEntryIndex() + 1
-                }
-            val incoming = pageSnapshots.get(targetIndex) ?: return null
-            val outgoing = currentPageFrame() ?: return null
-            SwipeTransition(incoming = incoming, outgoing = outgoing, direction = direction)
-                .takeIf { it.isRenderable }
-        }.getOrNull()
-
-    /** This page as a downscaled frame, or null when the capture is empty or fails. */
-    private fun currentPageFrame(): ImageBitmap? =
-        runCatching {
-            val bitmap = browser.bitmap()
-            val size = bitmap.size()
-            if (size.isEmpty) null else pageFrame(size.width(), size.height(), bitmap.pixels())
-        }.getOrNull()
-
-    /**
-     * Capture the page being left, so a later swipe back to it has something to slide in.
-     *
-     * Gated on the slide style, and that gate is the whole cost story: a capture is a blocking
-     * round trip plus a few megabytes of pixels on every main-frame navigation, which is not a
-     * price to charge someone who chose the chevron or turned the gesture off.
-     */
-    private fun captureCurrentPage() {
-        val wanted = SwipeNavSettingsManager.current() == SwipeNavStyle.SLIDE && BrowserSwipeNavScript.isEnabled()
-        if (!wanted) return
-        val entryIndex = runCatching { browser.navigation().currentEntryIndex() }.getOrNull() ?: return
-        currentPageFrame()?.let { pageSnapshots.put(entryIndex, it) }
     }
 
     // ============================================================
@@ -3443,19 +3290,7 @@ internal class BrowserHandleImpl(
         // platform - OverlayCorner escapes it into its own always-on-top window, because a
         // lightweight overlay renders behind the native GPU surface.
         Box(modifier = Modifier.fillMaxSize()) {
-            val transition = activeTransition
-            if (transition != null) {
-                // The browser view leaves the composition for the duration. See SwipeSlide for why
-                // replacing it beats drawing over it: under HARDWARE_ACCELERATED the page is a
-                // native surface above the Compose scene, so "over it" is not available.
-                SwipeSlide(
-                    transition = transition,
-                    phase = transitionPhase,
-                    tracked = transitionProgress,
-                    onSettled = ::onTransitionSettled,
-                )
-            }
-            viewState?.takeIf { transition == null }?.let { state ->
+            viewState?.let { state ->
                 key(viewGeneration) {
                     BrowserView(
                         state = state,
@@ -3600,7 +3435,6 @@ internal class BrowserHandleImpl(
         // reason the two above give: the thread is daemon and a call already inside JxBrowser
         // cannot be interrupted, so interrupting would buy nothing.
         pageInjectJob.getAndSet(null)?.cancel()
-        pageSnapshots.clear()
         pageInjectScope.cancel()
         pageInjectExecutor.shutdown()
         // Drop this browser's injectors, WITHOUT unclaiming the shared callback slot - that slot
