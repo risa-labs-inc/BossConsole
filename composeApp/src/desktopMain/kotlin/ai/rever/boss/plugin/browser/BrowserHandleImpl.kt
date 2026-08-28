@@ -5,6 +5,7 @@ import ai.rever.boss.components.overlays.OverlayCorner
 import ai.rever.boss.components.overlays.overlayCornerIsHeavyweight
 import ai.rever.boss.components.window_panel.components.main_window_panels.LocalInMainWindowPanel
 import ai.rever.boss.config.JxBrowserConfig
+import ai.rever.boss.config.SwipeNavSettingsManager
 import ai.rever.boss.dashboard.RecentBrowserPagesManager
 import ai.rever.boss.plugin.api.BrowserNavigationType
 import ai.rever.boss.plugin.api.LocalIsPanelActive
@@ -761,6 +762,7 @@ internal class BrowserHandleImpl(
         // unaffected: it's applied per tab on navigation via ZoomSettingsProvider.
         try {
             browser.zoom().mode(ZoomMode.PER_BROWSER)
+            watchSwipeSetting()
         } catch (e: Exception) {
             logger.warn(LogCategory.BROWSER, "Could not set per-browser zoom mode", error = e)
         }
@@ -1756,6 +1758,7 @@ internal class BrowserHandleImpl(
             // page paints already has an answer to gate on.
             frame.executeJavaScript<Any?>(
                 BrowserSwipeNavScript.stateUpdate(
+                    enabled = true,
                     canGoBack = browser.navigation().canGoBack(),
                     canGoForward = browser.navigation().canGoForward(),
                 ),
@@ -1768,6 +1771,32 @@ internal class BrowserHandleImpl(
                 "Swipe navigation injection failed",
                 mapOf("handleId" to id, "error" to (e::class.simpleName ?: "Exception")),
             )
+        }
+    }
+
+    /**
+     * Keep an already-open page's copy of the setting current.
+     *
+     * Without this the page keeps whatever was pushed at its last navigation, so switching the
+     * gesture off leaves the detector running on every tab until each one navigates - including the
+     * tab the user just changed the setting to test. That would make this setting half
+     * restart-scoped, which is exactly what its own KDoc says it is not.
+     *
+     * Only the flag is pushed, not navigability: those two change on different clocks, and pushing
+     * a stale back/forward pair here would be worse than pushing nothing.
+     */
+    private fun watchSwipeSetting() {
+        pageEventScope.launch {
+            SwipeNavSettingsManager.settings.collect {
+                if (!isValid) return@collect
+                val enabled = BrowserSwipeNavScript.isEnabled()
+                val statement =
+                    "window.${BrowserSwipeNavScript.STATE_PROPERTY} = " +
+                        "Object.assign(window.${BrowserSwipeNavScript.STATE_PROPERTY} || {}, { enabled: $enabled });"
+                pageInjectScope.launch(pageInjectDispatcher) {
+                    runCatching { browser.mainFrame().ifPresent { it.executeJavaScript<Any?>(statement) } }
+                }
+            }
         }
     }
 

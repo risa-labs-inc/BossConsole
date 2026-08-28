@@ -92,7 +92,9 @@ function newPage(js, options = {}) {
     );
 
   const body = element({ tagName: 'BODY' });
-  const scroller = element({ tagName: 'HTML' });
+  const scroller = element(
+    Object.assign({ tagName: 'HTML' }, options.root || {}),
+  );
 
   const add = (type, fn, opts) => {
     registrations.push({ type, opts });
@@ -196,8 +198,11 @@ function newPage(js, options = {}) {
     registrations,
     wheel,
     wheelRaw: (event) => (listeners.wheel || []).forEach((f) => f(event)),
-    swipe: (count, dx, dy, over) => {
-      for (let i = 0; i < count; i++) wheel(dx, dy || 0, over);
+    swipe: (count, dx, dy, over, startMs) => {
+      for (let i = 0; i < count; i++) {
+        if (startMs !== undefined) clockMs = startMs + i;
+        wheel(dx, dy || 0, over);
+      }
     },
     advance: (ms) => {
       clockMs += ms;
@@ -215,6 +220,10 @@ function newPage(js, options = {}) {
     },
     pagehide: () => (listeners.pagehide || []).forEach((f) => f()),
     puckHtml: () => (shadowRoots.length ? shadowRoots[shadowRoots.length - 1].innerHTML : null),
+    hostCss: () => {
+      const host = Array.prototype.filter.call(body.children, (c) => c.style && c.style.cssText)[0];
+      return host ? host.style.cssText : '';
+    },
     // How many overlay elements exist. One is created per document and reused, so this is what
     // catches stacking.
     liveOverlays: () => body.children.length,
@@ -404,6 +413,57 @@ console.log("\nChrome's cancellation tiers (history_swiper.mm)");
   eq('and a clean swipe still is not', p.navigated, ['back']);
 }
 
+console.log('\nswitching it off while a page is open');
+{
+  const p = newPage(js, { state: { enabled: false, back: true, forward: true } });
+  p.swipe(12, -10);
+  eq('a page told the gesture is off does nothing', p.navigated, []);
+  check('and draws no chevron', p.visibleOverlays() === 0, p.visibleOverlays());
+}
+{
+  // The host pushes the flag onto the existing state object, so a page loaded before this shipped
+  // has a state with no `enabled` key at all. Absent must mean on, not off.
+  const p = newPage(js, { state: { back: true, forward: true } });
+  p.swipe(12, -10);
+  eq('a state without the flag still works', p.navigated, ['back']);
+}
+
+console.log('\nthe root scroller');
+{
+  // `html { overflow-x: hidden }` with content wider than the viewport. scrollWidth still exceeds
+  // clientWidth under hidden, so a root that skipped the overflow test claimed it could scroll and
+  // killed the forward swipe on every such page, silently.
+  const p = newPage(js, {
+    root: { scrollWidth: 4000, clientWidth: 800, scrollLeft: 0, overflowX: 'hidden' },
+  });
+  p.swipe(12, 10);
+  eq('a root that cannot scroll does not block the swipe', p.navigated, ['forward']);
+}
+{
+  // And the case the special case exists for: an ordinary page whose root really does scroll
+  // sideways still keeps the gesture for itself.
+  const p = newPage(js, {
+    root: { scrollWidth: 4000, clientWidth: 800, scrollLeft: 500, overflowX: 'visible' },
+  });
+  p.swipe(12, -10);
+  eq('a root that can still scroll keeps the gesture', p.navigated, []);
+}
+
+console.log('\na fast flick');
+{
+  // Deltas that grow past the mouse-wheel bound partway through a gesture. Abandoning on those
+  // meant the harder you swiped the less likely it was to work.
+  const p = newPage(js);
+  p.swipe(3, -8);
+  p.swipe(6, -MAX_STEP_PX - 10, 0, undefined, 1_003);
+  eq('a flick that accelerates still commits', p.navigated, ['back']);
+}
+{
+  const p = newPage(js);
+  p.swipe(4, -MAX_STEP_PX - 10);
+  eq('but wheel-shaped from the first event is still refused', p.navigated, []);
+}
+
 console.log('\nthe affordance');
 {
   const p = newPage(js);
@@ -412,13 +472,17 @@ console.log('\nthe affordance');
   p.swipe(2, -10);
   check('then appears', p.visibleOverlays() === 1, p.visibleOverlays());
   check('anchored to the leading edge for back', /\.p\{[^}]*left:0;/.test(p.puckHtml()), p.puckHtml());
-  check('and does not take pointer events', p.puckHtml() !== null && p.liveOverlays() === 1);
+  // Asserted against the host's own inline style, not merely "an overlay exists": pointer-events
+  // is the one line stopping the chevron eating clicks over the page, and a test that never reads
+  // it passes just as happily with the line deleted.
+  check('and does not take pointer events', /pointer-events\s*:\s*none/.test(p.hostCss()), p.hostCss());
   p.settle();
   check('and is hidden when the gesture ends', p.visibleOverlays() === 0, p.visibleOverlays());
 }
 {
   // A second gesture starting while the previous chevron is still fading out. The exit animation
-  // is 220ms and the gesture gap is 120, so this window is not a corner case - it is what swiping
+  // runs EXIT_MS against a GESTURE_GAP_MS of quiet, so this window is not a corner case - it is
+  // what swiping
   // twice in a row looks like.
   const p = newPage(js);
   p.swipe(5, -10);

@@ -3,7 +3,8 @@
 // Why in the page at all: on macOS the app runs Chromium in HARDWARE_ACCELERATED mode,
 // where the browser is a native surface layered over the window rather than a component
 // in the Compose scene. Neither Compose nor AWT sees the wheel there, and Chromium's own
-// overscroll history navigation is an Aura feature that does not exist on the Mac port.
+// overscroll history navigation does nothing for a trackpad in EITHER rendering mode - measured,
+// see the note at its call site in BrowserServiceImpl; it is a touchscreen feature.
 // The renderer, however, always sees the wheel - that is how pages scroll - so the page is
 // the one place the gesture is reliably observable. See BrowserSwipeNavScript.kt.
 //
@@ -56,7 +57,6 @@
     var CANCEL_VERTICAL_LOW = COMMIT_PX * 0.125;
     var CANCEL_VERTICAL_HIGH = COMMIT_PX * 3;
     var EXIT_MS = 180;
-    var EXIT_MS = 180;
 
     // Net horizontal displacement, and the vertical PATH length. See the cancel rules above for
     // why these two are accumulated differently.
@@ -84,10 +84,17 @@
 
     function available(dir) {
         var s = state();
-        if (!s) {
+        if (!s || s.enabled === false) {
             return false;
         }
         return dir < 0 ? s.back === true : s.forward === true;
+    }
+
+    // Switched off while this page is open. The host pushes the flag the moment the setting
+    // changes, so the detector stops here rather than staying live until the next navigation.
+    function switchedOff() {
+        var s = state();
+        return !!s && s.enabled === false;
     }
 
     // Whether anything in the pointer's scroll chain can still move horizontally the way
@@ -132,11 +139,16 @@
             } catch (e2) {
                 overflowX = '';
             }
+            // The root needs a special case - it computes `overflow-x: visible` on an ordinary page
+            // even though the viewport scrolls - but it must NOT skip the test entirely, which is
+            // what `el === scroller` alone did. `html { overflow-x: hidden }` with content wider
+            // than the viewport still reports scrollWidth > clientWidth, so the root claimed it
+            // could scroll and every forward swipe on such a page died silently.
+            var hidden = overflowX === 'hidden' || overflowX === 'clip';
             var scrollable =
                 overflowX === 'auto' ||
                 overflowX === 'scroll' ||
-                overflowX === 'overlay' ||
-                el === scroller;
+                (el === scroller && !hidden);
             if (!scrollable) {
                 continue;
             }
@@ -153,7 +165,8 @@
     // ONE overlay for the life of the document, shown and hidden rather than built and destroyed.
     //
     // It used to be created per gesture and removed on a timer after the exit animation, which
-    // stacked: the exit is 220ms and a gesture ends after 120ms of quiet, so swiping twice in a row
+    // stacked: the exit runs EXIT_MS and a gesture ends after GESTURE_GAP_MS of quiet - 180 against
+    // 120 - so swiping twice in a row
     // - not a corner case, just swiping twice - left two chevrons on screen at once. A single
     // element cannot stack however the gestures overlap.
     var host = null;
@@ -217,6 +230,15 @@
                 puckDirection = dir;
             }
         } catch (e) {
+            // Take the element with us. Nulling the reference alone left a 0x0 div in the page for
+            // every failure, with nothing able to find it again.
+            try {
+                if (host && host.parentNode) {
+                    host.parentNode.removeChild(host);
+                }
+            } catch (e2) {
+                // The page may have torn its own DOM apart; there is nothing further to try.
+            }
             host = null;
             root = null;
             puck = null;
@@ -306,7 +328,7 @@
             reset();
         }, GESTURE_GAP_MS);
 
-        if (committed || rejected) {
+        if (committed || rejected || switchedOff()) {
             return;
         }
         // Line and page modes come from sources that are never a trackpad.
@@ -323,7 +345,11 @@
         if (!dx) {
             return;
         }
-        if (Math.abs(dx) >= MAX_STEP_PX) {
+        // A mouse wheel is a few big discrete deltas; a trackpad is many small ones. This only
+        // disqualifies a gesture that looks wheel-shaped FROM THE START - a fast trackpad flick
+        // also carries deltas this large, and abandoning on one meant the harder you swiped the
+        // less likely it was to work.
+        if (Math.abs(dx) >= MAX_STEP_PX && eventCount < MIN_EVENTS) {
             abandon();
             return;
         }

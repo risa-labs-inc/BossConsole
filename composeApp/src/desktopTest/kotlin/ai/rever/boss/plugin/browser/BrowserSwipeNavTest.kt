@@ -124,8 +124,9 @@ class BrowserSwipeNavTest {
     @Test
     fun `state is pushed as booleans on the property the script reads`() {
         assertEquals(
-            "window.${BrowserSwipeNavScript.STATE_PROPERTY} = { back: true, forward: false };",
-            BrowserSwipeNavScript.stateUpdate(canGoBack = true, canGoForward = false),
+            "window.${BrowserSwipeNavScript.STATE_PROPERTY} = " +
+                "{ enabled: true, back: true, forward: false };",
+            BrowserSwipeNavScript.stateUpdate(enabled = true, canGoBack = true, canGoForward = false),
         )
     }
 

@@ -594,6 +594,27 @@ restart. There is no Settings row and no per-site exclusion.
   through; nothing bounds a site lying about its own usage. Treat these as
   indicative, not as measurements, wherever a site has an incentive to lie.
 
+## Two-finger swipe navigation (macOS)
+
+A two-finger horizontal trackpad swipe navigates back/forward. It is detected **inside the page**
+(`BrowserSwipeNavScript` + `swipe-nav.js`), because under `HARDWARE_ACCELERATED` the browser is a
+native surface and neither Compose nor AWT sees the wheel. JxBrowser's
+`enableOverscrollHistoryNavigation` does NOT provide this - measured 2026-08-28, it does nothing for
+a trackpad in either rendering mode, because it is a touchscreen feature.
+
+The recognizer is a port of Chrome's own (`history_swiper.mm`): three cancellation tiers, with
+vertical measured as a path length and horizontal as net displacement. Chrome's absolute thresholds
+are fractions of the trackpad from `NSTouch.normalizedPosition`, which a page cannot see, so those
+carry over as the same fractions of the commit distance.
+
+**Off switch**: `Settings > Browser > Trackpad`, stored in `~/.boss/swipe-nav.json`, or
+`BOSS_BROWSER_SWIPE_NAV=false` (also `0` / `no` / `off`). The environment wins, and the Settings row
+says so. The setting is published as a **system property** because the browser plugin draws the home
+surface, lives in another repo, and `PluginContext.settingsProvider` reads nothing - so both halves
+of the gesture read one key. An unparseable value owns nothing.
+
+Covered by running it: `node scripts/test/test-swipe-nav.js`, in `build.yml`.
+
 **Three modules apply the Compose compiler with no Compose code, on purpose** -
 `plugin-logging`, `plugin-bookmark-types` and `plugin-workspace-types`.
 `boss-plugin-api` ships this same `ai.rever.boss.plugin.logging` package and *is* a Compose

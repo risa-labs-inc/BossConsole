@@ -249,9 +249,10 @@ BossConsole needs on Windows - so the flag debt runs in both directions.
 AppCDS startup tuning and memory-pressure work. All real, all out of scope for a
 browser-throughput change, and Lite gates each behind its own flag.
 
-**Open in Lite, unresolved anywhere:** macOS two-finger swipe-back is broken in
-HARDWARE mode, possibly a JxBrowser limitation. Another reason BossConsole's macOS
-stays on OFF_SCREEN.
+**Resolved (2026-08-28):** macOS two-finger swipe-back was listed here as broken in
+HARDWARE mode and possibly a JxBrowser limitation. Measured, it never worked in EITHER
+mode - JxBrowser's overscroll history navigation is a touchscreen feature. It is
+detected inside the page now and is mode-independent; see `BrowserSwipeNavScript`.
 
 ### Lite's independent corroboration
 
@@ -261,8 +262,9 @@ than throughput. Content-matched A/B, same page, clean 94-sample idle windows
 (-1.1 GB, -36%)**, peak CPU -14%, peak RSS -25%. Two unrelated methods, same answer.
 
 Lite defaults HARDWARE on **every** platform; BossConsole defaults it on Windows only,
-because macOS measures faster than Chrome on OFF_SCREEN here and Lite notes HARDWARE
-costs macOS the two-finger swipe-back gesture.
+because macOS measures faster than Chrome on OFF_SCREEN here. (Lite also noted HARDWARE
+costing macOS the two-finger swipe-back gesture; that turned out not to be true - see
+above.)
 
 ## Reproducing
 

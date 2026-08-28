@@ -11,6 +11,7 @@ import ai.rever.boss.components.settings.shared.SettingsTheme.TextPrimary
 import ai.rever.boss.components.settings.shared.SettingsTheme.TextSecondary
 import ai.rever.boss.components.settings.shared.SettingsToggle
 import ai.rever.boss.config.SwipeNavSettingsManager
+import ai.rever.boss.config.parseSwipeNavEnabled
 import ai.rever.boss.plugin.browser.BrowserSettings
 import ai.rever.boss.plugin.browser.BrowserSettingsManager
 import ai.rever.boss.plugin.ui.BossAlertDialog
@@ -26,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.runtime.*
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -82,20 +84,25 @@ fun FluckBrowserSettings() {
         // back/forward there and is an ordinary horizontal scroll everywhere else.
         if (SystemUtils.isMacOS) {
             SettingsSection(title = "Trackpad") {
+                // envDecides, not envOverride: a value the app cannot parse is ignored, so gating
+                // on mere presence disabled this row while the setting behind it was still live.
+                val envOwned = SwipeNavSettingsManager.envDecides()
                 val envOverride = SwipeNavSettingsManager.envOverride()
-                var swipeEnabled by remember { mutableStateOf(SwipeNavSettingsManager.isEnabled()) }
+                // Collected rather than snapshotted, so a second Settings window does not sit on a
+                // stale value after the other one changes it.
+                val stored by SwipeNavSettingsManager.settings.collectAsState()
+                val swipeEnabled = parseSwipeNavEnabled(envOverride) ?: stored.enabled
                 SettingsToggle(
                     label = "Two-finger swipe navigation",
                     checked = swipeEnabled,
-                    onCheckedChange = {
-                        swipeEnabled = it
-                        SwipeNavSettingsManager.set(it)
-                    },
+                    onCheckedChange = { SwipeNavSettingsManager.set(it) },
                     // Disabled rather than silently ignored: a user with the variable exported
                     // would otherwise watch this control do nothing and conclude it is broken.
-                    enabled = envOverride == null,
+                    enabled = !envOwned,
                     description =
-                        envOverride?.let { "Set by ${SwipeNavSettingsManager.KEY}=$it in the environment" }
+                        envOverride
+                            .takeIf { envOwned }
+                            ?.let { "Set by ${SwipeNavSettingsManager.KEY}=$it in the environment" }
                             ?: "Swipe right with two fingers to go back, left to go forward.",
                 )
             }

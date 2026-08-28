@@ -61,16 +61,37 @@ object SwipeNavSettingsManager {
         Json {
             ignoreUnknownKeys = true
             prettyPrint = true
+            // Without this a setting equal to the default is OMITTED, so choosing "on" writes `{}`.
+            // That round-trips correctly only for as long as the default never changes: flip it and
+            // every stored `{}` silently flips with it, turning a user's explicit choice into
+            // whatever the new default is. Writing the value down keeps the file meaning what it
+            // says.
+            encodeDefaults = true
         }
 
-    private val _settings = MutableStateFlow(loadSync())
-    val settings: StateFlow<SwipeNavSettings> = _settings.asStateFlow()
+    // Lazy, so a test can point [settingsFile] somewhere else first. Eager initialisation read the
+    // real ~/.boss file during object construction, before any test could get a word in, which made
+    // the seam look like it worked while doing nothing.
+    private val _settings: MutableStateFlow<SwipeNavSettings> by lazy { MutableStateFlow(loadSync()) }
+    val settings: StateFlow<SwipeNavSettings> get() = _settings.asStateFlow()
 
     /**
      * The environment's value, or null. Read from the environment ONLY: a system property here
      * would report this object's own publication back to it, and the row would look overridden.
      */
     fun envOverride(): String? = System.getenv(KEY)?.takeIf { it.isNotBlank() }
+
+    /**
+     * Whether the environment actually decides this, as opposed to merely having something in it.
+     *
+     * The distinction is the whole of a bug this had. `BOSS_BROWSER_SWIPE_NAV=maybe` is non-blank,
+     * so an [envOverride]-based gate disabled the Settings row and skipped publishing - while
+     * [isEnabled] parsed the same value to null and quietly used the stored setting. The row said
+     * the environment owned a value the app was ignoring, the property was never written, and the
+     * plugin half fell back to its own default: the two halves could then disagree, which is the
+     * one thing sharing this key exists to prevent.
+     */
+    fun envDecides(): Boolean = parseSwipeNavEnabled(envOverride()) != null
 
     /**
      * Whether the gesture is on right now.
@@ -90,7 +111,7 @@ object SwipeNavSettingsManager {
 
     /** Publish for the plugin half. Skipped when the environment owns the key, as elsewhere. */
     fun publish() {
-        if (envOverride() != null) {
+        if (envDecides()) {
             logger.info(LogCategory.BROWSER, "Swipe gesture setting ignored; the environment owns $KEY")
             return
         }
@@ -117,9 +138,20 @@ object SwipeNavSettingsManager {
             settingsFile.parentFile?.mkdirs()
             // Written to a sibling and moved, like the Chromium flags file: a kill mid-write would
             // otherwise leave a truncated file that the next launch reports as corrupt.
+            //
+            // Files.move, NOT File.renameTo, and the difference has shipped here before: v9.2.65's
+            // notes read "Favicons update on Windows again: File.renameTo fails with
+            // ERROR_ALREADY_EXISTS where POSIX rename(2) replaces". The destination exists from the
+            // second write onward, so renameTo would persist this setting exactly once and then
+            // stop - silently, since it reports failure in a return value nobody reads.
             val temp = File(settingsFile.parentFile, "${settingsFile.name}.tmp")
             temp.writeText(json.encodeToString(SwipeNavSettings.serializer(), value))
-            temp.renameTo(settingsFile)
+            java.nio.file.Files.move(
+                temp.toPath(),
+                settingsFile.toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+            )
         } catch (
             @Suppress("TooGenericExceptionCaught") e: Exception,
         ) {

@@ -12,8 +12,9 @@ import ai.rever.boss.utils.logging.LogCategory
  * `HARDWARE_ACCELERATED` rendering mode the browser is a native surface layered over the window
  * rather than a component in the Compose scene, so Compose never sees the wheel (the same fact
  * [shouldAllowPinch] documents at length). Chromium's own overscroll history navigation is already
- * switched on in `BrowserServiceImpl`, but it is an Aura feature and does not exist on the Mac
- * port. What is left is the renderer: it sees every wheel event, because that is how pages scroll.
+ * switched on in `BrowserServiceImpl` and does nothing for a trackpad in EITHER rendering mode -
+ * measured, see the note at that call site; it is a touchscreen feature. What is left is the
+ * renderer: it sees every wheel event, because that is how pages scroll.
  *
  * So the gesture is detected in the page and reported back through [BrowserSwipeNavBridge]. That
  * placement is not only a workaround - it is also where the question "would this scroll have gone
@@ -21,7 +22,7 @@ import ai.rever.boss.utils.logging.LogCategory
  * swipe that means "go back".
  *
  * The script is a resource rather than a Kotlin string (unlike [BrowserInteractionScript]) so the
- * gesture logic can be run and exercised directly. See `swipe-nav.test.js`.
+ * gesture logic can be run and exercised directly. See `scripts/test/test-swipe-nav.js`.
  */
 internal object BrowserSwipeNavScript {
     private val logger = BossLogger.forComponent("BrowserSwipeNavScript")
@@ -52,12 +53,18 @@ internal object BrowserSwipeNavScript {
      * a slow renderer, and the host already recomputes both flags on every navigation for the
      * toolbar - so the value is free and the push is one statement.
      *
-     * Both inputs are booleans, so there is nothing here a page could inject into.
+     * [enabled] rides along so switching the gesture off reaches pages that are ALREADY open. Read
+     * only at injection, the setting would not take effect on the tab the user is looking at until
+     * it navigated - which is the tab they would test the change on, and would make this setting
+     * half restart-scoped despite the KDoc on SwipeNavSettingsManager saying otherwise.
+     *
+     * Every input is a boolean, so there is nothing here a page could inject into.
      */
     fun stateUpdate(
+        enabled: Boolean,
         canGoBack: Boolean,
         canGoForward: Boolean,
-    ): String = "window.$STATE_PROPERTY = { back: $canGoBack, forward: $canGoForward };"
+    ): String = "window.$STATE_PROPERTY = { enabled: $enabled, back: $canGoBack, forward: $canGoForward };"
 
     private fun loadResource(path: String): String =
         try {
