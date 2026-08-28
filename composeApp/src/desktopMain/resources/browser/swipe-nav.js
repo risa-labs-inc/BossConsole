@@ -33,14 +33,35 @@
     // horizontal trackpad swipe, so these two bounds are the only thing separating them.
     var MIN_EVENTS = 3;
     var MAX_STEP_PX = 60;
-    // Vertical travel this large relative to horizontal means the user is scrolling, not
-    // swiping. Judged over the whole gesture, not per event, because the first few events
-    // of an honest swipe are noisy.
-    var VERTICAL_RATIO = 0.5;
+    // Chrome's own cancellation rules, ported from history_swiper.mm
+    // (shouldCancelHorizontalSwipeWithCurrentPoint). Three tiers, not one ratio:
+    //
+    //   if (yDelta > 2 * xDelta)                                   cancel
+    //   if (yDelta * 1.3 > xDelta && yDelta > 0.01)                 cancel
+    //   if (yDelta > 0.24)                                          cancel
+    //
+    // The second is the binding one in practice and it is LOOSER than the half-of-horizontal rule
+    // that used to be here: Chrome accepts a swipe until vertical reaches about 0.77 of horizontal,
+    // so gestures it would have taken were being thrown away.
+    //
+    // The asymmetry matters as much as the numbers. Chrome measures vertical as a PATH LENGTH -
+    // the sum of every |dy|, so wobble accumulates and counts against you - and horizontal as NET
+    // displacement from the start, so a reversal spends progress rather than adding to it.
+    var CANCEL_STRONG_RATIO = 2;
+    var CANCEL_MIXED_RATIO = 1.3;
+    // Chrome's thresholds are fractions of the TRACKPAD, from NSTouch normalized positions, which
+    // a page cannot see. Ours are in the only unit available here, so the two vertical limits are
+    // carried over as the same fractions of the commit distance that Chrome's are of its own:
+    // 0.01/0.08 and 0.24/0.08.
+    var CANCEL_VERTICAL_LOW = COMMIT_PX * 0.125;
+    var CANCEL_VERTICAL_HIGH = COMMIT_PX * 3;
+    var EXIT_MS = 180;
     var EXIT_MS = 180;
 
+    // Net horizontal displacement, and the vertical PATH length. See the cancel rules above for
+    // why these two are accumulated differently.
     var accumX = 0;
-    var accumY = 0;
+    var verticalPath = 0;
     var eventCount = 0;
     var lastEventAt = 0;
     // Set once the gesture has been ruled out; stays set until the gesture ends, so a
@@ -244,7 +265,7 @@
             hideAffordance(direction);
         }
         accumX = 0;
-        accumY = 0;
+        verticalPath = 0;
         eventCount = 0;
         rejected = false;
         committed = false;
@@ -301,7 +322,7 @@
         // Vertical travel counts from the first event of the gesture, including events with
         // no horizontal component at all. Otherwise a plain vertical scroll that curls into
         // a horizontal one at the end would arrive here looking like a fresh clean swipe.
-        accumY += dy;
+        verticalPath += Math.abs(dy);
         if (!dx) {
             return;
         }
@@ -313,10 +334,11 @@
         eventCount++;
         accumX += dx;
 
-        // Measured against a floor rather than against accumX alone: the first few events of
-        // an honest swipe carry a pixel or two of horizontal travel, and any vertical noise
-        // at all would exceed a bare ratio of it.
-        if (Math.abs(accumY) > Math.max(Math.abs(accumX), 24) * VERTICAL_RATIO) {
+        // Chrome's three tiers, in its order.
+        var xDelta = Math.abs(accumX);
+        if (verticalPath > CANCEL_STRONG_RATIO * xDelta ||
+            (verticalPath * CANCEL_MIXED_RATIO > xDelta && verticalPath > CANCEL_VERTICAL_LOW) ||
+            verticalPath > CANCEL_VERTICAL_HIGH) {
             abandon();
             return;
         }

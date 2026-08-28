@@ -355,6 +355,46 @@ console.log('\ngestures that must not navigate');
   check('a subframe installs nothing at all', p.installed() === 0, p.installed());
 }
 
+console.log("\nChrome's cancellation tiers (history_swiper.mm)");
+{
+  // Vertical at ~60% of horizontal. The old half-of-horizontal rule threw this away; Chrome takes
+  // it, and this is the shape of an ordinary slightly-sloped swipe.
+  const p = newPage(js);
+  p.swipe(14, -10, 6);
+  eq('a swipe with honest slope is taken', p.navigated, ['back']);
+}
+{
+  // Rule 1: yDelta > 2 * xDelta.
+  const p = newPage(js);
+  p.swipe(14, -10, -25);
+  eq('strongly vertical is refused', p.navigated, []);
+}
+{
+  // Rule 2: yDelta * 1.3 > xDelta, once vertical passes the low threshold. 8*1.3 = 10.4 > 10.
+  const p = newPage(js);
+  p.swipe(14, -10, 8);
+  eq('vertical past about three quarters of horizontal is refused', p.navigated, []);
+}
+{
+  // The path-length asymmetry, which is the point of measuring vertical the way Chrome does.
+  // This wobble nets out to roughly zero vertical, so a rule reading the NET total would take it;
+  // as a path length it accumulates and rule 2 refuses it.
+  //
+  // Rule 3 (yDelta > 3x the commit distance) is deliberately not exercised: it cannot be reached
+  // before a gesture commits, here or in Chrome, since both use the same 3:1 ratio between it and
+  // the navigation threshold. It is a backstop for a gesture that wanders without committing.
+  const p = newPage(js);
+  for (let i = 0; i < 20; i++) p.wheel(-10, i % 2 === 0 ? 8 : -8);
+  eq('vertical wobble that nets to zero is still refused', p.navigated, []);
+}
+{
+  // The same wobble read as a NET total would be about zero and would sail through, which is the
+  // bug this asymmetry prevents.
+  const p = newPage(js);
+  p.swipe(14, -10, 0);
+  eq('and a clean swipe still is not', p.navigated, ['back']);
+}
+
 console.log('\nthe affordance');
 {
   const p = newPage(js);
