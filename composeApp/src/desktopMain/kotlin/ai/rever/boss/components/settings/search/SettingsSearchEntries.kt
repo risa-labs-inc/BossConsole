@@ -216,6 +216,17 @@ private fun updatesEntries() =
 private fun browserEntries() =
     section(SettingsSection.FLUCK) {
         group("Default Browser")
+        group("Trackpad")
+        setting(
+            "Two-finger swipe navigation",
+            "Trackpad",
+            "swipe",
+            "gesture",
+            "trackpad",
+            "back",
+            "forward",
+            "two finger",
+        )
         group("User Agent")
         setting("Browser Identity", "User Agent", "user agent", "ua", "spoof")
         setting("Custom User Agent String", "User Agent", "ua string")
