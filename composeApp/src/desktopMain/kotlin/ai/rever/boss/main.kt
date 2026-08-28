@@ -306,6 +306,14 @@ fun main(args: Array<String>) {
     ai.rever.boss.config.ChromiumFlagsSettingsManager
         .applyToSystemProperties()
 
+    // The swipe style, published for the browser PLUGIN rather than for a ConfigLoader read site.
+    // It runs in this process but in another repo, and PluginContext.settingsProvider only opens
+    // the Settings window - it reads nothing - so a system property is the only channel the two
+    // halves of this gesture share. Unlike the flags above this one is republished whenever the
+    // setting changes, because it is read per gesture and must not need a relaunch.
+    ai.rever.boss.config.SwipeNavSettingsManager
+        .publish()
+
     // Opt-in override for the Compose UI's own rendering backend (Skiko) - separate from the
     // BROWSER's rendering mode in JxBrowserConfig. Lets a backend be A/B'd on a real machine
     // without a rebuild: pin DIRECT3D, or confirm the GPU-less Windows RDP/VM cohort that falls

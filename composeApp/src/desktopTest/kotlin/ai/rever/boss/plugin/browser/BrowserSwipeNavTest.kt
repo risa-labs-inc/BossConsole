@@ -1,5 +1,7 @@
 package ai.rever.boss.plugin.browser
 
+import ai.rever.boss.config.SwipeNavStyle
+import ai.rever.boss.config.parseSwipeNavStyle
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -19,31 +21,51 @@ class BrowserSwipeNavTest {
 
     @Test
     fun `on by default on macOS`() {
-        assertTrue(swipeNavEnabled(isMac = true, configValue = null))
+        assertTrue(swipeNavEnabled(isMac = true, style = SwipeNavStyle.CHEVRON))
+        assertTrue(swipeNavEnabled(isMac = true, style = SwipeNavStyle.SLIDE))
     }
 
     @Test
-    fun `off everywhere else, whatever the config says`() {
-        assertFalse(swipeNavEnabled(isMac = false, configValue = null))
-        assertFalse(swipeNavEnabled(isMac = false, configValue = "true"))
+    fun `off everywhere else, whatever the style says`() {
+        assertFalse(swipeNavEnabled(isMac = false, style = SwipeNavStyle.CHEVRON))
+        assertFalse(swipeNavEnabled(isMac = false, style = SwipeNavStyle.SLIDE))
     }
 
     @Test
-    fun `an explicit falsy value turns it off`() {
-        for (value in listOf("false", "0", "no", "off", "FALSE", " off ")) {
-            assertFalse(swipeNavEnabled(isMac = true, configValue = value), value)
+    fun `the off style turns it off`() {
+        assertFalse(swipeNavEnabled(isMac = true, style = SwipeNavStyle.OFF))
+    }
+
+    @Test
+    fun `every style spelling the setting writes round-trips`() {
+        for (style in SwipeNavStyle.entries) {
+            assertEquals(style, parseSwipeNavStyle(style.settingValue), style.name)
         }
     }
 
     /**
-     * A typo must not silently remove a gesture whose only other route back is finding the same
-     * typo. This is the same tri-state the Chromium switch toggles use: absent and unparseable
-     * both mean "no opinion", and only an explicit no is a no.
+     * The key shipped as an on/off switch before it grew a third state, so someone has `true` or
+     * `false` exported. Dropping those spellings would silently change what their shell says.
      */
     @Test
-    fun `an unparseable value leaves it on`() {
-        assertTrue(swipeNavEnabled(isMac = true, configValue = "maybe"))
-        assertTrue(swipeNavEnabled(isMac = true, configValue = ""))
+    fun `legacy boolean spellings still parse`() {
+        for (value in listOf("false", "0", "no", "off", "FALSE", " off ")) {
+            assertEquals(SwipeNavStyle.OFF, parseSwipeNavStyle(value), value)
+        }
+        for (value in listOf("true", "1", "yes", "on", "TRUE")) {
+            assertEquals(SwipeNavStyle.CHEVRON, parseSwipeNavStyle(value), value)
+        }
+    }
+
+    /**
+     * A typo must not silently remove a gesture whose only route back is finding the same typo, so
+     * an unparseable value is "no opinion" and the caller keeps its default - never off.
+     */
+    @Test
+    fun `an unparseable value is no opinion, not off`() {
+        assertNull(parseSwipeNavStyle("maybe"))
+        assertNull(parseSwipeNavStyle(""))
+        assertNull(parseSwipeNavStyle(null))
     }
 
     // --- What the bridge accepts from a page -------------------------------------------------

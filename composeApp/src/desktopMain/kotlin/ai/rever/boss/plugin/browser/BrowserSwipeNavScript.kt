@@ -1,6 +1,7 @@
 package ai.rever.boss.plugin.browser
 
-import ai.rever.boss.config.ConfigLoader
+import ai.rever.boss.config.SwipeNavSettingsManager
+import ai.rever.boss.config.SwipeNavStyle
 import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -12,8 +13,9 @@ import ai.rever.boss.utils.logging.LogCategory
  * `HARDWARE_ACCELERATED` rendering mode the browser is a native surface layered over the window
  * rather than a component in the Compose scene, so Compose never sees the wheel (the same fact
  * [shouldAllowPinch] documents at length). Chromium's own overscroll history navigation is already
- * switched on in `BrowserServiceImpl`, but it is an Aura feature and does not exist on the Mac
- * port. What is left is the renderer: it sees every wheel event, because that is how pages scroll.
+ * switched on in `BrowserServiceImpl` and does nothing for a trackpad in EITHER rendering mode -
+ * measured, see the note at that call site; it is a touchscreen feature. What is left is the
+ * renderer: it sees every wheel event, because that is how pages scroll.
  *
  * So the gesture is detected in the page and reported back through [BrowserSwipeNavBridge]. That
  * placement is not only a workaround - it is also where the question "would this scroll have gone
@@ -32,14 +34,6 @@ internal object BrowserSwipeNavScript {
     /** Property the host pushes navigability onto. Matched by the script. */
     const val STATE_PROPERTY: String = "__bossSwipeNavState"
 
-    /**
-     * Off-switch, resolved through [ConfigLoader] rather than `System.getenv` so the Settings
-     * screen can reach it (env still wins - see ConfigLoader's precedence contract). Absent means
-     * on: this restores behaviour every other macOS browser has, so the default cannot be "off
-     * until someone finds the toggle".
-     */
-    const val CONFIG_KEY: String = "BOSS_BROWSER_SWIPE_NAV"
-
     /** Lazily-loaded gesture script (cached for the process lifetime). */
     val source: String by lazy { loadResource("/browser/swipe-nav.js") }
 
@@ -50,7 +44,7 @@ internal object BrowserSwipeNavScript {
      * trackpad swipe means back/forward there and nothing in particular on Windows or Linux, where
      * it is an ordinary horizontal scroll that users expect to scroll.
      */
-    fun isEnabled(): Boolean = swipeNavEnabled(SystemUtils.isMacOS, ConfigLoader.getConfig(CONFIG_KEY))
+    fun isEnabled(): Boolean = swipeNavEnabled(SystemUtils.isMacOS, SwipeNavSettingsManager.current())
 
     /**
      * Statement that sets the direction availability the script gates on.
@@ -87,14 +81,10 @@ internal object BrowserSwipeNavScript {
 }
 
 /**
- * Pure part of [BrowserSwipeNavScript.isEnabled], split out so the default and the off-switch are
- * pinned by tests rather than by whatever platform CI happens to run on.
- *
- * Only an explicitly falsy value disables it. An unparseable one is treated as "no opinion" and
- * leaves the feature on, matching how the Chromium switch toggles resolve their tri-state: a typo
- * in a config file should not silently remove a gesture the user has no other way to get back.
+ * Pure part of [BrowserSwipeNavScript.isEnabled], split out so the platform gate is pinned by a
+ * test rather than by whatever platform CI happens to run on.
  */
 internal fun swipeNavEnabled(
     isMac: Boolean,
-    configValue: String?,
-): Boolean = isMac && !FluckEngine.isFalsyFlag(configValue)
+    style: SwipeNavStyle,
+): Boolean = isMac && style != SwipeNavStyle.OFF
