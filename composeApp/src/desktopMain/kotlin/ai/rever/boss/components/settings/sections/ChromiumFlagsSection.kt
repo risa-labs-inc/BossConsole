@@ -317,8 +317,7 @@ private fun RenderingSection(
             description =
                 modeEnvNote
                     ?: "Off-screen is the escape hatch: app menus and dialogs draw over the page as " +
-                    "ordinary Compose overlays, and macOS regains the two-finger swipe-back gesture, " +
-                    "at a cost in idle CPU and memory.",
+                    "ordinary Compose overlays, at a cost in idle CPU and memory.",
         )
 
         Spacer(modifier = Modifier.height(8.dp))

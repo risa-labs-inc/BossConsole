@@ -80,6 +80,16 @@ jobs:
         # the page's own find as "free". Only executing it tells them apart.
         run: node scripts/test/test-find-key-probe.js
 
+      - name: 🧪 Two-finger swipe navigation
+        # The macOS back/forward gesture is detected in the page, and it is a set of
+        # thresholds: how far commits, how much vertical drift disqualifies, how big a
+        # delta has to be before it is a mouse wheel rather than a trackpad. Every one of
+        # them is a number that looks reasonable while being wrong, and reading the script
+        # cannot tell a working set from a broken one. It also pins the bridge and state
+        # property names against the Kotlin, which are hand-matched across two files and
+        # two languages and drift into a gesture that silently does nothing.
+        run: node scripts/test/test-swipe-nav.js
+
       - name: ✍️ No new em-dashes in prose
         # House style is a spaced hyphen. Scoped to ADDED lines on purpose: the
         # sweep left code comments alone by design, so a whole-tree check would

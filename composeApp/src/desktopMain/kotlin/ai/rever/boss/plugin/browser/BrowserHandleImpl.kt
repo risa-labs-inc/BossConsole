@@ -298,6 +298,15 @@ internal class BrowserHandleImpl(
             windowId = { currentWindowId },
         )
 
+    // When the last two-finger swipe navigated, for [shouldAcceptSwipeNav]. A handle-level field
+    // rather than the `lastNavigationTime` the aux mouse buttons use, because that one is a
+    // `remember` slot inside Content() and this arrives from a JxBrowser thread with no
+    // composition in sight.
+    @Volatile private var lastSwipeNavAt = 0L
+
+    /** Receives committed two-finger swipes from the page. See [BrowserSwipeNavScript]. */
+    private val swipeNavBridge = BrowserSwipeNavBridge(onNavigate = ::onSwipeNavigate)
+
     private val disposed = AtomicBoolean(false)
 
     /**
@@ -1672,6 +1681,10 @@ internal class BrowserHandleImpl(
      * install could only ever answer for the main frame.
      */
     private fun injectPageHelpers(frame: Frame) {
+        // Outside the shared try below, and first, because everything in there is one failure
+        // domain: a throw from the Cmd+Click injection would silently cost this page its back
+        // gesture. It brings its own catch, so the reverse cannot happen either.
+        injectSwipeNav(frame)
         run {
             try {
                 // Inject Cmd+Click / Ctrl+Click handler for opening links in new tabs
@@ -1718,6 +1731,61 @@ internal class BrowserHandleImpl(
                 "Interaction collector injection failed",
                 mapOf("handleId" to id, "error" to (e::class.simpleName ?: "Exception")),
             )
+        }
+    }
+
+    /**
+     * Publish the swipe bridge on this page, tell it which directions exist, and start the
+     * detector.
+     *
+     * Re-run per navigation for two reasons, not one: each document gets a fresh JS context and
+     * needs the bridge republished, and a same-document navigation keeps the context but changes
+     * what `canGoBack`/`canGoForward` answer. The script no-ops its own second start; the state
+     * assignment is what actually has to run every time.
+     *
+     * Deliberately NOT gated on [BrowserAnalytics.telemetryEnabled], unlike the interaction
+     * collector next door. This is an input feature, and a deployment that turns telemetry off has
+     * not asked to lose the back gesture.
+     */
+    private fun injectSwipeNav(frame: Frame) {
+        if (!BrowserSwipeNavScript.isEnabled()) return
+        try {
+            val window = frame.executeJavaScript<JsObject>("window")
+            window?.putProperty(BrowserSwipeNavScript.BRIDGE_PROPERTY, swipeNavBridge)
+            // Before the script, so the first wheel event of a swipe that starts the instant the
+            // page paints already has an answer to gate on.
+            frame.executeJavaScript<Any?>(
+                BrowserSwipeNavScript.stateUpdate(
+                    canGoBack = browser.navigation().canGoBack(),
+                    canGoForward = browser.navigation().canGoForward(),
+                ),
+            )
+            frame.executeJavaScript<Any?>(BrowserSwipeNavScript.source)
+        } catch (e: Exception) {
+            // The exception CLASS, not its message, for the reason the collector above gives.
+            logger.debug(
+                LogCategory.BROWSER,
+                "Swipe navigation injection failed",
+                mapOf("handleId" to id, "error" to (e::class.simpleName ?: "Exception")),
+            )
+        }
+    }
+
+    /**
+     * A committed two-finger swipe, arriving from the page's JS thread.
+     *
+     * Posted onto [pageInjectScope] rather than acted on here: [BrowserSwipeNavBridge] promises the
+     * renderer it will not block, and `goBack()` is a round trip into the browser.
+     */
+    private fun onSwipeNavigate(direction: SwipeNavDirection) {
+        val now = System.currentTimeMillis()
+        if (!isValid || !shouldAcceptSwipeNav(now, lastSwipeNavAt)) return
+        lastSwipeNavAt = now
+        pageInjectScope.launch(pageInjectDispatcher) {
+            when (direction) {
+                SwipeNavDirection.BACK -> goBack()
+                SwipeNavDirection.FORWARD -> goForward()
+            }
         }
     }
 

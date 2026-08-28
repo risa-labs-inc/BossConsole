@@ -95,17 +95,17 @@ object JxBrowserConfig {
      * Lite (`f8d7c708`) and remains the least-measured of the three — the arm to run
      * there is the power/memory one, not Speedometer (see benchmarks/speedometer/UNIX.md).
      *
-     * Two macOS costs are accepted rather than solved:
+     * One macOS cost is accepted rather than solved: every app overlay routes through a
+     * heavyweight Swing window instead of a Compose Popup. That path exists because
+     * Windows needed it, and macOS is the second platform to exercise it.
      *
-     *  - The two-finger swipe-back gesture stops working, because navigation gestures
-     *    are consumed by the native surface. Lite tracks this as a known follow-up.
-     *  - Every app overlay routes through a heavyweight Swing window instead of a
-     *    Compose Popup. That path exists because Windows needed it, and macOS is the
-     *    second platform to exercise it.
-     *
-     * Pinch-to-zoom is NOT on that list, and would have been: it is gated on Compose
-     * hover, which a heavyweight surface never reports. See `shouldAllowPinch` in
-     * BrowserHandleImpl — the gate is mode-aware so the gesture survives.
+     * Two gestures would have joined it and did not. Pinch-to-zoom is gated on Compose
+     * hover, which a heavyweight surface never reports — see `shouldAllowPinch` in
+     * BrowserHandleImpl, where the gate is mode-aware so the gesture survives. The
+     * two-finger swipe-back was genuinely lost for a while, because the native surface
+     * consumes navigation gestures and Chromium's own overscroll navigation is an Aura
+     * feature that does not exist on the Mac port; it is detected inside the page now,
+     * which is mode-independent. See `BrowserSwipeNavScript`.
      *
      * Windows additionally hit three regressions Lite found first — the browser
      * surface sitting ~toolbar-height too high, Ctrl+R not reaching a focused page,
@@ -151,8 +151,8 @@ object JxBrowserConfig {
      * match Lite's so the same value works in both repos.
      *
      * [os] is no longer read — the default is uniform. It is kept as a parameter
-     * deliberately: a per-platform carve-out is a live possibility (macOS trades the
-     * swipe-back gesture for the power win, and Linux is the least-measured), and
+     * deliberately: a per-platform carve-out is a live possibility (Linux is the
+     * least-measured of the three), and
      * removing the parameter would mean re-threading it through every caller and test
      * to reintroduce one. Unused here means "no platform disagrees today", not "this
      * decision cannot be platform-specific".
