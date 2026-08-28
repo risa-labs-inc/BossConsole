@@ -150,8 +150,16 @@
 
     // ---- affordance -------------------------------------------------------------------
 
+    // ONE overlay for the life of the document, shown and hidden rather than built and destroyed.
+    //
+    // It used to be created per gesture and removed on a timer after the exit animation, which
+    // stacked: the exit is 220ms and a gesture ends after 120ms of quiet, so swiping twice in a row
+    // - not a corner case, just swiping twice - left two chevrons on screen at once. A single
+    // element cannot stack however the gestures overlap.
     var host = null;
+    var root = null;
     var puck = null;
+    var puckDirection = 0;
     var reduceMotion = false;
     try {
         reduceMotion = w.matchMedia('(prefers-reduced-motion: reduce)').matches === true;
@@ -170,38 +178,47 @@
 
     function showAffordance(dir) {
         var body = w.document.body;
-        // XML documents and some error pages have no body. Nothing to hang the puck on, and
-        // the gesture itself still works - only the affordance is skipped.
-        if (!body || host) {
+        // XML documents and some error pages have no body. Nothing to hang the puck on, and the
+        // gesture itself still works - only the affordance is skipped.
+        if (!body) {
             return;
         }
         try {
-            host = w.document.createElement('div');
-            host.setAttribute('aria-hidden', 'true');
-            host.style.cssText =
-                'position:fixed;top:0;left:0;width:0;height:0;margin:0;padding:0;border:0;' +
-                'z-index:2147483647;pointer-events:none;';
-            // A shadow root so no page CSS can reach in and nothing is inherited out. A page
-            // with `* { transition: all 2s }` would otherwise make the puck lag the finger.
-            var root = host.attachShadow ? host.attachShadow({ mode: 'closed' }) : host;
-            var edge = dir < 0 ? 'left:0;' : 'right:0;';
-            root.innerHTML =
-                '<style>' +
-                ':host{all:initial}' +
-                '.p{position:fixed;top:50%;' + edge +
-                'width:52px;height:52px;margin-top:-26px;border-radius:50%;' +
-                'display:flex;align-items:center;justify-content:center;' +
-                'background:rgba(250,250,250,0.94);color:#1c1c1e;' +
-                'box-shadow:0 2px 12px rgba(0,0,0,0.28);opacity:0;will-change:transform,opacity}' +
-                '@media (prefers-color-scheme: dark){' +
-                '.p{background:rgba(58,58,60,0.94);color:#f5f5f7;' +
-                'box-shadow:0 2px 12px rgba(0,0,0,0.5)}}' +
-                '</style>' +
-                '<div class="p">' + chevron(dir) + '</div>';
-            puck = root.querySelector ? root.querySelector('.p') : null;
-            body.appendChild(host);
+            if (!host) {
+                host = w.document.createElement('div');
+                host.setAttribute('aria-hidden', 'true');
+                host.style.cssText =
+                    'position:fixed;top:0;left:0;width:0;height:0;margin:0;padding:0;border:0;' +
+                    'z-index:2147483647;pointer-events:none;';
+                // A shadow root so no page CSS can reach in and nothing is inherited out. A page
+                // with `* { transition: all 2s }` would otherwise make the puck lag the finger.
+                root = host.attachShadow ? host.attachShadow({ mode: 'closed' }) : host;
+            }
+            // A single-page app can replace its own body out from under us.
+            if (host.parentNode !== body) {
+                body.appendChild(host);
+            }
+            if (puckDirection !== dir || !puck) {
+                var edge = dir < 0 ? 'left:0;' : 'right:0;';
+                root.innerHTML =
+                    '<style>' +
+                    ':host{all:initial}' +
+                    '.p{position:fixed;top:50%;' + edge +
+                    'width:52px;height:52px;margin-top:-26px;border-radius:50%;' +
+                    'display:flex;align-items:center;justify-content:center;' +
+                    'background:rgba(250,250,250,0.94);color:#1c1c1e;' +
+                    'box-shadow:0 2px 12px rgba(0,0,0,0.28);opacity:0;will-change:transform,opacity}' +
+                    '@media (prefers-color-scheme: dark){' +
+                    '.p{background:rgba(58,58,60,0.94);color:#f5f5f7;' +
+                    'box-shadow:0 2px 12px rgba(0,0,0,0.5)}}' +
+                    '</style>' +
+                    '<div class="p">' + chevron(dir) + '</div>';
+                puck = root.querySelector ? root.querySelector('.p') : null;
+                puckDirection = dir;
+            }
         } catch (e) {
             host = null;
+            root = null;
             puck = null;
         }
     }
@@ -219,36 +236,20 @@
         puck.style.opacity = (0.25 + 0.75 * clamped).toFixed(2);
     }
 
+    /** Hide it. The element stays for the life of the document; see the note on `host`. */
     function hideAffordance(dir) {
-        var dyingHost = host;
-        var dyingPuck = puck;
-        host = null;
-        puck = null;
-        if (!dyingHost) {
-            return;
-        }
-        var remove = function () {
-            try {
-                if (dyingHost.parentNode) {
-                    dyingHost.parentNode.removeChild(dyingHost);
-                }
-            } catch (e) {
-                // The page may have replaced the body under us. Nothing to clean up then.
-            }
-        };
-        if (!dyingPuck || reduceMotion) {
-            remove();
+        if (!puck) {
             return;
         }
         try {
-            dyingPuck.style.transition = 'transform ' + EXIT_MS + 'ms ease, opacity ' + EXIT_MS + 'ms ease';
-            dyingPuck.style.transform = 'translate3d(' + (dir < 0 ? -58 : 58) + 'px,0,0)';
-            dyingPuck.style.opacity = '0';
+            if (!reduceMotion) {
+                puck.style.transition = 'transform ' + EXIT_MS + 'ms ease, opacity ' + EXIT_MS + 'ms ease';
+            }
+            puck.style.transform = 'translate3d(' + (dir < 0 ? -58 : 58) + 'px,0,0)';
+            puck.style.opacity = '0';
         } catch (e) {
-            remove();
-            return;
+            // The page may have torn its own DOM apart. Nothing to hide, and nothing to report.
         }
-        w.setTimeout(remove, EXIT_MS + 40);
     }
 
     // ---- gesture ----------------------------------------------------------------------
@@ -261,9 +262,7 @@
             w.clearTimeout(endTimer);
             endTimer = 0;
         }
-        if (host) {
-            hideAffordance(direction);
-        }
+        hideAffordance(direction);
         accumX = 0;
         verticalPath = 0;
         eventCount = 0;
@@ -276,9 +275,7 @@
     // finger actually lifts.
     function abandon() {
         rejected = true;
-        if (host) {
-            hideAffordance(direction);
-        }
+        hideAffordance(direction);
     }
 
     function navigate(dir) {

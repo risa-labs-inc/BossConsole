@@ -215,7 +215,16 @@ function newPage(js, options = {}) {
     },
     pagehide: () => (listeners.pagehide || []).forEach((f) => f()),
     puckHtml: () => (shadowRoots.length ? shadowRoots[shadowRoots.length - 1].innerHTML : null),
+    // How many overlay elements exist. One is created per document and reused, so this is what
+    // catches stacking.
     liveOverlays: () => body.children.length,
+    // How many are actually SHOWING. The element outlives a gesture on purpose, so "gone" means
+    // faded out, not removed - which is also the thing a user can tell apart.
+    visibleOverlays: () =>
+      Array.prototype.filter.call(
+        body.children,
+        (c) => c._puck && c._puck.style.opacity && c._puck.style.opacity !== '0',
+      ).length,
     preventedDefaults: () => preventedDefaults,
     installed: () => (listeners.wheel || []).length,
   };
@@ -258,7 +267,7 @@ console.log('\na real swipe');
   p.swipe(12, -10);
   eq('goes back once', p.navigated, ['back']);
   p.settle();
-  check('leaves no overlay behind', p.liveOverlays() === 0, p.liveOverlays());
+  check('leaves nothing showing', p.visibleOverlays() === 0, p.visibleOverlays());
   check('never calls preventDefault', p.preventedDefaults() === 0, p.preventedDefaults());
 }
 {
@@ -284,9 +293,9 @@ console.log('\ngestures that must not navigate');
   const p = newPage(js);
   p.swipe(6, -10);
   eq('abandoned short of the threshold', p.navigated, []);
-  check('leaves its overlay up while the fingers are down', p.liveOverlays() === 1, p.liveOverlays());
+  check('leaves its overlay up while the fingers are down', p.visibleOverlays() === 1, p.visibleOverlays());
   p.settle();
-  check('and takes it away when they lift, with no further event', p.liveOverlays() === 0, p.liveOverlays());
+  check('and hides it when they lift, with no further event', p.visibleOverlays() === 0, p.visibleOverlays());
 }
 {
   const p = newPage(js);
@@ -343,7 +352,7 @@ console.log('\ngestures that must not navigate');
   const p = newPage(js, { state: { back: false, forward: true } });
   p.swipe(12, -10);
   eq('a direction with no history entry', p.navigated, []);
-  check('and shows no affordance for it', p.liveOverlays() === 0, p.liveOverlays());
+  check('and shows no affordance for it', p.visibleOverlays() === 0, p.visibleOverlays());
 }
 {
   const p = newPage(js, { state: null });
@@ -399,13 +408,23 @@ console.log('\nthe affordance');
 {
   const p = newPage(js);
   p.swipe(MIN_EVENTS - 1, -10);
-  check('waits for the gesture to look real', p.liveOverlays() === 0, p.liveOverlays());
+  check('waits for the gesture to look real', p.visibleOverlays() === 0, p.visibleOverlays());
   p.swipe(2, -10);
-  check('then appears', p.liveOverlays() === 1, p.liveOverlays());
+  check('then appears', p.visibleOverlays() === 1, p.visibleOverlays());
   check('anchored to the leading edge for back', /\.p\{[^}]*left:0;/.test(p.puckHtml()), p.puckHtml());
   check('and does not take pointer events', p.puckHtml() !== null && p.liveOverlays() === 1);
   p.settle();
-  check('and is cleaned up when the gesture ends', p.liveOverlays() === 0, p.liveOverlays());
+  check('and is hidden when the gesture ends', p.visibleOverlays() === 0, p.visibleOverlays());
+}
+{
+  // A second gesture starting while the previous chevron is still fading out. The exit animation
+  // is 220ms and the gesture gap is 120, so this window is not a corner case - it is what swiping
+  // twice in a row looks like.
+  const p = newPage(js);
+  p.swipe(5, -10);
+  p.advance(GAP_MS + 80);
+  p.swipe(5, -10);
+  check('never stacks a second chevron', p.liveOverlays() === 1, p.liveOverlays());
 }
 {
   const p = newPage(js);
@@ -417,7 +436,7 @@ console.log('\nthe affordance');
   p.swipe(5, -10);
   p.pagehide();
   p.settle();
-  check('and when the page goes away mid-swipe', p.liveOverlays() === 0, p.liveOverlays());
+  check('and when the page goes away mid-swipe', p.visibleOverlays() === 0, p.visibleOverlays());
 }
 {
   const p = newPage(js, { noBody: true });
