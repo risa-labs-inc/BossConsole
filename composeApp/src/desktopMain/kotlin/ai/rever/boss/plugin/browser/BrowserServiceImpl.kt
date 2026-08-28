@@ -576,7 +576,16 @@ object BrowserServiceImpl : BrowserService {
                 error("Engine was recycled during browser creation (generation $generation is stale)")
             }
 
-            // Enable swipe navigation for touchscreen devices
+            // Enable swipe navigation for touchscreen devices.
+            //
+            // Touchscreens only, and the qualifier is load-bearing: this does NOT give macOS the
+            // two-finger trackpad swipe, in either rendering mode. Measured 2026-08-28 with a
+            // build forced to OFF_SCREEN and the in-page detector disabled - no navigation. Two
+            // places in this repo used to imply otherwise (JxBrowserConfig's KDoc, and the
+            // Settings copy for the off-screen mode, which promised macOS "regains the
+            // two-finger swipe-back gesture"); both were wrong and are corrected. The trackpad
+            // gesture is detected in the page - see BrowserSwipeNavScript - so do not remove
+            // that on the strength of this line.
             browser.settings().enableOverscrollHistoryNavigation()
 
             // If a popup handed off a POST body for this URL (form-submit target="_blank"),

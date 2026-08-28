@@ -99,13 +99,21 @@ object JxBrowserConfig {
      * heavyweight Swing window instead of a Compose Popup. That path exists because
      * Windows needed it, and macOS is the second platform to exercise it.
      *
-     * Two gestures would have joined it and did not. Pinch-to-zoom is gated on Compose
-     * hover, which a heavyweight surface never reports — see `shouldAllowPinch` in
-     * BrowserHandleImpl, where the gate is mode-aware so the gesture survives. The
-     * two-finger swipe-back was genuinely lost for a while, because the native surface
-     * consumes navigation gestures and Chromium's own overscroll navigation is an Aura
-     * feature that does not exist on the Mac port; it is detected inside the page now,
-     * which is mode-independent. See `BrowserSwipeNavScript`.
+     * Pinch-to-zoom would have joined it and did not: it is gated on Compose hover, which a
+     * heavyweight surface never reports — see `shouldAllowPinch` in BrowserHandleImpl, where
+     * the gate is mode-aware so the gesture survives.
+     *
+     * The two-finger swipe-back is NOT on this list either, and the reason is worth recording
+     * because this file used to claim otherwise. It was described here, and in the Settings
+     * copy for OFF_SCREEN, as something HARDWARE_ACCELERATED took away and OFF_SCREEN gave
+     * back. **Measured 2026-08-28, it does neither.** A build launched with
+     * `BOSS_RENDERING_MODE=OFF_SCREEN` (log line confirming `mode=OFF_SCREEN`), with
+     * `enableOverscrollHistoryNavigation` on as it always is and the in-page detector switched
+     * off with `BOSS_BROWSER_SWIPE_NAV=false`, does not navigate on a two-finger swipe. So the
+     * gesture never worked in either mode, and the rendering mode was never what cost it.
+     * JxBrowser's setting is enabled for touchscreens — see its call site's own comment in
+     * BrowserServiceImpl — and a trackpad wheel is not a touch gesture. The working gesture is
+     * detected inside the page instead, which is mode-independent; see `BrowserSwipeNavScript`.
      *
      * Windows additionally hit three regressions Lite found first — the browser
      * surface sitting ~toolbar-height too high, Ctrl+R not reaching a focused page,
