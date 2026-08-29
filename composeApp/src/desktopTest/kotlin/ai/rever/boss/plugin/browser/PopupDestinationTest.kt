@@ -99,6 +99,21 @@ class PopupDestinationTest {
     }
 
     @Test
+    fun `a form posting to a fragment keeps its body`() {
+        // Chromium does not send the fragment to the network, so the upload callback sees the
+        // URL without it. Exact equality here silently downgraded the submission to a GET.
+        val nav =
+            popupDestination(
+                navigationUrl = "https://oncoemr.example.com/print#page2",
+                createTargetUrl = null,
+                capture = capture("https://oncoemr.example.com/print"),
+            )
+
+        assertEquals("https://oncoemr.example.com/print#page2", nav?.url)
+        assertContentEquals(formBody, nav?.postData)
+    }
+
+    @Test
     fun `an ordinary link opens as a plain GET`() {
         val nav = popupDestination("https://example.com/page", null, null)
 

@@ -30,7 +30,10 @@ internal fun popupDestination(
     capture: PopupCapture?,
 ): PopupNavigation? {
     val url = usablePopupUrl(navigationUrl) ?: usablePopupUrl(createTargetUrl) ?: return null
-    val body = capture?.takeIf { it.url == url }
+    // Fragments are compared away because Chromium does not send one to the network: a form
+    // posting to `/print#page2` reaches the upload callback as `/print`, and demanding an exact
+    // match would silently downgrade that submission to a GET.
+    val body = capture?.takeIf { it.url.substringBefore('#') == url.substringBefore('#') }
     return PopupNavigation(
         url = url,
         postData = body?.body,

@@ -25,9 +25,20 @@ object BrowserJavaScripts {
      *
      * The guards all exist because this hijacks the click before the page sees it, so anything
      * it claims wrongly is a link the page can no longer handle itself:
-     * - only the primary button, and only when nothing has already cancelled the click;
      * - never a `download` anchor, whose whole point is not to navigate;
-     * - only http(s), so `javascript:`, `mailto:`, `blob:` and `data:` stay with the page.
+     * - only http(s), so `javascript:`, `mailto:`, `blob:` and `data:` stay with the page. This
+     *   also covers an SVG `<a>`, whose `href` is an `SVGAnimatedString` rather than a string -
+     *   it has no `protocol`, so it falls through to Chromium instead of being opened as
+     *   `[object SVGAnimatedString]`. Do not "simplify" this to `new URL(link.href)`.
+     * - only the primary button. Near-dead as written, since Chromium fires `auxclick` rather
+     *   than `click` for the others, but the cost is one comparison.
+     *
+     * `defaultPrevented` is checked for the case where another capture-phase listener above us
+     * has already cancelled the click. It says nothing about the page's own handlers: this runs
+     * on the capture phase, so those have not run yet.
+     *
+     * Anything that falls through reaches Chromium's native cmd+click, which arrives at
+     * `CreatePopupCallback` with a correct target URL - so falling through is always safe.
      */
     val injectCmdClickHandler =
         """
