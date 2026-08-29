@@ -59,12 +59,12 @@ import com.teamdev.jxbrowser.media.MediaType
 import com.teamdev.jxbrowser.menu.ContextMenuContentType
 import com.teamdev.jxbrowser.navigation.LoadUrlParams
 import com.teamdev.jxbrowser.navigation.event.LoadFinished
-import com.teamdev.jxbrowser.navigation.event.LoadStarted
 import com.teamdev.jxbrowser.navigation.event.NavigationFinished
 import com.teamdev.jxbrowser.navigation.event.NavigationStarted
 import com.teamdev.jxbrowser.net.ByteData
 import com.teamdev.jxbrowser.net.HttpHeader
 import com.teamdev.jxbrowser.net.NetError
+import com.teamdev.jxbrowser.net.ResourceType
 import com.teamdev.jxbrowser.net.callback.BeforeSendUploadDataCallback
 import com.teamdev.jxbrowser.ui.KeyCode
 import com.teamdev.jxbrowser.ui.KeyModifiers
@@ -108,6 +108,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.awt.Window
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedDeque
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -368,6 +369,47 @@ internal class BrowserHandleImpl(
     // Callback variant that also carries POST body for form-submit popups.
     // When set, this wins over [openInNewTabCallback].
     private var openInNewTabWithDataCallback: ((PopupNavigation) -> Unit)? = null
+
+    /**
+     * Target URLs handed to `CreatePopupCallback`, oldest first, waiting to be claimed by the
+     * `OpenPopupCallback` for the same popup. Chromium creates and opens a popup in that order,
+     * so a FIFO pairs them up; the timestamp bounds a popup that is created and then never
+     * opened, which would otherwise leave an entry to mislead the next one.
+     */
+    private val pendingPopupTargets = ConcurrentLinkedDeque<TimedPopupTarget>()
+
+    private data class TimedPopupTarget(
+        val recordedAtMs: Long,
+        val url: String,
+    )
+
+    /** Remembers where a popup was told to go, before any browser exists to ask. */
+    private fun recordPopupTarget(url: String) {
+        val now = System.currentTimeMillis()
+        dropStalePopupTargets(now)
+        val usable = usablePopupUrl(url) ?: return
+        // Bounded as well as aged: a page that opens popups faster than they are claimed must
+        // not grow this without limit.
+        while (pendingPopupTargets.size >= MAX_PENDING_POPUP_TARGETS) {
+            pendingPopupTargets.pollFirst() ?: break
+        }
+        pendingPopupTargets.addLast(TimedPopupTarget(now, usable))
+    }
+
+    /** Takes the oldest unclaimed target, or null when there is none to pair with. */
+    private fun claimPopupTarget(): String? {
+        val now = System.currentTimeMillis()
+        dropStalePopupTargets(now)
+        return pendingPopupTargets.pollFirst()?.url
+    }
+
+    private fun dropStalePopupTargets(now: Long) {
+        while (true) {
+            val head = pendingPopupTargets.peekFirst() ?: return
+            if (now - head.recordedAtMs <= POPUP_TARGET_TTL_MS) return
+            pendingPopupTargets.pollFirst()
+        }
+    }
 
     // BrowserViewState for Compose rendering - managed per Content() call
     private var currentViewState: BrowserViewState? = null
@@ -2543,16 +2585,26 @@ internal class BrowserHandleImpl(
      * calls to new tabs instead of spawning popup windows.
      *
      * How it works:
-     * 1. CreatePopupCallback allows JxBrowser to create a temporary popup browser
+     * 1. CreatePopupCallback allows JxBrowser to create a temporary popup browser, and records
+     *    the target URL it is handed - the only place the destination is stated outright
      * 2. OpenPopupCallback intercepts before the popup is shown:
      *    - Empty bounds (Rect.empty()) indicates target="_blank" or cmd+click → route to new tab
      *    - Non-empty bounds indicates OAuth window or actual popup → allow to proceed
      */
     private fun setupPopupHandler() {
-        // Phase 1: Allow popup browser creation
+        // Phase 1: Allow popup browser creation, and keep the target URL it arrives with.
+        // OpenPopupCallback's params carry no URL, so without this the destination has to be
+        // recovered from the popup browser after the fact, which races the page's own scripts.
         browser.set(
             CreatePopupCallback::class.java,
-            CreatePopupCallback {
+            CreatePopupCallback { params ->
+                recordPopupTarget(
+                    try {
+                        params.targetUrl()
+                    } catch (_: Exception) {
+                        ""
+                    },
+                )
                 CreatePopupCallback.Response.create()
             },
         )
@@ -2565,6 +2617,11 @@ internal class BrowserHandleImpl(
                 val popupBrowser = params.popupBrowser()
                 val initialBounds = params.initialBounds()
                 val targetUrl = popupBrowser.url()
+
+                // Claimed for EVERY popup, including the OAuth-window branch below. The queue
+                // pairs creates with opens in order, so skipping the claim on one branch would
+                // hand the next link's tab a URL meant for this window.
+                val createTargetUrl = claimPopupTarget()
 
                 // Check if popup has specific window dimensions
                 val isEmptyBounds = initialBounds == Rect.empty()
@@ -2583,33 +2640,39 @@ internal class BrowserHandleImpl(
                     var subscription: Subscription? = null
                     val scope = CoroutineScope(Dispatchers.Default + Job())
 
-                    fun resolveUrlIfReady() {
-                        if (urlDeferred.isCompleted) return
-                        val u =
-                            try {
-                                popupBrowser.url()
-                            } catch (_: Exception) {
-                                ""
-                            }
-                        if (u.isNotEmpty() && u != "about:blank") urlDeferred.complete(u)
-                    }
-
-                    if (targetUrl.isNotEmpty() && targetUrl != "about:blank") {
-                        urlDeferred.complete(targetUrl)
+                    val alreadyNavigated = usablePopupUrl(targetUrl)
+                    if (alreadyNavigated != null) {
+                        urlDeferred.complete(alreadyNavigated)
                     } else {
+                        // NavigationStarted, not LoadStarted: LoadStarted carries no URL of its
+                        // own, so the old code had to re-read popupBrowser.url() and hope the
+                        // navigation had committed by then. When it had not, nothing ever
+                        // completed this deferred and the handler sat out its whole timeout with
+                        // the popup live and running the page's scripts - which is exactly the
+                        // window an analytics beacon needs to win the race below.
                         subscription =
-                            popupBrowser.navigation().on(LoadStarted::class.java) {
-                                resolveUrlIfReady()
+                            popupBrowser.navigation().on(NavigationStarted::class.java) { event ->
+                                try {
+                                    if (!event.isInMainFrame || event.isSameDocument) return@on
+                                    // A popup's initial empty document fires one of these too.
+                                    val started = usablePopupUrl(event.url()) ?: return@on
+                                    urlDeferred.complete(started)
+                                } catch (e: Exception) {
+                                    logger.debug(
+                                        LogCategory.BROWSER,
+                                        "Popup navigation event unreadable",
+                                        mapOf("error" to e.toString()),
+                                    )
+                                }
                             }
                     }
 
                     scope.launch {
                         try {
-                            // Wait up to 3s for a real URL.
-                            val url = withTimeoutOrNull(3_000) { urlDeferred.await() } ?: ""
+                            val url = withTimeoutOrNull(POPUP_URL_TIMEOUT_MS) { urlDeferred.await() }
                             // Brief grace period for the POST upload callback to fire after URL is known.
-                            // For POST navigations the upload typically fires within tens of ms of LoadStarted.
-                            val capture = withTimeoutOrNull(500) { captureDeferred.await() }
+                            // For POST navigations the upload fires within tens of ms of the navigation.
+                            val capture = withTimeoutOrNull(POPUP_UPLOAD_GRACE_MS) { captureDeferred.await() }
 
                             if (cleanedUp.compareAndSet(false, true)) {
                                 subscription?.unsubscribe()
@@ -2619,31 +2682,38 @@ internal class BrowserHandleImpl(
                                 }
                             }
 
-                            val finalUrl = capture?.url?.takeIf { it.isNotEmpty() } ?: url
-                            if (finalUrl.isEmpty() || finalUrl == "about:blank") {
+                            val nav = popupDestination(url, createTargetUrl, capture)
+                            if (nav == null) {
                                 logger.warn(LogCategory.BROWSER, "Popup navigation produced no URL, dropping")
                                 return@launch
+                            }
+                            if (capture != null && capture.url != nav.url) {
+                                // The capture is a subresource POST from the popup's page, not its
+                                // navigation. Keeping this visible: it is how the destination used
+                                // to get replaced by an analytics beacon endpoint.
+                                logger.warn(
+                                    LogCategory.BROWSER,
+                                    "Popup upload does not match the navigation, dropping the body",
+                                    mapOf(
+                                        "navigation" to nav.url,
+                                        "upload" to capture.url,
+                                    ),
+                                )
                             }
 
                             val withDataCb = openInNewTabWithDataCallback
                             if (withDataCb != null) {
-                                val nav =
-                                    PopupNavigation(
-                                        url = finalUrl,
-                                        postData = capture?.body,
-                                        contentType = capture?.contentType,
-                                    )
                                 withContext(Dispatchers.Main) { withDataCb(nav) }
                             } else {
-                                withContext(Dispatchers.Main) { openInNewTabCallback?.invoke(finalUrl) }
+                                withContext(Dispatchers.Main) { openInNewTabCallback?.invoke(nav.url) }
                             }
 
                             logger.debug(
                                 LogCategory.BROWSER,
                                 "Popup dispatched",
                                 mapOf(
-                                    "url" to finalUrl,
-                                    "hasPost" to (capture != null).toString(),
+                                    "url" to nav.url,
+                                    "hasPost" to (nav.postData != null).toString(),
                                 ),
                             )
                         } catch (e: Exception) {
@@ -3514,16 +3584,6 @@ internal class BrowserHandleImpl(
         logger.debug(LogCategory.BROWSER, "Browser handle disposed", mapOf("handleId" to id))
     }
 
-    /**
-     * Captured details of a POST upload made by a popup browser, used to replay
-     * the same POST when the popup is adopted as a new tab.
-     */
-    private data class PopupCapture(
-        val url: String,
-        val body: ByteArray,
-        val contentType: String,
-    )
-
     companion object {
         /** Cause-chain depth [isTransportFailure] inspects before giving up. */
         private const val MAX_CAUSE_DEPTH = 16
@@ -3548,6 +3608,29 @@ internal class BrowserHandleImpl(
 
         /** Best-effort cap on [loadUrlAndWait]; returns (no throw) if a load runs long. */
         private const val LOAD_TIMEOUT_MS = 30_000L
+
+        /**
+         * How long an adopted popup waits for its main-frame navigation to name a destination
+         * before falling back to the URL recorded at popup-creation time.
+         */
+        private const val POPUP_URL_TIMEOUT_MS = 3_000L
+
+        /**
+         * Grace period for the popup's main-frame upload to arrive once its URL is known, so a
+         * `target="_blank"` form POST keeps its body across the handoff. Only a MAIN_FRAME
+         * request can claim it, so this window is no longer a chance for a page's analytics
+         * beacon to be mistaken for the navigation.
+         */
+        private const val POPUP_UPLOAD_GRACE_MS = 500L
+
+        /**
+         * How long a recorded popup target stays claimable. Covers a popup that is created and
+         * never opened, which would otherwise be handed to the next popup instead.
+         */
+        private const val POPUP_TARGET_TTL_MS = 10_000L
+
+        /** Hard cap on unclaimed popup targets, so a popup-spamming page cannot grow the queue. */
+        private const val MAX_PENDING_POPUP_TARGETS = 16
 
         /**
          * How long a context menu waits for the form-field detail behind secret auto-fill
@@ -3597,7 +3680,15 @@ internal class BrowserHandleImpl(
                         try {
                             val req = params.urlRequest()
                             val popupBrowser = req.browser().orElse(null)
-                            if (popupBrowser != null) {
+                            // MAIN_FRAME only. This callback is engine-wide and fires for every
+                            // request carrying a body, so an XHR, a CSP report, or a sendBeacon
+                            // ping (ResourceType.PING) from the popup's own page used to be able
+                            // to claim the capture - and the first one to fire won, which is how
+                            // a tab ended up on an analytics endpoint. Gating the claim also
+                            // stops a beacon consuming the slot the real navigation needs. The
+                            // entry is not orphaned when the navigation is a plain GET: the popup
+                            // coroutine removes it on every exit path.
+                            if (popupBrowser != null && req.resourceType() == ResourceType.MAIN_FRAME) {
                                 val deferred = pendingPopupCaptures.remove(popupBrowser)
                                 if (deferred != null) {
                                     val bytes = params.uploadData().bytes() ?: ByteArray(0)

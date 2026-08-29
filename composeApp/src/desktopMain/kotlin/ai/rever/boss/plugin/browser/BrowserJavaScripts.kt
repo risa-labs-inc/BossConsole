@@ -22,20 +22,28 @@ object BrowserJavaScripts {
      * JxBrowser's OpenPopupCallback then routes this to open as a new tab.
      *
      * Uses capture phase (true) to intercept before normal click handlers.
+     *
+     * The guards all exist because this hijacks the click before the page sees it, so anything
+     * it claims wrongly is a link the page can no longer handle itself:
+     * - only the primary button, and only when nothing has already cancelled the click;
+     * - never a `download` anchor, whose whole point is not to navigate;
+     * - only http(s), so `javascript:`, `mailto:`, `blob:` and `data:` stay with the page.
      */
     val injectCmdClickHandler =
         """
         (function() {
             if (!window._cmdClickHandlerAdded) {
                 document.addEventListener('click', function(event) {
+                    if (!(event.metaKey || event.ctrlKey)) return;
+                    if (event.button !== 0 || event.defaultPrevented) return;
                     const link = event.target.closest('a');
-                    if (link && link.href) {
-                        if (event.metaKey || event.ctrlKey) {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            window.open(link.href, '_blank');
-                        }
-                    }
+                    if (!link || !link.href) return;
+                    if (link.hasAttribute('download')) return;
+                    const protocol = link.protocol;
+                    if (protocol !== 'http:' && protocol !== 'https:') return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    window.open(link.href, '_blank');
                 }, true);
                 window._cmdClickHandlerAdded = true;
             }
