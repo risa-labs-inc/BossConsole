@@ -35,7 +35,10 @@ internal class PopupTargetQueue(
     ) {
         dropStale(nowMs)
         // Bounded as well as aged: a page opening popups faster than they are claimed must not
-        // grow this without limit.
+        // grow this without limit. Dropping the oldest knowingly abandons the pairing past the
+        // cap - every later popup shifts by one - which is the right trade against unbounded
+        // growth, but it does mean the FIFO's guarantee stops at maxEntries rather than holding
+        // universally. Only the fallback destination is affected; the navigation still decides.
         while (entries.size >= maxEntries) {
             entries.pollFirst() ?: break
         }

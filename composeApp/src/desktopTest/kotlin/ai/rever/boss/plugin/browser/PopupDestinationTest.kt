@@ -123,10 +123,47 @@ class PopupDestinationTest {
     }
 
     @Test
-    fun `about blank is never a destination`() {
+    fun `about blank is never a destination, in any of its forms`() {
         assertNull(usablePopupUrl("about:blank"))
+        // Chromium's value for a popup it blocked. The exact-string compare this replaced let
+        // it through.
+        assertNull(usablePopupUrl("about:blank#blocked"))
+        assertNull(usablePopupUrl("about:srcdoc"))
         assertNull(usablePopupUrl(""))
+        assertNull(usablePopupUrl("   "))
         assertNull(usablePopupUrl(null))
+    }
+
+    @Test
+    fun `only http and https can be adopted into a tab`() {
         assertEquals("https://example.com", usablePopupUrl("https://example.com"))
+        assertEquals("http://localhost:8080/x", usablePopupUrl("http://localhost:8080/x"))
+
+        // A page controls what it passes to window.open, and the creation-time target is now a
+        // fallback destination - so this is the guard that stops it naming a local file.
+        assertNull(usablePopupUrl("file:///Users/me/.ssh/id_rsa"))
+        assertNull(usablePopupUrl("javascript:alert(1)"))
+        assertNull(usablePopupUrl("data:text/html,<h1>x"))
+        // Scoped to the document that minted it, so a fresh browser could never load it.
+        assertNull(usablePopupUrl("blob:https://example.com/abc-123"))
+        assertNull(usablePopupUrl("chrome://settings"))
+        assertNull(usablePopupUrl("filesystem:https://example.com/temporary/x"))
+    }
+
+    @Test
+    fun `a scheme is matched case-insensitively`() {
+        assertEquals("HttPs://example.com", usablePopupUrl("HttPs://example.com"))
+        assertEquals("HTTP://example.com", usablePopupUrl("HTTP://example.com"))
+    }
+
+    @Test
+    fun `a non-web creation target cannot become the destination`() {
+        assertNull(
+            popupDestination(
+                navigationUrl = null,
+                createTargetUrl = "file:///etc/passwd",
+                capture = null,
+            ),
+        )
     }
 }
