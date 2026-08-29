@@ -223,6 +223,26 @@ class DynamicPluginManager(
      */
     private val hiddenPlugins = ConcurrentHashMap<String, DynamicPluginInfo>()
 
+    /**
+     * Called after a previously-disabled plugin is actually registered again:
+     * [enablePlugin] (user re-enable) and [handleAccessChange] (RBAC un-hide).
+     *
+     * The desktop layer wires this to `MissingDependencyReporter.report` so a
+     * required dependency that was removed while the plugin sat disabled is
+     * offered the same way an install would (#180). Null in headless/test
+     * contexts.
+     *
+     * Per-manager, not a companion hook: reporting must read *this* window's
+     * `pluginStates`, and a process-wide first-window capture would leave every
+     * other window offering installs into a disposed manager.
+     *
+     * Not invoked from [installPlugin], [reregisterAfterRestart], or any reload:
+     * those either already report through the install paths, or are not a user
+     * asking to activate anything.
+     */
+    @Volatile
+    internal var onPluginActivated: ((PluginManifest) -> Unit)? = null
+
     companion object {
         private val companionLogger = BossLogger.forComponent("DynamicPluginManager")
 
@@ -1606,7 +1626,13 @@ class DynamicPluginManager(
         // Outside the mutex, same as installPlugin. Skipped when the plugin
         // was already enabled: a redundant enable must not discard an open
         // panel's in-memory state (resetComponent loses it by design).
-        if (result.isSuccess && !wasAlreadyEnabled) notifyPanelsRefresh(pluginId)
+        if (result.isSuccess && !wasAlreadyEnabled) {
+            notifyPanelsRefresh(pluginId)
+            // Same skip: a redundant enable is not the user re-arming a
+            // disabled plugin, so it must not re-offer a dependency they
+            // already declined (#180).
+            notifyPluginActivated(pluginId)
+        }
         return result
     }
 
@@ -1726,6 +1752,31 @@ class DynamicPluginManager(
         // watchdog.
         sandboxManager.disablePlugin(pluginId)
         updatePluginState(pluginId, info.copy(state = PluginState.DISABLED, enabled = false))
+    }
+
+    /**
+     * Invoke [onPluginActivated] with [pluginId]'s current manifest; never throws.
+     *
+     * Outside the mutex, same as [notifyPanelsRefresh]. The reporter is
+     * fire-and-forget and only reads `pluginStates`, so it does not need the
+     * lock; holding it would stall enable/RBAC on a dialog that may not exist
+     * yet.
+     */
+    private fun notifyPluginActivated(pluginId: String) {
+        val callback = onPluginActivated ?: return
+        val manifest = _pluginStates.value[pluginId]?.manifest ?: return
+        try {
+            callback(manifest)
+        } catch (t: Throwable) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Dependency check after plugin activation failed",
+                mapOf(
+                    "pluginId" to pluginId,
+                    "error" to (t.message ?: t::class.simpleName),
+                ),
+            )
+        }
     }
 
     /** Invoke [pluginPanelsRefresh] with [pluginId]'s currently-registered panels; never throws. */
@@ -2255,6 +2306,7 @@ class DynamicPluginManager(
      * user can now access, and unregisters/hides plugins they can no longer access.
      */
     private suspend fun handleAccessChange() {
+        val reactivated = mutableListOf<String>()
         mutex.withLock {
             // 1. Re-register previously-hidden plugins the user can now access.
             val nowVisible =
@@ -2269,6 +2321,7 @@ class DynamicPluginManager(
                         loadedPlugin.instance.register(trackingContext)
                         updatePluginState(pluginId, info.copy(state = PluginState.LOADED))
                         hiddenPlugins.remove(pluginId)
+                        reactivated += pluginId
                         logger.info(
                             LogCategory.SYSTEM,
                             "Re-registered plugin after access gained",
@@ -2322,6 +2375,9 @@ class DynamicPluginManager(
                 }
             }
         }
+        // Outside the mutex, same as enablePlugin: the reporter only reads
+        // pluginStates and must not stall RBAC behind a dialog.
+        reactivated.forEach(::notifyPluginActivated)
     }
 
     private fun updatePluginState(
