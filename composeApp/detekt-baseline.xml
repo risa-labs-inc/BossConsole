@@ -198,6 +198,7 @@
     <ID>CyclomaticComplexMethod:main.kt$private fun extractPty4jNatives(targetDir: File)</ID>
     <ID>EmptyElseBlock:FluckEngine.kt$FluckEngine${ }</ID>
     <ID>EmptyFunctionBlock:BossTabsComponentMoveTest.kt$BossTabsComponentMoveTest.TestTabComponent${ }</ID>
+    <ID>EmptyFunctionBlock:SplitViewWorkspaceTransferTest.kt$SplitViewWorkspaceTransferTest.TransferTabComponent${ }</ID>
     <ID>EmptyFunctionBlock:PanelComponentStoreResetTest.kt$PanelComponentStoreResetTest.FakePanelComponent${ }</ID>
     <ID>EmptyFunctionBlock:TabDropResultHandlingTest.kt$TabDropResultHandlingTest.DropTestComponent${ }</ID>
     <ID>EmptyIfBlock:FluckEngine.kt$FluckEngine${ }</ID>
@@ -999,6 +1000,7 @@
     <ID>NestedBlockDepth:main.kt$fun main(args: Array&lt;String&gt;)</ID>
     <ID>NestedBlockDepth:main.kt$private fun extractPty4jNatives(targetDir: File)</ID>
     <ID>PackageNaming:BarMenuItemsTest.kt$package ai.rever.boss.components.window_panel</ID>
+    <ID>PackageNaming:SplitViewWorkspaceTransferTest.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:TabMenuVisibilityReportTest.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:BookmarksDialogProviderImpl.kt$package ai.rever.boss.components.plugin.panels.left_top</ID>
     <ID>PackageNaming:BarMenuItems.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>

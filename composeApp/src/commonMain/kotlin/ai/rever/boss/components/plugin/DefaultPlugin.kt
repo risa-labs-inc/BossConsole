@@ -129,6 +129,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import java.io.File
 import ai.rever.boss.components.plugin.panels.right_top.BrowserIntegration as InternalBrowserIntegration
 import ai.rever.boss.plugin.api.BrowserIntegration as ApiBrowserIntegration
@@ -1421,8 +1422,41 @@ private class ApiActiveTabsProviderAdapter(
         tabId: String,
         panelId: String,
     ) {
-        splitViewState.selectTabInPanel(tabId, panelId)
+        // panelId is honoured first for the on-screen case, which is what every existing caller
+        // means. selectTabInPanel resolves it against the CURRENT tree only, so it silently did
+        // nothing for a tab in a workspace running behind this one - which is most of what
+        // activeTabs reports. Fall through to the cross-workspace path rather than give up.
+        if (splitViewState.getPanel(panelId) != null) {
+            splitViewState.selectTabInPanel(tabId, panelId)
+            return
+        }
+        splitViewState.selectTabAnywhere(tabId)
     }
+
+    override val supportsTabTransfer: Boolean get() = true
+
+    override val liveWorkspaceIds: Set<String> get() = splitViewState.liveWorkspaceIds
+
+    override suspend fun moveTabToWorkspace(
+        tabId: String,
+        targetWorkspaceId: String,
+    ): Boolean =
+        try {
+            // Marshalled here rather than at the call site: detach/adopt move Essenty
+            // LifecycleRegistries between panels, and the api is suspend precisely so a plugin
+            // does not have to know that.
+            withContext(Dispatchers.Main) {
+                splitViewState.moveTabToWorkspace(tabId, targetWorkspaceId)
+            }
+        } catch (e: Exception) {
+            tabsLogger.warn(
+                LogCategory.UI,
+                "moveTabToWorkspace failed",
+                mapOf("tabId" to tabId, "targetWorkspaceId" to targetWorkspaceId),
+                error = e,
+            )
+            false
+        }
 
     override fun getTabUrl(tabId: String): String? {
         val tabs = splitViewState.collectAllActiveTabs(workspaceManager, windowId)
@@ -1547,24 +1581,16 @@ private class ApiActiveTabsProviderAdapter(
         }
     }
 
-    override fun closeTab(tabId: String): Boolean {
-        return try {
-            val allPanels = splitViewState.getAllPanels()
-            for (panel in allPanels) {
-                val tabsComponent = panel.tabsComponent
-                // Check if the tab exists by trying to get its component
-                val component = tabsComponent.getComponentById(tabId)
-                if (component != null) {
-                    tabsComponent.removeTabById(tabId)
-                    return true
-                }
-            }
-            false
+    override fun closeTab(tabId: String): Boolean =
+        try {
+            // Every workspace this window is running, not only the one on screen. getAllPanels
+            // walks the current tree alone, so this returned false for any tab activeTabs reported
+            // from a preserved workspace - which the caller could not tell from "no such tab".
+            splitViewState.closeTabAnywhere(tabId)
         } catch (e: Exception) {
             tabsLogger.warn(LogCategory.UI, "closeTab failed", mapOf("tabId" to tabId), error = e)
             false
         }
-    }
 
     private fun convertToActiveTabData(tab: ai.rever.boss.topofmind.ActiveTab): ActiveTabData {
         val tabInfo = tab.tabInfo

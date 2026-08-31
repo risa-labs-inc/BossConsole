@@ -1721,6 +1721,226 @@ class SplitViewState(
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────────────────────
+    // Cross-workspace addressing
+    //
+    // collectAllActiveTabs walks the current tree AND the preserved ones, so a plugin can SEE
+    // every tab this window is running. Every write path below it - findPanel, getAllPanels,
+    // selectTabInPanel - reads _rootNode.value only, so nothing could ACT on a tab that was not
+    // on screen. These close that asymmetry.
+    // ─────────────────────────────────────────────────────────────────────────────────────────
+
+    /** Where a tab lives: which running workspace, and which panel inside it. */
+    data class TabLocation(
+        val workspaceId: String,
+        val panel: SplitNode.Panel,
+    )
+
+    /** The root of a workspace this window is running, current or preserved; null if it is not. */
+    private fun rootNodeForWorkspace(workspaceId: String): SplitNode? =
+        if (workspaceId == _currentWorkspaceId) {
+            _rootNode.value
+        } else {
+            preservedWorkspaceStates[workspaceId]?.rootNode
+        }
+
+    /** Every panel of a running workspace, in depth-first order. Empty if it is not running. */
+    fun panelsInWorkspace(workspaceId: String): List<SplitNode.Panel> =
+        rootNodeForWorkspace(workspaceId)?.let { getAllPanelsInNode(it) } ?: emptyList()
+
+    /**
+     * The panel a running workspace would activate, which is where a tab moved into it lands.
+     *
+     * Falls back to its first panel: a preserved state records the activePanelId from the moment
+     * it was preserved, and nothing keeps that honest if the panel was closed afterwards.
+     */
+    fun activePanelIdForWorkspace(workspaceId: String): String? {
+        val panels = panelsInWorkspace(workspaceId)
+        if (panels.isEmpty()) return null
+        val preferred =
+            if (workspaceId == _currentWorkspaceId) {
+                _activePanelId.value
+            } else {
+                preservedWorkspaceStates[workspaceId]?.activePanelId
+            }
+        return panels.firstOrNull { it.id == preferred }?.id ?: panels.first().id
+    }
+
+    /** Find a tab anywhere this window is running it, not only on screen. */
+    fun findTabLocation(tabId: String): TabLocation? {
+        for (workspaceId in liveWorkspaceIds) {
+            val panel =
+                panelsInWorkspace(workspaceId).firstOrNull { panel ->
+                    panel.tabsComponent.tabsState.value.tabs
+                        .any { it.id == tabId }
+                }
+            if (panel != null) return TabLocation(workspaceId, panel)
+        }
+        return null
+    }
+
+    /**
+     * Move a tab into another workspace this window is running, keeping it alive.
+     *
+     * The component instance and its lifecycle transfer as-is (see
+     * [BossTabsComponent.detachTab] / [BossTabsComponent.adoptTab]), so a browser tab keeps its
+     * page and its playing media rather than being destroyed here and rebuilt from config there.
+     *
+     * Deliberately does NOT switch workspaces and does NOT select the tab in its new panel: a move
+     * is usually filing something away, and both of those are the caller's to ask for afterwards.
+     *
+     * UI thread only, like every other tab mutation.
+     *
+     * @return true if the tab moved.
+     */
+    @Suppress("ReturnCount")
+    fun moveTabToWorkspace(
+        tabId: String,
+        targetWorkspaceId: String,
+    ): Boolean {
+        val source = findTabLocation(tabId) ?: return false
+        if (source.workspaceId == targetWorkspaceId) return false
+        val targetPanelId = activePanelIdForWorkspace(targetWorkspaceId) ?: return false
+        val targetPanel =
+            panelsInWorkspace(targetWorkspaceId).firstOrNull { it.id == targetPanelId } ?: return false
+        // Identity, not id. Panel ids are unique only WITHIN a tree, and every workspace's first
+        // pane is called "main" - comparing ids would reject the commonest move there is.
+        if (targetPanel.tabsComponent === source.panel.tabsComponent) return false
+
+        // Same shape as TabDropHandler.handleTabDropResult's MoveToPanel branch, and for the same
+        // reasons: transfer the live instance when we can; fall back to recreate-from-config only
+        // when the tab ENTRY survived without its component; drop the move when the tab is gone
+        // entirely, rather than resurrecting something that was closed underneath us.
+        val detached = source.panel.tabsComponent.detachTab(tabId)
+        val moved =
+            if (detached != null) {
+                // A non-null DetachedTab must be adopted or destroyed or its component leaks.
+                targetPanel.tabsComponent.adoptTab(detached) >= 0
+            } else {
+                val config =
+                    source.panel.tabsComponent.tabsState.value.tabs
+                        .firstOrNull { it.id == tabId }
+                if (config != null && source.panel.tabsComponent.removeTabById(tabId)) {
+                    targetPanel.tabsComponent.addTab(config) >= 0
+                } else {
+                    false
+                }
+            }
+        if (!moved) {
+            splitViewLogger.warn(
+                LogCategory.UI,
+                "moveTabToWorkspace: target refused the tab",
+                mapOf("tabId" to tabId, "from" to source.workspaceId, "to" to targetWorkspaceId),
+            )
+            return false
+        }
+
+        pruneEmptyPanelsIn(source.workspaceId)
+        return true
+    }
+
+    /**
+     * Close panes the move emptied.
+     *
+     * Two paths because the two kinds of tree are different objects. The current one is live and
+     * has activation history, bounds and focus requesters hanging off it, so it goes through
+     * [checkAndCloseEmptyPanels]. A preserved one is an immutable snapshot in a state map: it is
+     * rewritten, never mutated, and none of that bookkeeping applies to a tree nothing is showing.
+     */
+    @Suppress("ReturnCount")
+    private fun pruneEmptyPanelsIn(workspaceId: String) {
+        if (workspaceId == _currentWorkspaceId) {
+            checkAndCloseEmptyPanels()
+            return
+        }
+        val state = preservedWorkspaceStates[workspaceId] ?: return
+        val pruned = pruneEmptyPanels(state.rootNode) ?: return
+        if (pruned === state.rootNode) return
+        val survivors = getAllPanelsInNode(pruned).map { it.id }
+        preservedWorkspaceStates[workspaceId] =
+            state.copy(
+                rootNode = pruned,
+                // The recorded active panel may be the one we just dropped, and restorePreservedState
+                // writes it straight into _activePanelId - which would leave the restored workspace
+                // pointing at a panel that is not in its own tree.
+                activePanelId = state.activePanelId.takeIf { it in survivors } ?: survivors.first(),
+            )
+    }
+
+    /**
+     * Drop empty panes from a detached tree, collapsing splits that lose a side.
+     *
+     * Pure: returns a new tree, or the same instance when nothing was empty. Null only if EVERY
+     * pane is empty, which the caller reads as "leave it alone" - a workspace with no panels at
+     * all has nothing to restore into.
+     */
+    private fun pruneEmptyPanels(node: SplitNode): SplitNode? =
+        when (node) {
+            is SplitNode.Panel -> {
+                node.takeIf {
+                    it.tabsComponent.tabsState.value.tabs
+                        .isNotEmpty()
+                }
+            }
+
+            is SplitNode.VerticalSplit -> {
+                prunedSplit(node, node.left, node.right, SplitNode::VerticalSplit)
+            }
+
+            is SplitNode.HorizontalSplit -> {
+                prunedSplit(node, node.top, node.bottom, SplitNode::HorizontalSplit)
+            }
+        }
+
+    /** One side surviving collapses the split into it; both surviving unchanged reuses [original]. */
+    private fun prunedSplit(
+        original: SplitNode,
+        first: SplitNode,
+        second: SplitNode,
+        rebuild: (SplitNode, SplitNode) -> SplitNode,
+    ): SplitNode? {
+        val prunedFirst = pruneEmptyPanels(first)
+        val prunedSecond = pruneEmptyPanels(second)
+        if (prunedFirst == null || prunedSecond == null) return prunedFirst ?: prunedSecond
+        return if (prunedFirst === first && prunedSecond === second) original else rebuild(prunedFirst, prunedSecond)
+    }
+
+    /**
+     * Select a tab wherever this window is running it, including in a workspace that is not on
+     * screen - in which case it becomes that workspace's selected tab, ready for when you switch
+     * to it, without dragging the current workspace anywhere.
+     *
+     * @return true if the tab was found and selected.
+     */
+    @Suppress("ReturnCount")
+    fun selectTabAnywhere(tabId: String): Boolean {
+        val location = findTabLocation(tabId) ?: return false
+        val tabs = location.panel.tabsComponent.tabsState.value.tabs
+        val index = tabs.indexOfFirst { it.id == tabId }
+        if (index < 0) return false
+        location.panel.tabsComponent.selectTab(index)
+        if (location.workspaceId == _currentWorkspaceId) {
+            setActivePanel(location.panel.id)
+        } else {
+            // setActivePanel writes _activePanelId, which belongs to the tree on screen; pointing
+            // it at a panel from another workspace would leave the current workspace with no valid
+            // active panel. Record it on the preserved state instead, where restore reads it.
+            preservedWorkspaceStates[location.workspaceId]?.let { state ->
+                preservedWorkspaceStates[location.workspaceId] = state.copy(activePanelId = location.panel.id)
+            }
+        }
+        return true
+    }
+
+    /** Close a tab wherever this window is running it, including in a workspace not on screen. */
+    @Suppress("ReturnCount")
+    fun closeTabAnywhere(tabId: String): Boolean {
+        val location = findTabLocation(tabId) ?: return false
+        if (!location.panel.tabsComponent.removeTabById(tabId)) return false
+        pruneEmptyPanelsIn(location.workspaceId)
+        return true
+    }
+
     fun getPanelTabsComponent(panelId: String): BossTabsComponent? = findPanel(panelId)?.tabsComponent
 
     /**

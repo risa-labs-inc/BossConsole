@@ -143,7 +143,16 @@ intellij-platform = "243.21565.199"
 # The host implements the new members in this branch: UnifiedDiffParser + git diff
 # plumbing, the diff/composer tab types, the editor buffer API, and
 # ContentSearchService. Same forced order as above: api first, then this.
-boss-plugin-api = "1.0.87"
+#
+# 1.0.88 adds ActiveTabsProvider.moveTabToWorkspace + liveWorkspaceIds + supportsTabTransfer, which
+# this branch implements in SplitViewState. A window RUNS several workspaces at once and shows one,
+# so activeTabs has always reported tabs from workspaces that are not on screen - but every write
+# path (findPanel, getAllPanels, selectTabInPanel) read the current tree only, so nothing could act
+# on them. Same forced order as above: api first (boss-plugin-api#44 cuts v1.0.88), then this,
+# **and this pin 404s CI until that release exists**. It rebases onto the 1.0.87 that #45 took.
+#
+# Superset of 1.0.87: three defaulted members on an existing interface, nothing withdrawn.
+boss-plugin-api = "1.0.88"
 
 [libraries]
 kotlin-test-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin" }
