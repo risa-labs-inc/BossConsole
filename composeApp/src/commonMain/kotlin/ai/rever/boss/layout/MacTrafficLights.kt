@@ -22,6 +22,53 @@ val TRAFFIC_LIGHT_HEIGHT: Dp = 28.dp
 val TRAFFIC_LIGHT_WIDTH: Dp = 78.dp
 
 /**
+ * The cluster's geometry, measured off a live window rather than assumed.
+ *
+ * Three shipped versions of the fourth button's position were guesses and each was visibly wrong:
+ * 70dp (the light box minus an arbitrary nudge), then 74dp from an assumed 20pt pitch, then a 12dp
+ * circle when the lights are 14. The numbers below come from two measurements of the real thing:
+ *
+ * - **Frames**, read back from AppKit through the accessibility API (`System Events` ->
+ *   `buttons of window 1`), window origin (0, 33): close `{8, 41}`, minimise `{31, 41}`, zoom
+ *   `{54, 41}`, each `{16, 16}`. Centres 16 / 39 / 62, so the pitch is 23 and not the 20 that a
+ *   reading of the platform conventions suggests.
+ * - **Pixels**, from a 2x screen capture scanned along the centre line: the drawn circles are 14pt
+ *   across, which is smaller than their 16pt accessibility frame and larger than the 12pt the
+ *   button first used.
+ *
+ * Everything the button needs is derived from these three, so the drawn circle and the space
+ * reserved for it cannot disagree - which is exactly how the 12dp button ended up beside 14dp
+ * lights.
+ */
+val TRAFFIC_LIGHT_FIRST_CENTRE: Dp = 16.dp
+
+/** Centre-to-centre spacing. Measured at 23pt; the platform-convention answer of 20 is wrong here. */
+val TRAFFIC_LIGHT_PITCH: Dp = 23.dp
+
+/** The DRAWN diameter, which is neither the 16pt accessibility frame nor the 12pt first assumed. */
+val TRAFFIC_LIGHT_DIAMETER: Dp = 14.dp
+
+/** Where a fourth button on the same pitch starts, from the window's left edge. */
+val CAPTURED_BUTTON_START: Dp = TRAFFIC_LIGHT_FIRST_CENTRE + TRAFFIC_LIGHT_PITCH * 3 - TRAFFIC_LIGHT_DIAMETER / 2
+
+/**
+ * The button's top inset, so its centre lines up with the row.
+ *
+ * Not the middle of the title row: that is 26dp tall, so centring in it puts the button at 13
+ * against the lights' 16.
+ */
+val CAPTURED_BUTTON_TOP: Dp = TRAFFIC_LIGHT_FIRST_CENTRE - TRAFFIC_LIGHT_DIAMETER / 2
+
+/**
+ * Where chrome must start when the captured-full-screen button is drawn beside the lights.
+ *
+ * [TRAFFIC_LIGHT_WIDTH] covers the three OS buttons plus 8pt of trailing air; the fourth extends
+ * past it, so anything after the cluster clears its right edge plus the same air.
+ */
+val TRAFFIC_LIGHT_WIDTH_WITH_BUTTON: Dp =
+    TRAFFIC_LIGHT_FIRST_CENTRE + TRAFFIC_LIGHT_PITCH * 3 + TRAFFIC_LIGHT_DIAMETER / 2 + 8.dp
+
+/**
  * Which piece of chrome has to keep clear of the traffic lights, if any.
  *
  * The lights occupy a BOX - about 78dp wide and 28dp tall in the window's top-left corner - not a

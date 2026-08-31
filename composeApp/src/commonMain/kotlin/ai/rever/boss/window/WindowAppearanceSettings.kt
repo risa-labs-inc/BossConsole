@@ -174,6 +174,21 @@ data class WindowAppearanceSettings(
      * and Linux stay on the drawn menus.
      */
     val useNativeContextMenus: Boolean = true,
+    /**
+     * Whether captured full screen is offered at all: the blue button beside the traffic lights,
+     * the View menu item, and the two shortcuts.
+     *
+     * **Off by default, and this is not the usual caution about a new feature.** The mode takes
+     * the pointer and the OS shortcuts - on macOS it hides the menu bar and blocks Cmd+Tab - so
+     * someone who triggers it without meaning to is, for a moment, unable to reach the rest of
+     * their machine. There are three ways out and the mode says what they are, but "I pressed the
+     * blue circle to see what it did" should not be a way into that state. Someone who wants it
+     * asks for it here.
+     *
+     * Switching it off while a session is running ends that session, rather than leaving a window
+     * captured by a feature the settings say is not available.
+     */
+    val capturedFullScreenEnabled: Boolean = false,
 ) {
     companion object {
         /** Bump when a step is added to [WindowAppearanceMigrations.migrate]. */

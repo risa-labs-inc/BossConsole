@@ -420,6 +420,25 @@ private fun windowAppearanceEntries() =
         setting("Show Left Strip", "Bars", "chrome", "sidebar")
         setting("Show Right Strip", "Bars", "chrome", "sidebar")
         setting("Applies to", "Bars")
+        group("Captured Full Screen")
+        setting(
+            "Allow Captured Full Screen",
+            "Captured Full Screen",
+            // The words someone actually arrives with. "blue button" and "blue circle" matter most:
+            // the feature is discovered by seeing it beside the traffic lights, and its own name is
+            // the one thing that person does not know yet.
+            "blue button",
+            "blue circle",
+            "traffic light",
+            "fullscreen",
+            "kiosk",
+            "capture",
+            "pointer",
+            "mouse",
+            "cmd tab",
+            "shortcuts",
+            "parallels",
+        )
         group("Menus")
         setting("Native Context Menus", "Menus", "right click", "macos", "nsmenu")
     }

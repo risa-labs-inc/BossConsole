@@ -71,9 +71,45 @@ fun WindowAppearanceSettings() {
 
         BarsSection()
 
+        CapturedFullScreenSection()
+
         NativeContextMenuSection()
 
         TabBarSection()
+    }
+}
+
+/**
+ * The one switch that decides whether captured full screen exists for this install.
+ *
+ * Its own section rather than a row under Bars: the others there decide what is drawn, and this
+ * decides whether a mode that takes the pointer and the OS shortcuts can be started at all. It is
+ * also the only place that answers "what is the blue circle next to my traffic lights", which is
+ * the question someone arrives at Settings with.
+ */
+@Composable
+private fun CapturedFullScreenSection() {
+    val settings by WindowAppearanceSettingsManager.currentSettings.collectAsState()
+    val coroutineScope = rememberCoroutineScope()
+
+    SettingsSection(title = "Captured Full Screen") {
+        SettingsToggle(
+            label = "Allow Captured Full Screen",
+            checked = settings.capturedFullScreenEnabled,
+            onCheckedChange = { enabled ->
+                coroutineScope.launch {
+                    WindowAppearanceSettingsManager.updateSettings(
+                        settings.copy(capturedFullScreenEnabled = enabled),
+                    )
+                }
+            },
+            description =
+                "Add a blue button beside the window buttons that fills the display, confines the " +
+                    "pointer to it and takes your system shortcuts, so Cmd+Tab and the menu bar " +
+                    "stay in BOSS. Off by default: it is easy to trigger by accident and briefly " +
+                    "puts the rest of your machine out of reach. Leave it with Cmd+Alt+F, or by " +
+                    "holding Esc for two seconds.",
+        )
     }
 }
 

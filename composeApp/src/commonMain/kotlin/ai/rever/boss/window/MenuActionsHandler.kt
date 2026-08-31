@@ -68,6 +68,12 @@ object MenuActionsHandler {
     private val _toggleFocusModeEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val toggleFocusModeEvents: SharedFlow<String> = _toggleFocusModeEvents.asSharedFlow()
 
+    private val _capturedFullScreenEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
+    val capturedFullScreenEvents: SharedFlow<String> = _capturedFullScreenEvents.asSharedFlow()
+
+    private val _pointerReleaseEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
+    val pointerReleaseEvents: SharedFlow<String> = _pointerReleaseEvents.asSharedFlow()
+
     private val _splitVerticallyEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val splitVerticallyEvents: SharedFlow<String> = _splitVerticallyEvents.asSharedFlow()
 
@@ -324,6 +330,29 @@ object MenuActionsHandler {
      */
     fun triggerToggleFocusMode(windowId: String) {
         _toggleFocusModeEvents.tryEmit(windowId)
+    }
+
+    /**
+     * Trigger "enter or leave captured full screen" for the specified window.
+     *
+     * Collected in `BossWindow`, not in `BossAppMenuActionEffects` like most of these: entering
+     * resizes the window to cover its display, and `composeWindowState` is only in scope there.
+     *
+     * @param windowId The ID of the window where the action was triggered
+     */
+    fun triggerToggleCapturedFullScreen(windowId: String) {
+        _capturedFullScreenEvents.tryEmit(windowId)
+    }
+
+    /**
+     * Trigger "hand the pointer back" for the specified window.
+     *
+     * A no-op unless that window is currently holding a captured session.
+     *
+     * @param windowId The ID of the window where the action was triggered
+     */
+    fun triggerReleasePointer(windowId: String) {
+        _pointerReleaseEvents.tryEmit(windowId)
     }
 
     /**

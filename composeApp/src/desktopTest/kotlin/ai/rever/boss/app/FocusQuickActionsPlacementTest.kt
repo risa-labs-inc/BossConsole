@@ -235,4 +235,55 @@ class FocusQuickActionsPlacementTest {
             // FOCUS_QUICK_ACTION_COUNT counts it and the rail reserves a row for it.
             toolbox = { _, _ -> },
         )
+
+    @Test
+    fun `captured full screen keeps the actions in the cluster they already use`() {
+        // Not NONE. Dropping them left Toolbox unreachable on macOS - its menu is in the menu bar,
+        // which the mode hides - and Sign Out unreachable everywhere, since it has no shortcut.
+        assertEquals(
+            FocusQuickActionsPlacement.FLOATING,
+            focusQuickActionsPlacement(
+                settings = FocusModeSettings(enabled = true, hideTopBar = true),
+                topBarHidden = true,
+                rightStripHidden = true,
+                showTopBar = false,
+                capturedFullScreen = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `captured full screen never answers a placement that renders into hidden chrome`() {
+        // The trap this branch exists for. With a right strip configured the normal answer is
+        // RIGHT_RAIL, and captured full screen draws no rail - so the actions would be handed to a
+        // bar that is not composed, which is the v9.4.13 regression for the third time. FLOATING is
+        // the only placement that owns its own surface.
+        assertEquals(
+            FocusQuickActionsPlacement.FLOATING,
+            focusQuickActionsPlacement(
+                settings = FocusModeSettings(enabled = true, hideTopBar = true),
+                topBarHidden = true,
+                rightStripHidden = false,
+                showTopBar = false,
+                capturedFullScreen = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `captured full screen shows them even when the top bar is switched on`() {
+        // focusQuickActionsVisible would answer false here - the bar is neither hidden by the
+        // preference nor cleared by focus mode - but the mode hides it anyway. Asking capture first
+        // is what stops a user who keeps the top bar losing these four on entering.
+        assertEquals(
+            FocusQuickActionsPlacement.FLOATING,
+            focusQuickActionsPlacement(
+                settings = FocusModeSettings(enabled = false),
+                topBarHidden = false,
+                rightStripHidden = true,
+                showTopBar = true,
+                capturedFullScreen = true,
+            ),
+        )
+    }
 }

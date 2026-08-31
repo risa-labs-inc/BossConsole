@@ -1,6 +1,7 @@
 package ai.rever.boss.window
 
 import ai.rever.boss.components.plugin.registries.PluginShortcutRegistryImpl
+import ai.rever.boss.fullscreen.CapturedFullScreenState
 import ai.rever.boss.keymap.KeymapSettingsManager
 import ai.rever.boss.keymap.handler.KeymapMatcher
 import ai.rever.boss.keymap.model.KeyBinding
@@ -13,6 +14,10 @@ import java.awt.KeyboardFocusManager
 import java.awt.Window
 import java.awt.event.KeyEvent
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 
 /**
  * AWT-level keyboard interceptor that captures keyboard shortcuts before they reach
@@ -48,6 +53,29 @@ object AWTKeyboardInterceptor {
 
     // 500ms threshold follows accessibility guidelines for double-tap gestures (typically 500-800ms)
     private const val DOUBLE_SHIFT_THRESHOLD_MS = 500
+
+    /**
+     * Hardwired panic escape out of captured full screen: hold Escape for [ESCAPE_HOLD_MS].
+     *
+     * **The one shortcut in the app that is not in the keymap, on purpose.** Both documented ways
+     * out of a captured session are ordinary rebindable actions, which means a user can bind them
+     * to something they cannot reach - and the mode they would be stuck in has taken the pointer
+     * and the OS shortcuts. This is the floor under that: it cannot be rebound, cannot be
+     * conflicted with, and is matched here before the keymap is consulted at all, so a plugin
+     * shortcut cannot shadow it either.
+     *
+     * Escape is **never consumed**. A 2-second hold is the signal; every ordinary press still
+     * reaches the editor, the terminal and any open dialog exactly as before. Consuming it would
+     * break Escape app-wide to serve a key combination almost nobody presses.
+     */
+    private const val ESCAPE_HOLD_MS = 2000L
+    private var escapeHeld = false
+    private var escapeHoldTask: ScheduledFuture<*>? = null
+    private val escapeHoldScheduler: ScheduledExecutorService by lazy {
+        Executors.newSingleThreadScheduledExecutor { r ->
+            Thread(r, "boss-escape-hold").apply { isDaemon = true }
+        }
+    }
 
     // MRU tab-cycle tracking. Set when Ctrl+Tab starts a cycle in MRU mode, alongside the
     // physical keycode of the modifier sustaining it; the cycle commits only when THAT
@@ -116,6 +144,10 @@ object AWTKeyboardInterceptor {
 
         dispatcher =
             KeyEventDispatcher { event ->
+                // Before everything, including the "no modifiers, not ours" early out below:
+                // Escape carries none, and this must outrank the keymap. Never consumes.
+                if (event.keyCode == KeyEvent.VK_ESCAPE) trackEscapeHold(event)
+
                 // Handle double-shift detection for global search
                 if (event.keyCode == KeyEvent.VK_SHIFT) {
                     val currentTime = System.currentTimeMillis()
@@ -270,6 +302,49 @@ object AWTKeyboardInterceptor {
     /**
      * Find the BOSS window ID for an AWT window, checking parent windows.
      */
+
+    /**
+     * Track an Escape hold while a captured session is running.
+     *
+     * Driven by a scheduled task rather than by counting auto-repeat presses: key repeat can be
+     * slowed or switched off entirely in the OS, and a panic escape that depends on the user's
+     * keyboard settings is not a panic escape.
+     *
+     * Always returns without consuming; see [ESCAPE_HOLD_MS].
+     */
+    private fun trackEscapeHold(event: KeyEvent) {
+        if (!CapturedFullScreenState.current.value.active) {
+            cancelEscapeHold()
+            return
+        }
+        when (event.id) {
+            KeyEvent.KEY_PRESSED -> {
+                if (escapeHeld) return // auto-repeat, the task is already armed
+                escapeHeld = true
+                escapeHoldTask =
+                    escapeHoldScheduler.schedule({
+                        if (!escapeHeld) return@schedule
+                        val session = CapturedFullScreenState.current.value
+                        val windowId = session.windowId ?: return@schedule
+                        // Through the same event the button and the shortcut use, so the window
+                        // also gets its size and position back. Releasing the grabs directly here
+                        // would leave the window still covering the display.
+                        MenuActionsHandler.triggerToggleCapturedFullScreen(windowId)
+                    }, ESCAPE_HOLD_MS, TimeUnit.MILLISECONDS)
+            }
+
+            KeyEvent.KEY_RELEASED -> {
+                cancelEscapeHold()
+            }
+        }
+    }
+
+    private fun cancelEscapeHold() {
+        escapeHeld = false
+        escapeHoldTask?.cancel(false)
+        escapeHoldTask = null
+    }
+
     private fun findWindowId(window: Window?): String? {
         var current: Window? = window
         while (current != null) {
@@ -607,6 +682,16 @@ object AWTKeyboardInterceptor {
             // View Controls
             KeymapActions.FOCUS_MODE_TOGGLE -> {
                 MenuActionsHandler.triggerToggleFocusMode(windowId)
+                true
+            }
+
+            KeymapActions.CAPTURED_FULLSCREEN_TOGGLE -> {
+                MenuActionsHandler.triggerToggleCapturedFullScreen(windowId)
+                true
+            }
+
+            KeymapActions.POINTER_RELEASE -> {
+                MenuActionsHandler.triggerReleasePointer(windowId)
                 true
             }
 

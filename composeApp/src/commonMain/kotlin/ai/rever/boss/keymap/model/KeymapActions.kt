@@ -55,6 +55,18 @@ object KeymapActions {
     const val FOCUS_MODE_TOGGLE = "view.focus_mode_toggle"
     const val SETTINGS_OPEN = "view.settings_open"
 
+    /**
+     * Enter or leave captured full screen.
+     *
+     * Deliberately a different action from the View menu's plain "Enter Full Screen", which has no
+     * binding at all: one covers the display, the other also takes the pointer and the OS
+     * shortcuts, and a user who wanted the first would be startled by the second.
+     */
+    const val CAPTURED_FULLSCREEN_TOGGLE = "view.captured_fullscreen_toggle"
+
+    /** Hand the pointer back while staying in captured full screen. */
+    const val POINTER_RELEASE = "view.pointer_release"
+
     // Help Actions
     const val HELP_SHORTCUTS = "help.shortcuts"
 
@@ -112,6 +124,8 @@ object KeymapActions {
             CODEBASE_OPEN to "Open CodeBase panel",
             GLOBAL_SEARCH_OPEN to "Open global search (Double-Shift)",
             FOCUS_MODE_TOGGLE to "Toggle Focus Mode (hide/show UI bars)",
+            CAPTURED_FULLSCREEN_TOGGLE to "Enter or leave captured full screen (confines the pointer)",
+            POINTER_RELEASE to "Release the pointer while staying in captured full screen",
             SETTINGS_OPEN to "Open application settings",
             HELP_SHORTCUTS to "Show keyboard shortcuts help dialog",
             TEST_EXTERNAL_LINK to "Test external link handling (debug)",
@@ -151,6 +165,8 @@ object KeymapActions {
             CODEBASE_OPEN to Categories.TOOLS,
             GLOBAL_SEARCH_OPEN to Categories.SEARCH,
             FOCUS_MODE_TOGGLE to Categories.VIEW,
+            CAPTURED_FULLSCREEN_TOGGLE to Categories.VIEW,
+            POINTER_RELEASE to Categories.VIEW,
             SETTINGS_OPEN to Categories.VIEW,
             HELP_SHORTCUTS to Categories.HELP,
             TEST_EXTERNAL_LINK to Categories.DEBUG,
@@ -190,6 +206,8 @@ object KeymapActions {
             CODEBASE_OPEN to ShortcutContext.GLOBAL,
             GLOBAL_SEARCH_OPEN to ShortcutContext.GLOBAL,
             FOCUS_MODE_TOGGLE to ShortcutContext.GLOBAL,
+            CAPTURED_FULLSCREEN_TOGGLE to ShortcutContext.GLOBAL,
+            POINTER_RELEASE to ShortcutContext.GLOBAL,
             SETTINGS_OPEN to ShortcutContext.GLOBAL,
             HELP_SHORTCUTS to ShortcutContext.GLOBAL,
             TEST_EXTERNAL_LINK to ShortcutContext.GLOBAL,
@@ -229,6 +247,8 @@ object KeymapActions {
             CODEBASE_OPEN,
             GLOBAL_SEARCH_OPEN,
             FOCUS_MODE_TOGGLE,
+            CAPTURED_FULLSCREEN_TOGGLE,
+            POINTER_RELEASE,
             SETTINGS_OPEN,
             HELP_SHORTCUTS,
             TEST_EXTERNAL_LINK,

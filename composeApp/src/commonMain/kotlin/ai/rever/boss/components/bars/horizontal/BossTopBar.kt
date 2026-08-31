@@ -24,6 +24,7 @@ import ai.rever.boss.git.GitOperationResult
 import ai.rever.boss.git.GitService
 import ai.rever.boss.git.GitStashInfo
 import ai.rever.boss.layout.BossChrome
+import ai.rever.boss.layout.CAPTURED_BUTTON_TOP
 import ai.rever.boss.platform.rememberDirectoryPicker
 import ai.rever.boss.plugin.api.Panel
 import ai.rever.boss.plugin.api.Panel.Companion.bottom
@@ -98,6 +99,14 @@ fun BossDraggableComponent.BossTopBar(
      * shows through, which is white.
      */
     startInset: Dp = 0.dp,
+    /**
+     * Drawn at the very start of the row, after [startInset].
+     *
+     * Where the captured-full-screen button goes when there is no title row to hold it, which is
+     * the default on Windows and Linux and the macOS case where this bar carries the light
+     * clearance. After the inset, so on macOS it still lands just past the buttons.
+     */
+    leading: (@Composable () -> Unit)? = null,
 ) {
     val items = rememberBarContextMenuItems(ChromeBar.TOP)
 
@@ -105,6 +114,14 @@ fun BossDraggableComponent.BossTopBar(
         // The 36dp is the bar's own long-standing indent; the lights need more than that, so this
         // takes whichever is larger rather than adding them and pushing the content twice as far.
         HorizontalBarRow(modifier = Modifier.fillMaxHeight().padding(start = maxOf(TOP_BAR_START_INDENT, startInset))) {
+            if (leading != null) {
+                // Aligned to the bar's top rather than its centre, for the same reason the title
+                // row is: when this bar is the topmost chrome it is what the lights are drawn over,
+                // and they sit 16pt below the window edge whatever this bar's height is.
+                Box(modifier = Modifier.align(Alignment.Top).padding(top = CAPTURED_BUTTON_TOP, end = 8.dp)) {
+                    leading()
+                }
+            }
             BossTopLeftBar(workspaceManager, onApplyWorkspace, getCurrentWorkspace, onShowTopOfMind, onNewProject, onCloneProject)
             Spacer(modifier = Modifier.weight(1f))
             // Run/debug controls (Issue #91 / #321)

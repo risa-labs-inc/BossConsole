@@ -167,6 +167,11 @@ internal enum class FocusQuickActionsPlacement {
  * nowhere. It reads as "permanent" for the same reason `hides(RIGHT)` does, so it belongs in the
  * same test rather than in the reveal flags.
  */
+// Six inputs, each an independent condition about a different piece of chrome, and the value of the
+// function is that the case analysis is in one place a test can reach. The same call `macTrafficLightInset`
+// makes, for the same reason: bundling them into a data class would move the analysis somewhere less
+// visible without removing an input.
+@Suppress("LongParameterList")
 internal fun focusQuickActionsPlacement(
     settings: FocusModeSettings,
     topBarHidden: Boolean,
@@ -183,8 +188,36 @@ internal fun focusQuickActionsPlacement(
      * rails itself on a narrow window is decided during layout rather than in settings.
      */
     verticalTabBar: Boolean = false,
+    /**
+     * Whether this window is in captured full screen, in which case the answer is always
+     * [FocusQuickActionsPlacement.NONE].
+     *
+     * A THIRD reason the top bar is absent, answered with [FocusQuickActionsPlacement.FLOATING].
+     *
+     * **These actions keep the position they already have.** Two earlier versions moved them: the
+     * first dropped them entirely, which left Toolbox with no route at all on macOS (its menu is in
+     * the menu bar, which this mode hides) and Sign Out with no route anywhere, since it is raised
+     * only from the top bar and this cluster and has no shortcut - the
+     * `docs/release-notes/v9.4.13.md:47` regression by another door. The second put them in the
+     * mode's own top-edge bar, which fixed reachability by inventing a second home for four buttons
+     * that already have one. A mode is not a reason to move controls.
+     *
+     * **FLOATING specifically, not the normal answer for these settings.** The other three
+     * placements render INTO chrome - the right rail, the vertical tab bar's foot - and captured
+     * full screen draws none of it, so answering RIGHT_RAIL here would put the actions in a bar
+     * that is not composed, which is the same regression a third time. The floating cluster is the
+     * one placement that owns its own surface, and it is already what this window uses whenever the
+     * bar that holds these actions is gone.
+     *
+     * Asked FIRST, so it cannot be mistaken for another term in [focusQuickActionsVisible]. It is
+     * not one: it overrides rather than contributes, and the two absences it sits beside are
+     * already documented here as non-symmetric.
+     */
+    capturedFullScreen: Boolean = false,
 ): FocusQuickActionsPlacement =
     when {
+        capturedFullScreen -> FocusQuickActionsPlacement.FLOATING
+
         !focusQuickActionsVisible(settings, topBarHidden, showTopBar) -> FocusQuickActionsPlacement.NONE
 
         // Rail first, unchanged: where there is a right rail these have always gone in it, and it

@@ -203,6 +203,22 @@ object EmacsPresetDefinition {
                     description = KeymapActions.getDescription(KeymapActions.FOCUS_MODE_TOGGLE),
                 ),
                 KeyBinding(
+                    actionId = KeymapActions.CAPTURED_FULLSCREEN_TOGGLE,
+                    key = "F",
+                    modifiers = listOf("Ctrl", "Alt"),
+                    context = ShortcutContext.GLOBAL,
+                    category = KeymapActions.Categories.VIEW,
+                    description = KeymapActions.getDescription(KeymapActions.CAPTURED_FULLSCREEN_TOGGLE),
+                ),
+                KeyBinding(
+                    actionId = KeymapActions.POINTER_RELEASE,
+                    key = "P",
+                    modifiers = listOf("Ctrl", "Alt"),
+                    context = ShortcutContext.GLOBAL,
+                    category = KeymapActions.Categories.VIEW,
+                    description = KeymapActions.getDescription(KeymapActions.POINTER_RELEASE),
+                ),
+                KeyBinding(
                     actionId = KeymapActions.SETTINGS_OPEN,
                     key = "Comma",
                     modifiers = listOf("Ctrl"),

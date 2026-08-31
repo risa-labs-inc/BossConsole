@@ -3,6 +3,7 @@ package ai.rever.boss.app
 import ai.rever.boss.components.bars.horizontal.BossBottomBar
 import ai.rever.boss.components.bars.horizontal.BossTitleBar
 import ai.rever.boss.components.bars.horizontal.BossTopBar
+import ai.rever.boss.components.bars.horizontal.CapturedFullScreenButton
 import ai.rever.boss.components.bars.isBarVisible
 import ai.rever.boss.components.bars.vertical.BossLeftSideBar
 import ai.rever.boss.components.bars.vertical.BossRightSideBar
@@ -31,8 +32,12 @@ import ai.rever.boss.components.workspaces.applyWorkspace
 import ai.rever.boss.components.workspaces.extractCurrentWorkspace
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.focusmode.FocusModeSettings
+import ai.rever.boss.fullscreen.CapturedFullScreenHud
+import ai.rever.boss.fullscreen.CapturedFullScreenState
 import ai.rever.boss.handleTabDropResult
 import ai.rever.boss.layout.BossChrome
+import ai.rever.boss.layout.CAPTURED_BUTTON_START
+import ai.rever.boss.layout.CAPTURED_BUTTON_TOP
 import ai.rever.boss.layout.ChromeBudgetReadout
 import ai.rever.boss.layout.TrafficLightInset
 import ai.rever.boss.layout.asDrawn
@@ -65,6 +70,7 @@ import ai.rever.boss.window.LocalWindowGitState
 import ai.rever.boss.window.LocalWindowId
 import ai.rever.boss.window.LocalWindowProjectState
 import ai.rever.boss.window.LocalWindowRunnerState
+import ai.rever.boss.window.MenuActionsHandler
 import ai.rever.boss.window.TabBarPosition
 import ai.rever.boss.window.WindowAppearanceSettings
 import androidx.compose.animation.AnimatedVisibility
@@ -81,6 +87,7 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -276,6 +283,13 @@ internal fun BossAppScaffold(
     // clearing is not on screen however the preference reads. See asDrawn.
     val drawn = appearance.asDrawn(focusModeSettings)
 
+    // Captured full screen. A THIRD reason a bar is not drawn, after the standing appearance
+    // preference and focus mode's transient clearance, and deliberately kept as its own conjunct at
+    // every gate rather than folded into either - docs/release-notes/v9.4.13.md records what
+    // collapsing those two into one readable predicate cost the last time.
+    val capturedSession by CapturedFullScreenState.current.collectAsState()
+    val captured = capturedSession.capturing(state.windowId)
+
     // Whether the hover-revealed bar is up, reported by SplitViewPanel. It decides where the
     // host's actions render while the bar is collapsed - see the placement below.
     var drawerVisible by remember { mutableStateOf(false) }
@@ -295,6 +309,7 @@ internal fun BossAppScaffold(
     val quickActionsPlacement =
         focusQuickActionsPlacement(
             settings = focusModeSettings,
+            capturedFullScreen = captured,
             topBarHidden = !appearance.showTopBar,
             rightStripHidden = !appearance.showRightStrip,
             showTopBar = reveal.showTopBar,
@@ -346,6 +361,15 @@ internal fun BossAppScaffold(
     // know whether the panel or the bar is the one behind the strip.
     val leftPanelOpen = state.draggablePanelComponent.isVisible(left)
 
+    // The blue circle. One definition, handed to whichever chrome is actually on screen, so the two
+    // hosts cannot disagree about its wording or briefly show two of them.
+    val capturedFullScreenButton: @Composable () -> Unit = {
+        CapturedFullScreenButton(
+            capturing = captured,
+            onToggle = { MenuActionsHandler.triggerToggleCapturedFullScreen(state.windowId) },
+        )
+    }
+
     val trafficLights =
         macTrafficLightInset(
             appearance = drawn,
@@ -358,6 +382,29 @@ internal fun BossAppScaffold(
             leftPanelOpen = leftPanelOpen,
             // The density's width, not the 36dp floor: Comfortable draws 40dp rails.
             stripWidth = BossChrome.dimens.stripWidth,
+        )
+
+    // One answer per bar, folding the three independent reasons one can be missing. See
+    // chromeVisibility: the reasons are not interchangeable, and re-deriving them at each call site
+    // is how the Sign Out regression in v9.4.13 happened.
+    val chrome =
+        chromeVisibility(
+            appearance = appearance,
+            reveal = reveal,
+            capturedFullScreen = captured,
+            titleRowWanted = trafficLights.needsTitleRow(appearance.showTitleBar),
+        )
+
+    // Which chrome draws the blue button. Asked once, because the first version inferred it at two
+    // call sites and had no answer at all for a window with no title row and no top bar - where the
+    // lights sit over the left columns and the button rendered nowhere.
+    val buttonHost =
+        capturedButtonHost(
+            titleRowDrawn = chrome.titleRow,
+            topBarDrawn = chrome.topBar,
+            captured = captured,
+            isMacOs = SystemUtils.isMacOS,
+            enabled = appearance.capturedFullScreenEnabled,
         )
 
     // Where each left column starts, so it can ask whether the light box reaches it.
@@ -466,9 +513,13 @@ internal fun BossAppScaffold(
                 // and the tab bar across the top, the only thing under them is the content, and a
                 // full-width reserve costs no more than padding the content would. See
                 // TrafficLightInset.CONTENT.
-                if (trafficLights.needsTitleRow(appearance.showTitleBar)) {
+                if (chrome.titleRow) {
                     BossTitleBar(
                         onToggleMaximize = onToggleMaximize,
+                        leading =
+                            capturedFullScreenButton.takeIf {
+                                buttonHost == CapturedButtonHost.TITLE_ROW
+                            },
                     )
                 }
 
@@ -550,7 +601,7 @@ internal fun BossAppScaffold(
                 // off outright by the appearance preference. Both have to agree for a bar to show:
                 // focus mode is the transient posture, the preference is the standing choice.
                 AnimatedVisibility(
-                    visible = appearance.showTopBar && reveal.showTopBar,
+                    visible = chrome.topBar,
                     enter =
                         expandVertically(
                             expandFrom = Alignment.Top,
@@ -584,7 +635,21 @@ internal fun BossAppScaffold(
                             toolLauncher = hostToolLauncher,
                             // Clearance for the macOS traffic lights, which are drawn over this
                             // bar's start when there is no title row above it.
-                            startInset = trafficLights.barStartInset(),
+                            // The bar's own traffic-light indent, pulled back to where a fourth
+                            // button starts when this bar is the one drawing it. The button then
+                            // occupies the rest of the cluster's width and the bar's first real
+                            // control follows it, rather than the button being pushed out past the
+                            // whole light box and reading as unrelated to it.
+                            startInset =
+                                if (buttonHost == CapturedButtonHost.TOP_BAR && trafficLights.barStartInset() > 0.dp) {
+                                    CAPTURED_BUTTON_START
+                                } else {
+                                    trafficLights.barStartInset()
+                                },
+                            leading =
+                                capturedFullScreenButton.takeIf {
+                                    buttonHost == CapturedButtonHost.TOP_BAR
+                                },
                             onShowSearch = {
                                 state.showGlobalSearchDialog = true
                             },
@@ -606,7 +671,7 @@ internal fun BossAppScaffold(
                 ) {
                     // Left sidebar - hidden in focus mode with smooth expand/shrink animation
                     AnimatedVisibility(
-                        visible = appearance.showLeftStrip && reveal.showLeftSidebar,
+                        visible = chrome.leftStrip,
                         enter =
                             expandHorizontally(
                                 expandFrom = Alignment.Start,
@@ -741,7 +806,7 @@ internal fun BossAppScaffold(
 
                     // Right sidebar - hidden in focus mode with smooth expand/shrink animation
                     AnimatedVisibility(
-                        visible = appearance.showRightStrip && reveal.showRightSidebar,
+                        visible = chrome.rightStrip,
                         enter =
                             expandHorizontally(
                                 expandFrom = Alignment.End,
@@ -785,7 +850,7 @@ internal fun BossAppScaffold(
 
                 // Bottom bar - hidden in focus mode with smooth expand/shrink animation
                 AnimatedVisibility(
-                    visible = appearance.showBottomBar && reveal.showBottomBar,
+                    visible = chrome.bottomBar,
                     enter =
                         expandVertically(
                             expandFrom = Alignment.Bottom,
@@ -825,6 +890,32 @@ internal fun BossAppScaffold(
             // PluginContext.notificationProvider.showToast().
             state.currentDefaultPlugin?.pluginToastState?.let { toastState ->
                 ToastOverlay(toastState = toastState)
+
+                // The way out, for a mode that has hidden the menu bar and every bar that holds
+                // the blue button. Last in the Box so it draws above the content it is explaining.
+                // No bar is drawing it, so it goes in the traffic lights' own clearance band -
+                // the strip the columns beneath are already inset out of. See CapturedButtonHost.
+                if (buttonHost == CapturedButtonHost.OVERLAY) {
+                    Box(
+                        modifier =
+                            Modifier
+                                .align(Alignment.TopStart)
+                                .padding(start = CAPTURED_BUTTON_START, top = CAPTURED_BUTTON_TOP),
+                    ) {
+                        capturedFullScreenButton()
+                    }
+                }
+
+                CapturedFullScreenHud(
+                    session = capturedSession,
+                    // Shown "capturing", so its tooltip reads as the way out rather than the way in.
+                    exitButton = capturedFullScreenButton.takeIf { captured },
+                    // Settings / Toolbox / Tools / Search / Sign Out are deliberately NOT here.
+                    // They keep the position they already have - the floating quick-actions cluster,
+                    // which focusQuickActionsPlacement answers FLOATING for while captured. A mode
+                    // is not a reason to move controls, and a second home for four buttons that
+                    // already have one is how the two copies come to disagree.
+                )
             }
 
             // MRU tab-switcher overlay (Ctrl+Tab in most-recently-used mode)
