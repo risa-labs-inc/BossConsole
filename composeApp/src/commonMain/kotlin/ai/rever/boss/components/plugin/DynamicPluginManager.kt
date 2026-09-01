@@ -18,6 +18,7 @@ import ai.rever.boss.plugin.loader.DynamicPluginLoaderImpl
 import ai.rever.boss.plugin.loader.PluginApiLevelException
 import ai.rever.boss.plugin.loader.PluginBinaryIncompatibilityException
 import ai.rever.boss.plugin.loader.PluginBossVersionException
+import ai.rever.boss.plugin.loader.PluginManifestReader
 import ai.rever.boss.plugin.loader.PluginUnloadException
 import ai.rever.boss.plugin.sandbox.InProcessPluginSandbox
 import ai.rever.boss.plugin.sandbox.PluginErrorClassifier
@@ -1822,6 +1823,9 @@ class DynamicPluginManager(
                 exists = { java.io.File(it).isFile },
                 relocated = {
                     findRelocatedPluginJar(java.io.File(info.jarPath).parentFile, pluginId)?.absolutePath
+                },
+                manifestVersion = { path ->
+                    runCatching { PluginManifestReader.readFromJar(path).version }.getOrNull()
                 },
             ) ?: return Result.failure(
                 Exception("Cannot reload $pluginId - no existing JAR (loaded from ${info.jarPath})"),

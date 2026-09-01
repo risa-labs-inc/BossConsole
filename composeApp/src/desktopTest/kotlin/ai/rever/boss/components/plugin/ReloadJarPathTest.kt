@@ -1,5 +1,9 @@
 package ai.rever.boss.components.plugin
 
+import ai.rever.boss.plugin.loader.PluginManifestReader
+import java.io.File
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -20,6 +24,39 @@ class ReloadJarPathTest {
         present: Set<String> = emptySet(),
         relocated: String? = null,
     ) = resolveReloadJarPath(loaded, persisted, exists = { it in present }, relocated = { relocated })
+
+    private fun tempDir(): File =
+        File.createTempFile("plugins", null).apply {
+            delete()
+            mkdirs()
+            deleteOnExit()
+        }
+
+    private fun writeJar(
+        dir: File,
+        fileName: String,
+        pluginId: String,
+        version: String,
+    ): File {
+        val jar = File(dir, fileName)
+        ZipOutputStream(jar.outputStream()).use { zip ->
+            zip.putNextEntry(ZipEntry("META-INF/boss-plugin/plugin.json"))
+            zip.write(
+                """
+                {
+                  "manifestVersion": 1,
+                  "pluginId": "$pluginId",
+                  "displayName": "Test Plugin",
+                  "version": "$version",
+                  "apiVersion": "1.0.0",
+                  "mainClass": "com.example.TestPlugin"
+                }
+                """.trimIndent().toByteArray(),
+            )
+            zip.closeEntry()
+        }
+        return jar
+    }
 
     @Test
     fun `falls back to the installed record when an update deleted the loaded jar`() {
@@ -95,5 +132,50 @@ class ReloadJarPathTest {
     @Test
     fun `returns null when there is nothing to go on`() {
         assertNull(resolve(loaded = null, persisted = null, present = setOf("/p/anything.jar")))
+    }
+
+    @Test
+    fun `picks the newer version when the stale loaded jar could not be deleted on Windows`() {
+        // Simulates the Windows bug: the updater downloaded 1.2.15 and updated the installed.json
+        // record, but the JVM lock prevented deleting the old 1.2.14 jar. The resolver must still
+        // pick 1.2.15 by manifest version.
+        val dir = tempDir()
+        val stale = writeJar(dir, "fluck-browser-1.2.14.jar", "ai.rever.boss.fluck", "1.2.14")
+        val update = writeJar(dir, "fluck-browser-1.2.15.jar", "ai.rever.boss.fluck", "1.2.15")
+
+        val resolved =
+            resolveReloadJarPath(
+                loadedJarPath = stale.absolutePath,
+                persistedJarPath = update.absolutePath,
+                exists = { java.io.File(it).isFile },
+                relocated = { findRelocatedPluginJar(dir, "ai.rever.boss.fluck")?.absolutePath },
+                manifestVersion = { path ->
+                    runCatching { PluginManifestReader.readFromJar(path).version }.getOrNull()
+                },
+            )
+
+        assertEquals(update.absolutePath, resolved)
+    }
+
+    @Test
+    fun `picks the loaded jar when it has a higher version than the persisted record`() {
+        // Mirrors the stale-record case but with versioned jars: the loaded jar is newer, so the
+        // resolver must prefer it even though it is not the installed record.
+        val dir = tempDir()
+        val newer = writeJar(dir, "tool-1.2.15.jar", "ai.rever.boss.tool", "1.2.15")
+        val older = writeJar(dir, "tool-1.2.14.jar", "ai.rever.boss.tool", "1.2.14")
+
+        val resolved =
+            resolveReloadJarPath(
+                loadedJarPath = newer.absolutePath,
+                persistedJarPath = older.absolutePath,
+                exists = { java.io.File(it).isFile },
+                relocated = { findRelocatedPluginJar(dir, "ai.rever.boss.tool")?.absolutePath },
+                manifestVersion = { path ->
+                    runCatching { PluginManifestReader.readFromJar(path).version }.getOrNull()
+                },
+            )
+
+        assertEquals(newer.absolutePath, resolved)
     }
 }

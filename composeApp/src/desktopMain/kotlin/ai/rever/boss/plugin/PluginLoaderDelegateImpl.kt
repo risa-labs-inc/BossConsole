@@ -19,6 +19,7 @@ import ai.rever.boss.plugin.api.PluginLoaderDelegate
 import ai.rever.boss.plugin.api.PluginState
 import ai.rever.boss.plugin.api.PluginUnloadIntent
 import ai.rever.boss.plugin.api.PluginUnloadResult
+import ai.rever.boss.plugin.loader.PluginManifestReader
 import ai.rever.boss.plugin.loader.PluginSignatureSidecar
 import ai.rever.boss.plugin.loader.PluginUnloadException
 import ai.rever.boss.plugin.repository.remote.PluginStoreConfig
@@ -412,6 +413,9 @@ class PluginLoaderDelegateImpl(
                         relocated = {
                             val dir = (loadedJarPath ?: persistedJarPath)?.let { File(it).parentFile }
                             findRelocatedPluginJar(dir, pluginId)?.absolutePath
+                        },
+                        manifestVersion = { path ->
+                            runCatching { PluginManifestReader.readFromJar(path).version }.getOrNull()
                         },
                     )
                 }
