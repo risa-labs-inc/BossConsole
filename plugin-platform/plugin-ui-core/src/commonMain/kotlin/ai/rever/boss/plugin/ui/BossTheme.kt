@@ -1,8 +1,10 @@
 package ai.rever.boss.plugin.ui
 
+import androidx.compose.foundation.LocalScrollbarStyle
 import androidx.compose.material.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 
 /**
@@ -72,6 +74,22 @@ fun BossTheme(
     // UI / BossThemeController) re-skins the whole subtree.
     val theme = BossThemeController.current
 
+    // Compose's default ScrollbarStyle paints the thumb as Color.Black at 12% alpha
+    // unhovered, which is invisible against BOSS's dark panels — a scrollbar that
+    // communicates neither "there is more below" nor a visible drag target.
+    // CrashReportDialog used to carry a local copy of this same fix; deriving it here
+    // instead means every VerticalScrollbar/HorizontalScrollbar call site under this
+    // root — host and plugin panels alike, since plugin-ui-core is what plugins theme
+    // against — inherits a visible thumb with no per-call-site opt-in.
+    val defaultScrollbarStyle = LocalScrollbarStyle.current
+    val scrollbarStyle =
+        remember(defaultScrollbarStyle, theme.colors.textMuted, theme.colors.textSecondary) {
+            defaultScrollbarStyle.copy(
+                unhoverColor = theme.colors.textMuted.copy(alpha = 0.45f),
+                hoverColor = theme.colors.textSecondary,
+            )
+        }
+
     MaterialTheme(
         colors = theme.material,
     ) {
@@ -83,6 +101,7 @@ fun BossTheme(
             LocalBossRadii provides BossRadii(),
             LocalBossElevation provides BossElevation(),
             LocalBossTypography provides typography,
+            LocalScrollbarStyle provides scrollbarStyle,
         ) {
             content()
         }
