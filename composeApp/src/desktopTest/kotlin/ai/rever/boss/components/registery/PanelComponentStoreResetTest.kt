@@ -9,8 +9,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.arkivanov.decompose.ComponentContext
-import com.arkivanov.decompose.DefaultComponentContext
-import com.arkivanov.essenty.lifecycle.LifecycleRegistry
+import com.arkivanov.essenty.lifecycle.Lifecycle
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -56,16 +55,31 @@ class PanelComponentStoreResetTest {
         ctx: ComponentContext,
         val generation: Int,
         private val onBeforeResetAction: () -> Unit = {},
+        private val onInitializedAction: () -> Unit = {},
     ) : PanelComponentWithUI,
         ComponentContext by ctx {
+        var destroyCount = 0
+            private set
+
+        init {
+            lifecycle.subscribe(
+                callbacks =
+                    object : Lifecycle.Callbacks {
+                        override fun onDestroy() {
+                            destroyCount++
+                        }
+                    },
+            )
+        }
+
         @Composable
         override fun Content() {
         }
 
+        override fun onInitialized() = onInitializedAction()
+
         override fun onBeforeReset() = onBeforeResetAction()
     }
-
-    private fun newContext(): ComponentContext = DefaultComponentContext(LifecycleRegistry())
 
     private fun registerFactory(
         registry: PanelRegistry,
@@ -79,11 +93,47 @@ class PanelComponentStoreResetTest {
     }
 
     @Test
+    fun `removeComponent destroys the panel lifecycle exactly once`() {
+        val registry = PanelRegistry()
+        val id = PanelId("test-panel", 1)
+        registerFactory(registry, id, generation = 1)
+        val store = PanelComponentStore(registry)
+
+        val component = store.getOrCreateComponent(id) as FakePanelComponent
+
+        store.removeComponent(id)
+        store.removeComponent(id)
+
+        assertEquals(1, component.destroyCount)
+        assertFalse(store.activeComponents.containsKey(id))
+    }
+
+    @Test
+    fun `dispose destroys every panel lifecycle exactly once`() {
+        val registry = PanelRegistry()
+        val firstId = PanelId("first-panel", 1)
+        val secondId = PanelId("second-panel", 2)
+        registerFactory(registry, firstId, generation = 1)
+        registerFactory(registry, secondId, generation = 1)
+        val store = PanelComponentStore(registry)
+
+        val first = store.getOrCreateComponent(firstId) as FakePanelComponent
+        val second = store.getOrCreateComponent(secondId) as FakePanelComponent
+
+        store.dispose()
+        store.dispose()
+
+        assertEquals(1, first.destroyCount)
+        assertEquals(1, second.destroyCount)
+        assertTrue(store.activeComponents.isEmpty())
+    }
+
+    @Test
     fun `open panel keeps its cached component when the factory is re-registered`() {
         val registry = PanelRegistry()
         val id = PanelId("test-panel", 1)
         registerFactory(registry, id, generation = 1)
-        val store = PanelComponentStore(newContext(), registry)
+        val store = PanelComponentStore(registry)
 
         val opened = store.getOrCreateComponent(id) as FakePanelComponent
 
@@ -96,11 +146,11 @@ class PanelComponentStoreResetTest {
     }
 
     @Test
-    fun `resetComponent recreates the panel from the newly registered factory`() {
+    fun `resetComponent destroys the old lifecycle and gives the replacement its own lifecycle`() {
         val registry = PanelRegistry()
         val id = PanelId("test-panel", 1)
         registerFactory(registry, id, generation = 1)
-        val store = PanelComponentStore(newContext(), registry)
+        val store = PanelComponentStore(registry)
 
         val opened = store.getOrCreateComponent(id) as FakePanelComponent
         assertEquals(1, opened.generation)
@@ -109,9 +159,43 @@ class PanelComponentStoreResetTest {
         registerFactory(registry, id, generation = 2)
 
         assertTrue(store.resetComponent(id))
+        assertEquals(1, opened.destroyCount)
+
         val refreshed = store.getOrCreateComponent(id) as FakePanelComponent
         assertNotSame(opened, refreshed)
         assertEquals(2, refreshed.generation)
+
+        store.removeComponent(id)
+        assertEquals(1, refreshed.destroyCount)
+    }
+
+    @Test
+    fun `resetComponent destroys the replacement lifecycle when initialization fails`() {
+        val registry = PanelRegistry()
+        val id = PanelId("test-panel", 1)
+        registerFactory(registry, id, generation = 1)
+        val store = PanelComponentStore(registry)
+
+        val opened = store.getOrCreateComponent(id) as FakePanelComponent
+
+        registry.unregisterPanel(id)
+
+        lateinit var replacement: FakePanelComponent
+        registry.registerPanel(panelInfo(id)) { ctx, info ->
+            FakePanelComponent(
+                panelInfo = info,
+                ctx = ctx,
+                generation = 2,
+                onInitializedAction = {
+                    error("replacement initialization failed")
+                },
+            ).also { replacement = it }
+        }
+
+        assertFalse(store.resetComponent(id))
+        assertEquals(1, opened.destroyCount)
+        assertEquals(1, replacement.destroyCount)
+        assertFalse(store.activeComponents.containsKey(id))
     }
 
     @Test
@@ -121,7 +205,7 @@ class PanelComponentStoreResetTest {
         registerFactory(registry, id, generation = 1, onBeforeReset = {
             throw NoClassDefFoundError("plugin classloader already closed")
         })
-        val store = PanelComponentStore(newContext(), registry)
+        val store = PanelComponentStore(registry)
         store.getOrCreateComponent(id)
 
         registry.unregisterPanel(id)
@@ -136,14 +220,15 @@ class PanelComponentStoreResetTest {
         val registry = PanelRegistry()
         val id = PanelId("test-panel", 1)
         registerFactory(registry, id, generation = 1)
-        val store = PanelComponentStore(newContext(), registry)
-        store.getOrCreateComponent(id)
+        val store = PanelComponentStore(registry)
+        val opened = store.getOrCreateComponent(id) as FakePanelComponent
 
         registry.unregisterPanel(id)
 
         // No new factory: the reset fails, but the stale component must not
         // stay cached (it would pin the unloaded plugin's classloader).
         assertFalse(store.resetComponent(id))
+        assertEquals(1, opened.destroyCount)
         assertFalse(store.activeComponents.containsKey(id))
     }
 
@@ -152,7 +237,7 @@ class PanelComponentStoreResetTest {
         val registry = PanelRegistry()
         val id = PanelId("test-panel", 1)
         registerFactory(registry, id, generation = 1)
-        val store = PanelComponentStore(newContext(), registry)
+        val store = PanelComponentStore(registry)
 
         assertFalse(store.resetComponent(id))
     }
@@ -165,13 +250,13 @@ class PanelComponentStoreResetTest {
         val registryA = PanelRegistry()
         registerFactory(registryA, reloadId, generation = 1)
         registerFactory(registryA, otherId, generation = 1)
-        val storeA = PanelComponentStore(newContext(), registryA)
+        val storeA = PanelComponentStore(registryA)
         val aReload = storeA.getOrCreateComponent(reloadId)
         val aOther = storeA.getOrCreateComponent(otherId)
 
         val registryB = PanelRegistry()
         registerFactory(registryB, reloadId, generation = 1)
-        val storeB = PanelComponentStore(newContext(), registryB)
+        val storeB = PanelComponentStore(registryB)
         val bReload = storeB.getOrCreateComponent(reloadId)
 
         // Window ids unique to this test: the registry is a global singleton,
@@ -197,8 +282,8 @@ class PanelComponentStoreResetTest {
     @Test
     fun `store registry tracks stores per window`() {
         val registry = PanelRegistry()
-        val storeA = PanelComponentStore(newContext(), registry)
-        val storeB = PanelComponentStore(newContext(), registry)
+        val storeA = PanelComponentStore(registry)
+        val storeB = PanelComponentStore(registry)
 
         PanelComponentStoreRegistry.register("tracks-window-a", storeA)
         PanelComponentStoreRegistry.register("tracks-window-b", storeB)

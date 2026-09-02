@@ -5,13 +5,16 @@ import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.snapshots.SnapshotStateMap
-import com.arkivanov.decompose.ComponentContext
+import com.arkivanov.decompose.DefaultComponentContext
+import com.arkivanov.essenty.lifecycle.LifecycleRegistry
+import com.arkivanov.essenty.lifecycle.destroy
+import com.arkivanov.essenty.lifecycle.resume
 
 class PanelComponentStore(
-    private val rootContext: ComponentContext,
     private val registry: PanelRegistry,
 ) {
     private val logger = BossLogger.forComponent("PanelComponentStore")
+    private val panelLifecycles = mutableMapOf<PanelId, LifecycleRegistry>()
 
     // Map of active components by panel ID
     val activeComponents: SnapshotStateMap<PanelId, PanelComponentWithUI> = mutableStateMapOf()
@@ -28,8 +31,7 @@ class PanelComponentStore(
         // Return existing component if available
         activeComponents[panelId]?.let { return it }
 
-        // Create new component
-        val component = registry.createComponent(panelId, rootContext) ?: return null
+        val component = createComponent(panelId) ?: return null
 
         // Store and return
         activeComponents[panelId] = component
@@ -39,6 +41,16 @@ class PanelComponentStore(
     // Remove a component when panel is closed
     fun removeComponent(panelId: PanelId) {
         activeComponents.remove(panelId)
+        panelLifecycles.remove(panelId)?.destroy()
+    }
+
+    // Destroys every active panel lifecycle when the owning window closes.
+    // Must run on the UI thread because activeComponents is Compose snapshot state.
+    fun dispose() {
+        val lifecycles = panelLifecycles.values.toList()
+        activeComponents.clear()
+        panelLifecycles.clear()
+        lifecycles.forEach { it.destroy() }
     }
 
     /**
@@ -46,7 +58,7 @@ class PanelComponentStore(
      *
      * This method implements the "component recreation" reset strategy:
      * 1. Call onBeforeReset() on the current component for cleanup
-     * 2. Remove component from activeComponents (triggers Decompose disposal)
+     * 2. Remove the old component and destroy its lifecycle
      * 3. Create a fresh component instance
      * 4. Call onInitialized() on the new component
      * 5. Store and activate the new component
@@ -79,14 +91,17 @@ class PanelComponentStore(
             logger.warn(LogCategory.UI, "onBeforeReset failed during panel reset (continuing)", mapOf("panelId" to panelId.panelId), t)
         }
 
-        // Remove from active components (triggers Decompose disposal)
-        activeComponents.remove(panelId)
+        // Remove the old component and notify its lifecycle subscribers.
+        removeComponent(panelId)
 
         try {
-            // Create new component instance
-            val newComponent = registry.createComponent(panelId, rootContext)
+            val newComponent = createComponent(panelId)
             if (newComponent == null) {
-                logger.warn(LogCategory.UI, "Failed to create new component", mapOf("panelId" to panelId.panelId))
+                logger.warn(
+                    LogCategory.UI,
+                    "Failed to create new component",
+                    mapOf("panelId" to panelId.panelId),
+                )
                 return false
             }
 
@@ -99,8 +114,24 @@ class PanelComponentStore(
             logger.info(LogCategory.UI, "Successfully reset panel", mapOf("panelId" to panelId.panelId))
             return true
         } catch (t: Throwable) {
+            panelLifecycles.remove(panelId)?.destroy()
             logger.error(LogCategory.UI, "Error resetting panel", mapOf("panelId" to panelId.panelId), error = t)
             return false
         }
+    }
+
+    private fun createComponent(panelId: PanelId): PanelComponentWithUI? {
+        val lifecycle = LifecycleRegistry()
+        val component =
+            registry.createComponent(
+                panelId,
+                DefaultComponentContext(lifecycle),
+            ) ?: return null
+
+        // LifecycleRegistry starts below CREATED. Advancing it ensures that
+        // destroy() delivers onDestroy to the component's subscribers.
+        lifecycle.resume()
+        panelLifecycles[panelId] = lifecycle
+        return component
     }
 }
