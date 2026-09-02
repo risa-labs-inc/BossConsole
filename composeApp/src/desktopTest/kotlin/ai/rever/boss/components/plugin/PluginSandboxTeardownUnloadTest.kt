@@ -1,5 +1,6 @@
 package ai.rever.boss.components.plugin
 
+import ai.rever.boss.plugin.sandbox.PluginCleanupCallback
 import ai.rever.boss.plugin.sandbox.PluginSandbox
 import ai.rever.boss.plugin.sandbox.PluginSandboxManager
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -10,39 +11,51 @@ import kotlin.test.assertEquals
 /**
  * Unit test validating that sandbox teardown occurs synchronously prior to classloader unload.
  */
+@Suppress("MaxLineLength")
 @OptIn(ExperimentalCoroutinesApi::class)
 class PluginSandboxTeardownUnloadTest {
-
     @Test
-    fun `sandbox removal is invoked synchronously before loader unload`() = runTest {
-        val executionOrder = mutableListOf<String>()
+    fun `sandbox removal is invoked synchronously before loader unload`() =
+        runTest {
+            val executionOrder = mutableListOf<String>()
 
-        val fakeSandboxManager = object : PluginSandboxManager {
-            override fun createSandbox(pluginId: String) = throw UnsupportedOperationException()
-            override fun getSandbox(pluginId: String): PluginSandbox? = null
-            override fun getAllSandboxes(): Map<String, PluginSandbox> = emptyMap()
-            override suspend fun removeSandbox(pluginId: String) {
-                executionOrder.add("removeSandbox:$pluginId")
-            }
-            override suspend fun enablePlugin(pluginId: String) {}
-            override suspend fun disablePlugin(pluginId: String) {}
-            override suspend fun restartPlugin(pluginId: String): Boolean = false
-            override suspend fun fullyUnloadPlugin(pluginId: String): Result<Unit> = Result.success(Unit)
-            override fun registerCleanupCallback(callback: ai.rever.boss.plugin.sandbox.PluginCleanupCallback) {}
-            override fun unregisterCleanupCallback(callback: ai.rever.boss.plugin.sandbox.PluginCleanupCallback) {}
-            override fun dispose() {}
+            val fakeSandboxManager =
+                object : PluginSandboxManager {
+                    override fun createSandbox(pluginId: String) = throw UnsupportedOperationException()
+
+                    override fun getSandbox(pluginId: String): PluginSandbox? = null
+
+                    override fun getAllSandboxes(): Map<String, PluginSandbox> = emptyMap()
+
+                    override suspend fun removeSandbox(pluginId: String) {
+                        executionOrder.add("removeSandbox:$pluginId")
+                    }
+
+                    override suspend fun enablePlugin(pluginId: String) = throw UnsupportedOperationException()
+
+                    override suspend fun disablePlugin(pluginId: String) = throw UnsupportedOperationException()
+
+                    override suspend fun restartPlugin(pluginId: String): Boolean = false
+
+                    override suspend fun fullyUnloadPlugin(pluginId: String): Result<Unit> = Result.success(Unit)
+
+                    override fun registerCleanupCallback(callback: PluginCleanupCallback) = throw UnsupportedOperationException()
+
+                    override fun unregisterCleanupCallback(callback: PluginCleanupCallback) = throw UnsupportedOperationException()
+
+                    override fun dispose() = throw UnsupportedOperationException()
+                }
+
+            fakeSandboxManager.removeSandbox("ai.rever.boss.plugin.dynamic.terminaltab")
+            executionOrder.add("unloadPlugin:ai.rever.boss.plugin.dynamic.terminaltab")
+
+            assertEquals(
+                listOf(
+                    "removeSandbox:ai.rever.boss.plugin.dynamic.terminaltab",
+                    "unloadPlugin:ai.rever.boss.plugin.dynamic.terminaltab",
+                ),
+                executionOrder,
+                "Sandbox removal must precede classloader unloading so coroutines finish before classloader closure",
+            )
         }
-
-        fakeSandboxManager.removeSandbox("ai.rever.boss.plugin.dynamic.terminaltab")
-        executionOrder.add("unloadPlugin:ai.rever.boss.plugin.dynamic.terminaltab")
-
-        assertEquals(
-            listOf(
-                "removeSandbox:ai.rever.boss.plugin.dynamic.terminaltab",
-                "unloadPlugin:ai.rever.boss.plugin.dynamic.terminaltab"
-            ),
-            executionOrder,
-            "Sandbox removal must precede classloader unloading so coroutines finish before classloader closure"
-        )
-    }
 }
