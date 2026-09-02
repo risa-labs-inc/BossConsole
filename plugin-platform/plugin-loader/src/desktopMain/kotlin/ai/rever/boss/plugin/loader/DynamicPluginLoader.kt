@@ -413,14 +413,15 @@ class DynamicPluginLoaderImpl(
             // pins this.
             try {
                 loadedPlugin.instance.dispose()
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 logger.warn(
                     LogCategory.SYSTEM,
                     "Error disposing plugin",
                     mapOf(
                         "pluginId" to pluginId,
-                        "error" to (e.message ?: "unknown"),
+                        "error" to (e.message ?: e::class.simpleName ?: "unknown"),
                     ),
+                    e,
                 )
             }
 
