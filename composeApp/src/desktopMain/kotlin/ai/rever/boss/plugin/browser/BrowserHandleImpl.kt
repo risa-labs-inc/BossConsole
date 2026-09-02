@@ -103,6 +103,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.booleanOrNull
@@ -2456,13 +2457,8 @@ internal class BrowserHandleImpl(
 
     override suspend fun executeJavaScript(script: String): Any? {
         if (!isValid) return null
-        return withContext(Dispatchers.Main) {
-            try {
-                browser.mainFrame().map { it.executeJavaScript<Any?>(script) }.orElse(null)
-            } catch (e: Exception) {
-                logger.warn(LogCategory.BROWSER, "JS execution error", mapOf("handleId" to id, "error" to (e.message ?: "unknown")))
-                null
-            }
+        return browser.executeJavaScriptSuspending(script) { e ->
+            logger.warn(LogCategory.BROWSER, "JS execution error", mapOf("handleId" to id, "error" to (e.message ?: "unknown")))
         }
     }
 
@@ -4565,3 +4561,22 @@ internal fun shouldAllowPinch(
  * Restart-scoped: read once per browser view, not live-tunable.
  */
 internal fun parseTopInsetDp(raw: String?): Int = raw?.trim()?.toIntOrNull()?.coerceIn(0, 200) ?: 0
+
+internal suspend fun Browser.executeJavaScriptSuspending(script: String, logError: (Exception) -> Unit = {}): Any? {
+    return kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+        try {
+            mainFrame().ifPresentOrElse({ frame ->
+                frame.executeJavaScript(script) { result ->
+                    if (cont.isActive) {
+                        cont.resumeWith(Result.success(result))
+                    }
+                }
+            }, {
+                if (cont.isActive) cont.resumeWith(Result.success(null))
+            })
+        } catch (e: Exception) {
+            logError(e)
+            if (cont.isActive) cont.resumeWith(Result.success(null))
+        }
+    }
+}
