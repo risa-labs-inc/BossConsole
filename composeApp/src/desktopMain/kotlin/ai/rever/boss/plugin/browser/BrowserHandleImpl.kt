@@ -96,6 +96,9 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
@@ -318,8 +321,7 @@ internal class BrowserHandleImpl(
     private val swipeNavBridge = BrowserSwipeNavBridge(onNavigate = ::onSwipeNavigate)
 
     private val disposed = AtomicBoolean(false)
-    private val pendingOperationsCount = AtomicInteger(0)
-    private val operationsZeroSignal = Channel<Unit>(Channel.CONFLATED).apply { trySend(Unit) }
+    private val tracker = NativeOperationTracker(disposed)
 
     /**
      * Latched when a synchronous RPC through this browser fails because its transport is gone.
@@ -2465,27 +2467,18 @@ internal class BrowserHandleImpl(
         }
     }
 
-    private fun beginNativeOperation(): Boolean {
-        if (disposed.get()) return false
-        pendingOperationsCount.incrementAndGet()
-        // Double-check after incrementing
-        if (disposed.get()) {
-            endNativeOperation()
-            return false
-        }
-        return true
+    override fun prepareForDisposal() {
+        tracker.prepareForDisposal()
     }
 
+    private fun beginNativeOperation(): Boolean = tracker.beginNativeOperation()
+
     private fun endNativeOperation() {
-        if (pendingOperationsCount.decrementAndGet() == 0) {
-            operationsZeroSignal.trySend(Unit)
-        }
+        tracker.endNativeOperation()
     }
 
     override suspend fun awaitPendingNativeOperations() {
-        while (pendingOperationsCount.get() > 0) {
-            operationsZeroSignal.receiveCatching()
-        }
+        tracker.awaitPendingNativeOperations()
     }
 
     override fun getCurrentUrl(): String = syncCall("url", "") { browser.url() }
@@ -4110,6 +4103,7 @@ internal class BrowserHandleImpl(
             }
         }
     }
+    private val disposeExecuted = AtomicBoolean(false)
 
     override fun dispose() {
         // Synchronously, and before the guard below: invokeLater would let browser.close() run
@@ -4124,7 +4118,9 @@ internal class BrowserHandleImpl(
         // frozen app, and the task stays queued so the window is still disposed once the EDT
         // frees up. On the EDT already - composition teardown - it runs inline.
         closePopOutOnEdt()
-        if (!disposed.compareAndSet(false, true)) return
+        // Ensure disposed state is entered even if prepareForDisposal was skipped
+        disposed.set(true)
+        if (!disposeExecuted.compareAndSet(false, true)) return
         rendererPid.onGone()
         // Shut the interaction bridge FIRST. Its only gate is this authority, and the
         // collector flushes on `pagehide` — which is precisely when this runs. Closing the
@@ -4619,5 +4615,41 @@ internal suspend fun Browser.executeJavaScriptSuspending(
             logError(e)
             if (cont.isActive) cont.resumeWith(Result.success(null))
         }
+    }
+}
+
+/**
+ * Tracks the lifecycle of asynchronous JxBrowser operations against the browser's disposal state.
+ *
+ * Uses [MutableStateFlow] for lock-free, multi-waiter safe operation tracking, guaranteeing
+ * that no native operations can start after disposal has been requested, and allowing
+ * disposal to cleanly await pending ones.
+ */
+internal class NativeOperationTracker(
+    private val disposed: AtomicBoolean
+) {
+    private val pendingOperationsCount = MutableStateFlow(0)
+
+    fun prepareForDisposal() {
+        disposed.set(true)
+    }
+
+    fun beginNativeOperation(): Boolean {
+        if (disposed.get()) return false
+        pendingOperationsCount.update { it + 1 }
+        // Double-check after incrementing
+        if (disposed.get()) {
+            endNativeOperation()
+            return false
+        }
+        return true
+    }
+
+    fun endNativeOperation() {
+        pendingOperationsCount.update { it - 1 }
+    }
+
+    suspend fun awaitPendingNativeOperations() {
+        pendingOperationsCount.first { it == 0 }
     }
 }

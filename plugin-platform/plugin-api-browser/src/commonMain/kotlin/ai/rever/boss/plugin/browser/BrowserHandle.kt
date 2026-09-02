@@ -179,6 +179,11 @@ interface BrowserHandle {
     suspend fun executeJavaScript(script: String): Any? = null
 
     /**
+     * Prepares this handle for disposal by refusing any new asynchronous native operations.
+     */
+    fun prepareForDisposal() {}
+
+    /**
      * Suspends until all in-flight native asynchronous operations (such as executeJavaScript)
      * have completed or safely aborted.
      */
