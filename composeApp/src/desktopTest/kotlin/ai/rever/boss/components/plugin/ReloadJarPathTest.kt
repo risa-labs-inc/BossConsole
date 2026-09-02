@@ -6,6 +6,7 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 
 /**
@@ -177,5 +178,75 @@ class ReloadJarPathTest {
             )
 
         assertEquals(newer.absolutePath, resolved)
+    }
+
+    @Test
+    fun `does not consult the directory while a known candidate still exists`() {
+        // A routine reload must not directory-scan at all: a stray dev build or a pinned/downgraded
+        // install under the same pluginId must never win, and a download streaming onto a scannable
+        // <pluginId>-<version>.jar name must not be swept mid-write.
+        var relocatedCalled = false
+        val dir = tempDir()
+        val loadedJar = writeJar(dir, "tool-1.0.0.jar", "ai.rever.boss.tool", "1.0.0")
+        val recordedJar = writeJar(dir, "tool-1.0.1.jar", "ai.rever.boss.tool", "1.0.1")
+
+        val resolved =
+            resolveReloadJarPath(
+                loadedJarPath = loadedJar.absolutePath,
+                persistedJarPath = recordedJar.absolutePath,
+                exists = { java.io.File(it).isFile },
+                relocated = {
+                    relocatedCalled = true
+                    findRelocatedPluginJar(dir, "ai.rever.boss.tool")?.absolutePath
+                },
+                manifestVersion = { path ->
+                    runCatching { PluginManifestReader.readFromJar(path).version }.getOrNull()
+                },
+            )
+
+        assertEquals(recordedJar.absolutePath, resolved)
+        assertFalse(relocatedCalled)
+    }
+
+    @Test
+    fun `keeps position order and reports the failed paths when no manifest can be read`() {
+        // A manifest that throws must not promote the persisted record over the running jar, and a
+        // candidate scored as if it had no version must be diagnosable instead of silently mis-scored.
+        val failures = mutableListOf<String>()
+
+        val resolved =
+            resolveReloadJarPath(
+                loadedJarPath = "/p/tool.jar",
+                persistedJarPath = "/p/recorded.jar",
+                exists = { it == "/p/tool.jar" || it == "/p/recorded.jar" },
+                relocated = { null },
+                manifestVersion = { path -> throw IllegalStateException("corrupt manifest: $path") },
+                onManifestVersionReadFailed = { failures.add(it) },
+            )
+
+        assertEquals("/p/tool.jar", resolved)
+        assertEquals(listOf("/p/tool.jar", "/p/recorded.jar"), failures)
+    }
+
+    @Test
+    fun `prefers the loaded jar when versions tie`() {
+        // Equal versions keep the position preference, so reload behavior only changes when a known
+        // candidate is strictly newer - the tie must not silently swap the running jar.
+        val dir = tempDir()
+        val loadedJar = writeJar(dir, "tool-1.2.15-a.jar", "ai.rever.boss.tool", "1.2.15")
+        val recordedJar = writeJar(dir, "tool-1.2.15-b.jar", "ai.rever.boss.tool", "1.2.15")
+
+        val resolved =
+            resolveReloadJarPath(
+                loadedJarPath = loadedJar.absolutePath,
+                persistedJarPath = recordedJar.absolutePath,
+                exists = { java.io.File(it).isFile },
+                relocated = { null },
+                manifestVersion = { path ->
+                    runCatching { PluginManifestReader.readFromJar(path).version }.getOrNull()
+                },
+            )
+
+        assertEquals(loadedJar.absolutePath, resolved)
     }
 }

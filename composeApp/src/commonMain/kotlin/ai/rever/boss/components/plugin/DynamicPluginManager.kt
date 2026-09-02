@@ -1827,6 +1827,13 @@ class DynamicPluginManager(
                 manifestVersion = { path ->
                     runCatching { PluginManifestReader.readFromJar(path).version }.getOrNull()
                 },
+                onManifestVersionReadFailed = { path ->
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Could not read manifest version of a reload candidate jar",
+                        mapOf("pluginId" to pluginId, "path" to path),
+                    )
+                },
             ) ?: return Result.failure(
                 Exception("Cannot reload $pluginId - no existing JAR (loaded from ${info.jarPath})"),
             )
