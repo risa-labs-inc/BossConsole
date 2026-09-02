@@ -33,13 +33,19 @@ class DependencyPromptOnReenableTest {
     }
 
     private fun managerSource() =
-        read("composeApp/src/commonMain/kotlin/ai/rever/boss/components/plugin/DynamicPluginManager.kt")
+        read(
+            "composeApp/src/commonMain/kotlin/ai/rever/boss/components/plugin/DynamicPluginManager.kt",
+        )
 
     private fun setupSource() =
-        read("composeApp/src/desktopMain/kotlin/ai/rever/boss/components/plugin/PluginLoaderDelegateSetup.kt")
+        read(
+            "composeApp/src/desktopMain/kotlin/ai/rever/boss/components/plugin/PluginLoaderDelegateSetup.kt",
+        )
 
     private fun delegateSource() =
-        read("composeApp/src/desktopMain/kotlin/ai/rever/boss/plugin/PluginLoaderDelegateImpl.kt")
+        read(
+            "composeApp/src/desktopMain/kotlin/ai/rever/boss/plugin/PluginLoaderDelegateImpl.kt",
+        )
 
     /**
      * Body of the first `fun <name>(` in [source], brace-matched so a later
@@ -59,7 +65,10 @@ class DependencyPromptOnReenableTest {
         var depth = 0
         for (i in brace until source.length) {
             when (source[i]) {
-                '{' -> depth++
+                '{' -> {
+                    depth++
+                }
+
                 '}' -> {
                     depth--
                     if (depth == 0) return source.substring(brace, i + 1)
@@ -80,7 +89,10 @@ class DependencyPromptOnReenableTest {
         var depth = 0
         for (i in open until body.length) {
             when (body[i]) {
-                '{' -> depth++
+                '{' -> {
+                    depth++
+                }
+
                 '}' -> {
                     depth--
                     if (depth == 0) {
@@ -93,20 +105,41 @@ class DependencyPromptOnReenableTest {
     }
 
     /** Drop `//` comments so a sabotaged call left in a comment cannot pass. */
-    private fun uncommented(kotlin: String): String =
-        kotlin.lineSequence().joinToString("\n") { it.replace(Regex("//.*"), "") }
+    private fun uncommented(code: String) = code.lineSequence().joinToString("\n") { it.replace(Regex("//.*"), "") }
 
     @Test
     fun `re-enabling a disabled plugin reports missing dependencies`() {
         val body = uncommented(functionBody(managerSource(), "enablePlugin"))
         // The same skip notifyPanelsRefresh uses: a redundant enable of an
         // already-running plugin is not the user re-arming a disabled one.
+        // The report itself is gated on canAccess: an install-deps dialog is
+        // only actionable for a plugin the user can see, and one still hidden
+        // by RBAC is reported by handleAccessChange when access arrives.
         assertTrue(
             Regex(
                 """if\s*\(\s*result\.isSuccess\s*&&\s*!wasAlreadyEnabled\s*\)\s*\{""" +
-                    """[\s\S]{0,400}?notifyPluginActivated\(""",
+                    """[\s\S]{0,700}?if\s*\(\s*\w+\s*!=\s*null\s*&&\s*canAccess\(\w+\)\s*\)\s*\{""" +
+                    """\s*notifyPluginActivated\(""",
             ).containsMatchIn(body),
-            "enablePlugin must report missing dependencies when it actually re-enables",
+            "enablePlugin must report missing dependencies when it actually re-enables, gated on canAccess",
+        )
+    }
+
+    @Test
+    fun `the re-enable redundancy check is keyed off plugin state, not the enabled flag`() {
+        val body = uncommented(functionBody(managerSource(), "enablePlugin"))
+        // The RBAC hide step sets state = DISABLED without clearing `enabled`,
+        // so an enabled-flag check read a hidden plugin as already running and
+        // silenced the prompt for exactly the re-enable case #180 covers.
+        assertTrue(
+            Regex(
+                """wasAlreadyEnabled\s*=\s*_pluginStates\.value\[pluginId\]\?\.state\s*==\s*PluginState\.LOADED""",
+            ).containsMatchIn(body),
+            "enablePlugin must key the redundancy check off PluginState.LOADED",
+        )
+        assertFalse(
+            body.contains("?enabled == true"),
+            "enablePlugin must not read the `enabled` flag for the redundancy check",
         )
     }
 

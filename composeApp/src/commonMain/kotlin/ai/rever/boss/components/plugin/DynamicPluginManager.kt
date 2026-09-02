@@ -1556,7 +1556,13 @@ class DynamicPluginManager(
                         trackingContexts[pluginId]
                             ?: return@withLock Result.failure(Exception("No context for plugin: $pluginId"))
 
-                    wasAlreadyEnabled = _pluginStates.value[pluginId]?.enabled == true
+                    // Keyed off state, not the `enabled` flag: the RBAC hide step in
+                    // handleAccessChange sets state = DISABLED without clearing `enabled`,
+                    // so an enabled-flag check read a hidden plugin as "already running"
+                    // and silenced the #180 prompt for exactly the re-enable case that
+                    // needs it. A redundant enable of a genuinely running plugin (state
+                    // LOADED) still skips, preserving the declined-dependency skip.
+                    wasAlreadyEnabled = _pluginStates.value[pluginId]?.state == PluginState.LOADED
 
                     // Attributed for the duration of register(), so a callback the
                     // plugin wires up and invokes synchronously from here is
@@ -1630,8 +1636,15 @@ class DynamicPluginManager(
             notifyPanelsRefresh(pluginId)
             // Same skip: a redundant enable is not the user re-arming a
             // disabled plugin, so it must not re-offer a dependency they
-            // already declined (#180).
-            notifyPluginActivated(pluginId)
+            // already declined (#180). Gated on canAccess because anything
+            // loaded can reach enablePlugin through the shared API registry:
+            // an install-deps dialog is only actionable for a plugin the user
+            // can see, and one still hidden by RBAC gets its report from
+            // handleAccessChange when access actually arrives.
+            val activatedManifest = _pluginStates.value[pluginId]?.manifest
+            if (activatedManifest != null && canAccess(activatedManifest)) {
+                notifyPluginActivated(pluginId)
+            }
         }
         return result
     }
