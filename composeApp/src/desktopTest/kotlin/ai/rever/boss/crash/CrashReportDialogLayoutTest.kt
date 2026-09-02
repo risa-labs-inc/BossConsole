@@ -415,6 +415,31 @@ class CrashReportDialogLayoutTest {
     }
 
     @Test
+    fun theReportIssueButtonIsNotSqueezedAtTheMinimumWindowWidth() {
+        // #104: at the crash window's 450dp minimum, three buttons side by side used to
+        // over-subscribe the row, and Compose squeezed the shortfall into the *last* child
+        // instead of overflowing - down to ~88dp, well under either label's natural width. The
+        // fix stacks all three full-width below FooterActionsInlineMinWidth instead, so the
+        // primary button's width should now equal its stacked siblings', not be squeezed
+        // relative to them.
+        setDialogAtMinimumWindowSize()
+
+        val reportIssueWidth = rule.onNodeWithText("Report Issue").getUnclippedBoundsInRoot().width
+        val dismissWidth = rule.onNodeWithText("Don't Send").getUnclippedBoundsInRoot().width
+
+        assertTrue(
+            reportIssueWidth.value > 200f,
+            "\"Report Issue\" measured ${reportIssueWidth.value}dp wide - " +
+                "the pre-#104 squeeze produced ~88dp",
+        )
+        assertTrue(
+            abs(reportIssueWidth.value - dismissWidth.value) <= 1f,
+            "stacked buttons should be full-width siblings, not independently sized: " +
+                "\"Report Issue\" ${reportIssueWidth.value}dp vs \"Don't Send\" ${dismissWidth.value}dp",
+        )
+    }
+
+    @Test
     fun aBlankFailureMessageRendersThePlaceholderNotAnEmptyCard() {
         // Unreachable today (every Error interpolates a prefix), but it is the one behaviour the
         // sanitizer swap changed beyond redaction: maskUriParams answered "[empty]" for blank input,
