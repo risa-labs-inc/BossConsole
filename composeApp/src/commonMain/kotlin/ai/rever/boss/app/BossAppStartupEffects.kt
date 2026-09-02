@@ -440,6 +440,11 @@ internal fun BossAppStartupEffects(state: BossAppState) {
             // handle is released by rememberBossAppState, which also acquired it,
             // and app-level teardown is UpdateCoordinator.shutdown() in main.kt.
 
+            // Destroy every open panel's lifecycle so their doOnDestroy callbacks fire
+            // on window close — mirrors BossTabsComponent.disposeAllTabsBlocking for tabs
+            // (issue #213: panel doOnDestroy was dead code before this).
+            state.panelComponentStore.disposeAll()
+
             // Unregister this window's state from the global registries
             SplitViewStateRegistry.unregister(windowId)
             PanelComponentStoreRegistry.unregister(windowId)
