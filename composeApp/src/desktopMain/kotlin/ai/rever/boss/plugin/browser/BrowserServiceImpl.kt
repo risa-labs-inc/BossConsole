@@ -687,6 +687,13 @@ object BrowserServiceImpl : BrowserService {
     override suspend fun disposeBrowser(handle: BrowserHandle) {
         activeBrowsers.remove(handle.id)
         browserOwners.unregister(handle.id)
+
+        // Issue #300: If the browser is closed while a native JxBrowser operation is in flight,
+        // the renderer can crash. Suspend briefly to let operations finish safely.
+        withTimeoutOrNull(500) {
+            handle.awaitPendingNativeOperations()
+        }
+
         try {
             handle.dispose()
         } finally {

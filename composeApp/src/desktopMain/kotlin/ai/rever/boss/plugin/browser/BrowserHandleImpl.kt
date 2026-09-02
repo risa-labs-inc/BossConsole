@@ -92,6 +92,7 @@ import com.teamdev.jxbrowser.zoom.ZoomLevel
 import com.teamdev.jxbrowser.zoom.ZoomMode
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -317,6 +318,8 @@ internal class BrowserHandleImpl(
     private val swipeNavBridge = BrowserSwipeNavBridge(onNavigate = ::onSwipeNavigate)
 
     private val disposed = AtomicBoolean(false)
+    private val pendingOperationsCount = AtomicInteger(0)
+    private val operationsZeroSignal = Channel<Unit>(Channel.CONFLATED).apply { trySend(Unit) }
 
     /**
      * Latched when a synchronous RPC through this browser fails because its transport is gone.
@@ -2457,8 +2460,31 @@ internal class BrowserHandleImpl(
 
     override suspend fun executeJavaScript(script: String): Any? {
         if (!isValid) return null
-        return browser.executeJavaScriptSuspending(script) { e ->
+        return browser.executeJavaScriptSuspending(script, ::beginNativeOperation, ::endNativeOperation) { e ->
             logger.warn(LogCategory.BROWSER, "JS execution error", mapOf("handleId" to id, "error" to (e.message ?: "unknown")))
+        }
+    }
+
+    private fun beginNativeOperation(): Boolean {
+        if (disposed.get()) return false
+        pendingOperationsCount.incrementAndGet()
+        // Double-check after incrementing
+        if (disposed.get()) {
+            endNativeOperation()
+            return false
+        }
+        return true
+    }
+
+    private fun endNativeOperation() {
+        if (pendingOperationsCount.decrementAndGet() == 0) {
+            operationsZeroSignal.trySend(Unit)
+        }
+    }
+
+    override suspend fun awaitPendingNativeOperations() {
+        while (pendingOperationsCount.get() > 0) {
+            operationsZeroSignal.receiveCatching()
         }
     }
 
@@ -4562,14 +4588,29 @@ internal fun shouldAllowPinch(
  */
 internal fun parseTopInsetDp(raw: String?): Int = raw?.trim()?.toIntOrNull()?.coerceIn(0, 200) ?: 0
 
-internal suspend fun Browser.executeJavaScriptSuspending(script: String, logError: (Exception) -> Unit = {}): Any? {
+internal suspend fun Browser.executeJavaScriptSuspending(
+    script: String,
+    beginOp: () -> Boolean = { true },
+    endOp: () -> Unit = {},
+    logError: (Exception) -> Unit = {}
+): Any? {
     return kotlinx.coroutines.suspendCancellableCoroutine { cont ->
         try {
             mainFrame().ifPresentOrElse({ frame ->
-                frame.executeJavaScript(script) { result ->
-                    if (cont.isActive) {
-                        cont.resumeWith(Result.success(result))
+                if (!beginOp()) {
+                    if (cont.isActive) cont.resumeWith(Result.success(null))
+                    return@ifPresentOrElse
+                }
+                try {
+                    frame.executeJavaScript(script) { result ->
+                        endOp()
+                        if (cont.isActive) {
+                            cont.resumeWith(Result.success(result))
+                        }
                     }
+                } catch (e: Exception) {
+                    endOp()
+                    throw e
                 }
             }, {
                 if (cont.isActive) cont.resumeWith(Result.success(null))

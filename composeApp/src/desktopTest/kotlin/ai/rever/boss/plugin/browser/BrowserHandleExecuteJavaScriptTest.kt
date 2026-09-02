@@ -54,14 +54,23 @@ class BrowserHandleExecuteJavaScriptTest {
             }
         } as Browser
 
+        var beginCalled = false
+        var endCalled = false
+
         val result = runCatching {
             withTimeout(100) {
-                browser.executeJavaScriptSuspending("fakeScript")
+                browser.executeJavaScriptSuspending(
+                    script = "fakeScript",
+                    beginOp = { beginCalled = true; true },
+                    endOp = { endCalled = true }
+                )
             }
         }
 
         // Must fail with timeout exception
         assertTrue(result.exceptionOrNull() is TimeoutCancellationException)
+        assertTrue(beginCalled, "beginOp should be called")
+        assertTrue(!endCalled, "endOp should not be called yet since callback is pending")
 
         // Simulating the JxBrowser IPC callback arriving LATE after the coroutine has already cancelled.
         // It must NOT throw an exception inside the callback (cont.isActive check protects it).
@@ -69,6 +78,7 @@ class BrowserHandleExecuteJavaScriptTest {
         consumerFired = true
 
         assertTrue(consumerFired)
+        assertTrue(endCalled, "endOp must be called when late callback fires")
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)

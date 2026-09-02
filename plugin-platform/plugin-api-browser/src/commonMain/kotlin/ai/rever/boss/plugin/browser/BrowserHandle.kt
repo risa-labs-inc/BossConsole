@@ -179,6 +179,12 @@ interface BrowserHandle {
     suspend fun executeJavaScript(script: String): Any? = null
 
     /**
+     * Suspends until all in-flight native asynchronous operations (such as executeJavaScript)
+     * have completed or safely aborted.
+     */
+    suspend fun awaitPendingNativeOperations() = Unit
+
+    /**
      * Get the current URL.
      *
      * @return The current URL, or empty string if invalid
