@@ -3125,12 +3125,45 @@ object FluckEngine {
                                                 .build(),
                                         )
                                         // Restore original clipboard after paste completes
+                                        // (issue #205). Conditional, and only while the
+                                        // clipboard still holds exactly the plain text this
+                                        // branch wrote: the old unconditional time-based
+                                        // restore clobbered anything the user copied in the
+                                        // window - a Cmd+C landing inside those 200ms was
+                                        // silently lost, and two rapid paste-without-
+                                        // formatting presses could restore in the wrong
+                                        // order. A user copy in the window now wins; the
+                                        // original comes back only if it is still ours to
+                                        // put back.
                                         if (originalContents != null) {
                                             CoroutineScope(Dispatchers.IO).launch {
                                                 delay(200)
                                                 try {
-                                                    clipboard.setContents(originalContents, null)
-                                                } catch (_: Exception) {
+                                                    val current =
+                                                        clipboard.getData(java.awt.datatransfer.DataFlavor.stringFlavor) as? String
+                                                    if (current == plainText) {
+                                                        clipboard.setContents(originalContents, null)
+                                                    } else {
+                                                        // The clipboard changed hands mid-window.
+                                                        // Debug, not info: this is the happy
+                                                        // path working as designed, and a line
+                                                        // per keystroke would be noise.
+                                                        logger.debug(
+                                                            LogCategory.BROWSER,
+                                                            "Skipped clipboard restore - contents changed during paste-without-formatting",
+                                                        )
+                                                    }
+                                                } catch (e: Exception) {
+                                                    // A locked or failed clipboard read must not
+                                                    // crash the worker. Leaving the plain text in
+                                                    // place is the safe side of every failure here:
+                                                    // pasting formatted text later is recoverable,
+                                                    // destroying a fresh copy is not.
+                                                    logger.debug(
+                                                        LogCategory.BROWSER,
+                                                        "Clipboard restore check failed, leaving plain text in place",
+                                                        mapOf("error" to (e.message ?: "unknown")),
+                                                    )
                                                 }
                                             }
                                         }
