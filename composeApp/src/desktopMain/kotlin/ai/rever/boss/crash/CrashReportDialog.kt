@@ -502,33 +502,9 @@ internal fun CrashReportDialog(
                             }
 
                             is CrashReportService.SubmitResult.Error -> {
-                                // The text most likely to end up pasted into a public issue, and it
-                                // interpolates a raw exception message.
-                                //
-                                // sanitizeExceptionMessage, not maskUriParams: the latter redacts
-                                // named params inside a `?`/`#` segment, and the case that
-                                // motivates sanitizing here has neither — "Request timeout has
-                                // expired [url=https://…, …]" passed through verbatim. This is also
-                                // what the rest of the window already gets: CrashHandler runs the
-                                // exception message and stack trace through the same function
-                                // before they reach CrashReport.
-                                //
-                                // Scope, measured rather than assumed: a host is removed when it
-                                // appears *inside a URL* — filePathPattern swallows everything after
-                                // the scheme colon, which covers ktor's `[url=…]` messages. A bare
-                                // host does not match any location pattern and renders verbatim:
-                                // UnknownHostException.getMessage() is just the hostname, so
-                                // "Failed to submit crash report: proxy.corp.internal" survives
-                                // intact. Harmless for our own public endpoint, not necessarily so
-                                // for a corporate proxy — see #109.
-                                //
-                                // Cost of what it does remove: the endpoint is no longer named
-                                // here, only in the log. The diagnostic half survives ("Request
-                                // timeout has expired", and request_timeout=… since neither
-                                // `request` nor `timeout` marks a secret), which keeps this
-                                // narrower than a blunt redaction. A blank message renders
-                                // "[no message]" where maskUriParams gave "[empty]".
-                                LogSanitizer.sanitizeExceptionMessage(result.message)
+                                // SubmitResult.Error sanitizes its message at construction time via
+                                // LogSanitizer.sanitizeExceptionMessage, so result.message is safe to render.
+                                result.message
                             }
                         }
                     }

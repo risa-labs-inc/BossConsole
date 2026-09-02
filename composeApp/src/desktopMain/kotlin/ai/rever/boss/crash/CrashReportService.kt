@@ -5,6 +5,7 @@ import ai.rever.boss.config.SupabaseClientConfig
 import ai.rever.boss.utils.AppVersion
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.LogSanitizer
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.engine.cio.*
@@ -77,9 +78,13 @@ object CrashReportService {
             val isNewIssue: Boolean,
         ) : SubmitResult()
 
-        data class Error(
+        data class Error private constructor(
             val message: String,
-        ) : SubmitResult()
+        ) : SubmitResult() {
+            companion object {
+                operator fun invoke(message: String): Error = Error(LogSanitizer.sanitizeExceptionMessage(message))
+            }
+        }
     }
 
     /**
