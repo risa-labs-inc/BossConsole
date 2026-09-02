@@ -329,6 +329,37 @@ interface BrowserHandle {
     fun removeLoadingListener(listener: (Boolean) -> Unit)
 
     // ============================================================
+    // AUDIO PLAYBACK STATE
+    // ============================================================
+
+    /**
+     * Check whether this browser is currently producing sound.
+     *
+     * Backed by Chromium's own playback state (issue #308) — not a poll — so
+     * it is accurate for background tabs and inactive panels alike.
+     *
+     * @return true if audio is currently playing
+     */
+    fun isPlayingAudio(): Boolean = false
+
+    /**
+     * Add a listener for audio playback state changes.
+     *
+     * Fired the moment Chromium starts or stops producing sound, and replayed
+     * with the current state on registration (same contract as
+     * [addLoadingListener] — a listener attached while a video is already
+     * playing must not sit at "silent" until the next start event).
+     *
+     * @param listener Callback receiving true when playback starts, false when it stops
+     */
+    fun addAudioPlayingListener(listener: (Boolean) -> Unit) {}
+
+    /**
+     * Remove an audio playback listener.
+     */
+    fun removeAudioPlayingListener(listener: (Boolean) -> Unit) {}
+
+    // ============================================================
     // SECURITY
     // ============================================================
 

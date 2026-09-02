@@ -9,6 +9,8 @@ import ai.rever.boss.plugin.api.TabIcon
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
@@ -27,6 +29,7 @@ import androidx.compose.material.Text
 import androidx.compose.material.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Diversity2
 import androidx.compose.runtime.*
@@ -34,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
@@ -77,6 +81,13 @@ private const val HOVER_FILL_ALPHA = 0.55f
 /** The pin glyph on a pinned tab. Smaller than the close beside it: it is a state, not a button. */
 private val PIN_INDICATOR_SIZE = 10.dp
 
+/**
+ * The speaker glyph on a tab that is producing sound (issue #308). One size step above
+ * the pin: it has to be findable by scanning a full bar, which is the entire question
+ * it exists to answer.
+ */
+private val AUDIO_INDICATOR_SIZE = 12.dp
+
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun BossTabButton(
@@ -94,6 +105,16 @@ fun BossTabButton(
      * panes are already doing that job. So the tab itself has to say it.
      */
     isPinned: Boolean = false,
+    /**
+     * This tab's page is currently producing sound (issue #308).
+     *
+     * Pushed from Chromium's real playback events - never a poll - so it is accurate on
+     * background tabs and inactive panels, and clears the moment playback stops. Rendered
+     * as a small speaker beside the title behind an alpha crossfade: a glyph that pops in
+     * and out reads as flicker across a row of tabs, and one that lingers after a paused
+     * video lies about which tab to click.
+     */
+    isPlayingAudio: Boolean = false,
     isFocused: Boolean = true,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
@@ -479,6 +500,27 @@ fun BossTabButton(
                     softWrap = false,
                 )
                 titleBadge?.invoke()
+
+                // Speaker glyph while this tab is producing sound (issue #308). The alpha
+                // animation runs unconditionally - Compose state, cheap at either target -
+                // and the icon only composes while visible, so a silent tab's row measures
+                // exactly what it did before this feature existed.
+                val audioAlpha by animateFloatAsState(
+                    targetValue = if (isPlayingAudio) 1f else 0f,
+                    animationSpec = tween(durationMillis = 200),
+                    label = "audioPlayingIndicator",
+                )
+                if (audioAlpha > 0.01f) {
+                    Icon(
+                        imageVector = Icons.Filled.VolumeUp,
+                        contentDescription = "Playing audio",
+                        tint = colors.signal,
+                        modifier =
+                            Modifier
+                                .size(AUDIO_INDICATOR_SIZE)
+                                .graphicsLayer { alpha = audioAlpha },
+                    )
+                }
 
                 // Always drawn, unlike the close icon beside it: a tab is pinned whether or not
                 // the pointer is anywhere near it, and an indicator you have to hover to see

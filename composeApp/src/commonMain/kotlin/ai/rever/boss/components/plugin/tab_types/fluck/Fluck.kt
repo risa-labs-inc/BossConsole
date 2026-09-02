@@ -59,6 +59,7 @@ class FluckTabInfo(
     @Volatile var historyIndex: Int = -1, // Current position in navigation history
     private var _currentZoomLevel: Double = 1.0, // Current zoom level (1.0 = 100%)
     var faviconCacheKey: String? = null, // Cache key for persisted favicon
+    var isPlayingAudio: Boolean = false, // Live playback state, pushed by BrowserHandleImpl (issue #308)
 ) : TabInfo {
     override val title: String get() = _title
 
@@ -85,7 +86,8 @@ class FluckTabInfo(
             _icon == other._icon &&
             _tabIcon == other._tabIcon &&
             faviconCacheKey == other.faviconCacheKey &&
-            _currentZoomLevel == other._currentZoomLevel
+            _currentZoomLevel == other._currentZoomLevel &&
+            isPlayingAudio == other.isPlayingAudio
     }
 
     // Keep hashCode based on ID only for HashMap performance
@@ -103,6 +105,7 @@ class FluckTabInfo(
         _currentUrl: String = this._currentUrl,
         _currentZoomLevel: Double = this._currentZoomLevel,
         faviconCacheKey: String? = this.faviconCacheKey,
+        isPlayingAudio: Boolean = this.isPlayingAudio,
         navigationHistory: MutableList<Pair<String, String>>? = null,
         historyIndex: Int = this.historyIndex,
     ): FluckTabInfo {
@@ -117,6 +120,7 @@ class FluckTabInfo(
                 _currentUrl = _currentUrl,
                 _currentZoomLevel = _currentZoomLevel,
                 faviconCacheKey = faviconCacheKey,
+                isPlayingAudio = isPlayingAudio,
             )
 
         // Copy navigation history list to prevent shared reference issues (fixes Issue #406)
@@ -144,6 +148,16 @@ class FluckTabInfo(
     fun updateTabIcon(newTabIcon: TabIcon): FluckTabInfo = copy(_tabIcon = newTabIcon)
 
     fun updateFaviconCacheKey(newCacheKey: String?): FluckTabInfo = copy(faviconCacheKey = newCacheKey)
+
+    /**
+     * Set live audio-playback state (issue #308). Driven by JxBrowser's
+     * AudioStartedPlaying/AudioStoppedPlaying events — real playback state, not
+     * a poll — so the tab-bar speaker glyph appears and disappears the moment
+     * playback starts and stops, on background tabs and inactive panels too.
+     * Chromium stops media on navigation, which is what clears the flag when the
+     * user navigates away; no manual reset is needed.
+     */
+    fun updateAudioPlaying(playing: Boolean): FluckTabInfo = copy(isPlayingAudio = playing)
 
     fun updateZoomLevel(newLevel: Double): FluckTabInfo = copy(_currentZoomLevel = newLevel)
 

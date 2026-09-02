@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Tab
@@ -363,6 +364,19 @@ private fun ActiveTabDialogItem(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+            }
+
+            // Speaker glyph for a tab that is currently producing sound (issue #308), read
+            // straight off the live tab model. TopOfMindDialog refreshes its list every
+            // second, so start/stop land here within a poll of the event that caused them.
+            if ((activeTab.tabInfo as? FluckTabInfo)?.isPlayingAudio == true) {
+                Icon(
+                    imageVector = Icons.Filled.VolumeUp,
+                    contentDescription = "Playing audio",
+                    tint = BossTheme.colors.signal,
+                    modifier = Modifier.size(14.dp),
+                )
+                Spacer(modifier = Modifier.width(8.dp))
             }
 
             Spacer(modifier = Modifier.width(8.dp))
