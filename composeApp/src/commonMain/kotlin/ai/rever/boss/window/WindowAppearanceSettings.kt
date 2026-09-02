@@ -1,5 +1,6 @@
 package ai.rever.boss.window
 
+import ai.rever.boss.layout.ChromeDensity
 import ai.rever.boss.utils.SystemUtils
 import kotlinx.serialization.Serializable
 
@@ -174,6 +175,23 @@ data class WindowAppearanceSettings(
      * and Linux stay on the drawn menus.
      */
     val useNativeContextMenus: Boolean = true,
+    /**
+     * How tightly [showTopBar] and its neighbours are drawn - see [ChromeDensity].
+     *
+     * Orthogonal to *which* bars are on screen (the `show*` flags above): this answers "how much
+     * room may the bars that are on screen take", not "which ones are". `ai.rever.boss.layout.
+     * BossChrome` resolves it via `ChromeDimens.of(density)` and the host provides the result as
+     * `LocalChromeDimens` at the app root, so every bar file reads a height from that one place
+     * rather than carrying its own literal.
+     *
+     * Defaults to [ChromeDensity.COMFORTABLE] - today's shipped sizes - so an existing install's
+     * file, which does not mention this field, decodes to exactly the chrome it already had. A
+     * fresh install's default is decided by screen size instead, in
+     * `WindowAppearanceSettingsManager.getDefaultSettings` - see issue #239: a 13" laptop's screen
+     * is the case this field exists for, and an install-time default is the only way to make it
+     * apply without the user finding a switch first.
+     */
+    val density: ChromeDensity = ChromeDensity.COMFORTABLE,
 ) {
     companion object {
         /** Bump when a step is added to [WindowAppearanceMigrations.migrate]. */

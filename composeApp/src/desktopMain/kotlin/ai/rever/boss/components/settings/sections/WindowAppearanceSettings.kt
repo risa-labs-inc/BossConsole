@@ -9,6 +9,8 @@ import ai.rever.boss.components.settings.shared.SettingsInfoRow
 import ai.rever.boss.components.settings.shared.SettingsSection
 import ai.rever.boss.components.settings.shared.SettingsSlider
 import ai.rever.boss.components.settings.shared.SettingsToggle
+import ai.rever.boss.layout.ChromeDensity
+import ai.rever.boss.layout.displayName
 import ai.rever.boss.plugin.ui.menu.NativeContextMenus
 import ai.rever.boss.window.TabBarPosition
 import ai.rever.boss.window.TabBarVerticalWidthRange
@@ -287,6 +289,23 @@ private fun BarsSection() {
                 "These stay hidden until you switch them back on, in every window - hiding a bar " +
                     "from its right-click menu hides it everywhere. Focus Mode is separate: it " +
                     "hides bars temporarily and reveals them when you move the pointer to the edge.",
+        )
+
+        SettingsDropdown(
+            label = "Density",
+            options = ChromeDensity.entries.map { it.displayName },
+            selectedOption = settings.density.displayName,
+            onOptionSelected = { selected ->
+                val density = ChromeDensity.entries.first { it.displayName == selected }
+                coroutineScope.launch {
+                    WindowAppearanceSettingsManager.updateSettings(
+                        settings.copy(density = density),
+                    )
+                }
+            },
+            description =
+                "How much room the bars above take, all from one control. Compact is worth about " +
+                    "20dp of extra height on a laptop screen; Spacious is roomier, for a large display.",
         )
     }
 }
