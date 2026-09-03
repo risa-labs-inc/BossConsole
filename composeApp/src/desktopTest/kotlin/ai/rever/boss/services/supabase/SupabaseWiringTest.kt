@@ -62,7 +62,7 @@ class SupabaseWiringTest {
         val ALLOWED =
             Regex(
                 """sanitizeSupabaseFailure\(|error = safe|\$\{safe\.message\}|""" +
-                    """val supabaseJson = Json|validate\(\)\.getOrElse""",
+                    """val supabaseJson = Json|validate\(\)\.getOrElse|Result\.failure\(safe\)""",
             )
     }
 
@@ -138,7 +138,7 @@ class SupabaseWiringTest {
         // cannot quietly satisfy the assertion.
         val source = File(sourceDir(), "SecretService.kt").readText()
         val catches = Regex("""catch \(e: Exception\)""").findAll(source).count()
-        val sanitised = Regex("""Result\.failure\(sanitizeSupabaseFailure\(""").findAll(source).count()
+        val sanitised = Regex("""val safe = sanitizeSupabaseFailure\(""").findAll(source).count()
 
         assertTrue(catches > 0, "found no catch blocks - has the file moved?")
         assertEquals(catches, sanitised, "$catches catch blocks but $sanitised sanitised returns")
