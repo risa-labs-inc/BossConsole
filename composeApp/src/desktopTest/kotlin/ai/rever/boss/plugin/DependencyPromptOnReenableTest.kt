@@ -118,28 +118,42 @@ class DependencyPromptOnReenableTest {
         assertTrue(
             Regex(
                 """if\s*\(\s*result\.isSuccess\s*&&\s*!wasAlreadyEnabled\s*\)\s*\{""" +
-                    """[\s\S]{0,700}?if\s*\(\s*\w+\s*!=\s*null\s*&&\s*canAccess\(\w+\)\s*\)\s*\{""" +
+                    """[\s\S]{0,700}?if\s*\(\s*reportMissingDependencies\s*&&\s*\w+\s*!=\s*null\s*&&""" +
+                    """\s*canAccess\(\w+\)\s*\)\s*\{""" +
                     """\s*notifyPluginActivated\(""",
             ).containsMatchIn(body),
-            "enablePlugin must report missing dependencies when it actually re-enables, gated on canAccess",
+            "enablePlugin must report missing dependencies when it re-enables, " +
+                "gated on canAccess and the explicit opt-out",
         )
     }
 
     @Test
-    fun `the re-enable redundancy check is keyed off plugin state, not the enabled flag`() {
+    fun `the re-enable redundancy check keys off the enabled flag and the canAccess gate covers RBAC`() {
         val body = uncommented(functionBody(managerSource(), "enablePlugin"))
-        // The RBAC hide step sets state = DISABLED without clearing `enabled`,
-        // so an enabled-flag check read a hidden plugin as already running and
-        // silenced the prompt for exactly the re-enable case #180 covers.
+        // Round-2 review decision: keep ONE of the two RBAC guards. The
+        // enabled-flag key stays, same as main: the only enabled-but-not-running
+        // case is the RBAC hide (state = DISABLED, `enabled` left true), and the
+        // canAccess gate on the report blocks exactly that case -
+        // handleAccessChange reports when access actually arrives. Keying off
+        // PluginState.LOADED instead would only unblock a branch the gate
+        // immediately re-blocks: two guards for one net behaviour.
         assertTrue(
             Regex(
-                """wasAlreadyEnabled\s*=\s*_pluginStates\.value\[pluginId\]\?\.state\s*==\s*PluginState\.LOADED""",
+                """wasAlreadyEnabled\s*=\s*_pluginStates\.value\[pluginId\]\?\.enabled\s*==\s*true""",
             ).containsMatchIn(body),
-            "enablePlugin must key the redundancy check off PluginState.LOADED",
+            "enablePlugin must key the redundancy check off the enabled flag",
+        )
+        assertTrue(
+            Regex(
+                """if\s*\(\s*reportMissingDependencies\s*&&\s*\w+\s*!=\s*null\s*&&\s*canAccess\(\w+\)\s*\)""",
+            ).containsMatchIn(body),
+            "the canAccess gate must remain load-bearing on the re-enable report",
         )
         assertFalse(
-            body.contains("?enabled == true"),
-            "enablePlugin must not read the `enabled` flag for the redundancy check",
+            Regex(
+                """wasAlreadyEnabled\s*=\s*_pluginStates\.value\[pluginId\]\?\.state""",
+            ).containsMatchIn(body),
+            "the state-based redundancy key must stay dropped (round-2 review: it double-guards with canAccess)",
         )
     }
 
@@ -173,6 +187,22 @@ class DependencyPromptOnReenableTest {
     }
 
     @Test
+    fun `a crash-recovery restart re-enables without the dependency prompt`() {
+        val body = uncommented(functionBody(managerSource(), "restartOwning"))
+        // restartOwning calls enablePlugin to re-arm the sandbox after a crash.
+        // That is recovery, not the user re-arming a plugin: the error-boundary
+        // Restart button must not raise a store-install dialog mid-recovery
+        // (round-2 review; the old test inspected reregisterAfterRestart, a
+        // different function on the other branch).
+        assertTrue(
+            Regex(
+                """manager\.enablePlugin\s*\(\s*pluginId\s*,\s*reportMissingDependencies\s*=\s*false\s*\)""",
+            ).containsMatchIn(body),
+            "restartOwning must opt out of the re-enable dependency report",
+        )
+    }
+
+    @Test
     fun `installPlugin does not report missing dependencies`() {
         // installPlugin also serves startup restore, bundled load and the api
         // hot-swap reload-all. Reporting here would be one dialog per plugin
@@ -187,13 +217,21 @@ class DependencyPromptOnReenableTest {
     @Test
     fun `the desktop layer wires re-activation to the existing reporter`() {
         val source = uncommented(setupSource())
+        // Round-2 review: bind the reporter once outside the callback - every
+        // activation must not pay for a fresh forManager allocation.
         assertTrue(
             Regex(
-                """onPluginActivated\s*=\s*\{[\s\S]{0,400}?""" +
-                    """MissingDependencyReporter\.forManager\s*\(\s*dynamicPluginManager\s*\)""" +
-                    """[\s\S]{0,200}?\.report\s*\(\s*manifest\s*\)""",
+                """val\s+missingDependencyReporter\s*=\s*MissingDependencyReporter\.forManager""" +
+                    """\s*\(\s*dynamicPluginManager\s*\)""",
             ).containsMatchIn(source),
-            "PluginLoaderDelegateSetup must wire onPluginActivated to MissingDependencyReporter.report",
+            "PluginLoaderDelegateSetup must bind the per-manager reporter once, outside the callback",
+        )
+        assertTrue(
+            Regex(
+                """onPluginActivated\s*=\s*\{\s*manifest\s*->""" +
+                    """\s*missingDependencyReporter\.report\s*\(\s*manifest\s*\)\s*\}""",
+            ).containsMatchIn(source),
+            "onPluginActivated must report via the bound reporter without re-allocating per activation",
         )
     }
 

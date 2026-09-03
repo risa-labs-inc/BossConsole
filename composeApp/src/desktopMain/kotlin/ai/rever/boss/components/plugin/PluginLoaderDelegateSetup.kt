@@ -51,8 +51,12 @@ actual object PluginLoaderDelegateSetup {
         // come back with no prompt (#180). Per-manager: reporting must read
         // this window's pluginStates, and capturing the first window would
         // leave every other window offering installs into a disposed manager.
+        // Bound once, outside the callback: forManager allocates the states
+        // lambda and the installer, and every activation would pay for a
+        // reporter that never changes for this manager.
+        val missingDependencyReporter = MissingDependencyReporter.forManager(dynamicPluginManager)
         dynamicPluginManager.onPluginActivated = { manifest ->
-            MissingDependencyReporter.forManager(dynamicPluginManager).report(manifest)
+            missingDependencyReporter.report(manifest)
         }
 
         // The home screen's store access: what can be installed, and how. Registered here with
