@@ -168,7 +168,7 @@ class BrowserHandleExecuteJavaScriptTest {
             arrayOf(Frame::class.java)
         ) { _, method, _ ->
             if (method.name == "executeJavaScript") {
-                throw RuntimeException("Synchronous failure")
+                throw IllegalStateException("Synchronous failure")
             }
             null
         } as Frame
@@ -188,7 +188,10 @@ class BrowserHandleExecuteJavaScriptTest {
             )
         }
 
-        assertTrue(result.isSuccess, "executeJavaScriptSuspending should convert synchronous exceptions to success(null)")
+        assertTrue(
+            result.isSuccess,
+            "executeJavaScriptSuspending should convert synchronous exceptions to success(null)"
+        )
         assertNull(result.getOrNull(), "Result should be null on synchronous failure")
         assertEquals(1, endCallCount, "endOp must be called exactly once on synchronous throw")
     }

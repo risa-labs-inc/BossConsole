@@ -4604,14 +4604,20 @@ internal suspend fun Browser.executeJavaScriptSuspending(
                             cont.resumeWith(Result.success(result))
                         }
                     }
-                } catch (e: Exception) {
+                } catch (e: IllegalStateException) {
+                    endOp()
+                    throw e
+                } catch (e: ObjectClosedException) {
                     endOp()
                     throw e
                 }
             }, {
                 if (cont.isActive) cont.resumeWith(Result.success(null))
             })
-        } catch (e: Exception) {
+        } catch (e: IllegalStateException) {
+            logError(e)
+            if (cont.isActive) cont.resumeWith(Result.success(null))
+        } catch (e: ObjectClosedException) {
             logError(e)
             if (cont.isActive) cont.resumeWith(Result.success(null))
         }
@@ -4638,11 +4644,11 @@ internal class NativeOperationTracker(
         if (disposed.get()) return false
         pendingOperationsCount.update { it + 1 }
         // Double-check after incrementing
-        if (disposed.get()) {
+        val isDisposed = disposed.get()
+        if (isDisposed) {
             endNativeOperation()
-            return false
         }
-        return true
+        return !isDisposed
     }
 
     fun endNativeOperation() {
