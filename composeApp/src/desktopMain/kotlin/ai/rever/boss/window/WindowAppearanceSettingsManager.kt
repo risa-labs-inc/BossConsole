@@ -130,15 +130,9 @@ actual object WindowAppearanceSettingsManager {
         //
         // Stamped current: a fresh file is already on this build's defaults and must not be
         // migrated on the next launch as though it were an older one.
-        val density = defaultDensityFor(primaryScreenHeightDp())
         return WindowAppearanceSettings(
             showTitleBar = SystemUtils.isMacOS,
-            density = density,
-            // The other half of issue #239's small-screen default: a status bar most users never
-            // interact with is one whole row (BossBottomBar), and it is the one bar this manager
-            // can still turn off itself - showLeftStrip/showRightStrip are already off by the
-            // class default, so there is no width to reclaim the same way here.
-            showBottomBar = density != ChromeDensity.COMPACT,
+            density = defaultDensityFor(primaryScreenHeightDp()),
             settingsVersion = WindowAppearanceSettings.CURRENT_SETTINGS_VERSION,
         )
     }
@@ -150,7 +144,8 @@ actual object WindowAppearanceSettingsManager {
      * which must not crash a fresh install's very first launch - `runCatching` and a null fall
      * through [defaultDensityFor] to [ChromeDensity.COMFORTABLE], the same as it always defaulted.
      */
-    private fun primaryScreenHeightDp(): Int? = runCatching { Toolkit.getDefaultToolkit().screenSize.height }.getOrNull()
+    private fun primaryScreenHeightDp(): Int? =
+        runCatching { Toolkit.getDefaultToolkit().screenSize.height }.getOrNull()
 }
 
 /**
