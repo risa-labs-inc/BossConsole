@@ -78,6 +78,7 @@ object CrashReportService {
             val isNewIssue: Boolean,
         ) : SubmitResult()
 
+        @ConsistentCopyVisibility
         data class Error private constructor(
             val message: String,
         ) : SubmitResult() {
