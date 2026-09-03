@@ -2092,6 +2092,10 @@ class BossTabsComponent(
         /** Destroy the detached component instead of adopting it (fires its onDestroy cleanup). */
         fun destroy() {
             lifecycle?.destroy()
+            // A tab destroyed without adoption gets no close/removeTab call, so nothing
+            // else would drop its audio handler - and the handler captures this component
+            // (issue #308 review: the registry must not outlive its owner).
+            tabAudioHandlers.remove(config.id)?.let { TabAudioRegistry.unregister(config.id, it) }
         }
     }
 
@@ -2399,6 +2403,11 @@ class BossTabsComponent(
         // BrowserService fallback after every panel lifecycle has been destroyed.
         tabLifecycles.values.toList().forEach { it.destroy() }
         tabLifecycles.clear()
+        // Drop this component's audio handlers from the process-wide registry too (issue
+        // #308). The handler lambda captures `this`, so a stale entry would retain the whole
+        // BossTabsComponent past window teardown - the leak shape the PR review flagged.
+        tabAudioHandlers.forEach { (tabId, handler) -> TabAudioRegistry.unregister(tabId, handler) }
+        tabAudioHandlers.clear()
     }
 }
 

@@ -37,7 +37,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
@@ -518,7 +517,7 @@ fun BossTabButton(
                         modifier =
                             Modifier
                                 .size(AUDIO_INDICATOR_SIZE)
-                                .graphicsLayer { alpha = audioAlpha },
+                                .alpha(audioAlpha),
                     )
                 }
 

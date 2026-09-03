@@ -2669,7 +2669,12 @@ internal class BrowserHandleImpl(
                 logger.warn(LogCategory.BROWSER, "Audio listener threw exception", error = e)
             }
         }
-        ownerTabId?.let { tabId -> TabAudioRegistry.update(tabId, playing) }
+        // Marshalled to the EDT: the registry's handler mutates snapshot state the tab model
+        // owns, which is UI-thread-only (review of this PR). The listeners above stay on the
+        // JxBrowser event thread - replay-on-subscribe must not reorder against live events.
+        ownerTabId?.let { tabId ->
+            SwingUtilities.invokeLater { TabAudioRegistry.update(tabId, playing) }
+        }
     }
 
     // ============================================================
@@ -3506,6 +3511,12 @@ internal class BrowserHandleImpl(
         // this browser, and the host cannot work it out for itself - the tab is a dynamic
         // plugin's component type, which host code cannot name.
         ownerTabId = tabId
+
+        // If audio started before the plugin told us which tab owns this browser, the start
+        // event fired against a null owner and nothing was registered to replay it. Flush the
+        // current playback state now that the id is known, so the glyph appears at
+        // registration instead of never (review of this PR, open question).
+        if (_isPlayingAudio) notifyAudioPlaying(true)
 
         FluckEngine.setupFullscreenHandler(
             browser = browser,
