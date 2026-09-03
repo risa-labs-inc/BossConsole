@@ -20,11 +20,12 @@ import ai.rever.boss.plugin.api.Version
  * yields a parseable version — keep the original position preference (loaded first), which also
  * preserves callers that do not supply a version reader.
  *
- * [relocated] is a TRUE last resort, unchanged: it is consulted only when neither known candidate
- * survives its existence check or its manifest read. The plugin directory is deliberately not part
- * of the version comparison — a routine reload must not silently swap to a stray dev build or a
- * pinned/downgraded install that happens to declare a higher version under the same [pluginId]
- * key, nor race a download that streams onto a scannable `<pluginId>-<version>.jar` name.
+ * [relocated] is a TRUE last resort, unchanged: it is consulted only when neither candidate in
+ * [candidates] survives its existence check or its manifest read. The plugin directory is
+ * deliberately not part of the version comparison — a routine reload must not silently swap to a
+ * stray dev build or a pinned/downgraded install that happens to declare a higher version under
+ * the same [pluginId] key, nor race a download that streams onto a scannable
+ * `<pluginId>-<version>.jar` name.
  *
  * Returning null rather than guessing lets the caller keep the plugin running instead of unloading
  * it for a load that cannot work.
@@ -34,8 +35,7 @@ import ai.rever.boss.plugin.api.Version
  * that will be scored as if it had no version, so a mis-scored reload is diagnosable.
  */
 internal fun resolveReloadJarPath(
-    loadedJarPath: String?,
-    persistedJarPath: String?,
+    candidates: ReloadJarCandidates,
     exists: (String) -> Boolean,
     relocated: () -> String?,
     manifestVersion: (String) -> String? = { null },
@@ -44,30 +44,26 @@ internal fun resolveReloadJarPath(
     // Known candidates in the original position order: the running jar, then the installer's
     // record. The directory scan is deliberately NOT consulted here (see [relocated] above).
     val known =
-        listOfNotNull(loadedJarPath, persistedJarPath)
+        listOfNotNull(candidates.loadedJarPath, candidates.persistedJarPath)
             .filter { exists(it) }
 
-    if (known.isNotEmpty()) {
-        val versions =
-            known.associateWith { path ->
-                runCatching { manifestVersion(path)?.let { Version.parse(it) } }
-                    .onFailure { onManifestVersionReadFailed(path) }
-                    .getOrNull()
-            }
-        val readable = versions.filterValues { it != null }
-        if (readable.isNotEmpty()) {
-            // Highest manifest version wins; equal versions keep the position preference
-            // (the loaded jar first), which is the order this resolver had before version
-            // awareness was added.
-            return readable.entries
-                .maxWithOrNull(compareBy({ it.value }, { -known.indexOf(it.key) }))
-                ?.key
-        }
-        // No known candidate's manifest produced a version: no-reader callers and unreadable
-        // manifests both fall through to the original position order, or to relocation when
-        // neither known path exists.
-        return known.first()
+    if (known.isEmpty()) {
+        return relocated()
     }
 
-    return relocated()
+    val versions =
+        known.associateWith { path ->
+            runCatching { manifestVersion(path)?.let { Version.parse(it) } }
+                .onFailure { onManifestVersionReadFailed(path) }
+                .getOrNull()
+        }
+    val readable = versions.filterValues { it != null }
+    // Highest manifest version wins; equal versions (and every case where no known candidate
+    // yields a parseable version — no-reader callers and unreadable manifests alike) keep the
+    // original position preference (the loaded jar first), which is the order this resolver had
+    // before version awareness was added.
+    return readable.entries
+        .maxWithOrNull(compareBy({ it.value }, { -known.indexOf(it.key) }))
+        ?.key
+        ?: known.first()
 }

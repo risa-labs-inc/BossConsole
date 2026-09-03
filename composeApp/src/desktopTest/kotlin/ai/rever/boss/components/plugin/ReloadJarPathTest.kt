@@ -24,7 +24,11 @@ class ReloadJarPathTest {
         persisted: String? = null,
         present: Set<String> = emptySet(),
         relocated: String? = null,
-    ) = resolveReloadJarPath(loaded, persisted, exists = { it in present }, relocated = { relocated })
+    ) = resolveReloadJarPath(
+        candidates = ReloadJarCandidates(loadedJarPath = loaded, persistedJarPath = persisted),
+        exists = { it in present },
+        relocated = { relocated },
+    )
 
     private fun tempDir(): File =
         File.createTempFile("plugins", null).apply {
@@ -146,8 +150,11 @@ class ReloadJarPathTest {
 
         val resolved =
             resolveReloadJarPath(
-                loadedJarPath = stale.absolutePath,
-                persistedJarPath = update.absolutePath,
+                candidates =
+                    ReloadJarCandidates(
+                        loadedJarPath = stale.absolutePath,
+                        persistedJarPath = update.absolutePath,
+                    ),
                 exists = { java.io.File(it).isFile },
                 relocated = { findRelocatedPluginJar(dir, "ai.rever.boss.fluck")?.absolutePath },
                 manifestVersion = { path ->
@@ -168,8 +175,11 @@ class ReloadJarPathTest {
 
         val resolved =
             resolveReloadJarPath(
-                loadedJarPath = newer.absolutePath,
-                persistedJarPath = older.absolutePath,
+                candidates =
+                    ReloadJarCandidates(
+                        loadedJarPath = newer.absolutePath,
+                        persistedJarPath = older.absolutePath,
+                    ),
                 exists = { java.io.File(it).isFile },
                 relocated = { findRelocatedPluginJar(dir, "ai.rever.boss.tool")?.absolutePath },
                 manifestVersion = { path ->
@@ -192,8 +202,11 @@ class ReloadJarPathTest {
 
         val resolved =
             resolveReloadJarPath(
-                loadedJarPath = loadedJar.absolutePath,
-                persistedJarPath = recordedJar.absolutePath,
+                candidates =
+                    ReloadJarCandidates(
+                        loadedJarPath = loadedJar.absolutePath,
+                        persistedJarPath = recordedJar.absolutePath,
+                    ),
                 exists = { java.io.File(it).isFile },
                 relocated = {
                     relocatedCalled = true
@@ -216,8 +229,11 @@ class ReloadJarPathTest {
 
         val resolved =
             resolveReloadJarPath(
-                loadedJarPath = "/p/tool.jar",
-                persistedJarPath = "/p/recorded.jar",
+                candidates =
+                    ReloadJarCandidates(
+                        loadedJarPath = "/p/tool.jar",
+                        persistedJarPath = "/p/recorded.jar",
+                    ),
                 exists = { it == "/p/tool.jar" || it == "/p/recorded.jar" },
                 relocated = { null },
                 manifestVersion = { path -> throw IllegalStateException("corrupt manifest: $path") },
@@ -238,8 +254,11 @@ class ReloadJarPathTest {
 
         val resolved =
             resolveReloadJarPath(
-                loadedJarPath = loadedJar.absolutePath,
-                persistedJarPath = recordedJar.absolutePath,
+                candidates =
+                    ReloadJarCandidates(
+                        loadedJarPath = loadedJar.absolutePath,
+                        persistedJarPath = recordedJar.absolutePath,
+                    ),
                 exists = { java.io.File(it).isFile },
                 relocated = { null },
                 manifestVersion = { path ->

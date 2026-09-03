@@ -7,6 +7,7 @@ import ai.rever.boss.components.plugin.DynamicPluginInfo
 import ai.rever.boss.components.plugin.DynamicPluginManager
 import ai.rever.boss.components.plugin.MicrokernelRuntime
 import ai.rever.boss.components.plugin.findRelocatedPluginJar
+import ai.rever.boss.components.plugin.ReloadJarCandidates
 import ai.rever.boss.components.plugin.resolveReloadJarPath
 import ai.rever.boss.components.registery.PanelComponentStoreRegistry
 import ai.rever.boss.components.window_panel.SplitViewStateRegistry
@@ -407,8 +408,11 @@ class PluginLoaderDelegateImpl(
                     val persistedJarPath =
                         PluginPersistence.getInstalledPlugins().firstOrNull { it.pluginId == pluginId }?.jarPath
                     resolveReloadJarPath(
-                        loadedJarPath = loadedJarPath,
-                        persistedJarPath = persistedJarPath,
+                        candidates =
+                            ReloadJarCandidates(
+                                loadedJarPath = loadedJarPath,
+                                persistedJarPath = persistedJarPath,
+                            ),
                         exists = { File(it).isFile },
                         relocated = {
                             val dir = (loadedJarPath ?: persistedJarPath)?.let { File(it).parentFile }

@@ -1816,10 +1816,13 @@ class DynamicPluginManager(
         // Resolving first also keeps a plugin running when no reload is possible.
         val jarPath =
             resolveReloadJarPath(
-                loadedJarPath = info.jarPath,
-                // No access to the persisted record from commonMain; relocation covers the gap,
-                // and re-resolving from the directory is the more robust of the two anyway.
-                persistedJarPath = null,
+                candidates =
+                    ReloadJarCandidates(
+                        loadedJarPath = info.jarPath,
+                        // No access to the persisted record from commonMain; relocation covers the gap,
+                        // and re-resolving from the directory is the more robust of the two anyway.
+                        persistedJarPath = null,
+                    ),
                 exists = { java.io.File(it).isFile },
                 relocated = {
                     findRelocatedPluginJar(java.io.File(info.jarPath).parentFile, pluginId)?.absolutePath
