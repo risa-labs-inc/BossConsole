@@ -117,10 +117,20 @@ internal fun CrashReportDialog(
     val bodyOverflows by remember { derivedStateOf { bodyScrollState.isClipping() } }
     val traceOverflows by remember { derivedStateOf { stackTraceScrollState.isClipping() } }
 
-    // The visible-against-dark-panels scrollbar style now comes from LocalScrollbarStyle
-    // at the BossTheme root (plugin-ui-core's BossTheme.kt) rather than a local copy here —
-    // see #106.
-    val scrollbarStyle = LocalScrollbarStyle.current
+    // #106 moved this fix to the BossTheme root (plugin-ui-core's BossTheme.kt) so every
+    // other scrollbar in the app inherits it — but this dialog renders through its own
+    // ComposePanel().setContent root (see CrashHandler.kt) with no BossTheme ancestor, so
+    // that provider never reaches here. Kept as a local copy for that reason, with the
+    // same colors BossTheme.kt uses: textSecondary clears the 3:1 UI-component contrast
+    // floor in all six themes (textMuted at 45% alpha, this fix's first cut, did not).
+    val defaultScrollbarStyle = LocalScrollbarStyle.current
+    val scrollbarStyle =
+        remember(defaultScrollbarStyle, BossTheme.colors.textSecondary, BossTheme.colors.textPrimary) {
+            defaultScrollbarStyle.copy(
+                unhoverColor = BossTheme.colors.textSecondary,
+                hoverColor = BossTheme.colors.textPrimary,
+            )
+        }
 
     // Derived from the thumb it makes room for, so restyling the scrollbar can't leave it
     // overlapping text.
