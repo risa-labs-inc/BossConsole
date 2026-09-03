@@ -41,16 +41,19 @@ class PanelComponentStore(
     // Remove a component when panel is closed
     fun removeComponent(panelId: PanelId) {
         activeComponents.remove(panelId)
-        panelLifecycles.remove(panelId)?.destroy()
+        destroyLifecycle(panelId, panelLifecycles.remove(panelId))
     }
 
     // Destroys every active panel lifecycle when the owning window closes.
     // Must run on the UI thread because activeComponents is Compose snapshot state.
     fun dispose() {
-        val lifecycles = panelLifecycles.values.toList()
+        val lifecycles = panelLifecycles.toList()
         activeComponents.clear()
         panelLifecycles.clear()
-        lifecycles.forEach { it.destroy() }
+
+        lifecycles.forEach { (panelId, lifecycle) ->
+            destroyLifecycle(panelId, lifecycle)
+        }
     }
 
     /**
@@ -114,7 +117,7 @@ class PanelComponentStore(
             logger.info(LogCategory.UI, "Successfully reset panel", mapOf("panelId" to panelId.panelId))
             return true
         } catch (t: Throwable) {
-            panelLifecycles.remove(panelId)?.destroy()
+            destroyLifecycle(panelId, panelLifecycles.remove(panelId))
             logger.error(LogCategory.UI, "Error resetting panel", mapOf("panelId" to panelId.panelId), error = t)
             return false
         }
@@ -133,5 +136,23 @@ class PanelComponentStore(
         lifecycle.resume()
         panelLifecycles[panelId] = lifecycle
         return component
+    }
+
+    private fun destroyLifecycle(
+        panelId: PanelId,
+        lifecycle: LifecycleRegistry?,
+    ) {
+        if (lifecycle == null) return
+
+        try {
+            lifecycle.destroy()
+        } catch (t: Throwable) {
+            logger.warn(
+                LogCategory.UI,
+                "Panel lifecycle destroy failed (continuing)",
+                mapOf("panelId" to panelId.panelId),
+                t,
+            )
+        }
     }
 }

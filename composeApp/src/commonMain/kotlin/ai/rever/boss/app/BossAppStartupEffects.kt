@@ -431,9 +431,6 @@ internal fun BossAppStartupEffects(state: BossAppState) {
             // NOTE: the "Last Session" write is NOT here. It is app-level, not
             // per-window (#19), and lives in the windowId-keyed lifecycle effect
             // above via LastSessionCoordinator.
-
-            // Destroy panel lifecycles before plugin classloaders are closed.
-            state.panelComponentStore.dispose()
             // Cleanup plugin coroutines
             plugin.dispose()
             // NOTE: the updater is NOT torn down here. It is process-wide; the

@@ -56,6 +56,7 @@ class PanelComponentStoreResetTest {
         val generation: Int,
         private val onBeforeResetAction: () -> Unit = {},
         private val onInitializedAction: () -> Unit = {},
+        private val onDestroyAction: () -> Unit = {},
     ) : PanelComponentWithUI,
         ComponentContext by ctx {
         var destroyCount = 0
@@ -67,6 +68,7 @@ class PanelComponentStoreResetTest {
                     object : Lifecycle.Callbacks {
                         override fun onDestroy() {
                             destroyCount++
+                            onDestroyAction()
                         }
                     },
             )
@@ -86,17 +88,31 @@ class PanelComponentStoreResetTest {
         id: PanelId,
         generation: Int,
         onBeforeReset: () -> Unit = {},
+        onDestroy: () -> Unit = {},
     ) {
         registry.registerPanel(panelInfo(id)) { ctx, info ->
-            FakePanelComponent(info, ctx, generation, onBeforeReset)
+            FakePanelComponent(
+                panelInfo = info,
+                ctx = ctx,
+                generation = generation,
+                onBeforeResetAction = onBeforeReset,
+                onDestroyAction = onDestroy,
+            )
         }
     }
 
     @Test
-    fun `removeComponent destroys the panel lifecycle exactly once`() {
+    fun `removeComponent isolates lifecycle destroy failures and destroys exactly once`() {
         val registry = PanelRegistry()
         val id = PanelId("test-panel", 1)
-        registerFactory(registry, id, generation = 1)
+        registerFactory(
+            registry,
+            id,
+            generation = 1,
+            onDestroy = {
+                throw NoClassDefFoundError("plugin classloader already closed")
+            },
+        )
         val store = PanelComponentStore(registry)
 
         val component = store.getOrCreateComponent(id) as FakePanelComponent
@@ -109,11 +125,18 @@ class PanelComponentStoreResetTest {
     }
 
     @Test
-    fun `dispose destroys every panel lifecycle exactly once`() {
+    fun `dispose isolates failures and destroys every panel lifecycle exactly once`() {
         val registry = PanelRegistry()
         val firstId = PanelId("first-panel", 1)
         val secondId = PanelId("second-panel", 2)
-        registerFactory(registry, firstId, generation = 1)
+        registerFactory(
+            registry,
+            firstId,
+            generation = 1,
+            onDestroy = {
+                throw NoClassDefFoundError("plugin classloader already closed")
+            },
+        )
         registerFactory(registry, secondId, generation = 1)
         val store = PanelComponentStore(registry)
 
@@ -146,10 +169,17 @@ class PanelComponentStoreResetTest {
     }
 
     @Test
-    fun `resetComponent destroys the old lifecycle and gives the replacement its own lifecycle`() {
+    fun `resetComponent recreates after the old lifecycle destroy fails`() {
         val registry = PanelRegistry()
         val id = PanelId("test-panel", 1)
-        registerFactory(registry, id, generation = 1)
+        registerFactory(
+            registry,
+            id,
+            generation = 1,
+            onDestroy = {
+                throw NoClassDefFoundError("plugin classloader already closed")
+            },
+        )
         val store = PanelComponentStore(registry)
 
         val opened = store.getOrCreateComponent(id) as FakePanelComponent
@@ -170,7 +200,7 @@ class PanelComponentStoreResetTest {
     }
 
     @Test
-    fun `resetComponent destroys the replacement lifecycle when initialization fails`() {
+    fun `resetComponent isolates replacement destroy failure when initialization fails`() {
         val registry = PanelRegistry()
         val id = PanelId("test-panel", 1)
         registerFactory(registry, id, generation = 1)
@@ -188,6 +218,9 @@ class PanelComponentStoreResetTest {
                 generation = 2,
                 onInitializedAction = {
                     error("replacement initialization failed")
+                },
+                onDestroyAction = {
+                    throw NoClassDefFoundError("plugin classloader already closed")
                 },
             ).also { replacement = it }
         }
