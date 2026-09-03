@@ -68,7 +68,12 @@ class DesktopFileScannerTest {
         File(real, "file.txt").writeText("hi")
         val linkDir = tempDir()
         val link = File(linkDir, "link")
-        Files.createSymbolicLink(link.toPath(), real.toPath())
+        try {
+            Files.createSymbolicLink(link.toPath(), real.toPath())
+        } catch (e: java.nio.file.FileSystemException) {
+            org.junit.jupiter.api.Assumptions.assumeTrue(false, "Symlinks not supported or permitted on this OS environment: ${e.message}")
+            return
+        }
         assertTrue(directoryHasChildren(link.absolutePath))
     }
 
