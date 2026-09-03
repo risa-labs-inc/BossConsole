@@ -1,9 +1,6 @@
 package ai.rever.boss.components.plugin
 
 import ai.rever.boss.plugin.loader.PluginManifestReader
-import java.io.File
-import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -30,37 +27,33 @@ class ReloadJarPathTest {
         relocated = { relocated },
     )
 
-    private fun tempDir(): File =
-        File.createTempFile("plugins", null).apply {
-            delete()
-            mkdirs()
-            deleteOnExit()
-        }
+    @Test
+    fun `picks the newer version when the stale loaded jar could not be deleted on Windows`() {
+        // Simulates the Windows bug: the updater downloaded 1.2.15 and updated the installed.json
+        // record, but the JVM lock prevented deleting the old 1.2.14 jar. The resolver must still
+        // pick 1.2.15 by manifest version.
+        withTempDir { dir ->
+            val stale =
+                PluginJarTestFixtures.writeJar(dir, "fluck-browser-1.2.14.jar", "ai.rever.boss.fluck", "1.2.14")
+            val update =
+                PluginJarTestFixtures.writeJar(dir, "fluck-browser-1.2.15.jar", "ai.rever.boss.fluck", "1.2.15")
 
-    private fun writeJar(
-        dir: File,
-        fileName: String,
-        pluginId: String,
-        version: String,
-    ): File {
-        val jar = File(dir, fileName)
-        ZipOutputStream(jar.outputStream()).use { zip ->
-            zip.putNextEntry(ZipEntry("META-INF/boss-plugin/plugin.json"))
-            zip.write(
-                """
-                {
-                  "manifestVersion": 1,
-                  "pluginId": "$pluginId",
-                  "displayName": "Test Plugin",
-                  "version": "$version",
-                  "apiVersion": "1.0.0",
-                  "mainClass": "com.example.TestPlugin"
-                }
-                """.trimIndent().toByteArray(),
-            )
-            zip.closeEntry()
+            val resolved =
+                resolveReloadJarPath(
+                    candidates =
+                        ReloadJarCandidates(
+                            loadedJarPath = stale.absolutePath,
+                            persistedJarPath = update.absolutePath,
+                        ),
+                    exists = { java.io.File(it).isFile },
+                    relocated = { findRelocatedPluginJar(dir, "ai.rever.boss.fluck")?.absolutePath },
+                    manifestVersion = { path ->
+                        PluginManifestReader.readFromJar(path).version
+                    },
+                )
+
+            assertEquals(update.absolutePath, resolved)
         }
-        return jar
     }
 
     @Test
@@ -140,54 +133,29 @@ class ReloadJarPathTest {
     }
 
     @Test
-    fun `picks the newer version when the stale loaded jar could not be deleted on Windows`() {
-        // Simulates the Windows bug: the updater downloaded 1.2.15 and updated the installed.json
-        // record, but the JVM lock prevented deleting the old 1.2.14 jar. The resolver must still
-        // pick 1.2.15 by manifest version.
-        val dir = tempDir()
-        val stale = writeJar(dir, "fluck-browser-1.2.14.jar", "ai.rever.boss.fluck", "1.2.14")
-        val update = writeJar(dir, "fluck-browser-1.2.15.jar", "ai.rever.boss.fluck", "1.2.15")
-
-        val resolved =
-            resolveReloadJarPath(
-                candidates =
-                    ReloadJarCandidates(
-                        loadedJarPath = stale.absolutePath,
-                        persistedJarPath = update.absolutePath,
-                    ),
-                exists = { java.io.File(it).isFile },
-                relocated = { findRelocatedPluginJar(dir, "ai.rever.boss.fluck")?.absolutePath },
-                manifestVersion = { path ->
-                    runCatching { PluginManifestReader.readFromJar(path).version }.getOrNull()
-                },
-            )
-
-        assertEquals(update.absolutePath, resolved)
-    }
-
-    @Test
     fun `picks the loaded jar when it has a higher version than the persisted record`() {
         // Mirrors the stale-record case but with versioned jars: the loaded jar is newer, so the
         // resolver must prefer it even though it is not the installed record.
-        val dir = tempDir()
-        val newer = writeJar(dir, "tool-1.2.15.jar", "ai.rever.boss.tool", "1.2.15")
-        val older = writeJar(dir, "tool-1.2.14.jar", "ai.rever.boss.tool", "1.2.14")
+        withTempDir { dir ->
+            val newer = PluginJarTestFixtures.writeJar(dir, "tool-1.2.15.jar", "ai.rever.boss.tool", "1.2.15")
+            val older = PluginJarTestFixtures.writeJar(dir, "tool-1.2.14.jar", "ai.rever.boss.tool", "1.2.14")
 
-        val resolved =
-            resolveReloadJarPath(
-                candidates =
-                    ReloadJarCandidates(
-                        loadedJarPath = newer.absolutePath,
-                        persistedJarPath = older.absolutePath,
-                    ),
-                exists = { java.io.File(it).isFile },
-                relocated = { findRelocatedPluginJar(dir, "ai.rever.boss.tool")?.absolutePath },
-                manifestVersion = { path ->
-                    runCatching { PluginManifestReader.readFromJar(path).version }.getOrNull()
-                },
-            )
+            val resolved =
+                resolveReloadJarPath(
+                    candidates =
+                        ReloadJarCandidates(
+                            loadedJarPath = newer.absolutePath,
+                            persistedJarPath = older.absolutePath,
+                        ),
+                    exists = { java.io.File(it).isFile },
+                    relocated = { findRelocatedPluginJar(dir, "ai.rever.boss.tool")?.absolutePath },
+                    manifestVersion = { path ->
+                        PluginManifestReader.readFromJar(path).version
+                    },
+                )
 
-        assertEquals(newer.absolutePath, resolved)
+            assertEquals(newer.absolutePath, resolved)
+        }
     }
 
     @Test
@@ -196,29 +164,30 @@ class ReloadJarPathTest {
         // install under the same pluginId must never win, and a download streaming onto a scannable
         // <pluginId>-<version>.jar name must not be swept mid-write.
         var relocatedCalled = false
-        val dir = tempDir()
-        val loadedJar = writeJar(dir, "tool-1.0.0.jar", "ai.rever.boss.tool", "1.0.0")
-        val recordedJar = writeJar(dir, "tool-1.0.1.jar", "ai.rever.boss.tool", "1.0.1")
+        withTempDir { dir ->
+            val loadedJar = PluginJarTestFixtures.writeJar(dir, "tool-1.0.0.jar", "ai.rever.boss.tool", "1.0.0")
+            val recordedJar = PluginJarTestFixtures.writeJar(dir, "tool-1.0.1.jar", "ai.rever.boss.tool", "1.0.1")
 
-        val resolved =
-            resolveReloadJarPath(
-                candidates =
-                    ReloadJarCandidates(
-                        loadedJarPath = loadedJar.absolutePath,
-                        persistedJarPath = recordedJar.absolutePath,
-                    ),
-                exists = { java.io.File(it).isFile },
-                relocated = {
-                    relocatedCalled = true
-                    findRelocatedPluginJar(dir, "ai.rever.boss.tool")?.absolutePath
-                },
-                manifestVersion = { path ->
-                    runCatching { PluginManifestReader.readFromJar(path).version }.getOrNull()
-                },
-            )
+            val resolved =
+                resolveReloadJarPath(
+                    candidates =
+                        ReloadJarCandidates(
+                            loadedJarPath = loadedJar.absolutePath,
+                            persistedJarPath = recordedJar.absolutePath,
+                        ),
+                    exists = { java.io.File(it).isFile },
+                    relocated = {
+                        relocatedCalled = true
+                        findRelocatedPluginJar(dir, "ai.rever.boss.tool")?.absolutePath
+                    },
+                    manifestVersion = { path ->
+                        PluginManifestReader.readFromJar(path).version
+                    },
+                )
 
-        assertEquals(recordedJar.absolutePath, resolved)
-        assertFalse(relocatedCalled)
+            assertEquals(recordedJar.absolutePath, resolved)
+            assertFalse(relocatedCalled)
+        }
     }
 
     @Test
@@ -248,24 +217,126 @@ class ReloadJarPathTest {
     fun `prefers the loaded jar when versions tie`() {
         // Equal versions keep the position preference, so reload behavior only changes when a known
         // candidate is strictly newer - the tie must not silently swap the running jar.
-        val dir = tempDir()
-        val loadedJar = writeJar(dir, "tool-1.2.15-a.jar", "ai.rever.boss.tool", "1.2.15")
-        val recordedJar = writeJar(dir, "tool-1.2.15-b.jar", "ai.rever.boss.tool", "1.2.15")
+        withTempDir { dir ->
+            val loadedJar = PluginJarTestFixtures.writeJar(dir, "tool-1.2.15-a.jar", "ai.rever.boss.tool", "1.2.15")
+            val recordedJar = PluginJarTestFixtures.writeJar(dir, "tool-1.2.15-b.jar", "ai.rever.boss.tool", "1.2.15")
+
+            val resolved =
+                resolveReloadJarPath(
+                    candidates =
+                        ReloadJarCandidates(
+                            loadedJarPath = loadedJar.absolutePath,
+                            persistedJarPath = recordedJar.absolutePath,
+                        ),
+                    exists = { java.io.File(it).isFile },
+                    relocated = { null },
+                    manifestVersion = { path ->
+                        PluginManifestReader.readFromJar(path).version
+                    },
+                )
+
+            assertEquals(loadedJar.absolutePath, resolved)
+        }
+    }
+
+    @Test
+    fun `does not read any manifest when fewer than two known candidates survive`() {
+        // The menu-driven reload path supplies only the loaded jar, and it runs on the composition
+        // dispatcher: a single surviving candidate cannot be out-voted, so the resolver must skip
+        // the manifest read entirely instead of paying a blocking jar open + JSON parse on the UI
+        // thread (docs/THREADING.md) for a value it would discard.
+        var manifestReads = 0
 
         val resolved =
             resolveReloadJarPath(
                 candidates =
                     ReloadJarCandidates(
-                        loadedJarPath = loadedJar.absolutePath,
-                        persistedJarPath = recordedJar.absolutePath,
+                        loadedJarPath = "/p/tool.jar",
+                        persistedJarPath = null,
                     ),
-                exists = { java.io.File(it).isFile },
+                exists = { it == "/p/tool.jar" },
+                relocated = { null },
+                manifestVersion = { _ ->
+                    manifestReads++
+                    "1.0.0"
+                },
+                onManifestVersionReadFailed = {},
+            )
+
+        assertEquals("/p/tool.jar", resolved)
+        assertEquals(0, manifestReads)
+    }
+
+    @Test
+    fun `scores build metadata as the plain release version, not as version-less`() {
+        // The manifest reader accepts `1.10.0+build.5` (relaxed semver regex), but Version.parse
+        // cannot split the `+` suffix, which silently scored the RUNNING jar as version-less and
+        // let a strictly older record win - a downgrade main's position order never had. Semver
+        // S10 says build metadata is ignored for precedence, so it is stripped before parsing.
+        val resolved =
+            resolveReloadJarPath(
+                candidates =
+                    ReloadJarCandidates(
+                        loadedJarPath = "/p/tool-running.jar",
+                        persistedJarPath = "/p/tool-recorded.jar",
+                    ),
+                exists = { true },
                 relocated = { null },
                 manifestVersion = { path ->
-                    runCatching { PluginManifestReader.readFromJar(path).version }.getOrNull()
+                    if (path == "/p/tool-running.jar") "1.10.0+build.5" else "1.9.0"
                 },
             )
 
-        assertEquals(loadedJar.absolutePath, resolved)
+        assertEquals("/p/tool-running.jar", resolved)
+    }
+
+    @Test
+    fun `version comparison table`() {
+        // Exhaustive table over the comparison the Windows-stale-jar fix introduced: multi-digit
+        // components, prerelease ordering, build metadata, unreadable/missing versions, and ties.
+        // Expected winner is relative to the candidates' paths: "loaded" keeps the running jar,
+        // "persisted" takes the recorded one.
+        data class Case(
+            val name: String,
+            val loaded: String?,
+            val persisted: String?,
+            val expected: String,
+        )
+
+        val cases =
+            listOf(
+                Case("multi-digit minor beats lower", "1.10.0", "1.9.0", "loaded"),
+                Case("lower loses", "1.2.14", "1.2.15", "persisted"),
+                Case("prerelease loses to release", "1.2.3-alpha.1", "1.2.3", "persisted"),
+                Case("later prerelease wins", "1.2.3-beta.1", "1.2.3-alpha.2", "loaded"),
+                Case("build metadata ignored (loaded carries it)", "1.10.0+build.5", "1.10.0", "loaded"),
+                Case("build metadata ignored (persisted carries it)", "1.2.14", "1.2.14+build.9", "loaded"),
+                Case("unparsable record keeps the running jar", "1.2.3", "not-a-version", "loaded"),
+                Case("unparsable running jar loses to a parseable record", "1.2.x", "1.2.4", "persisted"),
+                Case("both unparsable keep position order", "garbage-a", "garbage-b", "loaded"),
+                Case("null versions keep position order", null, null, "loaded"),
+            )
+
+        for (case in cases) {
+            val resolved =
+                resolveReloadJarPath(
+                    candidates =
+                        ReloadJarCandidates(
+                            loadedJarPath = "/p/loaded.jar",
+                            persistedJarPath = "/p/persisted.jar",
+                        ),
+                    exists = { true },
+                    relocated = { null },
+                    manifestVersion = { path ->
+                        when (path) {
+                            "/p/loaded.jar" -> case.loaded
+                            "/p/persisted.jar" -> case.persisted
+                            else -> null
+                        }
+                    },
+                )
+            val expected = if (case.expected == "loaded") "/p/loaded.jar" else "/p/persisted.jar"
+            assertEquals(expected, resolved, "case '${case.name}'")
+        }
     }
 }

@@ -27,12 +27,25 @@ import ai.rever.boss.plugin.api.Version
  * the same [pluginId] key, nor race a download that streams onto a scannable
  * `<pluginId>-<version>.jar` name.
  *
+ * Documented trade-off, not a defect: when both known candidates exist, the persisted
+ * `installed.json` record CAN redirect a reload away from the running jar while that jar is still
+ * on disk — the record's manifest version being higher wins, same directory, same user, no
+ * privilege boundary crossed.
+ *
  * Returning null rather than guessing lets the caller keep the plugin running instead of unloading
  * it for a load that cannot work.
  *
  * Pure, with [exists], [relocated], and [manifestVersion] injected, so the decision is testable
  * without a filesystem. [onManifestVersionReadFailed] is a hook for callers to log a candidate
  * that will be scored as if it had no version, so a mis-scored reload is diagnosable.
+ *
+ * Manifest versions are only read when two or more known candidates survive: with a single
+ * survivor the comparison cannot change the outcome, so the read is skipped rather than paid for —
+ * the menu-driven reload path has no persisted record and runs on the composition dispatcher,
+ * where a jar open + manifest parse would be blocking I/O on the UI thread (docs/THREADING.md).
+ * Build metadata (`+build`) is stripped before parsing, per semver §10: it must be ignored for
+ * precedence, and the manifest reader accepts versions that [Version.parse] cannot split once a
+ * `+` is present.
  */
 internal fun resolveReloadJarPath(
     candidates: ReloadJarCandidates,
@@ -47,23 +60,33 @@ internal fun resolveReloadJarPath(
         listOfNotNull(candidates.loadedJarPath, candidates.persistedJarPath)
             .filter { exists(it) }
 
-    if (known.isEmpty()) {
-        return relocated()
-    }
-
-    val versions =
-        known.associateWith { path ->
-            runCatching { manifestVersion(path)?.let { Version.parse(it) } }
-                .onFailure { onManifestVersionReadFailed(path) }
-                .getOrNull()
+    return when {
+        known.isEmpty() -> {
+            relocated()
         }
-    val readable = versions.filterValues { it != null }
-    // Highest manifest version wins; equal versions (and every case where no known candidate
-    // yields a parseable version — no-reader callers and unreadable manifests alike) keep the
-    // original position preference (the loaded jar first), which is the order this resolver had
-    // before version awareness was added.
-    return readable.entries
-        .maxWithOrNull(compareBy({ it.value }, { -known.indexOf(it.key) }))
-        ?.key
-        ?: known.first()
+
+        // One surviving candidate cannot be out-voted. Reading its manifest would be pure cost,
+        // and on the menu-driven reload path that cost is blocking JarFile I/O on the UI thread.
+        known.size == 1 -> {
+            known.first()
+        }
+
+        else -> {
+            val versions =
+                known.associateWith { path ->
+                    runCatching { manifestVersion(path)?.let { Version.parse(it.substringBefore('+')) } }
+                        .onFailure { onManifestVersionReadFailed(path) }
+                        .getOrNull()
+                }
+            val readable = versions.filterValues { it != null }
+            // Highest manifest version wins; equal versions (and every case where no known
+            // candidate yields a parseable version — no-reader callers and unreadable manifests
+            // alike) keep the original position preference (the loaded jar first), which is the
+            // order this resolver had before version awareness was added.
+            readable.entries
+                .maxWithOrNull(compareBy({ it.value }, { -known.indexOf(it.key) }))
+                ?.key
+                ?: known.first()
+        }
+    }
 }

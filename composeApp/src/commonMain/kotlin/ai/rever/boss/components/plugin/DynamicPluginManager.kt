@@ -1828,7 +1828,10 @@ class DynamicPluginManager(
                     findRelocatedPluginJar(java.io.File(info.jarPath).parentFile, pluginId)?.absolutePath
                 },
                 manifestVersion = { path ->
-                    runCatching { PluginManifestReader.readFromJar(path).version }.getOrNull()
+                    // No swallow here: a manifest that fails to read must reach the resolver's
+                    // runCatching so onManifestVersionReadFailed logs the candidate instead of it
+                    // being silently scored as version-less.
+                    PluginManifestReader.readFromJar(path).version
                 },
                 onManifestVersionReadFailed = { path ->
                     logger.warn(
