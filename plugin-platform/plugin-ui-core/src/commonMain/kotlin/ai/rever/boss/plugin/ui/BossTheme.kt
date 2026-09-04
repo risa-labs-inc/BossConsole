@@ -1,8 +1,10 @@
 package ai.rever.boss.plugin.ui
 
+import androidx.compose.foundation.LocalScrollbarStyle
 import androidx.compose.material.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 
 /**
@@ -72,6 +74,31 @@ fun BossTheme(
     // UI / BossThemeController) re-skins the whole subtree.
     val theme = BossThemeController.current
 
+    // Compose's default ScrollbarStyle paints the thumb as Color.Black at 12% alpha
+    // unhovered, which is invisible against BOSS's dark panels — a scrollbar that
+    // communicates neither "there is more below" nor a visible drag target.
+    // Deriving it here means every VerticalScrollbar/HorizontalScrollbar call site
+    // under this root — host and plugin panels alike, since plugin-ui-core is what
+    // plugins theme against — inherits a visible thumb with no per-call-site opt-in.
+    // CrashReportDialog keeps its own copy of this fix separately: it renders through
+    // its own ComposePanel().setContent root with no BossTheme ancestor, so this
+    // provider never reaches it.
+    //
+    // textMuted at 45% alpha (the first cut of this fix) measured 1.01-1.32:1 against
+    // panel across the six themes - below the 3:1 UI-component contrast floor
+    // everywhere. textSecondary at full alpha is what PanelScrollbarConfig already
+    // uses for its own scrollbar thumb, and clears 3:1 in all six (4.97:1 worst
+    // case); textPrimary for the hover state keeps it one step brighter without
+    // introducing a third color the design system doesn't already use for this.
+    val defaultScrollbarStyle = LocalScrollbarStyle.current
+    val scrollbarStyle =
+        remember(defaultScrollbarStyle, theme.colors.textSecondary, theme.colors.textPrimary) {
+            defaultScrollbarStyle.copy(
+                unhoverColor = theme.colors.textSecondary,
+                hoverColor = theme.colors.textPrimary,
+            )
+        }
+
     MaterialTheme(
         colors = theme.material,
     ) {
@@ -83,6 +110,7 @@ fun BossTheme(
             LocalBossRadii provides BossRadii(),
             LocalBossElevation provides BossElevation(),
             LocalBossTypography provides typography,
+            LocalScrollbarStyle provides scrollbarStyle,
         ) {
             content()
         }
