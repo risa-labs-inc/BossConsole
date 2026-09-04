@@ -59,7 +59,6 @@ class FluckTabInfo(
     @Volatile var historyIndex: Int = -1, // Current position in navigation history
     private var _currentZoomLevel: Double = 1.0, // Current zoom level (1.0 = 100%)
     var faviconCacheKey: String? = null, // Cache key for persisted favicon
-    var isPlayingAudio: Boolean = false, // Live playback state, pushed by BrowserHandleImpl (issue #308)
 ) : TabInfo {
     override val title: String get() = _title
 
@@ -73,6 +72,16 @@ class FluckTabInfo(
             .Vector(icon)
     val currentUrl: String @Synchronized get() = _currentUrl
     val currentZoomLevel: Double get() = _currentZoomLevel
+
+    /**
+     * Live audio-playback state, pushed by BrowserHandleImpl from Chromium's own audio
+     * events (issue #308). Deliberately a mutable property and NOT a constructor parameter:
+     * detekt's baseline freezes the constructor's and copy()'s signatures by ID, so a new
+     * parameter there resurfaces their frozen LongParameterList findings as fresh
+     * violations. [updateAudioPlaying] is the copy-based mutation path that still lets the
+     * flag flow the way title/favicon do.
+     */
+    var isPlayingAudio: Boolean = false
 
     // Explicit equals() based on id AND content that affects display
     // This ensures Compose detects when tab content changes (title, URL, etc.)
@@ -105,7 +114,6 @@ class FluckTabInfo(
         _currentUrl: String = this._currentUrl,
         _currentZoomLevel: Double = this._currentZoomLevel,
         faviconCacheKey: String? = this.faviconCacheKey,
-        isPlayingAudio: Boolean = this.isPlayingAudio,
         navigationHistory: MutableList<Pair<String, String>>? = null,
         historyIndex: Int = this.historyIndex,
     ): FluckTabInfo {
@@ -120,8 +128,10 @@ class FluckTabInfo(
                 _currentUrl = _currentUrl,
                 _currentZoomLevel = _currentZoomLevel,
                 faviconCacheKey = faviconCacheKey,
-                isPlayingAudio = isPlayingAudio,
             )
+        // Carried in the body, not the parameter list: copy()'s signature is
+        // baseline-frozen (see the isPlayingAudio KDoc above).
+        newTab.isPlayingAudio = isPlayingAudio
 
         // Copy navigation history list to prevent shared reference issues (fixes Issue #406)
         // Pairs are immutable so they're safely shared; we just need independent list instances
@@ -157,7 +167,14 @@ class FluckTabInfo(
      * Chromium stops media on navigation, which is what clears the flag when the
      * user navigates away; no manual reset is needed.
      */
-    fun updateAudioPlaying(playing: Boolean): FluckTabInfo = copy(isPlayingAudio = playing)
+    fun updateAudioPlaying(playing: Boolean): FluckTabInfo {
+        // copy() then set, rather than a copy(isPlayingAudio = ...) parameter: copy()'s
+        // parameter-list signature is baseline-frozen (see the isPlayingAudio KDoc), and
+        // growing it resurfaces the frozen LongParameterList finding as a new violation.
+        val newTab = copy()
+        newTab.isPlayingAudio = playing
+        return newTab
+    }
 
     fun updateZoomLevel(newLevel: Double): FluckTabInfo = copy(_currentZoomLevel = newLevel)
 

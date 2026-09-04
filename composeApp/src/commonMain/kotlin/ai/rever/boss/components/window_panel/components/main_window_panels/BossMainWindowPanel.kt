@@ -151,7 +151,6 @@ private fun BossTabButtonWithFavicon(
     isSelected: Boolean,
     isFocused: Boolean,
     isPinned: Boolean,
-    isPlayingAudio: Boolean = false,
     onClick: () -> Unit,
     onClose: () -> Unit,
     contextMenuItems: List<ContextMenuItem>,
@@ -205,7 +204,6 @@ private fun BossTabButtonWithFavicon(
         isSelected = isSelected,
         isFocused = isFocused,
         isPinned = isPinned,
-        isPlayingAudio = isPlayingAudio,
         onClick = onClick,
         onClose = onClose,
         contextMenuItems = contextMenuItems,
@@ -797,10 +795,6 @@ fun BossTabsComponent.rememberTabBarState(
                 // The invariant, not a per-tab flag: pinned tabs are exactly the leading ones.
                 // See TabPinning for what keeps that true across moves and closes.
                 isPinned = index < pinnedCount,
-                // Live playback state straight off the tab model (issue #308): FluckTabInfo
-                // equals() includes it, so the copy pushed by handleAudioUpdate recomposes
-                // this row and the glyph fades in without any extra wiring here.
-                isPlayingAudio = (config as? FluckTabInfo)?.isPlayingAudio == true,
                 // A vertical tab's width is the bar's, so tabWidth is not consulted there at all.
                 tabWidth = if (!vertical && shrinkTabsToFit) tabWidth else null,
                 vertical = vertical,
@@ -2092,10 +2086,6 @@ class BossTabsComponent(
         /** Destroy the detached component instead of adopting it (fires its onDestroy cleanup). */
         fun destroy() {
             lifecycle?.destroy()
-            // A tab destroyed without adoption gets no close/removeTab call, so nothing
-            // else would drop its audio handler - and the handler captures this component
-            // (issue #308 review: the registry must not outlive its owner).
-            tabAudioHandlers.remove(config.id)?.let { TabAudioRegistry.unregister(config.id, it) }
         }
     }
 
@@ -2111,6 +2101,12 @@ class BossTabsComponent(
         val config = tabsState.value.tabs[index]
         val component = tabComponents.remove(tabId) ?: return null
         val lifecycle = tabLifecycles.remove(tabId)
+        // Drop the audio handler at detach (issue #308 review): adoption re-registers its
+        // own in adoptTab, and the destroy-without-adopt path gets no close/removeTab - so
+        // detaching here is what keeps the process-wide registry from retaining this
+        // component. DetachedTab cannot do it itself: a non-inner nested class cannot reach
+        // this component's members.
+        tabAudioHandlers.remove(tabId)?.let { TabAudioRegistry.unregister(tabId, it) }
 
         // Ownership-checked: no-op if the destination already re-registered this id.
         TabUpdateRegistry.unregisterTab(tabId, componentId)

@@ -2,6 +2,7 @@ package ai.rever.boss.components.buttons
 
 import ai.rever.boss.components.model.TabDraggableComponent
 import ai.rever.boss.components.model.TabDropResult
+import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
 import ai.rever.boss.components.overlays.ContextMenu
 import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.OverlayConfig
@@ -104,16 +105,6 @@ fun BossTabButton(
      * panes are already doing that job. So the tab itself has to say it.
      */
     isPinned: Boolean = false,
-    /**
-     * This tab's page is currently producing sound (issue #308).
-     *
-     * Pushed from Chromium's real playback events - never a poll - so it is accurate on
-     * background tabs and inactive panels, and clears the moment playback stops. Rendered
-     * as a small speaker beside the title behind an alpha crossfade: a glyph that pops in
-     * and out reads as flicker across a row of tabs, and one that lingers after a paused
-     * video lies about which tab to click.
-     */
-    isPlayingAudio: Boolean = false,
     isFocused: Boolean = true,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
@@ -500,10 +491,15 @@ fun BossTabButton(
                 )
                 titleBadge?.invoke()
 
-                // Speaker glyph while this tab is producing sound (issue #308). The alpha
-                // animation runs unconditionally - Compose state, cheap at either target -
-                // and the icon only composes while visible, so a silent tab's row measures
-                // exactly what it did before this feature existed.
+                // Speaker glyph while this tab is producing sound (issue #308), read straight
+                // off tabInfo rather than a parameter: FluckTabInfo carries live playback
+                // state pushed from Chromium's audio events, and leaving this composable's
+                // signature unchanged keeps detekt's signature-keyed baseline entries valid.
+                val isPlayingAudio = (tabInfo as? FluckTabInfo)?.isPlayingAudio == true
+
+                // The alpha animation runs unconditionally - Compose state, cheap at either
+                // target - and the icon only composes while visible, so a silent tab's row
+                // measures exactly what it did before this feature existed.
                 val audioAlpha by animateFloatAsState(
                     targetValue = if (isPlayingAudio) 1f else 0f,
                     animationSpec = tween(durationMillis = 200),

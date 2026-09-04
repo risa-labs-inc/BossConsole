@@ -6,8 +6,9 @@ import java.util.concurrent.ConcurrentHashMap
  * Host-side registry carrying browser audio-playback state into the tab model
  * (issue #308).
  *
- * The speaker glyph on a tab renders from [ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo.isPlayingAudio],
- * and the one thing that knows playback started is the browser — owned by the
+ * The speaker glyph on a tab renders from
+ * [ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo.isPlayingAudio], and the
+ * one thing that knows playback started is the browser — owned by the
  * dynamic fluck-browser plugin's tab component, a class the host cannot name
  * (the same reason `ActiveBrowserRegistry` exists). But the plugin DOES tell
  * the host which tab owns each browser (`BrowserHandle.setFullscreenHandler`),
