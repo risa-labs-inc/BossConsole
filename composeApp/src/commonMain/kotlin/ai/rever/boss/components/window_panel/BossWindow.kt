@@ -53,6 +53,8 @@ fun BossDraggableComponent.BossWindow(
     onDrawerVisibleChange: (Boolean) -> Unit = {},
     /** See `SplitViewPanel.onBarRailedChange`. */
     onBarRailedChange: (Boolean) -> Unit = {},
+    /** Reports whether the collapsed tab rail has enough height for its quick actions. */
+    onRailFitsActionsChange: (Boolean) -> Unit = {},
     /**
      * Clearance at the top of an open LEFT plugin panel, for the macOS traffic lights.
      *
@@ -186,6 +188,7 @@ fun BossDraggableComponent.BossWindow(
                         verticalBarTopInset = verticalBarTopInset,
                         onDrawerVisibleChange = onDrawerVisibleChange,
                         onBarRailedChange = onBarRailedChange,
+                        onRailFitsActionsChange = onRailFitsActionsChange,
                     )
                     DragTargetHighlight()
                 }

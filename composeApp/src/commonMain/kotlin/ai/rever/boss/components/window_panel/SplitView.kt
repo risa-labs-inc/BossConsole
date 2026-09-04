@@ -2023,6 +2023,7 @@ fun SplitViewPanel(
      * was not being drawn and they rendered nowhere at all.
      */
     onBarRailedChange: (Boolean) -> Unit = {},
+    onRailFitsActionsChange: (Boolean) -> Unit = {},
 ) {
     val density = LocalDensity.current
 
@@ -2086,6 +2087,7 @@ fun SplitViewPanel(
                 footer = verticalBarFooter,
                 belowMap = verticalBarBelowMap,
                 belowTabs = verticalBarRailActions,
+                onRailFitsActionsChange = onRailFitsActionsChange,
                 topInset = verticalBarTopInset,
                 splitTree = splitTree,
             )
@@ -2160,6 +2162,8 @@ private fun WindowBarRow(
     belowMap: @Composable () -> Unit,
     /** The rail's own copy of that chrome. See `WindowVerticalTabBar.belowTabs`. */
     belowTabs: @Composable () -> Unit,
+    /** Reports whether the collapsed tab rail has enough height for its quick actions. */
+    onRailFitsActionsChange: (Boolean) -> Unit,
     /** Clearance above the bar, for the macOS traffic lights. See [SplitViewPanel]. */
     topInset: Dp,
     splitTree: @Composable (Modifier) -> Unit,
@@ -2211,6 +2215,7 @@ private fun WindowBarRow(
                 belowTabs = belowTabs,
                 zoomed = splitViewState.zoomedPanelId != null,
                 onExitZoom = splitViewState::exitZoom,
+                onRailFitsActionsChange = onRailFitsActionsChange,
             )
             VerticalTabBarResizeHandle(
                 // Not while the bar is a rail: the rail's width is a different number, and a drag

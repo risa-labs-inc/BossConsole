@@ -98,6 +98,36 @@ class QuickActionsRailLayoutTest {
     }
 
     @Test
+    fun `rail fits exactly at the required height`() {
+        assertTrue(
+            railFitsActions(
+                availableHeight = 149.dp,
+                actionCount = 4,
+            ),
+        )
+    }
+
+    @Test
+    fun `rail does not fit when one dp too short`() {
+        assertTrue(
+            !railFitsActions(
+                availableHeight = 148.dp,
+                actionCount = 4,
+            ),
+        )
+    }
+
+    @Test
+    fun `rail fits when there are no actions`() {
+        assertTrue(
+            railFitsActions(
+                availableHeight = 0.dp,
+                actionCount = 0,
+            ),
+        )
+    }
+
+    @Test
     fun `every action fits the narrowest rail`() {
         mountRail()
 
