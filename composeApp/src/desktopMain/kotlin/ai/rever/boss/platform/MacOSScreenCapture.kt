@@ -54,10 +54,10 @@ object MacOSScreenCapture {
         if (!isMacOS) return true
 
         return try {
-            CoreGraphics.INSTANCE?.CGPreflightScreenCaptureAccess() ?: true
+            CoreGraphics.INSTANCE?.CGPreflightScreenCaptureAccess() ?: false
         } catch (e: Exception) {
             macOSScreenCaptureLogger.warn(LogCategory.SYSTEM, "Error checking screen capture permission", error = e)
-            true // Assume granted on error
+            false // Cannot verify permission, fail closed
         }
     }
 
@@ -71,12 +71,12 @@ object MacOSScreenCapture {
         if (!isMacOS) return true
 
         return try {
-            val result = CoreGraphics.INSTANCE?.CGRequestScreenCaptureAccess() ?: true
+            val result = CoreGraphics.INSTANCE?.CGRequestScreenCaptureAccess() ?: false
             macOSScreenCaptureLogger.debug(LogCategory.SYSTEM, "Screen capture permission request", mapOf("result" to result))
             result
         } catch (e: Exception) {
             macOSScreenCaptureLogger.warn(LogCategory.SYSTEM, "Error requesting screen capture permission", error = e)
-            true // Assume granted on error
+            false // Cannot verify permission, fail closed
         }
     }
 }
