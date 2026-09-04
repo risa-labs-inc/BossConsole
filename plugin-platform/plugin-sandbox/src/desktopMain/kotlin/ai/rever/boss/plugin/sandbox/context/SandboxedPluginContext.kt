@@ -73,9 +73,17 @@ class SandboxedPluginContext(
     /**
      * The pluginScope is provided by the sandbox, ensuring all plugin
      * coroutines run within the sandboxed scope with SupervisorJob.
+     * 
+     * Returned as a stable CoroutineScope facade whose context dynamically
+     * delegates to the current sandboxScope. This prevents a "zombie UI" leak
+     * where plugins cache this property (e.g. `val scope = context.pluginScope`)
+     * and permanently lose the ability to launch coroutines when a sandbox
+     * restart replaces the underlying scope.
      */
-    override val pluginScope: CoroutineScope
-        get() = _sandbox.sandboxScope
+    override val pluginScope: CoroutineScope = object : CoroutineScope {
+        override val coroutineContext: kotlin.coroutines.CoroutineContext
+            get() = _sandbox.sandboxScope.coroutineContext
+    }
 
     /**
      * The sandbox reference for health reporting.
