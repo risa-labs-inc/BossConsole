@@ -21,7 +21,13 @@ import kotlin.time.Duration
  * coordinator is the single owner that can [shutdown], windows hold handles that
  * cannot.
  */
-class UpdateManager {
+class UpdateManager private constructor(
+    private val installOperation: (suspend (String) -> InstallOutcome)?,
+) {
+    constructor() : this(null)
+
+    internal constructor(installOperation: UpdateInstallOperation) : this(installOperation::install)
+
     private val logger = BossLogger.forComponent("UpdateManager")
 
     // Internal for access by VersionListManager
@@ -213,6 +219,10 @@ class UpdateManager {
         // case the dismissal doesn't survive a restart and re-prompts.
         _showUpdateDialog.value = false
         _updateState.value = UpdateState.Idle
+        persistDismissedVersion(version)
+    }
+
+    private suspend fun persistDismissedVersion(version: Version) {
         UpdateSettings.lastDismissedVersion = version.toString()
         UpdateSettingsManager.saveSettings()
     }
@@ -312,7 +322,7 @@ class UpdateManager {
                 }
 
             if (downloadPath != null) {
-                _updateState.value = UpdateState.ReadyToInstall(downloadPath)
+                stageDownloadedUpdate(updateInfo, downloadPath)
                 UpdateResult.UpdateAvailable(updateInfo.copy())
             } else {
                 val errorMsg = "Failed to download update"
@@ -364,7 +374,7 @@ class UpdateManager {
                 }
 
             if (downloadPath != null) {
-                _updateState.value = UpdateState.ReadyToInstall(downloadPath)
+                stageDownloadedUpdate(updateInfo, downloadPath)
                 UpdateResult.UpdateAvailable(updateInfo)
             } else {
                 val errorMsg = "Failed to download version ${versionInfo.version}"
@@ -412,21 +422,37 @@ class UpdateManager {
             return false
         }
         return try {
-            val outcome = updateService.installUpdate(downloadPath)
+            val outcome = installOperation?.invoke(downloadPath) ?: updateService.installUpdate(downloadPath)
             if (outcome.succeeded) {
                 _updateState.value = UpdateState.RestartRequired
             } else {
-                // Prefer the installer's own explanation. It is the only place that
-                // knows *why* — e.g. a release requiring a newer macOS than this
-                // Mac runs — and a generic string there is indistinguishable from
-                // a crash to the user.
-                _updateState.value = UpdateState.Error(outcome.errorMessage ?: "Installation failed")
+                applyInstallFailure(outcome, _updateInfo.value)
             }
             outcome.succeeded
         } catch (e: Exception) {
             _updateState.value = UpdateState.Error("Installation failed: ${e.message}")
             false
         }
+    }
+
+    /** Apply a failed install while preserving any refusal-specific follow-up. */
+    private suspend fun applyInstallFailure(
+        outcome: InstallOutcome,
+        updateInfo: UpdateInfo?,
+    ) {
+        if (outcome.failureReason == InstallFailureReason.UnsupportedOs && updateInfo != null) {
+            persistDismissedVersion(updateInfo.latestVersion)
+        }
+        _updateState.value = UpdateState.Error(outcome.errorMessage ?: "Installation failed")
+    }
+
+    /** Record the exact update whose downloaded artifact is now ready to install. */
+    internal fun stageDownloadedUpdate(
+        updateInfo: UpdateInfo,
+        downloadPath: String,
+    ) {
+        _updateInfo.value = updateInfo
+        _updateState.value = UpdateState.ReadyToInstall(downloadPath)
     }
 
     /**
@@ -468,6 +494,12 @@ class UpdateManager {
         stopPeriodicChecks()
         scope.cancel()
     }
+}
+
+internal class UpdateInstallOperation(
+    private val operation: suspend (String) -> InstallOutcome,
+) {
+    suspend fun install(downloadPath: String): InstallOutcome = operation(downloadPath)
 }
 
 /**
