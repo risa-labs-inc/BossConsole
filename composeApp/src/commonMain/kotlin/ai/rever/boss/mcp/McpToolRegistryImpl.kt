@@ -1,6 +1,9 @@
 package ai.rever.boss.mcp
 
 import ai.rever.boss.components.bars.horizontal.StatusMessageManager
+import ai.rever.boss.mcp.sandbox.DefaultMcpToolSandbox
+import ai.rever.boss.mcp.sandbox.McpSandboxOutcome
+import ai.rever.boss.mcp.sandbox.McpToolSandbox
 import ai.rever.boss.plugin.api.McpToolArgs
 import ai.rever.boss.plugin.api.McpToolDefinition
 import ai.rever.boss.plugin.api.McpToolProvider
@@ -232,6 +235,7 @@ internal class McpToolRegistryCore(
     private val disabledFile: File?,
     private val invokeTimeoutMs: Long = 60_000L,
     private val onFault: (McpKillSwitchFault) -> Unit = {},
+    private val sandbox: McpToolSandbox = DefaultMcpToolSandbox(),
 ) {
     private val logger = BossLogger.forComponent("McpToolRegistry")
 
@@ -560,6 +564,7 @@ internal class McpToolRegistryCore(
         return permissions.containsAll(def.requiredPermissions)
     }
 
+    @Suppress("LongMethod", "ReturnCount")
     suspend fun invoke(
         toolName: String,
         arguments: String,
@@ -569,6 +574,44 @@ internal class McpToolRegistryCore(
             _tools.value.firstOrNull { it.definition.name == toolName }
                 ?: return McpToolResult("Unknown or disabled MCP tool: $toolName", isError = true)
         val args = parseArgs(arguments)
+        when (val outcome = sandbox.evaluateInvocation(toolName, args)) {
+            is McpSandboxOutcome.Allowed -> {
+                // Sandbox permitted execution
+            }
+
+            is McpSandboxOutcome.Denied -> {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Agent Tool Sandbox denied tool invocation",
+                    mapOf(
+                        "tool" to toolName,
+                        "riskLevel" to outcome.assessment.level.name,
+                        "reason" to outcome.assessment.reason,
+                    ),
+                )
+                return McpToolResult(
+                    "Sandbox denied invocation of tool '$toolName': ${outcome.assessment.reason}",
+                    isError = true,
+                )
+            }
+
+            is McpSandboxOutcome.RequiresApprovalUnresolved -> {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Agent Tool Sandbox blocked tool invocation requiring approval (no handler installed)",
+                    mapOf(
+                        "tool" to toolName,
+                        "riskLevel" to outcome.assessment.level.name,
+                        "reason" to outcome.assessment.reason,
+                    ),
+                )
+                return McpToolResult(
+                    "Tool '$toolName' requires human approval (${outcome.assessment.reason}), " +
+                        "but no interactive approval handler is installed",
+                    isError = true,
+                )
+            }
+        }
         return try {
             withTimeout(invokeTimeoutMs) { tool.definition.handler.call(args) }
         } catch (t: TimeoutCancellationException) {
