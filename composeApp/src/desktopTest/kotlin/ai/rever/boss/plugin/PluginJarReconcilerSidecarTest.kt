@@ -4,8 +4,10 @@ import ai.rever.boss.plugin.loader.PluginSignatureSidecar
 import java.io.File
 import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
+import kotlinx.coroutines.runBlocking
 import kotlin.test.AfterTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -57,6 +59,59 @@ class PluginJarReconcilerSidecarTest {
             out.closeEntry()
         }
         return jar
+    }
+
+    @Test
+    fun `a persisted plugin update keeps its current jar and sidecar`() = runBlocking {
+        val dir = tempPluginDir()
+        val pluginId = "ai.rever.boss.plugin.test.background"
+        val oldJar = manifestJar(dir, "test-plugin-1.0.0.jar", pluginId, "1.0.0")
+        val newJar = manifestJar(dir, "test-plugin-2.0.0.jar", pluginId, "2.0.0")
+        PluginSignatureSidecar.write(oldJar.absolutePath, "b2xkLXNpZw==")
+        var persistedJar: File? = null
+
+        finishBackgroundSystemPluginUpdate(
+            plugin = SystemPluginInfo(pluginId, "owner/repo", "test-plugin", 100),
+            promotedJar = newJar,
+            pluginDir = dir,
+            persistLoadablePlugin = { persistedJar = it },
+            persistSignature = { PluginSignatureSidecar.write(it.absolutePath, "bmV3LXNpZw==") },
+            manifestIdOf = { file -> if (file == oldJar) pluginId else null },
+            onSupersededArtifactProcessed = { _, _ -> error("loadable plugin must not be cleaned up") },
+        )
+
+        assertEquals(newJar, persistedJar, "the promoted JAR must be selected for next launch")
+        assertTrue(newJar.exists(), "the promoted JAR must remain")
+        assertTrue(File(PluginSignatureSidecar.pathFor(newJar.absolutePath)).exists())
+        assertTrue(oldJar.exists(), "the current-session JAR must remain")
+        assertTrue(
+            File(PluginSignatureSidecar.pathFor(oldJar.absolutePath)).exists(),
+            "the current-session JAR's sidecar must remain",
+        )
+    }
+
+    @Test
+    fun `a download-only runtime update removes superseded artifacts`() = runBlocking {
+        val dir = tempPluginDir()
+        val pluginId = "ai.rever.boss.plugin.test.runtime"
+        val oldJar = manifestJar(dir, "test-runtime-1.0.0.jar", pluginId, "1.0.0")
+        val newJar = manifestJar(dir, "test-runtime-2.0.0.jar", pluginId, "2.0.0")
+        PluginSignatureSidecar.write(oldJar.absolutePath, "b2xkLXNpZw==")
+
+        finishBackgroundSystemPluginUpdate(
+            plugin = SystemPluginInfo(pluginId, "owner/repo", "test-runtime", 100, downloadOnly = true),
+            promotedJar = newJar,
+            pluginDir = dir,
+            persistLoadablePlugin = { error("download-only artifacts must not be persisted") },
+            persistSignature = { PluginSignatureSidecar.write(it.absolutePath, "bmV3LXNpZw==") },
+            manifestIdOf = { file -> if (file == oldJar) pluginId else null },
+            onSupersededArtifactProcessed = { _, _ -> },
+        )
+
+        assertTrue(newJar.exists(), "the promoted runtime artifact must remain")
+        assertTrue(File(PluginSignatureSidecar.pathFor(newJar.absolutePath)).exists())
+        assertFalse(oldJar.exists(), "the superseded runtime artifact must be cleaned up")
+        assertFalse(File(PluginSignatureSidecar.pathFor(oldJar.absolutePath)).exists())
     }
 
     @Test

@@ -55,6 +55,46 @@ data class SystemPluginInfo(
 )
 
 /**
+ * Completes the post-promotion work for a background system-plugin download.
+ *
+ * A loadable plugin may still need the JAR that backed its current classloader,
+ * so its superseded artifact is deliberately left for startup reconciliation.
+ * A [SystemPluginInfo.downloadOnly] runtime is not reconciled or persisted, so
+ * it keeps the previous eager cleanup behavior instead.
+ */
+internal suspend fun finishBackgroundSystemPluginUpdate(
+    plugin: SystemPluginInfo,
+    promotedJar: File,
+    pluginDir: File,
+    persistLoadablePlugin: (File) -> Unit,
+    persistSignature: suspend (File) -> Unit,
+    manifestIdOf: (File) -> String?,
+    onSupersededArtifactProcessed: (File, Boolean) -> Unit,
+) {
+    if (!plugin.downloadOnly) persistLoadablePlugin(promotedJar)
+    persistSignature(promotedJar)
+
+    if (!plugin.downloadOnly) return
+
+    // Download-only runtime artifacts are neither loaded as plugins nor handled
+    // by PluginJarReconciler. Keep their established single-artifact lifecycle so
+    // a later in-session check cannot select an arbitrary stale version.
+    pluginDir
+        .listFiles()
+        ?.filter {
+            it.name.endsWith(".jar") &&
+                it.name != promotedJar.name &&
+                manifestIdOf(it) == plugin.pluginId
+        }?.forEach { oldFile ->
+            val deleted = oldFile.delete()
+            // A signature belongs to exactly one JAR. Do not remove it if a
+            // Windows lock left the JAR in place.
+            if (deleted) runCatching { PluginSignatureSidecar.delete(oldFile.absolutePath) }
+            onSupersededArtifactProcessed(oldFile, deleted)
+        }
+}
+
+/**
  * Sets up the plugin store infrastructure including:
  * - Local and remote plugin repositories
  * - Plugin update manager
@@ -533,10 +573,11 @@ object PluginStoreSetup {
     /**
      * Kick off a non-blocking update check for a system plugin.
      *
-     * The existing JAR stays in use for the current session regardless — we
-     * never swap a JAR out from under a live classloader. A newer release is
-     * downloaded in the background and replaces the file on disk for the next
-     * startup. `PluginPersistence` is updated by [downloadSystemPluginFromGitHub]
+     * For a loadable plugin, the existing JAR stays in use for the current
+     * session — we never swap a JAR out from under a live classloader. A newer
+     * release is recorded for the next startup while that JAR remains on disk.
+     * Download-only runtime artifacts retain their established replace-and-cleanup
+     * lifecycle. `PluginPersistence` is updated by [downloadSystemPluginFromGitHub]
      * for non-downloadOnly plugins so the new path is picked up automatically.
      *
      * Runs on [scope] so it survives any caller that cancels mid-startup.
@@ -612,9 +653,9 @@ object PluginStoreSetup {
                     !isNewerVersion(latestVersion, installedVersion) -> {
                         // Installed version is NEWER than the latest published release —
                         // e.g. a local dev build ahead of the store. Do NOT downgrade:
-                        // downloadSystemPluginFromGitHub deletes other versions, which
-                        // would clobber the local build. Only update when the published
-                        // release is strictly newer (the else branch below).
+                        // a download-only runtime update removes older versions, while a
+                        // loadable update repoints the next launch. Only update when the
+                        // published release is strictly newer (the else branch below).
                         logger.debug(
                             LogCategory.SYSTEM,
                             "Local system plugin newer than published - keeping local build",
@@ -1202,25 +1243,6 @@ object PluginStoreSetup {
                     )
                 }
 
-                // Register in persistence (skip for download-only plugins like microkernel runtime).
-                // Preserve the user's existing `enabled` choice and `sourceUrl` —
-                // `addInstalledPlugin` does removeIf+add, so passing the defaults
-                // would silently re-enable a user-disabled plugin and wipe sourceUrl
-                // on every background update.
-                if (!plugin.downloadOnly) {
-                    val existing =
-                        PluginPersistence
-                            .getInstalledPlugins()
-                            .find { it.pluginId == plugin.pluginId }
-                    PluginPersistence.addInstalledPlugin(
-                        pluginId = plugin.pluginId,
-                        jarPath = destFile.absolutePath,
-                        enabled = existing?.enabled ?: true,
-                        sourceUrl = existing?.sourceUrl,
-                        installedVersion = tagName.removePrefix("v"),
-                    )
-                }
-
                 // Bind the store signature to these bytes. Every OTHER install path
                 // writes a `<jar>.sig` sidecar; this one never did, so system
                 // plugins — api, Toolbox, the microkernel runtime, terminal-tab,
@@ -1236,7 +1258,40 @@ object PluginStoreSetup {
                 // safety cost: the stale sidecar was already cleared before the
                 // move, so the intermediate state is *unsigned*, which is
                 // warn-and-allow by design.
-                persistStoreSignatureSidecar(destFile)
+                finishBackgroundSystemPluginUpdate(
+                    plugin = plugin,
+                    promotedJar = destFile,
+                    pluginDir = _pluginDir,
+                    persistLoadablePlugin = { promoted ->
+                        // Preserve the user's existing `enabled` choice and `sourceUrl` —
+                        // `addInstalledPlugin` does removeIf+add, so passing the defaults
+                        // would silently re-enable a user-disabled plugin and wipe sourceUrl
+                        // on every background update.
+                        val existing =
+                            PluginPersistence
+                                .getInstalledPlugins()
+                                .find { it.pluginId == plugin.pluginId }
+                        PluginPersistence.addInstalledPlugin(
+                            pluginId = plugin.pluginId,
+                            jarPath = promoted.absolutePath,
+                            enabled = existing?.enabled ?: true,
+                            sourceUrl = existing?.sourceUrl,
+                            installedVersion = tagName.removePrefix("v"),
+                        )
+                    },
+                    persistSignature = { persistStoreSignatureSidecar(it) },
+                    manifestIdOf = { readPluginManifest(it)?.pluginId },
+                    onSupersededArtifactProcessed = { oldFile, deleted ->
+                        logger.debug(
+                            LogCategory.SYSTEM,
+                            "Removed old version",
+                            mapOf(
+                                "file" to oldFile.name,
+                                "deleted" to deleted,
+                            ),
+                        )
+                    },
+                )
 
                 logger.info(
                     LogCategory.SYSTEM,
@@ -1248,39 +1303,6 @@ object PluginStoreSetup {
                         "size" to destFile.length(),
                     ),
                 )
-
-                // Clean up older versioned JARs *after* the new JAR is on disk
-                // and persistence is updated. Match by manifest pluginId, NOT
-                // filename prefix: artifact prefixes can be prefixes of each
-                // other (e.g. "boss-plugin-terminal" matches
-                // "boss-plugin-terminal-tab-*.jar" and would delete the other
-                // plugin's JAR). On Windows the JVM may hold a lock on a JAR
-                // loaded earlier in this process; delete() will return false
-                // silently. The new versioned JAR has a different filename so
-                // it's unaffected; the stale file just lingers.
-                _pluginDir
-                    .listFiles()
-                    ?.filter {
-                        it.name.endsWith(".jar") &&
-                            it.name != jarFileName &&
-                            readPluginManifest(it)?.pluginId == plugin.pluginId
-                    }?.forEach { oldFile ->
-                        val deleted = oldFile.delete()
-                        // Drop the sidecar with its JAR so it can't outlive it as an
-                        // orphan — but only when the JAR actually went. A delete
-                        // here fails when the JVM holds a lock (Windows, JAR still
-                        // loaded), and stripping the sidecar off a JAR that is
-                        // staying would turn a signed plugin into an unsigned one.
-                        if (deleted) runCatching { PluginSignatureSidecar.delete(oldFile.absolutePath) }
-                        logger.debug(
-                            LogCategory.SYSTEM,
-                            "Removed old version",
-                            mapOf(
-                                "file" to oldFile.name,
-                                "deleted" to deleted,
-                            ),
-                        )
-                    }
 
                 true
             } catch (e: kotlinx.coroutines.CancellationException) {
