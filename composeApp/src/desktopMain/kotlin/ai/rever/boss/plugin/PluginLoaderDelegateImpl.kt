@@ -6,6 +6,7 @@ import ai.rever.boss.components.plugin.DependentRestartEventBus
 import ai.rever.boss.components.plugin.DynamicPluginInfo
 import ai.rever.boss.components.plugin.DynamicPluginManager
 import ai.rever.boss.components.plugin.MicrokernelRuntime
+import ai.rever.boss.components.plugin.ReloadJarCandidates
 import ai.rever.boss.components.plugin.findRelocatedPluginJar
 import ai.rever.boss.components.plugin.resolveReloadJarPath
 import ai.rever.boss.components.registery.PanelComponentStoreRegistry
@@ -19,6 +20,7 @@ import ai.rever.boss.plugin.api.PluginLoaderDelegate
 import ai.rever.boss.plugin.api.PluginState
 import ai.rever.boss.plugin.api.PluginUnloadIntent
 import ai.rever.boss.plugin.api.PluginUnloadResult
+import ai.rever.boss.plugin.loader.PluginManifestReader
 import ai.rever.boss.plugin.loader.PluginSignatureSidecar
 import ai.rever.boss.plugin.loader.PluginUnloadException
 import ai.rever.boss.plugin.repository.remote.PluginStoreConfig
@@ -386,6 +388,30 @@ class PluginLoaderDelegateImpl(
         }
     }
 
+    /**
+     * Log which file a reload came from when it differs from the running jar. Version comparison
+     * can now pick the record while the loaded jar still exists (the record's manifest version is
+     * higher) — only claim "the loaded JAR is gone" when it actually is.
+     */
+    private fun logReloadSource(
+        pluginId: String,
+        loadedJarPath: String?,
+        jarPath: String,
+    ) {
+        val loadedGone = loadedJarPath == null || !File(loadedJarPath).isFile
+        val message =
+            if (loadedGone) {
+                "Reloading from the installed record - the loaded JAR is gone, most likely replaced by an update"
+            } else {
+                "Reloading from the installed record - the record's manifest version is newer than the running jar"
+            }
+        logger.info(
+            LogCategory.SYSTEM,
+            message,
+            mapOf("pluginId" to pluginId, "loadedJarPath" to (loadedJarPath ?: "none"), "jarPath" to jarPath),
+        )
+    }
+
     private suspend fun doReloadPlugin(pluginId: String): LoadedPluginInfo? {
         return try {
             logger.info(LogCategory.SYSTEM, "Reloading plugin via delegate", mapOf("pluginId" to pluginId))
@@ -407,12 +433,27 @@ class PluginLoaderDelegateImpl(
                     val persistedJarPath =
                         PluginPersistence.getInstalledPlugins().firstOrNull { it.pluginId == pluginId }?.jarPath
                     resolveReloadJarPath(
-                        loadedJarPath = loadedJarPath,
-                        persistedJarPath = persistedJarPath,
+                        candidates =
+                            ReloadJarCandidates(
+                                loadedJarPath = loadedJarPath,
+                                persistedJarPath = persistedJarPath,
+                            ),
                         exists = { File(it).isFile },
                         relocated = {
                             val dir = (loadedJarPath ?: persistedJarPath)?.let { File(it).parentFile }
                             findRelocatedPluginJar(dir, pluginId)?.absolutePath
+                        },
+                        manifestVersion = { path ->
+                            // No swallow: let read failures reach the resolver's
+                            // onManifestVersionReadFailed hook so the candidate is logged.
+                            PluginManifestReader.readFromJar(path).version
+                        },
+                        onManifestVersionReadFailed = { path ->
+                            logger.warn(
+                                LogCategory.SYSTEM,
+                                "Could not read manifest version of a reload candidate jar",
+                                mapOf("pluginId" to pluginId, "path" to path),
+                            )
                         },
                     )
                 }
@@ -426,11 +467,7 @@ class PluginLoaderDelegateImpl(
                 return null
             }
             if (jarPath != loadedJarPath) {
-                logger.info(
-                    LogCategory.SYSTEM,
-                    "Reloading from the installed record - the loaded JAR is gone, most likely replaced by an update",
-                    mapOf("pluginId" to pluginId, "loadedJarPath" to (loadedJarPath ?: "none"), "jarPath" to jarPath),
-                )
+                logReloadSource(pluginId, loadedJarPath, jarPath)
             }
 
             // Unload

@@ -18,6 +18,7 @@ import ai.rever.boss.plugin.loader.DynamicPluginLoaderImpl
 import ai.rever.boss.plugin.loader.PluginApiLevelException
 import ai.rever.boss.plugin.loader.PluginBinaryIncompatibilityException
 import ai.rever.boss.plugin.loader.PluginBossVersionException
+import ai.rever.boss.plugin.loader.PluginManifestReader
 import ai.rever.boss.plugin.loader.PluginUnloadException
 import ai.rever.boss.plugin.sandbox.InProcessPluginSandbox
 import ai.rever.boss.plugin.sandbox.PluginErrorClassifier
@@ -1815,13 +1816,29 @@ class DynamicPluginManager(
         // Resolving first also keeps a plugin running when no reload is possible.
         val jarPath =
             resolveReloadJarPath(
-                loadedJarPath = info.jarPath,
-                // No access to the persisted record from commonMain; relocation covers the gap,
-                // and re-resolving from the directory is the more robust of the two anyway.
-                persistedJarPath = null,
+                candidates =
+                    ReloadJarCandidates(
+                        loadedJarPath = info.jarPath,
+                        // No access to the persisted record from commonMain; relocation covers the gap,
+                        // and re-resolving from the directory is the more robust of the two anyway.
+                        persistedJarPath = null,
+                    ),
                 exists = { java.io.File(it).isFile },
                 relocated = {
                     findRelocatedPluginJar(java.io.File(info.jarPath).parentFile, pluginId)?.absolutePath
+                },
+                manifestVersion = { path ->
+                    // No swallow here: a manifest that fails to read must reach the resolver's
+                    // runCatching so onManifestVersionReadFailed logs the candidate instead of it
+                    // being silently scored as version-less.
+                    PluginManifestReader.readFromJar(path).version
+                },
+                onManifestVersionReadFailed = { path ->
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Could not read manifest version of a reload candidate jar",
+                        mapOf("pluginId" to pluginId, "path" to path),
+                    )
                 },
             ) ?: return Result.failure(
                 Exception("Cannot reload $pluginId - no existing JAR (loaded from ${info.jarPath})"),
