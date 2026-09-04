@@ -1046,6 +1046,13 @@ class DefaultPlugin(
         // ============================================================
         PluginLoaderDelegateSetup.register(this, dynamicPluginManager)
 
+        // Register core panels that haven't been moved to dynamic plugins yet
+        panelRegistry.registerPanel(
+            ai.rever.boss.components.window_panel.components.AgentTracePanelInfo
+        ) { ctx, info ->
+            ai.rever.boss.components.window_panel.components.AgentTracePanelComponent(ctx, info)
+        }
+
         // ============================================================
         // DYNAMIC PANEL PLUGINS (loaded from JARs)
         // Previously registered based on auth/state, now loaded dynamically

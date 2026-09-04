@@ -636,8 +636,22 @@ internal class McpToolRegistryCore(
             _tools.value.firstOrNull { it.definition.name == toolName }
                 ?: return McpToolResult("Unknown or disabled MCP tool: $toolName", isError = true)
         val args = parseArgs(arguments)
+
+        // Start tracing, catching trace errors so they don't break the tool
+        val traceId = try {
+            ai.rever.boss.components.observability.AgentTraceStore.startTrace(toolName, arguments)
+        } catch (t: Throwable) {
+            "untraced"
+        }
+
         return try {
-            withTimeout(invokeTimeoutMs) { tool.definition.handler.call(args) }
+            val result = withTimeout(invokeTimeoutMs) { tool.definition.handler.call(args) }
+            if (traceId != "untraced") {
+                try {
+                    ai.rever.boss.components.observability.AgentTraceStore.completeTrace(traceId, result)
+                } catch (_: Throwable) {}
+            }
+            result
         } catch (t: TimeoutCancellationException) {
             logger.warn(
                 LogCategory.SYSTEM,
@@ -645,10 +659,20 @@ internal class McpToolRegistryCore(
                 mapOf("tool" to toolName, "providerId" to tool.providerId, "timeoutMs" to invokeTimeoutMs),
                 error = t,
             )
+            if (traceId != "untraced") {
+                try {
+                    ai.rever.boss.components.observability.AgentTraceStore.failTrace(traceId, t, isTimeout = true)
+                } catch (_: Throwable) {}
+            }
             McpToolResult("Tool '$toolName' timed out after ${invokeTimeoutMs / 1000}s", isError = true)
         } catch (t: CancellationException) {
             // Caller cancellation (not our timeout) must propagate — swallowing it
             // would break structured concurrency during request cancel/shutdown.
+            if (traceId != "untraced") {
+                try {
+                    ai.rever.boss.components.observability.AgentTraceStore.failTrace(traceId, t, isTimeout = false, isCancelled = true)
+                } catch (_: Throwable) {}
+            }
             throw t
         } catch (t: Throwable) {
             logger.warn(
@@ -660,6 +684,11 @@ internal class McpToolRegistryCore(
                     "error" to (t.message ?: t::class.simpleName),
                 ),
             )
+            if (traceId != "untraced") {
+                try {
+                    ai.rever.boss.components.observability.AgentTraceStore.failTrace(traceId, t, isTimeout = false)
+                } catch (_: Throwable) {}
+            }
             McpToolResult("Tool '$toolName' failed: ${t.message ?: t::class.simpleName}", isError = true)
         }
     }
