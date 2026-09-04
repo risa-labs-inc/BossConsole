@@ -115,6 +115,34 @@ class PluginClassLoader(
             }
         }
 
+        /** Resource misses use the standard null/empty contract, with a best-effort diagnostic. */
+        private fun logResourceRefusal(
+            firstSighting: Boolean,
+            pluginId: String,
+            resourceName: String,
+            state: ClassLoaderState,
+        ) {
+            // Logging may fail during shutdown; it must never replace a missing
+            // resource with an unchecked exception on the caller's teardown thread.
+            runCatching {
+                val data = mapOf("pluginId" to pluginId, "resourceName" to resourceName, "state" to state.name)
+                if (firstSighting) {
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Refused to resolve a plugin resource against the host after unload",
+                        data,
+                        IllegalStateException("Plugin '$pluginId' requested resource '$resourceName' while $state"),
+                    )
+                } else {
+                    logger.debug(
+                        LogCategory.SYSTEM,
+                        "Refused a repeat request for an already-refused plugin resource",
+                        data,
+                    )
+                }
+            }
+        }
+
         /**
          * Default packages that are always shared with the host.
          * These include Kotlin stdlib, coroutines, and BOSS plugin API.
@@ -191,6 +219,9 @@ class PluginClassLoader(
      * stack per name; the refusal itself is never deduped.
      */
     private val refusedClassNames: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /** One WARN per resource name across both singular and plural lookups; repeats use DEBUG. */
+    private val refusedResourceNames: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     /**
      * Whether this classloader has been marked for unloading.
@@ -372,6 +403,9 @@ class PluginClassLoader(
 
     /**
      * Get a resource with child-first strategy for plugin resources.
+     * Once unloading starts, a non-shared miss stays missing rather than
+     * substituting the host's copy. Resources in the still-open plugin JAR
+     * remain available to teardown code; shared resources remain parent-first.
      */
     override fun getResource(name: String): URL? {
         // For shared packages, use parent-first
@@ -380,11 +414,24 @@ class PluginClassLoader(
                 name.startsWith(it.replace('.', '/'))
             }
 
-        return if (isSharedResource) {
-            super.getResource(name)
-        } else {
-            // Child-first for plugin resources
-            findResource(name) ?: parent.getResource(name)
+        if (isSharedResource) {
+            return super.getResource(name)
+        }
+        val own = findResource(name)
+        val stateAtLookup = state
+        return when {
+            own != null -> {
+                own
+            }
+
+            stateAtLookup == ClassLoaderState.ACTIVE -> {
+                parent.getResource(name)
+            }
+
+            else -> {
+                logResourceRefusal(refusedResourceNames.add(name), pluginId, name, stateAtLookup)
+                null
+            }
         }
     }
 
@@ -395,6 +442,9 @@ class PluginClassLoader(
      * in the parent chain (whose jar carries its own
      * META-INF/boss-plugin/plugin.json and jar manifest) that would surface
      * the api jar's copy of non-shared resources ahead of the plugin's own.
+     * After unloading starts only own resources are enumerated, preventing
+     * META-INF/services discovery from silently switching to host providers.
+     * After close this is empty, as the plugin JAR can no longer be searched.
      */
     override fun getResources(name: String): java.util.Enumeration<URL> {
         val isSharedResource =
@@ -405,10 +455,16 @@ class PluginClassLoader(
             return super.getResources(name)
         }
         val own = java.util.Collections.list(findResources(name))
+        val stateAtLookup = state
         val fromParents =
-            java.util.Collections
-                .list(parent.getResources(name))
-                .filterNot { it in own }
+            if (stateAtLookup == ClassLoaderState.ACTIVE) {
+                java.util.Collections
+                    .list(parent.getResources(name))
+                    .filterNot { it in own }
+            } else {
+                logResourceRefusal(refusedResourceNames.add(name), pluginId, name, stateAtLookup)
+                emptyList()
+            }
         return java.util.Collections.enumeration(own + fromParents)
     }
 
