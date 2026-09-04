@@ -13,8 +13,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.arkivanov.decompose.ComponentContext
-import com.arkivanov.decompose.DefaultComponentContext
-import com.arkivanov.essenty.lifecycle.LifecycleRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -103,14 +101,12 @@ class PanelComponentStoreSuspensionTest {
         override fun resetRestartAttempts() = Unit
     }
 
-    private fun newContext(): ComponentContext = DefaultComponentContext(LifecycleRegistry())
-
     private fun newStore(vararg ids: PanelId): PanelComponentStore {
         val registry = PanelRegistry()
         ids.forEach { id ->
             registry.registerPanel(panelInfo(id)) { ctx, info -> FakePanelComponent(info, ctx) }
         }
-        return PanelComponentStore(newContext(), registry)
+        return PanelComponentStore(registry)
     }
 
     private fun ownedPanel(

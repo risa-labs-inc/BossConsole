@@ -128,6 +128,7 @@ internal fun BossAppStartupEffects(state: BossAppState) {
         PanelComponentStoreRegistry.register(windowId, state.panelComponentStore)
         onDispose {
             PanelComponentStoreRegistry.unregister(windowId)
+            state.panelComponentStore.dispose()
         }
     }
 
@@ -430,10 +431,8 @@ internal fun BossAppStartupEffects(state: BossAppState) {
             // NOTE: the "Last Session" write is NOT here. It is app-level, not
             // per-window (#19), and lives in the windowId-keyed lifecycle effect
             // above via LastSessionCoordinator.
-
             // Cleanup plugin coroutines
             plugin.dispose()
-
             // NOTE: the updater is NOT torn down here. It is process-wide; the
             // first window to close used to cancel periodic checks and in-flight
             // downloads for every window still open (#19, #37). This window's
