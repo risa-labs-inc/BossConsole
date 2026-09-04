@@ -1,5 +1,6 @@
 package ai.rever.boss.window
 
+import ai.rever.boss.layout.ChromeDensity
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.utils.logging.BossLogger
@@ -10,6 +11,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import java.awt.Toolkit
 import java.io.File
 
 /**
@@ -130,7 +132,44 @@ actual object WindowAppearanceSettingsManager {
         // migrated on the next launch as though it were an older one.
         return WindowAppearanceSettings(
             showTitleBar = SystemUtils.isMacOS,
+            density = defaultDensityFor(primaryScreenHeightDp()),
             settingsVersion = WindowAppearanceSettings.CURRENT_SETTINGS_VERSION,
         )
     }
+
+    /**
+     * The primary screen's logical height in dp, or null when it cannot be read.
+     *
+     * `Toolkit.getScreenSize()` throws `HeadlessException` off a display (a test JVM, a CI runner),
+     * which must not crash a fresh install's very first launch - `runCatching` and a null fall
+     * through [defaultDensityFor] to [ChromeDensity.COMFORTABLE], the same as it always defaulted.
+     */
+    private fun primaryScreenHeightDp(): Int? =
+        runCatching { Toolkit.getDefaultToolkit().screenSize.height }.getOrNull()
 }
+
+/**
+ * Screen heights at or above this stay on [ChromeDensity.COMFORTABLE]. See [defaultDensityFor].
+ *
+ * Chosen from issue #239's own measurements, not the 900 pt its first draft proposed: a 13"
+ * MacBook Air's default scaled resolution reports 956 pt of screen height (931 pt once the macOS
+ * menu bar is subtracted) - 900 would have left the reference machine this issue is about on
+ * Comfortable. 1000 clears both figures with margin, while a 15"+ laptop (typically >=1024 pt of
+ * logical height) or a desktop display stays untouched.
+ */
+private const val SMALL_SCREEN_HEIGHT_THRESHOLD_DP = 1000
+
+/**
+ * The density a fresh install should start on, given its primary screen's logical height in dp.
+ *
+ * A pure function, not a method on the manager, so it is directly testable without touching AWT -
+ * [WindowAppearanceSettingsManager.getDefaultSettings] is the only caller, and it is the one that
+ * reads [Toolkit]. `null` (the height could not be read) is treated as "not small": the manager
+ * must not crash or misconfigure a fresh install because a display could not be measured.
+ */
+internal fun defaultDensityFor(screenHeightDp: Int?): ChromeDensity =
+    if (screenHeightDp != null && screenHeightDp < SMALL_SCREEN_HEIGHT_THRESHOLD_DP) {
+        ChromeDensity.COMPACT
+    } else {
+        ChromeDensity.COMFORTABLE
+    }

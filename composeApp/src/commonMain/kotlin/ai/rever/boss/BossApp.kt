@@ -12,10 +12,14 @@ import ai.rever.boss.app.rememberFocusModeReveal
 import ai.rever.boss.components.registery.PanelRegistry
 import ai.rever.boss.filetypes.DefaultAppsOfferHost
 import ai.rever.boss.focusmode.FocusModeSettingsManager
+import ai.rever.boss.layout.ChromeDimens
+import ai.rever.boss.layout.LocalChromeDimens
 import ai.rever.boss.window.WindowAppearanceSettingsManager
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.platform.LocalDensity
 import com.arkivanov.decompose.ComponentContext
@@ -65,25 +69,33 @@ fun ComponentContext.BossApp(
     BossAppMenuActionEffects(state, reveal)
 
     BossTheme {
-        BossAppCompositionLocals(state) {
-            BossAppScaffold(
-                state = state,
-                reveal = reveal,
-                focusModeSettings = focusModeSettings,
-                revealOffsetDp = with(LocalDensity.current) { focusModeSettings.revealOffsetPx.toDp() },
-                appearance = windowAppearanceSettings,
-                onToggleMaximize = onToggleMaximize,
-            )
+        // Host-only, deliberately outside BossAppCompositionLocals: that composable documents
+        // itself as providing what "plugins and host UI" read, and no plugin draws a title bar,
+        // tab bar or icon strip - see ChromeDimens's own KDoc for why the type stays out of
+        // plugin-ui-core entirely.
+        val chromeDimens =
+            remember(windowAppearanceSettings.density) { ChromeDimens.of(windowAppearanceSettings.density) }
+        CompositionLocalProvider(LocalChromeDimens provides chromeDimens) {
+            BossAppCompositionLocals(state) {
+                BossAppScaffold(
+                    state = state,
+                    reveal = reveal,
+                    focusModeSettings = focusModeSettings,
+                    revealOffsetDp = with(LocalDensity.current) { focusModeSettings.revealOffsetPx.toDp() },
+                    appearance = windowAppearanceSettings,
+                    onToggleMaximize = onToggleMaximize,
+                )
 
-            BossAppDialogs(state)
+                BossAppDialogs(state)
 
-            // The one-time offer to make BOSS the default for links and code
-            // files. Composed here rather than inside BossAppDialogs because
-            // everything it touches - Launch Services, the Windows registry,
-            // xdg-mime - is desktopMain, so it is an expect/actual composable
-            // like AuthBrandSite. It raises nothing on the windows that are not
-            // the first, and nothing at all once the offer has been made.
-            DefaultAppsOfferHost(isFirstWindow = state.isFirstWindow)
+                // The one-time offer to make BOSS the default for links and code
+                // files. Composed here rather than inside BossAppDialogs because
+                // everything it touches - Launch Services, the Windows registry,
+                // xdg-mime - is desktopMain, so it is an expect/actual composable
+                // like AuthBrandSite. It raises nothing on the windows that are not
+                // the first, and nothing at all once the offer has been made.
+                DefaultAppsOfferHost(isFirstWindow = state.isFirstWindow)
+            }
         }
     }
 }
