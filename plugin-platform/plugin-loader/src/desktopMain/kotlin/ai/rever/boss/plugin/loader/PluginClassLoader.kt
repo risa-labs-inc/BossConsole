@@ -61,6 +61,11 @@ class PluginClassLoader(
     companion object {
         private val logger = BossLogger.forComponent("PluginClassLoader")
 
+        // Use one lock per class name instead of serialising unrelated plugin class loads.
+        init {
+            registerAsParallelCapable()
+        }
+
         /**
          * Weak process-wide registry of every constructed plugin classloader,
          * across all windows' managers (managers are per-window; crash
@@ -309,24 +314,35 @@ class PluginClassLoader(
         name: String,
         resolve: Boolean,
     ): Class<*> {
-        // Try to find in plugin JAR first
-        try {
-            val clazz = findClass(name)
-            if (resolve) {
-                resolveClass(clazz)
+        // ClassLoader.loadClass normally owns this lock, but the child-first path cannot delegate
+        // to it without losing its loading order. Re-check after acquiring the same JVM lock so
+        // two plugin threads cannot both miss findLoadedClass and call defineClass for one name.
+        synchronized(getClassLoadingLock(name)) {
+            val loadedClass = findLoadedClass(name)
+            if (loadedClass != null) {
+                if (resolve) {
+                    resolveClass(loadedClass)
+                }
+                return loadedClass
             }
-            return clazz
-        } catch (notInPluginJar: ClassNotFoundException) {
-            // One read: _state can move UNLOAD_IN_PROGRESS -> UNLOADED under us,
-            // and the message must not disagree with the structured field.
-            val stateAtRefusal = state
-            if (stateAtRefusal == ClassLoaderState.ACTIVE) {
-                // Fall back to parent. Deliberately unlogged: this is the
-                // expected delegation path for every host-provided class a
-                // plugin touches, so logging here would flood at class-load
-                // time on a hot path.
-                return parent.loadClass(name)
-            }
+            // Try to find in plugin JAR first
+            try {
+                val clazz = findClass(name)
+                if (resolve) {
+                    resolveClass(clazz)
+                }
+                return clazz
+            } catch (notInPluginJar: ClassNotFoundException) {
+                // One read: _state can move UNLOAD_IN_PROGRESS -> UNLOADED under us,
+                // and the message must not disagree with the structured field.
+                val stateAtRefusal = state
+                if (stateAtRefusal == ClassLoaderState.ACTIVE) {
+                    // Fall back to parent. Deliberately unlogged: this is the
+                    // expected delegation path for every host-provided class a
+                    // plugin touches, so logging here would flood at class-load
+                    // time on a hot path.
+                    return parent.loadClass(name)
+                }
 
             // A closed URLClassLoader answers findClass() with
             // ClassNotFoundException for EVERY name, including the ones its own
@@ -348,25 +364,21 @@ class PluginClassLoader(
             // straggler thread made the late request (a Ktor worker, a
             // coroutine dispatcher, an AWT handler) and can tear that thread
             // down mid-teardown.
-            val refusal =
-                ClassNotFoundException(
-                    "Plugin classloader for '$pluginId' is $stateAtRefusal; refusing to resolve " +
-                        "'$name' against the host classloader. Something still referenced the " +
-                        "plugin after it was unloaded - that reference is the bug.",
-                    notInPluginJar,
-                )
-            // WARN, not ERROR: refusing is the correct outcome and teardown
-            // continues. The throwable is attached so the first entry for a name
-            // carries the straggler's stack; repeats drop to DEBUG so a retry
-            // loop cannot bury the shutdown log. Best effort — logging must
-            // never replace the refusal, which is the thing that has to
-            // propagate.
-            try {
-                logRefusal(refusedClassNames.add(name), pluginId, name, stateAtRefusal, refusal)
-            } catch (_: Throwable) {
-                // Logging can itself fail during shutdown; the refusal stands.
+                val refusal =
+                    ClassNotFoundException(
+                        "Plugin classloader for '$pluginId' is $stateAtRefusal; refusing to resolve " +
+                            "'$name' against the host classloader. Something still referenced the " +
+                            "plugin after it was unloaded - that reference is the bug.",
+                        notInPluginJar,
+                    )
+                // WARN, not ERROR: refusing is the correct outcome and teardown continues.
+                try {
+                    logRefusal(refusedClassNames.add(name), pluginId, name, stateAtRefusal, refusal)
+                } catch (_: Throwable) {
+                    // Logging can itself fail during shutdown; the refusal stands.
+                }
+                throw refusal
             }
-            throw refusal
         }
     }
 
