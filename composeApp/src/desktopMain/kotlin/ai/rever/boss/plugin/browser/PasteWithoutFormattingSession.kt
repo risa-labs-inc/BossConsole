@@ -64,14 +64,19 @@ internal class PasteWithoutFormattingSession(
     fun tryRestore(): Boolean {
         synchronized(this) {
             val target = windowOriginal
-            if (pending.isEmpty() || target == null) return false
-            val current = currentContents()
-            val isOurs = pending.keys.any { it === current }
+            val current = if (pending.isNotEmpty() && target != null) currentContents() else null
+            if (target != null && current != null && pending.keys.any { it === current }) {
+                // Retire the window as restored: the next press starts fresh, and nothing
+                // about this burst outlives its own restore.
+                pending.clear()
+                windowOriginal = null
+                install(target)
+                return true
+            }
+            // Foreign content or nothing pending - retire without installing anything.
             pending.clear()
             windowOriginal = null
-            if (!isOurs) return false
-            install(target)
-            return true
+            return false
         }
     }
 }
