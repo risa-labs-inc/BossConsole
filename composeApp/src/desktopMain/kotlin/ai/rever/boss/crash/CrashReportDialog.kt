@@ -502,8 +502,8 @@ internal fun CrashReportDialog(
                             }
 
                             is CrashReportService.SubmitResult.Error -> {
-                                // The text most likely to end up pasted into a public issue, and it
-                                // interpolates a raw exception message.
+                                // SubmitResult.Error sanitizes its message at construction time via
+                                // LogSanitizer.sanitizeExceptionMessage.
                                 //
                                 // sanitizeExceptionMessage, not maskUriParams: the latter redacts
                                 // named params inside a `?`/`#` segment, and the case that
@@ -528,7 +528,7 @@ internal fun CrashReportDialog(
                                 // `request` nor `timeout` marks a secret), which keeps this
                                 // narrower than a blunt redaction. A blank message renders
                                 // "[no message]" where maskUriParams gave "[empty]".
-                                LogSanitizer.sanitizeExceptionMessage(result.message)
+                                result.message
                             }
                         }
                     }

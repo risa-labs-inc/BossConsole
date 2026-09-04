@@ -340,6 +340,27 @@ class CrashReportDialogLayoutTest {
     }
 
     @Test
+    fun submitResultErrorSanitizesAtConstruction() {
+        val raw =
+            "Failed to submit crash report: Request timeout has expired " +
+                "[url=https://api.risaboss.com/functions/v1/crash-report, request_timeout=15000 ms]"
+        val error = CrashReportService.SubmitResult.Error(raw)
+
+        kotlin.test.assertTrue(
+            error.message.contains("Request timeout has expired"),
+            "Error.message should retain non-sensitive diagnostic text",
+        )
+        kotlin.test.assertFalse(
+            error.message.contains("api.risaboss.com"),
+            "Error.message must sanitize URL hosts at construction time",
+        )
+        kotlin.test.assertFalse(
+            error.message.contains("crash-report"),
+            "Error.message must sanitize URL paths at construction time",
+        )
+    }
+
+    @Test
     fun theStackTracePaneIsCappedAndScrollsWithinThatCap() {
         setDialogAtMinimumWindowSize()
         rule.onNodeWithText("Technical Details").performClick()
