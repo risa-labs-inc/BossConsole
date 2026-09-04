@@ -61,6 +61,16 @@ data class UpdateSettingsData(
     val lastDismissedVersion: String? = null,
 )
 
+/** Filesystem destination used by [UpdateSettingsManager]. */
+internal object UpdateSettingsFiles {
+    /** Overridden by tests before [UpdateSettingsManager] initializes. */
+    @Volatile
+    var settingsFileOverride: File? = null
+
+    val settingsFile: File
+        get() = settingsFileOverride ?: BossDirectories.resolve("update-settings.json")
+}
+
 /**
  * Desktop implementation of update settings manager
  *
@@ -69,7 +79,8 @@ data class UpdateSettingsData(
  */
 actual object UpdateSettingsManager {
     private val logger = BossLogger.forComponent("UpdateSettingsManager")
-    private val settingsFile = BossDirectories.resolve("update-settings.json")
+    private val settingsFile: File
+        get() = UpdateSettingsFiles.settingsFile
     private val json =
         Json {
             prettyPrint = true
