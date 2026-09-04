@@ -1,3 +1,5 @@
+@file:Suppress("TooManyFunctions")
+
 package ai.rever.boss.app
 
 import ai.rever.boss.components.buttons.BossActionButton
@@ -207,7 +209,7 @@ internal enum class FocusQuickActionsPlacement {
  * nowhere. It reads as "permanent" for the same reason `hides(RIGHT)` does, so it belongs in the
  * same test rather than in the reveal flags.
  */
-// Six inputs, and each one is a different way the answer changes: whether these are wanted at
+// Seven inputs, and each one is a different way the answer changes: whether these are wanted at
 // all, then each host that could take them in turn. Folding them into a holder would put every
 // caller and every test through a builder to ask one question.
 @Suppress("LongParameterList")
@@ -246,6 +248,7 @@ internal fun focusQuickActionsPlacement(
      * panel is too small keeps the cluster, which is what it had before this.
      */
     panelFootAvailable: Boolean = false,
+    railActionsFit: Boolean = true,
 ): FocusQuickActionsPlacement =
     when {
         !focusQuickActionsVisible(settings, topBarHidden, showTopBar) -> FocusQuickActionsPlacement.NONE
@@ -261,7 +264,7 @@ internal fun focusQuickActionsPlacement(
         // Then that same bar collapsed, whose rail has room at the bottom. This case used to fall
         // through to the cluster, which is how asking for MORE content width ended up putting an
         // overlay in the content.
-        verticalBar == VerticalBarHost.RAIL -> FocusQuickActionsPlacement.TAB_BAR_RAIL
+        verticalBar == VerticalBarHost.RAIL && railActionsFit -> FocusQuickActionsPlacement.TAB_BAR_RAIL
 
         // No vertical bar at all, so nothing above can host them. The right panel's foot while
         // that panel is open and big enough to hold one, the corner of the content otherwise. See
@@ -340,6 +343,32 @@ internal fun focusQuickActionsRailRows(
     } else {
         0
     }
+
+/**
+ * Whether the quick-action column fits in the available height of the collapsed tab rail.
+ *
+ * The rail actions are stacked vertically: each button is 32dp high, with 4dp between buttons,
+ * 4dp of vertical padding, and a 1dp separator above them.
+ */
+internal fun railFitsActions(
+    availableHeight: Dp,
+    actionCount: Int,
+): Boolean {
+    if (actionCount == 0) return true
+
+    val buttonHeight = 32.dp
+    val gap = 4.dp
+    val verticalPadding = 8.dp
+    val separator = 1.dp
+
+    val actionsHeight =
+        buttonHeight * actionCount +
+            gap * (actionCount - 1) +
+            verticalPadding +
+            separator
+
+    return actionsHeight <= availableHeight
+}
 
 /**
  * Whether there is a right rail to put the actions on: focus mode is not clearing it and it is not

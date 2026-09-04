@@ -344,6 +344,10 @@ internal fun BossAppScaffold(
     // and not an effect: there is nothing to do on the reset except be true again.
     var panelFootFits by remember(panelFooterEdge) { mutableStateOf(true) }
 
+    // Whether the collapsed tab-bar rail has enough height for its quick actions.
+    // Keyed on the vertical-bar host so changing the bar mode starts from the safe default.
+    var railActionsFit by remember(verticalBar) { mutableStateOf(true) }
+
     // Where Settings / Search / Sign Out go while focus mode holds the top bar that owns them.
     // One decision, five mutually exclusive renderings - every piece of chrome the window already
     // draws before the overlay is considered at all. Read once here so the call sites below cannot
@@ -359,6 +363,7 @@ internal fun BossAppScaffold(
             // hovering it opens the drawer, which IS a full bar, so they move up into its foot for
             // as long as it is up. Only TOP position leaves nothing at all.
             verticalBar = verticalBar,
+            railActionsFit = railActionsFit,
             // Only consulted once the bar has offered nothing, i.e. in TOP position.
             panelFootAvailable = panelFootAvailable(panelFooterEdge, panelFootFits),
         )
@@ -743,6 +748,7 @@ internal fun BossAppScaffold(
                             },
                             onDrawerVisibleChange = { visible -> drawerVisible = visible },
                             onBarRailedChange = { railed -> barRailed = railed },
+                            onRailFitsActionsChange = { fits -> railActionsFit = fits },
                             verticalBarBelowMap = {
                                 VerticalBarHostActions(
                                     actions =

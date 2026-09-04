@@ -224,6 +224,7 @@ fun WindowVerticalTabBar(
      * With two slots each branch is handed only its own layout, so there is nothing to get wrong.
      */
     belowTabs: @Composable () -> Unit = {},
+    onRailFitsActionsChange: (Boolean) -> Unit = {},
 ) {
     // The pane the user is working in owns the bar's shared chrome: its bar menu, its Favorites
     // shelf, and where a favourite opens. Falling back to the first group keeps every one of
@@ -275,6 +276,7 @@ fun WindowVerticalTabBar(
                 onExpand = { onToggleCollapse?.invoke() },
                 onNewTab = lead.state.openNewTab,
                 belowTabs = belowTabs,
+                onRailFitsActionsChange = onRailFitsActionsChange,
             )
         } else {
             ExpandedGroups(

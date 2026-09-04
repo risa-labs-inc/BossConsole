@@ -1,5 +1,7 @@
 package ai.rever.boss.components.window_panel.components.main_window_panels
 
+import ai.rever.boss.app.FOCUS_QUICK_ACTION_COUNT
+import ai.rever.boss.app.railFitsActions
 import ai.rever.boss.components.bars.getPanelScrollbarConfig
 import ai.rever.boss.components.bars.lazyListScrollbar
 import ai.rever.boss.components.dividers.SDivider
@@ -19,6 +21,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -46,8 +49,10 @@ import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -181,6 +186,7 @@ fun BossTabRail(
     onExpand: () -> Unit,
     onNewTab: () -> Unit,
     belowTabs: @Composable () -> Unit = {},
+    onRailFitsActionsChange: (Boolean) -> Unit = {},
 ) {
     val colors = BossTheme.colors
     Column(
@@ -230,7 +236,16 @@ fun BossTabRail(
         // Below the "+", not above it: that button belongs to the tabs this rail is a list of,
         // and these belong to the app. The slot draws its own rule, so a rail with nothing to put
         // here ends at the "+" exactly as it always did.
-        belowTabs()
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val fits =
+                railFitsActions(
+                    availableHeight = maxHeight,
+                    actionCount = FOCUS_QUICK_ACTION_COUNT,
+                )
+            val report by rememberUpdatedState(onRailFitsActionsChange)
+            LaunchedEffect(fits) { report(fits) }
+            belowTabs()
+        }
     }
 }
 

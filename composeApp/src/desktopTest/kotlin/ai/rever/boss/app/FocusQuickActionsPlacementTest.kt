@@ -24,11 +24,13 @@ class FocusQuickActionsPlacementTest {
         showTopBar: Boolean,
         topBarHidden: Boolean = false,
         rightStripHidden: Boolean = false,
+        railActionsFit: Boolean = true,
     ) = focusQuickActionsPlacement(
         settings = settings,
         topBarHidden = topBarHidden,
         rightStripHidden = rightStripHidden,
         showTopBar = showTopBar,
+        railActionsFit = railActionsFit,
     )
 
     private fun rowsOf(
@@ -223,6 +225,37 @@ class FocusQuickActionsPlacementTest {
         assertEquals(FOCUS_QUICK_ACTION_COUNT, rowsOf(off, topBarHidden = true))
         assertEquals(0, rowsOf(off, topBarHidden = true, rightStripHidden = true))
         assertEquals(0, rowsOf(off, rightStripHidden = true))
+    }
+
+    @Test
+    fun `the collapsed rail hosts actions when there is enough height`() {
+        assertEquals(
+            FocusQuickActionsPlacement.TAB_BAR_RAIL,
+            focusQuickActionsPlacement(
+                settings = clearsTopKeepsRail,
+                topBarHidden = true,
+                rightStripHidden = true,
+                showTopBar = false,
+                verticalBar = VerticalBarHost.RAIL,
+                railActionsFit = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `the collapsed rail falls back when actions do not fit`() {
+        assertEquals(
+            FocusQuickActionsPlacement.PANEL_FOOTER,
+            focusQuickActionsPlacement(
+                settings = clearsTopKeepsRail,
+                topBarHidden = true,
+                rightStripHidden = true,
+                showTopBar = false,
+                verticalBar = VerticalBarHost.RAIL,
+                railActionsFit = false,
+                panelFootAvailable = true,
+            ),
+        )
     }
 
     private fun railFor(placement: FocusQuickActionsPlacement) =

@@ -209,7 +209,7 @@ fun KeyCaptureDialog(
                                 val binding =
                                     KeyBinding(
                                         actionId = actionId,
-                                        key = capturedKey!!.keyCode.toString(),
+                                        key = capturedKey!!.toString().removePrefix("Key: ").trim(),
                                         modifiers = capturedModifiers,
                                         context = context,
                                         category = category,
