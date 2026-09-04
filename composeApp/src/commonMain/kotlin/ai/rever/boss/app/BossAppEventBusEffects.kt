@@ -6,6 +6,7 @@ import ai.rever.boss.components.events.DashboardEventBus
 import ai.rever.boss.components.events.DashboardOpenTabTypeEvent
 import ai.rever.boss.components.events.FileEventBus
 import ai.rever.boss.components.events.GitTerminalEventBus
+import ai.rever.boss.components.events.HtmlFileEventBus
 import ai.rever.boss.components.events.NavigationTargetBus
 import ai.rever.boss.components.events.PanelEventBus
 import ai.rever.boss.components.events.RunEventBus
@@ -350,6 +351,17 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                         openTerminalLink(event.url, settings.openMode, splitViewState, event.sourceTerminalId, this, windowId = windowId)
                     }
                 }
+            }.launchIn(this)
+    }
+
+    // Listen for HTML file open prompt events
+    LaunchedEffect(splitViewState, windowId) {
+        HtmlFileEventBus.openPromptEvents
+            .filter { event -> event.sourceWindowId == windowId }
+            .onEach { event ->
+                state.pendingHtmlFilePath = event.filePath
+                state.pendingHtmlFileName = event.fileName
+                state.showHtmlFileOpenDialog = true
             }.launchIn(this)
     }
 

@@ -26,6 +26,9 @@ import ai.rever.boss.components.window_panel.components.main_window_panels.remem
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberTabGroupExpansion
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberToggleCollapseAction
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberWindowTabGroups
+import ai.rever.boss.components.events.HtmlFileEventBus
+import ai.rever.boss.html.HtmlFileOpenMode
+import ai.rever.boss.html.HtmlFileSettingsManager
 import ai.rever.boss.icons.FileIcons
 import ai.rever.boss.platform.bossFileDropTarget
 import ai.rever.boss.plugin.api.Panel
@@ -540,6 +543,11 @@ class SplitViewState(
             return ext in BROWSER_FILE_EXTENSIONS
         }
 
+        fun isHtmlFile(fileName: String): Boolean {
+            val ext = fileName.substringAfterLast('.', "").lowercase()
+            return ext == "html" || ext == "htm"
+        }
+
         fun toFileUrl(filePath: String): String =
             java.io
                 .File(filePath)
@@ -547,6 +555,7 @@ class SplitViewState(
                 .toString()
     }
 
+    @Suppress("ReturnCount")
     fun openFileInActivePanel(
         filePath: String,
         fileName: String,
@@ -555,6 +564,28 @@ class SplitViewState(
         if (shouldOpenInBrowser(fileName)) {
             openUrlInActivePanel(toFileUrl(filePath), fileName)
             return
+        }
+
+        // Route .html / .htm files based on user preference
+        if (isHtmlFile(fileName)) {
+            when (HtmlFileSettingsManager.currentSettings.value.openMode) {
+                HtmlFileOpenMode.EDITOR -> {
+                    openFileInEditorTab(filePath, fileName)
+                    return
+                }
+
+                HtmlFileOpenMode.BROWSER -> {
+                    openFileInBrowserTab(filePath, fileName)
+                    return
+                }
+
+                HtmlFileOpenMode.ALWAYS_ASK -> {
+                    openScope.launch {
+                        HtmlFileEventBus.emitOpenPrompt(filePath, fileName, windowId)
+                    }
+                    return
+                }
+            }
         }
 
         // Route .ipynb to the notebook editor — but only when the jupyter-notebook
@@ -568,6 +599,17 @@ class SplitViewState(
         }
 
         openFileInEditorTab(filePath, fileName)
+    }
+
+    /**
+     * Force-open a file in a browser tab, bypassing smart file routing.
+     * Used by "Open With > Browser" context menu action / explicit override.
+     */
+    fun openFileInBrowserTab(
+        filePath: String,
+        fileName: String,
+    ) {
+        openUrlInActivePanel(toFileUrl(filePath), fileName)
     }
 
     /**
