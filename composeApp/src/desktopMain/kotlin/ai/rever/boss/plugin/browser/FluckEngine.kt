@@ -51,6 +51,20 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
+ * Clipboard bookkeeping for paste-without-formatting (issue #205). One session for the
+ * process: the system clipboard is JVM-wide, so two presses in different tabs within the
+ * restore window are still one round trip and must settle together. See
+ * [PasteWithoutFormattingSession] for why the restore is identity-based rather than
+ * text-based - the text projection alone cannot tell "our write is still on the clipboard"
+ * from "a previous press already restored the rich original".
+ */
+private val pasteWithoutFormattingSession =
+    PasteWithoutFormattingSession(
+        currentContents = { Toolkit.getDefaultToolkit().systemClipboard.getContents(null) },
+        install = { Toolkit.getDefaultToolkit().systemClipboard.setContents(it, null) },
+    )
+
+/**
  * Classification of engine initialization errors for better user feedback.
  */
 sealed class EngineInitError {
@@ -3099,10 +3113,17 @@ object FluckEngine {
                                 // 4. Restore original clipboard after delay
                                 try {
                                     val clipboard = Toolkit.getDefaultToolkit().systemClipboard
-                                    val originalContents = clipboard.getContents(null)
                                     val plainText = clipboard.getData(java.awt.datatransfer.DataFlavor.stringFlavor) as? String
                                     if (plainText != null) {
-                                        clipboard.setContents(java.awt.datatransfer.StringSelection(plainText), null)
+                                        // Install the plain-text-only version and record the exact
+                                        // instance for the deferred restore. Identity, not text:
+                                        // "our write is still there" and "a previous press already
+                                        // restored the rich original" share a string projection, and
+                                        // only the instance tells them apart (review of this PR,
+                                        // re: #205's double-press downgrade).
+                                        val written = java.awt.datatransfer.StringSelection(plainText)
+                                        pasteWithoutFormattingSession.registerWrite(written)
+                                        clipboard.setContents(written, null)
                                         // Dispatch Cmd+V (or Ctrl+V) as a native key event to trigger paste
                                         val pasteModifiers =
                                             com.teamdev.jxbrowser.ui.KeyModifiers
@@ -3124,14 +3145,36 @@ object FluckEngine {
                                                 ).keyModifiers(pasteModifiers)
                                                 .build(),
                                         )
-                                        // Restore original clipboard after paste completes
-                                        if (originalContents != null) {
-                                            CoroutineScope(Dispatchers.IO).launch {
-                                                delay(200)
-                                                try {
-                                                    clipboard.setContents(originalContents, null)
-                                                } catch (_: Exception) {
+                                        // Restore after paste completes. Fires only while the
+                                        // clipboard still holds one of this window's writes, and
+                                        // puts back the content that preceded the FIRST of them -
+                                        // so a user copy in the window wins, and a burst of
+                                        // presses converges on the rich original instead of
+                                        // downgrading it to the last press's plain text.
+                                        CoroutineScope(Dispatchers.IO).launch {
+                                            delay(200)
+                                            try {
+                                                if (!pasteWithoutFormattingSession.tryRestore()) {
+                                                    // The clipboard changed hands mid-window, or
+                                                    // every write already restored. Debug, not
+                                                    // info: happy path, and a line per keystroke
+                                                    // would be noise.
+                                                    logger.debug(
+                                                        LogCategory.BROWSER,
+                                                        "Paste-without-formatting restore skipped - clipboard moved on",
+                                                    )
                                                 }
+                                            } catch (e: Exception) {
+                                                // A locked clipboard must not crash the worker.
+                                                // Leaving the plain text in place is the safe
+                                                // side of every failure here: pasting formatted
+                                                // text later is recoverable, destroying a fresh
+                                                // copy is not.
+                                                logger.debug(
+                                                    LogCategory.BROWSER,
+                                                    "Clipboard restore failed, leaving plain text in place",
+                                                    mapOf("error" to (e::class.simpleName ?: "unknown")),
+                                                )
                                             }
                                         }
                                     }
