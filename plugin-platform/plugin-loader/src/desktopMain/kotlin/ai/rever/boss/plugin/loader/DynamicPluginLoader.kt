@@ -411,16 +411,18 @@ class DynamicPluginLoaderImpl(
             // moving the mark up would make every plugin's dispose() that
             // lazily touches a host class start throwing. PluginUnloadOrderingTest
             // pins this.
+            @Suppress("TooGenericExceptionCaught")
             try {
                 loadedPlugin.instance.dispose()
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 logger.warn(
                     LogCategory.SYSTEM,
                     "Error disposing plugin",
                     mapOf(
                         "pluginId" to pluginId,
-                        "error" to (e.message ?: "unknown"),
+                        "error" to (e.message ?: e::class.simpleName ?: "unknown"),
                     ),
+                    e,
                 )
             }
 
