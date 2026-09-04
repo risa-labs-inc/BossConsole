@@ -59,6 +59,11 @@ class PluginClassLoader(
     private val sharedPackages: Set<String> = defaultSharedPackages,
 ) : URLClassLoader(urls, parent) {
     companion object {
+        init {
+            // Register during class initialization so getClassLoadingLock is per name.
+            registerAsParallelCapable()
+        }
+
         private val logger = BossLogger.forComponent("PluginClassLoader")
 
         /**
@@ -242,47 +247,50 @@ class PluginClassLoader(
     override fun loadClass(
         name: String,
         resolve: Boolean,
-    ): Class<*> {
-        // Check if already loaded
-        val loadedClass = findLoadedClass(name)
-        if (loadedClass != null) {
-            return loadedClass
-        }
+    ): Class<*> =
+        synchronized(getClassLoadingLock(name)) {
+            // Keep the lookup and definition under the same lock: concurrent first
+            // loads must not both miss here and define the same plugin class twice.
+            // Check if already loaded
+            val loadedClass = findLoadedClass(name)
+            if (loadedClass != null) {
+                return@synchronized loadedClass
+            }
 
-        // Check state. Loading is still allowed while the loader winds down —
-        // orderly teardown needs it: classes this loader already defined (the
-        // early return above), shared host classes (parent-first, below), and
-        // the plugin's own jar until close() shuts the jar. What is NOT allowed
-        // any more is delegating a class the plugin jar cannot supply to the
-        // host — see [loadClassChildFirst].
-        //
-        // DEBUG, not WARN: this fires on every post-ACTIVE attempt including the
-        // legitimate ones above, and it is not deduped, so at WARN a retry loop
-        // would bury the shutdown log with the benign message and hide the one
-        // that matters. The refusal in loadClassChildFirst is the WARN.
-        if (isUnloading) {
-            logger.debug(
-                LogCategory.SYSTEM,
-                "Attempt to load class from unloading classloader",
-                mapOf(
-                    "pluginId" to pluginId,
-                    "className" to name,
-                    "state" to state.name,
-                ),
-            )
-        }
+            // Check state. Loading is still allowed while the loader winds down —
+            // orderly teardown needs it: classes this loader already defined (the
+            // early return above), shared host classes (parent-first, below), and
+            // the plugin's own jar until close() shuts the jar. What is NOT allowed
+            // any more is delegating a class the plugin jar cannot supply to the
+            // host — see [loadClassChildFirst].
+            //
+            // DEBUG, not WARN: this fires on every post-ACTIVE attempt including the
+            // legitimate ones above, and it is not deduped, so at WARN a retry loop
+            // would bury the shutdown log with the benign message and hide the one
+            // that matters. The refusal in loadClassChildFirst is the WARN.
+            if (isUnloading) {
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Attempt to load class from unloading classloader",
+                    mapOf(
+                        "pluginId" to pluginId,
+                        "className" to name,
+                        "state" to state.name,
+                    ),
+                )
+            }
 
-        // Check if this is a shared package (parent-first)
-        val isSharedPackage = sharedPackages.any { name.startsWith(it) }
+            // Check if this is a shared package (parent-first)
+            val isSharedPackage = sharedPackages.any { name.startsWith(it) }
 
-        return if (isSharedPackage) {
-            // Parent-first loading for shared packages
-            super.loadClass(name, resolve)
-        } else {
-            // Child-first loading for plugin classes
-            loadClassChildFirst(name, resolve)
+            if (isSharedPackage) {
+                // Parent-first loading for shared packages
+                super.loadClass(name, resolve)
+            } else {
+                // Child-first loading for plugin classes
+                loadClassChildFirst(name, resolve)
+            }
         }
-    }
 
     /**
      * Load a class with child-first strategy.
