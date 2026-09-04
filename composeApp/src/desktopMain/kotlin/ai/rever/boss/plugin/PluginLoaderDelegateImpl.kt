@@ -71,6 +71,17 @@ class PluginLoaderDelegateImpl(
      */
     private val dependencyReporter = MissingDependencyReporter.forManager(dynamicPluginManager)
 
+    init {
+        // Issue #180: the manager's re-activation paths - enablePlugin and the RBAC
+        // access-regain loop in handleAccessChange - re-register a plugin without consulting
+        // its manifest, and a dependency removed while the plugin sat disabled leaves it in
+        // the silent looks-alive-does-nothing state. The manager is commonMain and the
+        // reporter desktopMain, so the manager exposes a notifier hook and this delegate
+        // binds it to the same reporter the install paths use - one reporter, one definition
+        // of "installed", one prompt shape.
+        dynamicPluginManager.dependencyMissingNotifier = dependencyReporter::report
+    }
+
     /**
      * Report the plugin's unmet dependencies (unless this is a reload) and describe it for the
      * caller.

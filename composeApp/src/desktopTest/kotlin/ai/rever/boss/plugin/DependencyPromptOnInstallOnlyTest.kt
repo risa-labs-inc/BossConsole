@@ -18,18 +18,28 @@ import kotlin.test.assertTrue
  * Same approach as `WindowsArm64SourceIsolationTest`, for the same reason - a mistake no
  * behavioural test can see should still fail a PR. Everything else about the prompt now has real
  * tests (`MissingDependencyReporterTest`, `PluginDependencyResolutionTest`), so this file is
- * deliberately down to the one property that cannot have one.
+ * down to the properties that cannot have one: the install-only rule above, and the two
+ * re-activation paths that must report again since #180 (a dependency removed while its
+ * dependent sat disabled leaves a re-enabled plugin registering against a provider that is
+ * not there - re-enabling is a user action, so it reports).
  */
 class DependencyPromptOnInstallOnlyTest {
+    private fun repoRoot(): File =
+        assertNotNull(
+            generateSequence(File("").absoluteFile) { it.parentFile }
+                .firstOrNull { File(it, "composeApp/build.gradle.kts").isFile },
+            "could not locate the repository root",
+        )
+
     private fun source(): String {
-        val root =
-            assertNotNull(
-                generateSequence(File("").absoluteFile) { it.parentFile }
-                    .firstOrNull { File(it, "composeApp/build.gradle.kts").isFile },
-                "could not locate the repository root",
-            )
-        val file = File(root, "composeApp/src/desktopMain/kotlin/ai/rever/boss/plugin/PluginLoaderDelegateImpl.kt")
+        val file = File(repoRoot(), "composeApp/src/desktopMain/kotlin/ai/rever/boss/plugin/PluginLoaderDelegateImpl.kt")
         assertTrue(file.isFile, "PluginLoaderDelegateImpl.kt not found at ${file.absolutePath}")
+        return file.readText()
+    }
+
+    private fun managerSource(): String {
+        val file = File(repoRoot(), "composeApp/src/commonMain/kotlin/ai/rever/boss/components/plugin/DynamicPluginManager.kt")
+        assertTrue(file.isFile, "DynamicPluginManager.kt not found at ${file.absolutePath}")
         return file.readText()
     }
 
@@ -70,6 +80,41 @@ class DependencyPromptOnInstallOnlyTest {
         assertTrue(
             Regex("""if\s*\(\s*reportDependencies\b[\s\S]{0,400}?\.report\(""").containsMatchIn(source()),
             "the load path must consult reportDependencies before reporting",
+        )
+    }
+
+    @Test
+    fun `the delegate binds the manager's re-activation notifier to the reporter`() {
+        // The manager is commonMain and the reporter desktopMain, so the notifier reaches the
+        // prompt only if this binding exists. Asserting the property, not the formatting.
+        assertTrue(
+            Regex("""dependencyMissingNotifier\s*=\s*dependencyReporter\.report""").containsMatchIn(source()),
+            "PluginLoaderDelegateImpl must bind dependencyMissingNotifier to the reporter (issue #180)",
+        )
+    }
+
+    @Test
+    fun `re-enabling a disabled plugin reports its unmet dependencies`() {
+        // A genuine re-enable (not a redundant one) is a user action, so after the panels
+        // refresh it must announce the manifest to the notifier.
+        assertTrue(
+            Regex(
+                """if\s*\(\s*result\.isSuccess\s*&&\s*!wasAlreadyEnabled\s*\)\s*\{[\s\S]{0,600}?""" +
+                    """dependencyMissingNotifier\?\.invoke\(""",
+            ).containsMatchIn(managerSource()),
+            "enablePlugin must report unmet dependencies on a genuine re-enable (issue #180)",
+        )
+    }
+
+    @Test
+    fun `regaining RBAC access reports unmet dependencies`() {
+        // Anchor on the log line the success path writes, so the assertion stays tied to the
+        // re-register that succeeded rather than to an arbitrary point in the loop.
+        assertTrue(
+            Regex(
+                """Re-registered plugin after access gained[\s\S]{0,600}?dependencyMissingNotifier\?\.invoke\(""",
+            ).containsMatchIn(managerSource()),
+            "handleAccessChange must report unmet dependencies when a hidden plugin becomes visible (issue #180)",
         )
     }
 }

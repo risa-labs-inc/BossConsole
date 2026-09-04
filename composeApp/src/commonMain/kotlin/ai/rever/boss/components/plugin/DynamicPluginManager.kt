@@ -132,6 +132,27 @@ class DynamicPluginManager(
     private val mutex = Mutex()
 
     /**
+     * Raised after a re-activation path re-registers a plugin whose manifest may declare
+     * dependencies that are no longer present (issue #180).
+     *
+     * The dependency check runs at install and never again, but a required dependency can be
+     * removed while its dependent sits DISABLED - the unload veto only covers LOADED dependents,
+     * which is what #178's isDisabled exemption opened. Re-enabling such a plugin registers it
+     * against a provider that is not there: the silent looks-alive-does-nothing state
+     * MissingDependencyReporter exists to prevent. Re-enabling and RBAC access regain are user
+     * actions, so - unlike a reload - they report.
+     *
+     * A function property rather than a constructor parameter because the thing that answers it,
+     * MissingDependencyReporter, lives in desktopMain while this manager is commonMain - the same
+     * source-set split `MissingDependencyInstaller` crosses by injection. PluginLoaderDelegateImpl
+     * binds it to the reporter's `report`, which computes the missing set with the real
+     * jar-existence predicate and raises the same prompt the install paths raise. Null in tests
+     * and wherever no reporter is wired; the notifier is an announcement, never a veto - a
+     * re-enable succeeds even when it fires.
+     */
+    var dependencyMissingNotifier: ((PluginManifest) -> Unit)? = null
+
+    /**
      * The underlying plugin loader.
      */
     private val pluginLoader =
@@ -1606,7 +1627,15 @@ class DynamicPluginManager(
         // Outside the mutex, same as installPlugin. Skipped when the plugin
         // was already enabled: a redundant enable must not discard an open
         // panel's in-memory state (resetComponent loses it by design).
-        if (result.isSuccess && !wasAlreadyEnabled) notifyPanelsRefresh(pluginId)
+        if (result.isSuccess && !wasAlreadyEnabled) {
+            notifyPanelsRefresh(pluginId)
+            // Issue #180: the dependency check ran at install and never again, but the
+            // dependency can have been removed while this plugin sat disabled. Announce it
+            // so the existing prompt can offer the install; the enable itself stands.
+            _pluginStates.value[pluginId]?.manifest?.let { manifest ->
+                dependencyMissingNotifier?.invoke(manifest)
+            }
+        }
         return result
     }
 
@@ -2276,6 +2305,12 @@ class DynamicPluginManager(
                                 "pluginId" to pluginId,
                             ),
                         )
+                        // Issue #180: same re-activation gap as enablePlugin - the plugin sat
+                        // unregistered while hidden, its dependency may have been removed in
+                        // that window, and registering against an absent provider is the silent
+                        // looks-alive-does-nothing state. Regained access is user-visible, so
+                        // report like an install would; the re-register itself stands.
+                        dependencyMissingNotifier?.invoke(info.manifest)
                     } catch (e: Throwable) {
                         logger.error(
                             LogCategory.SYSTEM,
