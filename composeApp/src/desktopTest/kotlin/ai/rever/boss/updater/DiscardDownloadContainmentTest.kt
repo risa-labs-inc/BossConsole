@@ -65,7 +65,10 @@ class DiscardDownloadContainmentTest {
         try {
             Files.createSymbolicLink(link.toPath(), victim.toPath())
         } catch (e: java.nio.file.FileSystemException) {
-            org.junit.jupiter.api.Assumptions.assumeTrue(false, "Symlinks not supported or permitted on this OS environment: ${e.message}")
+            org.junit.jupiter.api.Assumptions.assumeTrue(
+                false,
+                "Symlinks not supported or permitted on this OS environment: ${e.message}",
+            )
             return
         }
 
