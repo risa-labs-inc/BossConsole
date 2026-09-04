@@ -17,14 +17,16 @@ import java.io.File
 /**
  * Raises the install-time prompt for dependencies a plugin declares but which are absent.
  *
- * A class, and not the private method it started as, because more than one host path installs
- * on a user's behalf and each of them should report:
+ * A class, and not the private method it started as, because more than one host path
+ * activates a plugin on a user's behalf and each of them should report:
  *
  * - `PluginLoaderDelegateImpl.loadPlugin`, which the plugin-manager's install and update flows
  *   reach directly;
  * - `PluginInstallService`, the first-run wizard - the path where several plugins are chosen at
  *   once, so the one where an unmet dependency is *most* likely;
- * - `PluginUpdateBridge`, where an update can add a dependency the installed version never had.
+ * - `PluginUpdateBridge`, where an update can add a dependency the installed version never had;
+ * - `DynamicPluginManager.enablePlugin` and `handleAccessChange`, via `onPluginActivated` -
+ *   re-enabling a disabled plugin, including one that was hidden for lack of access (#180).
  *
  * What must not report is a **reload**: `resetPluginInstances`, the Toolbox's reload and the
  * evolver's hot reload all end in a load, and none of them is a user asking to install

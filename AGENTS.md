@@ -122,6 +122,11 @@ an update-shaped verb (or an intent parameter) on the api rather than a change t
   dependency) and `PluginUpdateBridge` (an update can add a dependency the installed version
   never declared). A **reload** must not report: `resetPluginInstances`, the Toolbox reload and
   the evolver's hot reload all end in a load, and none is a user asking for anything.
+  **Re-enable is a user action in a way a reload is not.** `enablePlugin` and `handleAccessChange`
+  (RBAC un-hide) never go through those three install reporters, and after #178 a required
+  dependency can be removed while its dependent sits disabled. Both paths therefore raise the
+  same prompt via `DynamicPluginManager.onPluginActivated`, wired by `PluginLoaderDelegateSetup`
+  to `MissingDependencyReporter.report`. A redundant enable (already enabled) does not re-offer.
 - **Optional dependencies are reported, flagged, not dropped.** An optional dependency is how a
   plugin says "this feature needs that plugin". Dropping them would leave this reporting
   nothing for the case it was built for.

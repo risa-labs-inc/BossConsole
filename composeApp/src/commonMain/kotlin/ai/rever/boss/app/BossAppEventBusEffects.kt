@@ -214,8 +214,9 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
     }
 
     // A plugin the user just installed declares a dependency that is not present. Only
-    // user-initiated installs report here (see PluginLoaderDelegateImpl), so this cannot
-    // fire during startup restore or the api hot-swap's reload-all.
+    // user-initiated installs and re-activations report here (see PluginLoaderDelegateImpl
+    // and DynamicPluginManager.onPluginActivated), so this cannot fire during startup
+    // restore or the api hot-swap's reload-all.
     LaunchedEffect(windowId) {
         PluginDependencyEventBus.missingDependencies
             .collect { prompt ->
