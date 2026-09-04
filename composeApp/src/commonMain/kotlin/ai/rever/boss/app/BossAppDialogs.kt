@@ -5,6 +5,7 @@ import ai.rever.boss.components.dialogs.CloneProjectDialog
 import ai.rever.boss.components.dialogs.ConfirmationDialog
 import ai.rever.boss.components.dialogs.GlobalSearchDialog
 import ai.rever.boss.components.dialogs.LogoutConfirmationDialog
+import ai.rever.boss.components.dialogs.McpApprovalDialog
 import ai.rever.boss.components.dialogs.NewProjectWizardDialog
 import ai.rever.boss.components.dialogs.NewTabDialog
 import ai.rever.boss.components.dialogs.ProjectOpenModeDialog
@@ -43,6 +44,7 @@ import ai.rever.boss.dashboard.DashboardStatsManager
 import ai.rever.boss.icons.FileIcons
 import ai.rever.boss.keymap.KeymapSettingsManager
 import ai.rever.boss.keymap.model.KeymapActions
+import ai.rever.boss.mcp.sandbox.McpApprovalEventBus
 import ai.rever.boss.platform.rememberDirectoryPicker
 import ai.rever.boss.plugin.api.Panel.Companion.left
 import ai.rever.boss.plugin.api.Panel.Companion.top
@@ -98,6 +100,17 @@ internal fun BossAppDialogs(state: BossAppState) {
 
     // Keymap settings (used by ShortcutHelpDialog)
     val keymapSettings by KeymapSettingsManager.currentSettings.collectAsState()
+
+    // Agent Tool Sandbox approval prompts for HIGH/CRITICAL MCP tool invocations
+    val currentMcpApprovalRequest by McpApprovalEventBus.approvalRequests.collectAsState(initial = null)
+    currentMcpApprovalRequest?.takeIf { !it.answer.isCompleted }?.let { request ->
+        McpApprovalDialog(
+            request = request,
+            onApprove = { request.answer.complete(true) },
+            onDeny = { request.answer.complete(false) },
+            onDismiss = { request.answer.complete(false) },
+        )
+    }
 
     // Plugin update confirmation prompt (from "Check for Updates" or the header badge).
     state.pluginUpdatePrompt?.let { prompt ->
