@@ -48,7 +48,7 @@ class SplitViewOperationsImpl(
         filePath: String,
         fileName: String,
     ) {
-        splitViewState.openUrlInActivePanel(SplitViewState.toFileUrl(filePath), fileName)
+        splitViewState.openFileInBrowserTab(filePath, fileName)
     }
 
     override fun openFileInEditor(

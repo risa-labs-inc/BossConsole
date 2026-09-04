@@ -136,6 +136,11 @@ internal class BossAppState(
     var pendingTerminalLinkUrl by mutableStateOf("")
     var pendingTerminalSourceId by mutableStateOf<String?>(null)
 
+    // HTML file open dialog
+    var showHtmlFileOpenDialog by mutableStateOf(false)
+    var pendingHtmlFilePath by mutableStateOf("")
+    var pendingHtmlFileName by mutableStateOf("")
+
     /**
      * A dependency a just-installed plugin declares but which is absent.
      *

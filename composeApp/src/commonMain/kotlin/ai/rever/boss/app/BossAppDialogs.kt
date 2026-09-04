@@ -4,6 +4,7 @@ import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.components.dialogs.CloneProjectDialog
 import ai.rever.boss.components.dialogs.ConfirmationDialog
 import ai.rever.boss.components.dialogs.GlobalSearchDialog
+import ai.rever.boss.components.dialogs.HtmlFileOpenDialog
 import ai.rever.boss.components.dialogs.LogoutConfirmationDialog
 import ai.rever.boss.components.dialogs.NewProjectWizardDialog
 import ai.rever.boss.components.dialogs.NewTabDialog
@@ -40,6 +41,8 @@ import ai.rever.boss.components.workspaces.SelectWorkspaceDialog
 import ai.rever.boss.components.workspaces.applyWorkspace
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.dashboard.DashboardStatsManager
+import ai.rever.boss.html.HtmlFileOpenMode
+import ai.rever.boss.html.HtmlFileSettingsManager
 import ai.rever.boss.icons.FileIcons
 import ai.rever.boss.keymap.KeymapSettingsManager
 import ai.rever.boss.keymap.model.KeymapActions
@@ -809,6 +812,42 @@ internal fun BossAppDialogs(state: BossAppState) {
                 )
                 state.pendingTerminalLinkUrl = ""
                 state.pendingTerminalSourceId = null
+            },
+        )
+    }
+
+    // HTML file open dialog
+    if (state.showHtmlFileOpenDialog) {
+        HtmlFileOpenDialog(
+            fileName = state.pendingHtmlFileName,
+            filePath = state.pendingHtmlFilePath,
+            onDismiss = {
+                state.showHtmlFileOpenDialog = false
+                state.pendingHtmlFilePath = ""
+                state.pendingHtmlFileName = ""
+            },
+            onOpenChoice = { mode, rememberChoice ->
+                state.showHtmlFileOpenDialog = false
+                val filePath = state.pendingHtmlFilePath
+                val fileName = state.pendingHtmlFileName
+                state.pendingHtmlFilePath = ""
+                state.pendingHtmlFileName = ""
+
+                if (rememberChoice) {
+                    coroutineScope.launch {
+                        HtmlFileSettingsManager.setOpenMode(mode)
+                    }
+                }
+
+                when (mode) {
+                    HtmlFileOpenMode.EDITOR, HtmlFileOpenMode.ALWAYS_ASK -> {
+                        splitViewState.openFileInEditorTab(filePath, fileName)
+                    }
+
+                    HtmlFileOpenMode.BROWSER -> {
+                        splitViewState.openFileInBrowserTab(filePath, fileName)
+                    }
+                }
             },
         )
     }
