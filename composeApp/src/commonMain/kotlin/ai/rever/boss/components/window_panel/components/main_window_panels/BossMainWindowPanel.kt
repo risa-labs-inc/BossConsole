@@ -27,6 +27,7 @@ import ai.rever.boss.components.plugin.LocalPanelPluginIdResolver
 import ai.rever.boss.components.plugin.MissingPluginOffer
 import ai.rever.boss.components.plugin.PluginBuildRegistry
 import ai.rever.boss.components.plugin.PluginBuildTag
+import ai.rever.boss.components.plugin.TabAudioRegistry
 import ai.rever.boss.components.plugin.TabUpdateRegistry
 import ai.rever.boss.components.plugin.providers.publishSystemEvent
 import ai.rever.boss.components.plugin.tab_types.PanelHostTabInfo
@@ -1602,6 +1603,13 @@ class BossTabsComponent(
     private val tabLifecycles = mutableMapOf<String, LifecycleRegistry>()
     private val tabsNavigation = TabsNavigation<TabInfo>()
 
+    // Per-tab handlers that apply browser audio-playback state to the tab model
+    // (issue #308). Keyed by tab id, mirrored into TabAudioRegistry where
+    // BrowserHandleImpl pushes Chromium's AudioStartedPlaying/AudioStoppedPlaying
+    // by ownerTabId. Registration is per-panel and re-done in adoptTab, so the
+    // handler that fires always belongs to the panel currently showing the tab.
+    private val tabAudioHandlers = mutableMapOf<String, (Boolean) -> Unit>()
+
     // Expose tab state for UI
     val tabsState: Value<TabsNavigation.TabsState<TabInfo>> = tabsNavigation.state
 
@@ -1976,6 +1984,16 @@ class BossTabsComponent(
             // Register tab with TabUpdateRegistry for plugin updates
             TabUpdateRegistry.registerTab(config.id, componentId)
 
+            // Carry browser audio state into the tab model (issue #308). Fluck tabs only:
+            // the speaker glyph renders from FluckTabInfo, and only a browser tab has
+            // playback state to report. The handler resolves the tab by id at fire time,
+            // so a stale registration after a move is a harmless no-op.
+            if (config is FluckTabInfo) {
+                val handler: (Boolean) -> Unit = { playing -> handleAudioUpdate(config.id, playing) }
+                tabAudioHandlers[config.id] = handler
+                TabAudioRegistry.register(config.id, handler)
+            }
+
             // Add to navigation
             val index = tabsNavigation.addTab(config)
             // A newly opened tab becomes active; record it as most-recently-used and end
@@ -2032,6 +2050,9 @@ class BossTabsComponent(
             // Unregister tab from TabUpdateRegistry (ownership-checked: a no-op if a move
             // already re-registered this tab id to its destination component)
             TabUpdateRegistry.unregisterTab(it.id, componentId)
+            // Same ownership rule for the audio handler (issue #308): a move re-registered
+            // the destination's handler, and this close must not wipe it.
+            tabAudioHandlers.remove(it.id)?.let { handler -> TabAudioRegistry.unregister(it.id, handler) }
             publishSystemEvent(TabEvent(tabId = it.id, tabType = TabEventType.CLOSED, windowId = windowId))
 
             // Dispose the component if it has a dispose method
@@ -2114,6 +2135,12 @@ class BossTabsComponent(
         val config = tabsState.value.tabs[index]
         val component = tabComponents.remove(tabId) ?: return null
         val lifecycle = tabLifecycles.remove(tabId)
+        // Drop the audio handler at detach (issue #308 review): adoption re-registers its
+        // own in adoptTab, and the destroy-without-adopt path gets no close/removeTab - so
+        // detaching here is what keeps the process-wide registry from retaining this
+        // component. DetachedTab cannot do it itself: a non-inner nested class cannot reach
+        // this component's members.
+        tabAudioHandlers.remove(tabId)?.let { TabAudioRegistry.unregister(tabId, it) }
 
         // Ownership-checked: no-op if the destination already re-registered this id.
         TabUpdateRegistry.unregisterTab(tabId, componentId)
@@ -2140,6 +2167,13 @@ class BossTabsComponent(
         tabComponents[detached.config.id] = detached.component
         detached.lifecycle?.let { tabLifecycles[detached.config.id] = it }
         TabUpdateRegistry.registerTab(detached.config.id, componentId)
+        // Re-register audio under this panel (issue #308): the source's handler now
+        // misses its id lookup and would no-op, leaving the moved tab's glyph frozen.
+        if (detached.config is FluckTabInfo) {
+            val handler: (Boolean) -> Unit = { playing -> handleAudioUpdate(detached.config.id, playing) }
+            tabAudioHandlers[detached.config.id] = handler
+            TabAudioRegistry.register(detached.config.id, handler)
+        }
         val index = tabsNavigation.addTab(detached.config)
         recordTabUsage(detached.config.id)
         tabCycleOrder = null
@@ -2380,6 +2414,30 @@ class BossTabsComponent(
         tabsNavigation.updateTab(index, config)
     }
 
+    /**
+     * Apply a browser audio-playback change to this component's tab model (issue #308).
+     *
+     * Registered per tab in [addTab]/[adoptTab] and invoked by TabAudioRegistry from
+     * BrowserHandleImpl's audio event handlers. Resolves by id at fire time rather than
+     * capturing an index: playback events arrive on a JxBrowser thread at any moment,
+     * and by the time one lands the tab may have moved indices or left this panel
+     * entirely - a stale lookup must be a no-op, not a wrong-tab update.
+     */
+    private fun handleAudioUpdate(
+        tabId: String,
+        playing: Boolean,
+    ) {
+        val tabs = tabsState.value.tabs
+        val index = tabs.indexOfFirst { it.id == tabId }
+        if (index < 0) return
+        val current = tabs[index] as? FluckTabInfo ?: return
+        // Skip identical pushes: AudioStartedPlaying/StoppedPlaying are edge events,
+        // but the replay on listener registration is a level, and a redundant
+        // updateTab would invalidate Compose for no visual change.
+        if (current.isPlayingAudio == playing) return
+        updateTab(index, current.updateAudioPlaying(playing))
+    }
+
     // Get active tab component
     fun getActiveComponent(): TabComponentWithUI? {
         val activeTab = tabsState.value.activeTab ?: return null
@@ -2509,6 +2567,11 @@ class BossTabsComponent(
         // BrowserService fallback after every panel lifecycle has been destroyed.
         tabLifecycles.values.toList().forEach { it.destroy() }
         tabLifecycles.clear()
+        // Drop this component's audio handlers from the process-wide registry too (issue
+        // #308). The handler lambda captures `this`, so a stale entry would retain the whole
+        // BossTabsComponent past window teardown - the leak shape the PR review flagged.
+        tabAudioHandlers.forEach { (tabId, handler) -> TabAudioRegistry.unregister(tabId, handler) }
+        tabAudioHandlers.clear()
     }
 }
 

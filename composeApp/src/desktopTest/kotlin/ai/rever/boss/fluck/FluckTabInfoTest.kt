@@ -12,6 +12,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -442,5 +443,39 @@ class FluckTabInfoTest {
         // Original should be unchanged
         assertEquals("https://initial.com", original.url)
         assertEquals("https://current.com", original.currentUrl)
+    }
+
+    // ==================== AUDIO PLAYBACK STATE (Issue #308) ====================
+
+    @Test
+    fun `updateAudioPlaying toggles the flag without touching the rest of the model`() {
+        val tabInfo = createTabInfo(url = "https://example.com")
+        assertFalse(tabInfo.isPlayingAudio)
+
+        val playing = tabInfo.updateAudioPlaying(true)
+        assertTrue(playing.isPlayingAudio)
+        assertEquals("https://example.com", playing.currentUrl)
+        assertEquals("Test Tab", playing.title)
+
+        val stopped = playing.updateAudioPlaying(false)
+        assertFalse(stopped.isPlayingAudio)
+    }
+
+    @Test
+    fun `isPlayingAudio participates in equals for Compose change detection`() {
+        val quiet = createTabInfo()
+        val playing = createTabInfo().updateAudioPlaying(true)
+
+        assertTrue(quiet != playing, "a playback change must produce a distinct tab model, or the glyph never renders")
+        assertTrue(quiet == playing.updateAudioPlaying(false), "and toggling back restores equality")
+    }
+
+    @Test
+    fun `copy carries isPlayingAudio across`() {
+        val playing = createTabInfo().updateAudioPlaying(true)
+        val splitCopy = playing.copy(id = "split-123")
+
+        assertTrue(splitCopy.isPlayingAudio, "a split-view copy of a playing tab keeps its glyph")
+        assertEquals("split-123", splitCopy.id)
     }
 }

@@ -3,6 +3,7 @@ package ai.rever.boss.plugin.browser
 import ai.rever.boss.cache.FaviconCache
 import ai.rever.boss.components.overlays.OverlayCorner
 import ai.rever.boss.components.overlays.overlayCornerIsHeavyweight
+import ai.rever.boss.components.plugin.TabAudioRegistry
 import ai.rever.boss.components.window_panel.components.main_window_panels.LocalInMainWindowPanel
 import ai.rever.boss.config.AutoPipSettingsManager
 import ai.rever.boss.config.JxBrowserConfig
@@ -61,6 +62,8 @@ import com.teamdev.jxbrowser.frame.EditorCommand
 import com.teamdev.jxbrowser.frame.Frame
 import com.teamdev.jxbrowser.js.JsObject
 import com.teamdev.jxbrowser.media.MediaType
+import com.teamdev.jxbrowser.media.event.AudioStartedPlaying
+import com.teamdev.jxbrowser.media.event.AudioStoppedPlaying
 import com.teamdev.jxbrowser.menu.ContextMenuContentType
 import com.teamdev.jxbrowser.navigation.LoadUrlParams
 import com.teamdev.jxbrowser.navigation.event.LoadFinished
@@ -356,9 +359,14 @@ internal class BrowserHandleImpl(
     private val faviconListeners = CopyOnWriteArrayList<(String?) -> Unit>()
     private val loadingListeners = CopyOnWriteArrayList<(Boolean) -> Unit>()
     private val zoomListeners = CopyOnWriteArrayList<(Double) -> Unit>()
+    private val audioPlayingListeners = CopyOnWriteArrayList<(Boolean) -> Unit>()
 
     // Track loading state
     private var _isLoading = false
+
+    // Last playback state Chromium reported, replayed to late-registered listeners the
+    // way lastKnownTitle/_isLoading are (issue #308).
+    @Volatile private var _isPlayingAudio = false
 
     // Context menu callback. Volatile because it is set from the UI thread and read from a
     // JxBrowser callback thread; a stale null read there means no menu at all.
@@ -1379,6 +1387,28 @@ internal class BrowserHandleImpl(
                     logger.warn(LogCategory.BROWSER, "Error processing favicon", error = e)
                 }
             }
+
+        // Audio playback state (issue #308). Chromium reports start/stop directly, so the
+        // tab bar's speaker glyph appears and disappears the moment playback changes -
+        // on background tabs and inactive panels too, with no polling. Guarded as a
+        // whole: audio() is engine-backed and this runs during browser setup, where a
+        // shape mismatch must degrade to "no indicator", not to a dead browser.
+        runCatching {
+            val audio = browser.audio()
+            _isPlayingAudio = audio.isPlaying()
+            subscriptions +=
+                audio.on(AudioStartedPlaying::class.java) { _ ->
+                    _isPlayingAudio = true
+                    notifyAudioPlaying(true)
+                }
+            subscriptions +=
+                audio.on(AudioStoppedPlaying::class.java) { _ ->
+                    _isPlayingAudio = false
+                    notifyAudioPlaying(false)
+                }
+        }.onFailure {
+            logger.warn(LogCategory.BROWSER, "Audio playback subscription unavailable", error = it)
+        }
 
         // Renderer gone. Forgetting the pid here keeps the strip honest: Chromium recycles pids,
         // so a retained one can later belong to a different helper of ours and that process's
@@ -2718,6 +2748,51 @@ internal class BrowserHandleImpl(
     }
 
     // ============================================================
+    // AUDIO PLAYBACK STATE
+    // ============================================================
+
+    override fun isPlayingAudio(): Boolean = _isPlayingAudio
+
+    override fun addAudioPlayingListener(listener: (Boolean) -> Unit) {
+        audioPlayingListeners.add(listener)
+        // Same replay, same reason as addLoadingListener: a listener attached while a
+        // video is already playing would otherwise sit at "silent" until the next start
+        // event. No blank case - both values are real answers.
+        runCatching { listener(_isPlayingAudio) }
+            .onFailure { logger.warn(LogCategory.BROWSER, "Audio listener threw on replay", error = it) }
+    }
+
+    override fun removeAudioPlayingListener(listener: (Boolean) -> Unit) {
+        audioPlayingListeners.remove(listener)
+    }
+
+    /**
+     * Fire the audio listeners and carry the state into the tab model.
+     *
+     * The second half is what makes the tab-bar glyph work end to end: the fluck-browser
+     * tab component is a dynamic plugin's class, so the host cannot register a listener
+     * with it - but the plugin DOES tell the host which tab owns this browser
+     * (via [setFullscreenHandler], the same channel Back-to-tab uses). That id reaches
+     * [TabAudioRegistry], where the owning BossTabsComponent picked up the handler in
+     * addTab, so the flag lands in FluckTabInfo the way title/favicon already do.
+     */
+    private fun notifyAudioPlaying(playing: Boolean) {
+        audioPlayingListeners.forEach { listener ->
+            try {
+                listener(playing)
+            } catch (e: Exception) {
+                logger.warn(LogCategory.BROWSER, "Audio listener threw exception", error = e)
+            }
+        }
+        // Marshalled to the EDT: the registry's handler mutates snapshot state the tab model
+        // owns, which is UI-thread-only (review of this PR). The listeners above stay on the
+        // JxBrowser event thread - replay-on-subscribe must not reorder against live events.
+        ownerTabId?.let { tabId ->
+            SwingUtilities.invokeLater { TabAudioRegistry.update(tabId, playing) }
+        }
+    }
+
+    // ============================================================
     // SECURITY
     // ============================================================
 
@@ -3567,6 +3642,12 @@ internal class BrowserHandleImpl(
         // this browser, and the host cannot work it out for itself - the tab is a dynamic
         // plugin's component type, which host code cannot name.
         ownerTabId = tabId
+
+        // If audio started before the plugin told us which tab owns this browser, the start
+        // event fired against a null owner and nothing was registered to replay it. Flush the
+        // current playback state now that the id is known, so the glyph appears at
+        // registration instead of never (review of this PR, open question).
+        if (_isPlayingAudio) notifyAudioPlaying(true)
 
         FluckEngine.setupFullscreenHandler(
             browser = browser,
