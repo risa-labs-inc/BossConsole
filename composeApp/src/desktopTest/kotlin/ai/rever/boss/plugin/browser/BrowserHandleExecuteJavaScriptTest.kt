@@ -168,7 +168,7 @@ class BrowserHandleExecuteJavaScriptTest {
             arrayOf(Frame::class.java)
         ) { _, method, _ ->
             if (method.name == "executeJavaScript") {
-                throw IllegalStateException("Synchronous failure")
+                error("Synchronous failure")
             }
             null
         } as Frame
