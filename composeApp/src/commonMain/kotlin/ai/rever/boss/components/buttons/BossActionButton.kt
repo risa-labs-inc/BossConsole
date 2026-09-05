@@ -24,6 +24,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.text.font.FontWeight
@@ -76,6 +79,19 @@ fun BossActionButton(
     contentPadding: PaddingValues = PaddingValues(2.dp),
     isSelected: Boolean = false,
     contextMenuItems: List<ContextMenuItem>? = null,
+    /**
+     * What a LEFT click does instead of opening [contextMenuItems].
+     *
+     * Null - the default, and all but one caller - leaves the button exactly as it was: a non-null
+     * [contextMenuItems] opens its menu on the primary click. Non-null hands the primary click to
+     * this action and moves the menu to the RIGHT click, so a button can have a first-class verb
+     * without losing the entries that only live in its menu.
+     *
+     * It returns whether it actually did anything. False falls straight through to opening the
+     * menu, so a primary action that could not run - its target plugin is disabled, say - leaves
+     * the user holding the control it replaced rather than a click that silently did nothing.
+     */
+    primaryAction: (() -> Boolean)? = null,
     contextDirection: Panel = bottom,
     hintText: String? = null,
     showHintWithDelay: Boolean = true,
@@ -290,7 +306,11 @@ fun BossActionButton(
 
     // Define button click handler
     val handleClick = {
-        if (contextMenuItems != null) {
+        // A primary action owns the left click and only yields to the menu when it reports it
+        // could not run. With no primary action this is the behaviour that has always been here:
+        // a non-null menu opens on the primary click.
+        val fellThrough = primaryAction?.invoke()?.not() ?: true
+        if (fellThrough && contextMenuItems != null) {
             showContextMenu = true
             hoverState.isShowing = false // Hide hover popup when showing context menu
         }
@@ -334,7 +354,19 @@ fun BossActionButton(
                     } else {
                         hoverable(interactionSource)
                     }
-                }.onGloballyPositioned { coordinates ->
+                }.then(
+                    // The menu's OTHER door, added only when a primary action has taken the left
+                    // click. A button without one keeps the modifier chain it has always had, so
+                    // nothing about the top bar's copy of this control changes.
+                    if (primaryAction != null && contextMenuItems != null) {
+                        Modifier.onSecondaryClick {
+                            showContextMenu = true
+                            hoverState.isShowing = false
+                        }
+                    } else {
+                        Modifier
+                    },
+                ).onGloballyPositioned { coordinates ->
                     val pos = coordinates.positionInParent()
                     buttonPositionRef[0] = pos.x
                     buttonPositionRef[1] = pos.y
@@ -354,6 +386,42 @@ fun BossActionButton(
         }
     }
 }
+
+/**
+ * Run [action] on a right-click, and consume the press.
+ *
+ * **The Initial pass**, which travels parent to child, so this answers before anything inside the
+ * button and before any menu an ancestor hangs off the same click. Consuming is what stops the
+ * two firing together.
+ *
+ * **Keyed on Unit, with nothing live captured.** `pointerInput` keeps the block it was given until
+ * a key changes, so a block that closes over a value which moves would go stale - and keying it on
+ * one that changes every composition is worse, because it cancels and restarts the gesture each
+ * time and a right-click landing in the gap goes to whatever is behind the button. That is the
+ * "sometimes the wrong menu" bug `BossTabButton` writes up. Callers therefore pass an [action] that
+ * touches only remembered holders.
+ */
+private fun Modifier.onSecondaryClick(action: () -> Unit): Modifier =
+    pointerInput(Unit) {
+        awaitPointerEventScope {
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                val awtEvent = event.nativeEvent as? java.awt.event.MouseEvent
+                if (event.type == PointerEventType.Press && awtEvent?.button == SECONDARY_MOUSE_BUTTON) {
+                    action()
+                    event.changes.forEach { it.consume() }
+                }
+            }
+        }
+    }
+
+/**
+ * AWT's number for the right mouse button, which is how `BossTabButton` reads it too.
+ *
+ * Off the native event rather than Compose's `PointerButtons`, because that is the form this
+ * codebase has already proven in commonMain on a desktop-only target.
+ */
+private const val SECONDARY_MOUSE_BUTTON = 3
 
 /** Text size in [BossActionButton]'s compact mode, matching the vertical bar's own rows. */
 private val COMPACT_FONT_SIZE = 11.sp

@@ -778,6 +778,9 @@ internal fun BossAppScaffold(
                                     // cleared is not on screen, and the project and workspace
                                     // pickers live nowhere else.
                                     topBarHidden = !drawn.showTopBar,
+                                    // Only so the workspace button can open Top of Mind HERE: a
+                                    // panel open event is broadcast and filtered by window.
+                                    windowId = state.windowId,
                                     project = selectedProject,
                                     onOpenProject = { state.showProjectDialog = true },
                                     workspaceManager = workspaceManager,
