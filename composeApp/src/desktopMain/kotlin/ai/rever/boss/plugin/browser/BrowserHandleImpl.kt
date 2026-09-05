@@ -92,13 +92,9 @@ import com.teamdev.jxbrowser.zoom.ZoomLevel
 import com.teamdev.jxbrowser.zoom.ZoomMode
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineExceptionHandler
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
@@ -106,6 +102,9 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -2574,23 +2573,31 @@ internal class BrowserHandleImpl(
      */
     override suspend fun executeJavaScript(script: String): Any? {
         if (!isValid) return null
-        val outcome = kotlinx.coroutines.withTimeoutOrNull(BoundedBrowserCall.DEFAULT_TIMEOUT_MS) {
-            Result.success(
-                browser.executeJavaScriptSuspending(script, ::beginNativeOperation, ::endNativeOperation) { e ->
-                    logger.warn(
-                        LogCategory.BROWSER,
-                        "JS execution error",
-                        mapOf("handleId" to id, "error" to (e.message ?: "unknown")),
-                    )
-                }
-            )
-        }
+        val outcome =
+            kotlinx.coroutines.withTimeoutOrNull(BoundedBrowserCall.DEFAULT_TIMEOUT_MS) {
+                Result.success(
+                    browser.executeJavaScriptSuspending(
+                        script,
+                        ::tryInitiateNativeOperation,
+                        ::endNativeOperation,
+                    ) { e ->
+                        logger.warn(
+                            LogCategory.BROWSER,
+                            "JS execution error",
+                            mapOf("handleId" to id, "error" to (e.message ?: "unknown")),
+                        )
+                    },
+                )
+            }
 
         return if (outcome == null) {
             logger.warn(
                 LogCategory.BROWSER,
                 "Browser round trip timed out - the renderer did not answer",
-                mapOf("thread" to "boss-browser-call-$id", "timeoutMs" to BoundedBrowserCall.DEFAULT_TIMEOUT_MS.toString()),
+                mapOf(
+                    "thread" to "boss-browser-call-$id",
+                    "timeoutMs" to BoundedBrowserCall.DEFAULT_TIMEOUT_MS.toString(),
+                ),
             )
             null
         } else {
@@ -2602,7 +2609,7 @@ internal class BrowserHandleImpl(
         tracker.prepareForDisposal()
     }
 
-    private fun beginNativeOperation(): Boolean = tracker.beginNativeOperation()
+    private fun tryInitiateNativeOperation(initiate: () -> Unit): Boolean = tracker.tryInitiateOperation(initiate)
 
     private fun endNativeOperation() {
         tracker.endNativeOperation()
@@ -4250,6 +4257,7 @@ internal class BrowserHandleImpl(
             }
         }
     }
+
     private val disposeExecuted = AtomicBoolean(false)
 
     override fun dispose() {
@@ -4747,30 +4755,27 @@ internal fun parseTopInsetDp(raw: String?): Int = raw?.trim()?.toIntOrNull()?.co
 
 internal suspend fun Browser.executeJavaScriptSuspending(
     script: String,
-    beginOp: () -> Boolean = { true },
+    tryInitiateOp: (initiate: () -> Unit) -> Boolean = {
+        it()
+        true
+    },
     endOp: () -> Unit = {},
-    logError: (Exception) -> Unit = {}
-): Any? {
-    return kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+    logError: (Exception) -> Unit = {},
+): Any? =
+    kotlinx.coroutines.suspendCancellableCoroutine { cont ->
         try {
             mainFrame().ifPresentOrElse({ frame ->
-                if (!beginOp()) {
-                    if (cont.isActive) cont.resumeWith(Result.success(null))
-                    return@ifPresentOrElse
-                }
-                try {
-                    frame.executeJavaScript(script) { result ->
-                        endOp()
-                        if (cont.isActive) {
-                            cont.resumeWith(Result.success(result))
+                val initiated =
+                    tryInitiateOp {
+                        frame.executeJavaScript(script) { result ->
+                            endOp()
+                            if (cont.isActive) {
+                                cont.resumeWith(Result.success(result))
+                            }
                         }
                     }
-                } catch (e: IllegalStateException) {
-                    endOp()
-                    throw e
-                } catch (e: ObjectClosedException) {
-                    endOp()
-                    throw e
+                if (!initiated) {
+                    if (cont.isActive) cont.resumeWith(Result.success(null))
                 }
             }, {
                 if (cont.isActive) cont.resumeWith(Result.success(null))
@@ -4783,7 +4788,6 @@ internal suspend fun Browser.executeJavaScriptSuspending(
             if (cont.isActive) cont.resumeWith(Result.success(null))
         }
     }
-}
 
 /**
  * Tracks the lifecycle of asynchronous JxBrowser operations against the browser's disposal state.
@@ -4793,23 +4797,36 @@ internal suspend fun Browser.executeJavaScriptSuspending(
  * disposal to cleanly await pending ones.
  */
 internal class NativeOperationTracker(
-    private val disposed: AtomicBoolean
+    private val disposed: AtomicBoolean,
 ) {
     private val pendingOperationsCount = MutableStateFlow(0)
+    private val disposalLock = Any()
 
     fun prepareForDisposal() {
-        disposed.set(true)
+        synchronized(disposalLock) {
+            disposed.set(true)
+        }
     }
 
-    fun beginNativeOperation(): Boolean {
-        if (disposed.get()) return false
-        pendingOperationsCount.update { it + 1 }
-        // Double-check after incrementing
-        val isDisposed = disposed.get()
-        if (isDisposed) {
-            endNativeOperation()
+    /**
+     * Synchronizes the initiation of a native operation with disposal.
+     * Ensures that once [prepareForDisposal] completes, no new native operations can be initiated.
+     */
+    inline fun tryInitiateOperation(initiate: () -> Unit): Boolean {
+        synchronized(disposalLock) {
+            if (disposed.get()) return false
+            pendingOperationsCount.update { it + 1 }
+            try {
+                initiate()
+            } catch (e: IllegalStateException) {
+                pendingOperationsCount.update { it - 1 }
+                throw e
+            } catch (e: com.teamdev.jxbrowser.ObjectClosedException) {
+                pendingOperationsCount.update { it - 1 }
+                throw e
+            }
+            return true
         }
-        return !isDisposed
     }
 
     fun endNativeOperation() {
