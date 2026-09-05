@@ -6,6 +6,7 @@ import ai.rever.boss.plugin.api.ProjectDataProvider
 import ai.rever.boss.window.Project
 import ai.rever.boss.window.WindowProjectState
 import ai.rever.boss.window.selectProjectInWindow
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -20,6 +21,11 @@ import kotlinx.coroutines.launch
  */
 class ProjectDataProviderImpl(
     private val windowProjectState: WindowProjectState?,
+    // Injectable purely for tests. Dispatchers.Main has no implementation in a plain test JVM, so
+    // a hard-coded one forces every test that builds this to install a global Main dispatcher -
+    // and, since nothing cancels the scope below, to leak a live collector into whatever
+    // scheduler that was. Passing Dispatchers.Unconfined keeps the leak inert and local.
+    dispatcher: CoroutineDispatcher = Dispatchers.Main,
 ) : ProjectDataProvider {
     // SupervisorJob, matching DefaultPlugin.pluginScope. There is one collector today, so this
     // is future-proofing rather than a fix: with a plain Job a second one added later would be
@@ -34,7 +40,7 @@ class ProjectDataProviderImpl(
     // properly means the bridge reading ProjectState directly instead of a per-window provider,
     // which is its own change - see the PR discussion. logDataProvider and gitDataProvider are
     // registered in the same group and want the same look.
-    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private val scope = CoroutineScope(dispatcher + SupervisorJob())
 
     // Map ProjectState's recentProjects to plugin's ProjectData type
     private val _recentProjects = MutableStateFlow<List<ProjectData>>(emptyList())

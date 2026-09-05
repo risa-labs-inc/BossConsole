@@ -15,15 +15,17 @@ import ai.rever.boss.plugin.api.ProjectData
 import ai.rever.boss.plugin.api.TabRegistry
 import ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.test.resetMain
-import kotlinx.coroutines.test.setMain
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
@@ -52,24 +54,10 @@ class ProjectChangeAnnouncementTest {
     fun install() {
         previousPublisher = ApplicationEventBusRegistry.systemPublisher
         ApplicationEventBusRegistry.systemPublisher = { captured += it }
-        // ProjectDataProviderImpl collects on Dispatchers.Main, which has no implementation in a
-        // plain test JVM - its launch fails and the collector silently never runs. The announcer
-        // itself uses no dispatcher; this is only so the provider in
-        // `a plugin-initiated selection is announced exactly once` is a working object.
-        //
-        // Dispatchers.Unconfined, NOT UnconfinedTestDispatcher. The provider owns its scope and
-        // nothing cancels it (see ProjectDataProviderImpl: DisposableProvider is deliberately not
-        // implemented), so its `ProjectState.recentProjects` collector outlives this class for
-        // the rest of the JVM. On a TestCoroutineScheduler that live coroutine is something every
-        // later `runTest` in the suite waits on, and the git tests - the next `runTest`-heavy
-        // classes to run - time out after 60s. Unconfined gives the same run-on-the-calling-
-        // thread behaviour without enrolling the leak in a scheduler anyone else observes.
-        Dispatchers.setMain(Dispatchers.Unconfined)
     }
 
     @AfterTest
     fun restore() {
-        Dispatchers.resetMain()
         ApplicationEventBusRegistry.systemPublisher = previousPublisher
     }
 
@@ -212,7 +200,10 @@ class ProjectChangeAnnouncementTest {
     @Test
     fun `a plugin-initiated selection is announced exactly once`() {
         val state = WindowProjectStateRegistry.getOrCreate("w-plugin")
-        val provider = ProjectDataProviderImpl(state)
+        // Unconfined rather than a global setMain: the provider's collector is never
+        // cancelled, so on a TestCoroutineScheduler it would be something every later
+        // runTest in the suite waits on. This keeps the leak inert and local.
+        val provider = ProjectDataProviderImpl(state, Dispatchers.Unconfined)
         try {
             provider.selectProject(ProjectData(name = "plugin", path = PLUGIN_PATH, lastOpened = 0L))
 
@@ -284,6 +275,63 @@ class ProjectChangeAnnouncementTest {
         )
     }
 
+    /** Documented behaviour change: no state means no selection happened, so nothing is announced. */
+    @Test
+    fun `a null window state announces nothing rather than an empty windowId`() {
+        ProjectDataProviderImpl(windowProjectState = null, dispatcher = Dispatchers.Unconfined)
+            .selectProject(ProjectData(name = "nowhere", path = "/tmp/boss-pca-nowhere", lastOpened = 0L))
+
+        assertTrue(changes().isEmpty(), "selectProjectInWindow no-ops on null; the old code still published")
+    }
+
+    /** The other half of the restore path: a workspace that restores no project announces nothing. */
+    @Test
+    fun `applyWorkspace announces nothing when it is not restoring a project`() {
+        val state = WindowProjectStateRegistry.getOrCreate("w-norestore")
+        try {
+            val workspace =
+                LayoutWorkspace(
+                    id = "norestore-test",
+                    name = "No restore",
+                    description = "Has a project path, but restoreProject is off",
+                    layout = SinglePanel(PanelConfig(id = "main", tabs = emptyList())),
+                    projectPath = "/tmp/boss-pca-not-restored",
+                )
+
+            runBlocking {
+                applyWorkspace(
+                    workspace,
+                    SplitViewState(TabRegistry(), windowId = "w-norestore"),
+                    state,
+                    restoreProject = false,
+                )
+            }
+
+            assertTrue(changes().isEmpty())
+        } finally {
+            WindowProjectStateRegistry.unregister("w-norestore")
+        }
+    }
+
+    /**
+     * Documented consequence of `unregister`: the next `getOrCreate` builds a new state with a
+     * new announcer, so the window's chain restarts at "" rather than continuing.
+     */
+    @Test
+    fun `unregistering and recreating a window restarts its previous-path chain`() {
+        try {
+            WindowProjectStateRegistry.getOrCreate("w-recycled").selectProject(project(RECYCLED_FIRST))
+            WindowProjectStateRegistry.unregister("w-recycled")
+            WindowProjectStateRegistry.getOrCreate("w-recycled").selectProject(project(RECYCLED_SECOND))
+
+            assertEquals(listOf("", ""), changes().map { it.previousProjectPath })
+        } finally {
+            WindowProjectStateRegistry.unregister("w-recycled")
+            ProjectState.removeRecentProject(RECYCLED_FIRST)
+            ProjectState.removeRecentProject(RECYCLED_SECOND)
+        }
+    }
+
     // ============================================================
     // The bus itself: it is created lazily, and used to drop everything until it was.
     // ============================================================
@@ -318,6 +366,50 @@ class ProjectChangeAnnouncementTest {
         }
     }
 
+    /**
+     * The other half of [publishSystemEvent]'s fallback: a registry holding a bus but no
+     * publisher is a broken invariant, and the event is dropped rather than emitted into this
+     * classloader's instance - which in that state is not necessarily the registry's bus.
+     *
+     * Asserts the drop, not the warning: `partialRegistryWarned` is a process-global with no
+     * reset, so whichever test trips it first makes "it warns" unassertable for the rest of the
+     * JVM.
+     */
+    @Test
+    fun `a system event is dropped, not misrouted, when the registry holds a bus but no publisher`() {
+        val previousBus: ApplicationEventBus? = ApplicationEventBusRegistry.bus
+        val outerPublisher = ApplicationEventBusRegistry.systemPublisher
+        ApplicationEventBusRegistry.bus = StubBus
+        ApplicationEventBusRegistry.systemPublisher = null
+        try {
+            publishSystemEvent(
+                ProjectChangeEvent(
+                    projectPath = "/tmp/boss-pca-halfbus",
+                    previousProjectPath = "",
+                    windowId = "w-half",
+                ),
+            )
+
+            assertNull(
+                ApplicationEventBusRegistry.systemPublisher,
+                "the half-registry should be refused, not completed by whatever getInstance builds",
+            )
+            assertSame(StubBus, ApplicationEventBusRegistry.bus, "and the existing bus left alone")
+        } finally {
+            ApplicationEventBusRegistry.bus = previousBus
+            ApplicationEventBusRegistry.systemPublisher = outerPublisher
+        }
+    }
+
+    /** Stands in for a bus installed by something other than this classloader's getInstance. */
+    private object StubBus : ApplicationEventBus {
+        override fun events(): Flow<ApplicationEvent> = emptyFlow()
+
+        override fun <T : ApplicationEvent> eventsOfType(eventType: Class<T>): Flow<T> = emptyFlow()
+
+        override fun publish(event: ApplicationEvent) = Unit
+    }
+
     private companion object {
         // Deliberately non-existent directories. ProjectState's saves are fire-and-forget on
         // Dispatchers.IO, so an add and its cleanup remove are unordered and a test path can
@@ -326,6 +418,8 @@ class ProjectChangeAnnouncementTest {
         // directory would not be.
         const val CREATED_PATH = "/tmp/boss-pca-created"
         const val RESTORED_PATH = "/tmp/boss-pca-restored-by-applier"
+        const val RECYCLED_FIRST = "/tmp/boss-pca-recycled-first"
+        const val RECYCLED_SECOND = "/tmp/boss-pca-recycled-second"
         const val PLUGIN_PATH = "/tmp/boss-pca-plugin"
     }
 }

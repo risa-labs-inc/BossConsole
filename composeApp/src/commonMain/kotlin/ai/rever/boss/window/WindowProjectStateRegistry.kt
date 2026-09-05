@@ -75,20 +75,36 @@ object WindowProjectStateRegistry {
      *
      * [updateRecents] is a parameter rather than a direct `ProjectState` call purely so that
      * claim is testable: `ProjectState` is an object, so a hard-coded call could not be made to
-     * fail. (A throw out of [announcer] inside the `finally` would discard the [updateRecents]
-     * exception; neither can throw today - `tryEmit` does not, and the recents update is in
-     * memory plus a fire-and-forget save - so this is noted rather than guarded.)
+     * fail.
+     *
+     * Written out rather than as `try`/`finally` so neither failure hides the other. A plain
+     * `finally` would discard the [updateRecents] exception if [announcer] threw on the way out;
+     * [announcer] is a parameter, so the type permits that even though the real one cannot
+     * (`tryEmit` does not throw). Whichever fails first is what propagates, with the other
+     * attached as suppressed.
      */
+    // Catching Throwable IS the contract here: the point is that neither half's failure can hide
+    // the other's, and a rule about narrow catches cannot express "whatever this arbitrary
+    // callback threw". Both are rethrown - nothing is swallowed.
+    @Suppress("TooGenericExceptionCaught")
     internal fun hostProjectCallback(
         updateRecents: (Project) -> Unit,
         announcer: ProjectSelectionCallback,
     ): ProjectSelectionCallback =
         ProjectSelectionCallback { project ->
+            var recentsFailure: Throwable? = null
             try {
                 updateRecents(project)
-            } finally {
-                announcer.onProjectSelected(project)
+            } catch (t: Throwable) {
+                recentsFailure = t
             }
+            try {
+                announcer.onProjectSelected(project)
+            } catch (t: Throwable) {
+                if (recentsFailure == null) throw t
+                recentsFailure.addSuppressed(t)
+            }
+            recentsFailure?.let { throw it }
         }
 
     /**

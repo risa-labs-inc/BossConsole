@@ -2466,7 +2466,15 @@ tasks.withType<Test> {
             .get()
             .asFile
     systemProperty("user.home", testHome.absolutePath)
-    doFirst { testHome.mkdirs() }
+    // Deleted, not just created. ProjectState's saves are fire-and-forget, so the FIRST run
+    // leaves a recent-projects.json behind; on the second, ProjectState.init's async load takes
+    // its `if (file.exists())` branch and assigns _recentProjects.value wholesale, which can land
+    // mid-test. A stale home reintroduces exactly the flake the redirect removes, so the home is
+    // fresh per run rather than merely private.
+    doFirst {
+        testHome.deleteRecursively()
+        testHome.mkdirs()
+    }
 }
 
 // Wrapper tasks that auto-increment build number before packaging

@@ -116,7 +116,13 @@ class ApplicationEventBusImpl private constructor(
                 // still null. That caller falls through to this method, blocks here, and emits
                 // on the same instance - nothing is lost. Reversing the two would not be
                 // obviously wrong to a later reader, so it is written down.
-                if (ApplicationEventBusRegistry.bus == null) {
+                // Both fields tested, because both are written. `systemPublisher != null` with a
+                // null `bus` is the mirror of the half-invariant publishSystemEvent refuses - and
+                // it is not hypothetical, it is exactly what a test installs when it swaps the
+                // publisher to capture events (ProjectChangeAnnouncementTest,
+                // BrowserAnalyticsEmissionTest, BossTabsComponentMoveTest). Testing only `bus`
+                // would let this method silently take that publisher away from them.
+                if (ApplicationEventBusRegistry.bus == null && ApplicationEventBusRegistry.systemPublisher == null) {
                     ApplicationEventBusRegistry.bus = bus
                     ApplicationEventBusRegistry.systemPublisher = { event -> bus.publishInternal(event) }
                 }

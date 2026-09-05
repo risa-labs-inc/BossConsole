@@ -42,9 +42,15 @@ internal class ProjectChangeAnnouncer(
      * saw. The cost is that `tryEmit` resumes suspended collectors, so a subscriber on
      * `Dispatchers.Unconfined` or `Main.immediate` runs its handler inline, on this thread,
      * holding this lock, inside `WindowProjectState.selectProject`. A slow third-party subscriber
-     * therefore stalls project selection for this window, and one that re-enters `selectProject`
-     * recurses through the lock. Ordering is worth that; the alternative is capturing `from`
+     * therefore stalls project selection for this window - on the UI thread already, but now
+     * also holding a lock, which in KERNEL mode widens a `runBlocking`-happy plugin from a UI
+     * hang to a cross-thread one. Ordering is worth that; the alternative is capturing `from`
      * under the lock and publishing outside it.
+     *
+     * A subscriber that re-enters `selectProject` inline is SAFE, and deliberately so - do not
+     * "fix" it. `synchronized` is reentrant on the same thread, and `previousPath` is advanced
+     * BEFORE the publish, so a re-entrant selection of the same path takes the `path == from`
+     * early return and a different path produces a correctly chained second event.
      *
      * What this does NOT settle, and cannot from here: agreement between the last event and
      * `WindowProjectState.selectedProject`. That class writes `_selectedProject.value` and then
