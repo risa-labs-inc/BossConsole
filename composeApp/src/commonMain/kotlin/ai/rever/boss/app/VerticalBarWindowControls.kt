@@ -4,6 +4,7 @@ import ai.rever.boss.components.buttons.BossActionButton
 import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.WorkspaceButton
 import ai.rever.boss.components.workspaces.WorkspaceManager
+import ai.rever.boss.components.workspaces.openTopOfMindWorkspacePicker
 import ai.rever.boss.plugin.api.Panel
 import ai.rever.boss.plugin.api.Panel.Companion.right
 import ai.rever.boss.plugin.api.Panel.Companion.top
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.Divider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -54,6 +56,13 @@ internal fun VerticalBarWindowControls(
      * seconds a bar is revealed is the better of the two.
      */
     topBarHidden: Boolean,
+    /**
+     * Which window this bar belongs to, needed only to open a panel in it.
+     *
+     * `PanelEventBus` events are broadcast process-wide and filtered by the collector, so an event
+     * emitted without the right window id opens the panel in every window or in none.
+     */
+    windowId: String,
     project: Project,
     onOpenProject: () -> Unit,
     workspaceManager: WorkspaceManager,
@@ -62,6 +71,8 @@ internal fun VerticalBarWindowControls(
     onShowTopOfMind: () -> Unit,
 ) {
     if (!topBarHidden) return
+
+    val scope = rememberCoroutineScope()
 
     Divider(color = BossTheme.colors.line)
     Column(
@@ -83,6 +94,13 @@ internal fun VerticalBarWindowControls(
             workspaceManager = workspaceManager,
             getCurrentWorkspace = getCurrentWorkspace,
             onShowTopOfMind = onShowTopOfMind,
+            // The left click opens Top of Mind and asks it for its workspace picker, which is a
+            // searchable list of workspaces sitting above a tree of every tab in them - more than
+            // this button's own menu has ever been able to say in a 200dp column. The menu is not
+            // lost: it moves to the right click, which is the only place Open Workspace Folder and
+            // Reset to Default exist at all. Returns false when Top of Mind is not installed or is
+            // disabled, and the click then opens the menu exactly as it used to.
+            onOpenWorkspacePicker = { openTopOfMindWorkspacePicker(windowId, scope) },
             compact = true,
         )
         BossActionButton(

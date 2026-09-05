@@ -1,7 +1,10 @@
 package ai.rever.boss.components.workspaces
 
 import ai.rever.boss.components.buttons.BossActionButton
+import ai.rever.boss.components.events.PanelEventBus
 import ai.rever.boss.components.overlays.ContextMenuItem
+import ai.rever.boss.components.plugin.registries.DeepLinkActionRegistryImpl
+import ai.rever.boss.plugin.api.PanelId
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel
 import androidx.compose.foundation.layout.Box
@@ -23,6 +26,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Briefcase
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 
 /**
  * Platform-specific function to open workspace directory
@@ -44,6 +49,21 @@ fun WorkspaceButton(
     workspaceManager: WorkspaceManager,
     getCurrentWorkspace: (() -> LayoutWorkspace)? = null,
     onShowTopOfMind: (() -> Unit)? = null,
+    /**
+     * What a LEFT click does, when there is something better for it to do than drop this menu.
+     *
+     * The vertical bar's copy passes [openTopOfMindWorkspacePicker], which opens the Top of Mind
+     * panel and asks it for its workspace picker - a searchable list, where this menu is an
+     * unfiltered one. It returns false when Top of Mind is not there to ask, and the click then
+     * falls through to the menu, which is also what the top bar's copy does with every click
+     * because it passes null.
+     *
+     * The menu is NOT removed either way. Its Options submenu is the only route to Open Workspace
+     * Folder and Reset to Default in the whole app - both need `WorkspaceManager` members that are
+     * not on the plugin api, so nothing else can offer them - so when the primary click is taken,
+     * the menu moves to the right click rather than going away.
+     */
+    onOpenWorkspacePicker: (() -> Boolean)? = null,
     /** Sized for the vertical tab bar rather than the top bar. See BossActionButton. */
     compact: Boolean = false,
 ) {
@@ -209,9 +229,14 @@ fun WorkspaceButton(
                         if (workspace.name != "Current") workspace.name else "Default"
                     } ?: "Default",
                 contextMenuItems = contextMenuItems,
+                primaryAction = onOpenWorkspacePicker,
                 hintText =
                     buildString {
                         append("Layout Workspace: ${currentWorkspace?.description ?: "Default layout"}")
+                        // Only where the left click has been taken. Told to right-click a button
+                        // whose left click already opens the menu, a user right-clicks and gets
+                        // nothing.
+                        if (onOpenWorkspacePicker != null) append("\nRight-click for workspace options")
                         append("\nWorkspaces saved to: ${workspaceManager.getWorkspaceDirectory()}")
                     },
             )
@@ -261,4 +286,54 @@ fun WorkspaceButton(
             },
         )
     }
+}
+
+/**
+ * The Top of Mind plugin, as the two ids a caller outside it needs.
+ *
+ * `PanelId.pluginId` is deliberately the api DEFAULT rather than [TOP_OF_MIND_PLUGIN_ID]: a panel
+ * is registered under the id the plugin hands `PanelRegistry`, nothing rewrites it, and Top of
+ * Mind's `PanelInfo` constructs its `PanelId` without naming a plugin. The two ids are different
+ * strings for that reason and neither can be swapped for the other.
+ *
+ * `defaultOrder` is not part of panel matching - the event handler compares `panelId` and
+ * `pluginId` only - so this carries the plugin's real 5 for honesty rather than for matching.
+ */
+private val TOP_OF_MIND_PANEL = PanelId(panelId = "top-of-mind", defaultOrder = 5)
+
+/** Deep-link handler id of the Top of Mind plugin, which is its plugin id by convention. */
+private const val TOP_OF_MIND_PLUGIN_ID = "ai.rever.boss.plugin.dynamic.topofmind"
+
+/**
+ * The action Top of Mind answers with its workspace picker. A wire name shared with the plugin.
+ */
+private const val ACTION_OPEN_WORKSPACE_PICKER = "open-workspace-picker"
+
+/**
+ * Open Top of Mind in [windowId] and raise its workspace picker. Returns whether anything was
+ * there to answer.
+ *
+ * **Asks first, opens second, and that order is deliberate.** `dispatch` answers synchronously
+ * whether Top of Mind is loaded at all, which is the one failure the caller can still do something
+ * about: it returns false and [WorkspaceButton] falls back to the menu this click replaced.
+ * Opening the panel cannot answer that - it is an event with no reply. The plugin holds a request
+ * that arrives before its panel is on screen, so asking early costs nothing.
+ *
+ * What this canNOT report is a plugin that is loaded but whose panel never composes. That path
+ * ends in a click that appears to do nothing, and the honest fix for it is on the panel-open side
+ * rather than here.
+ */
+internal fun openTopOfMindWorkspacePicker(
+    windowId: String,
+    scope: CoroutineScope,
+): Boolean {
+    val accepted =
+        DeepLinkActionRegistryImpl.dispatch(
+            handlerId = TOP_OF_MIND_PLUGIN_ID,
+            action = ACTION_OPEN_WORKSPACE_PICKER,
+            params = emptyMap(),
+        )
+    if (!accepted) return false
+    scope.launch { PanelEventBus.openPanel(TOP_OF_MIND_PANEL, windowId) }
+    return true
 }
