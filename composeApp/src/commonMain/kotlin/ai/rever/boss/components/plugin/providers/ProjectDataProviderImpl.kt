@@ -23,9 +23,10 @@ class ProjectDataProviderImpl(
     private val windowProjectState: WindowProjectState?,
 ) : ProjectDataProvider,
     DisposableProvider {
-    // SupervisorJob, matching DefaultPlugin.pluginScope: with a plain Job the collectors below
-    // are siblings, and a failure in one cancels the scope and every other one with it - silently,
-    // since nothing awaits them.
+    // SupervisorJob, matching DefaultPlugin.pluginScope. There is one collector today, so this
+    // is future-proofing rather than a fix: with a plain Job a second one added later would be
+    // its sibling, and a failure in either would cancel the scope and take the other with it -
+    // silently, since nothing awaits them.
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     // Map ProjectState's recentProjects to plugin's ProjectData type
@@ -44,6 +45,12 @@ class ProjectDataProviderImpl(
     /**
      * This provider is per-window and owns a coroutine, so its collector outlives the window
      * unless the plugin says otherwise - `pluginScope` is not its scope. See [DisposableProvider].
+     *
+     * In KERNEL mode this instance is also handed to a process-wide `ProjectDataServiceBridge`
+     * (`KernelBootstrap`), so closing the window that built it freezes [recentProjects] for
+     * out-of-process plugins watching it. That is how `logDataProvider` and `gitDataProvider`
+     * already behave - they are registered in the same group and disposed the same way - so this
+     * is consistent rather than new, but it is not pure cleanup either.
      */
     override fun dispose() {
         scope.cancel()

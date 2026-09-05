@@ -37,9 +37,10 @@ actual fun createApplicationEventBus(scope: CoroutineScope): ApplicationEventBus
  * Scope handed to a bus created by [publishSystemEvent] rather than by a plugin touching
  * `PluginContext.applicationEventBus`. Nothing in [ApplicationEventBusImpl] launches on it today;
  * it exists because the constructor takes one, and it is a supervisor so that a future child
- * failing cannot take the process-wide bus with it.
+ * failing cannot take the process-wide bus with it. Lazy so it is built only if that fallback is
+ * ever taken, which on most runs it is not.
  */
-private val systemEventBusScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+private val systemEventBusScope by lazy { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
 
 actual fun publishSystemEvent(event: ApplicationEvent) {
     // Route through the shared registry rather than this classloader's own singleton, so host
@@ -49,12 +50,14 @@ actual fun publishSystemEvent(event: ApplicationEvent) {
         it(event)
         return
     }
-    // No bus yet: create one rather than dropping the event. The bus was previously built only
-    // when the first plugin touched PluginContext.applicationEventBus, so until some plugin was
-    // curious every host event - ProjectChangeEvent, AuthEvent, TabEvent - went nowhere, and with
-    // replay = 0 no later subscriber could recover it. Whether a plugin had asked yet is not a
-    // sensible thing for the host's events to depend on. getInstance also registers the publisher,
-    // so this branch is taken at most once.
+    // No publisher registered means getInstance has never run, which means nobody holds the bus,
+    // which means it has no subscribers - so THIS event still reaches no one, and creating the
+    // bus does not rescue it. What it buys is that it is the last one: the bus was previously
+    // built only when the first plugin touched PluginContext.applicationEventBus, so on a build
+    // where no installed plugin had asked yet the host was permanently silent - not
+    // ProjectChangeEvent, not AuthEvent, not TabEvent, and with replay = 0 nothing recoverable
+    // afterwards. Whether a plugin has been curious is not a sensible thing for the host's events
+    // to depend on. getInstance registers the publisher, so this branch is taken at most once.
     ApplicationEventBusImpl.getInstance(systemEventBusScope).publishInternal(event)
 }
 
@@ -71,23 +74,29 @@ class ApplicationEventBusImpl private constructor(
         @Volatile
         private var instance: ApplicationEventBusImpl? = null
 
-        fun getInstance(scope: CoroutineScope): ApplicationEventBusImpl {
-            val bus =
-                instance ?: synchronized(this) {
-                    instance ?: ApplicationEventBusImpl(scope).also { instance = it }
+        fun getInstance(scope: CoroutineScope): ApplicationEventBusImpl =
+            synchronized(this) {
+                val bus = instance ?: ApplicationEventBusImpl(scope).also { instance = it }
+                // Publish to the process-global registry so the host's publishSystemEvent and
+                // in-process plugins share this exact instance regardless of classloader.
+                //
+                // Checked on every call rather than only at creation: the registry is what
+                // publishSystemEvent reads, so an instance that exists while the registry is
+                // empty means host events go nowhere, and nothing would ever put it right.
+                // Inside the lock, because it is a read-modify-write of two process-global
+                // statics; the lock is uncontended after the first call.
+                //
+                // Order matters, though not in the way it looks: `bus` is set first, so a
+                // concurrent publishSystemEvent can see a non-null bus while systemPublisher is
+                // still null. That caller falls through to this method, blocks here, and emits
+                // on the same instance - nothing is lost. Reversing the two would not be
+                // obviously wrong to a later reader, so it is written down.
+                if (ApplicationEventBusRegistry.bus == null) {
+                    ApplicationEventBusRegistry.bus = bus
+                    ApplicationEventBusRegistry.systemPublisher = { event -> bus.publishInternal(event) }
                 }
-            // Publish to the process-global registry so the host's publishSystemEvent and
-            // in-process plugins share this exact instance regardless of classloader.
-            //
-            // Checked on every call rather than only at creation: the registry is what
-            // publishSystemEvent reads, so an instance that exists while the registry is empty
-            // means host events go nowhere, and nothing would ever put it right.
-            if (ApplicationEventBusRegistry.bus == null) {
-                ApplicationEventBusRegistry.bus = bus
-                ApplicationEventBusRegistry.systemPublisher = { event -> bus.publishInternal(event) }
+                bus
             }
-            return bus
-        }
     }
 
     // Replay = 0 means events are only delivered to active subscribers
