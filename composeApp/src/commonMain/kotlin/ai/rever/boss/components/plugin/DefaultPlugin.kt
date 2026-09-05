@@ -1492,18 +1492,22 @@ private class ApiActiveTabsProviderAdapter(
     override val activePanelId: String? get() = splitViewState.activePanelId
 
     /**
-     * The tab [panelId] is showing.
+     * The tab a pane is showing, in any workspace this window is running.
      *
-     * Resolved across every workspace this window is running, not just the tree on screen, because
-     * a pane behind the current workspace still has a tab on top of it - and a caller listing tabs
-     * from all of them would otherwise mark none of those panes.
+     * Scoped to ONE workspace's tree, which is what the workspaceId parameter is for: panel ids
+     * repeat across trees (every workspace's first pane is `main`), so searching every running
+     * workspace and taking the first hit answered from the wrong one as soon as two were running.
+     * `panelsInWorkspace` covers a preserved workspace as well as the current one, so a pane
+     * behind this workspace still answers - it just is not visible.
      */
-    override fun selectedTabId(panelId: String): String? =
+    override fun selectedTabId(
+        workspaceId: String,
+        panelId: String,
+    ): String? =
         splitViewState
-            .liveWorkspaceIds
-            .firstNotNullOfOrNull { workspaceId ->
-                splitViewState.panelsInWorkspace(workspaceId).firstOrNull { it.id == panelId }
-            }?.tabsComponent
+            .panelsInWorkspace(workspaceId)
+            .firstOrNull { it.id == panelId }
+            ?.tabsComponent
             ?.tabsState
             ?.value
             ?.activeTab

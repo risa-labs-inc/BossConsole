@@ -160,7 +160,10 @@ class ActiveTabsProviderProxy(
     // panel id would have it mark the wrong tab.
     override val activePanelId: String? get() = null
 
-    override fun selectedTabId(panelId: String): String? = null
+    override fun selectedTabId(
+        workspaceId: String,
+        panelId: String,
+    ): String? = null
 
     override val supportsTabTransfer: Boolean get() = false
 
