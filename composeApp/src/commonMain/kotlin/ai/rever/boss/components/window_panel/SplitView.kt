@@ -1932,6 +1932,38 @@ class SplitViewState(
         return true
     }
 
+    /**
+     * Put a workspace this window is already RUNNING back on screen.
+     *
+     * The cheap half of a workspace switch. A normal switch has to read a saved [LayoutWorkspace]
+     * off disk and rebuild the tree from its config; this one does not, because the tree is still
+     * here - it was preserved when you left. So it is only ever preserve-the-current-one and
+     * restore-the-other, which is exactly what `applyWorkspace` collapses to for a live workspace
+     * anyway (it early-returns once [restorePreservedState] succeeds).
+     *
+     * **This moves the SPLIT VIEW only.** `WorkspaceManager.currentWorkspace` is a separate notion
+     * that the workspace menu and every plugin reading `WorkspaceDataProvider` observe, and nothing
+     * here can reach it. A caller must update that too or the two disagree about which workspace is
+     * showing - see `ApiActiveTabsProviderAdapter.selectTab`, which does both.
+     *
+     * UI thread only.
+     *
+     * @return false if that workspace is not running here, or is already the one on screen.
+     */
+    @Suppress("ReturnCount")
+    fun switchToLiveWorkspace(
+        workspaceId: String,
+        leavingWorkspaceName: String = "",
+    ): Boolean {
+        if (workspaceId == _currentWorkspaceId) return false
+        if (workspaceId !in liveWorkspaceIds) return false
+        // Preserves the CURRENT tree under the current id and then points _currentWorkspaceId at
+        // the target; restore then swaps the tree in. Both, in this order, or leaving a workspace
+        // drops its layout.
+        preserveCurrentState(workspaceId, leavingWorkspaceName)
+        return restorePreservedState(workspaceId)
+    }
+
     /** Close a tab wherever this window is running it, including in a workspace not on screen. */
     @Suppress("ReturnCount")
     fun closeTabAnywhere(tabId: String): Boolean {
