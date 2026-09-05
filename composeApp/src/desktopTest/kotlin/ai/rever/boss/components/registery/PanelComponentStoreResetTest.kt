@@ -11,6 +11,7 @@ import androidx.compose.ui.unit.dp
 import com.arkivanov.decompose.ComponentContext
 import com.arkivanov.decompose.DefaultComponentContext
 import com.arkivanov.essenty.lifecycle.LifecycleRegistry
+import com.arkivanov.essenty.lifecycle.doOnDestroy
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -210,4 +211,113 @@ class PanelComponentStoreResetTest {
         }
         assertFalse(PanelComponentStoreRegistry.getAllStores().contains(storeA))
     }
+
+    // --- Issue #213: per-panel lifecycle tests ---
+    // Panels used to share the window's root ComponentContext, whose lifecycle is never
+    // destroyed. Every doOnDestroy a panel registered was dead code. These tests pin the fix:
+    // each panel gets its own LifecycleRegistry, destroyed on close/reset/disposeAll.
+
+    @Test
+    fun `removeComponent fires doOnDestroy on the closed panel's lifecycle`() {
+        val registry = PanelRegistry()
+        val id = PanelId("lifecycle-close", 1)
+        var destroyCalled = false
+        registry.registerPanel(panelInfo(id)) { ctx, info ->
+            object : PanelComponentWithUI, ComponentContext by ctx {
+                init { lifecycle.doOnDestroy { destroyCalled = true } }
+
+                @Composable
+                override fun Content() {}
+            }
+        }
+        val store = PanelComponentStore(newContext(), registry)
+        store.getOrCreateComponent(id)
+
+        store.removeComponent(id)
+
+        assertTrue(destroyCalled, "doOnDestroy must fire when a panel is closed (issue #213)")
+    }
+
+    @Test
+    fun `resetComponent fires doOnDestroy on the outgoing component's lifecycle`() {
+        val registry = PanelRegistry()
+        val id = PanelId("lifecycle-reset", 1)
+        var destroyCalled = false
+        registerFactory(registry, id, generation = 1)
+        val store = PanelComponentStore(newContext(), registry)
+        val component = store.getOrCreateComponent(id)!!
+        component.lifecycle.doOnDestroy { destroyCalled = true }
+
+        assertTrue(store.resetComponent(id))
+
+        assertTrue(destroyCalled, "doOnDestroy must fire on the outgoing component during reset (issue #213)")
+    }
+
+    @Test
+    fun `disposeAll fires doOnDestroy on every open panel`() {
+        val registry = PanelRegistry()
+        val idA = PanelId("lifecycle-all-a", 1)
+        val idB = PanelId("lifecycle-all-b", 2)
+        var destroyA = false
+        var destroyB = false
+        registry.registerPanel(panelInfo(idA)) { ctx, info ->
+            object : PanelComponentWithUI, ComponentContext by ctx {
+                init { lifecycle.doOnDestroy { destroyA = true } }
+
+                @Composable
+                override fun Content() {}
+            }
+        }
+        registry.registerPanel(panelInfo(idB)) { ctx, info ->
+            object : PanelComponentWithUI, ComponentContext by ctx {
+                init { lifecycle.doOnDestroy { destroyB = true } }
+
+                @Composable
+                override fun Content() {}
+            }
+        }
+        val store = PanelComponentStore(newContext(), registry)
+        store.getOrCreateComponent(idA)
+        store.getOrCreateComponent(idB)
+
+        store.disposeAll()
+
+        assertTrue(destroyA, "disposeAll must fire doOnDestroy on panel A (window close)")
+        assertTrue(destroyB, "disposeAll must fire doOnDestroy on panel B (window close)")
+        assertTrue(store.activeComponents.isEmpty())
+    }
+
+    @Test
+    fun `closing one panel does not fire doOnDestroy on another`() {
+        val registry = PanelRegistry()
+        val idA = PanelId("lifecycle-iso-a", 1)
+        val idB = PanelId("lifecycle-iso-b", 2)
+        var destroyA = false
+        var destroyB = false
+        registry.registerPanel(panelInfo(idA)) { ctx, info ->
+            object : PanelComponentWithUI, ComponentContext by ctx {
+                init { lifecycle.doOnDestroy { destroyA = true } }
+
+                @Composable
+                override fun Content() {}
+            }
+        }
+        registry.registerPanel(panelInfo(idB)) { ctx, info ->
+            object : PanelComponentWithUI, ComponentContext by ctx {
+                init { lifecycle.doOnDestroy { destroyB = true } }
+
+                @Composable
+                override fun Content() {}
+            }
+        }
+        val store = PanelComponentStore(newContext(), registry)
+        store.getOrCreateComponent(idA)
+        store.getOrCreateComponent(idB)
+
+        store.removeComponent(idA)
+
+        assertTrue(destroyA, "the closed panel's doOnDestroy must fire")
+        assertFalse(destroyB, "a sibling panel's lifecycle must be unaffected")
+    }
+
 }
