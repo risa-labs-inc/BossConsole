@@ -2029,6 +2029,69 @@ class SplitViewState(
         }
     }
 
+    /**
+     * What every tab collected out of one preserved workspace's tree has in common.
+     *
+     * One parameter rather than four: the two collectors recurse, so each addition was passed
+     * through every call site twice more, and the pane names are the fourth.
+     */
+    private data class WorkspaceTabContext(
+        val workspaceId: String,
+        val workspaceName: String,
+        val windowId: String,
+        val splitPositions: Map<String, String>,
+    )
+
+    /**
+     * The same names for a workspace running BEHIND the one on screen, where nothing was measured.
+     *
+     * A preserved workspace's panes were never composed, so they have no bounds; the rectangles
+     * come from its split tree with every divider assumed centred. That assumption cannot change
+     * the answer - [paneLabel] asks only which edges a pane touches and which axis it spans, and no
+     * divider position changes either - so a workspace names its panes identically before and after
+     * it comes on screen. Which is the point: Top of Mind lists every running workspace, and a
+     * naming that only worked for the one on screen would be the drift it exists to remove.
+     *
+     * Deliberately NOT consulting [panelName]. Panel ids are unique only within one tree - every
+     * workspace's first pane is called `main` - so a name the user gave a pane here would be
+     * returned for the pane of that name in every other workspace too. The pane on screen is
+     * `getAllPanels()`, which is one tree and has no such ambiguity.
+     */
+    private fun splitPositionsForNode(root: SplitNode): Map<String, String> {
+        val rects = mutableListOf<Pair<String, PanelBounds>>()
+        collectPaneRects(root, PanelBounds(0f, 0f, 1f, 1f), rects)
+        if (rects.size <= 1) return emptyMap()
+        val byId = rects.toMap()
+        val glyphs = paneGlyphs(rects.map { it.first }) { byId[it] }
+        return rects.withIndex().associate { (index, entry) ->
+            entry.first to paneLabel(index, glyphs[entry.first])
+        }
+    }
+
+    private fun collectPaneRects(
+        node: SplitNode,
+        area: PanelBounds,
+        into: MutableList<Pair<String, PanelBounds>>,
+    ) {
+        val halfWidth = area.width / 2f
+        val halfHeight = area.height / 2f
+        when (node) {
+            is SplitNode.Panel -> {
+                into.add(node.id to area)
+            }
+
+            is SplitNode.VerticalSplit -> {
+                collectPaneRects(node.left, PanelBounds(area.x, area.y, halfWidth, area.height), into)
+                collectPaneRects(node.right, PanelBounds(area.x + halfWidth, area.y, halfWidth, area.height), into)
+            }
+
+            is SplitNode.HorizontalSplit -> {
+                collectPaneRects(node.top, PanelBounds(area.x, area.y, area.width, halfHeight), into)
+                collectPaneRects(node.bottom, PanelBounds(area.x, area.y + halfHeight, area.width, halfHeight), into)
+            }
+        }
+    }
+
     fun collectAllActiveFluckTabs(windowId: String = "unknown"): List<ActiveTab> {
         val result = mutableListOf<ActiveTab>()
         val seenTabIds = mutableSetOf<String>()
@@ -2067,7 +2130,17 @@ class SplitViewState(
         // Collect from preserved states (only if not already in current state)
         preservedWorkspaceStates.forEach { (workspaceId, state) ->
             if (workspaceId != _currentWorkspaceId) {
-                collectFluckTabsFromNode(state.rootNode, workspaceId, state.workspaceName, windowId, result, seenTabIds)
+                collectFluckTabsFromNode(
+                    state.rootNode,
+                    WorkspaceTabContext(
+                        workspaceId,
+                        state.workspaceName,
+                        windowId,
+                        splitPositionsForNode(state.rootNode),
+                    ),
+                    result,
+                    seenTabIds,
+                )
             }
         }
 
@@ -2151,7 +2224,17 @@ class SplitViewState(
         // Collect from preserved states (only if not already added)
         preservedWorkspaceStates.forEach { (workspaceId, state) ->
             if (!seenConfigIds.contains(workspaceId)) {
-                collectAllTabsFromNode(state.rootNode, workspaceId, getWorkspaceName(workspaceId), windowId, result, seenTabIds)
+                collectAllTabsFromNode(
+                    state.rootNode,
+                    WorkspaceTabContext(
+                        workspaceId,
+                        getWorkspaceName(workspaceId),
+                        windowId,
+                        splitPositionsForNode(state.rootNode),
+                    ),
+                    result,
+                    seenTabIds,
+                )
                 if (result.any { it.workspaceId == workspaceId }) {
                     seenConfigIds.add(workspaceId)
                 }
@@ -2163,9 +2246,7 @@ class SplitViewState(
 
     private fun collectFluckTabsFromNode(
         node: SplitNode,
-        workspaceId: String,
-        workspaceName: String,
-        windowId: String,
+        context: WorkspaceTabContext,
         result: MutableList<ActiveTab>,
         seenTabIds: MutableSet<String>,
     ) {
@@ -2176,10 +2257,11 @@ class SplitViewState(
                         result.add(
                             ActiveTab(
                                 tabInfo = tab,
-                                workspaceId = workspaceId,
-                                workspaceName = workspaceName,
+                                workspaceId = context.workspaceId,
+                                workspaceName = context.workspaceName,
                                 panelId = node.id,
-                                windowId = windowId,
+                                windowId = context.windowId,
+                                splitPosition = context.splitPositions[node.id],
                             ),
                         )
                         seenTabIds.add(tab.id)
@@ -2188,22 +2270,20 @@ class SplitViewState(
             }
 
             is SplitNode.VerticalSplit -> {
-                collectFluckTabsFromNode(node.left, workspaceId, workspaceName, windowId, result, seenTabIds)
-                collectFluckTabsFromNode(node.right, workspaceId, workspaceName, windowId, result, seenTabIds)
+                collectFluckTabsFromNode(node.left, context, result, seenTabIds)
+                collectFluckTabsFromNode(node.right, context, result, seenTabIds)
             }
 
             is SplitNode.HorizontalSplit -> {
-                collectFluckTabsFromNode(node.top, workspaceId, workspaceName, windowId, result, seenTabIds)
-                collectFluckTabsFromNode(node.bottom, workspaceId, workspaceName, windowId, result, seenTabIds)
+                collectFluckTabsFromNode(node.top, context, result, seenTabIds)
+                collectFluckTabsFromNode(node.bottom, context, result, seenTabIds)
             }
         }
     }
 
     private fun collectAllTabsFromNode(
         node: SplitNode,
-        workspaceId: String,
-        workspaceName: String,
-        windowId: String,
+        context: WorkspaceTabContext,
         result: MutableList<ActiveTab>,
         seenTabIds: MutableSet<String>,
     ) {
@@ -2214,10 +2294,11 @@ class SplitViewState(
                         result.add(
                             ActiveTab(
                                 tabInfo = tab,
-                                workspaceId = workspaceId,
-                                workspaceName = workspaceName,
+                                workspaceId = context.workspaceId,
+                                workspaceName = context.workspaceName,
                                 panelId = node.id,
-                                windowId = windowId,
+                                windowId = context.windowId,
+                                splitPosition = context.splitPositions[node.id],
                             ),
                         )
                         seenTabIds.add(tab.id)
@@ -2226,13 +2307,13 @@ class SplitViewState(
             }
 
             is SplitNode.VerticalSplit -> {
-                collectAllTabsFromNode(node.left, workspaceId, workspaceName, windowId, result, seenTabIds)
-                collectAllTabsFromNode(node.right, workspaceId, workspaceName, windowId, result, seenTabIds)
+                collectAllTabsFromNode(node.left, context, result, seenTabIds)
+                collectAllTabsFromNode(node.right, context, result, seenTabIds)
             }
 
             is SplitNode.HorizontalSplit -> {
-                collectAllTabsFromNode(node.top, workspaceId, workspaceName, windowId, result, seenTabIds)
-                collectAllTabsFromNode(node.bottom, workspaceId, workspaceName, windowId, result, seenTabIds)
+                collectAllTabsFromNode(node.top, context, result, seenTabIds)
+                collectAllTabsFromNode(node.bottom, context, result, seenTabIds)
             }
         }
     }

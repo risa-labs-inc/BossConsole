@@ -112,6 +112,52 @@ class SplitViewWorkspaceTransferTest {
     }
 
     @Test
+    fun `a preserved workspace names its panes the way the tab bar would`() {
+        // The tab bar reads MEASURED rectangles, and a workspace behind the one on screen was
+        // never composed - so its names come from the split tree with the dividers assumed
+        // centred. Same words either way, which is the point: `splitPosition` is what a plugin
+        // listing these tabs prints as its group header.
+        val state = newSplitViewState()
+        state.enterWorkspace("ws-a", "tab-a")
+        val right = state.splitPanel("main", SplitOrientation.VERTICAL)
+        state.getPanel(right)!!.tabsComponent.addTab(TransferTabInfo(id = "tab-a2"))
+        state.enterWorkspace("ws-b", "tab-b")
+
+        val positions =
+            state
+                .collectAllActiveTabs(windowId = "test-window")
+                .associate { it.tabInfo.id to it.splitPosition }
+
+        assertEquals("Left", positions["tab-a"])
+        assertEquals("Right", positions["tab-a2"])
+        // One pane is not a split, so a position would be a claim about a divider that is not
+        // there. Null is what ActiveTabData documents for it.
+        assertNull(positions["tab-b"])
+    }
+
+    @Test
+    fun `a nested pane in a preserved workspace gets its corner, not its branch`() {
+        // "Top right", the way the bar says it - NOT "RIGHT > TOP", which is what reading the
+        // saved SplitConfig tree produces and is the drift this replaced.
+        val state = newSplitViewState()
+        state.enterWorkspace("ws-a", "tab-left")
+        val right = state.splitPanel("main", SplitOrientation.VERTICAL)
+        state.getPanel(right)!!.tabsComponent.addTab(TransferTabInfo(id = "tab-top-right"))
+        val bottomRight = state.splitPanel(right, SplitOrientation.HORIZONTAL)
+        state.getPanel(bottomRight)!!.tabsComponent.addTab(TransferTabInfo(id = "tab-bottom-right"))
+        state.enterWorkspace("ws-b", "tab-b")
+
+        val positions =
+            state
+                .collectAllActiveTabs(windowId = "test-window")
+                .associate { it.tabInfo.id to it.splitPosition }
+
+        assertEquals("Left", positions["tab-left"])
+        assertEquals("Top right", positions["tab-top-right"])
+        assertEquals("Bottom right", positions["tab-bottom-right"])
+    }
+
+    @Test
     fun `moves a live tab from the current workspace into a preserved one`() {
         val state = newSplitViewState()
         state.enterWorkspace("ws-a", "tab-a")
