@@ -1,6 +1,7 @@
 package ai.rever.boss.components.plugin
 
 import ai.rever.boss.cache.loadFaviconFromCache
+import ai.rever.boss.components.dialogs.TabCollector
 import ai.rever.boss.components.events.TerminalEventBus
 import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.contextMenu
@@ -104,6 +105,7 @@ import ai.rever.boss.services.supabase.RoleManagementProviderImpl
 import ai.rever.boss.services.supabase.SecretDataProviderImpl
 import ai.rever.boss.services.supabase.SupabaseDataProviderImpl
 import ai.rever.boss.services.supabase.UserManagementProviderImpl
+import ai.rever.boss.topofmind.TopOfMindStateHolder
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.LogSanitizer
@@ -122,10 +124,12 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -1416,6 +1420,34 @@ private class ApiActiveTabsProviderAdapter(
     override suspend fun refreshTabs() {
         val tabs = splitViewState.collectAllActiveTabs(workspaceManager, windowId)
         _activeTabs.value = tabs.map { convertToActiveTabData(it) }
+    }
+
+    /**
+     * Every open window's tabs, where [activeTabs] is this window's alone.
+     *
+     * Derived from `TopOfMindStateHolder` rather than collected here, because that holder is
+     * already where the cross-window walk lands: `TabCollector.refreshGlobalState` writes it, and
+     * `GlobalSearchService` reads it. A second collector in this adapter would be a second answer
+     * to one question, and one adapter exists per window - so N windows would each be walking
+     * every other window's split trees on their own schedule.
+     *
+     * The holder is process-wide and so is this flow, which is the point: a switcher asking for
+     * every window must not be scoped to the one it was opened from.
+     */
+    override val allWindowTabs: StateFlow<List<ActiveTabData>> =
+        TopOfMindStateHolder.activeTabs
+            .map { tabs -> tabs.map { convertToActiveTabData(it) } }
+            .stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+    /**
+     * Collect every window's tabs into the holder [allWindowTabs] is derived from.
+     *
+     * On demand rather than polled: this walks `SplitViewStateRegistry.getAllStates()` for every
+     * open window, where [refreshTabs]' 2s loop walks one. A caller opening a switcher asks first;
+     * nothing else pays for it.
+     */
+    override suspend fun refreshAllWindowTabs() {
+        TabCollector.refreshGlobalState(workspaceManager)
     }
 
     @Suppress("ReturnCount")
