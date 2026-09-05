@@ -4,6 +4,7 @@ import ai.rever.boss.config.SelfHealingSettingsManager
 import ai.rever.boss.ipc.BossIpcClient
 import ai.rever.boss.ipc.BossIpcServer
 import ai.rever.boss.ipc.IpcAddressResolver
+import ai.rever.boss.ipc.auth.ProcessTokenRegistry
 import ai.rever.boss.ipc.proto.OrchestratorServiceGrpcKt
 import ai.rever.boss.ipc.proto.ProcessFailureReport
 import ai.rever.boss.ipc.proto.ProcessState
@@ -13,6 +14,7 @@ import ai.rever.boss.ipc.services.EventBusServiceImpl
 import ai.rever.boss.ipc.services.KernelServiceImpl
 import ai.rever.boss.ipc.services.StateServiceImpl
 import ai.rever.boss.kernel.services.*
+import ai.rever.boss.kernel.ui.RemoteUiPlacement
 import ai.rever.boss.kernel.ui.RemoteUiSurfaceRegistry
 import ai.rever.boss.plugin.api.*
 import ai.rever.boss.process.ManagedProcess
@@ -132,6 +134,11 @@ internal fun reapChildren(
     monitor: ProcessMonitor?,
     registry: ProcessRegistry?,
     gracePeriodMs: Long = 3_000,
+    /**
+     * When present, each reaped child's IPC credential is invalidated once it is confirmed gone — see
+     * [ProcessTokenRegistry.revoke]. Null spawns behave exactly as before (no tokens exist to revoke).
+     */
+    tokenRegistry: ProcessTokenRegistry? = null,
 ) {
     reaping = true
     try {
@@ -166,6 +173,10 @@ internal fun reapChildren(
 
         // Children are dead, so nothing is going to answer on these. Close them without waiting.
         children.forEach { runCatching { it.ipcClient?.shutdown(timeoutMs = 0) } }
+
+        // And nothing should be able to answer *as* them either: a credential outliving the process
+        // it was issued to is exactly what BossConsole#53 exists to avoid.
+        children.forEach { runCatching { tokenRegistry?.revoke(it.config.processId) } }
     } finally {
         reaping = false
     }
@@ -343,6 +354,13 @@ class KernelBootstrap(
         private set
 
     /**
+     * Per-process IPC credentials for this kernel instance, or null in MONOLITH mode where nothing is
+     * spawned and no bridge checks identity. Shared by [processSpawner] (which mints) and [ipcServer]'s
+     * [ai.rever.boss.ipc.auth.ProcessIdentityInterceptor] (which verifies) — see BossConsole#53.
+     */
+    private var processTokenRegistry: ProcessTokenRegistry? = null
+
+    /**
      * IPC address of each registered child, so the kernel can call *them*.
      *
      * [KernelServiceImpl] has always known these — it just handed them to a callback that dropped
@@ -367,10 +385,12 @@ class KernelBootstrap(
         // Create infrastructure
         kernelAddress = IpcAddressResolver.kernelAddress()
         val registry = ProcessRegistry()
+        val tokenRegistry = ProcessTokenRegistry()
         // The spawner registers everything it spawns, so no call site can forget to.
-        val spawner = ProcessSpawner(kernelAddress!!, registry = registry)
+        val spawner = ProcessSpawner(kernelAddress!!, registry = registry, tokenRegistry = tokenRegistry)
         processRegistry = registry
         processSpawner = spawner
+        processTokenRegistry = tokenRegistry
         processMonitor = ProcessMonitor(registry, scope)
 
         // Register JVM shutdown hook to kill child processes on exit/crash
@@ -378,7 +398,7 @@ class KernelBootstrap(
             Thread({
                 try {
                     logger.info("JVM shutdown hook: cleaning up child processes...")
-                    reapChildren(processMonitor, processRegistry)
+                    reapChildren(processMonitor, processRegistry, tokenRegistry = processTokenRegistry)
                     ipcServer?.stop()
                 } catch (_: Exception) {
                 }
@@ -429,11 +449,11 @@ class KernelBootstrap(
         // and never touches the socket. Adding a service to a running server is safe; the ordering above
         // is about existence, not about protecting streams.
         ipcServer =
-            BossIpcServer(kernelAddress!!)
+            BossIpcServer(kernelAddress!!, tokenRegistry)
                 .addService(kernelService!!)
                 .addService(eventBusService!!)
                 .addService(stateService!!)
-                .addService(PluginUIServiceBridge(RemoteUiSurfaceRegistry.shared))
+                .addService(PluginUIServiceBridge(RemoteUiSurfaceRegistry.shared, placement = RemoteUiPlacement.shared))
                 .start()
 
         // Wire IPC event bridge to forward events cross-process (M8 fix)
@@ -851,7 +871,7 @@ class KernelBootstrap(
         //    back-to-back with no wait between tiers, so no tier was actually down before the next
         //    was signalled. Reintroducing it would mean a wait per tier, and therefore an exit cost
         //    that scales with the number of tiers.
-        reapChildren(processMonitor, processRegistry)
+        reapChildren(processMonitor, processRegistry, tokenRegistry = processTokenRegistry)
 
         // 3. Stop IPC server
         ipcServer?.stop()

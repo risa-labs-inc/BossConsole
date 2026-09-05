@@ -205,6 +205,9 @@ class OutOfProcessPluginSpawnerImpl(
         val process = managedProcesses.remove(pluginId)
         runCatching { process?.destroyForcibly() }
         process?.let { kernelRegistry()?.unregisterIfSame(processIdOf(pluginId), it) }
+        // Never coming back under this attempt's identity - revoke rather than leave a credential
+        // for a process that never finished starting (BossConsole#53).
+        runCatching { processSpawner.revokeToken(processIdOf(pluginId)) }
     }
 
     override suspend fun terminate(pluginId: String): Result<Unit> =
@@ -250,6 +253,11 @@ class OutOfProcessPluginSpawnerImpl(
                 // part-way through an unload still reaps it; and removing by id alone could evict
                 // a replacement that a concurrent respawn had already registered.
                 process?.let { kernelRegistry()?.unregisterIfSame(processIdOf(pluginId), it) }
+                // A deliberate terminate() is "not coming back", unlike a crash the monitor will
+                // respawn - so its credential is revoked here rather than left to outlive it
+                // (BossConsole#53). A concurrent respawn racing this would get its own fresh token
+                // from spawn() regardless, same as any other revoke-then-reissue ordering.
+                runCatching { processSpawner.revokeToken(processIdOf(pluginId)) }
             }
         }
 

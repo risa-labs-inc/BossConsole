@@ -9,7 +9,13 @@ import com.arkivanov.decompose.ComponentContext
 
 class PanelComponentStore(
     private val rootContext: ComponentContext,
-    private val registry: PanelRegistry,
+    /**
+     * Public (read-only) so a caller that has resolved this store via
+     * [PanelComponentStoreRegistry.getStore] can register a panel into the same window's
+     * [PanelRegistry] this store reads from — e.g. remote/out-of-process UI placement
+     * (BossConsole#54), which has no other way to reach a specific window's registry.
+     */
+    val registry: PanelRegistry,
 ) {
     private val logger = BossLogger.forComponent("PanelComponentStore")
 
