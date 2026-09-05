@@ -174,6 +174,17 @@ class ActiveTabsProviderProxy(
         targetWorkspaceId: String,
     ): Boolean = false
 
+    // allWindowTabs and refreshAllWindowTabs are left on their api defaults, which is the same
+    // answer this proxy gives every other member that needs state it cannot see. The wire has one
+    // stream, `watchActiveTabs`, and the host serves it from the window this plugin was launched
+    // for; there is no cross-window RPC to forward, so an override here could only re-publish the
+    // one window's list under a name that promises every window.
+    //
+    // The default IS that one window's list (`allWindowTabs get() = activeTabs`), deliberately, so
+    // a switcher built on it shows fewer tabs rather than none - and `refreshAllWindowTabs`'s
+    // empty default leaves `refreshTabs` as the thing that actually refreshes it. Overriding
+    // either to something narrower would take a working degradation away.
+
     private fun ActiveTabProto.toData() =
         ActiveTabData(
             tabId = tabId,

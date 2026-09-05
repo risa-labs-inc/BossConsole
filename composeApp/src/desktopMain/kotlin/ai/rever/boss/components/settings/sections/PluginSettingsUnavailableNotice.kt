@@ -2,6 +2,10 @@ package ai.rever.boss.components.settings.sections
 
 import ai.rever.boss.components.plugin.DynamicPluginManager
 import ai.rever.boss.components.plugin.MissingPluginOffer
+import ai.rever.boss.components.plugin.PluginSectionAbsence
+import ai.rever.boss.components.plugin.pluginSectionAbsence
+import ai.rever.boss.components.plugin.pluginSectionMessage
+import ai.rever.boss.components.plugin.pluginSectionOffersInstall
 import ai.rever.boss.plugin.sandbox.ui.PluginCrashRegistry
 import ai.rever.boss.plugin.ui.BossPrimaryButton
 import ai.rever.boss.plugin.ui.BossTheme

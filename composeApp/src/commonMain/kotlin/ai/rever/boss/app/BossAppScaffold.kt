@@ -19,6 +19,7 @@ import ai.rever.boss.components.overlays.TabDraggingOverlay
 import ai.rever.boss.components.plugin.LocalPanelPluginIdResolver
 import ai.rever.boss.components.plugin.LocalPluginUninstallable
 import ai.rever.boss.components.plugin.PanelIds
+import ai.rever.boss.components.plugin.openTopOfMindQuickSwitcher
 import ai.rever.boss.components.plugin.panels.left_bottom.TopOfMind.LocalSplitViewState
 import ai.rever.boss.components.plugin.panels.left_bottom.TopOfMind.LocalWorkspaceManager
 import ai.rever.boss.components.plugin.providers.TopOfMindDataProvider
@@ -616,7 +617,7 @@ internal fun BossAppScaffold(
                                 extractCurrentWorkspace(splitViewState, selectedProject.path)
                             },
                             onShowTopOfMind = {
-                                state.showTopOfMindDialog = true
+                                openTopOfMindQuickSwitcher(state.windowId, state.coroutineScope)
                             },
                             onShowSettings = {
                                 state.settingsWindow.open()
@@ -788,7 +789,9 @@ internal fun BossAppScaffold(
                                     getCurrentWorkspace = {
                                         extractCurrentWorkspace(splitViewState, selectedProject.path)
                                     },
-                                    onShowTopOfMind = { state.showTopOfMindDialog = true },
+                                    onShowTopOfMind = {
+                                        openTopOfMindQuickSwitcher(state.windowId, state.coroutineScope)
+                                    },
                                 )
                             },
                         )

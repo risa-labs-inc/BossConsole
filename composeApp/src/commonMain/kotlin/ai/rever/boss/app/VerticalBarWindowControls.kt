@@ -1,10 +1,10 @@
 package ai.rever.boss.app
 
 import ai.rever.boss.components.buttons.BossActionButton
+import ai.rever.boss.components.plugin.openTopOfMindWorkspacePicker
 import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.WorkspaceButton
 import ai.rever.boss.components.workspaces.WorkspaceManager
-import ai.rever.boss.components.workspaces.openTopOfMindWorkspacePicker
 import ai.rever.boss.plugin.api.Panel
 import ai.rever.boss.plugin.api.Panel.Companion.right
 import ai.rever.boss.plugin.api.Panel.Companion.top
