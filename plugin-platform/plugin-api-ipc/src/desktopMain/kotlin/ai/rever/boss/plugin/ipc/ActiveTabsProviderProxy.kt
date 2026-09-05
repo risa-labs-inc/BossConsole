@@ -155,6 +155,13 @@ class ActiveTabsProviderProxy(
     // Answering the probe honestly is the point. A plugin that reads supportsTabTransfer = false
     // hides the affordance; one that trusted a defaulted `false` return would show a menu item
     // that quietly does nothing every time.
+    // Both need the host's live split-view state, which does not cross this boundary. Null rather
+    // than a guess: a caller reads "no selection information here" and marks nothing, where a wrong
+    // panel id would have it mark the wrong tab.
+    override val activePanelId: String? get() = null
+
+    override fun selectedTabId(panelId: String): String? = null
+
     override val supportsTabTransfer: Boolean get() = false
 
     override val liveWorkspaceIds: Set<String> get() = emptySet()
