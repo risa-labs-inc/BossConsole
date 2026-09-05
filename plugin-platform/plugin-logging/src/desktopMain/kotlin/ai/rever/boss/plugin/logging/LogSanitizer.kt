@@ -230,6 +230,17 @@ object LogSanitizer {
     private val emailPattern = Regex("""[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}""")
 
     /**
+     * Private DNS names that can reveal an organisation's internal topology in
+     * network failures. Kept to the private-style suffixes measured in #109 so
+     * ordinary dotted prose and package names remain diagnostic.
+     */
+    private val privateHostnamePattern =
+        Regex(
+            """(?<![A-Za-z0-9_.-])(?:[A-Za-z0-9-]+\.)+(?:internal|local)(?![A-Za-z0-9_.-])""",
+            RegexOption.IGNORE_CASE,
+        )
+
+    /**
      * Runs of text that are a credential by their own structure, wherever they
      * appear: a JWT (three base64url segments — the first is the base64url of a
      * JSON header, which is why every JWT begins `eyJ`), a GitHub token prefix,
@@ -382,6 +393,7 @@ object LogSanitizer {
                 .replace(filePathPattern, "[PATH]")
                 .replace(urlPattern, "[URL]")
                 .replace(emailPattern, "[EMAIL]")
+                .replace(privateHostnamePattern, "[HOST]")
 
         val withMaskedAssignments =
             assignmentPattern.replace(withoutLocations) { match ->

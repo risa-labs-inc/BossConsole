@@ -454,6 +454,27 @@ class LogSanitizerTest {
     }
 
     @Test
+    fun `sanitizeExceptionMessage redacts a bare private hostname`() {
+        val result = LogSanitizer.sanitizeExceptionMessage("java.net.UnknownHostException: internal.service.local")
+
+        assertEquals("java.net.UnknownHostException: [HOST]", result)
+    }
+
+    @Test
+    fun `sanitizeExceptionMessage redacts a private hostname but preserves its port`() {
+        val result = LogSanitizer.sanitizeExceptionMessage("Connect to proxy.corp.internal:3128 failed")
+
+        assertEquals("Connect to [HOST]:3128 failed", result)
+    }
+
+    @Test
+    fun `sanitizeExceptionMessage preserves ordinary dotted diagnostics`() {
+        val message = "com.example.Client reported foo.bar in Version 1.2.3."
+
+        assertEquals(message, LogSanitizer.sanitizeExceptionMessage(message))
+    }
+
+    @Test
     fun `sanitizeExceptionMessage preserves an ordinary long identifier`() {
         // Well over the 20-character length that marks a map *value* as
         // sensitive. In message text a long run is normally just a name, and
@@ -531,6 +552,13 @@ class LogSanitizerTest {
         // The frame either side of it is untouched.
         assertTrue(result.contains("ai.rever.boss.services.auth.SessionManager.refreshSession(SessionManager.kt:142)"))
         assertFalse(result.contains("IkpXVCJ9"))
+    }
+
+    @Test
+    fun `sanitizeStackTrace redacts a private hostname in a Caused by line`() {
+        val trace = "Caused by: java.net.UnknownHostException: internal.service.local"
+
+        assertEquals("Caused by: java.net.UnknownHostException: [HOST]", LogSanitizer.sanitizeStackTrace(trace))
     }
 
     @Test
