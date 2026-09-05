@@ -593,6 +593,16 @@ restart. There is no Settings row and no per-site exclusion.
   `window.__bossInteractionStarted`. The sanitizers bound what can be *smuggled*
   through; nothing bounds a site lying about its own usage. Treat these as
   indicative, not as measurements, wherever a site has an incentive to lie.
+- **Every project the user opens is now on the bus, not only plugin-initiated ones.**
+  `ProjectChangeEvent` used to be published from `ProjectDataProviderImpl.selectProject`
+  alone, so a path reached plugins only when a plugin had asked for the switch. It is
+  now announced from the window state's own `ProjectSelectionCallback`
+  (`WindowProjectStateRegistry.newState` / `ProjectChangeAnnouncer`), which covers the
+  startup restore, the top bar picker, the CLI, deep links and the KERNEL-mode gRPC
+  bridge. Project paths routinely contain usernames, so this widens *when* a filesystem
+  path reaches every installed plugin, not *what* - the same install-time-gating stance
+  as the bus above applies, and it is recorded here because this paragraph is the
+  canonical list of what a third-party plugin can observe.
 - **`PluginContext.projectSearchProvider` is the first UNGATED WRITE surface.**
   Like the event bus it is available to every installed plugin, but where the
   bus is a read, its `replaceInProject` rewrites file contents anywhere inside

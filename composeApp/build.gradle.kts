@@ -2448,6 +2448,33 @@ tasks.withType<Test> {
     // Disable failure when test sources exist but no tests are discovered
     // This handles misconfigured test sources or test classes without test methods
     failOnNoDiscoveredTests = false
+
+    // Point the test JVM's home at a build directory, so BossDirectories.rootDir resolves to
+    // <build>/test-home/.boss instead of the developer's real ~/.boss.
+    //
+    // This is not hygiene. ProjectState.updateRecentProjects persists to that directory and keeps
+    // only MAX_RECENT_PROJECTS = 10 entries, so a test that records a handful of projects EVICTS
+    // real ones from the developer's picker, and no cleanup can put them back. Several other
+    // classes here read user.home too (DefaultWorkingDirectoryTest, ProjectRemovalTest,
+    // WorkspaceApplierMigrationTest); they read it through the same property, so they stay
+    // consistent - which is why this belongs on the task rather than in one test's setup.
+    // BossDirectories.rootDir is a `by lazy` on a process-global, so the task is the only
+    // reliable place to set it: by the time any test code runs it is too late.
+    val testHome =
+        layout.buildDirectory
+            .dir("test-home")
+            .get()
+            .asFile
+    systemProperty("user.home", testHome.absolutePath)
+    // Deleted, not just created. ProjectState's saves are fire-and-forget, so the FIRST run
+    // leaves a recent-projects.json behind; on the second, ProjectState.init's async load takes
+    // its `if (file.exists())` branch and assigns _recentProjects.value wholesale, which can land
+    // mid-test. A stale home reintroduces exactly the flake the redirect removes, so the home is
+    // fresh per run rather than merely private.
+    doFirst {
+        testHome.deleteRecursively()
+        testHome.mkdirs()
+    }
 }
 
 // Wrapper tasks that auto-increment build number before packaging

@@ -15,8 +15,13 @@ expect fun createApplicationEventBus(scope: CoroutineScope): ApplicationEventBus
 
 /**
  * Publish a host/system [ApplicationEvent] onto the shared application event bus so plugins
- * (e.g. the analytics plugin) observe it. Best-effort: a no-op if the bus has not been
- * created yet. Lets common-source host code emit system events without depending on the
- * platform-specific bus implementation.
+ * (e.g. the analytics plugin) observe it. Lets common-source host code emit system events
+ * without depending on the platform-specific bus implementation.
+ *
+ * Best-effort in one specific way: the bus is `replay = 0`, so an event published while nothing
+ * is subscribed reaches no one and is not recoverable afterwards. It is no longer a *no-op* when
+ * the bus does not exist - the desktop implementation creates it, so the host is not silent until
+ * some plugin happens to touch `PluginContext.applicationEventBus` - but that first event is
+ * still, by definition, unsubscribed.
  */
 expect fun publishSystemEvent(event: ApplicationEvent)
