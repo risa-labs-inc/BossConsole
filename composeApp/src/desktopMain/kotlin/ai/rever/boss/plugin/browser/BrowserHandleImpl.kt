@@ -102,7 +102,11 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.booleanOrNull
@@ -316,6 +320,7 @@ internal class BrowserHandleImpl(
     private val swipeNavBridge = BrowserSwipeNavBridge(onNavigate = ::onSwipeNavigate)
 
     private val disposed = AtomicBoolean(false)
+    private val tracker = NativeOperationTracker(disposed)
 
     /**
      * Latched when a synchronous RPC through this browser fails because its transport is gone.
@@ -2568,17 +2573,50 @@ internal class BrowserHandleImpl(
      */
     override suspend fun executeJavaScript(script: String): Any? {
         if (!isValid) return null
-        return handleCall.call(
-            onError = { e ->
-                logger.warn(
-                    LogCategory.BROWSER,
-                    "JS execution error",
-                    mapOf("handleId" to id, "error" to (e.message ?: "unknown")),
+        val outcome =
+            kotlinx.coroutines.withTimeoutOrNull(BoundedBrowserCall.DEFAULT_TIMEOUT_MS) {
+                Result.success(
+                    browser.executeJavaScriptSuspending(
+                        script,
+                        ::tryInitiateNativeOperation,
+                        ::endNativeOperation,
+                    ) { e ->
+                        logger.warn(
+                            LogCategory.BROWSER,
+                            "JS execution error",
+                            mapOf("handleId" to id, "error" to (e.message ?: "unknown")),
+                        )
+                    },
                 )
-            },
-        ) {
-            browser.mainFrame().map { it.executeJavaScript<Any?>(script) }.orElse(null)
+            }
+
+        return if (outcome == null) {
+            logger.warn(
+                LogCategory.BROWSER,
+                "Browser round trip timed out - the renderer did not answer",
+                mapOf(
+                    "thread" to "boss-browser-call-$id",
+                    "timeoutMs" to BoundedBrowserCall.DEFAULT_TIMEOUT_MS.toString(),
+                ),
+            )
+            null
+        } else {
+            outcome.getOrNull()
         }
+    }
+
+    override fun prepareForDisposal() {
+        tracker.prepareForDisposal()
+    }
+
+    private fun tryInitiateNativeOperation(initiate: () -> Unit): Boolean = tracker.tryInitiateOperation(initiate)
+
+    private fun endNativeOperation() {
+        tracker.endNativeOperation()
+    }
+
+    override suspend fun awaitPendingNativeOperations() {
+        tracker.awaitPendingNativeOperations()
     }
 
     override fun getCurrentUrl(): String = syncCall("url", "") { browser.url() }
@@ -4220,6 +4258,8 @@ internal class BrowserHandleImpl(
         }
     }
 
+    private val disposeExecuted = AtomicBoolean(false)
+
     override fun dispose() {
         // Synchronously, and before the guard below: invokeLater would let browser.close() run
         // first, and closing the browser under a still-attached Swing view is exactly the
@@ -4233,7 +4273,9 @@ internal class BrowserHandleImpl(
         // frozen app, and the task stays queued so the window is still disposed once the EDT
         // frees up. On the EDT already - composition teardown - it runs inline.
         closePopOutOnEdt()
-        if (!disposed.compareAndSet(false, true)) return
+        // Ensure disposed state is entered even if prepareForDisposal was skipped
+        disposed.set(true)
+        if (!disposeExecuted.compareAndSet(false, true)) return
         rendererPid.onGone()
         // Shut the interaction bridge FIRST. Its only gate is this authority, and the
         // collector flushes on `pagehide` — which is precisely when this runs. Closing the
@@ -4710,3 +4752,88 @@ internal fun shouldAllowPinch(
  * Restart-scoped: read once per browser view, not live-tunable.
  */
 internal fun parseTopInsetDp(raw: String?): Int = raw?.trim()?.toIntOrNull()?.coerceIn(0, 200) ?: 0
+
+internal suspend fun Browser.executeJavaScriptSuspending(
+    script: String,
+    tryInitiateOp: (initiate: () -> Unit) -> Boolean = {
+        it()
+        true
+    },
+    endOp: () -> Unit = {},
+    logError: (Exception) -> Unit = {},
+): Any? =
+    kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+        try {
+            mainFrame().ifPresentOrElse({ frame ->
+                val initiated =
+                    tryInitiateOp {
+                        frame.executeJavaScript(script) { result ->
+                            endOp()
+                            if (cont.isActive) {
+                                cont.resumeWith(Result.success(result))
+                            }
+                        }
+                    }
+                if (!initiated) {
+                    if (cont.isActive) cont.resumeWith(Result.success(null))
+                }
+            }, {
+                if (cont.isActive) cont.resumeWith(Result.success(null))
+            })
+        } catch (e: IllegalStateException) {
+            logError(e)
+            if (cont.isActive) cont.resumeWith(Result.success(null))
+        } catch (e: ObjectClosedException) {
+            logError(e)
+            if (cont.isActive) cont.resumeWith(Result.success(null))
+        }
+    }
+
+/**
+ * Tracks the lifecycle of asynchronous JxBrowser operations against the browser's disposal state.
+ *
+ * Uses [MutableStateFlow] for lock-free, multi-waiter safe operation tracking, guaranteeing
+ * that no native operations can start after disposal has been requested, and allowing
+ * disposal to cleanly await pending ones.
+ */
+internal class NativeOperationTracker(
+    private val disposed: AtomicBoolean,
+) {
+    private val pendingOperationsCount = MutableStateFlow(0)
+    private val disposalLock = Any()
+
+    fun prepareForDisposal() {
+        synchronized(disposalLock) {
+            disposed.set(true)
+        }
+    }
+
+    /**
+     * Synchronizes the initiation of a native operation with disposal.
+     * Ensures that once [prepareForDisposal] completes, no new native operations can be initiated.
+     */
+    inline fun tryInitiateOperation(initiate: () -> Unit): Boolean {
+        synchronized(disposalLock) {
+            if (disposed.get()) return false
+            pendingOperationsCount.update { it + 1 }
+            try {
+                initiate()
+            } catch (e: IllegalStateException) {
+                pendingOperationsCount.update { it - 1 }
+                throw e
+            } catch (e: com.teamdev.jxbrowser.ObjectClosedException) {
+                pendingOperationsCount.update { it - 1 }
+                throw e
+            }
+            return true
+        }
+    }
+
+    fun endNativeOperation() {
+        pendingOperationsCount.update { it - 1 }
+    }
+
+    suspend fun awaitPendingNativeOperations() {
+        pendingOperationsCount.first { it == 0 }
+    }
+}
