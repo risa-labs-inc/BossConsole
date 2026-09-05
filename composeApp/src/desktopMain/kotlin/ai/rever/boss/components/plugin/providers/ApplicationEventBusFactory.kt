@@ -71,7 +71,9 @@ class ApplicationEventBusImpl private constructor(
     private val scope: CoroutineScope,
 ) : ApplicationEventBus {
     companion object {
-        @Volatile
+        // Not @Volatile: every read and write is inside the synchronized block below. The
+        // lock-free fast path is gone deliberately - both callers (createApplicationEventBus,
+        // publishSystemEvent) check the registry first, so this is not on a hot path.
         private var instance: ApplicationEventBusImpl? = null
 
         fun getInstance(scope: CoroutineScope): ApplicationEventBusImpl =

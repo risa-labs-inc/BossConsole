@@ -40,20 +40,13 @@ object WindowProjectStateRegistry {
     private val _states = mutableStateMapOf<String, WindowProjectState>()
 
     /**
-     * Register a new window project state.
-     * Sets up callback to update recent projects when project is selected.
-     */
-    fun register(windowId: String): WindowProjectState {
-        val state = newState(windowId)
-        _states[windowId] = state
-        windowProjectStateLogger.debug(LogCategory.UI, "Registered state for window", mapOf("windowId" to windowId))
-        return state
-    }
-
-    /**
-     * The one place a production [WindowProjectState] is built, so the host wiring below cannot
-     * be installed on some windows and not others. [register] and [getOrCreate] both come here;
-     * they used to carry a copy each, and only one of the two would have been updated.
+     * The one place a [WindowProjectState] is built, so the host wiring below cannot be installed
+     * on some windows and not others.
+     *
+     * There used to be a `register` alongside [getOrCreate] carrying a second copy of this
+     * wiring, with no production caller and an overwrite that handed back a fresh state - and,
+     * once the announcer existed, a fresh `previousPath` seeded to `""` for a window that already
+     * had a project open. It is gone; [getOrCreate] is the only way in.
      */
     private fun newState(windowId: String): WindowProjectState {
         val state = WindowProjectState(windowId)
@@ -62,8 +55,17 @@ object WindowProjectStateRegistry {
         // setProjectSelectionCallback on it again drops both halves, the recent-projects update
         // and the event-bus announcement. Nothing outside this object does today.
         state.setProjectSelectionCallback { project ->
-            ProjectState.updateRecentProjects(project)
-            announcer.onProjectSelected(project)
+            // try/finally, not two statements: updateRecentProjects persists to disk, and if it
+            // throws, skipping the announcement would ALSO leave the announcer's previousPath
+            // stale - every later selection in this window would then report a
+            // previousProjectPath one step behind, silently, for the rest of the session. The
+            // announcement being unconditional is the entire point of this class, so it must not
+            // be the half an unrelated failure can skip. The throw still propagates.
+            try {
+                ProjectState.updateRecentProjects(project)
+            } finally {
+                announcer.onProjectSelected(project)
+            }
         }
         return state
     }

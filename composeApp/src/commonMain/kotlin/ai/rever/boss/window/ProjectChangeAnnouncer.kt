@@ -2,7 +2,6 @@ package ai.rever.boss.window
 
 import ai.rever.boss.components.plugin.providers.publishSystemEvent
 import ai.rever.boss.plugin.api.ProjectChangeEvent
-import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Announces every project selection in one window onto the application event bus.
@@ -31,34 +30,47 @@ internal class ProjectChangeAnnouncer(
     initialPath: String = "",
 ) : ProjectSelectionCallback {
     /**
+     * Guards [previousPath] *and* the publish, so the event order subscribers see matches the
+     * previous-path chain they carry. One caller is not main-confined:
+     * `ProjectDataServiceBridge.selectProject` is a gRPC handler that runs on a gRPC executor
+     * thread in KERNEL mode with no hop to Main, so two selections really can arrive at once.
+     * Uncontended in every other case.
+     *
+     * What this does NOT settle, and cannot from here: agreement between the last event and
+     * `WindowProjectState.selectedProject`. That class writes `_selectedProject.value` and then
+     * calls this callback with no atomicity of its own, so under concurrent selection the state
+     * can already end up disagreeing with the last event. Closing that means locking upstream.
+     */
+    private val lock = Any()
+
+    /**
      * The last announced path, seeded so that the selection already standing when the announcer
      * is installed is not itself announced. In production that seed is always `""`:
      * [WindowProjectState] constructs itself with no project and the registry installs this on
      * the next line. The parameter is defensive - and reachable from tests - rather than a
      * production scenario, so do not read a non-empty seed as something a call site arranges.
-     *
-     * Atomic because one caller is not main-confined: `ProjectDataServiceBridge.selectProject`
-     * is a gRPC handler that runs on a gRPC executor thread in KERNEL mode with no hop to Main.
-     * `getAndSet` collapses the read and the write, so two concurrent selections cannot both
-     * publish the same `previousProjectPath`, and a repeat selection cannot slip past a stale
-     * read.
      */
-    private val previousPath = AtomicReference(initialPath)
+    private var previousPath: String = initialPath
 
     override fun onProjectSelected(project: Project) {
         val path = project.path
-        val from = previousPath.getAndSet(path)
-        // Re-selecting the same project is not a change. The old publish site did fire for it -
-        // selectProject rewrites lastOpened on every call, so the state emits a fresh Project
-        // each time - with previousProjectPath == projectPath. A plugin that used that as a
-        // "reload the project" nudge no longer receives one.
-        if (path == from) return
-        publishSystemEvent(
-            ProjectChangeEvent(
-                projectPath = path,
-                previousProjectPath = from,
-                windowId = windowId,
-            ),
-        )
+        synchronized(lock) {
+            val from = previousPath
+            // Re-selecting the same project is not a change. The old publish site did fire for
+            // it - selectProject rewrites lastOpened on every call, so the state emits a fresh
+            // Project each time - with previousProjectPath == projectPath. A plugin that used
+            // that as a "reload the project" nudge no longer receives one. (Checked: the only
+            // consumers in boss_plugins are the two fluck-agent panels, and both assign
+            // `_bossProject.value` and re-sweep, which is idempotent on a repeat.)
+            if (path == from) return
+            previousPath = path
+            publishSystemEvent(
+                ProjectChangeEvent(
+                    projectPath = path,
+                    previousProjectPath = from,
+                    windowId = windowId,
+                ),
+            )
+        }
     }
 }

@@ -3,12 +3,19 @@ package ai.rever.boss.window
 import ai.rever.boss.components.plugin.panels.left_top.ProjectState
 import ai.rever.boss.components.plugin.providers.ProjectDataProviderImpl
 import ai.rever.boss.components.plugin.providers.publishSystemEvent
+import ai.rever.boss.components.window_panel.SplitViewState
+import ai.rever.boss.components.workspaces.LayoutWorkspace
+import ai.rever.boss.components.workspaces.PanelConfig
+import ai.rever.boss.components.workspaces.applyWorkspace
 import ai.rever.boss.plugin.api.ApplicationEvent
 import ai.rever.boss.plugin.api.ApplicationEventBus
 import ai.rever.boss.plugin.api.ApplicationEventBusRegistry
 import ai.rever.boss.plugin.api.ProjectChangeEvent
 import ai.rever.boss.plugin.api.ProjectData
+import ai.rever.boss.plugin.api.TabRegistry
+import ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -44,6 +51,7 @@ class ProjectChangeAnnouncementTest {
         // the collector starts and resumes on the calling thread, which makes the dispose test
         // deterministic instead of a sleep. The announcer itself uses no dispatcher at all.
         Dispatchers.setMain(UnconfinedTestDispatcher())
+        settleProjectState()
     }
 
     @AfterTest
@@ -130,30 +138,56 @@ class ProjectChangeAnnouncementTest {
     // ============================================================
 
     @Test
-    fun `a state from the registry announces, whichever entry point built it`() {
-        val registered = WindowProjectStateRegistry.register("w-registered")
+    fun `a state from the registry announces`() {
         val created = WindowProjectStateRegistry.getOrCreate("w-created")
         try {
-            registered.selectProject(project(REGISTERED_PATH))
             created.selectProject(project(CREATED_PATH))
 
             assertEquals(
-                listOf("w-registered" to REGISTERED_PATH, "w-created" to CREATED_PATH),
+                listOf("w-created" to CREATED_PATH),
                 changes().map { it.windowId to it.projectPath },
             )
             // The callback's OTHER half. Without this, deleting ProjectState.updateRecentProjects
             // from newState leaves every test in this file green while the project picker
             // silently stops recording anything.
             val recent = ProjectState.recentProjects.value.map { it.path }
-            assertTrue(REGISTERED_PATH in recent, "the recent-projects half of the callback did not run")
             assertTrue(CREATED_PATH in recent, "the recent-projects half of the callback did not run")
         } finally {
-            WindowProjectStateRegistry.unregister("w-registered")
             WindowProjectStateRegistry.unregister("w-created")
-            // The registry's other half is ProjectState.updateRecentProjects, which persists.
-            // These paths do not exist; leaving them in the list would put them in the picker.
-            ProjectState.removeRecentProject(REGISTERED_PATH)
             ProjectState.removeRecentProject(CREATED_PATH)
+        }
+    }
+
+    /**
+     * The regression path itself, rather than a comment claiming to imitate it. `applyWorkspace`
+     * is what runs on startup restore, and its `windowProjectState.selectProject` call is the one
+     * that used to announce nothing at all.
+     *
+     * `WorkspaceApplierMigrationTest` already stands this fixture up; this is the same shape with
+     * an empty panel, since no tab is needed to observe the selection.
+     */
+    @Test
+    fun `applyWorkspace announces the project it restores`() {
+        val state = WindowProjectStateRegistry.getOrCreate("w-restore")
+        try {
+            val workspace =
+                LayoutWorkspace(
+                    id = "restore-test",
+                    name = "Restore test",
+                    description = "No tabs; only the project matters",
+                    layout = SinglePanel(PanelConfig(id = "main", tabs = emptyList())),
+                    projectPath = RESTORED_PATH,
+                )
+
+            runBlocking { applyWorkspace(workspace, SplitViewState(TabRegistry(), windowId = "w-restore"), state) }
+
+            val event = changes().single()
+            assertEquals(RESTORED_PATH, event.projectPath)
+            assertEquals("w-restore", event.windowId)
+            assertEquals("", event.previousProjectPath)
+        } finally {
+            WindowProjectStateRegistry.unregister("w-restore")
+            ProjectState.removeRecentProject(RESTORED_PATH)
         }
     }
 
@@ -164,7 +198,7 @@ class ProjectChangeAnnouncementTest {
      */
     @Test
     fun `a plugin-initiated selection is announced exactly once`() {
-        val state = WindowProjectStateRegistry.register("w-plugin")
+        val state = WindowProjectStateRegistry.getOrCreate("w-plugin")
         val provider = ProjectDataProviderImpl(state)
         try {
             provider.selectProject(ProjectData(name = "plugin", path = PLUGIN_PATH, lastOpened = 0L))
@@ -242,8 +276,35 @@ class ProjectChangeAnnouncementTest {
     }
 
     private companion object {
-        const val REGISTERED_PATH = "/tmp/boss-pca-registered"
+        /**
+         * `ProjectState` is a process-global object whose `init` kicks off an async
+         * `loadRecentProjects()` that assigns `_recentProjects.value` **wholesale**. Landing
+         * between a test's `updateRecentProjects` and its assertion would drop the just-added
+         * path - and only on a machine where `~/.boss/recent-projects.json` exists, which is a
+         * developer-only flake and the worst kind.
+         *
+         * Touch the object once and let that single small file read finish before any test runs.
+         * The load happens exactly once per JVM, so this is once per JVM too. It is a settle
+         * rather than a handshake because `ProjectState` exposes nothing to await; if it ever
+         * grows a completion signal, wait on that instead.
+         */
+        private var settled = false
+
+        @Synchronized
+        fun settleProjectState() {
+            if (settled) return
+            ProjectState.recentProjects.value
+            Thread.sleep(500)
+            settled = true
+        }
+
+        // Deliberately non-existent directories. ProjectState's saves are fire-and-forget on
+        // Dispatchers.IO, so an add and its cleanup remove are unordered and a test path can
+        // survive in the real recent-projects.json. loadRecentProjects drops entries whose
+        // directory is gone, so a non-existent path is reclaimed on the next launch; a real temp
+        // directory would not be.
         const val CREATED_PATH = "/tmp/boss-pca-created"
+        const val RESTORED_PATH = "/tmp/boss-pca-restored-by-applier"
         const val PLUGIN_PATH = "/tmp/boss-pca-plugin"
         const val DISPOSE_BEFORE_PATH = "/tmp/boss-pca-dispose-before"
         const val DISPOSE_AFTER_PATH = "/tmp/boss-pca-dispose-after"
