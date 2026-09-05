@@ -20,6 +20,8 @@ import ai.rever.boss.components.window_panel.components.main_window_panels.Windo
 import ai.rever.boss.components.window_panel.components.main_window_panels.WindowVerticalTabBar
 import ai.rever.boss.components.window_panel.components.main_window_panels.createBossAppContext
 import ai.rever.boss.components.window_panel.components.main_window_panels.overlayRegionInWindow
+import ai.rever.boss.components.window_panel.components.main_window_panels.paneGlyphs
+import ai.rever.boss.components.window_panel.components.main_window_panels.paneLabel
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberPinDrawerAction
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberTabBarLayout
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberTabBarRevealState
@@ -2000,6 +2002,33 @@ class SplitViewState(
         }
     }
 
+    /**
+     * What the vertical tab bar calls each pane - a name the user gave it, else "Left", "Top right",
+     * "Pane 3" - or an empty map when there is only one pane and so nothing to distinguish.
+     *
+     * Line for line the same derivation `WindowVerticalTabBar` uses for its group headers: a
+     * `panelName` beats the derived position, the position comes from `paneLabel` over
+     * `paneGlyphs` on the panes' MEASURED rectangles, and an unmeasured pane falls through to
+     * "Pane N" rather than to nothing. Deliberately the same, so a panel listing these tabs and the
+     * bar listing the same tabs cannot disagree about what a pane is called.
+     *
+     * `ActiveTab.splitPosition` has carried a comment promising exactly these values since it was
+     * declared and was never once populated, so every consumer saw null and had to invent its own
+     * naming from the saved layout - a different source of truth, which goes stale the moment a pane
+     * is split without saving.
+     *
+     * Measured, so it is right for any arrangement, nested ones included, and follows a divider as
+     * it is dragged. Only the workspace on screen has bounds at all; a preserved one answers
+     * "Pane N", which is honest about position without inventing a side it may not be on.
+     */
+    private fun splitPositionsFor(panelsInOrder: List<SplitNode.Panel>): Map<String, String> {
+        if (panelsInOrder.size <= 1) return emptyMap()
+        val glyphs = paneGlyphs(panelsInOrder.map { it.id }, ::getPanelBounds)
+        return panelsInOrder.withIndex().associate { (index, panel) ->
+            panel.id to (panelName(panel.id) ?: paneLabel(index, glyphs[panel.id]))
+        }
+    }
+
     fun collectAllActiveFluckTabs(windowId: String = "unknown"): List<ActiveTab> {
         val result = mutableListOf<ActiveTab>()
         val seenTabIds = mutableSetOf<String>()
@@ -2014,7 +2043,9 @@ class SplitViewState(
                         else -> "Current Workspace"
                     }
 
-            getAllPanels().forEach { panel ->
+            val panels = getAllPanels()
+            val splitPositions = splitPositionsFor(panels)
+            panels.forEach { panel ->
                 panel.tabsComponent.tabsState.value.tabs.forEach { tab ->
                     if (!seenTabIds.contains(tab.id) && (tab is FluckTabInfo || tab.typeId.typeId == "fluck")) {
                         result.add(
@@ -2024,6 +2055,7 @@ class SplitViewState(
                                 workspaceName = workspaceName,
                                 panelId = panel.id,
                                 windowId = windowId,
+                                splitPosition = splitPositions[panel.id],
                             ),
                         )
                         seenTabIds.add(tab.id)
@@ -2089,7 +2121,9 @@ class SplitViewState(
         _currentWorkspaceId?.let { workspaceId ->
             val currentTabs = mutableListOf<ActiveTab>()
 
-            getAllPanels().forEach { panel ->
+            val panels = getAllPanels()
+            val splitPositions = splitPositionsFor(panels)
+            panels.forEach { panel ->
                 panel.tabsComponent.tabsState.value.tabs.forEach { tab ->
                     if (!seenTabIds.contains(tab.id)) {
                         currentTabs.add(
@@ -2099,6 +2133,7 @@ class SplitViewState(
                                 workspaceName = getWorkspaceName(workspaceId),
                                 panelId = panel.id,
                                 windowId = windowId,
+                                splitPosition = splitPositions[panel.id],
                             ),
                         )
                         seenTabIds.add(tab.id)
