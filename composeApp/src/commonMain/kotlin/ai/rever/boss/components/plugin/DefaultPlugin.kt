@@ -1489,6 +1489,26 @@ private class ApiActiveTabsProviderAdapter(
         target?.let { workspaceManager.loadWorkspace(it) }
     }
 
+    override val activePanelId: String? get() = splitViewState.activePanelId
+
+    /**
+     * The tab [panelId] is showing.
+     *
+     * Resolved across every workspace this window is running, not just the tree on screen, because
+     * a pane behind the current workspace still has a tab on top of it - and a caller listing tabs
+     * from all of them would otherwise mark none of those panes.
+     */
+    override fun selectedTabId(panelId: String): String? =
+        splitViewState
+            .liveWorkspaceIds
+            .firstNotNullOfOrNull { workspaceId ->
+                splitViewState.panelsInWorkspace(workspaceId).firstOrNull { it.id == panelId }
+            }?.tabsComponent
+            ?.tabsState
+            ?.value
+            ?.activeTab
+            ?.id
+
     override val supportsTabTransfer: Boolean get() = true
 
     override val liveWorkspaceIds: Set<String> get() = splitViewState.liveWorkspaceIds
