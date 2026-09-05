@@ -455,7 +455,7 @@ internal fun CrashReportDialog(
                     }
                 }
 
-                if (bodyOverflows) {
+                if (bodyOverflows && bodyScrollState.canScrollForward) {
                     // Marks the clipped edge. Overlaid rather than stacked below the body so it
                     // costs no layout height — see the footer comment. Same *position* as the old
                     // sibling rule (the body is at its cap, so the ~17dp freed from the footer goes
@@ -465,6 +465,8 @@ internal fun CrashReportDialog(
                         color = BossTheme.colors.line,
                         modifier = Modifier.align(Alignment.BottomStart).testTag(BOUNDARY_RULE_TAG),
                     )
+                }
+                if (bodyOverflows) {
                     VerticalScrollbar(
                         modifier =
                             Modifier
@@ -528,7 +530,8 @@ internal fun CrashReportDialog(
                                 // `request` nor `timeout` marks a secret), which keeps this
                                 // narrower than a blunt redaction. A blank message renders
                                 // "[no message]" where maskUriParams gave "[empty]".
-                                LogSanitizer.sanitizeExceptionMessage(result.message)
+                                // Bound the first composition's regex work as well as the rendered text.
+                                LogSanitizer.sanitizeExceptionMessage(result.message.take(4_000))
                             }
                         }
                     }
@@ -753,8 +756,8 @@ internal const val TRACE_PANE_TAG = "crash-dialog-trace-pane"
 
 /**
  * Height cap on the stack-trace viewport. Bounded so a deep trace takes its own overflow instead of
- * making the body an endless scroll. Shared with the test rather than duplicated, so moving the cap
- * can't leave an assertion validating the old number.
+ * making the body an endless scroll. Named for legibility; the layout test deliberately bounds the
+ * pane against the body viewport independently, so changing this cap cannot weaken its assertion.
  *
  * Do not remove it as cosmetic: this pane's `verticalScroll` sits inside the body's, which hands
  * down an unbounded max height. The `heightIn` is what bounds it, and without it the dialog throws
