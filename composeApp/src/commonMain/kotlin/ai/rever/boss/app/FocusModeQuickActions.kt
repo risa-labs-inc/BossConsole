@@ -116,7 +116,7 @@ internal fun focusQuickActionsVisible(
     showTopBar: Boolean,
 ): Boolean = topBarHidden || (settings.hides(FocusModeEdge.TOP) && !showTopBar)
 
-/** Where the three actions belong right now. Mutually exclusive by construction. */
+/** Where the host's own actions belong right now. Mutually exclusive by construction. */
 internal enum class FocusQuickActionsPlacement {
     /** Nowhere: the top bar is up and still owns them. */
     NONE,
@@ -133,20 +133,60 @@ internal enum class FocusQuickActionsPlacement {
      */
     TAB_BAR_FOOTER,
 
+    /**
+     * A column at the foot of the vertical tab bar's COLLAPSED rail, under the "+".
+     *
+     * Preferred over [FLOATING] for the reason [TAB_BAR_FOOTER] is: a rail is the same bar with
+     * its labels taken away, so it is chrome the app draws anyway, and its bottom third was empty.
+     * Collapsing the bar is a request for content width, and answering that with a native
+     * always-on-top window parked in the content is the opposite of granting it.
+     *
+     * Its own placement rather than a flavour of [TAB_BAR_FOOTER] because the two share no layout
+     * - the foot is a wrapping row at least 120dp wide, this is one icon per line down a strip as
+     * narrow as 36dp - and because only ever one of them is on screen.
+     */
+    TAB_BAR_RAIL,
+
+    /**
+     * A row at the foot of the open RIGHT plugin panel's own column - see [hostActionsPanelEdge],
+     * which names that column and rules the other two out.
+     *
+     * Reached only in TOP tab-bar position, which has no vertical bar to put anything in, and only
+     * while the right panel is open and big enough to carry the row - see [panelFooterFitsColumn],
+     * which is what keeps a sliver of a panel from growing 188dp of icons. The cluster is an
+     * overlay that swallows clicks in the region
+     * it covers, it sits in the content area's bottom-right corner, and that corner belongs to the
+     * right panel whenever there is one - so in that configuration the actions move into that
+     * panel's chrome and cover nothing.
+     *
+     * **The panel's foot, not a band across the content area.** A full-width row also fixes the
+     * collision, and it looks like one: the window grows a strip of dead chrome the width of the
+     * screen to hold four icons. Inside the panel they read as what they are, at the scale of the
+     * thing they sit in - the same shape the vertical bar's foot has. That is also why a BOTTOM
+     * panel does not host these: its column is the whole window's width, so its foot is that band.
+     *
+     * Deliberately NOT the answer for a bare TOP window as well. With no panel open the corner is
+     * empty content, where the overlay costs nothing, and there is no panel to put a foot on.
+     */
+    PANEL_FOOTER,
+
     /** A floating cluster in the content area's bottom-right corner. */
     FLOATING,
 }
 
 /**
- * Which of the two renderings the actions get, once [focusQuickActionsVisible] says they are needed
- * at all.
+ * Which of the five renderings the actions get, once [focusQuickActionsVisible] says they are
+ * needed at all.
  *
- * **The rail wins whenever there is a rail**, and the floating cluster is the fallback for when
- * there is not. The cluster is an overlay over live content - on the heavyweight path a native
- * always-on-top window with no click-through - so it is the more intrusive of the two by some
- * distance. Where the right sidebar is on screen there is already a strip of icon chrome at the
- * window's end edge with empty space at the bottom of it, and three more icons there cost nothing
- * and look like what they are.
+ * **Every piece of chrome the window already draws - or layout it can carve out of a panel -
+ * is tried before the overlay is.** In order:
+ * the right rail, the vertical tab bar's foot, that bar's collapsed rail, the open right panel's
+ * foot, and only then the floating cluster. The cluster is an overlay over
+ * live content - on the heavyweight path a native always-on-top window with no click-through - so
+ * it is by some distance the most intrusive of them, and it is now reached only by a window with
+ * no rail, no vertical bar and nothing in the corner for it to cover. Where the right sidebar is
+ * on screen there is already a strip of icon chrome at the window's end edge with empty space at
+ * the bottom of it, and four more icons there cost nothing and look like what they are.
  *
  * That is not a rare case, it is the **default one on Windows**: `defaultHidesSidebars` leaves both
  * sidebars up there precisely because hover-reveal cannot fire over a browser tab, while the top
@@ -167,22 +207,45 @@ internal enum class FocusQuickActionsPlacement {
  * nowhere. It reads as "permanent" for the same reason `hides(RIGHT)` does, so it belongs in the
  * same test rather than in the reveal flags.
  */
+// Six inputs, and each one is a different way the answer changes: whether these are wanted at
+// all, then each host that could take them in turn. Folding them into a holder would put every
+// caller and every test through a builder to ask one question.
+@Suppress("LongParameterList")
 internal fun focusQuickActionsPlacement(
     settings: FocusModeSettings,
     topBarHidden: Boolean,
     rightStripHidden: Boolean,
     showTopBar: Boolean,
     /**
-     * Whether the window's tab bar runs down the left edge AND is expanded, which is what gives
-     * these actions a home under its split map.
+     * What the window's vertical tab bar can offer these actions: a foot under its split map, the
+     * bottom of its collapsed rail, or nothing at all in TOP position. See [verticalBarHost],
+     * which is where the three are told apart.
      *
-     * The expanded half is not a detail: a collapsed bar draws its rail and nothing else, so its
-     * foot does not exist and these four would render nowhere at all. Read from
-     * `WindowAppearanceSettings`, which is a standing choice, so it needs none of the care the
-     * reveal flags do - with the same known gap the traffic-light rule has, that a bar which
-     * rails itself on a narrow window is decided during layout rather than in settings.
+     * Read from `WindowAppearanceSettings` and the bar's MEASURED width, so it needs none of the
+     * care the reveal flags do - with the same known gap the traffic-light rule has, that a bar
+     * which rails itself on a narrow window is decided during layout rather than in settings.
      */
-    verticalTabBar: Boolean = false,
+    verticalBar: VerticalBarHost = VerticalBarHost.NONE,
+    /**
+     * Whether the RIGHT plugin panel is open AND its column can afford the row.
+     *
+     * The one input that is about the window's CONTENT rather than its chrome, and it is here for
+     * one reason: the floating cluster has no click-through, so wherever it sits it takes that
+     * corner away from whatever is under it. A right panel is what the bottom-right corner sits
+     * on top of, it is something the user asked for and is looking at, and it comes with a foot
+     * to put these in; empty content in the corner of a bare window is none of the three.
+     *
+     * The right panel and not "any panel" - see [hostActionsPanelEdge], which is where the left
+     * and bottom columns are ruled out and why, and which also picks the column.
+     *
+     * **Both halves, because a panel narrow enough is not a home either.** A panel drags down to
+     * about 20dp, where a row that wraps rather than clips stacks five buttons into 188dp and
+     * takes it out of the plugin. [panelFooterFitsColumn] is that test, and
+     * [PanelFooterHostActions] reports its answer back here out of layout, the same way
+     * `onBarRailedChange` reports a bar that railed itself on a narrow window. A window whose
+     * panel is too small keeps the cluster, which is what it had before this.
+     */
+    panelFootAvailable: Boolean = false,
 ): FocusQuickActionsPlacement =
     when {
         !focusQuickActionsVisible(settings, topBarHidden, showTopBar) -> FocusQuickActionsPlacement.NONE
@@ -193,7 +256,17 @@ internal fun focusQuickActionsPlacement(
 
         // Then the tab bar's foot, which displaces only the floating cluster - it is chrome the app
         // already draws, where the cluster is a native always-on-top window with no click-through.
-        verticalTabBar -> FocusQuickActionsPlacement.TAB_BAR_FOOTER
+        verticalBar == VerticalBarHost.FOOT -> FocusQuickActionsPlacement.TAB_BAR_FOOTER
+
+        // Then that same bar collapsed, whose rail has room at the bottom. This case used to fall
+        // through to the cluster, which is how asking for MORE content width ended up putting an
+        // overlay in the content.
+        verticalBar == VerticalBarHost.RAIL -> FocusQuickActionsPlacement.TAB_BAR_RAIL
+
+        // No vertical bar at all, so nothing above can host them. The right panel's foot while
+        // that panel is open and big enough to hold one, the corner of the content otherwise. See
+        // the two enum entries for why that split rather than one answer for both.
+        panelFootAvailable -> FocusQuickActionsPlacement.PANEL_FOOTER
 
         else -> FocusQuickActionsPlacement.FLOATING
     }
@@ -216,25 +289,18 @@ internal fun focusQuickActionsRail(
     onSignOut: () -> Unit,
     toolbox: (@Composable (hintDirection: Panel, modifier: Modifier) -> Unit)? = null,
 ): List<@Composable () -> Unit> =
-    if (placement != FocusQuickActionsPlacement.RIGHT_RAIL) {
-        emptyList()
-    } else {
-        focusQuickActionButtons(
-            // Hints point INTO the window. The rail is against the window's end edge, so a hint
-            // laid out to its right would be off screen - the same call the rail's own icons make
-            // through `slot.opposite`.
-            hintDirection = left,
-            // 32.dp, where the floating cluster leaves the buttons at their own 28.dp: in the rail
-            // these have to match the icons above them, and `DraggableSidebarSection` sizes those
-            // the same way. An outer fixed size wins over the inner one BossActionButton applies in
-            // imageVector mode, because a fixed constraint coerces what it wraps.
-            modifier = Modifier.size(SIDEBAR_ICON_SIZE),
-            onShowSettings = onShowSettings,
-            toolbox = toolbox,
-            onShowSearch = onShowSearch,
-            onSignOut = onSignOut,
-        )
-    }
+    focusQuickActionsFor(
+        owner = FocusQuickActionsPlacement.RIGHT_RAIL,
+        // Hints point INTO the window. The rail is against the window's end edge, so a hint laid
+        // out to its right would be off screen - the same call the rail's own icons make through
+        // `slot.opposite`.
+        hintDirection = left,
+        placement = placement,
+        onShowSettings = onShowSettings,
+        onShowSearch = onShowSearch,
+        onSignOut = onSignOut,
+        toolbox = toolbox,
+    )
 
 /** One rail icon, matching what `DraggableSidebarSection` gives the plugin icons above it. */
 internal val SIDEBAR_ICON_SIZE = 32.dp
@@ -251,7 +317,7 @@ internal val SIDEBAR_ICON_SIZE = 32.dp
  * each time the user reaches for the top bar, which is the common case on the Windows defaults this
  * placement is aimed at.
  *
- * So the budget is held for as long as focus mode *owns* the top bar, and only the three icons come
+ * So the budget is held for as long as focus mode *owns* the top bar, and only the icons come
  * and go. The cost is up to 145dp of rail that is briefly reserved and empty, which is invisible:
  * the slack lands in the weighted spacer, and the icons above it do not move.
  *
@@ -297,9 +363,9 @@ private fun railExists(
 internal const val FOCUS_QUICK_ACTION_COUNT = 4
 
 /**
- * Settings, Search and Sign Out as three separate composables, in the order both hosts want them.
+ * The host's own actions as separate composables, in the order every host wants them.
  *
- * One definition, three layouts, in the order Sign Out, Settings, Tools, Search.
+ * One definition, five layouts, in the order Sign Out, Settings, Tools, Search.
  *
  * The **order carries the same intent on every axis**: Sign Out first, so the destructive action
  * is the one furthest from the window corner - leftmost in the floating row and in the tab bar's
@@ -308,7 +374,7 @@ internal const val FOCUS_QUICK_ACTION_COUNT = 4
  * Search ends the row as the one that opens a field rather than a place. `BossTopRightBar` uses
  * the same order, which is where these live when the top bar is up.
  *
- * A list rather than a composable that lays them out, because the two hosts disagree about more
+ * A list rather than a composable that lays them out, because the hosts disagree about more
  * than the axis: the rail has to reserve its own height from the *count* before it renders anything
  * (see `SidebarIconRail.bottomSectionHeight`), and a list is the only shape where the count and the
  * content cannot drift apart.
@@ -329,7 +395,7 @@ internal fun focusQuickActionButtons(
      * It can never be non-null in the [FocusQuickActionsPlacement.RIGHT_RAIL] flavour: that
      * placement needs a right strip, and the launcher only reaches this group when BOTH strips are
      * gone. `FocusQuickActionsPlacementTest` pins that, because it is what keeps
-     * [FOCUS_QUICK_ACTION_COUNT] - and so the rail's reserve - correct at three.
+     * [FOCUS_QUICK_ACTION_COUNT] - and so the rail's reserve - correct.
      */
     toolLauncher: (@Composable (hintDirection: Panel, modifier: Modifier) -> Unit)? = null,
 ): List<@Composable () -> Unit> =

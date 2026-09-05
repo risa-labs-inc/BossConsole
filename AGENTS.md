@@ -615,6 +615,44 @@ vertical measured as a path length and horizontal as net displacement. Chrome's 
 are fractions of the trackpad from `NSTouch.normalizedPosition`, which a page cannot see, so those
 carry over as the same fractions of the commit distance.
 
+**It commits at the end of the gesture, not on crossing the commit distance** - and "end of
+gesture" is literally `GESTURE_GAP_MS` (120ms) with no wheel event, because AWT does not surface
+NSEvent's scroll phases and a time gap is the only segmentation signal there is. So it is not
+release: holding past the line and simply STOPPING, fingers still down, commits after 120ms too.
+The window in which reversing still cancels is 120ms of continuous motion, not "until you lift".
+The decision reads the LAST horizontal position, so easing back below the line cancels.
+
+That makes `GESTURE_GAP_MS` do three jobs at once: segmenting one gesture from the next, setting a
+floor on commit latency, and (as the minimum possible gap between two gesture ends) bounding
+`SWIPE_NAV_DEBOUNCE_MS` from above. Raising or lowering it touches all three, and
+`BrowserSwipeNavTest` reads it out of the script so the third one fails loudly.
+
+**Past the commit distance, vertical drift stops cancelling** (`reachedCommit`). Vertical is a path
+length and only ever grows, so every event after the crossing was one more chance to cancel a swipe
+the user had already completed. Before the line the three tiers apply unchanged; after it, only
+easing back or reversing can still cancel. Native swipe-back behaves the same way.
+
+**Two host-side windows, for two different things** (`BrowserSwipeNavBridge.kt`).
+`SWIPE_NAV_DEBOUNCE_MS` (32ms, any direction) catches a double-dispatch bug in the bridge.
+`SWIPE_NAV_REPEAT_MS` (400ms, same direction only) is the paused-drag guard: a slow drag that
+hesitates past `GESTURE_GAP_MS` with the fingers down is two gestures to the script and would
+navigate back twice. That guard cannot live in the page - the first commit navigates the tab and
+the script's state dies with the document. The cost is that two intentional same-direction swipes
+under 400ms apart become one; that is the deliberate trade, because a dropped swipe is retryable
+and an extra step back may not be, since the forward entry need not survive a redirect. A reversal
+is never held for the repeat window.
+
+**Momentum phase costs latency and nothing else.** A `CGEvent` tap on this hardware (measured
+2026-09-02) shows macOS emitting momentum-phase scroll for 180-870ms after the fingers lift,
+carrying 325-2500px of horizontal travel. Whether Chromium forwards those to the renderer as
+`wheel` events is NOT confirmed: if it does, each one re-arms the end-of-gesture timer and a flick
+commits at end-of-momentum instead of at release. It cannot change the ANSWER - a tail runs the
+flick's own direction, so it can neither reverse nor ease back, and `reachedCommit` is what closed
+the remaining path, a tail's `deltaY` tripping the vertical tiers. Synthetic phase-tagged events
+cannot settle the forwarding question - `CGEventPost` from another process never reaches the
+layered native browser surface, and does not even enter the session event stream - so it needs one
+real flick against a recording `wheel` listener.
+
 **Off switch**: `Settings > Browser > Trackpad`, stored in `~/.boss/swipe-nav.json`, or
 `BOSS_BROWSER_SWIPE_NAV=false` (also `0` / `no` / `off`). The environment wins, and the Settings row
 says so. The setting is published as a **system property** because the browser plugin draws the home

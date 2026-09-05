@@ -1,5 +1,6 @@
 package ai.rever.boss.components.settings.keymap
 
+import ai.rever.boss.components.plugin.registries.PluginShortcutRegistryImpl
 import ai.rever.boss.components.settings.search.LocalSettingsHighlight
 import ai.rever.boss.components.settings.search.settingsSearchTarget
 import ai.rever.boss.keymap.KeymapSettingsManager
@@ -8,6 +9,7 @@ import ai.rever.boss.keymap.lifecycle.ShortcutLifecycleManager
 import ai.rever.boss.keymap.model.KeyBinding
 import ai.rever.boss.keymap.model.KeymapSettings
 import ai.rever.boss.keymap.model.TabSwitchMode
+import ai.rever.boss.keymap.presets.KeymapPresets
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -61,9 +63,7 @@ fun EditableKeymapSettings() {
     // by the user, shown as synthetic "Plugins" rows. Rebinding one persists a
     // real entry under its actionId (withBinding), which then supersedes the
     // plugin default everywhere — including the interceptor.
-    val registeredPluginShortcuts by ai.rever.boss.components.plugin.registries.PluginShortcutRegistryImpl
-        .shortcuts
-        .collectAsState()
+    val registeredPluginShortcuts by PluginShortcutRegistryImpl.shortcuts.collectAsState()
     val pluginDefaultRows =
         remember(registeredPluginShortcuts, keymapSettings) {
             registeredPluginShortcuts
@@ -82,10 +82,26 @@ fun EditableKeymapSettings() {
                 }
         }
 
+    // A plugin action id can also arrive as a REAL keymap entry, not just a synthetic row: the
+    // presets bind the fluck browser's Focus Address Bar, because only a keymap entry can carry
+    // a ShortcutContext and Cmd+L has to mean Go To Line in an editor. Harmless to dispatch when
+    // the plugin is absent (nothing owns the id), but it should not be listed and rebindable on
+    // an install with no address bar to focus.
+    //
+    // Scoped to the ids the HOST authors, not to the plugin. prefix: a user's own rebind of some
+    // other plugin's shortcut is a stored binding they must still be able to see and reset while
+    // that plugin is disabled or mid-update, and it was listed before this filter existed.
+    val hiddenPluginActionIds =
+        remember(registeredPluginShortcuts) {
+            val owned = registeredPluginShortcuts.mapTo(mutableSetOf()) { it.spec.actionId }
+            KeymapPresets.HOST_AUTHORED_PLUGIN_ACTIONS - owned
+        }
+
     // Filter shortcuts based on search and category
     val filteredShortcuts =
-        remember(keymapSettings, pluginDefaultRows, searchQuery, selectedCategory) {
-            val shortcuts = keymapSettings.shortcuts.values.toList() + pluginDefaultRows
+        remember(keymapSettings, pluginDefaultRows, hiddenPluginActionIds, searchQuery, selectedCategory) {
+            val listable = keymapSettings.shortcuts.values.filter { it.actionId !in hiddenPluginActionIds }
+            val shortcuts = listable + pluginDefaultRows
             shortcuts
                 .filter { binding ->
                     val matchesSearch =

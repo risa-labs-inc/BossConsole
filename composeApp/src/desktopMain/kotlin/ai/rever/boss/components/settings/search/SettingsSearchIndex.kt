@@ -1,7 +1,10 @@
 package ai.rever.boss.components.settings.search
 
+import ai.rever.boss.components.plugin.registries.SettingsPageRegistryImpl
 import ai.rever.boss.components.settings.sidebar.SettingsSection
 import ai.rever.boss.plugin.api.PanelId
+import ai.rever.boss.search.SearchSources
+import ai.rever.boss.search.SettingSearchRecord
 
 /**
  * One searchable thing in the Settings window.
@@ -44,8 +47,13 @@ data class SettingsSearchEntry(
     val context: String? = null,
 ) {
     init {
-        require(section != null || pluginPageId != null || panel != null) {
-            "a search entry must name a built-in section, a plugin page or a panel: $label"
+        // EXACTLY one, not at least one. Every consumer routes on a three-way branch - the global
+        // search's `onSettingSelect` checks panelId first, the window's `applyHit` checks panel
+        // first - so an entry naming two targets would be silently routed by whichever branch came
+        // first, and the two surfaces would only agree by coincidence. Requiring one makes the
+        // record's documented invariant true rather than merely observed.
+        require(listOfNotNull(section, pluginPageId, panel).size == 1) {
+            "a search entry must name exactly one of a built-in section, a plugin page or a panel: $label"
         }
     }
 
@@ -98,6 +106,63 @@ object SettingsSearchIndex {
      * and a diff that adds a setting touches only the data.
      */
     val builtIn: List<SettingsSearchEntry> get() = builtInEntries
+
+    /**
+     * Hand this index to the global (double-shift) search.
+     *
+     * Called once at desktop startup. The global search lives in commonMain and cannot see
+     * [SettingsSearchEntry] at all, so it gets plain records through [SearchSources].
+     *
+     * **A ranking function, not a list of rows.** Handing over rows meant the global search had to
+     * score them itself, with a second scorer that disagreed with this one: `FuzzyMatcher` matches
+     * a subsequence of a single target, so "user agent" reached "Browser Identity" in the Settings
+     * window and matched nothing in the global search. [SettingsSearchMatcher] is what fixes that,
+     * by tokenising the query, and this is how both surfaces come to share it - one definition of
+     * what a settings match is worth, and no second keyword penalty to keep in step.
+     *
+     * A function rather than a snapshot for the original reason too: plugin pages appear and
+     * disappear with their plugins, and a list captured at startup would go stale into a search
+     * index, which is the one place staleness is invisible.
+     *
+     * Built-in entries plus the plugin pages currently visible, which is the same union
+     * `SettingsWindow` feeds its own search box - with one deliberate difference: signpost
+     * reachability is applied by the caller, not here. `withReachableSignposts` needs the panel
+     * registry and is `@Composable`; `GlobalSearchService` filters on the searching window's
+     * registered tools instead, which is the same predicate `activatePlugin` uses. See
+     * `GlobalSearchService.searchSettings`.
+     */
+    fun registerWithGlobalSearch() {
+        // Force the lazy index HERE, at startup, rather than leaving it to the first query.
+        //
+        // `builtInEntries` is `by lazy` and `SettingsSearchEntry.init` now requires exactly one
+        // target, so a malformed entry throws. Reached first from inside `isolated("settings")`,
+        // that throw would be caught, logged at WARN, and cost the whole Settings category - and
+        // `by lazy` does not cache a failed initialiser, so it would re-throw and re-warn on every
+        // keystroke instead of failing once. Startup is where a bad constant should stop the app,
+        // and silence per keystroke is exactly the failure mode `SearchSources` argues against.
+        require(builtIn.isNotEmpty()) { "the settings index is empty; nothing would be searchable" }
+
+        SearchSources.registerSettingsSearch { query ->
+            val pages =
+                SettingsPageRegistryImpl.visiblePages().map {
+                    pluginPageEntry(it.pageId, it.displayName, it.description)
+                }
+            SettingsSearchMatcher
+                .search(query, builtIn + pages)
+                .map { hit ->
+                    SettingSearchRecord(
+                        label = hit.entry.label,
+                        breadcrumb = hit.entry.breadcrumb,
+                        section = hit.entry.section?.name,
+                        pluginPageId = hit.entry.pluginPageId,
+                        panelId = hit.entry.panel?.panelId,
+                        group = hit.entry.group,
+                        highlightable = hit.entry.highlightable,
+                        score = hit.score,
+                    )
+                }
+        }
+    }
 }
 
 /** Builds a plugin-page entry. Plugins supply only a name and a description, so that is all we index. */

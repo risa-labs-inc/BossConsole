@@ -11,6 +11,7 @@ import ai.rever.boss.components.settings.search.SettingsSearchIndex
 import ai.rever.boss.components.settings.search.SettingsSearchMatcher
 import ai.rever.boss.components.settings.search.SettingsSearchState
 import ai.rever.boss.components.settings.search.handleSettingsSearchKey
+import ai.rever.boss.components.settings.search.highlightFor
 import ai.rever.boss.components.settings.search.pluginPageEntry
 import ai.rever.boss.components.settings.search.revealPanel
 import ai.rever.boss.components.settings.search.withReachableSignposts
@@ -68,6 +69,8 @@ actual fun SettingsWindow(
     initialSection: String?,
     focusRequest: Int,
     sectionRequest: Int,
+    requestedHighlight: SettingsHighlight?,
+    highlightRequest: Int,
 ) {
     // No local `isOpen` flag. Composition is already gated by `SettingsWindowState.visible`, and a
     // second source of truth for "is this window up" is the bug this whole change fixes, waiting to
@@ -130,6 +133,8 @@ actual fun SettingsWindow(
                 SettingsContent(
                     initialSection = initialSection,
                     sectionRequest = sectionRequest,
+                    requestedHighlight = requestedHighlight,
+                    highlightRequest = highlightRequest,
                     searchState = searchState,
                 )
             }
@@ -141,6 +146,8 @@ actual fun SettingsWindow(
 private fun SettingsContent(
     initialSection: String? = null,
     sectionRequest: Int = 0,
+    requestedHighlight: SettingsHighlight? = null,
+    highlightRequest: Int = 0,
     searchState: SettingsSearchState = remember { SettingsSearchState() },
 ) {
     var selectedSection by remember { mutableStateOf(initialSectionFor(initialSection, visiblePageIds())) }
@@ -210,16 +217,11 @@ private fun SettingsContent(
             entry.section != null -> {
                 selectedPluginPageId = null
                 selectedSection = entry.section
-                // A delegated section has no host control to point at, so pointing at nothing is
-                // the honest outcome - better than leaving a stale highlight from the last pick
-                // armed on a page it does not belong to.
-                highlight =
-                    if (entry.highlightable) {
-                        highlightNonce += 1
-                        SettingsHighlight(group = entry.group, label = entry.label, nonce = highlightNonce)
-                    } else {
-                        null
-                    }
+                // Bumped whether or not a highlight comes of it: the counter is only ever read
+                // back off a non-null highlight, and one unconditional bump is cheaper to reason
+                // about than a second rule about when it moves.
+                highlightNonce += 1
+                highlight = highlightFor(entry, highlightNonce)
             }
         }
     }
@@ -266,6 +268,34 @@ private fun SettingsContent(
                 }
             }
         }
+    }
+
+    // A highlight asked for from OUTSIDE the window - the global search finding a row by name.
+    //
+    // Keyed on the holder's request COUNTER, not on the value and not on the nonce. A value key
+    // would light the same row once and then do nothing, which is what the nonce exists to fix -
+    // but a nonce key has its own blind spot, because "point at nothing" is null and null carries
+    // no nonce, so `null -> null` looked like nothing happening while a local highlight stayed
+    // armed on a page the window had navigated away from. The counter moves on every request,
+    // including one that clears. Runs after the navigation effect above, which puts the row on
+    // screen.
+    LaunchedEffect(highlightRequest) {
+        // Re-stamped with THIS window's counter rather than adopted as-is. The requester has a
+        // counter of its own, and both start at zero: reveal row A from the global search
+        // (external nonce 1), then pick the same row A in this window's search box (local nonce 1),
+        // and the value equals what is already in `highlight` - no state change, the keyed effect
+        // in searchTarget never re-runs, and the window visibly does nothing. Which is precisely
+        // what the nonce exists to prevent.
+        // Assigned unconditionally, null included. `reveal(highlightable = false)` nulls the
+        // holder's highlight on purpose - its KDoc argues that pointing at nothing beats leaving
+        // the last pick armed on a page it does not belong to - and acting only on a non-null
+        // request threw that away: the effect re-ran with the key gone from 1 to null, did
+        // nothing, and the local highlight kept pointing at the previous row. `sectionLevel` and
+        // `delegated` entries are highlightable = false WITH a real section, so this was reachable
+        // from ordinary rows: pick a highlightable Appearance row, then a section-level catch-all
+        // elsewhere, then Appearance's own catch-all, and the first row lit up unasked.
+        highlightNonce += 1
+        highlight = requestedHighlight?.copy(nonce = highlightNonce)
     }
 
     // If the selected page's plugin is disabled/unloaded, fall back to sections.

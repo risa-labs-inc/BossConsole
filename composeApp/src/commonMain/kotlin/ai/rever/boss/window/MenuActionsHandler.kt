@@ -30,16 +30,50 @@ object MenuActionsHandler {
     private val _closeTabEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val closeTabEvents: SharedFlow<String> = _closeTabEvents.asSharedFlow()
 
+    /** [triggerSelectTabByIndex] sentinel meaning "whatever the last tab is". */
+    const val LAST_TAB_INDEX = -1
+
     /**
      * Tab-cycling actions. These are intentionally carried on a SINGLE flow (below) rather
      * than one flow per action: a "next/previous" step and the "commit" that follows it must
      * be observed in emission order, which is only guaranteed within one ordered stream.
      */
-    enum class TabSwitchAction { NEXT, PREVIOUS, COMMIT }
+    enum class TabSwitchAction {
+        NEXT,
+        PREVIOUS,
+        COMMIT,
+
+        /**
+         * Step in tab-bar order regardless of the configured TabSwitchMode, and start no MRU
+         * cycle. Cmd+Opt+Arrow / Cmd+Shift+Bracket are browser chords with no modifier-release
+         * gesture to commit on, so an MRU cycle armed by them would never be committed.
+         */
+        NEXT_POSITIONAL,
+        PREVIOUS_POSITIONAL,
+    }
 
     // Single ordered stream for Ctrl+Tab so a step is always delivered before its commit.
     private val _tabSwitchEvents = MutableSharedFlow<Pair<String, TabSwitchAction>>(extraBufferCapacity = 10)
     val tabSwitchEvents: SharedFlow<Pair<String, TabSwitchAction>> = _tabSwitchEvents.asSharedFlow()
+
+    /**
+     * Select a tab by position: (windowId, index), where index -1 means "the last tab"
+     * (Cmd+9's browser meaning). Out-of-range positions are ignored by the collector.
+     */
+    private val _selectTabIndexEvents = MutableSharedFlow<Pair<String, Int>>(extraBufferCapacity = 10)
+    val selectTabIndexEvents: SharedFlow<Pair<String, Int>> = _selectTabIndexEvents.asSharedFlow()
+
+    private val _reopenClosedTabEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
+    val reopenClosedTabEvents: SharedFlow<String> = _reopenClosedTabEvents.asSharedFlow()
+
+    private val _browserBackEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
+    val browserBackEvents: SharedFlow<String> = _browserBackEvents.asSharedFlow()
+
+    private val _browserForwardEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
+    val browserForwardEvents: SharedFlow<String> = _browserForwardEvents.asSharedFlow()
+
+    private val _browserDevToolsEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
+    val browserDevToolsEvents: SharedFlow<String> = _browserDevToolsEvents.asSharedFlow()
 
     private val _zoomInEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val zoomInEvents: SharedFlow<String> = _zoomInEvents.asSharedFlow()
@@ -139,6 +173,19 @@ object MenuActionsHandler {
     private val _panelCountState = MutableStateFlow<Map<String, Int>>(emptyMap())
     val panelCountState: StateFlow<Map<String, Int>> = _panelCountState.asStateFlow()
 
+    private val _activePanelTabCountState = MutableStateFlow<Map<String, Int>>(emptyMap())
+
+    /**
+     * How many tabs the ACTIVE panel holds, per window.
+     *
+     * Drives the enabled flag on View > Next Tab / Previous Tab, which must grey out with one
+     * tab rather than no-op: their accelerator is a MenuBar accelerator, so an always-enabled
+     * item consumes its chord window-wide even when stepping cannot do anything. Under BOSS
+     * Default that eats Cmd+Opt+Arrow; under the VS Code and IntelliJ presets the primary falls
+     * back to Cmd+Shift+Bracket, so a single-tab editor would lose those instead.
+     */
+    val activePanelTabCountState: StateFlow<Map<String, Int>> = _activePanelTabCountState.asStateFlow()
+
     /**
      * Update whether split is enabled for a window.
      * Split should be enabled when there are tabs in the active panel.
@@ -160,6 +207,30 @@ object MenuActionsHandler {
      * @return True if split is enabled (has active tabs), false otherwise
      */
     fun isSplitEnabled(windowId: String): Boolean = _splitEnabledState.value[windowId] ?: false
+
+    /** Publish the active panel's tab count for [activePanelTabCountState]. */
+    fun updateActivePanelTabCount(
+        windowId: String,
+        count: Int,
+    ) {
+        _activePanelTabCountState.update { it + (windowId to count) }
+    }
+
+    /**
+     * How many tabs the active panel of [windowId] holds, 0 before the first panel composes.
+     *
+     * Drives the interceptor's Cmd+1..Cmd+9 gate as well as [canStepTabs].
+     *
+     * The 0 default means those chords PROPAGATE for the frames between the interceptor going
+     * live and the publishing LaunchedEffect landing, while [panelCountState] defaults to 1 and
+     * so lets panel navigation through in the same window. Opposite defaults, deliberately: each
+     * one fails toward "do not claim a chord we cannot serve", which for a count of tabs is 0 and
+     * for a count of panels is 1.
+     */
+    fun activePanelTabCount(windowId: String): Int = _activePanelTabCountState.value[windowId] ?: 0
+
+    /** Whether tab stepping can do anything in [windowId] right now. */
+    fun canStepTabs(windowId: String): Boolean = activePanelTabCount(windowId) > 1
 
     /**
      * Update the panel count for a window.
@@ -187,8 +258,13 @@ object MenuActionsHandler {
      * @param windowId The window ID to clean up
      */
     fun cleanupWindow(windowId: String) {
-        _splitEnabledState.value = _splitEnabledState.value - windowId
-        _panelCountState.value = _panelCountState.value - windowId
+        _splitEnabledState.update { it - windowId }
+        _panelCountState.update { it - windowId }
+        _activePanelTabCountState.update { it - windowId }
+        // Co-located with the other per-window state rather than left to the window-close path
+        // alone: this one holds up to 25 TabInfos per window, so a future close path that
+        // forgot it would strand them for the life of the process.
+        ClosedTabHistory.clear(windowId)
         // If the window was closed before the customize-sidebar request
         // it triggered was handled, drop the orphaned entry so it doesn't
         // accumulate in the map across the session.
@@ -229,6 +305,59 @@ object MenuActionsHandler {
      */
     fun triggerPreviousTab(windowId: String) {
         _tabSwitchEvents.tryEmit(windowId to TabSwitchAction.PREVIOUS)
+    }
+
+    /**
+     * Trigger a "Next Tab" in tab-bar order (Cmd+Opt+Right), ignoring the MRU setting.
+     *
+     * @param windowId The ID of the window where the action was triggered
+     */
+    fun triggerNextTabPositional(windowId: String) {
+        _tabSwitchEvents.tryEmit(windowId to TabSwitchAction.NEXT_POSITIONAL)
+    }
+
+    /**
+     * Trigger a "Previous Tab" in tab-bar order (Cmd+Opt+Left), ignoring the MRU setting.
+     *
+     * @param windowId The ID of the window where the action was triggered
+     */
+    fun triggerPreviousTabPositional(windowId: String) {
+        _tabSwitchEvents.tryEmit(windowId to TabSwitchAction.PREVIOUS_POSITIONAL)
+    }
+
+    /**
+     * Select the tab at [index] in the active panel (Cmd+1..Cmd+8, zero-based).
+     */
+    fun triggerSelectTabByIndex(
+        windowId: String,
+        index: Int,
+    ) {
+        _selectTabIndexEvents.tryEmit(windowId to index)
+    }
+
+    /** Select the last tab in the active panel (Cmd+9). */
+    fun triggerSelectLastTab(windowId: String) {
+        _selectTabIndexEvents.tryEmit(windowId to LAST_TAB_INDEX)
+    }
+
+    /** Reopen the most recently closed tab in this window (Cmd+Shift+T). */
+    fun triggerReopenClosedTab(windowId: String) {
+        _reopenClosedTabEvents.tryEmit(windowId)
+    }
+
+    /** Browser history back for the window's active browser (Cmd+[). */
+    fun triggerBrowserBack(windowId: String) {
+        _browserBackEvents.tryEmit(windowId)
+    }
+
+    /** Browser history forward for the window's active browser (Cmd+]). */
+    fun triggerBrowserForward(windowId: String) {
+        _browserForwardEvents.tryEmit(windowId)
+    }
+
+    /** Open DevTools on the window's active browser (Cmd+Opt+I). */
+    fun triggerBrowserDevTools(windowId: String) {
+        _browserDevToolsEvents.tryEmit(windowId)
     }
 
     /**

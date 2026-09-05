@@ -166,6 +166,12 @@ internal fun Modifier.forwardUnclaimedKeys(
  *   claimed by neither side. [KeymapMatcher.hasSystemModifier] is the interceptor's own test for that
  *   and is now shared rather than reimplemented, so the two cannot drift.
  *
+ *   Not exact any more, in the safe direction: the interceptor now declines chords it has a
+ *   binding for but cannot act on - Cmd+3 in a two-tab panel, tab stepping in a single-tab panel,
+ *   panel navigation in a single-panel window. This test still refuses to forward those, so such
+ *   a chord reaches nobody. Nothing places a remote surface yet, and closing it means teaching
+ *   this the gates dispatchAction applies; see #52.
+ *
  *   Not consulted: `PluginShortcutRegistryImpl`'s defaults, which the interceptor checks after the
  *   keymap. They sit behind the same system-modifier early exit, so anything they could claim is
  *   already refused above by having a modifier — with one narrow exception, a plugin default arriving

@@ -311,11 +311,11 @@ internal class BrowserHandleImpl(
             windowId = { currentWindowId },
         )
 
-    // When the last two-finger swipe navigated, for [shouldAcceptSwipeNav]. A handle-level field
-    // rather than the `lastNavigationTime` the aux mouse buttons use, because that one is a
-    // `remember` slot inside Content() and this arrives from a JxBrowser thread with no
-    // composition in sight.
-    @Volatile private var lastSwipeNavAt = 0L
+    // How close together two two-finger swipes may navigate. A handle-level object rather than the
+    // `lastNavigationTime` the aux mouse buttons use, because that one is a `remember` slot inside
+    // Content() and this arrives from a JxBrowser thread with no composition in sight. It survives
+    // the navigation it just caused, which the page-side script cannot - see [SwipeNavGate].
+    private val swipeNavGate = SwipeNavGate()
 
     /** Receives committed two-finger swipes from the page. See [BrowserSwipeNavScript]. */
     private val swipeNavBridge = BrowserSwipeNavBridge(onNavigate = ::onSwipeNavigate)
@@ -511,6 +511,26 @@ internal class BrowserHandleImpl(
         }
     }
 
+    /**
+     * Every blocking renderer round trip this handle makes, off the EDT and answered on a deadline.
+     *
+     * See [BoundedBrowserCall] for why both of those are necessary and why they need two different
+     * threads. Browser-process calls are deliberately NOT routed through here: `loadUrl`,
+     * `browser.url()` and `dispatch` are answered by a process page JS cannot block, so they are not
+     * this failure and gain nothing from queueing behind a wedged renderer.
+     *
+     * **Why [frameProbeExecutor], [contextMenuExecutor] and [pageInjectExecutor] are still separate.**
+     * This class is a strictly better version of all three - retiring thread, encapsulated deadline,
+     * one place the two-thread rule lives - and folding them in would leave one pattern instead of
+     * four. It is deliberately not done here, and the reason is not inertia: merging the queues merges
+     * the blast radii. Today a wedged page-helper injection still leaves the context menu answering
+     * and the stall probe reporting, because each waits on its own thread; behind one queue they
+     * would all time out together, and the frame-stall probe in particular exists to interrogate a
+     * page already suspected of misbehaving. Folding them in is a real option, but it is a decision
+     * about how much independence to trade for one pattern, and it belongs in its own change.
+     */
+    private val handleCall = BoundedBrowserCall("boss-browser-call-$id")
+
     // --- Co-browse / tab sharing (DOM state-sync) ---
     // Whether the rrweb recorder is actively streaming this tab to viewers.
     @Volatile private var coBrowseCapturing = false
@@ -530,8 +550,12 @@ internal class BrowserHandleImpl(
     // Page→host bridge injected onto window.__bossCoBrowse; its onEvent is repointed per capture.
     private val coBrowseBridge = CoBrowseBridge()
 
-    // Main-thread scope for injection/teardown (rrweb inject + executeJavaScript run on Main).
-    private val coBrowseScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    // Scope for injection/teardown. Its launches make blocking renderer round trips, so it runs on
+    // [handleCall]'s thread rather than Main: on Main, a viewer sharing a tab whose page stops
+    // answering froze the whole app. Single-threaded, so those stay ordered against each other.
+    //
+    // dispatchCoBrowseInput is the one member that overrides this back to Main - see its comment.
+    private val coBrowseScope = CoroutineScope(SupervisorJob() + handleCall.dispatcher)
 
     // --- Page event channel (setPageEventScript) ---
     // The plugin-supplied document-start script, or null when uninstalled. Read by the injector
@@ -551,8 +575,11 @@ internal class BrowserHandleImpl(
     // then be injected twice.
     private val pageEventInjectRegistered = AtomicBoolean(false)
 
-    // Main-thread scope for the one immediate injection into the already-loaded document.
-    private val pageEventScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    // Scope for the one immediate injection into the already-loaded document. On [handleCall]'s
+    // thread and not Main for the reason [coBrowseScope] gives: that injection hands the bridge over
+    // with `putProperty`, a blocking renderer round trip, and it is the call that was caught holding
+    // the EDT with the macOS menu bar parked behind it.
+    private val pageEventScope = CoroutineScope(SupervisorJob() + handleCall.dispatcher)
 
     /*
      * Why there is NO "inject once per document" counter here, though there was one for a while.
@@ -1911,9 +1938,7 @@ internal class BrowserHandleImpl(
      * renderer it will not block, and `goBack()` is a round trip into the browser.
      */
     private fun onSwipeNavigate(direction: SwipeNavDirection) {
-        val now = System.currentTimeMillis()
-        if (!isValid || !shouldAcceptSwipeNav(now, lastSwipeNavAt)) return
-        lastSwipeNavAt = now
+        if (!isValid || !swipeNavGate.accept(direction)) return
         pageInjectScope.launch(pageInjectDispatcher) {
             when (direction) {
                 SwipeNavDirection.BACK -> goBack()
@@ -1990,8 +2015,14 @@ internal class BrowserHandleImpl(
         }
     }
 
-    // Main thread only. Reads pageEventScript once into a local: it is @Volatile, and an uninstall
-    // racing this would otherwise hand over the bridge and then evaluate null.
+    // Two callers, two threads, and never Main on either: [handleCall]'s thread when
+    // setPageEventScript injects into the already-loaded document, and JxBrowser's own inject-callback
+    // thread from the document-start injector, which has to block there before calling proceed().
+    // Both are correct; what matters is that neither is the EDT, because this blocks on the renderer
+    // twice over (an `executeJavaScript` and a `putProperty`).
+    //
+    // Reads pageEventScript once into a local: it is @Volatile, and an uninstall racing this would
+    // otherwise hand over the bridge and evaluate null.
     //
     // Two guards, each a distinct "nothing to do here": no script installed, and no window to hand
     // the bridge through. They log differently, so collapsing them would hide which one fired.
@@ -2052,7 +2083,15 @@ internal class BrowserHandleImpl(
     /**
      * Inject the rrweb recorder + page→host bridge into [frame] (main frame only).
      * rrweb captures same-origin iframes natively, so we never start a second
-     * recorder in subframes. Must run on the JxBrowser/Main thread.
+     * recorder in subframes.
+     *
+     * Two callers, two threads, and never Main on either - the same pair
+     * [injectPageEventScript] has: [handleCall]'s thread when [startCoBrowseCapture]
+     * injects into the already-loaded document, and JxBrowser's own inject-callback
+     * thread from [ensureCoBrowseInjectCallback]'s document-start injector, which has
+     * to block there before calling proceed(). What matters is that neither is the
+     * EDT, because this blocks on the renderer four times over, and on Main a page
+     * that stopped answering froze the app.
      */
     private fun injectCoBrowseRecorder(frame: Frame) {
         try {
@@ -2177,7 +2216,13 @@ internal class BrowserHandleImpl(
 
         fun bool(k: String) = o[k]?.jsonPrimitive?.booleanOrNull ?: false
         val kind = str("kind")
-        coBrowseScope.launch {
+        // Main, overriding [coBrowseScope]'s dispatcher, which is the one member here that keeps its
+        // pre-existing thread. `browser.dispatch` is answered by the browser process, not the
+        // renderer, so page JS cannot stall it and it was never part of this freeze. Two reasons not
+        // to move it anyway: it would be an unannounced behaviour change to remote input under
+        // HARDWARE_ACCELERATED, and while the shared thread is wedged a viewer's pointer keeps
+        // enqueueing one task per event at frame rate onto an unbounded queue.
+        coBrowseScope.launch(Dispatchers.Main) {
             try {
                 val point = Point.of(int("x"), int("y"))
                 when (kind) {
@@ -2319,7 +2364,22 @@ internal class BrowserHandleImpl(
             )
             return null
         }
-        return withContext(Dispatchers.Main) {
+        // Bounded on [handleCall] for the reason [executeJavaScript] gives: a viewer actuating a tab
+        // whose page has stopped answering must not freeze the host.
+        //
+        // No backlog guard here, unlike CoBrowseRtcPeerImpl.sendDom, and the difference is that this
+        // one is AWAITED. The viewer gets one status per event and cannot outrun its own round trips,
+        // so the queue depth is bounded by the number of viewers rather than by a frame rate - and
+        // `call`'s finally cancels whatever it gave up on, so a stale event resumes with cancellation
+        // instead of being actuated late into a page that recovered. What is left is retention: the
+        // task and its eventJson sit on the queue while the renderer is wedged. sendDom has neither
+        // property, which is why it drops instead.
+        //
+        // The catch stays INSIDE the block rather than wrapping the call. Kotlin's
+        // CancellationException is a java.util.concurrent one, which extends IllegalStateException,
+        // so a `catch (e: Exception)` around the await would swallow a caller's cancellation and
+        // answer "err" to it - reporting a co-browse failure for what was an orderly teardown.
+        return handleCall.call {
             try {
                 val status =
                     browser
@@ -2328,21 +2388,51 @@ internal class BrowserHandleImpl(
                             frame.executeJavaScript<String?>(CoBrowseScripts.applyControl(eventJson))
                         }.orElse(null)
                 if (status != "ok") {
-                    // Non-ok statuses ("stale"/"denied"/"nomirror"/"err:…") are how
-                    // control failures surface — keep them visible for live debugging.
+                    // Non-ok statuses ("stale"/"denied"/"nomirror"/"err:…") are ordinary outcomes and
+                    // stay visible for live debugging - but the payload does NOT go with them.
+                    // CoBrowseScripts.applyControl assigns `p.value` for kind 'input', so eventJson
+                    // carries the literal text the viewer typed into a field, which can be a
+                    // password. The kind is what makes the line useful; the value never was.
                     logger.warn(
                         LogCategory.BROWSER,
                         "Co-browse control not applied",
-                        mapOf("handleId" to id, "status" to (status ?: "null"), "event" to eventJson.take(120)),
+                        mapOf(
+                            "handleId" to id,
+                            // Truncated because an "err:…" status is built from a page-side exception
+                            // message, so its length and content are the page's to choose.
+                            "status" to (status?.take(STATUS_LOG_LIMIT) ?: "null"),
+                            "kind" to coBrowseEventKind(eventJson),
+                        ),
                     )
                 }
                 status
             } catch (e: Exception) {
-                logger.warn(LogCategory.BROWSER, "Co-browse control apply failed", mapOf("handleId" to id), error = e)
+                logger.warn(
+                    LogCategory.BROWSER,
+                    "Co-browse control apply failed",
+                    mapOf("handleId" to id),
+                    error = e,
+                )
                 "err"
             }
         }
     }
+
+    /**
+     * The event's `kind` alone, for logging.
+     *
+     * A co-browse event's payload can hold whatever a viewer typed, so it is never logged; AGENTS.md
+     * requires [ai.rever.boss.utils.logging.LogSanitizer] for anything that might carry a secret,
+     * and the cheapest way to satisfy that here is to not carry one.
+     */
+    private fun coBrowseEventKind(eventJson: String): String =
+        runCatching {
+            kotlinx.serialization.json.Json
+                .parseToJsonElement(eventJson)
+                .jsonObject["kind"]
+                ?.jsonPrimitive
+                ?.contentOrNull
+        }.getOrNull() ?: "unknown"
 
     /**
      * Generation first, and `isClosed` last and guarded, because the two are not equally
@@ -2387,7 +2477,16 @@ internal class BrowserHandleImpl(
         return try {
             block()
         } catch (e: Exception) {
-            if (isTransportFailure(e)) connectionDead.set(true)
+            if (isTransportFailure(e)) {
+                connectionDead.set(true)
+                // isValid has just flipped without a disposal, and nothing unregisters here -
+                // the registration is only dropped later by reconcileOrphanedBrowsers or at
+                // window teardown. ActiveBrowserRegistry recomputes only on register/unregister,
+                // so without this its window set stays stale in the dangerous direction: the
+                // browser menu items stay ENABLED, keep swallowing Cmd+[ window-wide, and
+                // activeIn then answers null. Republishing re-reads isValid and drops the window.
+                ActiveBrowserRegistry.republish()
+            }
             logger.debug(
                 LogCategory.BROWSER,
                 "Browser sync call failed",
@@ -2460,10 +2559,42 @@ internal class BrowserHandleImpl(
         }
     }
 
+    /**
+     * Evaluate a plugin's script in the main frame, or null if the renderer did not answer in time.
+     *
+     * Every part of that bound lives in [BoundedBrowserCall], including which thread the wait runs
+     * on - see its KDoc for why leaving that to the caller silently lost the deadline.
+     *
+     * **The behaviour change a plugin can see.** This used to wait forever (and take the app with
+     * it); it now answers null after [BoundedBrowserCall.DEFAULT_TIMEOUT_MS]. That null is
+     * indistinguishable from a script that legitimately evaluated to null, so a plugin reading it as
+     * "no such element" will occasionally see that on a page slow enough to miss the deadline. The
+     * timeout is always logged with the tab's thread name, which is the only way to tell the two
+     * apart from outside.
+     */
     override suspend fun executeJavaScript(script: String): Any? {
         if (!isValid) return null
-        return browser.executeJavaScriptSuspending(script, ::beginNativeOperation, ::endNativeOperation) { e ->
-            logger.warn(LogCategory.BROWSER, "JS execution error", mapOf("handleId" to id, "error" to (e.message ?: "unknown")))
+        val outcome = kotlinx.coroutines.withTimeoutOrNull(BoundedBrowserCall.DEFAULT_TIMEOUT_MS) {
+            Result.success(
+                browser.executeJavaScriptSuspending(script, ::beginNativeOperation, ::endNativeOperation) { e ->
+                    logger.warn(
+                        LogCategory.BROWSER,
+                        "JS execution error",
+                        mapOf("handleId" to id, "error" to (e.message ?: "unknown")),
+                    )
+                }
+            )
+        }
+
+        return if (outcome == null) {
+            logger.warn(
+                LogCategory.BROWSER,
+                "Browser round trip timed out - the renderer did not answer",
+                mapOf("thread" to "boss-browser-call-$id", "timeoutMs" to BoundedBrowserCall.DEFAULT_TIMEOUT_MS.toString()),
+            )
+            null
+        } else {
+            outcome.getOrNull()
         }
     }
 
@@ -3425,14 +3556,30 @@ internal class BrowserHandleImpl(
         SwingUtilities.invokeLater { closeSurfacePopOut() }
     }
 
+    /**
+     * The one round trip on this handle whose thread the *caller* used to pick.
+     *
+     * A non-suspend override on the public [BrowserHandle] interface that blocked on the renderer
+     * inline, so a plugin calling it from a `Dispatchers.Main` coroutine or a Compose click handler
+     * made the freeze this class was otherwise fixed for - and `BrowserMainThreadRoundTripTest`
+     * cannot see it, because there is no Main marker at the call site: the EDT-ness came from a
+     * caller a module away.
+     *
+     * [BoundedBrowserCall.post] rather than [BoundedBrowserCall.call] because there is nothing to
+     * await - this returns Unit, and a non-suspend caller has no context to suspend in anyway. The
+     * cost is that a caller now learns nothing about failure beyond the log, which it did not learn
+     * before either.
+     */
     override fun requestPictureInPicture() {
         if (!isValid) return
-        browser.mainFrame().ifPresent { frame ->
-            try {
-                frame.executeJavaScript<Unit>(BrowserJavaScripts.enablePictureInPicture)
-                logger.debug(LogCategory.BROWSER, "Requested Picture-in-Picture mode")
-            } catch (e: Exception) {
-                logger.warn(LogCategory.BROWSER, "Failed to request Picture-in-Picture", error = e)
+        handleCall.post {
+            browser.mainFrame().ifPresent { frame ->
+                try {
+                    frame.executeJavaScript<Unit>(BrowserJavaScripts.enablePictureInPicture)
+                    logger.debug(LogCategory.BROWSER, "Requested Picture-in-Picture mode")
+                } catch (e: Exception) {
+                    logger.warn(LogCategory.BROWSER, "Failed to request Picture-in-Picture", error = e)
+                }
             }
         }
     }
@@ -4170,6 +4317,17 @@ internal class BrowserHandleImpl(
         pageInjectJob.getAndSet(null)?.cancel()
         pageInjectScope.cancel()
         pageInjectExecutor.shutdown()
+        // Last of the four. Note what this ordering does NOT buy: coBrowseScope and pageEventScope
+        // were cancelled above, and cancelling a scope also cancels children that were dispatched but
+        // have not started - startCoroutineCancellable means DispatchedTask.run sees an inactive job
+        // and resumes with the cancellation instead of running the body. So the teardown queued by
+        // stopCoBrowseCapture (recordStop, setControlGuard(false)) does not run here, and did not
+        // before this change either, when both scopes were cancelled the same way on Main.
+        //
+        // Left alone rather than re-posted outside the cancelled scope: the browser is closing a few
+        // lines below, so stopping a recorder in a page that is about to go away buys nothing.
+        // See [BoundedBrowserCall.shutdown] for why not shutdownNow().
+        handleCall.shutdown()
         // Drop this browser's injectors, WITHOUT unclaiming the shared callback slot - that slot
         // belongs to BrowserInjectDispatcher on behalf of every registered injector, and removing
         // it here would tear down another feature's hook as a side effect of this teardown.
@@ -4221,6 +4379,9 @@ internal class BrowserHandleImpl(
     companion object {
         /** Cause-chain depth [isTransportFailure] inspects before giving up. */
         private const val MAX_CAUSE_DEPTH = 16
+
+        /** How much of a page-authored co-browse status string reaches the log. */
+        private const val STATUS_LOG_LIMIT = 80
 
         /**
          * Popup browsers we are currently waiting to capture an upload body for.

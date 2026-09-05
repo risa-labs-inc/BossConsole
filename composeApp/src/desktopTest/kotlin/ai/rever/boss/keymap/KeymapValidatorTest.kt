@@ -2,6 +2,7 @@ package ai.rever.boss.keymap
 
 import ai.rever.boss.keymap.handler.KeymapValidator
 import ai.rever.boss.keymap.model.KeyBinding
+import ai.rever.boss.keymap.model.KeyStroke
 import ai.rever.boss.keymap.model.KeymapSettings
 import ai.rever.boss.keymap.model.ShortcutContext
 import org.junit.jupiter.api.Test
@@ -497,5 +498,162 @@ class KeymapValidatorTest {
         assertTrue(description.contains("New Window"), "Should mention first action")
         assertTrue(description.contains("New Tab"), "Should mention second action")
         assertTrue(description.contains("2 actions"), "Should mention count")
+    }
+    // ==================== ALTERNATE KEYSTROKE CONFLICTS ====================
+
+    @Test
+    fun `an alternate colliding with another action's primary is a conflict`() {
+        // Both matchers consult allKeystrokes, so this is real behaviour: two actions fire on
+        // one chord. Keying conflict detection on the primary alone reported nothing, which
+        // also meant a preset test asserting "no conflicts" could not see one.
+        val zoomIn =
+            KeyBinding(
+                actionId = "browser.zoom_in",
+                key = "Equals",
+                modifiers = listOf("Cmd"),
+                alternateKeystrokes = listOf(KeyStroke("Equals", listOf("Cmd", "Shift"))),
+                context = ShortcutContext.GLOBAL,
+                description = "Zoom in",
+            )
+        val other =
+            KeyBinding(
+                actionId = "custom.action",
+                key = "Equals",
+                modifiers = listOf("Cmd", "Shift"),
+                context = ShortcutContext.GLOBAL,
+                description = "Something the user rebound",
+            )
+
+        val conflicts = KeymapValidator.validate(KeymapSettings.fromBindings(listOf(zoomIn, other)))
+
+        assertEquals(1, conflicts.size, "Cmd+Shift+Equals is bound twice")
+        assertEquals(
+            setOf("browser.zoom_in", "custom.action"),
+            conflicts
+                .single()
+                .bindings
+                .map { it.actionId }
+                .toSet(),
+        )
+    }
+
+    @Test
+    fun `two bindings colliding on two chords are one conflict, not two`() {
+        // Grouping by every signature means a pair that shares both a primary and an alternate
+        // lands in two buckets. It is one thing for the user to fix, and conflictCount is what
+        // the settings badge shows, so reporting it twice would double-count.
+        val first =
+            KeyBinding(
+                actionId = "action.one",
+                key = "K",
+                modifiers = listOf("Cmd"),
+                alternateKeystrokes = listOf(KeyStroke("J", listOf("Cmd"))),
+                context = ShortcutContext.GLOBAL,
+                description = "First",
+            )
+        val second =
+            KeyBinding(
+                actionId = "action.two",
+                key = "K",
+                modifiers = listOf("Cmd"),
+                alternateKeystrokes = listOf(KeyStroke("J", listOf("Cmd"))),
+                context = ShortcutContext.GLOBAL,
+                description = "Second",
+            )
+
+        val settings = KeymapSettings.fromBindings(listOf(first, second))
+
+        assertEquals(1, KeymapValidator.validate(settings).size, "Cmd+K and Cmd+J are one pair")
+        assertEquals(1, KeymapValidator.conflictCount(settings))
+        assertEquals(
+            setOf("action.one", "action.two"),
+            KeymapValidator
+                .validate(settings)
+                .single()
+                .bindings
+                .map { it.actionId }
+                .toSet(),
+        )
+    }
+
+    @Test
+    fun `distinct colliding pairs are still reported separately`() {
+        // Guard against the dedupe collapsing unrelated conflicts: different action sets stay
+        // different entries.
+        val a = KeyBinding("a", "K", listOf("Cmd"), context = ShortcutContext.GLOBAL, description = "A")
+        val b = KeyBinding("b", "K", listOf("Cmd"), context = ShortcutContext.GLOBAL, description = "B")
+        val c = KeyBinding("c", "J", listOf("Cmd"), context = ShortcutContext.GLOBAL, description = "C")
+        val d = KeyBinding("d", "J", listOf("Cmd"), context = ShortcutContext.GLOBAL, description = "D")
+
+        val conflicts = KeymapValidator.validate(KeymapSettings.fromBindings(listOf(a, b, c, d)))
+
+        assertEquals(2, conflicts.size)
+    }
+
+    @Test
+    fun `checkBinding sees a collision against an existing binding's alternate`() {
+        val existing =
+            KeyBinding(
+                actionId = "browser.zoom_in",
+                key = "Equals",
+                modifiers = listOf("Cmd"),
+                alternateKeystrokes = listOf(KeyStroke("Equals", listOf("Cmd", "Shift"))),
+                context = ShortcutContext.GLOBAL,
+                description = "Zoom in",
+            )
+        val candidate =
+            KeyBinding(
+                actionId = "custom.action",
+                key = "Equals",
+                modifiers = listOf("Cmd", "Shift"),
+                context = ShortcutContext.GLOBAL,
+                description = "Candidate",
+            )
+
+        val clashes = KeymapValidator.checkBinding(candidate, KeymapSettings.fromBindings(listOf(existing)))
+
+        assertEquals(listOf("browser.zoom_in"), clashes.map { it.actionId })
+    }
+
+    @Test
+    fun `two alternates on the same chord in disjoint contexts do not conflict`() {
+        // The context rule still applies to alternates: EDITOR and BROWSER never both fire.
+        val editor =
+            KeyBinding(
+                actionId = "editor.thing",
+                key = "K",
+                modifiers = listOf("Cmd"),
+                alternateKeystrokes = listOf(KeyStroke("J", listOf("Cmd"))),
+                context = ShortcutContext.EDITOR,
+                description = "Editor thing",
+            )
+        val browser =
+            KeyBinding(
+                actionId = "browser.thing",
+                key = "L",
+                modifiers = listOf("Cmd"),
+                alternateKeystrokes = listOf(KeyStroke("J", listOf("Cmd"))),
+                context = ShortcutContext.BROWSER,
+                description = "Browser thing",
+            )
+
+        assertTrue(KeymapValidator.validate(KeymapSettings.fromBindings(listOf(editor, browser))).isEmpty())
+    }
+
+    @Test
+    fun `a binding is not reported as conflicting with itself`() {
+        // allSignatures() is distinct()-ed before grouping, so a binding whose primary and
+        // alternate happen to normalise together does not pair with itself.
+        val selfOverlapping =
+            KeyBinding(
+                actionId = "only.action",
+                key = "Equals",
+                modifiers = listOf("Cmd"),
+                alternateKeystrokes = listOf(KeyStroke("Equals", listOf("Cmd"))),
+                context = ShortcutContext.GLOBAL,
+                description = "Only action",
+            )
+
+        assertTrue(KeymapValidator.validate(KeymapSettings.fromBindings(listOf(selfOverlapping))).isEmpty())
     }
 }

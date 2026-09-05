@@ -34,7 +34,7 @@ The application features a comprehensive keyboard shortcuts system (Issue #201) 
 - `ShortcutContext.kt` - Enum defining where shortcuts are active
 - `KeyBinding.kt` - Individual shortcut with key, modifiers, context, category, description
 - `KeymapSettings.kt` - Container for all shortcuts with preset tracking
-- `KeymapActions.kt` - Registry of 20 action IDs across 8 categories
+- `KeymapActions.kt` - Registry of 47 action IDs across 11 categories
 
 **Handler System** (`composeApp/src/commonMain/kotlin/ai/rever/boss/keymap/handler/`):
 - `KeymapMatcher.kt` - Matches keyboard events to configured bindings
@@ -56,21 +56,35 @@ The application features a comprehensive keyboard shortcuts system (Issue #201) 
 - `KeymapSettingsManager.kt` - Expect/actual pattern for platform-specific persistence
 - Desktop implementation saves to `~/.boss/keymap-settings.json`
 
-## Available Actions (20 total)
+## Available Actions (47 total)
 
 ### Window Management (2)
 - `window.new` - Create new window
 - `window.close` - Close current window
 
-### Tab Management (2)
+### Tab Management (16)
 - `tab.new` - Open new tab dialog
 - `tab.close` - Close current tab (or window if last tab)
+- `tab.next` / `tab.previous` - Step tabs following the configured tab-switch mode (MRU by
+  default, with the switcher overlay). Held-modifier driven: the MRU cycle commits when the
+  modifier is released.
+- `tab.reopen_closed` - Reopen the most recently closed tab. Works for every tab type; the
+  history is per window and holds 25 entries
+- `tab.next_positional` / `tab.previous_positional` - Step in tab-bar order regardless of the
+  tab-switch mode, and start no MRU cycle. Separate actions because these chords are discrete,
+  so an MRU cycle armed by one would never be committed
+- `tab.select_1` .. `tab.select_8` - Select the tab at that position
+- `tab.select_last` - Select the last tab, whatever its index (the browser meaning of Cmd+9)
 
-### Browser Controls (4)
-- `browser.reload` - Reload browser tab (BROWSER context only)
-- `browser.zoom_reset` - Reset zoom to 100% (BROWSER context only)
-- `browser.zoom_in` - Increase zoom (BROWSER context only)
-- `browser.zoom_out` - Decrease zoom (BROWSER context only)
+### Browser Controls (8)
+All BROWSER context only.
+- `browser.reload` - Reload browser tab
+- `browser.zoom_reset` - Reset zoom to 100%
+- `browser.zoom_in` - Increase zoom
+- `browser.zoom_out` - Decrease zoom
+- `browser.find` - Find text on page
+- `browser.back` / `browser.forward` - Browser history
+- `browser.devtools` - Open developer tools
 
 ### Navigation (7)
 - `panel.navigate_left` - Switch to left panel
@@ -84,15 +98,41 @@ The application features a comprehensive keyboard shortcuts system (Issue #201) 
 ### Workspace (1)
 - `workspace.save` - Save current workspace layout (WORKSPACE context)
 
+### Editor (7)
+All EDITOR context only. Several exist so the chord is listed and rebindable while the editor
+plugin serves it from its own key handling, `editor.go_to_line` among them; the AWT interceptor
+has no dispatch case for those and deliberately leaves the event to propagate.
+- `editor.save` / `editor.save_all` - Save the current file / all files
+- `editor.find` / `editor.replace` - Find, find and replace
+- `editor.find_next` / `editor.find_previous` - Step matches
+- `editor.go_to_line` - Go to line number
+
 ### Tools (1)
 - `codebase.open` - Open CodeBase panel
+
+### Search (1)
+- `search.open` - Open global search (Double-Shift)
 
 ### View/UI (2)
 - `view.focus_mode_toggle` - Toggle focus mode (hide/show UI bars)
 - `view.settings_open` - Open application settings (works in focus mode)
 
+### Help (1)
+- `help.shortcuts` - Show the keyboard shortcuts help dialog
+
 ### Debug (1)
 - `test.external_link` - Test external link handling (debug only)
+
+### Plugin-contributed actions
+
+Plugins can contribute their own global actions via `PluginContext.registerShortcutActionProvider`,
+under ids namespaced `plugin.<pluginId>.<name>`. These are GLOBAL only and are not listed above,
+because the set depends on which plugins are installed. A host binding always wins a chord
+collision, and a user rebind stored under the plugin's action id supersedes the plugin's default.
+
+The fluck browser contributes `Focus Address Bar` on Cmd+L, which is why `editor.go_to_line`
+shares that chord: the interceptor stops at a matched host binding rather than falling through to
+the plugin pass, so Cmd+L is Go To Line in an editor and Focus Address Bar in a browser.
 
 ## Preset Keymaps
 
@@ -106,15 +146,25 @@ Window Management:
 Tab Management:
   Cmd+T               - New tab
   Cmd+W               - Close tab
+  Cmd+Shift+T         - Reopen closed tab
+  Ctrl+Tab            - Next tab (MRU by default; see Tab switch mode)
+  Ctrl+Shift+Tab      - Previous tab
+  Cmd+Opt+Right/Left  - Next/previous tab in tab-bar order
+  Cmd+Shift+] / [     - Same, alternate chords
+  Cmd+1 .. Cmd+8      - Select tab by position
+  Cmd+9               - Select the last tab
 
 Browser Controls (in browser tabs only):
   Cmd+R               - Reload
   Cmd+0               - Reset zoom
-  Cmd+=               - Zoom in
+  Cmd+= / Cmd+Shift+= - Zoom in (the second is what a US layout reports for Cmd+Plus)
   Cmd+-               - Zoom out
+  Cmd+F               - Find on page
+  Cmd+[ / Cmd+]       - Back / forward
+  Cmd+Opt+I           - Developer tools
 
 Navigation:
-  Cmd+Arrow Keys      - Navigate between panels
+  Cmd+Arrow Keys      - Navigate between panels (only with a split open)
   Cmd+Shift+|         - Split current tab vertically
   Cmd+Shift+-         - Split current tab horizontally
   Ctrl+Space          - Quick switcher (Top of Mind)
@@ -132,6 +182,55 @@ View/UI:
 Debug:
   Cmd+Shift+G         - Test external link
 ```
+
+The standard browser chords above are shared by every preset rather than written out per preset,
+via `KeymapPresets.standardBrowserBindings()`. Merging is per keystroke: a chord the preset
+already claims is dropped and the first surviving keystroke becomes the primary. So VS Code and
+IntelliJ, which both put panel navigation on Cmd+Opt+Arrow, get positional tab stepping on
+Cmd+Shift+[ and Cmd+Shift+] instead; IntelliJ keeps Cmd+1 on the Project tool window and gets no
+Cmd+1 tab select.
+
+Existing installs pick these up through `KeymapSettingsManager.migrateSettings`, which adds
+actions missing from a stored keymap and tops up new alternates on bindings whose primary still
+matches the preset. A rebound chord is left alone. Chords are compared order- and
+case-insensitively on both halves, so a hand-edited `["Shift","Cmd"]` reads the same as
+`["Cmd","Shift"]`.
+
+Migration is chord-checked the same way the merge is: a new action whose chords a stored keymap
+already claims is dropped rather than added as a live conflict, which matters here because one
+migration lands twenty chords onto a keymap the user may have customised.
+
+Host bindings beat plugin defaults, and this is where that starts to bite: the new Cmd+1..Cmd+9
+entries permanently shadow any plugin GLOBAL default on those chords, and a host binding the
+interceptor matches but does not dispatch now stops there rather than falling through to the
+plugin pass. That is the documented rule working as intended, but Cmd+1..9 are popular plugin
+chords, and this is the change that closes them. A plugin wanting one has to be rebound by the
+user, which puts it in the keymap where it wins the earlier pass.
+
+### What these chords take from other surfaces
+
+One rule, applied everywhere: a chord is claimed when the action can act, and left alone when it
+cannot. It is NOT gated on focus, because the mechanism that fires these window-wide is a native
+menu accelerator, and a Compose `MenuBar` accelerator ignores the binding's `ShortcutContext`.
+Two consequences worth knowing before filing a bug:
+
+- **Cmd+[ and Cmd+]** become browser history whenever a browser is the visible surface of the
+  active main panel. With a browser there and focus in a sidebar editor, they navigate history
+  rather than outdent and indent. Narrowing further needs a focus signal the menu layer does not
+  have.
+- **Cmd+Opt+Left/Right** (and the Cmd+Shift+Bracket alternates) step tabs whenever the active
+  panel has two or more, whatever surface has focus - so a terminal or editor does not see them
+  in a multi-tab panel. This is the same rule as above, not a different one: the action can act,
+  so the chord is claimed. Cmd+1..Cmd+8 in a two-tab panel is the mirror image - the action
+  cannot act, so the chord goes through.
+
+A chord that cannot act is not claimed. Cmd+1..Cmd+8 with fewer tabs than that, Cmd+9 with no
+tabs, Cmd+Shift+T with an empty history, tab stepping in a single-tab panel and panel navigation
+in a single-panel window all propagate to whatever has focus instead of being swallowed. This
+matters because a native menu accelerator fires window-wide whatever the binding's context, so an
+always-enabled item would take Cmd+[ from an editor, where it is outdent. Browsers do consume
+Cmd+1..9 unconditionally; BOSS does not, because those chords reach surfaces a browser has no
+equivalent of.
 
 ### VS Code Preset
 

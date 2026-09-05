@@ -1,6 +1,7 @@
 package ai.rever.boss.components.plugin.panels.right_top
 
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabComponent
+import ai.rever.boss.plugin.browser.BoundedBrowserCall
 import ai.rever.boss.plugin.browser.BrowserServiceImpl
 import ai.rever.boss.plugin.browser.LockedBrowser
 import ai.rever.boss.utils.logging.BossLogger
@@ -59,25 +60,54 @@ actual class BrowserAccessor {
 class DesktopBrowserIntegration(
     internal val browser: LockedBrowser,
 ) : BrowserIntegration {
+    /**
+     * One per integration, not one per process.
+     *
+     * Sharing a single instance across every tab was the wrong trade: the motivating case is a
+     * renderer parked on a modal `window.prompt`, which never returns, so the shared thread stays
+     * held for as long as that dialog is open and *every* plugin call in the process then costs a
+     * full deadline and answers null - on tabs that are perfectly healthy, for a dialog nobody knows
+     * is open. Per-integration puts the blast radius back to the one tab that stopped answering,
+     * which is what the per-handle instance in BrowserHandleImpl already achieves.
+     *
+     * Affordable because [BoundedBrowserCall]'s thread is created on first call and retires when
+     * idle: these accessors are rebuilt on every tab switch and nothing disposes them, so an
+     * instance that is churned through without making a call costs nothing at all. Explicitly
+     * shutting the previous one down where the cache is replaced was the other option and was
+     * rejected - a plugin can still be holding that integration, and its calls would start
+     * answering null underneath it.
+     *
+     * Never shut down, and that is not an admitted leak: with `allowCoreThreadTimeOut` the worker
+     * exits after its idle window and the executor becomes garbage along with the integration that
+     * held it. An instance that never made a call never started a thread in the first place.
+     */
+    private val accessorCall = BoundedBrowserCall("boss-plugin-browser-call-${System.identityHashCode(browser)}")
+
+    /**
+     * Evaluate [script] in the tab this accessor is pointed at, or null if the renderer did not
+     * answer in time.
+     *
+     * This is the *plugin-facing* path - `DefaultPlugin.getBrowserIntegration` resolves it and
+     * `BrowserIntegrationAdapter.executeJavaScript` hands it out - so it is a shipped API onto the
+     * exact freeze [BoundedBrowserCall] describes. It ran on `Dispatchers.Main`, which meant a
+     * plugin driving a tab parked on a modal `window.prompt` took the EDT, and AppKit's main thread
+     * with it.
+     */
     override suspend fun executeJavaScript(script: String): Any? =
-        withContext(Dispatchers.Main) {
-            try {
-                val mainFrame = browser.mainFrame().orElse(null)
-                if (mainFrame != null) {
-                    mainFrame.executeJavaScript<Any>(script)
-                } else {
-                    null
-                }
-            } catch (e: Exception) {
+        accessorCall.call(
+            onError = { e ->
                 browserAccessorLogger.debug(
                     LogCategory.BROWSER,
                     "executeJavaScript failed - returning null",
                     mapOf("error" to e.toString()),
                 )
-                null
-            }
+            },
+        ) {
+            browser.mainFrame().orElse(null)?.executeJavaScript<Any>(script)
         }
 
+    // Stays on Main: `loadUrl` is answered by the browser process, which page JS cannot block, so
+    // it is not the hazard executeJavaScript above is and gains nothing from queueing behind one.
     override suspend fun navigate(url: String) {
         withContext(Dispatchers.Main) {
             try {

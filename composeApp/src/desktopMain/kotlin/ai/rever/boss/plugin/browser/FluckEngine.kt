@@ -2602,7 +2602,8 @@ object FluckEngine {
         }
 
     /**
-     * Whether the native key interceptor has to serve zoom chords in this configuration.
+     * Whether this native key interceptor is the only layer that sees main-modifier chords in
+     * this configuration, and so has to serve them itself.
      *
      * Two conditions, because two different things can put the chord somewhere else.
      *
@@ -2610,25 +2611,43 @@ object FluckEngine {
      * consumes the key before the JVM sees it, which is the whole reason this case exists - the
      * same reason Ctrl+R needed one. Under OFF_SCREEN the chord arrives through AWT and Compose
      * instead, so the AWT keymap and the plugin's `onPreviewKeyEvent` serve it and claiming it
-     * here as well risks a second zoom step. OFF_SCREEN is not hypothetical: it is reachable per
+     * here as well risks a second step. OFF_SCREEN is not hypothetical: it is reachable per
      * install through BOSS_RENDERING_MODE or Settings > Browser Engine, so gating on the platform
      * alone would leave anyone who flipped that setting exposed.
      *
      * Platform. macOS is exempt even under HARDWARE_ACCELERATED, because the chord reaches AWT
      * there - which is why zoom was reported broken on Windows only - and the AWT keymap
-     * (`browser.zoom_in` and friends) plus the plugin's Compose handler already serve it.
+     * (`AWTKeyboardInterceptor`, serving `browser.zoom_in` and friends as well as `tab.close`,
+     * `tab.new` and the like) already serves it.
      *
-     * Both exemptions guard the same failure: two layers acting on one keypress, where the second
-     * zoom step is indistinguishable from the user having pressed the key twice.
+     * Both exemptions guard the same failure: two layers acting on one keypress. The symptom
+     * depends on the action's shape: a second zoom step is indistinguishable from the user
+     * having pressed the key twice, while one Cmd+W dispatched from BOTH layers closed the
+     * active tab and then the newly-active neighbour - the classic report being "Cmd+W on the
+     * tab after the terminal closed the terminal and the other tab". Every chord this callback
+     * dispatches through [ai.rever.boss.window.MenuActionsHandler] (zoom, N/T/W and
+     * Shift+F/Shift+S) must be gated on this value; a new one added later must be too.
      *
      * [JxBrowserConfig.renderingMode] is a `lazy` val, so this resolves once per process. That is
      * the right granularity: changing the mode needs the engine rebuilt, so it cannot change under
      * a running browser anyway.
      */
-    private val interceptsZoomNatively: Boolean
-        get() =
-            !SystemUtils.isMacOS &&
-                JxBrowserConfig.renderingMode == com.teamdev.jxbrowser.engine.RenderingMode.HARDWARE_ACCELERATED
+    private val interceptsChordsNatively: Boolean
+        get() = ownsChordsNatively(SystemUtils.isMacOS, JxBrowserConfig.renderingMode)
+
+    /**
+     * Pure part of [interceptsChordsNatively], split out so the platform/mode decision is
+     * testable without a live engine, the way [JxBrowserConfig.resolveRenderingMode] is.
+     *
+     * The order is load-bearing: a macOS machine that flipped the mode to OFF_SCREEN still
+     * reaches AWT, so the platform check must win over the mode - and a Windows machine in
+     * HARDWARE_ACCELERATED is the ONLY combination where the JVM never sees the chord, which is
+     * the only combination this layer may claim.
+     */
+    internal fun ownsChordsNatively(
+        isMacOS: Boolean,
+        mode: com.teamdev.jxbrowser.engine.RenderingMode,
+    ): Boolean = !isMacOS && mode == com.teamdev.jxbrowser.engine.RenderingMode.HARDWARE_ACCELERATED
 
     internal enum class BrowserZoomAction { IN, OUT, RESET }
 
@@ -2787,8 +2806,18 @@ object FluckEngine {
 
     /**
      * Sets up keyboard interceptor for a browser to forward menu shortcuts to the native menu bar.
-     * This intercepts Cmd+R, Cmd+N, Cmd+T, Cmd+W, etc. (on macOS) or Ctrl+R, Ctrl+N, etc. (on Windows/Linux)
-     * before JxBrowser consumes them, and manually triggers the corresponding MenuActionsHandler methods.
+     * This intercepts Cmd+R, Cmd+N, Cmd+T, Cmd+W, etc. (on macOS) or Ctrl+R, Ctrl+N, etc. (on
+     * Windows/Linux) before JxBrowser consumes them, and manually triggers the corresponding
+     * MenuActionsHandler methods.
+     *
+     * The window-scoped chords (N/T/W and Shift+F/Shift+S) are dispatched from HERE only when
+     * this native layer is the one that sees the chord - see [interceptsChordsNatively]. On
+     * macOS (every rendering mode) and on other platforms under OFF_SCREEN, the same chord
+     * also reaches the AWT keymap (`AWTKeyboardInterceptor`), and dispatching from both layers
+     * turned one Cmd+W into two closes: the active tab, then the newly-active neighbour.
+     * There the callback still suppresses the chord (so a page never sees it) but leaves the
+     * dispatch to the AWT layer, which is the keymap's single source of truth.
+     *
      * Window-owned browsers suppress every key event while their AWT window is inactive.
      *
      * @param ownerWindowId stable owner used for focus gating and shortcut dispatch; null preserves
@@ -2890,13 +2919,13 @@ object FluckEngine {
                     // HARDWARE_ACCELERATED the native surface consumes it, so neither the AWT
                     // keymap nor the plugin's Compose handler ever sees a key event. Same failure
                     // that made Ctrl+R need the case above. Skipped on macOS, where those layers do
-                    // get the chord - see interceptsZoomNatively.
+                    // get the chord - see interceptsChordsNatively.
                     //
                     // suppress() unconditionally, unlike the find chord below, which proceeds so a
                     // site with its own find-in-page can pre-empt it: Chrome treats zoom as a
                     // reserved accelerator pages cannot override, and suppressing is also what
                     // stops Chromium applying its own built-in zoom on top of ours.
-                    if (interceptsZoomNatively) {
+                    if (interceptsChordsNatively) {
                         val zoomAction = resolveBrowserZoomAction(keyCode, shiftDown = false)
                         if (zoomAction != null) {
                             applyBrowserZoom(browser, zoomTarget, zoomAction)
@@ -2906,23 +2935,30 @@ object FluckEngine {
                     }
                     if (shortcutWindowId != null) {
                         when (keyCode) {
-                            com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_N -> {
-                                ai.rever.boss.window.MenuActionsHandler
-                                    .triggerNewTab(shortcutWindowId)
-                                return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response
-                                    .suppress()
-                            }
-
-                            com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_T -> {
-                                ai.rever.boss.window.MenuActionsHandler
-                                    .triggerNewTab(shortcutWindowId)
+                            com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_N,
+                            com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_T,
+                            -> {
+                                // On macOS and under OFF_SCREEN the AWT keymap already serves
+                                // this chord (its `tab.new` / `window.new` bindings), so
+                                // dispatching here too double-fires one press - two new tabs,
+                                // or a tab plus a window, depending on the preset. See
+                                // [interceptsChordsNatively].
+                                if (interceptsChordsNatively) {
+                                    ai.rever.boss.window.MenuActionsHandler
+                                        .triggerNewTab(shortcutWindowId)
+                                }
                                 return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response
                                     .suppress()
                             }
 
                             com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_W -> {
-                                ai.rever.boss.window.MenuActionsHandler
-                                    .triggerCloseTab(shortcutWindowId)
+                                // Dispatching from BOTH this layer and the AWT keymap is what
+                                // made one Cmd+W close the active tab and then the
+                                // newly-active neighbour; see [interceptsChordsNatively].
+                                if (interceptsChordsNatively) {
+                                    ai.rever.boss.window.MenuActionsHandler
+                                        .triggerCloseTab(shortcutWindowId)
+                                }
                                 return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response
                                     .suppress()
                             }
@@ -3019,7 +3055,7 @@ object FluckEngine {
                     // reason as "find previous" above. Zoom out and reset decline shift, so only
                     // this one chord is claimed here. macOS-exempt on the same grounds as the
                     // unshifted case above.
-                    if (interceptsZoomNatively) {
+                    if (interceptsChordsNatively) {
                         val shiftZoomAction = resolveBrowserZoomAction(keyCode, shiftDown = true)
                         if (shiftZoomAction != null) {
                             applyBrowserZoom(browser, zoomTarget, shiftZoomAction)
@@ -3029,16 +3065,28 @@ object FluckEngine {
                     }
                     if (shortcutWindowId != null) {
                         when (keyCode) {
-                            com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_F -> {
-                                ai.rever.boss.window.MenuActionsHandler
-                                    .triggerToggleFocusMode(shortcutWindowId)
-                                return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response
-                                    .suppress()
-                            }
+                            com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_F,
+                            com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_S,
+                            -> {
+                                // Same double-fire as the unshifted case: on macOS and under
+                                // OFF_SCREEN the AWT keymap already serves focus-mode toggle
+                                // (Cmd/Ctrl+Shift+F) and save workspace (Cmd/Ctrl+Shift+S), and
+                                // a second dispatch cancels the toggle or saves twice.
+                                if (interceptsChordsNatively) {
+                                    when (keyCode) {
+                                        com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_F -> {
+                                            ai.rever.boss.window.MenuActionsHandler
+                                                .triggerToggleFocusMode(shortcutWindowId)
+                                        }
 
-                            com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_S -> {
-                                ai.rever.boss.window.MenuActionsHandler
-                                    .triggerSaveWorkspace(shortcutWindowId)
+                                        com.teamdev.jxbrowser.ui.KeyCode.KEY_CODE_S -> {
+                                            ai.rever.boss.window.MenuActionsHandler
+                                                .triggerSaveWorkspace(shortcutWindowId)
+                                        }
+
+                                        else -> {}
+                                    }
+                                }
                                 return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response
                                     .suppress()
                             }

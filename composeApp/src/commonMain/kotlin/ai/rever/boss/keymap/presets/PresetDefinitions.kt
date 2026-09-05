@@ -230,6 +230,10 @@ object EmacsPresetDefinition {
                 ),
             )
 
-        return KeymapSettings.fromBindings(bindings, presetName = "Emacs", customized = false)
+        return KeymapSettings.fromBindings(
+            KeymapPresets.withStandardBrowserBindings(bindings),
+            presetName = "Emacs",
+            customized = false,
+        )
     }
 }

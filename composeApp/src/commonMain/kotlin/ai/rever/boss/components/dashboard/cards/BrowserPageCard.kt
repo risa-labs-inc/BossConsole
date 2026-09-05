@@ -5,8 +5,6 @@ import ai.rever.boss.dashboard.RecentBrowserPage
 import ai.rever.boss.dashboard.RecentBrowserPagesManager
 import ai.rever.boss.plugin.api.TabIcon
 import ai.rever.boss.plugin.ui.BossTheme
-import ai.rever.boss.utils.logging.BossLogger
-import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Image
@@ -47,8 +45,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-private val logger = BossLogger.forComponent("BrowserPageCard")
-
 /**
  * Card displaying a recent browser page with favicon.
  */
@@ -72,20 +68,17 @@ fun BrowserPageCard(
     val iconColor = getDomainColor(domain)
     val cardShape = RoundedCornerShape(12.dp)
 
-    // Load high-quality favicon (Google's service provides up to 128px icons)
-    var favicon by remember(page.url) { mutableStateOf<ai.rever.boss.plugin.api.TabIcon.Image?>(null) }
+    // The page's own cached favicon, or Google's guess about its host when there is none -
+    // loadHighQualityFavicon settles that order. A 16px page icon is soft in this 36dp card;
+    // it is still the right site, which the 128px guess about a parent domain was not.
+    //
+    // Unguarded, and keyed the same way the effect is: loadHighQualityFavicon does not throw, and
+    // a catch here would swallow the cancellation this effect's disposal raises.
+    var favicon by remember(page.url, page.faviconCacheKey) {
+        mutableStateOf<ai.rever.boss.plugin.api.TabIcon.Image?>(null)
+    }
     LaunchedEffect(page.url, page.faviconCacheKey) {
-        favicon =
-            try {
-                loadHighQualityFavicon(page.url, page.faviconCacheKey)
-            } catch (e: Exception) {
-                logger.debug(
-                    LogCategory.BROWSER,
-                    "Failed to load high-quality favicon - card shows fallback icon",
-                    mapOf("error" to e.toString()),
-                )
-                null
-            }
+        favicon = loadHighQualityFavicon(page.url, page.faviconCacheKey)
     }
 
     Box(

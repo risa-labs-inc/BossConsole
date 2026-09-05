@@ -2,11 +2,12 @@ package ai.rever.boss.window
 
 import ai.rever.boss.components.plugin.registries.PluginShortcutRegistryImpl
 import ai.rever.boss.keymap.KeymapSettingsManager
-import ai.rever.boss.keymap.handler.KeymapMatcher
 import ai.rever.boss.keymap.model.KeyBinding
+import ai.rever.boss.keymap.model.KeyStroke
 import ai.rever.boss.keymap.model.KeymapActions
 import ai.rever.boss.keymap.model.ShortcutContext
 import ai.rever.boss.keymap.model.TabSwitchMode
+import ai.rever.boss.keymap.model.canonicalModifiers
 import ai.rever.boss.utils.SystemUtils
 import java.awt.KeyEventDispatcher
 import java.awt.KeyboardFocusManager
@@ -87,6 +88,15 @@ object AWTKeyboardInterceptor {
     /**
      * Update the active shortcut context for a window.
      * Called from the Compose layer when the active tab type changes.
+     *
+     * NOT CALLED TODAY - no production caller sets a window context, so [windowContextMap] is
+     * always empty and [detectCurrentContext] answers purely from the AWT focus walk. That walk
+     * can only see a heavyweight component, i.e. JxBrowser's page surface, so BROWSER-context
+     * bindings resolve while the PAGE has focus and not while focus is in a browser's Compose
+     * chrome (address bar, tab strip, find bar). Wiring this up would fix that class, but it is
+     * window-scoped: with a browser in the main panel and focus in a SIDEBAR editor it would
+     * report BROWSER and hand Cmd+F and Cmd+R to the browser, which is why it stays unwired
+     * here. See the Cmd+L note in `KeymapPresets.standardBrowserBindings`.
      *
      * @param windowId The BOSS window ID
      * @param context The shortcut context of the currently active component
@@ -203,32 +213,55 @@ object AWTKeyboardInterceptor {
                 val focusedWindow = KeyboardFocusManager.getCurrentKeyboardFocusManager().focusedWindow
                 val windowId = findWindowId(focusedWindow) ?: return@KeyEventDispatcher false
 
-                // Get current keymap settings and create matcher
-                val settings = KeymapSettingsManager.currentSettings.value
-                val matcher = KeymapMatcher(settings)
-
                 // Try to match the key event against shortcuts
-                val binding = findMatchingBinding(event, matcher)
+                val match = findMatchingBinding(event)
+                val binding = match?.binding
 
                 if (binding != null) {
                     // Dispatch the action through MenuActionsHandler
                     val handled = dispatchAction(binding.actionId, windowId)
-                    if (handled) {
-                        // Begin (or continue) an MRU tab cycle: remember which modifier is
-                        // sustaining it so its release — and only its release — commits the cycle.
-                        // This arms even when the focused panel has <=1 tab (the component-side
-                        // switchTab/commit then no-op), so the interceptor may briefly believe a
-                        // cycle is active when none is — harmless, and Tab stays swallowed.
-                        if ((binding.actionId == KeymapActions.TAB_NEXT || binding.actionId == KeymapActions.TAB_PREVIOUS) &&
-                            KeymapSettingsManager.currentSettings.value.tabSwitchMode == TabSwitchMode.MRU
-                        ) {
-                            tabCycleActive = true
-                            tabCycleModifierKeyCode = cyclingModifierKeyCode(binding)
-                        }
-                        // Consume the event to prevent it from reaching BossTerm
-                        event.consume()
-                        return@KeyEventDispatcher true
+                    if (!handled) {
+                        // A host binding matched but has no dispatch case here, because the
+                        // chord is served further down or by nothing at all. QUICK_SWITCHER_OPEN
+                        // (Ctrl+Space) and TEST_EXTERNAL_LINK (Cmd+Shift+G) are the two that
+                        // reach this today, and every EDITOR_* binding would join them if
+                        // updateWindowContext were ever wired up.
+                        //
+                        // NOT the EDITOR bindings today: detectCurrentContext can only answer
+                        // BROWSER, TERMINAL or GLOBAL, so isContextEligible drops an
+                        // EDITOR-context binding in findMatchingBinding and it never gets here.
+                        // EDITOR_GO_TO_LINE (Cmd+L) is therefore kept safe from a plugin GLOBAL
+                        // default by the fluck browser not registering one, not by this branch.
+                        //
+                        // Return rather than fall through to the plugin-default pass below. That
+                        // pass is documented as running only when NO host binding matched, and
+                        // letting an undispatched host binding fall into it inverts the rule:
+                        // whichever plugin registered the same chord as a GLOBAL default would
+                        // shadow the host binding AND consume the event (a plugin's onAction
+                        // returns Unit, so PluginShortcutRegistryImpl.dispatch reports success
+                        // for any registered action), leaving the real handler with nothing.
+                        return@KeyEventDispatcher false
                     }
+
+                    // Begin (or continue) an MRU tab cycle: remember which modifier is
+                    // sustaining it so its release - and only its release - commits the cycle.
+                    // This arms even when the focused panel has <=1 tab (the component-side
+                    // switchTab/commit then no-op), so the interceptor may briefly believe a
+                    // cycle is active when none is - harmless, and Tab stays swallowed.
+                    if ((binding.actionId == KeymapActions.TAB_NEXT || binding.actionId == KeymapActions.TAB_PREVIOUS) &&
+                        KeymapSettingsManager.currentSettings.value.tabSwitchMode == TabSwitchMode.MRU
+                    ) {
+                        tabCycleActive = true
+                        // From the keystroke that MATCHED, not the binding's primary: an
+                        // alternate can carry the other primary modifier, and arming on Meta
+                        // while the user holds Control means the release never commits. The
+                        // switcher overlay then stays on screen with Tab swallowed until some
+                        // unrelated modifier release happens to match.
+                        tabCycleModifierKeyCode = cyclingModifierKeyCode(match.keystroke)
+                    }
+                    // Consume the event to prevent it from reaching BossTerm
+                    event.consume()
+                    return@KeyEventDispatcher true
                 }
 
                 // Plugin-contributed GLOBAL shortcuts (PluginShortcutRegistry).
@@ -281,12 +314,16 @@ object AWTKeyboardInterceptor {
     }
 
     /**
-     * The physical modifier keycode that sustains an MRU tab cycle for [binding], mirroring
-     * the platform-aware mapping in findMatchingBinding: a "Ctrl" binding is the Control key
-     * on macOS but the Meta key on Windows/Linux (and vice-versa for a "Cmd" binding).
+     * The physical modifier keycode that sustains an MRU tab cycle for [keystroke], mirroring
+     * the platform-aware mapping in findMatchingBinding: a "Ctrl" chord is the Control key
+     * on macOS but the Meta key on Windows/Linux (and vice-versa for a "Cmd" chord).
+     *
+     * Takes the keystroke the event MATCHED rather than the binding, so an alternate spelled
+     * with the other primary modifier arms the modifier the user is actually holding. Arming
+     * the wrong one wedges the switcher overlay open rather than merely losing a chord.
      */
-    private fun cyclingModifierKeyCode(binding: KeyBinding): Int {
-        val hasCmd = binding.modifiers.any { it.equals("Cmd", true) || it.equals("Meta", true) }
+    internal fun cyclingModifierKeyCode(keystroke: KeyStroke): Int {
+        val hasCmd = "cmd" in canonicalModifiers(keystroke.modifiers)
         return if (SystemUtils.isMacOS) {
             if (hasCmd) KeyEvent.VK_META else KeyEvent.VK_CONTROL
         } else {
@@ -361,16 +398,25 @@ object AWTKeyboardInterceptor {
             else -> bindingContext == currentContext
         }
 
+    /** A binding, and WHICH of its keystrokes the event matched. See [cyclingModifierKeyCode]. */
+    internal data class BindingMatch(
+        val binding: KeyBinding,
+        val keystroke: KeyStroke,
+    )
+
     /**
      * Find a matching binding for the AWT KeyEvent.
      * Context-aware: skips component-specific bindings when the focused component
      * doesn't match, and prefers bindings whose context matches the current focus.
+     *
+     * Reads the keymap itself rather than taking a KeymapMatcher: it used to take one and never
+     * consult it, so the caller built a matcher per keypress for nothing. The Compose-side
+     * matcher is a different path (the Shortcuts tester and getMatchingBindings read it).
      */
-    private fun findMatchingBinding(
-        event: KeyEvent,
-        matcher: KeymapMatcher,
-    ): KeyBinding? {
-        val keyName = getKeyName(event.keyCode)
+    private fun findMatchingBinding(event: KeyEvent): BindingMatch? {
+        // Canonicalised once: keyNameMatches folds both sides, so doing it per keystroke per
+        // binding meant two lowercase() allocations for each of ~47 bindings per keypress.
+        val eventKey = canonicalKeyName(getKeyName(event.keyCode))
         val settings = KeymapSettingsManager.currentSettings.value
 
         // Detect current context for filtering
@@ -379,16 +425,23 @@ object AWTKeyboardInterceptor {
         val currentContext = detectCurrentContext(windowId)
 
         // Collect all matching bindings with their context priority
-        var bestMatch: KeyBinding? = null
+        var bestMatch: BindingMatch? = null
         var bestPriority = -1
 
         for (binding in settings.shortcuts.values) {
             if (!binding.enabled) continue
 
-            // Check if key matches
-            if (!binding.key.equals(keyName, ignoreCase = true)) continue
+            // Primary keystroke OR any alternate - allKeystrokes is what makes Cmd+Plus reach
+            // zoom in alongside Cmd+Equals. Matching only `binding.key` silently ignored every
+            // alternateKeystrokes entry the model has always been able to express. WHICH
+            // keystroke matched is kept, not just that one did: the MRU cycle arms on its
+            // modifier, and for an alternate the binding's primary is the wrong answer.
+            val matched =
+                binding.allKeystrokes.firstOrNull { keystroke ->
+                    canonicalKeyName(keystroke.key) == eventKey && chordMatchesEvent(keystroke.modifiers, event)
+                }
 
-            if (chordMatchesEvent(binding.modifiers, event)) {
+            if (matched != null) {
                 // Skip bindings whose context doesn't match
                 if (!isContextEligible(binding.context, currentContext)) continue
 
@@ -402,7 +455,7 @@ object AWTKeyboardInterceptor {
                     }
 
                 if (priority > bestPriority) {
-                    bestMatch = binding
+                    bestMatch = BindingMatch(binding, matched)
                     bestPriority = priority
                 }
             }
@@ -422,14 +475,14 @@ object AWTKeyboardInterceptor {
         val pluginShortcuts = PluginShortcutRegistryImpl.shortcuts.value
         if (pluginShortcuts.isEmpty()) return null
 
-        val keyName = getKeyName(event.keyCode)
+        val eventKey = canonicalKeyName(getKeyName(event.keyCode))
         val userShortcuts = KeymapSettingsManager.currentSettings.value.shortcuts
 
         for (registered in pluginShortcuts) {
             val spec = registered.spec
             val default = spec.defaultBinding ?: continue
             if (userShortcuts.containsKey(spec.actionId)) continue
-            if (!default.key.equals(keyName, ignoreCase = true)) continue
+            if (canonicalKeyName(default.key) != eventKey) continue
             if (chordMatchesEvent(default.modifiers, event)) {
                 return spec.actionId
             }
@@ -447,10 +500,11 @@ object AWTKeyboardInterceptor {
         modifiers: Collection<String>,
         event: KeyEvent,
     ): Boolean {
-        val hasCmd = modifiers.any { it.equals("Cmd", true) || it.equals("Meta", true) }
-        val hasCtrl = modifiers.any { it.equals("Ctrl", true) || it.equals("Control", true) }
-        val hasShift = modifiers.any { it.equals("Shift", true) }
-        val hasAlt = modifiers.any { it.equals("Alt", true) || it.equals("Option", true) }
+        val canonical = canonicalModifiers(modifiers.toList())
+        val hasCmd = "cmd" in canonical
+        val hasCtrl = "ctrl" in canonical
+        val hasShift = "shift" in canonical
+        val hasAlt = "alt" in canonical
 
         val primaryMatch =
             if (hasCmd || hasCtrl) {
@@ -466,7 +520,35 @@ object AWTKeyboardInterceptor {
     }
 
     /**
+     * Compare a binding's key name against [eventKeyName] from [getKeyName].
+     *
+     * Alias-tolerant so a keymap file written by an older build (or hand-edited, or imported
+     * from another machine) still matches: "Left" and "DirectionLeft" are the same key, as are
+     * "Space"/"Spacebar" and "Esc"/"Escape".
+     */
+    internal fun keyNameMatches(
+        bindingKey: String,
+        eventKeyName: String,
+    ): Boolean = canonicalKeyName(bindingKey) == canonicalKeyName(eventKeyName)
+
+    /**
+     * The key-name fold, delegated to the model so this path and the Compose matcher cannot
+     * drift again. This file used to own a copy, which is how "Left" and "DirectionLeft"
+     * managed to be different keys on one path and the same on the other.
+     */
+    private fun canonicalKeyName(keyName: String): String =
+        ai.rever.boss.keymap.model
+            .canonicalKeyName(keyName)
+
+    /**
      * Convert AWT key code to key name string.
+     *
+     * The vocabulary here has to be the one the presets store, which is Compose's `Key` naming:
+     * the arrows are "DirectionLeft" and friends, NOT "Left". They used to be spelled "Left",
+     * which meant no arrow binding ever matched on this path - Cmd+Arrow panel navigation
+     * worked only because the native menu carries its own accelerator, and fell dead the moment
+     * a terminal or browser held focus. [keyNameMatches] accepts both spellings so an older or
+     * hand-edited keymap file still resolves.
      */
     private fun getKeyName(keyCode: Int): String =
         when (keyCode) {
@@ -512,10 +594,10 @@ object AWTKeyboardInterceptor {
             KeyEvent.VK_TAB -> "Tab"
             KeyEvent.VK_BACK_SPACE -> "Backspace"
             KeyEvent.VK_DELETE -> "Delete"
-            KeyEvent.VK_LEFT -> "Left"
-            KeyEvent.VK_RIGHT -> "Right"
-            KeyEvent.VK_UP -> "Up"
-            KeyEvent.VK_DOWN -> "Down"
+            KeyEvent.VK_LEFT -> "DirectionLeft"
+            KeyEvent.VK_RIGHT -> "DirectionRight"
+            KeyEvent.VK_UP -> "DirectionUp"
+            KeyEvent.VK_DOWN -> "DirectionDown"
             KeyEvent.VK_HOME -> "Home"
             KeyEvent.VK_END -> "End"
             KeyEvent.VK_PAGE_UP -> "PageUp"
@@ -548,10 +630,63 @@ object AWTKeyboardInterceptor {
         }
 
     /**
+     * Run [trigger] and claim the event, but only while [windowId]'s active panel has more than
+     * one tab. Returning false leaves the chord to the focused component.
+     */
+    internal fun dispatchIfCanStepTabs(
+        windowId: String,
+        trigger: (String) -> Unit,
+    ): Boolean {
+        if (!MenuActionsHandler.canStepTabs(windowId)) return false
+        trigger(windowId)
+        return true
+    }
+
+    /**
+     * Run [trigger] and claim the event, but only while [windowId]'s active panel actually has a
+     * tab at position [index].
+     *
+     * `selectTabByPosition` ignores an out-of-range position, so without this a two-tab window
+     * would swallow Cmd+3 through Cmd+8 from a terminal or an editor and do nothing with them -
+     * the same "claiming a chord that cannot act" this file gates panel navigation and tab
+     * stepping against. Browsers do consume the whole Cmd+1..9 block unconditionally; BOSS does
+     * not, because those chords reach surfaces a browser has no equivalent of.
+     */
+    internal fun dispatchIfTabExistsAt(
+        windowId: String,
+        index: Int,
+        trigger: (String) -> Unit,
+    ): Boolean {
+        if (MenuActionsHandler.activePanelTabCount(windowId) <= index) return false
+        trigger(windowId)
+        return true
+    }
+
+    /**
+     * Run [trigger] and claim the event, but only while [windowId] has more than one panel.
+     *
+     * Returning false leaves the chord to the focused component. See the panel-navigation
+     * branches in [dispatchAction] for why that matters.
+     */
+    internal fun dispatchIfMultiPanel(
+        windowId: String,
+        trigger: (String) -> Unit,
+    ): Boolean {
+        val panelCount = MenuActionsHandler.panelCountState.value[windowId] ?: 1
+        if (panelCount <= 1) return false
+        trigger(windowId)
+        return true
+    }
+
+    /**
      * Dispatch an action through MenuActionsHandler.
      * Returns true if the action was handled, false otherwise.
+     *
+     * Internal rather than private so desktopTest can assert which actions the interceptor
+     * claims: returning false is load-bearing, because it is what leaves a chord to the
+     * component that really serves it.
      */
-    private fun dispatchAction(
+    internal fun dispatchAction(
         actionId: String,
         windowId: String,
     ): Boolean =
@@ -575,6 +710,36 @@ object AWTKeyboardInterceptor {
             KeymapActions.TAB_PREVIOUS -> {
                 MenuActionsHandler.triggerPreviousTab(windowId)
                 true
+            }
+
+            // Gated on the same state as the File menu item's enabled flag: with an empty
+            // stack the chord would be consumed for nothing, and Cmd+Shift+T is a plain
+            // Cmd+Shift+letter that another surface may well want.
+            KeymapActions.TAB_REOPEN_CLOSED -> {
+                if (!ClosedTabHistory.hasEntries(windowId)) {
+                    false
+                } else {
+                    MenuActionsHandler.triggerReopenClosedTab(windowId)
+                    true
+                }
+            }
+
+            // Gated for the same reason as panel navigation below: with one tab there is
+            // nowhere to step, and claiming the chord would take Cmd+Shift+Bracket away from an
+            // editor (where the VS Code and IntelliJ presets put these) for no effect.
+            KeymapActions.TAB_NEXT_POSITIONAL -> {
+                dispatchIfCanStepTabs(windowId) { MenuActionsHandler.triggerNextTabPositional(it) }
+            }
+
+            KeymapActions.TAB_PREVIOUS_POSITIONAL -> {
+                dispatchIfCanStepTabs(windowId) { MenuActionsHandler.triggerPreviousTabPositional(it) }
+            }
+
+            // Index 0, not 8: Cmd+9 means "the last tab", so any non-empty panel serves it. In a
+            // one-tab panel it is claimed and reselects the already-active tab, which is what
+            // browsers do; only an empty panel lets the chord through.
+            KeymapActions.TAB_SELECT_LAST -> {
+                dispatchIfTabExistsAt(windowId, 0) { MenuActionsHandler.triggerSelectLastTab(it) }
             }
 
             // Window Management
@@ -610,25 +775,29 @@ object AWTKeyboardInterceptor {
                 true
             }
 
-            // Panel Navigation
+            // Panel Navigation.
+            //
+            // Gated on there being somewhere to navigate TO, mirroring the `enabled` flag on the
+            // matching View-menu items. The gate is what keeps Cmd+Left meaning "caret to line
+            // start" in a text field or a web page whenever the window has a single panel: the
+            // default bindings are bare Cmd+Arrow, which macOS also reserves for caret movement,
+            // so an unconditional `true` here would consume the chord and hand back nothing.
+            // (With a split open the chord is the user's panel navigation either way - that is
+            // already what the enabled menu accelerator does today.)
             KeymapActions.PANEL_NAVIGATE_LEFT -> {
-                MenuActionsHandler.triggerNavigatePanelLeft(windowId)
-                true
+                dispatchIfMultiPanel(windowId) { MenuActionsHandler.triggerNavigatePanelLeft(it) }
             }
 
             KeymapActions.PANEL_NAVIGATE_RIGHT -> {
-                MenuActionsHandler.triggerNavigatePanelRight(windowId)
-                true
+                dispatchIfMultiPanel(windowId) { MenuActionsHandler.triggerNavigatePanelRight(it) }
             }
 
             KeymapActions.PANEL_NAVIGATE_UP -> {
-                MenuActionsHandler.triggerNavigatePanelUp(windowId)
-                true
+                dispatchIfMultiPanel(windowId) { MenuActionsHandler.triggerNavigatePanelUp(it) }
             }
 
             KeymapActions.PANEL_NAVIGATE_DOWN -> {
-                MenuActionsHandler.triggerNavigatePanelDown(windowId)
-                true
+                dispatchIfMultiPanel(windowId) { MenuActionsHandler.triggerNavigatePanelDown(it) }
             }
 
             // Split Panel
@@ -650,6 +819,28 @@ object AWTKeyboardInterceptor {
 
             KeymapActions.BROWSER_FIND -> {
                 MenuActionsHandler.triggerBrowserFind(windowId)
+                true
+            }
+
+            // These three claim unconditionally while every neighbouring branch carries a gate,
+            // and that is deliberate: their bindings are ShortcutContext.BROWSER, so
+            // isContextEligible(BROWSER, GLOBAL) is false and findMatchingBinding only reaches
+            // here when the focus walk already reported BROWSER. The gate is upstream and
+            // stronger than a dispatch-time count, not missing. (The MENU items for the same
+            // actions do need `enabled`, because an accelerator fires window-wide whatever the
+            // context - see ActiveBrowserRegistry.windowsWithActiveBrowser.)
+            KeymapActions.BROWSER_BACK -> {
+                MenuActionsHandler.triggerBrowserBack(windowId)
+                true
+            }
+
+            KeymapActions.BROWSER_FORWARD -> {
+                MenuActionsHandler.triggerBrowserForward(windowId)
+                true
+            }
+
+            KeymapActions.BROWSER_DEVTOOLS -> {
+                MenuActionsHandler.triggerBrowserDevTools(windowId)
                 true
             }
 
@@ -684,13 +875,26 @@ object AWTKeyboardInterceptor {
             }
 
             else -> {
-                // Plugin-contributed actions ("plugin.<pluginId>.<name>") —
-                // reached when the user rebound a plugin shortcut (the binding
-                // then lives in the keymap settings and matches the main pass).
-                if (actionId.startsWith(PluginShortcutRegistryImpl.ACTION_ID_PREFIX)) {
-                    PluginShortcutRegistryImpl.dispatch(actionId, windowId)
-                } else {
-                    false
+                // Cmd+1..Cmd+8 carry a position, so they resolve by lookup rather than as
+                // eight near-identical branches.
+                val tabIndex = KeymapActions.TAB_SELECT_BY_INDEX.indexOf(actionId)
+                when {
+                    tabIndex >= 0 -> {
+                        dispatchIfTabExistsAt(windowId, tabIndex) {
+                            MenuActionsHandler.triggerSelectTabByIndex(it, tabIndex)
+                        }
+                    }
+
+                    // Plugin-contributed actions ("plugin.<pluginId>.<name>") -
+                    // reached when the user rebound a plugin shortcut (the binding
+                    // then lives in the keymap settings and matches the main pass).
+                    actionId.startsWith(PluginShortcutRegistryImpl.ACTION_ID_PREFIX) -> {
+                        PluginShortcutRegistryImpl.dispatch(actionId, windowId)
+                    }
+
+                    else -> {
+                        false
+                    }
                 }
             }
         }

@@ -25,6 +25,10 @@ const scriptKt = path.join(
   repoRoot,
   'composeApp/src/desktopMain/kotlin/ai/rever/boss/plugin/browser/BrowserSwipeNavScript.kt',
 );
+const bridgeKt = path.join(
+  repoRoot,
+  'composeApp/src/desktopMain/kotlin/ai/rever/boss/plugin/browser/BrowserSwipeNavBridge.kt',
+);
 
 let failures = 0;
 function check(name, cond, detail) {
@@ -34,6 +38,12 @@ function check(name, cond, detail) {
     failures++;
     console.log(`  FAIL ${name}${detail === undefined ? '' : ` -> ${detail}`}`);
   }
+}
+/** Smallest distance between consecutive commits; Infinity when there are fewer than two. */
+function minGap(times) {
+  let smallest = Infinity;
+  for (let i = 1; i < times.length; i++) smallest = Math.min(smallest, times[i] - times[i - 1]);
+  return smallest;
 }
 function eq(name, actual, expected) {
   check(
@@ -54,12 +64,27 @@ function hostProperties() {
   return { bridge: grab('BRIDGE_PROPERTY'), state: grab('STATE_PROPERTY') };
 }
 
+/**
+ * The host's same-direction repeat window, read from the Kotlin.
+ *
+ * The paused-drag case below is the one place these two files make a claim about each other: the
+ * script emits two commits and the host is what collapses them. Restating 400 here would let the
+ * two drift apart with both suites green.
+ */
+function hostRepeatMs() {
+  const src = fs.readFileSync(bridgeKt, 'utf8');
+  const m = /^internal const val SWIPE_NAV_REPEAT_MS = (\d+)L/m.exec(src);
+  if (!m) throw new Error('SWIPE_NAV_REPEAT_MS not found in BrowserSwipeNavBridge.kt');
+  return Number(m[1]);
+}
+
 // ---------------------------------------------------------------------------
 // Fake DOM: only what the detector touches, so an added DOM read fails loudly.
 // ---------------------------------------------------------------------------
 function newPage(js, options = {}) {
   const listeners = {};
   const navigated = [];
+  const navigatedAt = [];
   const registrations = [];
   let clockMs = 1000;
   let preventedDefaults = 0;
@@ -168,7 +193,14 @@ function newPage(js, options = {}) {
   };
   sandbox.window.top = options.subframe ? {} : sandbox.window;
   sandbox.document = sandbox.window.document;
-  sandbox.window[hostProps.bridge] = { navigate: (d) => navigated.push(d) };
+  // The clock is recorded alongside the direction: the host's SWIPE_NAV_DEBOUNCE_MS rests on
+  // "two commits are never closer than GESTURE_GAP_MS", and that claim lives in this script.
+  sandbox.window[hostProps.bridge] = {
+    navigate: (d) => {
+      navigated.push(d);
+      navigatedAt.push(clockMs);
+    },
+  };
   if (options.state !== null) {
     sandbox.window[hostProps.state] = options.state || { back: true, forward: true };
   }
@@ -195,6 +227,7 @@ function newPage(js, options = {}) {
     element,
     body,
     navigated,
+    navigatedAt,
     registrations,
     wheel,
     wheelRaw: (event) => (listeners.wheel || []).forEach((f) => f(event)),
@@ -207,6 +240,17 @@ function newPage(js, options = {}) {
     advance: (ms) => {
       clockMs += ms;
       fireDue();
+    },
+    // Move the clock WITHOUT running anything that came due. Models the one ordering the script
+    // cannot control: Chromium dispatches input on a higher-priority task queue than timers, so a
+    // wheel event can run while the end-of-gesture timer is due but has not fired yet.
+    jump: (ms) => {
+      clockMs += ms;
+    },
+    // Replace the state object the host pushes, mid-gesture. Assigning a whole new value (or
+    // taking it away) is what the host actually does; mutating the existing one is a separate case.
+    setState: (value) => {
+      sandbox.window[hostProps.state] = value;
     },
     // Let every pending timer run, however far in the future. What a lifted finger and a
     // finished exit animation look like from the script's side.
@@ -241,6 +285,7 @@ function newPage(js, options = {}) {
 
 // ---------------------------------------------------------------------------
 const hostProps = hostProperties();
+const REPEAT_MS = hostRepeatMs();
 const js = fs.readFileSync(scriptJs, 'utf8');
 const constant = (name) => Number(new RegExp(`var ${name} = (\\d+)`).exec(js)[1]);
 const COMMIT_PX = constant('COMMIT_PX');
@@ -249,7 +294,8 @@ const MIN_EVENTS = constant('MIN_EVENTS');
 const MAX_STEP_PX = constant('MAX_STEP_PX');
 console.log(
   `detector: COMMIT_PX=${COMMIT_PX} GESTURE_GAP_MS=${GAP_MS} MIN_EVENTS=${MIN_EVENTS} ` +
-    `MAX_STEP_PX=${MAX_STEP_PX}; host: ${hostProps.bridge} / ${hostProps.state}`,
+    `MAX_STEP_PX=${MAX_STEP_PX}; host: ${hostProps.bridge} / ${hostProps.state}, ` +
+    `SWIPE_NAV_REPEAT_MS=${REPEAT_MS}`,
 );
 
 console.log('\nwiring');
@@ -274,19 +320,21 @@ console.log('\na real swipe');
 {
   const p = newPage(js);
   p.swipe(12, -10);
-  eq('goes back once', p.navigated, ['back']);
   p.settle();
+  eq('goes back once', p.navigated, ['back']);
   check('leaves nothing showing', p.visibleOverlays() === 0, p.visibleOverlays());
   check('never calls preventDefault', p.preventedDefaults() === 0, p.preventedDefaults());
 }
 {
   const p = newPage(js);
   p.swipe(12, 10);
+  p.settle();
   eq('the other direction goes forward', p.navigated, ['forward']);
 }
 {
   const p = newPage(js);
   p.swipe(24, -10);
+  p.settle();
   eq('one continuous swipe navigates exactly once', p.navigated, ['back']);
 }
 {
@@ -294,7 +342,194 @@ console.log('\na real swipe');
   p.swipe(12, -10);
   p.advance(GAP_MS + 80);
   p.swipe(12, -10);
+  p.settle();
   eq('two swipes across a gap navigate twice', p.navigated, ['back', 'back']);
+}
+{
+  // The floor the host's SWIPE_NAV_DEBOUNCE_MS is derived from, proved rather than asserted in
+  // prose: whatever the ordering of timers and events, two commits are never closer together than
+  // GESTURE_GAP_MS, because that gap IS how one gesture is told from the next. If a future change
+  // to decide()'s call sites falsifies that, the debounce's whole justification goes with it.
+  const p = newPage(js);
+  p.swipe(12, -10);
+  p.advance(GAP_MS + 40);
+  p.swipe(12, -10);
+  p.advance(GAP_MS + 40);
+  p.swipe(12, 10);
+  p.settle();
+  eq('three gestures navigate three times', p.navigated, ['back', 'back', 'forward']);
+  check(
+    'and no two commits are closer than the gesture gap',
+    minGap(p.navigatedAt) >= GAP_MS,
+    `${JSON.stringify(p.navigatedAt)} min gap ${minGap(p.navigatedAt)}, want >= ${GAP_MS}`,
+  );
+}
+{
+  // A slow deliberate drag that HESITATES mid-swipe. 120ms of quiet with the fingers still down is
+  // byte-identical to a lift, so this is two gestures here and there is no signal that would make
+  // it one. What is pinned is that the script really does emit two commits: the guard against it
+  // is SWIPE_NAV_REPEAT_MS in BrowserSwipeNavBridge.kt, which has to live host-side because this
+  // script's state dies with the document the first commit navigates away from.
+  const p = newPage(js);
+  p.swipe(9, -10);
+  p.advance(GAP_MS + 1);
+  p.swipe(9, -10);
+  p.settle();
+  eq('a drag paused past the gesture gap is two gestures to the script', p.navigated, ['back', 'back']);
+  check(
+    'and the two are close enough for the host repeat window to catch',
+    minGap(p.navigatedAt) <= REPEAT_MS,
+    `${JSON.stringify(p.navigatedAt)} min gap ${minGap(p.navigatedAt)}, want <= ${REPEAT_MS}`,
+  );
+}
+
+console.log('\nthe end of the gesture, not the threshold, is what commits');
+{
+  // The bug this whole change fixes (boss-plugin-fluck-browser#36): crossing COMMIT_PX used to
+  // navigate on the spot, in the same wheel event, fingers still down. Held right at the commit
+  // distance with no further events, it must not navigate until the gesture actually ends.
+  const p = newPage(js);
+  p.swipe(9, -10);
+  eq('holding at the commit distance does not navigate on the crossing event', p.navigated, []);
+  check('the affordance is still up, filled in', p.visibleOverlays() === 1, p.visibleOverlays());
+  p.settle();
+  eq('and only fires once the gesture ends', p.navigated, ['back']);
+}
+{
+  // Same direction throughout - accumX never crosses back through zero, so this is NOT the
+  // reversal guard below, just letting go before release while short of the line again.
+  const p = newPage(js);
+  p.swipe(12, -10);
+  p.swipe(4, 10);
+  p.settle();
+  eq('easing back below the commit distance before release does not navigate', p.navigated, []);
+}
+{
+  const p = newPage(js);
+  p.swipe(12, -10);
+  p.swipe(1, -10);
+  p.settle();
+  eq('holding past the commit distance through release still navigates', p.navigated, ['back']);
+}
+{
+  const p = newPage(js);
+  p.swipe(12, -10);
+  p.pagehide();
+  eq('the page going away mid-swipe is not routed through a commit', p.navigated, []);
+}
+{
+  // A second review round caught this: decide() runs from the endTimer regardless of how few
+  // events the gesture had, so without its own MIN_EVENTS check, two deltas of 50px each - each
+  // one under MAX_STEP_PX, so neither is caught by the wheel-shape guard on its own - total
+  // 100px, clear COMMIT_PX (90), and never reach the eventCount that would have shown any
+  // affordance at all. That must not navigate.
+  const p = newPage(js);
+  p.swipe(2, -50);
+  p.settle();
+  eq('two events under MIN_EVENTS must not navigate however far they travel', p.navigated, []);
+  check('and no affordance was ever shown for it', p.liveOverlays() === 0, p.liveOverlays());
+}
+{
+  // The setting can flip WHILE a gesture is in flight. onWheel checks it already, so this
+  // specifically exercises decide() at gesture end, after the last onWheel call latched a
+  // direction and a distance. `state` is passed by reference and mutated directly - the same
+  // object the host pushes the flag onto in production.
+  const state = { back: true, forward: true };
+  const p = newPage(js, { state });
+  p.swipe(12, -10);
+  state.enabled = false;
+  p.settle();
+  eq('switching the gesture off mid-swipe stops it committing on release too', p.navigated, []);
+}
+{
+  // decide() asks available() rather than switchedOff(), which also fails closed on state going
+  // away entirely - the host replacing the object, not mutating it.
+  const p = newPage(js);
+  p.swipe(12, -10);
+  p.setState(null);
+  p.settle();
+  eq('state disappearing mid-swipe stops it committing too', p.navigated, []);
+}
+{
+  // A direction that lost its history entry mid-gesture. onWheel latched `available` at the first
+  // event on purpose (see chainCanScroll's note on latching); decide() re-asks at the end, which
+  // is the conservative half of that pair.
+  const state = { back: true, forward: true };
+  const p = newPage(js, { state });
+  p.swipe(12, -10);
+  state.back = false;
+  p.settle();
+  eq('a direction that stopped being navigable mid-swipe does not commit', p.navigated, []);
+}
+{
+  // The gap check at the top of onWheel is the OTHER end-of-gesture signal, and it must decide
+  // too. Here the timer is due but has not run and a new gesture's first event beats it - the
+  // ordering Chromium's higher-priority input queue makes possible. Without decide() there, a
+  // gesture the user completed past the commit distance navigates nowhere, silently.
+  const p = newPage(js);
+  p.swipe(12, -10);
+  p.jump(GAP_MS + 1);
+  p.wheel(-10, 0);
+  eq('a finished gesture still commits when the next event beats its timer', p.navigated, ['back']);
+  p.settle();
+  eq('and the timer firing afterwards does not commit it twice', p.navigated, ['back']);
+}
+{
+  // Removing `committed` means the gesture keeps being evaluated after crossing COMMIT_PX, where
+  // it used to stop listening entirely. Reversing past the line therefore cancels now - the
+  // interesting half of the reversal guard, and consistent with reading the LAST position.
+  const p = newPage(js);
+  p.swipe(12, -10);
+  p.swipe(20, 10);
+  p.settle();
+  eq('reversing after crossing the commit distance cancels', p.navigated, []);
+}
+{
+  // The vertical rule is the opposite call, and it is `reachedCommit`. verticalPath only ever
+  // grows, so once the gesture is past the line every further event is another chance to cancel a
+  // swipe the user already completed - including events the user did not make, since a momentum
+  // tail carries 325-2500px (AGENTS.md) and any dy in it clears CANCEL_VERTICAL_HIGH outright.
+  // Past the line only the horizontal position decides, which is what a native swipe-back does.
+  const p = newPage(js);
+  p.swipe(10, -10);
+  for (let i = 0; i < 12; i++) p.wheel(-1, i % 2 === 0 ? 9 : -9);
+  p.settle();
+  eq('vertical drift after crossing the commit distance no longer cancels', p.navigated, ['back']);
+}
+{
+  // The same rule BEFORE the line still cancels, which is the half that must not be lost: this is
+  // one event short of COMMIT_PX when the wobble starts.
+  const p = newPage(js);
+  p.swipe(8, -10);
+  for (let i = 0; i < 12; i++) p.wheel(-1, i % 2 === 0 ? 9 : -9);
+  p.settle();
+  eq('vertical drift before the commit distance still cancels', p.navigated, []);
+}
+{
+  // The closest this harness gets to the momentum shape, sized to the top of the range measured in
+  // AGENTS.md: 2400px of same-direction travel after the gesture is past the line, with a little
+  // over 10% of it as vertical path. That clears CANCEL_VERTICAL_HIGH (270px) on its own - which
+  // is exactly how a tail the user never made could have cancelled a swipe they had completed.
+  // It must still commit, exactly once: late rather than lost is the whole claim decide() makes.
+  const p = newPage(js);
+  p.swipe(10, -10);
+  for (let i = 0; i < 60; i++) p.wheel(-40, i % 2 === 0 ? 5 : -5);
+  p.settle();
+  eq('a long same-direction tail past the line still commits once', p.navigated, ['back']);
+}
+{
+  // reachedCommit is latched only once the gesture also has MIN_EVENTS, so the two-big-deltas pair
+  // decide() refuses on its own cannot switch the vertical tiers off on its way past the line.
+  // Two 50px notches clear COMMIT_PX at eventCount 2; then real vertical scrolling (which
+  // accumulates verticalPath without running the tiers, since those events carry no dx); then one
+  // stray horizontal event, which is the tiers' single chance to see the whole shape. It has to
+  // still be taken, or the pair has bought itself immunity it never earned.
+  const p = newPage(js);
+  p.swipe(2, -50);
+  p.swipe(8, 0, 40);
+  p.wheel(-1, 0);
+  p.settle();
+  eq('two big deltas past the line do not switch the vertical tiers off', p.navigated, []);
 }
 
 console.log('\ngestures that must not navigate');
@@ -310,6 +545,7 @@ console.log('\ngestures that must not navigate');
   const p = newPage(js);
   const carousel = p.element({ scrollWidth: 1200, clientWidth: 400, scrollLeft: 300, overflowX: 'auto' });
   p.swipe(12, -10, 0, carousel);
+  p.settle();
   eq('over something that can still scroll that way', p.navigated, []);
 }
 {
@@ -317,35 +553,41 @@ console.log('\ngestures that must not navigate');
   // Same element, already scrolled hard against the edge the swipe is pushing toward.
   const carousel = p.element({ scrollWidth: 1200, clientWidth: 400, scrollLeft: 0, overflowX: 'auto' });
   p.swipe(12, -10, 0, carousel);
+  p.settle();
   eq('but does navigate once that element is at its edge', p.navigated, ['back']);
 }
 {
   const p = newPage(js);
   const styled = p.element({ scrollWidth: 1200, clientWidth: 400, scrollLeft: 300, overflowX: 'hidden' });
   p.swipe(12, -10, 0, styled);
+  p.settle();
   eq('overflow:hidden is not a scroll chain', p.navigated, ['back']);
 }
 {
   const p = newPage(js);
   p.swipe(3, -MAX_STEP_PX);
+  p.settle();
   eq('a discrete mouse wheel, however far it travels', p.navigated, []);
 }
 {
   const p = newPage(js);
   p.wheelRaw({ deltaMode: 1, deltaX: -40, deltaY: 0, target: p.body, composedPath: () => [p.body] });
   p.swipe(12, -10);
+  p.settle();
   eq('anything that is not pixel-mode', p.navigated, []);
 }
 {
   // Diagonal: vertical travel outruns the floor immediately.
   const p = newPage(js);
   p.swipe(12, -10, -40);
+  p.settle();
   eq('a diagonal drag', p.navigated, []);
 }
 {
   const p = newPage(js);
   p.swipe(5, 0, -50);
   p.swipe(12, -10);
+  p.settle();
   eq('a vertical scroll that curls into a horizontal one', p.navigated, []);
 }
 {
@@ -355,17 +597,20 @@ console.log('\ngestures that must not navigate');
   // the guard is there or not.
   p.swipe(5, -10);
   p.swipe(15, 10);
+  p.settle();
   eq('a swipe reversed halfway', p.navigated, []);
 }
 {
   const p = newPage(js, { state: { back: false, forward: true } });
   p.swipe(12, -10);
+  p.settle();
   eq('a direction with no history entry', p.navigated, []);
   check('and shows no affordance for it', p.visibleOverlays() === 0, p.visibleOverlays());
 }
 {
   const p = newPage(js, { state: null });
   p.swipe(12, -10);
+  p.settle();
   eq('before the host has said what is navigable', p.navigated, []);
 }
 {
@@ -379,18 +624,21 @@ console.log("\nChrome's cancellation tiers (history_swiper.mm)");
   // it, and this is the shape of an ordinary slightly-sloped swipe.
   const p = newPage(js);
   p.swipe(14, -10, 6);
+  p.settle();
   eq('a swipe with honest slope is taken', p.navigated, ['back']);
 }
 {
   // Rule 1: yDelta > 2 * xDelta.
   const p = newPage(js);
   p.swipe(14, -10, -25);
+  p.settle();
   eq('strongly vertical is refused', p.navigated, []);
 }
 {
   // Rule 2: yDelta * 1.3 > xDelta, once vertical passes the low threshold. 8*1.3 = 10.4 > 10.
   const p = newPage(js);
   p.swipe(14, -10, 8);
+  p.settle();
   eq('vertical past about three quarters of horizontal is refused', p.navigated, []);
 }
 {
@@ -403,6 +651,7 @@ console.log("\nChrome's cancellation tiers (history_swiper.mm)");
   // the navigation threshold. It is a backstop for a gesture that wanders without committing.
   const p = newPage(js);
   for (let i = 0; i < 20; i++) p.wheel(-10, i % 2 === 0 ? 8 : -8);
+  p.settle();
   eq('vertical wobble that nets to zero is still refused', p.navigated, []);
 }
 {
@@ -410,6 +659,7 @@ console.log("\nChrome's cancellation tiers (history_swiper.mm)");
   // bug this asymmetry prevents.
   const p = newPage(js);
   p.swipe(14, -10, 0);
+  p.settle();
   eq('and a clean swipe still is not', p.navigated, ['back']);
 }
 
@@ -417,6 +667,7 @@ console.log('\nswitching it off while a page is open');
 {
   const p = newPage(js, { state: { enabled: false, back: true, forward: true } });
   p.swipe(12, -10);
+  p.settle();
   eq('a page told the gesture is off does nothing', p.navigated, []);
   check('and draws no chevron', p.visibleOverlays() === 0, p.visibleOverlays());
 }
@@ -425,6 +676,7 @@ console.log('\nswitching it off while a page is open');
   // has a state with no `enabled` key at all. Absent must mean on, not off.
   const p = newPage(js, { state: { back: true, forward: true } });
   p.swipe(12, -10);
+  p.settle();
   eq('a state without the flag still works', p.navigated, ['back']);
 }
 
@@ -437,6 +689,7 @@ console.log('\nthe root scroller');
     root: { scrollWidth: 4000, clientWidth: 800, scrollLeft: 0, overflowX: 'hidden' },
   });
   p.swipe(12, 10);
+  p.settle();
   eq('a root that cannot scroll does not block the swipe', p.navigated, ['forward']);
 }
 {
@@ -446,6 +699,7 @@ console.log('\nthe root scroller');
     root: { scrollWidth: 4000, clientWidth: 800, scrollLeft: 500, overflowX: 'visible' },
   });
   p.swipe(12, -10);
+  p.settle();
   eq('a root that can still scroll keeps the gesture', p.navigated, []);
 }
 
@@ -456,11 +710,13 @@ console.log('\na fast flick');
   const p = newPage(js);
   p.swipe(3, -8);
   p.swipe(6, -MAX_STEP_PX - 10, 0, undefined, 1_003);
+  p.settle();
   eq('a flick that accelerates still commits', p.navigated, ['back']);
 }
 {
   const p = newPage(js);
   p.swipe(4, -MAX_STEP_PX - 10);
+  p.settle();
   eq('but wheel-shaped from the first event is still refused', p.navigated, []);
 }
 
@@ -505,6 +761,7 @@ console.log('\nthe affordance');
 {
   const p = newPage(js, { noBody: true });
   p.swipe(12, -10);
+  p.settle();
   eq('a document with no body still navigates', p.navigated, ['back']);
 }
 

@@ -298,6 +298,29 @@ class BossDraggableComponent(
     fun getItemsForSlotUnfiltered(slot: Panel): List<SidebarItem> = itemsBySlot[slot].orEmpty()
 
     /**
+     * Every tool registered in this window's sidebar, hidden ones included.
+     *
+     * Unfiltered on purpose, and shared by the two surfaces that exist to reach a tool without its
+     * icon - the tools launcher and the global search. Both make the same argument: a tool someone
+     * hid from a strip is precisely the one they will go looking for.
+     *
+     * Not remembered anywhere: `itemsBySlot` is Compose state, so reading it inside composition is
+     * what keeps `ToolLauncherDialog` subscribed to a plugin loading or unloading. The global
+     * search's supplier gets no subscription and does not need one - it is re-invoked per search,
+     * which is the freshness that matters there.
+     *
+     * Note the reason is the reading CONTEXT, not the thread: `GlobalSearchService.search` invokes
+     * the supplier from the dialog's `LaunchedEffect` before it hands off to `Dispatchers.Default`,
+     * so it is not a background thread - but an effect body is not a snapshot observation scope
+     * either way, so nothing subscribes.
+     */
+    fun allSidebarTools(): List<SidebarItem> =
+        SidebarVisibilitySettings.ALL_SLOT_IDS
+            .map(SidebarVisibilitySettings::panelFor)
+            .flatMap(::getItemsForSlotUnfiltered)
+            .distinctBy { it.id }
+
+    /**
      * The Toolbox's own sidebar item, or null if the plugin is not registered.
      *
      * Unfiltered, on purpose: a user who hid the Toolbox from their sidebar has not asked to lose
@@ -582,7 +605,10 @@ class BossDraggableComponent(
      *
      * @param panelId a `PanelId.panelId`, e.g. "codebase" or "bookmarks".
      */
-    fun activatePlugin(panelId: String) {
+    fun activatePlugin(
+        panelId: String,
+        toggle: Boolean = true,
+    ) {
         val slotEntry =
             itemsBySlot.entries.find { (_, items) ->
                 items.any { it.pluginContentId.panelId == panelId }
@@ -620,12 +646,50 @@ class BossDraggableComponent(
         }
 
         // Same plugin toggles, a different one takes the panel over - what toggleVisibility does.
-        if (panelsData[panel]?.sidebarItem?.id == item.id) {
+        // [toggle] false suppresses the first half: see [revealPlugin] for who needs that and why.
+        if (toggle && panelsData[panel]?.sidebarItem?.id == item.id) {
             setPanelVisible(panel, panelsData[panel]?.visibility != true)
         } else {
             setPanelVisible(panel, true)
         }
         panelsData[panel]?.let { panelsData[panel] = it.copy(sidebarItem = item) }
+    }
+
+    /**
+     * Bring [panelId]'s tool to the user: focus the tab hosting it, or show its panel. Never hides.
+     *
+     * The verb a SEARCH needs, and it is not the icon's. [activatePlugin] alone was wrong on two
+     * counts, both reachable by typing a tool's name and pressing Enter:
+     *
+     * - **It toggled.** "Same plugin toggles" is right for an icon - an icon is a switch - and
+     *   wrong here. The user named a thing and asked for it, so answering by *hiding* the terminal
+     *   they can already see is never what they meant, and nothing on the row hints that it might
+     *   happen. Passing `toggle = false` is what makes this a reveal.
+     * - **It ignored a tool already open as a main tab**, re-opening it in the sidebar instead of
+     *   focusing the tab it is in. For the JxBrowser-backed panels that is the case
+     *   [PANEL_DISPOSAL_DELAY_MS] exists for - one `BrowserViewState`, one Compose view - so it is
+     *   the worst one to get wrong.
+     *
+     * A plugin-supplied [SidebarItem.onClick] still wins, as it does from the icon: a plugin that
+     * takes over its own click owns what clicking means, including whether it toggles. Only the
+     * DEFAULT path is a reveal here.
+     *
+     * That first branch duplicates [handleSidebarItemClick]'s rather than calling it, because only
+     * the default half may differ - delegating would bring the toggle back. If the custom-click
+     * rule ever changes, both need it; see [handleSidebarItemClick] for the canonical statement.
+     */
+    fun revealPlugin(panelId: String) {
+        val item = allSidebarTools().find { it.pluginContentId.panelId == panelId }
+        val customClick = item?.onClick
+        when {
+            customClick != null -> customClick()
+
+            item != null && isHostedAsTab(item.pluginContentId) -> requestFocusHostedTab(item.pluginContentId)
+
+            // Null item falls through on purpose: activatePlugin owns the "no such panel" warning,
+            // and duplicating the fence here would mean two places to keep in step.
+            else -> activatePlugin(panelId, toggle = false)
+        }
     }
 
     /** Which display area a sidebar slot's panel opens in. Same mapping as the icon's own click. */

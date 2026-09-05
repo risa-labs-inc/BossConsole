@@ -120,11 +120,7 @@ fun BossDraggableComponent.ToolLauncherDialog(onDismiss: () -> Unit) {
     // Deliberately NOT remembered. itemsBySlot is a Compose state map, so reading it here is what
     // subscribes this dialog to a tool loading or unloading while it is open; a remember would
     // freeze the list at whatever was registered when the dialog opened.
-    val allTools =
-        SidebarVisibilitySettings.ALL_SLOT_IDS
-            .map(SidebarVisibilitySettings::panelFor)
-            .flatMap(::getItemsForSlotUnfiltered)
-            .distinctBy { it.id }
+    val allTools = allSidebarTools()
     val matches = allTools.filter { matchesToolQuery(it, query) }
 
     // Type-to-open, the way a launcher is expected to behave: the field has focus the moment the

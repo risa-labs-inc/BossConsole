@@ -15,6 +15,7 @@ import ai.rever.boss.keymap.KeymapSettingsManager
 import ai.rever.boss.keymap.menu.MenuShortcutBridge
 import ai.rever.boss.keymap.model.KeymapActions
 import ai.rever.boss.plugin.api.PanelRegistry
+import ai.rever.boss.plugin.browser.ActiveBrowserRegistry
 import ai.rever.boss.plugin.browser.FluckEngine
 import ai.rever.boss.plugin.browser.LocalAwtWindow
 import ai.rever.boss.plugin.browser.ScreenCaptureNotifier
@@ -344,6 +345,22 @@ fun ApplicationScope.BossWindow(
         val splitEnabledMap by MenuActionsHandler.splitEnabledState.collectAsState()
         val isSplitEnabled = splitEnabledMap[windowState.id] ?: false
 
+        // Whether Cmd+Shift+T has anything to reopen in this window.
+        val closedTabDepths by ClosedTabHistory.depths.collectAsState()
+        val hasClosedTabs = (closedTabDepths[windowState.id] ?: 0) > 0
+
+        // Whether this window has a browser for the browser menu items to act on. A MenuBar
+        // accelerator fires from anywhere in the window whatever the binding's ShortcutContext,
+        // so leaving these enabled would swallow Cmd+[ / Cmd+] in an editor (outdent/indent)
+        // for an item that then does nothing.
+        val browserWindows by ActiveBrowserRegistry.windowsWithActiveBrowser.collectAsState()
+        val hasBrowser = windowState.id in browserWindows
+
+        // View > Next/Previous Tab: same reasoning as the browser items. stepPositional returns
+        // early below two tabs, so an always-enabled item would consume the chord and do nothing.
+        val activePanelTabCounts by MenuActionsHandler.activePanelTabCountState.collectAsState()
+        val canStepTabs = (activePanelTabCounts[windowState.id] ?: 0) > 1
+
         // Get panel count state (for enabling/disabling panel navigation)
         val panelCountMap by MenuActionsHandler.panelCountState.collectAsState()
         val panelCount = panelCountMap[windowState.id] ?: 1
@@ -414,6 +431,14 @@ fun ApplicationScope.BossWindow(
                     onClick = {
                         MenuActionsHandler.triggerCloseTab(windowState.id)
                     },
+                )
+                Item(
+                    "Reopen Closed Tab",
+                    shortcut = shortcutBridge.getKeyShortcut(KeymapActions.TAB_REOPEN_CLOSED),
+                    onClick = {
+                        MenuActionsHandler.triggerReopenClosedTab(windowState.id)
+                    },
+                    enabled = hasClosedTabs,
                 )
 
                 // Auto save belongs to the editor plugin, which owns the save path and the
@@ -727,6 +752,52 @@ fun ApplicationScope.BossWindow(
                     onClick = {
                         MenuActionsHandler.triggerReloadBrowser(windowState.id)
                     },
+                )
+                Item(
+                    "Back",
+                    shortcut = shortcutBridge.getKeyShortcut(KeymapActions.BROWSER_BACK),
+                    onClick = {
+                        MenuActionsHandler.triggerBrowserBack(windowState.id)
+                    },
+                    enabled = hasBrowser,
+                )
+                Item(
+                    "Forward",
+                    shortcut = shortcutBridge.getKeyShortcut(KeymapActions.BROWSER_FORWARD),
+                    onClick = {
+                        MenuActionsHandler.triggerBrowserForward(windowState.id)
+                    },
+                    enabled = hasBrowser,
+                )
+                Item(
+                    "Developer Tools",
+                    shortcut = shortcutBridge.getKeyShortcut(KeymapActions.BROWSER_DEVTOOLS),
+                    onClick = {
+                        MenuActionsHandler.triggerBrowserDevTools(windowState.id)
+                    },
+                    enabled = hasBrowser,
+                )
+
+                Separator()
+
+                // Tab stepping in tab-bar order. Ctrl+Tab (TAB_NEXT/TAB_PREVIOUS) is deliberately
+                // NOT here: it is MRU by default and held-modifier driven, which a one-shot menu
+                // accelerator cannot express.
+                Item(
+                    "Next Tab",
+                    shortcut = shortcutBridge.getKeyShortcut(KeymapActions.TAB_NEXT_POSITIONAL),
+                    onClick = {
+                        MenuActionsHandler.triggerNextTabPositional(windowState.id)
+                    },
+                    enabled = canStepTabs,
+                )
+                Item(
+                    "Previous Tab",
+                    shortcut = shortcutBridge.getKeyShortcut(KeymapActions.TAB_PREVIOUS_POSITIONAL),
+                    onClick = {
+                        MenuActionsHandler.triggerPreviousTabPositional(windowState.id)
+                    },
+                    enabled = canStepTabs,
                 )
 
                 Separator()
