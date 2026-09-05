@@ -980,6 +980,30 @@ plugin api's new `ActiveTabsProvider.allWindowTabs` is derived from it, with
 cross-window tab walk - `ApiActiveTabsProviderAdapter` is per window, so an adapter collecting its
 own would have N windows each walking every other window's split trees on their own schedule.
 
+## One pane, one name
+
+`ActiveTabData.splitPosition` reaches every plugin with the name the window's own vertical tab bar
+prints on that pane's group header - "Left", "Top right", "Pane 3". It had carried a comment
+promising exactly those values since it was declared and was **never populated**, so every consumer
+saw null and invented its own naming from the saved `SplitConfig`: a different source of truth,
+which describes the tree rather than the screen (so a nested pane came out "TOP > LEFT" where the
+bar says "Top left") and goes stale the moment a pane is split without saving.
+
+`paneGlyphs` in `PaneGlyph.kt` is the normalisation both sides share. The answer for one pane
+depends on all of them, so it takes the whole set; `WindowVerticalTabBar` had the only copy, and a
+second one in `SplitViewState` is precisely how the two names would drift. `splitPositionsFor` then
+applies the bar's own two rules - a `panelName` the user gave beats the derived position, and an
+unmeasured pane falls through to "Pane N" - and answers nothing at all for a lone pane, because a
+position there claims a divider that does not exist.
+
+**A workspace running behind the one on screen answers too.** Its panes were never composed, so
+there are no measured rectangles; the rectangles come from its split tree with every divider
+assumed centred, which cannot change the answer - `paneLabel` asks only which edges a pane touches
+and which axis it spans, and no divider position changes either. So a workspace names its panes
+identically before and after it comes on screen. That path deliberately does **not** consult
+`panelName`: panel ids are unique only within one tree (every workspace's first pane is `main`), so
+a name given to one pane would be returned for the pane of that name in every other workspace.
+
 ## A missing plugin no longer fails silently
 
 Browser, editor and terminal tabs are plugin-provided. `addTab` logged "Dropped
