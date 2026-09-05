@@ -399,25 +399,28 @@ Releases build and sign for all platforms (macOS, Windows, Linux × x64/ARM64), 
 
 ---
 
-## CLI
+## CLI & Agent Harness
 
-BOSS includes a command-line interface for quick access:
+BOSS includes a command-line interface for developers and external AI agents:
 
 ```bash
-boss url https://github.com    # Open a URL in a browser tab
-boss folder ~/Documents        # Open a folder
-boss file README.md            # Open a file in the editor
-boss terminal                  # Open a terminal
-boss plugin bookmarks          # Open a plugin panel
-boss --help                    # Show help
+boss https://github.com            # Open a URL in an embedded browser tab
+boss file README.md                # Open a file in BossEditor
+boss status --json                 # Query running application status
+boss mcp list --filter browser     # Discover registered MCP tools
+boss mcp describe <tool>           # Fetch tool schema on demand
+boss mcp invoke <tool> --args ...  # Execute tool headlessly via authenticated IPC
 ```
 
-**Installation:** Toolbox / Tools → Install BOSS CLI (or automatically via Homebrew).
+See [docs/CLI.md](docs/CLI.md) for full options, exit codes, stream guarantees, and agent integration recipes.
+
+**Installation:** Toolbox / Tools → Install BOSS CLI (or via Homebrew / installers).
 
 ---
 
 ## Documentation
 
+- [Command Line Interface (CLI)](docs/CLI.md) - CLI Agent Harness, `boss status`, `boss mcp`, and agent scripting
 - [Core Subsystems](docs/SUBSYSTEMS.md) - Auth, UI, keyboard shortcuts, threading
 - [Design System](docs/DESIGN_SYSTEM.md) - "Operator's Console" tokens, themes, and the live styleguide
 - [BossEditor Module](docs/BOSSEDITOR.md) - LSP, PSI, editor features

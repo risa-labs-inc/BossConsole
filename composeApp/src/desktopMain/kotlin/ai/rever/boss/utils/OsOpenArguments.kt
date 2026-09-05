@@ -36,7 +36,7 @@ internal object OsOpenArguments {
      * a subcommand is added there and not here - the failure mode is a
      * double-open, which is easy to miss and hard to attribute.
      */
-    internal val CLI_SUBCOMMANDS = setOf("url", "workspace", "file", "folder", "terminal")
+    internal val CLI_SUBCOMMANDS = setOf("url", "workspace", "file", "folder", "terminal", "status", "mcp", "completion")
 
     /** What a path on disk is, for deciding which deep link to build. */
     internal enum class OpenTargetKind { FILE, DIRECTORY, ABSENT }

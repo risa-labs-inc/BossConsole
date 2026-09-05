@@ -3,6 +3,7 @@ package ai.rever.boss
 import BossTheme
 import ai.rever.boss.cli.CLICommandHandler
 import ai.rever.boss.cli.createBossCLI
+import com.github.ajalt.clikt.core.ProgramResult
 import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.components.dialogs.ChromiumDownloadContent
 import ai.rever.boss.config.ChromiumAutoDownloader
@@ -239,6 +240,26 @@ fun main(args: Array<String>) {
             ai.rever.boss.llm.RisaLlmTokenCommand
                 .execute(),
         )
+    }
+
+    // Headless CLI commands (status, mcp, completion, --help, -v) target the running
+    // instance or generate output headlessly. Execute before AWT, plugins, Skiko,
+    // or acquiring the single-instance lock so they fail fast (<100ms) when BOSS is
+    // closed without booting the GUI or corrupting standard output streams.
+    val firstNonFlag = args.firstOrNull { !it.startsWith("-") }?.lowercase()
+    val isHeadlessCli = firstNonFlag in setOf("status", "mcp", "completion") ||
+        (args.isNotEmpty() && args.all { it in setOf("-h", "--help", "-v", "--version", "help", "version") })
+
+    if (isHeadlessCli) {
+        try {
+            createBossCLI().main(args)
+            exitProcess(0)
+        } catch (e: ProgramResult) {
+            exitProcess(e.statusCode)
+        } catch (e: Exception) {
+            System.err.println("Error: ${e.message ?: "Failed to execute CLI command"}")
+            exitProcess(1)
+        }
     }
 
     val startupBeganMs = System.currentTimeMillis()
@@ -500,6 +521,17 @@ fun main(args: Array<String>) {
                 )
                 exitProcess(1)
             }
+        } else if (args.isNotEmpty()) {
+            // Standalone CLI commands (status, mcp, etc.) target the running instance via the single-instance IPC channel
+            try {
+                createBossCLI().main(args)
+            } catch (e: ProgramResult) {
+                exitProcess(e.statusCode)
+            } catch (e: Exception) {
+                System.err.println("Error: ${e.message ?: "Failed to execute CLI command"}")
+                exitProcess(1)
+            }
+            exitProcess(0)
         } else {
             logger.info(LogCategory.SYSTEM, "No URL to send - existing BOSS window should be visible")
             exitProcess(0)
@@ -748,7 +780,11 @@ fun main(args: Array<String>) {
     val engineLabel = "BOSS Browser Engine ${ChromiumAutoDownloader.effectiveVersion}"
 
     val chromiumNeedsDownload =
-        engineAction == ai.rever.boss.plugin.browser.FluckEngine.EngineStartupAction.Download
+        if (System.getProperty("boss.dev.mode") == "true") {
+            false
+        } else {
+            engineAction == ai.rever.boss.plugin.browser.FluckEngine.EngineStartupAction.Download
+        }
     when (engineAction) {
         ai.rever.boss.plugin.browser.FluckEngine.EngineStartupAction.BootAndReport -> {
             logger.error(
@@ -802,10 +838,12 @@ fun main(args: Array<String>) {
             val osOpenRequests = OsOpenArguments.deepLinksFrom(args)
 
             if (osOpenRequests.isEmpty()) {
-                // Not an OS open request, so it is the operator's CLI.
                 logger.debug(LogCategory.SYSTEM, "Processing CLI arguments", mapOf("args" to args.joinToString(" ")))
-                createBossCLI().main(args)
-                // Commands are queued, continue with app initialization
+                try {
+                    createBossCLI().main(args)
+                } catch (e: Exception) {
+                    logger.error(LogCategory.SYSTEM, "CLI error", error = e)
+                }
             }
             // Otherwise these are links and files the OS wants opened;
             // `DeepLinkHandler.processCommandLineArgs` below is the single place

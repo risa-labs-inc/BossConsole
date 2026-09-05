@@ -56,8 +56,8 @@ class AppUpdateRealtimeService(
     var onReleaseChanged: (suspend () -> Unit)? = null
 
     fun start() {
-        if (UpdateSourceConfig.primarySource == "github") {
-            logger.info(LogCategory.NETWORK, "App update realtime disabled (primary source = github)")
+        if (UpdateSourceConfig.primarySource == "github" || System.getProperty("boss.dev.mode") == "true") {
+            logger.info(LogCategory.NETWORK, "App update realtime disabled (primary source = github or dev mode)")
             return
         }
         if (client != null) {
