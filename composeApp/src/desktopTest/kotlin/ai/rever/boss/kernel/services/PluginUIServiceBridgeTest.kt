@@ -1,5 +1,9 @@
 package ai.rever.boss.kernel.services
 
+import ai.rever.boss.components.registery.PanelComponentStore
+import ai.rever.boss.components.registery.PanelComponentStoreRegistry
+import ai.rever.boss.components.window_panel.SplitViewState
+import ai.rever.boss.components.window_panel.SplitViewStateRegistry
 import ai.rever.boss.ipc.auth.ProcessIdentityInterceptor
 import ai.rever.boss.ipc.auth.ProcessTokenClientInterceptor
 import ai.rever.boss.ipc.auth.ProcessTokenRegistry
@@ -12,11 +16,16 @@ import ai.rever.boss.ipc.proto.UIUnregistration
 import ai.rever.boss.ipc.proto.WidgetNode
 import ai.rever.boss.ipc.proto.WidgetType
 import ai.rever.boss.ipc.proto.WidgetUpdate
+import ai.rever.boss.kernel.ui.RemoteUiPlacement
 import ai.rever.boss.kernel.ui.RemoteUiSurfaceHost
 import ai.rever.boss.kernel.ui.RemoteUiSurfaceRegistry
 import ai.rever.boss.kernel.ui.SurfaceRegistration
+import ai.rever.boss.plugin.api.PanelRegistry
+import ai.rever.boss.plugin.api.TabRegistry
 import ai.rever.boss.ui.sdk.DiffOperation
 import ai.rever.boss.ui.sdk.WidgetProtoConverter.toProtoDiff
+import com.arkivanov.decompose.DefaultComponentContext
+import com.arkivanov.essenty.lifecycle.LifecycleRegistry
 import io.grpc.ManagedChannel
 import io.grpc.ManagedChannelBuilder
 import io.grpc.Server
@@ -37,6 +46,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -598,6 +608,98 @@ class PluginUIServiceBridgeTest {
             anonymousPlugin().unregisterUI(UIUnregistration.newBuilder().setSurfaceId("never-registered").build())
         }
 
+    // ---- BossConsole#54: identity gates placement, end to end ----
+    //
+    // #53's rejections are proven above at the RPC layer (a thrown PERMISSION_DENIED). These two
+    // additionally wire a real RemoteUiPlacement pointed at a real (if throwaway) window, so "never
+    // reaches placement" is an observed fact about a PanelRegistry - not just an inference from the
+    // RPC failing.
+
+    @Test
+    fun `an unauthenticated RegisterUI never reaches placement`() =
+        runBlocking {
+            withWiredPlacement { panelRegistry, _, _, anonymousStub ->
+                assertFailsWith<StatusException> { anonymousStub().registerUI(registration(PANEL)) }
+
+                assertNull(registry.surfaceOf(PANEL))
+                assertTrue(panelRegistry.getAllPanels().none { it.id.panelId == PANEL })
+            }
+        }
+
+    @Test
+    fun `process A claiming process B's identity never places a surface under either name`() =
+        runBlocking {
+            withWiredPlacement { panelRegistry, tabRegistry, stubAs, _ ->
+                val failure =
+                    assertFailsWith<StatusException> {
+                        stubAs("plugin-a").registerUI(registration(PANEL, process = "plugin-b"))
+                    }
+
+                assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+                assertNull(registry.surfaceOf(PANEL), "the impersonation attempt must not have registered anything")
+                assertTrue(panelRegistry.getAllPanels().none { it.id.panelId == PANEL })
+                assertTrue(tabRegistry.getAllTabTypes().none { it.typeId.typeId == PANEL })
+            }
+        }
+
+    /**
+     * A second bridge, wired with a real [RemoteUiPlacement] pointed at a throwaway window
+     * (registered into the same process-wide [SplitViewStateRegistry] / [PanelComponentStoreRegistry]
+     * production placement itself resolves through), so a test can observe whether placement was
+     * actually reached rather than inferring it from the RPC's own outcome. Torn down on return.
+     */
+    private suspend fun <T> withWiredPlacement(
+        use: suspend (
+            panelRegistry: PanelRegistry,
+            tabRegistry: TabRegistry,
+            stubAs: (String) -> PluginUIServiceGrpcKt.PluginUIServiceCoroutineStub,
+            anonymousStub: () -> PluginUIServiceGrpcKt.PluginUIServiceCoroutineStub,
+        ) -> T,
+    ): T {
+        val windowId = "bridge-placement-test-${placementWindowCounter.getAndIncrement()}"
+        val panelRegistry = PanelRegistry()
+        val tabRegistry = TabRegistry()
+        val splitViewState = SplitViewState(tabRegistry, windowId)
+        val store = PanelComponentStore(DefaultComponentContext(LifecycleRegistry()), panelRegistry)
+        SplitViewStateRegistry.register(windowId, splitViewState)
+        PanelComponentStoreRegistry.register(windowId, store)
+        val wiredPlacement = RemoteUiPlacement(registry = registry, resolveWindowId = { windowId })
+        val wiredServer =
+            ServerBuilder
+                .forPort(0)
+                .intercept(ProcessIdentityInterceptor(tokenRegistry))
+                .addService(PluginUIServiceBridge(registry, placement = wiredPlacement))
+                .build()
+                .start()
+        val channels = mutableListOf<ManagedChannel>()
+
+        fun stubAs(processId: String): PluginUIServiceGrpcKt.PluginUIServiceCoroutineStub {
+            val ch =
+                ManagedChannelBuilder
+                    .forAddress("localhost", wiredServer.port)
+                    .usePlaintext()
+                    .intercept(ProcessTokenClientInterceptor(tokenRegistry.issue(processId)))
+                    .build()
+            channels += ch
+            return PluginUIServiceGrpcKt.PluginUIServiceCoroutineStub(ch)
+        }
+
+        fun anonymousStub(): PluginUIServiceGrpcKt.PluginUIServiceCoroutineStub {
+            val ch = ManagedChannelBuilder.forAddress("localhost", wiredServer.port).usePlaintext().build()
+            channels += ch
+            return PluginUIServiceGrpcKt.PluginUIServiceCoroutineStub(ch)
+        }
+        try {
+            return use(panelRegistry, tabRegistry, ::stubAs, ::anonymousStub)
+        } finally {
+            channels.forEach { it.shutdownNow() }
+            wiredServer.shutdownNow()
+            SplitViewStateRegistry.unregister(windowId)
+            PanelComponentStoreRegistry.unregister(windowId)
+            splitViewState.dispose()
+        }
+    }
+
     // ---- Helpers ----
 
     /**
@@ -713,6 +815,7 @@ class PluginUIServiceBridgeTest {
         const val POLL_INTERVAL_MS = 5L
         const val SHUTDOWN_TIMEOUT_MS = 5_000L
         const val DEFAULT_PROCESS = "plugin-a"
+        val placementWindowCounter = AtomicInteger(0)
 
         /** Long enough not to be flaky, short enough that the reaping test costs nothing. */
         const val BRIEF_BIND_TIMEOUT_MS = 250L

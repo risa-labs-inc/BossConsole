@@ -8,6 +8,7 @@ import ai.rever.boss.ipc.proto.UIRegistration
 import ai.rever.boss.ipc.proto.UIRegistrationResponse
 import ai.rever.boss.ipc.proto.UIUnregistration
 import ai.rever.boss.ipc.proto.WidgetUpdate
+import ai.rever.boss.kernel.ui.RemoteUiPlacement
 import ai.rever.boss.kernel.ui.RemoteUiSurface
 import ai.rever.boss.kernel.ui.RemoteUiSurfaceDescriptor
 import ai.rever.boss.kernel.ui.RemoteUiSurfaceRegistry
@@ -59,6 +60,13 @@ import kotlin.time.Duration.Companion.seconds
 class PluginUIServiceBridge(
     private val registry: RemoteUiSurfaceRegistry = RemoteUiSurfaceRegistry.shared,
     private val bindTimeoutMs: Long = DEFAULT_BIND_TIMEOUT_MS,
+    /**
+     * Turns an accepted registration into a visible panel or tab (BossConsole#54). Null (the
+     * default) accepts registrations exactly as before placement existed — every #53 test, and any
+     * caller that only cares about the transport, constructs this bridge with no placer and sees no
+     * behaviour change.
+     */
+    private val placement: RemoteUiPlacement? = null,
 ) : PluginUIServiceGrpcKt.PluginUIServiceCoroutineImplBase() {
     override suspend fun registerUI(request: UIRegistration): UIRegistrationResponse {
         val authenticated = authenticatedCallerOrRefuse(request.surfaceId, "RegisterUI")
@@ -92,6 +100,9 @@ class PluginUIServiceBridge(
                 if (request.hasInitialTree()) {
                     outcome.surface.pushTree(request.initialTree.toKotlin())
                 }
+                // Fire-and-forget: placement (BossConsole#54) may retry before a window is
+                // available, and RegisterUI's response is "accepted," not "on screen yet."
+                placement?.place(request.surfaceId)
                 registrationResponse(success = true, error = "")
             }
         }
@@ -212,7 +223,9 @@ class PluginUIServiceBridge(
         }
 
         val removed = registry.unregister(request.surfaceId)
-        if (!removed) {
+        if (removed) {
+            placement?.remove(request.surfaceId)
+        } else {
             logger.debug(
                 LogCategory.UI,
                 "Ignoring UnregisterUI for an unknown surface",

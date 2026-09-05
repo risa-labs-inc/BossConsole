@@ -14,6 +14,7 @@ import ai.rever.boss.ipc.services.EventBusServiceImpl
 import ai.rever.boss.ipc.services.KernelServiceImpl
 import ai.rever.boss.ipc.services.StateServiceImpl
 import ai.rever.boss.kernel.services.*
+import ai.rever.boss.kernel.ui.RemoteUiPlacement
 import ai.rever.boss.kernel.ui.RemoteUiSurfaceRegistry
 import ai.rever.boss.plugin.api.*
 import ai.rever.boss.process.ManagedProcess
@@ -452,7 +453,7 @@ class KernelBootstrap(
                 .addService(kernelService!!)
                 .addService(eventBusService!!)
                 .addService(stateService!!)
-                .addService(PluginUIServiceBridge(RemoteUiSurfaceRegistry.shared))
+                .addService(PluginUIServiceBridge(RemoteUiSurfaceRegistry.shared, placement = RemoteUiPlacement.shared))
                 .start()
 
         // Wire IPC event bridge to forward events cross-process (M8 fix)
