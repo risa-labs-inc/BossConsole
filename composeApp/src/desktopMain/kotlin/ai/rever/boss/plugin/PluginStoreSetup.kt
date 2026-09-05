@@ -24,6 +24,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.URL
@@ -92,6 +94,14 @@ object PluginStoreSetup {
      */
     private val inFlightUpdateChecks =
         java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicBoolean>()
+
+    private val sidecarBackfill =
+        SidecarBackfillCoordinator(
+            scope = scope,
+            sidecarExists = { jarFile -> PluginSignatureSidecar.read(jarFile.absolutePath) != null },
+            updateInFlight = { pluginId -> inFlightUpdateChecks[pluginId]?.get() == true },
+            persist = ::persistStoreSignatureSidecar,
+        )
 
     /**
      * Whether microkernel mode is active (OOP plugins need the runtime JAR).
@@ -304,14 +314,11 @@ object PluginStoreSetup {
                     )
                     PluginStoreConfig.accessToken = token
 
-                    // Signature backfill waits for this token: the store's
-                    // install-permission gate 403s an unauthenticated caller, so
-                    // running it earlier would fail forever for exactly the
-                    // plugins that need it. Once per process — see
-                    // drainSidecarBackfill.
-                    if (token != null && sidecarBackfillStarted.compareAndSet(false, true)) {
-                        scope.launch { drainSidecarBackfill() }
-                    }
+                    // Signature backfill waits for this token because the store's
+                    // install-permission gate rejects unauthenticated callers.
+                    // Recording readiness also wakes JARs queued after an earlier
+                    // authenticated emission.
+                    sidecarBackfill.setAuthenticated(token != null)
                 }
             }
 
@@ -650,6 +657,7 @@ object PluginStoreSetup {
                 )
             } finally {
                 flag.set(false)
+                sidecarBackfill.onUpdateCheckCompleted(systemPlugin.pluginId)
             }
         }
     }
@@ -908,14 +916,6 @@ object PluginStoreSetup {
         expectedSha256: String,
     ): Boolean = runCatching { sha256Of(jarFile).equals(expectedSha256, ignoreCase = true) }.getOrDefault(false)
 
-    /** JARs seen without a sidecar, drained once by [drainSidecarBackfill]. */
-    private val sidecarBackfillQueue = java.util.concurrent.ConcurrentLinkedQueue<Pair<String, File>>()
-
-    /** The drain runs at most once per process — see [drainSidecarBackfill]. */
-    private val sidecarBackfillStarted =
-        java.util.concurrent.atomic
-            .AtomicBoolean(false)
-
     /**
      * Note an already-installed system plugin whose sidecar is missing.
      *
@@ -925,64 +925,15 @@ object PluginStoreSetup {
      * exists. A user already up to date would stay unsigned forever and lose every
      * system plugin — Toolbox included — the moment enforcement flips.
      *
-     * Only queues. The work is deferred to [drainSidecarBackfill] because doing it
-     * here would run unauthenticated (see that function) and would race the update
-     * check launched immediately before it.
+     * The coordinator defers persistence until authentication is available and an
+     * update check is no longer replacing this JAR.
      */
     private fun backfillSidecarIfMissing(
         pluginId: String,
         jarFile: File,
     ) {
-        if (PluginSignatureSidecar.read(jarFile.absolutePath) != null) return
-        sidecarBackfillQueue.add(pluginId to jarFile)
+        sidecarBackfill.enqueue(pluginId, jarFile)
     }
-
-    /**
-     * Fetch signatures for queued JARs, once, after the store client is authenticated.
-     *
-     * Deferred rather than run at startup for three reasons, all of which made the
-     * naive version fail exactly where it mattered:
-     *
-     * - **Auth.** [PluginStoreConfig.accessToken] starts null and is only set when
-     *   `sessionStatus` emits, while `ensureSystemPluginsInstalled` runs from
-     *   `initialize()`. The download route 403s an unauthenticated caller for any
-     *   plugin with non-empty `requiredPermissions`, so backfilling at startup would
-     *   deterministically fail for precisely the plugins it targets — every launch,
-     *   forever, never producing a sidecar.
-     * - **Cost.** `getDownloadUrl` is not read-only; it books a row in
-     *   `plugin_downloads`, which feeds the store's default `sortBy = "downloads"`
-     *   ranking. Retrying every launch would fabricate a download per system plugin
-     *   per user forever. Running at most once per process bounds that. A
-     *   signature-only store route would remove it entirely — worth doing, but it's
-     *   an edge-function change and is tracked on BossConsole#102 rather than here.
-     * - **Races.** Draining serially, skipping any plugin whose update check is
-     *   still in flight, keeps this off the JARs [scheduleBackgroundUpdateCheck] is
-     *   replacing underneath it.
-     */
-    private suspend fun drainSidecarBackfill() {
-        withContext(Dispatchers.IO) {
-            generateSequence { sidecarBackfillQueue.poll() }
-                .filter { (pluginId, jarFile) -> stillNeedsSidecar(pluginId, jarFile) }
-                .forEach { (_, jarFile) -> persistStoreSignatureSidecar(jarFile) }
-        }
-    }
-
-    /**
-     * Whether a queued JAR should still be backfilled, re-evaluated at drain time
-     * rather than when it was queued.
-     *
-     * The update path signs whatever it installs, so a JAR it is currently
-     * replacing needs nothing from us — and touching one mid-replacement is
-     * exactly how an orphaned or mismatched sidecar gets created. The JAR may also
-     * have been removed, or signed by another path, since queueing.
-     */
-    private fun stillNeedsSidecar(
-        pluginId: String,
-        jarFile: File,
-    ): Boolean =
-        inFlightUpdateChecks[pluginId]?.get() != true &&
-            jarFile.exists() &&
-            PluginSignatureSidecar.read(jarFile.absolutePath) == null
 
     /**
      * Download a system plugin from GitHub releases.
@@ -1896,4 +1847,101 @@ object PluginStoreSetup {
             .findAll(releaseJson)
             .map { it.groupValues[1] }
             .firstOrNull { !it.endsWith("-thin.jar") }
+}
+
+/** Coordinates authenticated, race-safe signature backfill for installed system-plugin JARs. */
+internal class SidecarBackfillCoordinator(
+    private val scope: CoroutineScope,
+    private val sidecarExists: (File) -> Boolean,
+    private val updateInFlight: (String) -> Boolean,
+    private val persist: suspend (File) -> Unit,
+) {
+    private data class JarStamp(
+        val path: String,
+        val length: Long,
+        val modifiedAt: Long,
+    )
+
+    private data class PendingJar(
+        val pluginId: String,
+        val jarFile: File,
+        val stamp: JarStamp,
+    )
+
+    private data class AttemptKey(
+        val pluginId: String,
+        val stamp: JarStamp,
+    )
+
+    private val pending = java.util.concurrent.ConcurrentHashMap<String, PendingJar>()
+    private val attempted = java.util.concurrent.ConcurrentHashMap.newKeySet<AttemptKey>()
+    private val drainMutex = Mutex()
+
+    @Volatile
+    private var authenticated = false
+
+    fun setAuthenticated(available: Boolean) {
+        authenticated = available
+        if (available) requestDrain()
+    }
+
+    fun enqueue(
+        pluginId: String,
+        jarFile: File,
+    ) {
+        if (sidecarExists(jarFile)) return
+        val stamp = stampOf(jarFile) ?: return
+        pending[pluginId] = PendingJar(pluginId, jarFile, stamp)
+        requestDrain()
+    }
+
+    fun onUpdateCheckCompleted(pluginId: String) {
+        if (pending.containsKey(pluginId)) requestDrain()
+    }
+
+    private fun requestDrain() {
+        if (!authenticated) return
+        scope.launch {
+            drainMutex.withLock { drainOnce() }
+        }
+    }
+
+    private suspend fun drainOnce() {
+        if (!authenticated) return
+
+        pending.entries.toList().forEach { (_, entry) ->
+            if (!authenticated) return
+            if (!isCurrentAndUnsigned(entry)) {
+                pending.remove(entry.pluginId, entry)
+                return@forEach
+            }
+            if (updateInFlight(entry.pluginId)) return@forEach
+
+            val attemptKey = AttemptKey(entry.pluginId, entry.stamp)
+            if (!attempted.add(attemptKey)) {
+                pending.remove(entry.pluginId, entry)
+                return@forEach
+            }
+            if (!pending.remove(entry.pluginId, entry)) return@forEach
+
+            try {
+                persist(entry.jarFile)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                attempted.remove(attemptKey)
+                pending.putIfAbsent(entry.pluginId, entry)
+                throw cancelled
+            } catch (_: Exception) {
+                attempted.remove(attemptKey)
+                pending.putIfAbsent(entry.pluginId, entry)
+            }
+        }
+    }
+
+    private fun isCurrentAndUnsigned(entry: PendingJar): Boolean =
+        stampOf(entry.jarFile) == entry.stamp && !sidecarExists(entry.jarFile)
+
+    private fun stampOf(jarFile: File): JarStamp? {
+        if (!jarFile.exists()) return null
+        return JarStamp(jarFile.absolutePath, jarFile.length(), jarFile.lastModified())
+    }
 }
