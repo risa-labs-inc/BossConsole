@@ -1,7 +1,6 @@
 package ai.rever.boss.components.plugin.providers
 
 import ai.rever.boss.components.plugin.panels.left_top.ProjectState
-import ai.rever.boss.plugin.api.ProjectChangeEvent
 import ai.rever.boss.plugin.api.ProjectData
 import ai.rever.boss.plugin.api.ProjectDataProvider
 import ai.rever.boss.window.Project
@@ -9,11 +8,11 @@ import ai.rever.boss.window.WindowProjectState
 import ai.rever.boss.window.selectProjectInWindow
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /**
@@ -22,8 +21,12 @@ import kotlinx.coroutines.launch
  */
 class ProjectDataProviderImpl(
     private val windowProjectState: WindowProjectState?,
-) : ProjectDataProvider {
-    private val scope = CoroutineScope(Dispatchers.Main)
+) : ProjectDataProvider,
+    DisposableProvider {
+    // SupervisorJob, matching DefaultPlugin.pluginScope: with a plain Job the collectors below
+    // are siblings, and a failure in one cancels the scope and every other one with it - silently,
+    // since nothing awaits them.
+    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     // Map ProjectState's recentProjects to plugin's ProjectData type
     private val _recentProjects = MutableStateFlow<List<ProjectData>>(emptyList())
@@ -36,42 +39,14 @@ class ProjectDataProviderImpl(
                 _recentProjects.value = projects.map { it.toProjectData() }
             }
         }
+    }
 
-        // ONE publisher for every project change, whatever caused it.
-        //
-        // This used to live in selectProject() below, so only PLUGIN-initiated
-        // selections were announced. The two callers that matter most were not:
-        // WorkspaceApplier.applyWorkspace calls windowProjectState.selectProject
-        // directly on startup restore, and so does the top bar's picker. A panel
-        // built before that restore - the normal case, since workspace JSON is read
-        // sequentially off disk while plugins load in parallel - never heard that a
-        // project had arrived, and rendered empty. Observing the state itself catches
-        // all three callers instead of the one. The bus is replay = 0: a publish that
-        // never happens cannot be recovered later, so this must not be per-caller.
-        if (windowProjectState != null) {
-            scope.launch {
-                // Seeded from the current value so the StateFlow's replay of it is not
-                // announced as a change. The seed is "" (no project) at startup, and
-                // telling every plugin the project became "" moments before the real
-                // restore lands is exactly the clear-yourself signal to avoid.
-                var previousPath = windowProjectState.selectedProject.value.path
-                windowProjectState.selectedProject
-                    .map { it.path }
-                    .distinctUntilChanged()
-                    .collect { path ->
-                        if (path == previousPath) return@collect
-                        val from = previousPath
-                        previousPath = path
-                        publishSystemEvent(
-                            ProjectChangeEvent(
-                                projectPath = path,
-                                previousProjectPath = from,
-                                windowId = windowProjectState.windowId,
-                            ),
-                        )
-                    }
-            }
-        }
+    /**
+     * This provider is per-window and owns a coroutine, so its collector outlives the window
+     * unless the plugin says otherwise - `pluginScope` is not its scope. See [DisposableProvider].
+     */
+    override fun dispose() {
+        scope.cancel()
     }
 
     override fun updateRecentProjects(project: ProjectData) {
@@ -82,8 +57,12 @@ class ProjectDataProviderImpl(
         ProjectState.removeRecentProject(projectPath)
     }
 
-    // No publish here: the init collector above announces this selection, and every
-    // other one, from the state it lands in. Publishing here too would double-fire.
+    // No ProjectChangeEvent here. This is the plugin-initiated path and it was the ONLY one that
+    // published, which is why the startup restore - WorkspaceApplier calling
+    // windowProjectState.selectProject directly - announced nothing and panels built before it
+    // stayed empty for the session. The publish now happens where every caller ends up, in the
+    // ProjectSelectionCallback that WindowProjectStateRegistry installs on the state itself;
+    // see ProjectChangeAnnouncer. Publishing here too would double-fire on this path.
     override fun selectProject(project: ProjectData) {
         selectProjectInWindow(windowProjectState, project.toProject())
     }

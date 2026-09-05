@@ -44,13 +44,27 @@ object WindowProjectStateRegistry {
      * Sets up callback to update recent projects when project is selected.
      */
     fun register(windowId: String): WindowProjectState {
-        val state = WindowProjectState(windowId)
-        // Register callback to update recent projects list
-        state.setProjectSelectionCallback { project ->
-            ProjectState.updateRecentProjects(project)
-        }
+        val state = newState(windowId)
         _states[windowId] = state
         windowProjectStateLogger.debug(LogCategory.UI, "Registered state for window", mapOf("windowId" to windowId))
+        return state
+    }
+
+    /**
+     * The one place a production [WindowProjectState] is built, so the host wiring below cannot
+     * be installed on some windows and not others. [register] and [getOrCreate] both come here;
+     * they used to carry a copy each, and only one of the two would have been updated.
+     */
+    private fun newState(windowId: String): WindowProjectState {
+        val state = WindowProjectState(windowId)
+        val announcer = ProjectChangeAnnouncer(windowId, state.selectedProject.value.path)
+        // The state holds ONE callback slot, and this is the host's: anything that calls
+        // setProjectSelectionCallback on it again drops both halves, the recent-projects update
+        // and the event-bus announcement. Nothing outside this object does today.
+        state.setProjectSelectionCallback { project ->
+            ProjectState.updateRecentProjects(project)
+            announcer.onProjectSelected(project)
+        }
         return state
     }
 
@@ -65,12 +79,7 @@ object WindowProjectStateRegistry {
     fun getOrCreate(windowId: String): WindowProjectState =
         _states.getOrPut(windowId) {
             windowProjectStateLogger.debug(LogCategory.UI, "Creating new state for window", mapOf("windowId" to windowId))
-            val state = WindowProjectState(windowId)
-            // Register callback to update recent projects list
-            state.setProjectSelectionCallback { project ->
-                ProjectState.updateRecentProjects(project)
-            }
-            state
+            newState(windowId)
         }
 
     /**
