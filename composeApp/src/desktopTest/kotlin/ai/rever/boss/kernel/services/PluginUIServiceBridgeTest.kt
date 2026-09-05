@@ -1,5 +1,8 @@
 package ai.rever.boss.kernel.services
 
+import ai.rever.boss.ipc.auth.ProcessIdentityInterceptor
+import ai.rever.boss.ipc.auth.ProcessTokenClientInterceptor
+import ai.rever.boss.ipc.auth.ProcessTokenRegistry
 import ai.rever.boss.ipc.proto.ClickEvent
 import ai.rever.boss.ipc.proto.PluginUIServiceGrpcKt
 import ai.rever.boss.ipc.proto.TextChangeEvent
@@ -42,6 +45,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import ai.rever.boss.ipc.proto.WidgetTree as ProtoWidgetTree
@@ -59,25 +63,45 @@ import ai.rever.boss.ui.sdk.WidgetTree as SdkWidgetTree
  * So the assertion that matters throughout is not "an event arrived" but "an event arrived **with its
  * payload**". Everything here goes over localhost TCP through the generated stubs; nothing is faked at
  * the transport.
+ *
+ * The server runs behind a real [ProcessIdentityInterceptor] backed by [tokenRegistry], and [plugin] -
+ * the default stub every pre-existing test in this file uses, sharing [channel] exactly as it always
+ * has - is authenticated as [DEFAULT_PROCESS], the same identity [registration] defaults its
+ * `process_id` field to. That is what lets the bulk of this file stay unchanged: one real caller, its
+ * declared identity and its authenticated one agreeing, is exactly the ordinary case. The
+ * BossConsole#53 tests further down are the ones that build a *second*, differently-authenticated stub
+ * with [pluginAs] to exercise the disagreement.
  */
 class PluginUIServiceBridgeTest {
     private lateinit var registry: RemoteUiSurfaceRegistry
+    private lateinit var tokenRegistry: ProcessTokenRegistry
     private lateinit var server: Server
     private lateinit var channel: ManagedChannel
     private lateinit var plugin: PluginUIServiceGrpcKt.PluginUIServiceCoroutineStub
+    private val extraChannels = mutableListOf<ManagedChannel>()
 
     @BeforeTest
     fun setUp() {
         // Port 0: the OS picks a free one, which cannot race a concurrently starting test the way
         // "find a free port, then bind it" can.
         registry = RemoteUiSurfaceRegistry()
+        tokenRegistry = ProcessTokenRegistry()
         server =
             ServerBuilder
                 .forPort(0)
+                .intercept(ProcessIdentityInterceptor(tokenRegistry))
                 .addService(PluginUIServiceBridge(registry))
                 .build()
                 .start()
-        channel = ManagedChannelBuilder.forAddress("localhost", server.port).usePlaintext().build()
+        // channel and plugin share one connection, as they always have - several tests (e.g. "a plugin
+        // that disappears...") kill `channel` directly to simulate the plugin process dying, and that
+        // only tears down `plugin`'s actual stream if this is the same connection it uses.
+        channel =
+            ManagedChannelBuilder
+                .forAddress("localhost", server.port)
+                .usePlaintext()
+                .intercept(ProcessTokenClientInterceptor(tokenRegistry.issue(DEFAULT_PROCESS)))
+                .build()
         plugin = PluginUIServiceGrpcKt.PluginUIServiceCoroutineStub(channel)
     }
 
@@ -85,8 +109,34 @@ class PluginUIServiceBridgeTest {
     fun tearDown() {
         channel.shutdownNow()
         channel.awaitTermination(SHUTDOWN_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        extraChannels.forEach { it.shutdownNow() }
+        extraChannels.forEach { it.awaitTermination(SHUTDOWN_TIMEOUT_MS, TimeUnit.MILLISECONDS) }
         server.shutdownNow()
         server.awaitTermination(SHUTDOWN_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+    }
+
+    /**
+     * A stub authenticated as [processId] against this test's server - a fresh channel carrying its own
+     * [ProcessTokenClientInterceptor], since one channel can only ever speak as the identity attached to
+     * it at construction. Tracked in [extraChannels] so [tearDown] closes it too.
+     */
+    private fun pluginAs(processId: String): PluginUIServiceGrpcKt.PluginUIServiceCoroutineStub {
+        val token = tokenRegistry.issue(processId)
+        val authenticatedChannel =
+            ManagedChannelBuilder
+                .forAddress("localhost", server.port)
+                .usePlaintext()
+                .intercept(ProcessTokenClientInterceptor(token))
+                .build()
+        extraChannels += authenticatedChannel
+        return PluginUIServiceGrpcKt.PluginUIServiceCoroutineStub(authenticatedChannel)
+    }
+
+    /** An unauthenticated stub against this test's server - no credential attached at all. */
+    private fun anonymousPlugin(): PluginUIServiceGrpcKt.PluginUIServiceCoroutineStub {
+        val unauthenticatedChannel = ManagedChannelBuilder.forAddress("localhost", server.port).usePlaintext().build()
+        extraChannels += unauthenticatedChannel
+        return PluginUIServiceGrpcKt.PluginUIServiceCoroutineStub(unauthenticatedChannel)
     }
 
     @Test
@@ -329,9 +379,13 @@ class PluginUIServiceBridgeTest {
     @Test
     fun `a duplicate surface id is rejected and says why`() =
         runBlocking {
+            // Two actually-different processes, each authenticated as itself: the scenario this test
+            // means to cover (two plugins racing for one surface_id) is inherently a two-identity one,
+            // and a single stub can no longer stand in for both now that a declared process_id has to
+            // match who is really calling.
             assertTrue(plugin.registerUI(registration(PANEL, process = "plugin-a")).success)
 
-            val second = plugin.registerUI(registration(PANEL, process = "plugin-b"))
+            val second = pluginAs("plugin-b").registerUI(registration(PANEL, process = "plugin-b"))
 
             assertFalse(second.success)
             assertContains(second.errorMessage, PANEL)
@@ -385,10 +439,16 @@ class PluginUIServiceBridgeTest {
             val brief =
                 ServerBuilder
                     .forPort(0)
+                    .intercept(ProcessIdentityInterceptor(tokenRegistry))
                     .addService(quickBridge())
                     .build()
                     .start()
-            val briefChannel = ManagedChannelBuilder.forAddress("localhost", brief.port).usePlaintext().build()
+            val briefChannel =
+                ManagedChannelBuilder
+                    .forAddress("localhost", brief.port)
+                    .usePlaintext()
+                    .intercept(ProcessTokenClientInterceptor(tokenRegistry.issue(DEFAULT_PROCESS)))
+                    .build()
             try {
                 val silent = Channel<WidgetUpdate>(Channel.UNLIMITED)
                 val stub = PluginUIServiceGrpcKt.PluginUIServiceCoroutineStub(briefChannel)
@@ -457,6 +517,87 @@ class PluginUIServiceBridgeTest {
             assertFalse(host.connections.last(), "no stream yet, so the surface is not connected")
         }
 
+    // ---- BossConsole#53: process identity ----
+
+    @Test
+    fun `RegisterUI with no credential at all is refused`() =
+        runBlocking {
+            val failure = assertFailsWith<StatusException> { anonymousPlugin().registerUI(registration(PANEL)) }
+
+            assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+            assertNull(registry.surfaceOf(PANEL), "a refused registration must not reach the registry")
+        }
+
+    @Test
+    fun `process A cannot impersonate process B through RegisterUI`() =
+        runBlocking {
+            // plugin-a's own channel, claiming to be plugin-b in the request body.
+            val failure =
+                assertFailsWith<StatusException> {
+                    plugin.registerUI(registration(PANEL, process = "plugin-b"))
+                }
+
+            assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+            assertNull(registry.surfaceOf(PANEL), "an impersonation attempt must not reach the registry")
+
+            // The rejection cost plugin-a nothing: it can still register under its own name.
+            assertTrue(plugin.registerUI(registration(PANEL, process = DEFAULT_PROCESS)).success)
+        }
+
+    @Test
+    fun `process A cannot impersonate process B through StreamUI`() =
+        runBlocking {
+            val host = RecordingHost()
+            registry.attach(PANEL, host)
+            assertTrue(pluginAs("plugin-b").registerUI(registration(PANEL, process = "plugin-b")).success)
+
+            // plugin-a (this test's default `plugin`) tries to stream plugin-b's surface.
+            val attack = Channel<WidgetUpdate>(Channel.UNLIMITED)
+            val attackStream = plugin.streamUI(attack.consumeAsFlow())
+            attack.send(fullTree(PANEL, label = "stolen"))
+
+            val failure = assertFailsWith<StatusException> { attackStream.toList() }
+            assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+
+            // plugin-b's surface was never claimed, closed or overwritten by the attempt: it streams
+            // normally afterwards, exactly as if the attack had never happened.
+            assertFalse(registry.surfaceOf(PANEL)!!.streaming, "the attempt must not have claimed the surface")
+            val legitimate = Channel<WidgetUpdate>(Channel.UNLIMITED)
+            coroutineScope {
+                val stream = launch { runCatching { pluginAs("plugin-b").streamUI(legitimate.consumeAsFlow()).toList() } }
+                legitimate.send(fullTree(PANEL, label = "mine"))
+                awaitTrue { host.trees.isNotEmpty() }
+                assertEquals("mine", host.trees.last().label())
+                stream.cancel()
+            }
+        }
+
+    @Test
+    fun `process A cannot impersonate process B through UnregisterUI`() =
+        runBlocking {
+            assertTrue(pluginAs("plugin-b").registerUI(registration(PANEL, process = "plugin-b")).success)
+
+            val failure =
+                assertFailsWith<StatusException> {
+                    plugin.unregisterUI(UIUnregistration.newBuilder().setSurfaceId(PANEL).build())
+                }
+
+            assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+            assertNotNull(registry.surfaceOf(PANEL), "plugin-b's surface must survive plugin-a's attempt")
+
+            // The true owner can still unregister its own surface.
+            pluginAs("plugin-b").unregisterUI(UIUnregistration.newBuilder().setSurfaceId(PANEL).build())
+            assertNull(registry.surfaceOf(PANEL))
+        }
+
+    @Test
+    fun `unregistering an unknown surface is unaffected by having no credential`() =
+        runBlocking {
+            // No owner exists to protect, so this stays the pre-existing idempotent no-op regardless of
+            // who (or what) calls it - unlike RegisterUI and StreamUI, which always require identity.
+            anonymousPlugin().unregisterUI(UIUnregistration.newBuilder().setSurfaceId("never-registered").build())
+        }
+
     // ---- Helpers ----
 
     /**
@@ -504,7 +645,7 @@ class PluginUIServiceBridgeTest {
 
     private fun registration(
         surfaceId: String,
-        process: String = "plugin-a",
+        process: String = DEFAULT_PROCESS,
     ): UIRegistration =
         UIRegistration
             .newBuilder()
@@ -571,6 +712,7 @@ class PluginUIServiceBridgeTest {
         const val AWAIT_TIMEOUT_MS = 10_000L
         const val POLL_INTERVAL_MS = 5L
         const val SHUTDOWN_TIMEOUT_MS = 5_000L
+        const val DEFAULT_PROCESS = "plugin-a"
 
         /** Long enough not to be flaky, short enough that the reaping test costs nothing. */
         const val BRIEF_BIND_TIMEOUT_MS = 250L

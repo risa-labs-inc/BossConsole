@@ -1,5 +1,6 @@
 package ai.rever.boss.kernel
 
+import ai.rever.boss.ipc.auth.ProcessTokenRegistry
 import ai.rever.boss.process.ManagedProcess
 import ai.rever.boss.process.ProcessConfig
 import ai.rever.boss.process.ProcessMonitor
@@ -255,5 +256,28 @@ class ReapChildrenTest {
         reapChildren(monitor = null, registry = ProcessRegistry())
         reapChildren(monitor = null, registry = null)
         assertEquals(0, ProcessRegistry().getAllProcesses().size)
+    }
+
+    @Test
+    fun `a reaped child's IPC credential is revoked - it must not outlive the process (BossConsole#53)`() {
+        val registry = ProcessRegistry()
+        val tokenRegistry = ProcessTokenRegistry()
+        val token = tokenRegistry.issue("plugin-under-test")
+        registry.register("plugin-under-test", managed("plugin-under-test", FakeProcess(1)))
+
+        reapChildren(monitor = null, registry = registry, tokenRegistry = tokenRegistry)
+
+        assertEquals(null, tokenRegistry.identityFor(token), "a dead process's credential must stop resolving")
+    }
+
+    @Test
+    fun `reaping with no tokenRegistry behaves exactly as before - null is not a crash`() {
+        val registry = ProcessRegistry()
+        val process = FakeProcess(1)
+        registry.register("plugin-under-test", managed("plugin-under-test", process))
+
+        reapChildren(monitor = null, registry = registry)
+
+        assertFalse(process.isAlive, "omitting tokenRegistry must not stop the reap itself from working")
     }
 }

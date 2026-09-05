@@ -1,5 +1,8 @@
 package ai.rever.boss.kernel.ui
 
+import ai.rever.boss.ipc.auth.ProcessIdentityInterceptor
+import ai.rever.boss.ipc.auth.ProcessTokenClientInterceptor
+import ai.rever.boss.ipc.auth.ProcessTokenRegistry
 import ai.rever.boss.ipc.proto.PluginUIServiceGrpcKt
 import ai.rever.boss.ipc.proto.UIEvent
 import ai.rever.boss.ipc.proto.UIRegistration
@@ -265,13 +268,22 @@ class RemoteUiLifecycleTest {
         // generated plugin-side stub, and a response flow whose completion is what ends the collection —
         // so `destroyed` arriving *last* proves it was delivered before the channel closed rather than
         // dropped by the teardown that closes it.
+        val tokenRegistry = ProcessTokenRegistry()
         val server =
             ServerBuilder
                 .forPort(0)
+                .intercept(ProcessIdentityInterceptor(tokenRegistry))
                 .addService(PluginUIServiceBridge(registry))
                 .build()
                 .start()
-        val channel = ManagedChannelBuilder.forAddress("localhost", server.port).usePlaintext().build()
+        // Authenticated as PROCESS, matching registration()'s process id - the bridge now verifies
+        // identity before RegisterUI/StreamUI/UnregisterUI (BossConsole#53).
+        val channel =
+            ManagedChannelBuilder
+                .forAddress("localhost", server.port)
+                .usePlaintext()
+                .intercept(ProcessTokenClientInterceptor(tokenRegistry.issue(PROCESS)))
+                .build()
         val plugin = PluginUIServiceGrpcKt.PluginUIServiceCoroutineStub(channel)
         try {
             val received =
