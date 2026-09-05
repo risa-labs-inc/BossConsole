@@ -186,6 +186,37 @@ case "$1" in
         open_url "$deep_link"
         ;;
 
+    status|mcp|completion)
+        BOSS_BIN="${BOSS_BIN:-}"
+        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+        if [ -z "$BOSS_BIN" ]; then
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                if [ -x "/Applications/BOSS.app/Contents/MacOS/BOSS" ]; then
+                    BOSS_BIN="/Applications/BOSS.app/Contents/MacOS/BOSS"
+                elif [ -x "$HOME/Applications/BOSS.app/Contents/MacOS/BOSS" ]; then
+                    BOSS_BIN="$HOME/Applications/BOSS.app/Contents/MacOS/BOSS"
+                elif [ -x "$SCRIPT_DIR/../composeApp/build/compose/binaries/main/app/BOSS.app/Contents/MacOS/BOSS" ]; then
+                    BOSS_BIN="$SCRIPT_DIR/../composeApp/build/compose/binaries/main/app/BOSS.app/Contents/MacOS/BOSS"
+                fi
+            elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+                if command -v boss-desktop &> /dev/null; then
+                    BOSS_BIN="boss-desktop"
+                elif [ -x "/opt/boss/bin/boss" ]; then
+                    BOSS_BIN="/opt/boss/bin/boss"
+                elif [ -x "$SCRIPT_DIR/../composeApp/build/compose/binaries/main/app/bin/BOSS" ]; then
+                    BOSS_BIN="$SCRIPT_DIR/../composeApp/build/compose/binaries/main/app/bin/BOSS"
+                fi
+            fi
+        fi
+
+        if [ -n "$BOSS_BIN" ]; then
+            exec "$BOSS_BIN" "$@"
+        else
+            echo "Error: BOSS application binary not found. Please launch BOSS."
+            exit 1
+        fi
+        ;;
+
     --version|-v|version)
         echo "BOSS CLI version {{VERSION}}"
         echo "Built: {{BUILD_DATE}}"
@@ -195,12 +226,16 @@ case "$1" in
         cat <<EOF
 BOSS CLI - Business Operating System Service
 Version: {{VERSION}}
+Built: {{BUILD_DATE}}
 
 Usage:
   boss <url-or-path>             Auto-detect and open URL, file, or folder
   boss <command> [arguments]     Run explicit command
 
 Commands:
+  status                 Queries status and health of the running BOSS instance
+  mcp <action> [args]    Discovers and invokes desktop MCP tools (list, describe, invoke)
+  completion <shell>     Generates shell completion script (bash, zsh, fish)
   url <url>              Opens a URL in Fluck browser
   workspace <config>     Loads a workspace configuration
   file <path>            Opens a file in the editor

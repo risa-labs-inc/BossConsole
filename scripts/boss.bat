@@ -25,6 +25,9 @@ if "%~1"=="" (
 REM Parse command
 set "COMMAND=%~1"
 
+if /i "%COMMAND%"=="status" goto :cmd_forward_exe
+if /i "%COMMAND%"=="mcp" goto :cmd_forward_exe
+if /i "%COMMAND%"=="completion" goto :cmd_forward_exe
 if /i "%COMMAND%"=="url" goto :cmd_url
 if /i "%COMMAND%"=="workspace" goto :cmd_workspace
 if /i "%COMMAND%"=="file" goto :cmd_file
@@ -111,6 +114,22 @@ call :urlencode "%~2" ENCODED
 start "" "boss://plugin?id=%ENCODED%"
 goto :eof
 
+:cmd_forward_exe
+if not defined BOSS_EXE set "BOSS_EXE=%LOCALAPPDATA%\Programs\BOSS\BOSS.exe"
+if not exist "!BOSS_EXE!" set "BOSS_EXE=%ProgramFiles%\BOSS\BOSS.exe"
+if not exist "!BOSS_EXE!" set "BOSS_EXE=%~dp0..\composeApp\build\compose\binaries\main\app\BOSS\BOSS.exe"
+if exist "!BOSS_EXE!" (
+    "!BOSS_EXE!" %*
+    exit /b !ERRORLEVEL!
+)
+where pwsh >nul 2>nul
+if %ERRORLEVEL%==0 (
+    pwsh -NoProfile -ExecutionPolicy Bypass -File "%~dp0boss.ps1" %*
+) else (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0boss.ps1" %*
+)
+exit /b !ERRORLEVEL!
+
 :cmd_version
 echo BOSS CLI version {{VERSION}}
 echo Built: {{BUILD_DATE}}
@@ -119,12 +138,16 @@ goto :eof
 :cmd_help
 echo BOSS CLI - Business Operating System Service
 echo Version: {{VERSION}}
+echo Built: {{BUILD_DATE}}
 echo.
 echo Usage:
 echo   boss ^<url-or-path^>             Auto-detect and open URL, file, or folder
 echo   boss ^<command^> [arguments]     Run explicit command
 echo.
 echo Commands:
+echo   status                 Queries status and health of the running BOSS instance
+echo   mcp ^<action^> [args]    Discovers and invokes desktop MCP tools (list, describe, invoke)
+echo   completion ^<shell^>     Generates shell completion script (bash, zsh, fish)
 echo   url ^<url^>              Opens a URL in Fluck browser
 echo   workspace ^<config^>     Loads a workspace configuration
 echo   file ^<path^>            Opens a file in the editor
