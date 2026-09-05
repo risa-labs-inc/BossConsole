@@ -133,7 +133,12 @@ private fun offerTopOfMind() {
     val absence =
         pluginSectionAbsence(
             installed = MissingPluginOffer.isInstalled(TOP_OF_MIND_PLUGIN_ID),
-            state = manager?.pluginStates?.value?.get(TOP_OF_MIND_PLUGIN_ID)?.state,
+            state =
+                manager
+                    ?.pluginStates
+                    ?.value
+                    ?.get(TOP_OF_MIND_PLUGIN_ID)
+                    ?.state,
             isIncompatible = PluginCrashRegistry.isIncompatible(TOP_OF_MIND_PLUGIN_ID),
             missingPermissions = missingPermissions,
             servesNoPanel = true,
@@ -147,9 +152,17 @@ private fun offerTopOfMind() {
 
     val offered =
         when (absence) {
-            PluginSectionAbsence.NOT_INSTALLED -> MissingPluginOffer.offerIfMissing(TOP_OF_MIND_PLUGIN_ID, "Quick switcher")
-            PluginSectionAbsence.DISABLED -> offerToEnableTopOfMind(manager)
-            else -> false
+            PluginSectionAbsence.NOT_INSTALLED -> {
+                MissingPluginOffer.offerIfMissing(TOP_OF_MIND_PLUGIN_ID, "Quick switcher")
+            }
+
+            PluginSectionAbsence.DISABLED -> {
+                offerToEnableTopOfMind(manager)
+            }
+
+            else -> {
+                false
+            }
         }
     // Not an else branch: `offerIfMissing` fails open when there is no manager or no injected
     // installer factory, and the enable offer refuses a plugin the user already declined this

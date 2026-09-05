@@ -80,13 +80,7 @@ fun rememberWindowTabGroups(
 
     // Every pane's measured rectangle, normalised against the area they cover between them. Read
     // here rather than inside a group because the answer for one pane depends on all of them.
-    val glyphs =
-        panels
-            .mapNotNull { panel -> splitViewState.getPanelBounds(panel.id)?.let { panel.id to it } }
-            .let { measured ->
-                val all = measured.map { it.second }
-                measured.mapNotNull { (id, bounds) -> paneGlyphFor(bounds, all)?.let { id to it } }.toMap()
-            }
+    val glyphs = paneGlyphs(panels.map { it.id }, splitViewState::getPanelBounds)
 
     return panels.mapIndexed { index, panel ->
         key(panel.id) {
