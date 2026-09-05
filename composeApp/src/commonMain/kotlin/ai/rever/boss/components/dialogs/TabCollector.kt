@@ -8,8 +8,10 @@ import ai.rever.boss.topofmind.TopOfMindStateHolder
 /**
  * Utility for collecting tabs from all windows.
  *
- * Used by both TopOfMindDialog and GlobalSearchDialog to ensure
- * consistent tab collection logic across the application.
+ * Used by GlobalSearchDialog and by the plugin api's `allWindowTabs`, so the quick switcher and
+ * the global search see one list built one way. It is the ONLY cross-window tab walk: an adapter
+ * or a dialog collecting its own would be a second answer to one question, and there is one of
+ * these per window.
  */
 object TabCollector {
     /**

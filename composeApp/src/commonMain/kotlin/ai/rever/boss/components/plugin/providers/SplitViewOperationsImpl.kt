@@ -12,6 +12,7 @@ import ai.rever.boss.plugin.tab.terminal.TerminalTabType
 import ai.rever.boss.plugin.workspace.LayoutWorkspace
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.window.WindowProjectStateRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -89,11 +90,27 @@ class SplitViewOperationsImpl(
     }
 
     override fun applyWorkspace(workspace: LayoutWorkspace) {
-        // Launch the suspend function in a coroutine
-        // The workspace is already the correct type (plugin LayoutWorkspace == composeApp LayoutWorkspace via typealias)
+        // The workspace is already the correct type (plugin LayoutWorkspace == composeApp
+        // LayoutWorkspace via typealias).
         scope.launch {
             ai.rever.boss.components.workspaces
-                .applyWorkspace(workspace, splitViewState)
+                .applyWorkspace(
+                    workspace = workspace,
+                    splitViewState = splitViewState,
+                    // A workspace REMEMBERS its project (LayoutWorkspace.projectPath), and
+                    // applyWorkspace restores it - but only when handed a windowProjectState, and
+                    // this call passed none. So the host's own switch carried the project across
+                    // and a plugin's did not: switching workspace from a panel left the previous
+                    // workspace's project selected, which is what everything project-scoped then
+                    // kept answering from.
+                    //
+                    // Resolved from the registry rather than taken as a constructor parameter:
+                    // BossAppState builds this provider BEFORE it builds its own
+                    // windowProjectState, so a parameter would mean reordering that. `get`, not
+                    // `getOrCreate` - a window with no project state has no project to restore,
+                    // and creating one here would be inventing state from a workspace switch.
+                    windowProjectState = WindowProjectStateRegistry.get(windowId),
+                )
         }
     }
 

@@ -1,5 +1,9 @@
 package ai.rever.boss.components.settings.sections
 
+import ai.rever.boss.components.plugin.PluginSectionAbsence
+import ai.rever.boss.components.plugin.pluginSectionAbsence
+import ai.rever.boss.components.plugin.pluginSectionMessage
+import ai.rever.boss.components.plugin.pluginSectionOffersInstall
 import ai.rever.boss.plugin.api.PluginState
 import kotlin.test.Test
 import kotlin.test.assertEquals

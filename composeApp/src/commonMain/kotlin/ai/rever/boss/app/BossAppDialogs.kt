@@ -13,7 +13,6 @@ import ai.rever.boss.components.dialogs.ShortcutHelpDialog
 import ai.rever.boss.components.dialogs.TabType
 import ai.rever.boss.components.dialogs.TerminalLinkOpenDialog
 import ai.rever.boss.components.dialogs.ToolLauncherDialog
-import ai.rever.boss.components.dialogs.TopOfMindDialog
 import ai.rever.boss.components.events.DashboardEventBus
 import ai.rever.boss.components.events.FileEventBus
 import ai.rever.boss.components.events.PanelEventBus
@@ -28,6 +27,7 @@ import ai.rever.boss.components.plugin.PluginLoadGateHost
 import ai.rever.boss.components.plugin.PluginLoadRemedyAccess
 import ai.rever.boss.components.plugin.PluginStoreVersionBridge
 import ai.rever.boss.components.plugin.PluginUpdateBridge
+import ai.rever.boss.components.plugin.openTopOfMindQuickSwitcher
 import ai.rever.boss.components.plugin.providers.GenericDialogHostContent
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
 import ai.rever.boss.components.registery.PanelComponentStoreRegistry
@@ -407,46 +407,6 @@ internal fun BossAppDialogs(state: BossAppState) {
         )
     }
 
-    // Top of mind quick switcher dialog
-    if (state.showTopOfMindDialog) {
-        TopOfMindDialog(
-            splitViewState = splitViewState,
-            workspaceManager = workspaceManager,
-            onDismiss = {
-                state.showTopOfMindDialog = false
-                state.focusRequester.requestFocus()
-            },
-            onTabSelect = { activeTab ->
-                state.showTopOfMindDialog = false
-                coroutineScope.launch {
-                    // Preserve current state before switching
-                    val currentWorkspace = workspaceManager.currentWorkspace.value
-                    if (currentWorkspace != null && currentWorkspace.id.isNotEmpty()) {
-                        splitViewState.preserveCurrentState(currentWorkspace.id, currentWorkspace.name)
-                    }
-
-                    // Find the workspace containing this tab
-                    val targetWorkspace =
-                        workspaceManager.workspaces.value.find {
-                            it.id == activeTab.workspaceId
-                        }
-
-                    if (targetWorkspace != null) {
-                        // Load and apply the target workspace
-                        workspaceManager.loadWorkspace(targetWorkspace)
-                        applyWorkspace(targetWorkspace, splitViewState, windowProjectState)
-
-                        // Focus the specific tab after a short delay to ensure workspace is applied
-                        delay(100)
-                        splitViewState.selectTabInPanel(activeTab.tabInfo.id, activeTab.panelId)
-                    }
-                }
-
-                state.focusRequester.requestFocus()
-            },
-        )
-    }
-
     // The tools launcher's dialog.
     if (state.showToolLauncherDialog) {
         // In the MAIN composition, not inside whichever chrome raised it - see BossAppState.
@@ -624,7 +584,7 @@ internal fun BossAppDialogs(state: BossAppState) {
                     }
 
                     KeymapActions.QUICK_SWITCHER_OPEN -> {
-                        state.showTopOfMindDialog = true
+                        openTopOfMindQuickSwitcher(windowId, coroutineScope)
                     }
 
                     KeymapActions.WORKSPACE_SAVE -> {

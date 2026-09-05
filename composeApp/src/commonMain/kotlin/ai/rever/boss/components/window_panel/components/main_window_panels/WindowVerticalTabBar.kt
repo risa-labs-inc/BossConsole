@@ -80,13 +80,7 @@ fun rememberWindowTabGroups(
 
     // Every pane's measured rectangle, normalised against the area they cover between them. Read
     // here rather than inside a group because the answer for one pane depends on all of them.
-    val glyphs =
-        panels
-            .mapNotNull { panel -> splitViewState.getPanelBounds(panel.id)?.let { panel.id to it } }
-            .let { measured ->
-                val all = measured.map { it.second }
-                measured.mapNotNull { (id, bounds) -> paneGlyphFor(bounds, all)?.let { id to it } }.toMap()
-            }
+    val glyphs = paneGlyphs(panels.map { it.id }, splitViewState::getPanelBounds)
 
     return panels.mapIndexed { index, panel ->
         key(panel.id) {
@@ -200,7 +194,7 @@ fun WindowVerticalTabBar(
      * Window chrome to sit BELOW the split map, at the very foot of the bar.
      *
      * Separate from [footer] because the two sit either side of the map and mean different things:
-     * the footer holds what belongs to this window's contents (the project and workspace pickers),
+     * the footer holds what belongs to this window's contents (the workspace and project pickers),
      * this holds what belongs to the app - Settings, Search, Sign Out and the tools launcher,
      * when there is no strip and no top bar left to hold them. See `focusQuickActionsPlacement`.
      *

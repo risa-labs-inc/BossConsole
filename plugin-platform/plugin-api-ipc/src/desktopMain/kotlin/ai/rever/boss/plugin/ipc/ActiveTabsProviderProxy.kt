@@ -148,6 +148,43 @@ class ActiveTabsProviderProxy(
             false
         }
 
+    // Cross-workspace transfer is in-process only, the same line openTab, openTabInSplit and
+    // openPanelAsTab already take: it moves a live tab component and its lifecycle between panels
+    // of the host's split-view state, which has no meaning on this side of an IPC boundary.
+    //
+    // Answering the probe honestly is the point. A plugin that reads supportsTabTransfer = false
+    // hides the affordance; one that trusted a defaulted `false` return would show a menu item
+    // that quietly does nothing every time.
+    // Both need the host's live split-view state, which does not cross this boundary. Null rather
+    // than a guess: a caller reads "no selection information here" and marks nothing, where a wrong
+    // panel id would have it mark the wrong tab.
+    override val activePanelId: String? get() = null
+
+    override fun selectedTabId(
+        workspaceId: String,
+        panelId: String,
+    ): String? = null
+
+    override val supportsTabTransfer: Boolean get() = false
+
+    override val liveWorkspaceIds: Set<String> get() = emptySet()
+
+    override suspend fun moveTabToWorkspace(
+        tabId: String,
+        targetWorkspaceId: String,
+    ): Boolean = false
+
+    // allWindowTabs and refreshAllWindowTabs are left on their api defaults, which is the same
+    // answer this proxy gives every other member that needs state it cannot see. The wire has one
+    // stream, `watchActiveTabs`, and the host serves it from the window this plugin was launched
+    // for; there is no cross-window RPC to forward, so an override here could only re-publish the
+    // one window's list under a name that promises every window.
+    //
+    // The default IS that one window's list (`allWindowTabs get() = activeTabs`), deliberately, so
+    // a switcher built on it shows fewer tabs rather than none - and `refreshAllWindowTabs`'s
+    // empty default leaves `refreshTabs` as the thing that actually refreshes it. Overriding
+    // either to something narrower would take a working degradation away.
+
     private fun ActiveTabProto.toData() =
         ActiveTabData(
             tabId = tabId,

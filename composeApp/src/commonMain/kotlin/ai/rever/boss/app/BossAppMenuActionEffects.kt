@@ -12,6 +12,7 @@ import ai.rever.boss.components.plugin.PluginUpdateBridge
 import ai.rever.boss.components.plugin.StoreVersionLookup
 import ai.rever.boss.components.plugin.StoreVersionPrompt
 import ai.rever.boss.components.plugin.UpdateCheckOutcome
+import ai.rever.boss.components.plugin.openTopOfMindQuickSwitcher
 import ai.rever.boss.components.sidebar.SidebarVisibilitySettings
 import ai.rever.boss.components.sidebar.SidebarVisibilitySettingsManager
 import ai.rever.boss.components.window_panel.NavigationDirection
@@ -287,7 +288,9 @@ internal fun BossAppMenuActionEffects(
         MenuActionsHandler.selectWorkspaceEvents
             .onEach { eventWindowId ->
                 if (eventWindowId == windowId) {
-                    state.showTopOfMindDialog = true
+                    // The switcher is the Top of Mind plugin's, not this window's: the host asks
+                    // for it and says why when nothing answers. See openTopOfMindQuickSwitcher.
+                    openTopOfMindQuickSwitcher(windowId, coroutineScope)
                 }
             }.launchIn(this)
     }

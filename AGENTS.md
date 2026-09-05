@@ -931,6 +931,79 @@ It replaced a `swift <tempfile>` shell-out per call, which needed Xcode installe
 and so could not work at all on most machines; the Swift scripts remain only as a
 fallback for URL schemes if `Native.load` fails.
 
+## The quick switcher belongs to a plugin now
+
+`Ctrl+Space` used to set `BossAppState.showTopOfMindDialog` and the host drew its own
+`TopOfMindDialog`. Both are **deleted**. It now dispatches `open-quick-switcher` at the Top of Mind
+plugin and opens that plugin's panel, exactly as the workspace button already did with
+`open-workspace-picker`; both helpers live in `components/plugin/TopOfMindActions.kt`.
+
+**The panel id is `PanelId("top-of-mind", 5)`, not `PanelIds.TOP_OF_MIND`.** That constant is
+`PanelId("topofmind", 2)` - a different id string from the one the plugin registers - so opening by
+it matches nothing at all, silently. Only the `panelId` and `pluginId` are compared, so the order
+is carried for honesty rather than for matching.
+
+**When `dispatch` returns false there is no fallback dialog, and that is the point.** Falling back
+would hide the fact that the plugin is missing behind a switcher that looks fine but sees only this
+window. `openTopOfMindQuickSwitcher` instead says why, reusing what already exists rather than
+adding a second install path:
+
+| State | What happens |
+|---|---|
+| not installed | `MissingPluginOffer.offerIfMissing`, which raises the host's store-backed `MissingDependencyDialog`. It is `userInitiated`, so a keypress re-asks after a previous dismissal. |
+| installed, switched off | An **Enable** button, through `MissingHandlerPluginEventBus` - the host's only enable-offering dialog. Installing something already installed cannot fix it. |
+| installed and running, no handler | A status line: an older plugin build, update it in the Toolbox. |
+| anything else | A status line naming the state (no access, incompatible, still starting). |
+
+The decision is `pluginSectionAbsence`, the same pure function `PluginSettingsUnavailableNotice`
+uses, **moved from `settings/sections/` (desktopMain) into `components/plugin/` (commonMain)** so
+both callers share one ordering. That ordering is the part worth not copying: permissions first
+because an inaccessible plugin is recorded DISABLED too, and incompatible/disabled before installed
+because `MissingPluginOffer.isInstalled` counts both as installed. `servesNoPanel` is passed `true`
+from the keypress path and reads there as "serves no such action" - reached only after `dispatch`
+has already said no.
+
+Two things the enable path knows that the install path does not. `MissingHandlerPluginBus` remembers
+a "Not now" for the session and drops every later report, so `wasDeclined` is asked first and a
+declined plugin falls through to the status line rather than to silence. And its `tabTypeId` field
+carries the action name here, which only feeds its log lines and the collector's "has it registered
+since?" re-check against `TabRegistry` - no tab type is called `open-quick-switcher`, so that
+re-check can never suppress the prompt.
+
+**The host still does not depend on the plugin.** api -> host is forced (`ActiveTabsProvider` is
+`@HostImplemented`) and plugin -> host is forced (`minBossVersion`); a host that required the plugin
+would close a cycle. It builds and runs without it and merely declines to do the job itself.
+
+`TopOfMindStateHolder` and `TabCollector` **stay**: `GlobalSearchService` reads the holder, and the
+plugin api's new `ActiveTabsProvider.allWindowTabs` is derived from it, with
+`refreshAllWindowTabs()` calling `TabCollector.refreshGlobalState`. That is deliberately the only
+cross-window tab walk - `ApiActiveTabsProviderAdapter` is per window, so an adapter collecting its
+own would have N windows each walking every other window's split trees on their own schedule.
+
+## One pane, one name
+
+`ActiveTabData.splitPosition` reaches every plugin with the name the window's own vertical tab bar
+prints on that pane's group header - "Left", "Top right", "Pane 3". It had carried a comment
+promising exactly those values since it was declared and was **never populated**, so every consumer
+saw null and invented its own naming from the saved `SplitConfig`: a different source of truth,
+which describes the tree rather than the screen (so a nested pane came out "TOP > LEFT" where the
+bar says "Top left") and goes stale the moment a pane is split without saving.
+
+`paneGlyphs` in `PaneGlyph.kt` is the normalisation both sides share. The answer for one pane
+depends on all of them, so it takes the whole set; `WindowVerticalTabBar` had the only copy, and a
+second one in `SplitViewState` is precisely how the two names would drift. `splitPositionsFor` then
+applies the bar's own two rules - a `panelName` the user gave beats the derived position, and an
+unmeasured pane falls through to "Pane N" - and answers nothing at all for a lone pane, because a
+position there claims a divider that does not exist.
+
+**A workspace running behind the one on screen answers too.** Its panes were never composed, so
+there are no measured rectangles; the rectangles come from its split tree with every divider
+assumed centred, which cannot change the answer - `paneLabel` asks only which edges a pane touches
+and which axis it spans, and no divider position changes either. So a workspace names its panes
+identically before and after it comes on screen. That path deliberately does **not** consult
+`panelName`: panel ids are unique only within one tree (every workspace's first pane is `main`), so
+a name given to one pane would be returned for the pane of that name in every other workspace.
+
 ## A missing plugin no longer fails silently
 
 Browser, editor and terminal tabs are plugin-provided. `addTab` logged "Dropped

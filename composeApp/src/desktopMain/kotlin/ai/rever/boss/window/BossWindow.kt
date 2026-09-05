@@ -480,7 +480,8 @@ fun ApplicationScope.BossWindow(
 
                     Separator()
 
-                    // Access TopOfMindDialog for workspace switching and quick navigation
+                    // Raises Top of Mind's quick switcher, which is where switching between
+                    // every window's tabs lives now.
                     Item(
                         "Top of the Mind",
                         shortcut = shortcutBridge.getKeyShortcut(KeymapActions.QUICK_SWITCHER_OPEN),

@@ -44,6 +44,21 @@ fun WorkspaceButton(
     workspaceManager: WorkspaceManager,
     getCurrentWorkspace: (() -> LayoutWorkspace)? = null,
     onShowTopOfMind: (() -> Unit)? = null,
+    /**
+     * What a LEFT click does, when there is something better for it to do than drop this menu.
+     *
+     * The vertical bar's copy passes `openTopOfMindWorkspacePicker`, which opens the Top of Mind
+     * panel and asks it for its workspace picker - a searchable list, where this menu is an
+     * unfiltered one. It returns false when Top of Mind is not there to ask, and the click then
+     * falls through to the menu, which is also what the top bar's copy does with every click
+     * because it passes null.
+     *
+     * The menu is NOT removed either way. Its Options submenu is the only route to Open Workspace
+     * Folder and Reset to Default in the whole app - both need `WorkspaceManager` members that are
+     * not on the plugin api, so nothing else can offer them - so when the primary click is taken,
+     * the menu moves to the right click rather than going away.
+     */
+    onOpenWorkspacePicker: (() -> Boolean)? = null,
     /** Sized for the vertical tab bar rather than the top bar. See BossActionButton. */
     compact: Boolean = false,
 ) {
@@ -209,9 +224,14 @@ fun WorkspaceButton(
                         if (workspace.name != "Current") workspace.name else "Default"
                     } ?: "Default",
                 contextMenuItems = contextMenuItems,
+                primaryAction = onOpenWorkspacePicker,
                 hintText =
                     buildString {
                         append("Layout Workspace: ${currentWorkspace?.description ?: "Default layout"}")
+                        // Only where the left click has been taken. Told to right-click a button
+                        // whose left click already opens the menu, a user right-clicks and gets
+                        // nothing.
+                        if (onOpenWorkspacePicker != null) append("\nRight-click for workspace options")
                         append("\nWorkspaces saved to: ${workspaceManager.getWorkspaceDirectory()}")
                     },
             )

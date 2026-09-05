@@ -1,4 +1,4 @@
-package ai.rever.boss.components.settings.sections
+package ai.rever.boss.components.plugin
 
 import ai.rever.boss.plugin.api.PluginState
 
