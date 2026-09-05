@@ -36,10 +36,23 @@ internal class ProjectChangeAnnouncer(
      * thread in KERNEL mode with no hop to Main, so two selections really can arrive at once.
      * Uncontended in every other case.
      *
+     * The publish is deliberately INSIDE the lock, not just the `previousPath` read-modify-write:
+     * outside it, two selections could update the chain in one order and `tryEmit` in the other,
+     * leaving a subscriber on an event whose `previousProjectPath` does not match what it last
+     * saw. The cost is that `tryEmit` resumes suspended collectors, so a subscriber on
+     * `Dispatchers.Unconfined` or `Main.immediate` runs its handler inline, on this thread,
+     * holding this lock, inside `WindowProjectState.selectProject`. A slow third-party subscriber
+     * therefore stalls project selection for this window, and one that re-enters `selectProject`
+     * recurses through the lock. Ordering is worth that; the alternative is capturing `from`
+     * under the lock and publishing outside it.
+     *
      * What this does NOT settle, and cannot from here: agreement between the last event and
      * `WindowProjectState.selectedProject`. That class writes `_selectedProject.value` and then
      * calls this callback with no atomicity of its own, so under concurrent selection the state
      * can already end up disagreeing with the last event. Closing that means locking upstream.
+     *
+     * Untested, and hard to test honestly: the contended case needs two threads racing a
+     * `selectProject`, which is a scheduling assertion rather than a behavioural one.
      */
     private val lock = Any()
 

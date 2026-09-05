@@ -13,6 +13,8 @@ import ai.rever.boss.plugin.api.ProjectChangeEvent
 import ai.rever.boss.plugin.api.TabEvent
 import ai.rever.boss.plugin.api.TerminalSessionEvent
 import ai.rever.boss.plugin.api.WindowFocusEvent
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -20,6 +22,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.filterIsInstance
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Desktop implementation of ApplicationEventBus factory.
@@ -50,16 +53,36 @@ actual fun publishSystemEvent(event: ApplicationEvent) {
         it(event)
         return
     }
-    // No publisher registered means getInstance has never run, which means nobody holds the bus,
-    // which means it has no subscribers - so THIS event still reaches no one, and creating the
-    // bus does not rescue it. What it buys is that it is the last one: the bus was previously
-    // built only when the first plugin touched PluginContext.applicationEventBus, so on a build
-    // where no installed plugin had asked yet the host was permanently silent - not
-    // ProjectChangeEvent, not AuthEvent, not TabEvent, and with replay = 0 nothing recoverable
-    // afterwards. Whether a plugin has been curious is not a sensible thing for the host's events
-    // to depend on. getInstance registers the publisher, so this branch is taken at most once.
+    // Both registry fields are public vars in the api, so `bus` set without `systemPublisher` is
+    // one stray assignment away (the runtime module, a plugin, a test that restores only half).
+    // Falling through in that state would emit into THIS classloader's instance, which is not
+    // necessarily the registry's bus - a permanent silent drop on every publish, including the
+    // high-volume browser-interaction path. Refuse it and say so once, rather than working
+    // around half an invariant.
+    if (ApplicationEventBusRegistry.bus != null) {
+        if (partialRegistryWarned.compareAndSet(false, true)) {
+            systemEventLogger.warn(
+                LogCategory.SYSTEM,
+                "ApplicationEventBusRegistry has a bus but no systemPublisher; host events are being dropped",
+            )
+        }
+        return
+    }
+    // No bus and no publisher: getInstance has never run, so nobody holds the bus and it has no
+    // subscribers - THIS event still reaches no one, and creating the bus does not rescue it.
+    // What it buys is that it is the last one. The bus was previously built only when the first
+    // plugin touched PluginContext.applicationEventBus, so on a build where no installed plugin
+    // had asked yet the host was permanently silent - not ProjectChangeEvent, not AuthEvent, not
+    // TabEvent, and with replay = 0 nothing recoverable afterwards. Whether a plugin has been
+    // curious is not a sensible thing for the host's events to depend on. getInstance registers
+    // the publisher, so this branch is taken at most once.
     ApplicationEventBusImpl.getInstance(systemEventBusScope).publishInternal(event)
 }
+
+private val systemEventLogger = BossLogger.forComponent("ApplicationEventBus")
+
+/** One warning, not one per event: the drop is permanent, so repeating it only buries the log. */
+private val partialRegistryWarned = AtomicBoolean(false)
 
 /**
  * Desktop implementation of ApplicationEventBus.

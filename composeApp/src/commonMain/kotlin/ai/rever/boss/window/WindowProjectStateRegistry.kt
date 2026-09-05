@@ -50,25 +50,46 @@ object WindowProjectStateRegistry {
      */
     private fun newState(windowId: String): WindowProjectState {
         val state = WindowProjectState(windowId)
-        val announcer = ProjectChangeAnnouncer(windowId, state.selectedProject.value.path)
         // The state holds ONE callback slot, and this is the host's: anything that calls
         // setProjectSelectionCallback on it again drops both halves, the recent-projects update
         // and the event-bus announcement. Nothing outside this object does today.
-        state.setProjectSelectionCallback { project ->
-            // try/finally, not two statements: updateRecentProjects persists to disk, and if it
-            // throws, skipping the announcement would ALSO leave the announcer's previousPath
-            // stale - every later selection in this window would then report a
-            // previousProjectPath one step behind, silently, for the rest of the session. The
-            // announcement being unconditional is the entire point of this class, so it must not
-            // be the half an unrelated failure can skip. The throw still propagates.
+        state.setProjectSelectionCallback(
+            hostProjectCallback(
+                updateRecents = ProjectState::updateRecentProjects,
+                announcer = ProjectChangeAnnouncer(windowId, state.selectedProject.value.path),
+            ),
+        )
+        return state
+    }
+
+    /**
+     * The window's selection callback: record the project as recent, then announce it.
+     *
+     * `try`/`finally`, not two statements. [updateRecents] persists to disk, and if it throws,
+     * skipping the announcement would ALSO leave the announcer's `previousPath` stale - every
+     * later selection in this window would then report a `previousProjectPath` one step behind,
+     * silently, for the rest of the session. The announcement being unconditional is the entire
+     * point of [ProjectChangeAnnouncer], so it must not be the half an unrelated failure can
+     * skip. The recents update stays FIRST so a plugin reading `recentProjects` off the event
+     * sees the new entry, and the original throw still propagates.
+     *
+     * [updateRecents] is a parameter rather than a direct `ProjectState` call purely so that
+     * claim is testable: `ProjectState` is an object, so a hard-coded call could not be made to
+     * fail. (A throw out of [announcer] inside the `finally` would discard the [updateRecents]
+     * exception; neither can throw today - `tryEmit` does not, and the recents update is in
+     * memory plus a fire-and-forget save - so this is noted rather than guarded.)
+     */
+    internal fun hostProjectCallback(
+        updateRecents: (Project) -> Unit,
+        announcer: ProjectSelectionCallback,
+    ): ProjectSelectionCallback =
+        ProjectSelectionCallback { project ->
             try {
-                ProjectState.updateRecentProjects(project)
+                updateRecents(project)
             } finally {
                 announcer.onProjectSelected(project)
             }
         }
-        return state
-    }
 
     /**
      * Get the project state for a window.

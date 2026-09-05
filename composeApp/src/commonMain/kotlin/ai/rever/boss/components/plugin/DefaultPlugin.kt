@@ -894,11 +894,10 @@ class DefaultPlugin(
         DirectoryPickerProviderImpl()
     }
 
-    // Project data provider for managing recent projects.
-    // Named delegate so dispose() can cancel its collector without forcing the lazy
-    // (see logDataProviderDelegate for the same pattern).
-    private val projectDataProviderDelegate = lazy { ProjectDataProviderImpl(windowProjectState) }
-    override val projectDataProvider: ai.rever.boss.plugin.api.ProjectDataProvider by projectDataProviderDelegate
+    // Project data provider for managing recent projects
+    override val projectDataProvider: ai.rever.boss.plugin.api.ProjectDataProvider by lazy {
+        ProjectDataProviderImpl(windowProjectState)
+    }
 
     /**
      * Create a sandboxed plugin context for a specific plugin.
@@ -1106,9 +1105,6 @@ class DefaultPlugin(
         }
         if (gitDataProviderDelegate.isInitialized()) {
             (gitDataProvider as? DisposableProvider)?.dispose()
-        }
-        if (projectDataProviderDelegate.isInitialized()) {
-            (projectDataProvider as? DisposableProvider)?.dispose()
         }
         pluginScope.cancel()
     }

@@ -16,13 +16,13 @@ import ai.rever.boss.plugin.api.TabRegistry
 import ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -36,7 +36,13 @@ import kotlin.test.assertTrue
  * What these pin is the placement, not the plumbing: the announcement hangs off the state's own
  * [ProjectSelectionCallback], which `WindowProjectState.selectProject` - the sole mutator of the
  * selection - invokes synchronously for every caller. Move it back onto any single caller, or
- * drop it from one of the registry's two construction paths, and one of these fails.
+ * drop it from `WindowProjectStateRegistry.newState`, and one of these fails.
+ *
+ * Isolation note: `captured` is fed by the process-global
+ * `ApplicationEventBusRegistry.systemPublisher`, so while this class runs it intercepts every
+ * host event in the JVM and `changes().single()` assumes nothing else is publishing. That holds
+ * because `composeApp/build.gradle.kts` sets no `maxParallelForks`; turning parallel forks on
+ * would break this class, `BrowserAnalyticsEmissionTest` and `BossTabsComponentMoveTest` together.
  */
 class ProjectChangeAnnouncementTest {
     private val captured = mutableListOf<ApplicationEvent>()
@@ -47,11 +53,18 @@ class ProjectChangeAnnouncementTest {
         previousPublisher = ApplicationEventBusRegistry.systemPublisher
         ApplicationEventBusRegistry.systemPublisher = { captured += it }
         // ProjectDataProviderImpl collects on Dispatchers.Main, which has no implementation in a
-        // plain test JVM - its launch fails and the collector silently never runs. Unconfined so
-        // the collector starts and resumes on the calling thread, which makes the dispose test
-        // deterministic instead of a sleep. The announcer itself uses no dispatcher at all.
-        Dispatchers.setMain(UnconfinedTestDispatcher())
-        settleProjectState()
+        // plain test JVM - its launch fails and the collector silently never runs. The announcer
+        // itself uses no dispatcher; this is only so the provider in
+        // `a plugin-initiated selection is announced exactly once` is a working object.
+        //
+        // Dispatchers.Unconfined, NOT UnconfinedTestDispatcher. The provider owns its scope and
+        // nothing cancels it (see ProjectDataProviderImpl: DisposableProvider is deliberately not
+        // implemented), so its `ProjectState.recentProjects` collector outlives this class for
+        // the rest of the JVM. On a TestCoroutineScheduler that live coroutine is something every
+        // later `runTest` in the suite waits on, and the git tests - the next `runTest`-heavy
+        // classes to run - time out after 60s. Unconfined gives the same run-on-the-calling-
+        // thread behaviour without enrolling the leak in a scheduler anyone else observes.
+        Dispatchers.setMain(Dispatchers.Unconfined)
     }
 
     @AfterTest
@@ -207,38 +220,68 @@ class ProjectChangeAnnouncementTest {
             assertEquals(PLUGIN_PATH, event.projectPath)
             assertEquals("w-plugin", event.windowId)
         } finally {
-            provider.dispose()
             WindowProjectStateRegistry.unregister("w-plugin")
             ProjectState.removeRecentProject(PLUGIN_PATH)
         }
     }
 
     /**
-     * The reason `projectDataProviderDelegate` became a named lazy: the provider owns a
-     * coroutine that `pluginScope` does not cancel, so before this it kept collecting
-     * `ProjectState.recentProjects` for every window that had ever been opened.
+     * Windows are independent. This is the property most likely to break if the announcer is
+     * ever hoisted to an object or the seed is shared: B's selection must not move A's chain.
      */
     @Test
-    fun `dispose stops the recent-projects collector`() {
-        val provider = ProjectDataProviderImpl(windowProjectState = null)
-        try {
-            ProjectState.updateRecentProjects(project(DISPOSE_BEFORE_PATH))
-            assertTrue(
-                provider.recentProjects.value.any { it.path == DISPOSE_BEFORE_PATH },
-                "the collector never ran, so the assertion after dispose would prove nothing",
-            )
+    fun `one window's selection does not touch another window's previous path`() {
+        val a = announcingState("w-a")
+        val b = announcingState("w-b")
 
-            provider.dispose()
-            ProjectState.updateRecentProjects(project(DISPOSE_AFTER_PATH))
+        a.selectProject(project("/tmp/boss-pca-a1"))
+        b.selectProject(project("/tmp/boss-pca-b1"))
+        a.selectProject(project("/tmp/boss-pca-a2"))
 
-            assertTrue(
-                provider.recentProjects.value.none { it.path == DISPOSE_AFTER_PATH },
-                "the collector kept running after dispose()",
-            )
-        } finally {
-            ProjectState.removeRecentProject(DISPOSE_BEFORE_PATH)
-            ProjectState.removeRecentProject(DISPOSE_AFTER_PATH)
+        assertEquals(
+            listOf(
+                Triple("w-a", "", "/tmp/boss-pca-a1"),
+                Triple("w-b", "", "/tmp/boss-pca-b1"),
+                // "" would mean B's selection reset A, /tmp/boss-pca-b1 that they share a chain.
+                Triple("w-a", "/tmp/boss-pca-a1", "/tmp/boss-pca-a2"),
+            ),
+            changes().map { Triple(it.windowId, it.previousProjectPath, it.projectPath) },
+        )
+    }
+
+    /**
+     * The one design claim in `newState` that is not about placement: the announcement must not
+     * be the half an unrelated failure can skip. `ProjectState` is an object, so this is only
+     * reachable because `hostProjectCallback` takes the recents update as a parameter.
+     */
+    @Test
+    fun `a failing recent-projects update does not swallow the announcement`() {
+        val state = WindowProjectState("w-throwing")
+        state.setProjectSelectionCallback(
+            WindowProjectStateRegistry.hostProjectCallback(
+                updateRecents = { error("recent-projects persistence is broken") },
+                announcer = ProjectChangeAnnouncer("w-throwing", ""),
+            ),
+        )
+
+        assertFailsWith<IllegalStateException> {
+            state.selectProject(project("/tmp/boss-pca-throwing"))
         }
+
+        // Announced anyway - and, the half that actually bites, previousPath advanced with it.
+        assertEquals("/tmp/boss-pca-throwing", changes().single().projectPath)
+
+        // Throws again - updateRecents is broken for good in this test - but the announcement
+        // is what is being read, and it happens in the finally either way.
+        assertFailsWith<IllegalStateException> {
+            state.selectProject(project("/tmp/boss-pca-throwing-next"))
+        }
+
+        assertEquals(
+            "/tmp/boss-pca-throwing",
+            changes().last().previousProjectPath,
+            "previousPath was left behind by the throw, so every later event is one step stale",
+        )
     }
 
     // ============================================================
@@ -276,28 +319,6 @@ class ProjectChangeAnnouncementTest {
     }
 
     private companion object {
-        /**
-         * `ProjectState` is a process-global object whose `init` kicks off an async
-         * `loadRecentProjects()` that assigns `_recentProjects.value` **wholesale**. Landing
-         * between a test's `updateRecentProjects` and its assertion would drop the just-added
-         * path - and only on a machine where `~/.boss/recent-projects.json` exists, which is a
-         * developer-only flake and the worst kind.
-         *
-         * Touch the object once and let that single small file read finish before any test runs.
-         * The load happens exactly once per JVM, so this is once per JVM too. It is a settle
-         * rather than a handshake because `ProjectState` exposes nothing to await; if it ever
-         * grows a completion signal, wait on that instead.
-         */
-        private var settled = false
-
-        @Synchronized
-        fun settleProjectState() {
-            if (settled) return
-            ProjectState.recentProjects.value
-            Thread.sleep(500)
-            settled = true
-        }
-
         // Deliberately non-existent directories. ProjectState's saves are fire-and-forget on
         // Dispatchers.IO, so an add and its cleanup remove are unordered and a test path can
         // survive in the real recent-projects.json. loadRecentProjects drops entries whose
@@ -306,7 +327,5 @@ class ProjectChangeAnnouncementTest {
         const val CREATED_PATH = "/tmp/boss-pca-created"
         const val RESTORED_PATH = "/tmp/boss-pca-restored-by-applier"
         const val PLUGIN_PATH = "/tmp/boss-pca-plugin"
-        const val DISPOSE_BEFORE_PATH = "/tmp/boss-pca-dispose-before"
-        const val DISPOSE_AFTER_PATH = "/tmp/boss-pca-dispose-after"
     }
 }
