@@ -74,6 +74,17 @@ internal fun VerticalBarWindowControls(
         // these two means opening the wrong thing entirely, a project dialog or a workspace menu.
         verticalArrangement = Arrangement.spacedBy(ROW_GAP),
     ) {
+        // Workspace above project, because that is the containment: a workspace REMEMBERS a
+        // project (LayoutWorkspace.projectPath) and switching workspace restores it, so the
+        // workspace is the outer choice and the project is a property of the one you are in.
+        // Listing the project first read as the reverse - as though a project held workspaces.
+        WorkspaceButton(
+            onOpenWorkspace = onApplyWorkspace,
+            workspaceManager = workspaceManager,
+            getCurrentWorkspace = getCurrentWorkspace,
+            onShowTopOfMind = onShowTopOfMind,
+            compact = true,
+        )
         BossActionButton(
             // A folder rather than the top bar's project LOGO tile. That tile is 28dp of solid
             // colour built to anchor a wide bar; down a 200dp column it is the loudest thing on
@@ -94,13 +105,6 @@ internal fun VerticalBarWindowControls(
             maxTextWidth = LABEL_MAX_WIDTH,
             compact = true,
             onClick = onOpenProject,
-        )
-        WorkspaceButton(
-            onOpenWorkspace = onApplyWorkspace,
-            workspaceManager = workspaceManager,
-            getCurrentWorkspace = getCurrentWorkspace,
-            onShowTopOfMind = onShowTopOfMind,
-            compact = true,
         )
     }
 }
