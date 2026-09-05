@@ -295,6 +295,59 @@ class SplitViewWorkspaceTransferTest {
     }
 
     @Test
+    fun `switchToLiveWorkspace brings a preserved workspace back with its layout intact`() {
+        val state = newSplitViewState()
+        state.enterWorkspace("ws-a", "tab-a1", "tab-a2")
+        val splitId = state.splitPanel("main", SplitOrientation.VERTICAL)
+        state.getPanel(splitId)!!.tabsComponent.addTab(TransferTabInfo(id = "tab-a3"))
+        state.enterWorkspace("ws-b", "tab-b")
+
+        assertTrue(state.switchToLiveWorkspace("ws-a", leavingWorkspaceName = "ws-b"))
+
+        assertEquals("ws-a", state.currentWorkspaceId)
+        // Its whole tree came back, split and all - a live switch restores, it does not rebuild
+        // from a saved config.
+        assertEquals(2, state.getAllPanels().size)
+        assertEquals(listOf("tab-a1", "tab-a2", "tab-a3"), state.tabIdsIn("ws-a"))
+        // And the one we left is still running behind it.
+        assertEquals(listOf("tab-b"), state.tabIdsIn("ws-b"))
+    }
+
+    @Test
+    fun `switchToLiveWorkspace refuses the current workspace and one that is not running`() {
+        val state = newSplitViewState()
+        state.enterWorkspace("ws-a", "tab-a")
+        state.enterWorkspace("ws-b", "tab-b")
+
+        assertFalse(state.switchToLiveWorkspace("ws-b"))
+        assertFalse(state.switchToLiveWorkspace("ws-never-opened"))
+        assertEquals("ws-b", state.currentWorkspaceId)
+    }
+
+    @Test
+    fun `selecting a tab before the switch survives the restore`() {
+        // The order focus depends on: selectTabAnywhere records the tab as its pane's active one
+        // AND repoints the preserved activePanelId, then restorePreservedState reads both into
+        // the live state. Selecting after the swap would race the restore.
+        val state = newSplitViewState()
+        state.enterWorkspace("ws-a", "tab-a1", "tab-a2")
+        val splitId = state.splitPanel("main", SplitOrientation.VERTICAL)
+        state.getPanel(splitId)!!.tabsComponent.addTab(TransferTabInfo(id = "tab-a3"))
+        state.enterWorkspace("ws-b", "tab-b")
+
+        assertTrue(state.selectTabAnywhere("tab-a3"))
+        assertTrue(state.switchToLiveWorkspace("ws-a", leavingWorkspaceName = "ws-b"))
+
+        // The pane holding it is active, and it is the selected tab in that pane.
+        val pane = state.getPanel(state.activePanelId)!!
+        assertEquals(
+            "tab-a3",
+            pane.tabsComponent.tabsState.value.activeTab
+                ?.id,
+        )
+    }
+
+    @Test
     fun `activePanelIdForWorkspace falls back to a real pane when the recorded one is gone`() {
         val state = newSplitViewState()
         state.enterWorkspace("ws-a", "tab-a")

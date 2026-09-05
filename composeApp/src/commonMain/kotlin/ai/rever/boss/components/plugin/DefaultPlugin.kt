@@ -1418,6 +1418,7 @@ private class ApiActiveTabsProviderAdapter(
         _activeTabs.value = tabs.map { convertToActiveTabData(it) }
     }
 
+    @Suppress("ReturnCount")
     override fun selectTab(
         tabId: String,
         panelId: String,
@@ -1430,7 +1431,62 @@ private class ApiActiveTabsProviderAdapter(
             splitViewState.selectTabInPanel(tabId, panelId)
             return
         }
+        val location = splitViewState.findTabLocation(tabId) ?: return
+        if (location.workspaceId == splitViewState.currentWorkspaceId) {
+            splitViewState.selectTabAnywhere(tabId)
+            return
+        }
+        // FOCUS means "show me this tab", so a tab in another running workspace brings that
+        // workspace forward. Selecting it in a pane nobody can see is not focusing it - that was
+        // the first version of this, and from Top of Mind it read as the click doing nothing.
+        scope.launch(Dispatchers.Main) {
+            switchWorkspaceForFocus(location.workspaceId, tabId)
+        }
+    }
+
+    /**
+     * Bring [workspaceId] on screen and land on [tabId].
+     *
+     * Order is load-bearing. The tab is selected FIRST, while its workspace is still preserved:
+     * `selectTabAnywhere` records it as that pane's active tab and repoints the preserved state's
+     * `activePanelId`, and `restorePreservedState` reads both straight into the live state. Doing
+     * it the other way round would mean selecting into a tree mid-swap and racing the restore.
+     *
+     * Both halves of "which workspace is showing" are updated: the split view (which holds the
+     * trees) and `WorkspaceManager.currentWorkspace` (which the workspace menu and every
+     * `WorkspaceDataProvider` consumer read). Moving one without the other leaves the UI naming a
+     * workspace that is not the one on screen.
+     */
+    private fun switchWorkspaceForFocus(
+        workspaceId: String,
+        tabId: String,
+    ) {
+        val leaving = workspaceManager.currentWorkspace.value
         splitViewState.selectTabAnywhere(tabId)
+        if (!splitViewState.switchToLiveWorkspace(workspaceId, leaving?.name.orEmpty())) return
+
+        // The saved LayoutWorkspace when there is one, so the menu shows its real name and
+        // project. A workspace can be running under an id the saved list has never seen, and a
+        // live switch needs no layout from it - the tree came from the preserved state, not from
+        // this object - so a minimal stand-in is enough to keep the two notions in step.
+        val target =
+            workspaceManager.workspaces.value.firstOrNull { it.id == workspaceId }
+                ?: splitViewState
+                    .collectAllActiveTabs(workspaceManager, windowId)
+                    .firstOrNull { it.workspaceId == workspaceId }
+                    ?.let { tab ->
+                        ai.rever.boss.plugin.workspace.LayoutWorkspace(
+                            id = workspaceId,
+                            name = tab.workspaceName,
+                            description = "",
+                            layout =
+                                ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel(
+                                    ai.rever.boss.plugin.workspace
+                                        .PanelConfig(id = "main", tabs = emptyList()),
+                                ),
+                        )
+                    }
+        target?.let { workspaceManager.loadWorkspace(it) }
     }
 
     override val supportsTabTransfer: Boolean get() = true
