@@ -632,4 +632,124 @@ class McpToolRegistryCoreTest {
         assertTrue(core.tools.value.isEmpty())
         assertTrue(core.permittedTools().isEmpty(), "permittedTools reads the same snapshot")
     }
+
+    // ---------------------------------------------------------------------
+    // Governed Autonomy — Policy, Approval Gate, and Operation Ledger
+    // ---------------------------------------------------------------------
+
+    @Test
+    fun `invoke respects DENY policy and records rejection in ledger`() =
+        runBlocking {
+            var handlerCalled = false
+            val tool =
+                echoTool(
+                    name = "blocked_tool",
+                    handler =
+                        McpToolHandler {
+                            handlerCalled = true
+                            McpToolResult("ok")
+                        },
+                )
+            val policyEngine = McpPolicyEngine(policyFile = null)
+            policyEngine.setToolPolicy("blocked_tool", McpPolicyAction.DENY)
+            val ledger = McpOperationLedger(ledgerFile = null)
+
+            val core =
+                McpToolRegistryCore(
+                    disabledFile = null,
+                    policyEngine = policyEngine,
+                    ledger = ledger,
+                )
+            core.registerProvider(provider("p1", tool))
+
+            val res = core.invoke("blocked_tool", "{}")
+            assertTrue(res.isError)
+            assertTrue(res.content.contains("rejected by policy"))
+            assertFalse(handlerCalled, "Handler must never be called when policy is DENY")
+
+            // Verified in ledger
+            assertEquals(1L, ledger.totalCalls.value)
+            assertEquals(1L, ledger.totalErrors.value)
+            assertEquals(McpApprovalDisposition.POLICY_DENIED, ledger.recentOperations.value.first().approvalDisposition)
+        }
+
+    @Test
+    fun `invoke with ASK policy suspends and succeeds when approved by operator`() =
+        runBlocking {
+            var handlerCalled = false
+            val tool =
+                echoTool(
+                    name = "k8s_delete",
+                    handler =
+                        McpToolHandler {
+                            handlerCalled = true
+                            McpToolResult("pod deleted")
+                        },
+                )
+            val approvalBus = McpApprovalBus(defaultTimeoutMs = 5000L)
+            val ledger = McpOperationLedger(ledgerFile = null)
+
+            val core =
+                McpToolRegistryCore(
+                    disabledFile = null,
+                    approvalBus = approvalBus,
+                    ledger = ledger,
+                )
+            core.registerProvider(provider("p1", tool))
+
+            // Invoke in background coroutine (it will suspend waiting for approval)
+            val deferredResult = async { core.invoke("k8s_delete", "{\"pod\":\"test-pod\"}") }
+
+            // Receive request and approve
+            val req = kotlinx.coroutines.flow.first(approvalBus.requests)
+            assertEquals("k8s_delete", req.toolName)
+            approvalBus.approve(req.id, trustForSession = false)
+
+            val res = deferredResult.await()
+            assertFalse(res.isError)
+            assertEquals("pod deleted", res.content)
+            assertTrue(handlerCalled)
+
+            // Ledger record
+            assertEquals(1L, ledger.totalCalls.value)
+            assertEquals(McpApprovalDisposition.APPROVED_ONCE, ledger.recentOperations.value.first().approvalDisposition)
+        }
+
+    @Test
+    fun `invoke with ASK policy returns error when operator denies`() =
+        runBlocking {
+            var handlerCalled = false
+            val tool =
+                echoTool(
+                    name = "docker_rm",
+                    handler =
+                        McpToolHandler {
+                            handlerCalled = true
+                            McpToolResult("removed")
+                        },
+                )
+            val approvalBus = McpApprovalBus(defaultTimeoutMs = 5000L)
+            val ledger = McpOperationLedger(ledgerFile = null)
+
+            val core =
+                McpToolRegistryCore(
+                    disabledFile = null,
+                    approvalBus = approvalBus,
+                    ledger = ledger,
+                )
+            core.registerProvider(provider("p1", tool))
+
+            val deferredResult = async { core.invoke("docker_rm", "{}") }
+
+            val req = kotlinx.coroutines.flow.first(approvalBus.requests)
+            approvalBus.deny(req.id, "Container in use")
+
+            val res = deferredResult.await()
+            assertTrue(res.isError)
+            assertTrue(res.content.contains("Container in use"))
+            assertFalse(handlerCalled)
+
+            assertEquals(1L, ledger.totalErrors.value)
+            assertEquals(McpApprovalDisposition.DENIED_BY_OPERATOR, ledger.recentOperations.value.first().approvalDisposition)
+        }
 }

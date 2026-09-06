@@ -224,6 +224,18 @@ fun BossRightBottomBar() {
         )
     }
 
+    val policyFault by McpToolRegistryImpl.policyFault.collectAsState()
+    policyFault?.let { fault ->
+        Text(
+            text = "⚠ ${fault.message}",
+            color = BossTheme.colors.warn,
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.widthIn(max = 560.dp).padding(horizontal = 8.dp),
+        )
+    }
+
     // Status message (temporary messages like "Workspace Saved")
     val statusMessage by StatusMessageManager.currentMessage.collectAsState()
     statusMessage?.let { message ->

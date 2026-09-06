@@ -776,6 +776,21 @@ internal fun BossAppDialogs(state: BossAppState) {
         )
     }
 
+    // Interactive approval dialog for governed MCP tools invoked by an AI agent
+    state.pendingMcpApproval?.let { approvalRequest ->
+        ai.rever.boss.components.dialogs.McpApprovalDialog(
+            request = approvalRequest,
+            onApprove = { trustForSession ->
+                ai.rever.boss.mcp.McpToolRegistryImpl.approvalBus.approve(approvalRequest.id, trustForSession)
+                state.pendingMcpApproval = null
+            },
+            onDeny = { reason ->
+                ai.rever.boss.mcp.McpToolRegistryImpl.approvalBus.deny(approvalRequest.id, reason)
+                state.pendingMcpApproval = null
+            },
+        )
+    }
+
     // Terminal link open dialog (Issue #346)
     if (state.showTerminalLinkDialog) {
         TerminalLinkOpenDialog(

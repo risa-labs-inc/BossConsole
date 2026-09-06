@@ -93,6 +93,19 @@ object McpToolRegistryImpl : McpToolRegistry {
     /** How long a kill-switch fault sits in the bottom bar — longer than a routine status message. */
     private const val FAULT_MESSAGE_MS = 10_000L
 
+    val policyEngine =
+        McpPolicyEngine(
+            policyFile = BossDirectories.resolve("mcp-tool-policy.json"),
+            onFault = { StatusMessageManager.showMessage(it.message, durationMs = FAULT_MESSAGE_MS) },
+        )
+
+    val approvalBus = McpApprovalBus()
+
+    val ledger =
+        McpOperationLedger(
+            ledgerFile = BossDirectories.resolve("mcp-calls.jsonl"),
+        )
+
     private val core =
         McpToolRegistryCore(
             disabledFile = BossDirectories.resolve("mcp-disabled-tools.json"),
@@ -100,6 +113,9 @@ object McpToolRegistryImpl : McpToolRegistry {
             // without an api release, so the host announces the event itself. The
             // durable surface is the flow below, read by the status bar.
             onFault = { StatusMessageManager.showMessage(it.message, durationMs = FAULT_MESSAGE_MS) },
+            policyEngine = policyEngine,
+            approvalBus = approvalBus,
+            ledger = ledger,
         )
 
     override val allTools: StateFlow<List<RegisteredMcpTool>> get() = core.allTools
@@ -115,6 +131,9 @@ object McpToolRegistryImpl : McpToolRegistry {
      * before anyone looked. See [McpKillSwitchFault].
      */
     val killSwitchFault: StateFlow<McpKillSwitchFault?> get() = core.fault
+
+    /** Non-null when the policy engine degraded to fail-closed state. */
+    val policyFault: StateFlow<McpPolicyFault?> get() = core.policyEngine.fault
 
     /** See `Core.permittedTools`. */
     fun permittedTools(): List<RegisteredMcpTool> = core.permittedTools()
@@ -272,6 +291,9 @@ internal class McpToolRegistryCore(
     private val disabledFile: File?,
     private val invokeTimeoutMs: Long = 60_000L,
     private val onFault: (McpKillSwitchFault) -> Unit = {},
+    val policyEngine: McpPolicyEngine = McpPolicyEngine(),
+    val approvalBus: McpApprovalBus = McpApprovalBus(),
+    val ledger: McpOperationLedger = McpOperationLedger(),
 ) {
     private val logger = BossLogger.forComponent("McpToolRegistry")
 
@@ -636,21 +658,123 @@ internal class McpToolRegistryCore(
             _tools.value.firstOrNull { it.definition.name == toolName }
                 ?: return McpToolResult("Unknown or disabled MCP tool: $toolName", isError = true)
         val args = parseArgs(arguments)
+
+        // 1. Policy check (ALLOW / ASK / DENY)
+        val policy = policyEngine.policyFor(toolName)
+        if (policy == McpPolicyAction.DENY) {
+            val errorMsg = "MCP tool '$toolName' is rejected by policy (DENY)"
+            logger.warn(
+                LogCategory.SYSTEM,
+                "MCP tool rejected by policy",
+                mapOf("tool" to toolName, "policy" to "DENY"),
+            )
+            ledger.record(
+                toolName = toolName,
+                providerId = tool.providerId,
+                policyApplied = McpPolicyAction.DENY,
+                approvalDisposition = McpApprovalDisposition.POLICY_DENIED,
+                durationMs = 0L,
+                isError = true,
+                rawArgs = args.raw,
+                errorSnippet = errorMsg,
+            )
+            return McpToolResult(errorMsg, isError = true)
+        }
+
+        var disposition = McpApprovalDisposition.AUTO_ALLOWED
+        if (policy == McpPolicyAction.ASK) {
+            val decision =
+                approvalBus.requestApproval(
+                    toolName = toolName,
+                    providerId = tool.providerId,
+                    arguments = args.raw,
+                )
+            when (decision) {
+                is McpApprovalDecision.Approved -> {
+                    disposition =
+                        if (decision.trustForSession) {
+                            policyEngine.trustForSession(toolName)
+                            McpApprovalDisposition.SESSION_TRUSTED
+                        } else {
+                            McpApprovalDisposition.APPROVED_ONCE
+                        }
+                }
+
+                is McpApprovalDecision.Denied -> {
+                    val errorMsg = "MCP tool '$toolName' rejected by operator: ${decision.reason}"
+                    ledger.record(
+                        toolName = toolName,
+                        providerId = tool.providerId,
+                        policyApplied = McpPolicyAction.ASK,
+                        approvalDisposition = McpApprovalDisposition.DENIED_BY_OPERATOR,
+                        durationMs = 0L,
+                        isError = true,
+                        rawArgs = args.raw,
+                        errorSnippet = errorMsg,
+                    )
+                    return McpToolResult(errorMsg, isError = true)
+                }
+
+                is McpApprovalDecision.Timeout -> {
+                    val errorMsg = "MCP tool '$toolName' timed out waiting for operator approval"
+                    ledger.record(
+                        toolName = toolName,
+                        providerId = tool.providerId,
+                        policyApplied = McpPolicyAction.ASK,
+                        approvalDisposition = McpApprovalDisposition.TIMEOUT,
+                        durationMs = 0L,
+                        isError = true,
+                        rawArgs = args.raw,
+                        errorSnippet = errorMsg,
+                    )
+                    return McpToolResult(errorMsg, isError = true)
+                }
+            }
+        }
+
+        // 2. Execution with timing and journal recording
+        val startTime = System.nanoTime()
         return try {
-            withTimeout(invokeTimeoutMs) { tool.definition.handler.call(args) }
+            val res = withTimeout(invokeTimeoutMs) { tool.definition.handler.call(args) }
+            val elapsedMs = (System.nanoTime() - startTime) / 1_000_000L
+            ledger.record(
+                toolName = toolName,
+                providerId = tool.providerId,
+                policyApplied = policy,
+                approvalDisposition = disposition,
+                durationMs = elapsedMs,
+                isError = res.isError,
+                rawArgs = args.raw,
+                errorSnippet = if (res.isError) res.content else null,
+            )
+            res
         } catch (t: TimeoutCancellationException) {
+            val elapsedMs = (System.nanoTime() - startTime) / 1_000_000L
+            val errorMsg = "Tool '$toolName' timed out after ${invokeTimeoutMs / 1000}s"
             logger.warn(
                 LogCategory.SYSTEM,
                 "MCP tool handler timed out",
                 mapOf("tool" to toolName, "providerId" to tool.providerId, "timeoutMs" to invokeTimeoutMs),
                 error = t,
             )
-            McpToolResult("Tool '$toolName' timed out after ${invokeTimeoutMs / 1000}s", isError = true)
+            ledger.record(
+                toolName = toolName,
+                providerId = tool.providerId,
+                policyApplied = policy,
+                approvalDisposition = disposition,
+                durationMs = elapsedMs,
+                isError = true,
+                rawArgs = args.raw,
+                errorSnippet = errorMsg,
+            )
+            McpToolResult(errorMsg, isError = true)
         } catch (t: CancellationException) {
             // Caller cancellation (not our timeout) must propagate — swallowing it
             // would break structured concurrency during request cancel/shutdown.
             throw t
         } catch (t: Throwable) {
+            val elapsedMs = (System.nanoTime() - startTime) / 1_000_000L
+            val errorMsg = "Tool '$toolName' failed: ${t.message ?: t::class.simpleName}"
             logger.warn(
                 LogCategory.SYSTEM,
                 "MCP tool handler failed",
@@ -660,7 +784,17 @@ internal class McpToolRegistryCore(
                     "error" to (t.message ?: t::class.simpleName),
                 ),
             )
-            McpToolResult("Tool '$toolName' failed: ${t.message ?: t::class.simpleName}", isError = true)
+            ledger.record(
+                toolName = toolName,
+                providerId = tool.providerId,
+                policyApplied = policy,
+                approvalDisposition = disposition,
+                durationMs = elapsedMs,
+                isError = true,
+                rawArgs = args.raw,
+                errorSnippet = errorMsg,
+            )
+            McpToolResult(errorMsg, isError = true)
         }
     }
 

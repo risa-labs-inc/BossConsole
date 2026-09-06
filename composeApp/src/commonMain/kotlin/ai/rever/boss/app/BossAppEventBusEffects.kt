@@ -126,6 +126,14 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
         // just like URL handler, to prevent terminals from being destroyed by clearAllPanels()
     }
 
+    // Listen for MCP tool approval requests from background AI agents (Governed Autonomy)
+    LaunchedEffect(Unit) {
+        ai.rever.boss.mcp.McpToolRegistryImpl.approvalBus.requests
+            .onEach { request ->
+                state.pendingMcpApproval = request
+            }.launchIn(this)
+    }
+
     // Listen for runner terminal events (Issue #347 - Runner in terminal sidebar)
     // Issue #498: Filter events by window to prevent duplicate tabs in all windows
     LaunchedEffect(splitViewState, windowId) {

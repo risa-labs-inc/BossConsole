@@ -177,6 +177,10 @@ internal class BossAppState(
     // waiting for the operator to confirm it. Null whenever nothing is pending.
     var pendingTerminalCommand by mutableStateOf<PendingTerminalCommand?>(null)
 
+    // An MCP tool execution requested by an AI agent that is suspended waiting
+    // for operator approval under an ASK policy.
+    var pendingMcpApproval by mutableStateOf<ai.rever.boss.mcp.McpApprovalRequest?>(null)
+
     // Snapshot of the in-progress MRU tab cycle, drives the Ctrl+Tab switcher overlay
     // (null in positional mode and whenever no cycle is active).
     var tabCycleOverlay by mutableStateOf<TabCycleOverlayData?>(null)
