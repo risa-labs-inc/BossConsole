@@ -7,7 +7,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -64,9 +63,14 @@ class McpPolicyEngine(
     /**
      * Resolve the effective policy action for [toolName].
      *
+     * Explicit DENY rules in configuration always win over session trust.
      * If [toolName] was trusted by the operator for this session, it returns [McpPolicyAction.ALLOW].
      */
     fun policyFor(toolName: String): McpPolicyAction {
+        val configured = _config.value.rules[toolName]
+        if (configured == McpPolicyAction.DENY) {
+            return McpPolicyAction.DENY
+        }
         if (toolName in _sessionTrustedTools.value) {
             return McpPolicyAction.ALLOW
         }

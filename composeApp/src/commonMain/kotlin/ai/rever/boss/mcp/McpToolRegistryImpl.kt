@@ -7,16 +7,19 @@ import ai.rever.boss.plugin.api.McpToolProvider
 import ai.rever.boss.plugin.api.McpToolRegistry
 import ai.rever.boss.plugin.api.McpToolResult
 import ai.rever.boss.plugin.api.RegisteredMcpTool
+import ai.rever.boss.plugin.logging.LogSanitizer
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -668,16 +671,18 @@ internal class McpToolRegistryCore(
                 "MCP tool rejected by policy",
                 mapOf("tool" to toolName, "policy" to "DENY"),
             )
-            ledger.record(
-                toolName = toolName,
-                providerId = tool.providerId,
-                policyApplied = McpPolicyAction.DENY,
-                approvalDisposition = McpApprovalDisposition.POLICY_DENIED,
-                durationMs = 0L,
-                isError = true,
-                rawArgs = args.raw,
-                errorSnippet = errorMsg,
-            )
+            withContext(Dispatchers.IO) {
+                ledger.record(
+                    toolName = toolName,
+                    providerId = tool.providerId,
+                    policyApplied = McpPolicyAction.DENY,
+                    approvalDisposition = McpApprovalDisposition.POLICY_DENIED,
+                    durationMs = 0L,
+                    isError = true,
+                    rawArgs = args.raw,
+                    errorSnippet = LogSanitizer.sanitizeLogMessage(errorMsg),
+                )
+            }
             return McpToolResult(errorMsg, isError = true)
         }
 
@@ -702,31 +707,35 @@ internal class McpToolRegistryCore(
 
                 is McpApprovalDecision.Denied -> {
                     val errorMsg = "MCP tool '$toolName' rejected by operator: ${decision.reason}"
-                    ledger.record(
-                        toolName = toolName,
-                        providerId = tool.providerId,
-                        policyApplied = McpPolicyAction.ASK,
-                        approvalDisposition = McpApprovalDisposition.DENIED_BY_OPERATOR,
-                        durationMs = 0L,
-                        isError = true,
-                        rawArgs = args.raw,
-                        errorSnippet = errorMsg,
-                    )
+                    withContext(Dispatchers.IO) {
+                        ledger.record(
+                            toolName = toolName,
+                            providerId = tool.providerId,
+                            policyApplied = McpPolicyAction.ASK,
+                            approvalDisposition = McpApprovalDisposition.DENIED_BY_OPERATOR,
+                            durationMs = 0L,
+                            isError = true,
+                            rawArgs = args.raw,
+                            errorSnippet = LogSanitizer.sanitizeLogMessage(errorMsg),
+                        )
+                    }
                     return McpToolResult(errorMsg, isError = true)
                 }
 
                 is McpApprovalDecision.Timeout -> {
                     val errorMsg = "MCP tool '$toolName' timed out waiting for operator approval"
-                    ledger.record(
-                        toolName = toolName,
-                        providerId = tool.providerId,
-                        policyApplied = McpPolicyAction.ASK,
-                        approvalDisposition = McpApprovalDisposition.TIMEOUT,
-                        durationMs = 0L,
-                        isError = true,
-                        rawArgs = args.raw,
-                        errorSnippet = errorMsg,
-                    )
+                    withContext(Dispatchers.IO) {
+                        ledger.record(
+                            toolName = toolName,
+                            providerId = tool.providerId,
+                            policyApplied = McpPolicyAction.ASK,
+                            approvalDisposition = McpApprovalDisposition.TIMEOUT,
+                            durationMs = 0L,
+                            isError = true,
+                            rawArgs = args.raw,
+                            errorSnippet = LogSanitizer.sanitizeLogMessage(errorMsg),
+                        )
+                    }
                     return McpToolResult(errorMsg, isError = true)
                 }
             }
@@ -737,16 +746,18 @@ internal class McpToolRegistryCore(
         return try {
             val res = withTimeout(invokeTimeoutMs) { tool.definition.handler.call(args) }
             val elapsedMs = (System.nanoTime() - startTime) / 1_000_000L
-            ledger.record(
-                toolName = toolName,
-                providerId = tool.providerId,
-                policyApplied = policy,
-                approvalDisposition = disposition,
-                durationMs = elapsedMs,
-                isError = res.isError,
-                rawArgs = args.raw,
-                errorSnippet = if (res.isError) res.content else null,
-            )
+            withContext(Dispatchers.IO) {
+                ledger.record(
+                    toolName = toolName,
+                    providerId = tool.providerId,
+                    policyApplied = policy,
+                    approvalDisposition = disposition,
+                    durationMs = elapsedMs,
+                    isError = res.isError,
+                    rawArgs = args.raw,
+                    errorSnippet = if (res.isError) LogSanitizer.sanitizeLogMessage(res.content) else null,
+                )
+            }
             res
         } catch (t: TimeoutCancellationException) {
             val elapsedMs = (System.nanoTime() - startTime) / 1_000_000L
@@ -757,19 +768,34 @@ internal class McpToolRegistryCore(
                 mapOf("tool" to toolName, "providerId" to tool.providerId, "timeoutMs" to invokeTimeoutMs),
                 error = t,
             )
-            ledger.record(
-                toolName = toolName,
-                providerId = tool.providerId,
-                policyApplied = policy,
-                approvalDisposition = disposition,
-                durationMs = elapsedMs,
-                isError = true,
-                rawArgs = args.raw,
-                errorSnippet = errorMsg,
-            )
+            withContext(Dispatchers.IO) {
+                ledger.record(
+                    toolName = toolName,
+                    providerId = tool.providerId,
+                    policyApplied = policy,
+                    approvalDisposition = disposition,
+                    durationMs = elapsedMs,
+                    isError = true,
+                    rawArgs = args.raw,
+                    errorSnippet = LogSanitizer.sanitizeLogMessage(errorMsg),
+                )
+            }
             McpToolResult(errorMsg, isError = true)
         } catch (t: CancellationException) {
-            // Caller cancellation (not our timeout) must propagate — swallowing it
+            val elapsedMs = (System.nanoTime() - startTime) / 1_000_000L
+            withContext(Dispatchers.IO) {
+                ledger.record(
+                    toolName = toolName,
+                    providerId = tool.providerId,
+                    policyApplied = policy,
+                    approvalDisposition = disposition,
+                    durationMs = elapsedMs,
+                    isError = true,
+                    rawArgs = args.raw,
+                    errorSnippet = "Execution cancelled by caller",
+                )
+            }
+            // Caller cancellation (not our timeout) must propagate - swallowing it
             // would break structured concurrency during request cancel/shutdown.
             throw t
         } catch (t: Throwable) {
@@ -784,16 +810,18 @@ internal class McpToolRegistryCore(
                     "error" to (t.message ?: t::class.simpleName),
                 ),
             )
-            ledger.record(
-                toolName = toolName,
-                providerId = tool.providerId,
-                policyApplied = policy,
-                approvalDisposition = disposition,
-                durationMs = elapsedMs,
-                isError = true,
-                rawArgs = args.raw,
-                errorSnippet = errorMsg,
-            )
+            withContext(Dispatchers.IO) {
+                ledger.record(
+                    toolName = toolName,
+                    providerId = tool.providerId,
+                    policyApplied = policy,
+                    approvalDisposition = disposition,
+                    durationMs = elapsedMs,
+                    isError = true,
+                    rawArgs = args.raw,
+                    errorSnippet = LogSanitizer.sanitizeExceptionMessage(t.message ?: t::class.simpleName ?: "error"),
+                )
+            }
             McpToolResult(errorMsg, isError = true)
         }
     }

@@ -7,6 +7,7 @@ import ai.rever.boss.components.dialogs.GlobalSearchDialog
 import ai.rever.boss.components.dialogs.LogoutConfirmationDialog
 import ai.rever.boss.components.dialogs.NewProjectWizardDialog
 import ai.rever.boss.components.dialogs.NewTabDialog
+import ai.rever.boss.components.dialogs.McpApprovalDialog
 import ai.rever.boss.components.dialogs.ProjectOpenModeDialog
 import ai.rever.boss.components.dialogs.ProjectSelectionDialog
 import ai.rever.boss.components.dialogs.ShortcutHelpDialog
@@ -17,6 +18,7 @@ import ai.rever.boss.components.dialogs.TopOfMindDialog
 import ai.rever.boss.components.events.DashboardEventBus
 import ai.rever.boss.components.events.FileEventBus
 import ai.rever.boss.components.events.PanelEventBus
+import ai.rever.boss.mcp.McpToolRegistryImpl
 import ai.rever.boss.components.plugin.DependentRestartDeclinedException
 import ai.rever.boss.components.plugin.DependentRestartDialog
 import ai.rever.boss.components.plugin.DynamicPluginManager
@@ -778,15 +780,15 @@ internal fun BossAppDialogs(state: BossAppState) {
 
     // Interactive approval dialog for governed MCP tools invoked by an AI agent
     state.pendingMcpApproval?.let { approvalRequest ->
-        ai.rever.boss.components.dialogs.McpApprovalDialog(
+        val pendingList by McpToolRegistryImpl.approvalBus.pendingList.collectAsState()
+        McpApprovalDialog(
             request = approvalRequest,
+            pendingQueueSize = pendingList.size,
             onApprove = { trustForSession ->
-                ai.rever.boss.mcp.McpToolRegistryImpl.approvalBus.approve(approvalRequest.id, trustForSession)
-                state.pendingMcpApproval = null
+                McpToolRegistryImpl.approvalBus.approve(approvalRequest.id, trustForSession)
             },
             onDeny = { reason ->
-                ai.rever.boss.mcp.McpToolRegistryImpl.approvalBus.deny(approvalRequest.id, reason)
-                state.pendingMcpApproval = null
+                McpToolRegistryImpl.approvalBus.deny(approvalRequest.id, reason)
             },
         )
     }

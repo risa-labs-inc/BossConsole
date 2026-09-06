@@ -22,6 +22,7 @@ import ai.rever.boss.components.window_panel.rememberSplitViewState
 import ai.rever.boss.components.wizard.plugin.WizardPluginInfo
 import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.workspaceManager
+import ai.rever.boss.mcp.McpApprovalRequest
 import ai.rever.boss.services.FileHandlerService
 import ai.rever.boss.services.TerminalHandlerService
 import ai.rever.boss.services.URLHandlerService
@@ -179,7 +180,7 @@ internal class BossAppState(
 
     // An MCP tool execution requested by an AI agent that is suspended waiting
     // for operator approval under an ASK policy.
-    var pendingMcpApproval by mutableStateOf<ai.rever.boss.mcp.McpApprovalRequest?>(null)
+    var pendingMcpApproval by mutableStateOf<McpApprovalRequest?>(null)
 
     // Snapshot of the in-progress MRU tab cycle, drives the Ctrl+Tab switcher overlay
     // (null in positional mode and whenever no cycle is active).

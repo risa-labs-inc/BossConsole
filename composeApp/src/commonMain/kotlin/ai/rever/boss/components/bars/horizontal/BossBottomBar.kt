@@ -236,6 +236,21 @@ fun BossRightBottomBar() {
         )
     }
 
+    // Governed Autonomy telemetry: show last executed tool, duration, and status
+    val recentOps by McpToolRegistryImpl.ledger.recentOperations.collectAsState()
+    recentOps.firstOrNull()?.let { lastOp ->
+        val statusSymbol = if (lastOp.isError) "✕" else "✓"
+        val statusColor = if (lastOp.isError) BossTheme.colors.alert else BossTheme.colors.textSecondary
+        Text(
+            text = "MCP: ${lastOp.toolName} (${lastOp.durationMs}ms) $statusSymbol",
+            color = statusColor,
+            fontSize = 11.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 6.dp),
+        )
+    }
+
     // Status message (temporary messages like "Workspace Saved")
     val statusMessage by StatusMessageManager.currentMessage.collectAsState()
     statusMessage?.let { message ->

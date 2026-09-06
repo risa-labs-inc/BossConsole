@@ -15,9 +15,13 @@ import java.util.UUID
 /**
  * Append-only persistent journal and real-time telemetry buffer for MCP tool executions.
  *
- * Saves records to `~/.boss/mcp-calls.jsonl` with size-based rotation.
- * All arguments are sanitized via [LogSanitizer] before persistence to prevent
+ * Saves records to `~/.boss/mcp-calls.jsonl` with size-based rotation (active file + up to 5 backups).
+ * Arguments and error snippets are sanitized via [LogSanitizer] before persistence to prevent
  * credential leaks.
+ *
+ * Scope note: Tool discovery, RBAC permissions, and kill-switch blocks are enforced upstream
+ * in tool resolution; unpermitted or unregistered tool calls are blocked before reaching
+ * policy checks and the operation ledger.
  */
 class McpOperationLedger(
     private val ledgerFile: File? = null,
@@ -40,7 +44,7 @@ class McpOperationLedger(
 
     /**
      * Record a tool execution, rejection, or timeout.
-     * Never throws — I/O failures are logged without disrupting tool return.
+     * Never throws - I/O failures are logged without disrupting tool return.
      */
     fun record(
         toolName: String,
@@ -53,6 +57,7 @@ class McpOperationLedger(
         errorSnippet: String? = null,
     ): McpOperationRecord {
         val sanitized = sanitizeArguments(rawArgs)
+        val sanitizedErrorSnippet = errorSnippet?.let { LogSanitizer.sanitizeLogMessage(it) }
         val record =
             McpOperationRecord(
                 id = UUID.randomUUID().toString(),
@@ -64,7 +69,7 @@ class McpOperationLedger(
                 durationMs = durationMs,
                 isError = isError,
                 sanitizedArgs = sanitized,
-                errorSnippet = errorSnippet,
+                errorSnippet = sanitizedErrorSnippet,
             )
 
         // 1. Update in-memory telemetry ring buffer
@@ -110,14 +115,28 @@ class McpOperationLedger(
                 val dst = File(parent, "${file.name}.${i + 1}")
                 if (src.exists()) {
                     if (dst.exists()) dst.delete()
-                    src.renameTo(dst)
+                    val renamed = src.renameTo(dst)
+                    if (!renamed) {
+                        logger.debug(
+                            LogCategory.SYSTEM,
+                            "Could not rename rotated ledger backup file",
+                            mapOf("src" to src.name, "dst" to dst.name),
+                        )
+                    }
                 }
             }
 
             // Move active file to .1
             val backup1 = File(parent, "${file.name}.1")
             if (backup1.exists()) backup1.delete()
-            file.renameTo(backup1)
+            val renamed = file.renameTo(backup1)
+            if (!renamed) {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Could not rename active ledger to .1 backup",
+                    mapOf("file" to file.name),
+                )
+            }
 
             logger.info(
                 LogCategory.SYSTEM,
@@ -133,11 +152,15 @@ class McpOperationLedger(
         }
     }
 
+    /**
+     * Sanitizes map arguments using [LogSanitizer.sanitizeMap].
+     * Avoids blind length-based string masking so that legitimate arguments
+     * like long file paths, URLs, and shell commands are preserved for auditing.
+     */
     private fun sanitizeArguments(rawArgs: Map<String, Any?>): Map<String, String> {
         val maskedMap = LogSanitizer.sanitizeMap(rawArgs)
         return maskedMap.mapValues { (_, value) ->
-            val str = value?.toString() ?: "null"
-            if (LogSanitizer.looksLikeSecret(str)) "[REDACTED]" else str
+            value?.toString() ?: "null"
         }
     }
 }

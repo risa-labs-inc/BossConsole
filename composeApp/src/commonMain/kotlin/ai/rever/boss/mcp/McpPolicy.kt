@@ -5,7 +5,7 @@ import kotlinx.serialization.Serializable
 /**
  * The disposition rule applied to an MCP tool invocation.
  *
- * Modeled after the policy inspector (ALLOW / SCOPED / ASK / DENY):
+ * Modeled after the policy inspector (ALLOW / ASK / DENY):
  * - [ALLOW]: The tool handler runs immediately without prompt or delay.
  * - [ASK]: Execution is suspended, and the human operator is prompted for approval.
  * - [DENY]: Execution is immediately rejected with a policy error; the handler is never called.

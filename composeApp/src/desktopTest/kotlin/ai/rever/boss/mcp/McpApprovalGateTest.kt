@@ -1,10 +1,12 @@
 package ai.rever.boss.mcp
 
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
@@ -76,5 +78,55 @@ class McpApprovalGateTest {
                 )
 
             assertIs<McpApprovalDecision.Timeout>(decision)
+        }
+
+    @Test
+    fun `approve after timeout returns false and does not reopen execution`() =
+        runBlocking {
+            val bus = McpApprovalBus(defaultTimeoutMs = 50L)
+
+            val deferredDecision =
+                async {
+                    bus.requestApproval(
+                        toolName = "secret_get",
+                        providerId = "secret-manager",
+                        arguments = mapOf("id" to "api_token"),
+                        timeoutMs = 50L,
+                    )
+                }
+
+            val request = bus.requests.first()
+            val decision = deferredDecision.await()
+            assertIs<McpApprovalDecision.Timeout>(decision)
+
+            // Attempting to approve after timeout has elapsed returns false
+            val lateApprove = bus.approve(request.id, trustForSession = false)
+            assertFalse(lateApprove)
+            assertTrue(bus.pendingList.value.isEmpty())
+        }
+
+    @Test
+    fun `exceeding pending buffer capacity immediately returns Denied buffer full`() =
+        runBlocking {
+            val bus = McpApprovalBus(defaultTimeoutMs = 10_000L, maxPendingRequests = 2)
+
+            val d1 = async { bus.requestApproval("tool_1", "p1", emptyMap()) }
+            val d2 = async { bus.requestApproval("tool_2", "p1", emptyMap()) }
+
+            // Wait for both to be pending
+            delay(50)
+            assertEquals(2, bus.pendingList.value.size)
+
+            // Third request exceeds capacity (2)
+            val overflowDecision = bus.requestApproval("tool_3", "p1", emptyMap())
+            assertIs<McpApprovalDecision.Denied>(overflowDecision)
+            assertTrue(overflowDecision.reason.contains("Too many pending"))
+
+            // Clean up by approving d1 and d2
+            val list = bus.pendingList.value
+            bus.approve(list[0].id)
+            bus.approve(list[1].id)
+            d1.await()
+            d2.await()
         }
 }

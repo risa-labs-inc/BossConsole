@@ -3,11 +3,12 @@ package ai.rever.boss.mcp
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
@@ -43,11 +44,13 @@ data class McpApprovalRequest(
  */
 open class McpApprovalBus(
     private val defaultTimeoutMs: Long = 45_000L,
+    private val maxPendingRequests: Int = 4,
 ) {
     private val logger = BossLogger.forComponent("McpApprovalBus")
+    private val lock = Any()
 
-    private val channel = Channel<McpApprovalRequest>(capacity = 4)
-    val requests = channel.receiveAsFlow()
+    private val _requests = MutableSharedFlow<McpApprovalRequest>(extraBufferCapacity = 64)
+    val requests: SharedFlow<McpApprovalRequest> = _requests.asSharedFlow()
 
     private val activeRequests = ConcurrentHashMap<String, McpApprovalRequest>()
     private val _pendingList = MutableStateFlow<List<McpApprovalRequest>>(emptyList())
@@ -73,20 +76,20 @@ open class McpApprovalBus(
                 timeoutMs = timeoutMs,
             )
 
-        activeRequests[request.id] = request
-        _pendingList.update { it + request }
-
-        val sent = channel.trySend(request)
-        if (sent.isFailure) {
-            activeRequests.remove(request.id)
-            _pendingList.update { list -> list.filterNot { it.id == request.id } }
-            logger.warn(
-                LogCategory.SYSTEM,
-                "Approval request dropped - buffer full",
-                mapOf("tool" to toolName),
-            )
-            return McpApprovalDecision.Denied("Too many pending approval requests")
+        synchronized(lock) {
+            if (_pendingList.value.size >= maxPendingRequests) {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Approval request dropped - buffer full",
+                    mapOf("tool" to toolName),
+                )
+                return McpApprovalDecision.Denied("Too many pending approval requests")
+            }
+            activeRequests[request.id] = request
+            _pendingList.update { it + request }
         }
+
+        _requests.tryEmit(request)
 
         logger.info(
             LogCategory.SYSTEM,
@@ -110,8 +113,10 @@ open class McpApprovalBus(
             }
             decision
         } finally {
-            activeRequests.remove(request.id)
-            _pendingList.update { list -> list.filterNot { it.id == request.id } }
+            synchronized(lock) {
+                activeRequests.remove(request.id)
+                _pendingList.update { list -> list.filterNot { it.id == request.id } }
+            }
         }
     }
 

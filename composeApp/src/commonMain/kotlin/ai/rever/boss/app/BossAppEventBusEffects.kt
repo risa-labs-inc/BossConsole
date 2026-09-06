@@ -27,6 +27,7 @@ import ai.rever.boss.components.workspaces.requiresProject
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.dashboard.DashboardStatsManager
 import ai.rever.boss.git.GitTerminalService
+import ai.rever.boss.mcp.McpToolRegistryImpl
 import ai.rever.boss.plugin.api.NewTabContext
 import ai.rever.boss.plugin.api.Panel.Companion.bottom
 import ai.rever.boss.plugin.api.Panel.Companion.left
@@ -126,11 +127,13 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
         // just like URL handler, to prevent terminals from being destroyed by clearAllPanels()
     }
 
-    // Listen for MCP tool approval requests from background AI agents (Governed Autonomy)
+    // Listen for MCP tool approval requests from background AI agents (Governed Autonomy).
+    // Driven directly by pendingList StateFlow so multiple windows receive shared updates,
+    // queued approvals advance automatically in FIFO order, and timed-out requests dismiss immediately.
     LaunchedEffect(Unit) {
-        ai.rever.boss.mcp.McpToolRegistryImpl.approvalBus.requests
-            .onEach { request ->
-                state.pendingMcpApproval = request
+        McpToolRegistryImpl.approvalBus.pendingList
+            .onEach { list ->
+                state.pendingMcpApproval = list.firstOrNull()
             }.launchIn(this)
     }
 

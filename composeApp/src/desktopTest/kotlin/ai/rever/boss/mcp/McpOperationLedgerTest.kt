@@ -79,7 +79,59 @@ class McpOperationLedgerTest {
 
         // Sensitive fields masked
         val secretVal = decoded.sanitizedArgs["secret_key"] ?: ""
-        assertTrue(secretVal == "[REDACTED]" || secretVal.contains("***") || secretVal.contains("..."), "secret_key should be sanitized: $secretVal")
+        assertFalse(secretVal.contains("my-super-secret-password-12345"), "secret_key must not expose secret in plaintext")
+        val tokenVal = decoded.sanitizedArgs["auth_token"] ?: ""
+        assertFalse(tokenVal.contains("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"), "auth_token must not expose secret in plaintext")
+    }
+
+    @Test
+    fun `long file paths and commands survive without blind length-based redaction`() {
+        val file = createTempLedgerFile()
+        val ledger = McpOperationLedger(ledgerFile = file)
+
+        val longFilePath = "/Users/alice/projects/boss-console/composeApp/src/commonMain/App.kt"
+        val shellCommand = "git status --porcelain && cargo check --workspace"
+
+        ledger.record(
+            toolName = "codebase_read",
+            providerId = "codebase",
+            policyApplied = McpPolicyAction.ALLOW,
+            approvalDisposition = McpApprovalDisposition.AUTO_ALLOWED,
+            durationMs = 12L,
+            isError = false,
+            rawArgs =
+                mapOf(
+                    "path" to longFilePath,
+                    "command" to shellCommand,
+                ),
+        )
+
+        val lines = file.readLines()
+        val decoded = Json.decodeFromString<McpOperationRecord>(lines.first())
+        assertEquals(longFilePath, decoded.sanitizedArgs["path"], "Long file path must be preserved for audit")
+        assertEquals(shellCommand, decoded.sanitizedArgs["command"], "Shell command must be preserved for audit")
+    }
+
+    @Test
+    fun `errorSnippet is sanitized before ledger persistence`() {
+        val file = createTempLedgerFile()
+        val ledger = McpOperationLedger(ledgerFile = file)
+
+        ledger.record(
+            toolName = "k8s_delete",
+            providerId = "kubernetes",
+            policyApplied = McpPolicyAction.ASK,
+            approvalDisposition = McpApprovalDisposition.DENIED_BY_OPERATOR,
+            durationMs = 0L,
+            isError = true,
+            rawArgs = emptyMap(),
+            errorSnippet = "Failed connecting with Bearer secret-token-ey1234567890",
+        )
+
+        val lines = file.readLines()
+        val decoded = Json.decodeFromString<McpOperationRecord>(lines.first())
+        val errorText = decoded.errorSnippet ?: ""
+        assertFalse(errorText.contains("secret-token-ey1234567890"), "errorSnippet must have credentials sanitized")
     }
 
     @Test

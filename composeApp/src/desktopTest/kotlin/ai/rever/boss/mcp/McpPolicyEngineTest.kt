@@ -87,4 +87,20 @@ class McpPolicyEngineTest {
         assertEquals(McpPolicyAction.ASK, engine.policyFor("k8s_delete"))
         assertEquals(McpPolicyAction.ASK, engine.policyFor("run_command"))
     }
+
+    @Test
+    fun `explicit DENY rule overrides session trust`() {
+        val file = createTempPolicyFile()
+        val engine = McpPolicyEngine(policyFile = file)
+
+        // Give tool session trust
+        engine.trustForSession("danger_tool")
+        assertEquals(McpPolicyAction.ALLOW, engine.policyFor("danger_tool"))
+
+        // Set explicit rule to DENY
+        engine.setToolPolicy("danger_tool", McpPolicyAction.DENY)
+
+        // DENY always wins, even when session-trusted
+        assertEquals(McpPolicyAction.DENY, engine.policyFor("danger_tool"))
+    }
 }

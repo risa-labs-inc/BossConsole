@@ -634,7 +634,7 @@ class McpToolRegistryCoreTest {
     }
 
     // ---------------------------------------------------------------------
-    // Governed Autonomy — Policy, Approval Gate, and Operation Ledger
+    // Governed Autonomy - Policy, Approval Gate, and Operation Ledger
     // ---------------------------------------------------------------------
 
     @Test
@@ -751,5 +751,39 @@ class McpToolRegistryCoreTest {
 
             assertEquals(1L, ledger.totalErrors.value)
             assertEquals(McpApprovalDisposition.DENIED_BY_OPERATOR, ledger.recentOperations.value.first().approvalDisposition)
+        }
+
+    @Test
+    fun `invoke records cancellation in ledger and rethrows CancellationException`() =
+        runBlocking {
+            val tool =
+                echoTool(
+                    name = "slow_tool",
+                    handler =
+                        McpToolHandler {
+                            throw CancellationException("Caller cancelled job")
+                        },
+                )
+            val ledger = McpOperationLedger(ledgerFile = null)
+            val core =
+                McpToolRegistryCore(
+                    disabledFile = null,
+                    ledger = ledger,
+                )
+            core.registerProvider(provider("p1", tool))
+
+            var thrown: CancellationException? = null
+            try {
+                core.invoke("slow_tool", "{}")
+            } catch (e: CancellationException) {
+                thrown = e
+            }
+
+            assertTrue(thrown != null, "CancellationException must be rethrown")
+            assertEquals(1L, ledger.totalCalls.value)
+            assertEquals(1L, ledger.totalErrors.value)
+            val record = ledger.recentOperations.value.first()
+            assertTrue(record.isError)
+            assertEquals("Execution cancelled by caller", record.errorSnippet)
         }
 }
