@@ -16,6 +16,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
 import org.slf4j.LoggerFactory
 
 /**
@@ -169,14 +173,25 @@ class PluginStateBridge(
             }
 
             update.hasDeltaState() -> {
-                // TODO: Implement actual JSON Merge Patch for delta state.
-                // For now, request full state since applying raw patch bytes
-                // as a replacement would corrupt state.
-                logger.debug(
-                    "Delta state received for plugin={}, requesting full state instead",
-                    pluginId,
-                )
-                fetchCurrentState()
+                try {
+                    val currentStateStr = _state.value.decodeToString()
+                    val currentStateJson = if (currentStateStr.isBlank()) JsonObject(emptyMap()) else Json.parseToJsonElement(currentStateStr)
+                    
+                    val patchStr = update.deltaState.patchBytes.toByteArray().decodeToString()
+                    val patchJson = Json.parseToJsonElement(patchStr)
+                    
+                    val mergedJson = currentStateJson.mergePatch(patchJson)
+                    val mergedBytes = mergedJson.toString().encodeToByteArray()
+                    
+                    applyState(mergedBytes, update.deltaState.version)
+                } catch (e: Exception) {
+                    logger.warn(
+                        "Failed to apply delta state for plugin={}, requesting full state instead: {}",
+                        pluginId,
+                        e.message
+                    )
+                    fetchCurrentState()
+                }
             }
 
             update.hasEffect() -> {
@@ -204,4 +219,23 @@ class PluginStateBridge(
         scope.cancel()
         logger.info("PluginStateBridge disposed for plugin={}", pluginId)
     }
+}
+
+private fun JsonElement.mergePatch(patch: JsonElement): JsonElement {
+    if (patch !is JsonObject) {
+        return patch
+    }
+
+    val targetObj = if (this is JsonObject) this.toMutableMap() else mutableMapOf()
+
+    for ((key, value) in patch) {
+        if (value is JsonNull) {
+            targetObj.remove(key)
+        } else {
+            val targetValue = targetObj[key] ?: JsonNull
+            targetObj[key] = targetValue.mergePatch(value)
+        }
+    }
+
+    return JsonObject(targetObj)
 }
