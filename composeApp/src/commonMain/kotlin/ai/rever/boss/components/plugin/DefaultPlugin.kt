@@ -1552,19 +1552,39 @@ private class ApiActiveTabsProviderAdapter(
     override suspend fun moveTabToWorkspace(
         tabId: String,
         targetWorkspaceId: String,
+    ): Boolean = moveTab(tabId, targetWorkspaceId, targetPanelId = null)
+
+    override suspend fun moveTabToPane(
+        tabId: String,
+        targetWorkspaceId: String,
+        targetPanelId: String,
+    ): Boolean = moveTab(tabId, targetWorkspaceId, targetPanelId)
+
+    /**
+     * The one implementation behind both move verbs; a null [targetPanelId] lets the workspace's
+     * active pane take the tab, which is the whole difference between them.
+     */
+    private suspend fun moveTab(
+        tabId: String,
+        targetWorkspaceId: String,
+        targetPanelId: String?,
     ): Boolean =
         try {
             // Marshalled here rather than at the call site: detach/adopt move Essenty
             // LifecycleRegistries between panels, and the api is suspend precisely so a plugin
             // does not have to know that.
             withContext(Dispatchers.Main) {
-                splitViewState.moveTabToWorkspace(tabId, targetWorkspaceId)
+                splitViewState.moveTabToWorkspace(tabId, targetWorkspaceId, targetPanelId)
             }
         } catch (e: Exception) {
             tabsLogger.warn(
                 LogCategory.UI,
                 "moveTabToWorkspace failed",
-                mapOf("tabId" to tabId, "targetWorkspaceId" to targetWorkspaceId),
+                mapOf(
+                    "tabId" to tabId,
+                    "targetWorkspaceId" to targetWorkspaceId,
+                    "targetPanelId" to (targetPanelId ?: "active"),
+                ),
                 error = e,
             )
             false

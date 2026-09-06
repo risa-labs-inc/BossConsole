@@ -1834,12 +1834,28 @@ class SplitViewState(
     fun moveTabToWorkspace(
         tabId: String,
         targetWorkspaceId: String,
+        /**
+         * The pane to land in, or null to let the workspace's active pane take it.
+         *
+         * Named, this also makes a move WITHIN one workspace meaningful, which the workspace-only
+         * verb had to refuse: without a pane there is nothing to distinguish "move it to where it
+         * already is" from a real request. The same-pane check below still refuses that.
+         */
+        targetPanelId: String? = null,
     ): Boolean {
         val source = findTabLocation(tabId) ?: return false
-        if (source.workspaceId == targetWorkspaceId) return false
-        val targetPanelId = activePanelIdForWorkspace(targetWorkspaceId) ?: return false
+        if (targetPanelId == null && source.workspaceId == targetWorkspaceId) return false
+        val panels = panelsInWorkspace(targetWorkspaceId)
         val targetPanel =
-            panelsInWorkspace(targetWorkspaceId).firstOrNull { it.id == targetPanelId } ?: return false
+            if (targetPanelId != null) {
+                // Refused rather than fallen back on. A caller that names a pane which is not in
+                // that workspace has the wrong idea of the layout, and quietly landing the tab
+                // somewhere else would hide that from it AND from the user watching the tab move.
+                panels.firstOrNull { it.id == targetPanelId } ?: return false
+            } else {
+                val activeId = activePanelIdForWorkspace(targetWorkspaceId) ?: return false
+                panels.firstOrNull { it.id == activeId } ?: return false
+            }
         // Identity, not id. Panel ids are unique only WITHIN a tree, and every workspace's first
         // pane is called "main" - comparing ids would reject the commonest move there is.
         if (targetPanel.tabsComponent === source.panel.tabsComponent) return false
@@ -1867,7 +1883,12 @@ class SplitViewState(
             splitViewLogger.warn(
                 LogCategory.UI,
                 "moveTabToWorkspace: target refused the tab",
-                mapOf("tabId" to tabId, "from" to source.workspaceId, "to" to targetWorkspaceId),
+                mapOf(
+                    "tabId" to tabId,
+                    "from" to source.workspaceId,
+                    "to" to targetWorkspaceId,
+                    "toPanel" to (targetPanelId ?: "active"),
+                ),
             )
             return false
         }

@@ -112,6 +112,79 @@ class SplitViewWorkspaceTransferTest {
     }
 
     @Test
+    fun `moves a tab into a NAMED pane of another workspace`() {
+        val state = newSplitViewState()
+        state.enterWorkspace("ws-a", "tab-a")
+        val right = state.splitPanel("main", SplitOrientation.VERTICAL)
+        state.getPanel(right)!!.tabsComponent.addTab(TransferTabInfo(id = "tab-a2"))
+        state.enterWorkspace("ws-b", "tab-b")
+
+        // Not the active pane - the one that was asked for. Without the panel argument the host
+        // picks, and a drop onto a specific pane has no way to say which.
+        assertTrue(state.moveTabToWorkspace("tab-b", "ws-a", targetPanelId = right))
+
+        val landed = state.panelsInWorkspace("ws-a").first { it.id == right }
+        assertEquals(
+            listOf("tab-a2", "tab-b"),
+            landed.tabsComponent.tabsState.value.tabs
+                .map { it.id },
+        )
+    }
+
+    @Test
+    fun `moves a tab between two panes of ONE workspace`() {
+        // The workspace-only verb has to refuse this: without a pane there is nothing to tell it
+        // from "move it to where it already is".
+        val state = newSplitViewState()
+        state.enterWorkspace("ws-a", "tab-a")
+        val right = state.splitPanel("main", SplitOrientation.VERTICAL)
+        state.getPanel(right)!!.tabsComponent.addTab(TransferTabInfo(id = "tab-a2"))
+
+        val component = state.getPanel("main")!!.tabsComponent.getComponentById("tab-a")
+        assertFalse(state.moveTabToWorkspace("tab-a", "ws-a"))
+        assertTrue(state.moveTabToWorkspace("tab-a", "ws-a", targetPanelId = right))
+
+        val landed = state.getPanel(right)!!.tabsComponent
+        assertEquals(
+            listOf("tab-a2", "tab-a"),
+            landed.tabsState.value.tabs
+                .map { it.id },
+        )
+        // The LIVE instance travelled, exactly as it does across workspaces.
+        assertSame(component, landed.getComponentById("tab-a"))
+        assertEquals(0, (component as TransferTabComponent).destroyCount)
+    }
+
+    @Test
+    fun `refuses a pane that is not in the target workspace, rather than redirecting`() {
+        // The arrangement matters: the source tab is in ws-a's RIGHT pane while ws-a's active pane
+        // is "main", so a fallback to the active pane would be a legal move and would SUCCEED.
+        // Without that, an implementation that silently redirects passes this test.
+        val state = newSplitViewState()
+        state.enterWorkspace("ws-a", "tab-a")
+        val aRight = state.splitPanel("main", SplitOrientation.VERTICAL)
+        state.getPanel(aRight)!!.tabsComponent.addTab(TransferTabInfo(id = "tab-a2"))
+        state.setActivePanel("main")
+        state.enterWorkspace("ws-b", "tab-b")
+        val bRight = state.splitPanel("main", SplitOrientation.VERTICAL)
+        state.getPanel(bRight)!!.tabsComponent.addTab(TransferTabInfo(id = "tab-b2"))
+
+        // A pane of ws-b, named as if it were one of ws-a. A caller with the wrong idea of the
+        // layout must not have the tab quietly land somewhere else.
+        assertFalse(state.moveTabToWorkspace("tab-a2", "ws-a", targetPanelId = bRight))
+        assertFalse(state.moveTabToWorkspace("tab-a2", "ws-a", targetPanelId = "no-such-pane"))
+        val stillThere =
+            state
+                .panelsInWorkspace("ws-a")
+                .first { it.id == aRight }
+                .tabsComponent.tabsState.value.tabs
+                .map { it.id }
+        assertEquals(listOf("tab-a2"), stillThere)
+        // Its own pane is a move to where it already is.
+        assertFalse(state.moveTabToWorkspace("tab-b2", "ws-b", targetPanelId = bRight))
+    }
+
+    @Test
     fun `a preserved workspace names its panes the way the tab bar would`() {
         // The tab bar reads MEASURED rectangles, and a workspace behind the one on screen was
         // never composed - so its names come from the split tree with the dividers assumed

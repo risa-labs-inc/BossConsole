@@ -148,7 +148,8 @@ class ActiveTabsProviderProxy(
             false
         }
 
-    // Cross-workspace transfer is in-process only, the same line openTab, openTabInSplit and
+    // Cross-workspace and cross-pane transfer are in-process only, the same line openTab,
+    // openTabInSplit and
     // openPanelAsTab already take: it moves a live tab component and its lifecycle between panels
     // of the host's split-view state, which has no meaning on this side of an IPC boundary.
     //
@@ -172,6 +173,12 @@ class ActiveTabsProviderProxy(
     override suspend fun moveTabToWorkspace(
         tabId: String,
         targetWorkspaceId: String,
+    ): Boolean = false
+
+    override suspend fun moveTabToPane(
+        tabId: String,
+        targetWorkspaceId: String,
+        targetPanelId: String,
     ): Boolean = false
 
     // allWindowTabs and refreshAllWindowTabs are left on their api defaults, which is the same
