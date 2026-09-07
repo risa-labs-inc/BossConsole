@@ -1552,13 +1552,14 @@ private class ApiActiveTabsProviderAdapter(
     override suspend fun moveTabToWorkspace(
         tabId: String,
         targetWorkspaceId: String,
-    ): Boolean = moveTab(tabId, targetWorkspaceId, targetPanelId = null)
+    ): Boolean = moveTab(tabId, targetWorkspaceId, targetPanelId = null, targetIndex = null)
 
     override suspend fun moveTabToPane(
         tabId: String,
         targetWorkspaceId: String,
         targetPanelId: String,
-    ): Boolean = moveTab(tabId, targetWorkspaceId, targetPanelId)
+        targetIndex: Int?,
+    ): Boolean = moveTab(tabId, targetWorkspaceId, targetPanelId, targetIndex)
 
     /**
      * The one implementation behind both move verbs; a null [targetPanelId] lets the workspace's
@@ -1568,13 +1569,14 @@ private class ApiActiveTabsProviderAdapter(
         tabId: String,
         targetWorkspaceId: String,
         targetPanelId: String?,
+        targetIndex: Int?,
     ): Boolean =
         try {
             // Marshalled here rather than at the call site: detach/adopt move Essenty
             // LifecycleRegistries between panels, and the api is suspend precisely so a plugin
             // does not have to know that.
             withContext(Dispatchers.Main) {
-                splitViewState.moveTabToWorkspace(tabId, targetWorkspaceId, targetPanelId)
+                splitViewState.moveTabToWorkspace(tabId, targetWorkspaceId, targetPanelId, targetIndex)
             }
         } catch (e: Exception) {
             tabsLogger.warn(
@@ -1584,6 +1586,7 @@ private class ApiActiveTabsProviderAdapter(
                     "tabId" to tabId,
                     "targetWorkspaceId" to targetWorkspaceId,
                     "targetPanelId" to (targetPanelId ?: "active"),
+                    "targetIndex" to (targetIndex?.toString() ?: "append"),
                 ),
                 error = e,
             )

@@ -1842,23 +1842,26 @@ class SplitViewState(
          * already is" from a real request. The same-pane check below still refuses that.
          */
         targetPanelId: String? = null,
+        /**
+         * Where in the destination pane's list the tab should sit, or null to append.
+         *
+         * Only meaningful alongside [targetPanelId]: an index into a pane nobody named is an index
+         * into a list the caller cannot see. It is also what makes a move WITHIN one pane a real
+         * request - a reorder - where without it there is nothing to do.
+         */
+        targetIndex: Int? = null,
     ): Boolean {
         val source = findTabLocation(tabId) ?: return false
         if (targetPanelId == null && source.workspaceId == targetWorkspaceId) return false
-        val panels = panelsInWorkspace(targetWorkspaceId)
-        val targetPanel =
-            if (targetPanelId != null) {
-                // Refused rather than fallen back on. A caller that names a pane which is not in
-                // that workspace has the wrong idea of the layout, and quietly landing the tab
-                // somewhere else would hide that from it AND from the user watching the tab move.
-                panels.firstOrNull { it.id == targetPanelId } ?: return false
-            } else {
-                val activeId = activePanelIdForWorkspace(targetWorkspaceId) ?: return false
-                panels.firstOrNull { it.id == activeId } ?: return false
-            }
+        val targetPanel = destinationPanel(targetWorkspaceId, targetPanelId) ?: return false
         // Identity, not id. Panel ids are unique only WITHIN a tree, and every workspace's first
         // pane is called "main" - comparing ids would reject the commonest move there is.
-        if (targetPanel.tabsComponent === source.panel.tabsComponent) return false
+        if (targetPanel.tabsComponent === source.panel.tabsComponent) {
+            // Landing in the pane it is already in is a REORDER when an index says where, and
+            // nothing at all when it does not. Detach and adopt would work here too and must not
+            // be used: it would destroy and rebuild a lifecycle to change a list position.
+            return targetIndex != null && reorderWithinPanel(targetPanel, tabId, targetIndex)
+        }
 
         // Same shape as TabDropHandler.handleTabDropResult's MoveToPanel branch, and for the same
         // reasons: transfer the live instance when we can; fall back to recreate-from-config only
@@ -1893,8 +1896,49 @@ class SplitViewState(
             return false
         }
 
+        // Adopted at the END of the destination's list, so an index is applied afterwards. There is
+        // no adopt-at-index on BossTabsComponent, and one move within the pane it just landed in is
+        // cheaper than adding one.
+        if (targetIndex != null) reorderWithinPanel(targetPanel, tabId, targetIndex)
+
         pruneEmptyPanelsIn(source.workspaceId)
         return true
+    }
+
+    /**
+     * The pane a move should land in, or null when there is not one.
+     *
+     * A NAMED pane that the workspace does not have is refused rather than fallen back on: a caller
+     * with the wrong idea of the layout must not have the tab quietly land somewhere else, where
+     * neither it nor the user watching the tab move would learn anything.
+     */
+    private fun destinationPanel(
+        targetWorkspaceId: String,
+        targetPanelId: String?,
+    ): SplitNode.Panel? {
+        val panels = panelsInWorkspace(targetWorkspaceId)
+        val wanted = targetPanelId ?: activePanelIdForWorkspace(targetWorkspaceId) ?: return null
+        return panels.firstOrNull { it.id == wanted }
+    }
+
+    /**
+     * Put [tabId] at [targetIndex] within [panel], and say whether anything moved.
+     *
+     * The index is clamped rather than rejected. A caller computes it from a list it read a frame
+     * ago - a tab can close in between - and "as near as asked" is a better answer to that than
+     * refusing a move the user has already committed to with a drop.
+     */
+    private fun reorderWithinPanel(
+        panel: SplitNode.Panel,
+        tabId: String,
+        targetIndex: Int,
+    ): Boolean {
+        val tabs = panel.tabsComponent.tabsState.value.tabs
+        val from = tabs.indexOfFirst { it.id == tabId }
+        val to = targetIndex.coerceIn(0, tabs.lastIndex)
+        val moves = from >= 0 && from != to
+        if (moves) panel.tabsComponent.moveTab(from, to)
+        return moves
     }
 
     /**

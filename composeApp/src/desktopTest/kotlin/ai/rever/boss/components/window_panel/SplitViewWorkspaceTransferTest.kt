@@ -156,6 +156,46 @@ class SplitViewWorkspaceTransferTest {
     }
 
     @Test
+    fun `lands the tab at the index it was dropped at`() {
+        val state = newSplitViewState()
+        state.enterWorkspace("ws-a", "a1", "a2", "a3")
+        state.enterWorkspace("ws-b", "b1")
+
+        // Above "a2", which is index 1 - not appended, which is what adoptTab does on its own.
+        assertTrue(state.moveTabToWorkspace("b1", "ws-a", targetPanelId = "main", targetIndex = 1))
+        assertEquals(listOf("a1", "b1", "a2", "a3"), state.tabIdsIn("ws-a"))
+    }
+
+    @Test
+    fun `reorders within one pane, without destroying the component`() {
+        // Same pane, so there is nothing to detach: this has to be a move, or a lifecycle would be
+        // torn down and rebuilt to change a list position.
+        val state = newSplitViewState()
+        state.enterWorkspace("ws-a", "a1", "a2", "a3")
+        val component = state.getPanel("main")!!.tabsComponent.getComponentById("a3")
+
+        assertTrue(state.moveTabToWorkspace("a3", "ws-a", targetPanelId = "main", targetIndex = 0))
+        assertEquals(listOf("a3", "a1", "a2"), state.tabIdsIn("ws-a"))
+        assertSame(component, state.getPanel("main")!!.tabsComponent.getComponentById("a3"))
+        assertEquals(0, (component as TransferTabComponent).destroyCount)
+    }
+
+    @Test
+    fun `an index past the end is clamped, and a no-op reorder is refused`() {
+        // Clamped rather than rejected: the caller computed the index from a list it read a frame
+        // ago, and a drop the user already committed to should land as near as asked.
+        val state = newSplitViewState()
+        state.enterWorkspace("ws-a", "a1", "a2")
+
+        assertTrue(state.moveTabToWorkspace("a1", "ws-a", targetPanelId = "main", targetIndex = 99))
+        assertEquals(listOf("a2", "a1"), state.tabIdsIn("ws-a"))
+        // Already there.
+        assertFalse(state.moveTabToWorkspace("a1", "ws-a", targetPanelId = "main", targetIndex = 1))
+        // No index in its own pane is nothing to do at all.
+        assertFalse(state.moveTabToWorkspace("a1", "ws-a", targetPanelId = "main"))
+    }
+
+    @Test
     fun `refuses a pane that is not in the target workspace, rather than redirecting`() {
         // The arrangement matters: the source tab is in ws-a's RIGHT pane while ws-a's active pane
         // is "main", so a fallback to the active pane would be a legal move and would SUCCEED.

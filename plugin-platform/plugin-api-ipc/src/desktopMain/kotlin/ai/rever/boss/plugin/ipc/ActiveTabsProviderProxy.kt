@@ -179,6 +179,7 @@ class ActiveTabsProviderProxy(
         tabId: String,
         targetWorkspaceId: String,
         targetPanelId: String,
+        targetIndex: Int?,
     ): Boolean = false
 
     // allWindowTabs and refreshAllWindowTabs are left on their api defaults, which is the same
