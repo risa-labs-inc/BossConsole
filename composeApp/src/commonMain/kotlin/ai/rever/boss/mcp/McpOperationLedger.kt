@@ -153,14 +153,9 @@ class McpOperationLedger(
     }
 
     /**
-     * Sanitizes map arguments using [LogSanitizer.sanitizeMap].
+     * Sanitizes map arguments using [McpArgumentSanitizer].
      * Avoids blind length-based string masking so that legitimate arguments
      * like long file paths, URLs, and shell commands are preserved for auditing.
      */
-    private fun sanitizeArguments(rawArgs: Map<String, Any?>): Map<String, String> {
-        val maskedMap = LogSanitizer.sanitizeMap(rawArgs)
-        return maskedMap.mapValues { (_, value) ->
-            value?.toString() ?: "null"
-        }
-    }
+    private fun sanitizeArguments(rawArgs: Map<String, Any?>): Map<String, String> = McpArgumentSanitizer.sanitize(rawArgs)
 }

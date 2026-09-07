@@ -54,7 +54,7 @@ class McpOperationLedgerTest {
     }
 
     @Test
-    fun `record redacts sensitive argument values via LogSanitizer`() {
+    fun `record redacts sensitive argument values via McpArgumentSanitizer`() {
         val file = createTempLedgerFile()
         val ledger = McpOperationLedger(ledgerFile = file)
 
@@ -82,6 +82,31 @@ class McpOperationLedgerTest {
         assertFalse(secretVal.contains("my-super-secret-password-12345"), "secret_key must not expose secret in plaintext")
         val tokenVal = decoded.sanitizedArgs["auth_token"] ?: ""
         assertFalse(tokenVal.contains("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"), "auth_token must not expose secret in plaintext")
+    }
+
+    @Test
+    fun `a credential-shaped value is masked even under a non-sensitive key name`() {
+        val file = createTempLedgerFile()
+        val ledger = McpOperationLedger(ledgerFile = file)
+
+        ledger.record(
+            toolName = "run_command",
+            providerId = "terminal",
+            policyApplied = McpPolicyAction.ASK,
+            approvalDisposition = McpApprovalDisposition.APPROVED_ONCE,
+            durationMs = 5L,
+            isError = false,
+            rawArgs =
+                mapOf(
+                    // "id" names nothing sensitive, but the value is a JWT by shape.
+                    "id" to "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc",
+                ),
+        )
+
+        val lines = file.readLines()
+        val decoded = Json.decodeFromString<McpOperationRecord>(lines.first())
+        val idVal = decoded.sanitizedArgs["id"] ?: ""
+        assertFalse(idVal.contains("eyJzdWIiOiIxMjM0NTY3ODkwIn0"), "a JWT-shaped value must be masked regardless of its key name")
     }
 
     @Test

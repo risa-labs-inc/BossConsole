@@ -1,8 +1,8 @@
 package ai.rever.boss.components.dialogs
 
 import ai.rever.boss.mcp.McpApprovalRequest
+import ai.rever.boss.mcp.McpArgumentSanitizer
 import ai.rever.boss.mcp.McpMutatingToolCatalog
-import ai.rever.boss.plugin.logging.LogSanitizer
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
@@ -151,7 +151,7 @@ fun McpApprovalDialog(
 
                     val sanitizedArguments =
                         remember(request.arguments) {
-                            LogSanitizer.sanitizeMap(request.arguments)
+                            McpArgumentSanitizer.sanitize(request.arguments)
                         }
 
                     if (sanitizedArguments.isNotEmpty()) {
