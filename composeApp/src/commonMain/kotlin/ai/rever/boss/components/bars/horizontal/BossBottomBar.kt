@@ -259,7 +259,7 @@ fun BossRightBottomBar() {
         )
     }
 
-    // Status message (temporary messages like "Workspace Saved")
+    // Status message (temporary messages like "Space Saved")
     val statusMessage by StatusMessageManager.currentMessage.collectAsState()
     statusMessage?.let { message ->
         Text(

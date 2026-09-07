@@ -82,7 +82,7 @@ fun WorkspaceButton(
             // Save workspace
             add(
                 ContextMenuItem(
-                    text = "Save Workspace...",
+                    text = "Save Space...",
                     icon = Icons.Outlined.Save,
                     onClick = { showSaveDialog = true },
                 ),
@@ -106,7 +106,7 @@ fun WorkspaceButton(
             if (deletableWorkspaces.isNotEmpty()) {
                 add(
                     ContextMenuItem(
-                        text = "Delete Workspace...",
+                        text = "Delete Space...",
                         icon = Icons.Outlined.Delete,
                         onClick = { showDeleteDialog = true },
                     ),
@@ -118,7 +118,7 @@ fun WorkspaceButton(
             // Open workspace directory
             add(
                 ContextMenuItem(
-                    text = "Open Workspace Folder",
+                    text = "Open Space Folder",
                     icon = Icons.Outlined.FolderOpen,
                     onClick = {
                         openWorkspaceDirectory(workspaceManager.getWorkspaceDirectory())
@@ -227,12 +227,12 @@ fun WorkspaceButton(
                 primaryAction = onOpenWorkspacePicker,
                 hintText =
                     buildString {
-                        append("Layout Workspace: ${currentWorkspace?.description ?: "Default layout"}")
+                        append("Layout Space: ${currentWorkspace?.description ?: "Default layout"}")
                         // Only where the left click has been taken. Told to right-click a button
                         // whose left click already opens the menu, a user right-clicks and gets
                         // nothing.
-                        if (onOpenWorkspacePicker != null) append("\nRight-click for workspace options")
-                        append("\nWorkspaces saved to: ${workspaceManager.getWorkspaceDirectory()}")
+                        if (onOpenWorkspacePicker != null) append("\nRight-click for space options")
+                        append("\nSpaces saved to: ${workspaceManager.getWorkspaceDirectory()}")
                     },
             )
         }

@@ -459,7 +459,7 @@ fun ApplicationScope.BossWindow(
                 Separator()
 
                 // Workspace submenu
-                Menu("Select Workspace") {
+                Menu("Select Space") {
                     workspaces.forEach { workspace ->
                         Item(
                             text = workspace.name,
@@ -472,7 +472,7 @@ fun ApplicationScope.BossWindow(
 
                     if (workspaces.isEmpty()) {
                         Item(
-                            text = "(No workspaces available)",
+                            text = "(No spaces available)",
                             onClick = { },
                             enabled = false,
                         )
@@ -494,7 +494,7 @@ fun ApplicationScope.BossWindow(
                 Separator()
 
                 Item(
-                    "Save Workspace",
+                    "Save Space",
                     shortcut = shortcutBridge.getKeyShortcut(KeymapActions.WORKSPACE_SAVE),
                     onClick = {
                         MenuActionsHandler.triggerSaveWorkspace(windowState.id)

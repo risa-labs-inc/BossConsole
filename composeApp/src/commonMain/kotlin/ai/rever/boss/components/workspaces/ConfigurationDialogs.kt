@@ -32,12 +32,12 @@ fun SaveWorkspaceDialog(
 
     BossAlertDialog(
         onDismissRequest = onDismiss,
-        title = { androidx.compose.material.Text("Save Workspace") },
+        title = { androidx.compose.material.Text("Save Space") },
         text = {
             androidx.compose.material.OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
-                label = { androidx.compose.material.Text("Workspace Name") },
+                label = { androidx.compose.material.Text("Space Name") },
                 singleLine = true,
             )
         },
@@ -95,11 +95,11 @@ fun DeleteWorkspaceDialog(
 
     BossAlertDialog(
         onDismissRequest = onDismiss,
-        title = { androidx.compose.material.Text("Delete Workspace") },
+        title = { androidx.compose.material.Text("Delete Space") },
         text = {
             Column {
                 androidx.compose.material.Text(
-                    "Select a workspace to delete:",
+                    "Select a space to delete:",
                     modifier = Modifier.padding(bottom = 16.dp),
                 )
 
@@ -125,7 +125,7 @@ fun DeleteWorkspaceDialog(
 
                 if (workspaces.isEmpty()) {
                     androidx.compose.material.Text(
-                        "No custom workspaces to delete.",
+                        "No custom spaces to delete.",
                         color = BossTheme.colors.textSecondary,
                     )
                 }

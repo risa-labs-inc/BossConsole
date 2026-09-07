@@ -519,7 +519,7 @@ internal fun BossAppMenuActionEffects(
                         workspaceManager.updateCurrentWorkspace(updatedConfig)
                         workspaceManager.saveCurrentWorkspace()
                         TabTreeState.markWorkspaceAsSaved(currentConfig.id)
-                        StatusMessageManager.showMessage("Workspace Saved")
+                        StatusMessageManager.showMessage("Space Saved")
                     } else {
                         val currentLayout = extractCurrentWorkspace(splitViewState, windowProjectState.selectedProject.value.path)
                         val newConfig =
@@ -529,7 +529,7 @@ internal fun BossAppMenuActionEffects(
                             )
                         workspaceManager.updateCurrentWorkspace(newConfig)
                         workspaceManager.saveCurrentWorkspace()
-                        StatusMessageManager.showMessage("Workspace Saved")
+                        StatusMessageManager.showMessage("Space Saved")
                     }
                 }
             }.launchIn(this)

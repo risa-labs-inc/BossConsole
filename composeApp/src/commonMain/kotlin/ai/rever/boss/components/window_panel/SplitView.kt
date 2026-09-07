@@ -2209,7 +2209,7 @@ class SplitViewState(
                 preservedWorkspaceStates[workspaceId]?.workspaceName
                     ?: when (workspaceId) {
                         "last-session" -> "Last Session"
-                        else -> "Current Workspace"
+                        else -> "Current Space"
                     }
 
             val panels = getAllPanels()
@@ -2304,7 +2304,7 @@ class SplitViewState(
                 ?: preservedWorkspaceStates[workspaceId]?.workspaceName
                 ?: when (workspaceId) {
                     "last-session" -> "Last Session"
-                    else -> "Workspace $workspaceId"
+                    else -> "Space $workspaceId"
                 }
 
         // Collect from current state (only if it has tabs)

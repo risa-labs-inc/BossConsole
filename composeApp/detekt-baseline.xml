@@ -896,7 +896,7 @@
     <ID>MaxLineLength:SplitViewStateRegistry.kt$SplitViewStateRegistry$splitViewStateRegistryLogger.debug(LogCategory.UI, "Registering state for window", mapOf("windowId" to windowId))</ID>
     <ID>MaxLineLength:SplitViewStateRegistry.kt$SplitViewStateRegistry$splitViewStateRegistryLogger.debug(LogCategory.UI, "Total registered windows", mapOf("count" to _states.value.size))</ID>
     <ID>MaxLineLength:SplitViewStateRegistry.kt$SplitViewStateRegistry$splitViewStateRegistryLogger.debug(LogCategory.UI, "Unregistering state for window", mapOf("windowId" to windowId))</ID>
-    <ID>MaxLineLength:StartupSettings.kt$"If no workspaces are found within the timeout, it assumes a fresh install and shows the New Tab dialog."</ID>
+    <ID>MaxLineLength:StartupSettings.kt$"If no spaces are found within the timeout, it assumes a fresh install and shows the New Tab dialog."</ID>
     <ID>MaxLineLength:StatusBarRegistryImpl.kt$StatusBarRegistryImpl$.</ID>
     <ID>MaxLineLength:SupabaseApiClient.kt$SupabaseApiClient$// Secure configuration - values loaded from ConfigLoader (environment variables, system properties, or local.properties)</ID>
     <ID>MaxLineLength:SupabasePasskeyService.kt$SupabasePasskeyService$logger.debug(LogCategory.PASSKEY, "Fetching passkeys for user", mapOf("userId" to LogSanitizer.maskUserId(userId)))</ID>

@@ -1219,6 +1219,51 @@ literal table: the mapping lives in each plugin's `plugin.json` and when the
 plugin is absent there is no manifest to read. It keys on the **type string**, not
 the whole `TabTypeId`, whose equality includes `pluginId` and `defaultOrder`.
 
+## The product word is "Space", the code word is `workspace`
+
+What a person reads in BOSS is a **Space**. What the code calls it is still `workspace`,
+everywhere. That split is deliberate: do not "finish the rename".
+
+**Renamed (display only)**: button and menu labels, dialog titles and bodies, tooltips, content
+descriptions, empty states, toasts, the Settings sidebar entry and its section titles and option
+descriptions, the Shortcuts category and its action descriptions, and MCP tool descriptions.
+
+**Kept as `workspace`**, each because changing it breaks something real:
+
+- **Identifiers** - `workspaceId`, `WorkspaceManager`, `LayoutWorkspace`, `WorkspaceDataProvider`,
+  `moveTabToWorkspace`, packages, files, classes, parameters. The plugin api under
+  `plugin-platform/` is consumed by 33 plugin repos and is binary-checked
+  (`WorkspaceStableFieldTest`, `PanelConfigBinaryCompatTest`); a member rename rejects every plugin.
+- **Action and permission ids** - `"workspace.save"` and anything of that shape. Matched as strings.
+- **Persisted keys and paths** - `BOSS/workspaces`, `workspace-settings.json`, serialized field
+  names, ids like `"workspace-claude-code"` and `"last-session"`.
+- **Workspace NAMES**, including defaults - `"Default Workspace"`, `"My Workspace"`,
+  `"Last Session"`, and the generated `"Workspace <epoch>"` with its `"Saved workspace"`
+  description. `WorkspaceDataProvider.deleteWorkspace(name)` and `WorkspaceManager` match by NAME,
+  so renaming a default orphans lookups against files already on a user's disk. This is the trap
+  that looks most like a UI string: check what a string is USED for before changing it.
+- **`boss://` hosts and parameter names**, the `boss workspace` CLI subcommand and its `--help`
+  prose (help that names a different word than the command it documents is worse than the old
+  word), MCP tool NAMES (`tabs_list`, `tab_move`), and `LogCategory.WORKSPACE`.
+- **Log message text.** Operator-facing diagnostics that people grep across versions, sitting
+  right beside the identifiers.
+
+**Settings search keeps the old word.** `workspaceEntries()` and `startupEntries()` in
+`SettingsSearchEntries.kt` carry `"workspace"`/`"workspaces"` keywords next to the new "Space"
+labels, plus a `sectionLevel` catch-all, so a year of habit still finds the page.
+`SettingsSearchIndexDriftTest` scans the sources, so a renamed `SettingsSection(title = ...)` has
+to be renamed in the index in the same commit.
+
+**Comments were left alone**, apart from two that quote a label that changed. A comment sitting
+next to `workspaceId` while saying "space" reads worse than either word on its own. Note that
+detekt baseline signatures embed KDoc and string text, so editing a comment inside a baselined
+declaration invalidates its baseline entry.
+
+Two user-visible strings deliberately still say "workspace", because there the word is generic
+English rather than the Space concept: the auth brand headline "The governed workspace for AI
+agents" (`AuthBrandArt.kt` and `auth-brand/index.html`) and the Toolbox wizard's "Customize your
+workspace by selecting the tools you need." Tools install app-wide, not into a Space.
+
 ## Documentation
 
 - [MCP for agent-less operators](docs/mcp-agentless-operators.md) - Toolbox kill-switches and attach path
