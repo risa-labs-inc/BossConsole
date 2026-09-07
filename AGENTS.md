@@ -339,6 +339,25 @@ not built for the two-window case.
 prompt for that plugin is already queued, so `offerIfMissing` returning true is not proof anything
 appeared. The press therefore logs whatever happens, matching the bookmarks shelf's call site.
 
+## The tools menu shows a scrollbar only when it scrolls
+
+`ToolLauncherDialog`'s grid is capped at `VISIBLE_ROWS`, and its scrollbar is pinned visible while
+there are more rows than that. It reads as one pattern with the Top of Mind plugin's Space picker,
+which does the same job and now uses the same tile vocabulary and the same 0.7 alpha.
+
+Two traps, both hit while wiring this:
+
+- **`Modifier.scrollbar` has no fits-the-viewport guard**, unlike `lazyListScrollbar`, which
+  refuses to draw. Given content that fits it computes `contentLength == viewport` and a
+  FULL-LENGTH thumb, so pinning `alpha` unconditionally paints a permanent bar down a grid with
+  nothing to scroll. Anything pinning that alpha has to gate it.
+- **The gate cannot be a scroll-state read.** `ScrollState.maxValue` starts at `Int.MAX_VALUE` and
+  holds it until the scrollable has measured, so `maxValue > 0` is true on every first
+  composition; `canScrollForward` is `value < maxValue`, so it is true then as well. Both were
+  tried and both drew a bar under three tiles - a probe printed 2147483647. Gate on layout
+  arithmetic instead, which is right on the first frame: here, the row count against
+  `VISIBLE_ROWS`, rounded UP so 13 tools in 4 columns is 4 rows.
+
 ## Retiring a plugin into another one
 
 `RetiredPlugins.sweep()` uninstalls a plugin whose job another plugin has taken over. It runs at
