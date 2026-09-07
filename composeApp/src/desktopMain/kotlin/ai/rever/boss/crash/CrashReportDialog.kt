@@ -124,11 +124,13 @@ internal fun CrashReportDialog(
     // same colors BossTheme.kt uses: textSecondary clears the 3:1 UI-component contrast
     // floor in all six themes (textMuted at 45% alpha, this fix's first cut, did not).
     val defaultScrollbarStyle = LocalScrollbarStyle.current
+    val thumbColor = BossTheme.colors.textSecondary
+    val thumbHoverColor = BossTheme.colors.textPrimary
     val scrollbarStyle =
-        remember(defaultScrollbarStyle, BossTheme.colors.textSecondary, BossTheme.colors.textPrimary) {
+        remember(defaultScrollbarStyle, thumbColor, thumbHoverColor) {
             defaultScrollbarStyle.copy(
-                unhoverColor = BossTheme.colors.textSecondary,
-                hoverColor = BossTheme.colors.textPrimary,
+                unhoverColor = thumbColor,
+                hoverColor = thumbHoverColor,
             )
         }
 
