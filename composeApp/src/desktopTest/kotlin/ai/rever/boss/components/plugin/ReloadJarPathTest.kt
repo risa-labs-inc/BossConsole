@@ -311,7 +311,7 @@ class ReloadJarPathTest {
 
     @Test
     fun `version comparison table`() {
-        // Exhaustive table over the comparison the Windows-stale-jar fix introduced: multi-digit
+        // Regression table over the comparison the Windows-stale-jar fix introduced: multi-digit
         // components, prerelease ordering, build metadata, unreadable/missing versions, and ties.
         // Expected winner is relative to the candidates' paths: "loaded" keeps the running jar,
         // "persisted" takes the recorded one.
@@ -325,6 +325,16 @@ class ReloadJarPathTest {
         val cases =
             listOf(
                 Case("multi-digit minor beats lower", "1.10.0", "1.9.0", "loaded"),
+                Case("multi-part prerelease advances", "1.0.0-alpha.1.2", "1.0.0-alpha.1.3", "persisted"),
+                Case("multi-part prerelease cannot downgrade", "1.0.0-alpha.1.3", "1.0.0-alpha.1.2", "loaded"),
+                Case("numeric identifiers compare numerically", "1.0.0-rc.2", "1.0.0-rc.10", "persisted"),
+                Case("numeric precedes text", "1.0.0-alpha.1", "1.0.0-alpha.beta", "persisted"),
+                Case("unknown labels compare lexically", "1.0.0-dev", "1.0.0-nightly", "persisted"),
+                Case("identifier prefix precedes extension", "1.0.0-alpha", "1.0.0-alpha.1", "persisted"),
+                Case("numeric-only prereleases", "1.0.0-2", "1.0.0-10", "persisted"),
+                Case("large identifiers", "1.0.0-9999999999", "1.0.0-10000000000", "persisted"),
+                Case("prerelease metadata ignored", "1.0.0-alpha.1+one", "1.0.0-alpha.1+two", "loaded"),
+                Case("invalid extra core component", "1.0.0.9", "1.0.0", "persisted"),
                 Case("lower loses", "1.2.14", "1.2.15", "persisted"),
                 Case("prerelease loses to release", "1.2.3-alpha.1", "1.2.3", "persisted"),
                 Case("later prerelease wins", "1.2.3-beta.1", "1.2.3-alpha.2", "loaded"),

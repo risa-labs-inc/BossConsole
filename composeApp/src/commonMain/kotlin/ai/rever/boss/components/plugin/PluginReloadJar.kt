@@ -1,7 +1,5 @@
 package ai.rever.boss.components.plugin
 
-import ai.rever.boss.plugin.api.Version
-
 /**
  * The JAR a reload should load: the one the plugin is running from, else the installer's recorded
  * one — comparing manifest versions when both exist — else whatever is on disk under a new name,
@@ -42,9 +40,8 @@ import ai.rever.boss.plugin.api.Version
  * Manifest versions are only read when two or more known candidates survive: with a single
  * survivor the comparison cannot change the outcome, so the read is skipped. Callers must run
  * filesystem checks and manifest reads on an I/O dispatcher.
- * Build metadata (`+build`) is stripped before parsing, per semver §10: it must be ignored for
- * precedence, and the manifest reader accepts versions that [Version.parse] cannot split once a
- * `+` is present.
+ * [PluginReloadVersion] compares all prerelease identifiers and ignores build metadata for
+ * precedence. The shared plugin API comparator only supports a subset of prerelease formats.
  */
 internal fun resolveReloadJarPath(
     candidates: ReloadJarCandidates,
@@ -73,7 +70,7 @@ internal fun resolveReloadJarPath(
         else -> {
             val versions =
                 known.associateWith { path ->
-                    runCatching { manifestVersion(path)?.let { Version.parse(it.substringBefore('+')) } }
+                    runCatching { manifestVersion(path)?.let { PluginReloadVersion.parse(it) } }
                         .onFailure { onManifestVersionReadFailed(path) }
                         .getOrNull()
                 }
