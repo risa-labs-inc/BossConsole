@@ -21,7 +21,7 @@ import ai.rever.boss.plugin.api.Version
  * preserves callers that do not supply a version reader.
  *
  * [relocated] is a TRUE last resort, unchanged: it is consulted only when neither candidate in
- * [candidates] survives its existence check or its manifest read. The plugin directory is
+ * [candidates] survives its existence check. The plugin directory is
  * deliberately not part of the version comparison — a routine reload must not silently swap to a
  * stray dev build or a pinned/downgraded install that happens to declare a higher version under
  * the same [pluginId] key, nor race a download that streams onto a scannable
@@ -40,9 +40,8 @@ import ai.rever.boss.plugin.api.Version
  * that will be scored as if it had no version, so a mis-scored reload is diagnosable.
  *
  * Manifest versions are only read when two or more known candidates survive: with a single
- * survivor the comparison cannot change the outcome, so the read is skipped rather than paid for —
- * the menu-driven reload path has no persisted record and runs on the composition dispatcher,
- * where a jar open + manifest parse would be blocking I/O on the UI thread (docs/THREADING.md).
+ * survivor the comparison cannot change the outcome, so the read is skipped. Callers must run
+ * filesystem checks and manifest reads on an I/O dispatcher.
  * Build metadata (`+build`) is stripped before parsing, per semver §10: it must be ignored for
  * precedence, and the manifest reader accepts versions that [Version.parse] cannot split once a
  * `+` is present.
@@ -58,6 +57,7 @@ internal fun resolveReloadJarPath(
     // record. The directory scan is deliberately NOT consulted here (see [relocated] above).
     val known =
         listOfNotNull(candidates.loadedJarPath, candidates.persistedJarPath)
+            .distinct()
             .filter { exists(it) }
 
     return when {
@@ -65,8 +65,7 @@ internal fun resolveReloadJarPath(
             relocated()
         }
 
-        // One surviving candidate cannot be out-voted. Reading its manifest would be pure cost,
-        // and on the menu-driven reload path that cost is blocking JarFile I/O on the UI thread.
+        // One surviving candidate cannot be out-voted, so its manifest need not be read.
         known.size == 1 -> {
             known.first()
         }

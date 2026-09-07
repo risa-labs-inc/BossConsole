@@ -46,6 +46,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.lang.ref.WeakReference
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -245,6 +246,13 @@ class DynamicPluginManager(
      */
     @Volatile
     internal var onPluginActivated: ((PluginManifest) -> Unit)? = null
+
+    /**
+     * Desktop persistence lookup used by menu reloads to compare the installed record with
+     * the running JAR. Called on Dispatchers.IO; null in headless contexts without persistence.
+     */
+    @Volatile
+    internal var persistedReloadJarPath: ((String) -> String?)? = null
 
     companion object {
         private val companionLogger = BossLogger.forComponent("DynamicPluginManager")
@@ -1862,7 +1870,7 @@ class DynamicPluginManager(
     }
 
     /**
-     * Reload a plugin by uninstalling and reinstalling from the same JAR path.
+     * Reload a plugin from the newest known JAR, preserving its enabled state.
      *
      * @param pluginId The plugin ID to reload
      * @return Result containing the reloaded plugin info or an error
@@ -1880,32 +1888,32 @@ class DynamicPluginManager(
         // it meant one click could force-unload several plugins and fail to bring them back.
         // Resolving first also keeps a plugin running when no reload is possible.
         val jarPath =
-            resolveReloadJarPath(
-                candidates =
-                    ReloadJarCandidates(
-                        loadedJarPath = info.jarPath,
-                        // No access to the persisted record from commonMain; relocation covers the gap,
-                        // and re-resolving from the directory is the more robust of the two anyway.
-                        persistedJarPath = null,
-                    ),
-                exists = { java.io.File(it).isFile },
-                relocated = {
-                    findRelocatedPluginJar(java.io.File(info.jarPath).parentFile, pluginId)?.absolutePath
-                },
-                manifestVersion = { path ->
-                    // No swallow here: a manifest that fails to read must reach the resolver's
-                    // runCatching so onManifestVersionReadFailed logs the candidate instead of it
-                    // being silently scored as version-less.
-                    PluginManifestReader.readFromJar(path).version
-                },
-                onManifestVersionReadFailed = { path ->
-                    logger.warn(
-                        LogCategory.SYSTEM,
-                        "Could not read manifest version of a reload candidate jar",
-                        mapOf("pluginId" to pluginId, "path" to path),
-                    )
-                },
-            ) ?: return Result.failure(
+            withContext(Dispatchers.IO) {
+                resolveReloadJarPath(
+                    candidates =
+                        ReloadJarCandidates(
+                            loadedJarPath = info.jarPath,
+                            persistedJarPath = persistedReloadJarPath?.invoke(pluginId),
+                        ),
+                    exists = { java.io.File(it).isFile },
+                    relocated = {
+                        findRelocatedPluginJar(java.io.File(info.jarPath).parentFile, pluginId)?.absolutePath
+                    },
+                    manifestVersion = { path ->
+                        // No swallow here: a manifest that fails to read must reach the resolver's
+                        // runCatching so onManifestVersionReadFailed logs the candidate instead of it
+                        // being silently scored as version-less.
+                        PluginManifestReader.readFromJar(path).version
+                    },
+                    onManifestVersionReadFailed = { path ->
+                        logger.warn(
+                            LogCategory.SYSTEM,
+                            "Could not read manifest version of a reload candidate jar",
+                            mapOf("pluginId" to pluginId, "path" to path),
+                        )
+                    },
+                )
+            } ?: return Result.failure(
                 Exception("Cannot reload $pluginId - no existing JAR (loaded from ${info.jarPath})"),
             )
 

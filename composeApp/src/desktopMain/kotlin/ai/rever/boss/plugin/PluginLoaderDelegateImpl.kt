@@ -388,26 +388,14 @@ class PluginLoaderDelegateImpl(
         }
     }
 
-    /**
-     * Log which file a reload came from when it differs from the running jar. Version comparison
-     * can now pick the record while the loaded jar still exists (the record's manifest version is
-     * higher) — only claim "the loaded JAR is gone" when it actually is.
-     */
     private fun logReloadSource(
         pluginId: String,
         loadedJarPath: String?,
         jarPath: String,
     ) {
-        val loadedGone = loadedJarPath == null || !File(loadedJarPath).isFile
-        val message =
-            if (loadedGone) {
-                "Reloading from the installed record - the loaded JAR is gone, most likely replaced by an update"
-            } else {
-                "Reloading from the installed record - the record's manifest version is newer than the running jar"
-            }
         logger.info(
             LogCategory.SYSTEM,
-            message,
+            "Reloading from a different JAR",
             mapOf("pluginId" to pluginId, "loadedJarPath" to (loadedJarPath ?: "none"), "jarPath" to jarPath),
         )
     }

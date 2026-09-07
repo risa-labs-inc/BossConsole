@@ -28,6 +28,25 @@ class ReloadJarPathTest {
     )
 
     @Test
+    fun `identical loaded and persisted paths skip manifest reads`() {
+        var existenceChecks = 0
+        val resolved =
+            resolveReloadJarPath(
+                candidates = ReloadJarCandidates("/p/tool.jar", "/p/tool.jar"),
+                exists = {
+                    existenceChecks++
+                    true
+                },
+                relocated = { error("Existing candidate must not trigger relocation") },
+                manifestVersion = { error("A single distinct candidate needs no version comparison") },
+                onManifestVersionReadFailed = { error("Manifest should not be read") },
+            )
+
+        assertEquals("/p/tool.jar", resolved)
+        assertEquals(1, existenceChecks)
+    }
+
+    @Test
     fun `picks the newer version when the stale loaded jar could not be deleted on Windows`() {
         // Simulates the Windows bug: the updater downloaded 1.2.15 and updated the installed.json
         // record, but the JVM lock prevented deleting the old 1.2.14 jar. The resolver must still

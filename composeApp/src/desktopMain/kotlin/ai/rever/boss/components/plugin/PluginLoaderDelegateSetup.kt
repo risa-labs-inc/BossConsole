@@ -46,6 +46,12 @@ actual object PluginLoaderDelegateSetup {
         val delegate = PluginLoaderDelegateImpl(dynamicPluginManager)
         context.registerPluginAPI(delegate)
 
+        // Menu reloads use the manager directly, so they need the installer's current path too.
+        // The manager invokes this lookup on IO before it unloads the running plugin.
+        dynamicPluginManager.persistedReloadJarPath = { pluginId ->
+            PluginPersistence.getInstalledPlugins().firstOrNull { it.pluginId == pluginId }?.jarPath
+        }
+
         // Re-enable and RBAC un-hide never go through the install reporters, so
         // a required dependency removed while the plugin sat disabled used to
         // come back with no prompt (#180). Per-manager: reporting must read
