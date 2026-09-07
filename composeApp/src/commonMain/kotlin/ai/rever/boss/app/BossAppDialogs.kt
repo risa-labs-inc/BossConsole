@@ -18,6 +18,7 @@ import ai.rever.boss.components.events.DashboardEventBus
 import ai.rever.boss.components.events.FileEventBus
 import ai.rever.boss.components.events.PanelEventBus
 import ai.rever.boss.components.plugin.DependentRestartDeclinedException
+import ai.rever.boss.components.plugin.PanelIds
 import ai.rever.boss.components.plugin.DependentRestartDialog
 import ai.rever.boss.components.plugin.DynamicPluginManager
 import ai.rever.boss.components.plugin.MissingDependencyDialog
@@ -703,6 +704,17 @@ internal fun BossAppDialogs(state: BossAppState) {
             onPageSelect = { url ->
                 state.showGlobalSearchDialog = false
                 coroutineScope.launch { DashboardEventBus.openUrlInNewTab(url, windowId) }
+                state.focusRequester.requestFocus()
+            },
+            onMcpToolSelect = { mcp ->
+                state.showGlobalSearchDialog = false
+                // Same verb as onToolSelect: open Toolbox so kill-switches are reachable without a
+                // coding CLI attached (BossConsole#380). Does not invoke the MCP tool.
+                state.draggablePanelComponent.revealPlugin(PanelIds.PLUGIN_MANAGER.panelId)
+                StatusMessageManager.showMessage(
+                    "Toolbox → MCP tools: toggle kill-switch for ${mcp.name}",
+                    durationMs = 8_000L,
+                )
                 state.focusRequester.requestFocus()
             },
         )

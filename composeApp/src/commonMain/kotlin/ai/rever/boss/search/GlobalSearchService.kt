@@ -660,7 +660,8 @@ object GlobalSearchService {
      * contain what was typed - see [proseScore] - while a name hit stays fuzzy, because the name is
      * what someone is actually trying to recall.
      *
-     * These results have no activation. See [SearchResult.McpToolResult].
+     * Activation opens Toolbox for kill-switch management (not tool invoke). See
+     * [SearchResult.McpToolResult] and BossConsole#380.
      */
     private fun searchMcpTools(query: String): List<SearchResult.McpToolResult> {
         val queryLower = query.lowercase()
