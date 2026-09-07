@@ -3,7 +3,6 @@ package ai.rever.boss
 import BossTheme
 import ai.rever.boss.cli.CLICommandHandler
 import ai.rever.boss.cli.createBossCLI
-import com.github.ajalt.clikt.core.ProgramResult
 import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.components.dialogs.ChromiumDownloadContent
 import ai.rever.boss.config.ChromiumAutoDownloader
@@ -58,6 +57,7 @@ import androidx.compose.ui.window.WindowExceptionHandlerFactory
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import com.github.ajalt.clikt.core.ProgramResult
 import com.github.ajalt.clikt.core.main
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -247,8 +247,9 @@ fun main(args: Array<String>) {
     // or acquiring the single-instance lock so they fail fast (<100ms) when BOSS is
     // closed without booting the GUI or corrupting standard output streams.
     val firstNonFlag = args.firstOrNull { !it.startsWith("-") }?.lowercase()
-    val isHeadlessCli = firstNonFlag in setOf("status", "mcp", "completion") ||
-        (args.isNotEmpty() && args.all { it in setOf("-h", "--help", "-v", "--version", "help", "version") })
+    val isHeadlessCli =
+        firstNonFlag in setOf("status", "mcp", "completion") ||
+            (args.isNotEmpty() && args.all { it in setOf("-h", "--help", "-v", "--version", "help", "version") })
 
     if (isHeadlessCli) {
         try {
@@ -522,7 +523,8 @@ fun main(args: Array<String>) {
                 exitProcess(1)
             }
         } else if (args.isNotEmpty()) {
-            // Standalone CLI commands (status, mcp, etc.) target the running instance via the single-instance IPC channel
+            // Standalone CLI commands (status, mcp, etc.) target the running instance
+            // via the single-instance IPC channel
             try {
                 createBossCLI().main(args)
             } catch (e: ProgramResult) {

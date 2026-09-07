@@ -2,20 +2,20 @@ package ai.rever.boss.cli
 
 import ai.rever.boss.utils.DeepLinkHandler
 import ai.rever.boss.utils.DeepLinkOrigin
+import ai.rever.boss.utils.SingleInstanceManager
+import com.github.ajalt.clikt.completion.CompletionCandidates
+import com.github.ajalt.clikt.completion.CompletionCommand
+import com.github.ajalt.clikt.completion.CompletionGenerator
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.Context
 import com.github.ajalt.clikt.core.NoOpCliktCommand
+import com.github.ajalt.clikt.core.ProgramResult
 import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.parameters.arguments.argument
 import com.github.ajalt.clikt.parameters.arguments.optional
 import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
-import com.github.ajalt.clikt.completion.CompletionCandidates
-import com.github.ajalt.clikt.completion.CompletionCommand
-import com.github.ajalt.clikt.completion.CompletionGenerator
-import com.github.ajalt.clikt.core.ProgramResult
-import ai.rever.boss.utils.SingleInstanceManager
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -25,8 +25,8 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.ByteArrayOutputStream
-import java.nio.charset.StandardCharsets
 import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 
 /**
  * Main BOSS CLI command.
@@ -141,8 +141,6 @@ class BossTerminalCommand : CliktCommand(name = "terminal") {
     }
 }
 
-
-
 /**
  * Queries running BOSS Console status (memory, active project, version).
  * Usage:
@@ -171,15 +169,17 @@ class BossStatusCommand : CliktCommand(name = "status") {
         )
     }
 
-    private fun formatHumanStatus(rawJson: String): String {
-        return buildString {
+    private fun formatHumanStatus(rawJson: String): String =
+        buildString {
             appendLine("BOSS Console Status")
             appendLine("-------------------")
             try {
                 val element = Json.parseToJsonElement(rawJson).jsonObject
                 appendLine("  Running:        ${element["running"]?.jsonPrimitive?.contentOrNull ?: "true"}")
                 appendLine("  Version:        ${element["version"]?.jsonPrimitive?.contentOrNull ?: "unknown"}")
-                appendLine("  OS:             ${element["os"]?.jsonPrimitive?.contentOrNull ?: "unknown"} (${element["arch"]?.jsonPrimitive?.contentOrNull ?: ""})")
+                val osName = element["os"]?.jsonPrimitive?.contentOrNull ?: "unknown"
+                val osArch = element["arch"]?.jsonPrimitive?.contentOrNull ?: ""
+                appendLine("  OS:             $osName ($osArch)")
                 val project = element["activeProject"]?.jsonPrimitive?.contentOrNull
                 if (!project.isNullOrBlank()) {
                     appendLine("  Active Project: $project")
@@ -195,7 +195,6 @@ class BossStatusCommand : CliktCommand(name = "status") {
                 appendLine(rawJson)
             }
         }
-    }
 }
 
 /**
@@ -204,6 +203,7 @@ class BossStatusCommand : CliktCommand(name = "status") {
  *   boss mcp list [--json]
  *   boss mcp invoke <tool_name> [-a|--args <json>] [--stdin]
  */
+@Suppress("TooManyFunctions")
 class BossMcpCommand : CliktCommand(name = "mcp") {
     override fun help(context: Context) = "Discovers and invokes MCP tools in the running BOSS Console"
 
@@ -214,16 +214,33 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
     val tool by argument(help = "Tool name to describe or invoke").optional()
     val args by option("-a", "--args", help = "JSON arguments string for the tool").default("{}")
     val stdin by option("--stdin", help = "Read JSON arguments from standard input").flag(default = false)
-    val timeout by option("-t", "--timeout", help = "Timeout in seconds for tool invocation (default: 30)").default("30")
+    val timeout by option(
+        "-t",
+        "--timeout",
+        help = "Timeout in seconds for tool invocation (default: 30)",
+    ).default("30")
     val filter by option("-f", "--filter", help = "Filter tools by substring in name, description, or plugin ID")
-    val raw by option("-r", "--raw", help = "Emit only the raw unescaped content (ideal for shell scripts and piping)").flag(default = false)
+    val raw by option(
+        "-r",
+        "--raw",
+        help = "Emit only the raw unescaped content (ideal for shell scripts and piping)",
+    ).flag(default = false)
     val json by option("--json", help = "Output response in raw JSON format").flag(default = false)
 
     override fun run() {
         when (val act = action?.lowercase()) {
-            null, "list" -> handleList()
-            "describe", "info" -> handleDescribe()
-            "invoke", "call" -> handleInvoke()
+            null, "list" -> {
+                handleList()
+            }
+
+            "describe", "info" -> {
+                handleDescribe()
+            }
+
+            "invoke", "call" -> {
+                handleInvoke()
+            }
+
             else -> {
                 echo("Unknown mcp action: '$act'. Supported actions: list, describe, invoke", err = true)
                 throw ProgramResult(1)
@@ -242,15 +259,16 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
                     } else {
                         try {
                             val array = Json.parseToJsonElement(rawJson).jsonArray
-                            val filtered = array.filter { item ->
-                                val obj = item.jsonObject
-                                val name = obj["name"]?.jsonPrimitive?.contentOrNull.orEmpty()
-                                val desc = obj["description"]?.jsonPrimitive?.contentOrNull.orEmpty()
-                                val pluginId = obj["pluginId"]?.jsonPrimitive?.contentOrNull.orEmpty()
-                                name.contains(filterQuery, ignoreCase = true) ||
-                                    desc.contains(filterQuery, ignoreCase = true) ||
-                                    pluginId.contains(filterQuery, ignoreCase = true)
-                            }
+                            val filtered =
+                                array.filter { item ->
+                                    val obj = item.jsonObject
+                                    val name = obj["name"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                                    val desc = obj["description"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                                    val pluginId = obj["pluginId"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                                    name.contains(filterQuery, ignoreCase = true) ||
+                                        desc.contains(filterQuery, ignoreCase = true) ||
+                                        pluginId.contains(filterQuery, ignoreCase = true)
+                                }
                             echo(JsonArray(filtered).toString())
                         } catch (_: Exception) {
                             echo(rawJson)
@@ -261,17 +279,21 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
                 }
             },
             onFailure = { error ->
-                echo("Error: ${error.message}", err = true)
-                throw ProgramResult(1)
+                fail("Error: ${error.message}")
             },
         )
     }
 
+    private fun fail(message: String): Nothing {
+        echo(message, err = true)
+        throw ProgramResult(1)
+    }
+
+    @Suppress("TooGenericExceptionCaught")
     private fun handleDescribe() {
         val toolName = tool
         if (toolName.isNullOrBlank()) {
-            echo("Missing tool name. Usage: boss mcp describe <tool_name> [--json]", err = true)
-            throw ProgramResult(1)
+            fail("Missing tool name. Usage: boss mcp describe <tool_name> [--json]")
         }
 
         val result = SingleInstanceManager.queryMcpList()
@@ -279,13 +301,20 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
             onSuccess = { rawJson ->
                 try {
                     val array = Json.parseToJsonElement(rawJson).jsonArray
-                    val match = array.firstOrNull { item ->
-                        val name = item.jsonObject["name"]?.jsonPrimitive?.contentOrNull.orEmpty()
-                        name.equals(toolName, ignoreCase = true)
-                    }
+                    val match =
+                        array.firstOrNull { item ->
+                            val name =
+                                item.jsonObject["name"]
+                                    ?.jsonPrimitive
+                                    ?.contentOrNull
+                                    .orEmpty()
+                            name.equals(toolName, ignoreCase = true)
+                        }
                     if (match == null) {
-                        echo("MCP tool '$toolName' not found or disabled in BOSS Console. Run 'boss mcp list' to view available tools.", err = true)
-                        throw ProgramResult(1)
+                        fail(
+                            "MCP tool '$toolName' not found or disabled in BOSS Console. " +
+                                "Run 'boss mcp list' to view available tools.",
+                        )
                     }
                     if (json) {
                         echo(match.toString())
@@ -295,90 +324,93 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
                 } catch (e: ProgramResult) {
                     throw e
                 } catch (e: Exception) {
-                    echo("Error: Describing MCP tool '$toolName' failed: ${e.message}", err = true)
-                    throw ProgramResult(1)
+                    fail("Error: Describing MCP tool '$toolName' failed: ${e.message}")
                 }
             },
             onFailure = { error ->
-                echo("Error: ${error.message}", err = true)
-                throw ProgramResult(1)
+                fail("Error: ${error.message}")
             },
         )
+    }
+
+    @Suppress("TooGenericExceptionCaught")
+    private fun resolveArgumentsJson(): String {
+        if (stdin || args == "-") {
+            return try {
+                readBoundedStdin(SingleInstanceManager.MAX_REQUEST_BYTES)
+            } catch (e: ProgramResult) {
+                throw e
+            } catch (e: Exception) {
+                fail("Error: Failed to read arguments from stdin: ${e.message}")
+            }
+        }
+        return args
+    }
+
+    @Suppress("TooGenericExceptionCaught")
+    private fun validateArgumentsJson(argumentsJson: String) {
+        try {
+            val parsed = Json.parseToJsonElement(argumentsJson)
+            if (parsed !is JsonObject) {
+                fail("Error: Tool arguments must be a JSON object (e.g. '{\"key\":\"value\"}').")
+            }
+        } catch (e: ProgramResult) {
+            throw e
+        } catch (e: Exception) {
+            fail("Error: Malformed JSON arguments: ${e.message ?: "Invalid JSON syntax"}")
+        }
+    }
+
+    @Suppress("TooGenericExceptionCaught")
+    private fun handleInvokeResponse(responseJson: String) {
+        try {
+            val element = Json.parseToJsonElement(responseJson).jsonObject
+            val isError = element["isError"]?.jsonPrimitive?.booleanOrNull ?: false
+            val content = element["content"]?.jsonPrimitive?.contentOrNull ?: responseJson
+
+            if (isError) {
+                // Error output strictly written to stderr
+                if (json) {
+                    echo(responseJson, err = true)
+                } else {
+                    echo(content, err = true)
+                }
+                throw ProgramResult(1)
+            } else {
+                // Valid output strictly written to stdout
+                if (json && !raw) {
+                    echo(responseJson)
+                } else {
+                    echo(content)
+                }
+            }
+        } catch (e: ProgramResult) {
+            throw e
+        } catch (_: Exception) {
+            echo(responseJson)
+        }
     }
 
     private fun handleInvoke() {
         val toolName = tool
         if (toolName.isNullOrBlank()) {
-            echo("Missing tool name. Usage: boss mcp invoke <tool_name> [--args '<json>' | --stdin] [-r|--raw] [--json]", err = true)
-            throw ProgramResult(1)
+            fail(
+                "Missing tool name. Usage: boss mcp invoke <tool_name> " +
+                    "[--args '<json>' | --stdin] [-r|--raw] [--json]",
+            )
         }
 
-        val argumentsJson =
-            if (stdin || args == "-") {
-                try {
-                    readBoundedStdin(SingleInstanceManager.MAX_REQUEST_BYTES)
-                } catch (e: ProgramResult) {
-                    throw e
-                } catch (e: Exception) {
-                    echo("Error: Failed to read arguments from stdin: ${e.message}", err = true)
-                    throw ProgramResult(1)
-                }
-            } else {
-                args
-            }
-
-        // Validate that argumentsJson is well-formed JSON
-        try {
-            val parsed = Json.parseToJsonElement(argumentsJson)
-            if (parsed !is JsonObject) {
-                echo("Error: Tool arguments must be a JSON object (e.g. '{\"key\":\"value\"}').", err = true)
-                throw ProgramResult(1)
-            }
-        } catch (e: ProgramResult) {
-            throw e
-        } catch (e: Exception) {
-            echo("Error: Malformed JSON arguments: ${e.message ?: "Invalid JSON syntax"}", err = true)
-            throw ProgramResult(1)
-        }
+        val argumentsJson = resolveArgumentsJson()
+        validateArgumentsJson(argumentsJson)
 
         val timeoutMs = (timeout.toLongOrNull() ?: 30L) * 1000L
         val result = SingleInstanceManager.invokeMcpTool(toolName, argumentsJson, timeoutMs = timeoutMs)
         result.fold(
             onSuccess = { responseJson ->
-                try {
-                    val element = Json.parseToJsonElement(responseJson).jsonObject
-                    val isError = element["isError"]?.jsonPrimitive?.booleanOrNull ?: false
-                    val content = element["content"]?.jsonPrimitive?.contentOrNull ?: responseJson
-
-                    if (isError) {
-                        // Error output strictly written to stderr
-                        if (json) {
-                            echo(responseJson, err = true)
-                        } else {
-                            echo(content, err = true)
-                        }
-                        throw ProgramResult(1)
-                    } else {
-                        // Valid output strictly written to stdout
-                        if (json && !raw) {
-                            echo(responseJson)
-                        } else {
-                            echo(content)
-                        }
-                    }
-                } catch (e: ProgramResult) {
-                    throw e
-                } catch (_: Exception) {
-                    if (json) {
-                        echo(responseJson)
-                    } else {
-                        echo(responseJson)
-                    }
-                }
+                handleInvokeResponse(responseJson)
             },
             onFailure = { error ->
-                echo("Error: ${error.message}", err = true)
-                throw ProgramResult(1)
+                fail("Error: ${error.message}")
             },
         )
     }
@@ -404,8 +436,11 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
         }
     }
 
-    private fun formatHumanToolsList(rawJson: String, filterQuery: String?): String {
-        return buildString {
+    private fun formatHumanToolsList(
+        rawJson: String,
+        filterQuery: String?,
+    ): String =
+        buildString {
             if (filterQuery.isNullOrBlank()) {
                 appendLine("Available MCP Tools in BOSS Console")
                 appendLine("===================================")
@@ -415,19 +450,20 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
             }
             try {
                 val array = Json.parseToJsonElement(rawJson).jsonArray
-                val filtered = if (filterQuery.isNullOrBlank()) {
-                    array
-                } else {
-                    array.filter { item ->
-                        val obj = item.jsonObject
-                        val name = obj["name"]?.jsonPrimitive?.contentOrNull.orEmpty()
-                        val desc = obj["description"]?.jsonPrimitive?.contentOrNull.orEmpty()
-                        val pluginId = obj["pluginId"]?.jsonPrimitive?.contentOrNull.orEmpty()
-                        name.contains(filterQuery, ignoreCase = true) ||
-                            desc.contains(filterQuery, ignoreCase = true) ||
-                            pluginId.contains(filterQuery, ignoreCase = true)
+                val filtered =
+                    if (filterQuery.isNullOrBlank()) {
+                        array
+                    } else {
+                        array.filter { item ->
+                            val obj = item.jsonObject
+                            val name = obj["name"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                            val desc = obj["description"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                            val pluginId = obj["pluginId"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                            name.contains(filterQuery, ignoreCase = true) ||
+                                desc.contains(filterQuery, ignoreCase = true) ||
+                                pluginId.contains(filterQuery, ignoreCase = true)
+                        }
                     }
-                }
 
                 if (filtered.isEmpty()) {
                     if (filterQuery.isNullOrBlank()) {
@@ -457,15 +493,18 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
                 appendLine(rawJson)
             }
         }
-    }
 
-    private fun formatHumanToolDetail(obj: JsonObject): String {
-        return buildString {
+    private fun formatHumanToolDetail(obj: JsonObject): String =
+        buildString {
             val name = obj["name"]?.jsonPrimitive?.contentOrNull ?: "unknown"
             val pluginId = obj["pluginId"]?.jsonPrimitive?.contentOrNull ?: "unknown"
             val desc = obj["description"]?.jsonPrimitive?.contentOrNull ?: "No description provided."
             val requiresAdmin = obj["requiresAdmin"]?.jsonPrimitive?.booleanOrNull ?: false
-            val perms = obj["requiredPermissions"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull } ?: emptyList()
+            val perms =
+                obj["requiredPermissions"]
+                    ?.jsonArray
+                    ?.mapNotNull { it.jsonPrimitive.contentOrNull }
+                    ?: emptyList()
 
             appendLine("MCP Tool: $name")
             appendLine("Plugin:   $pluginId")
@@ -480,7 +519,6 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
             appendLine("Description:")
             appendLine(desc.prependIndent("  "))
         }
-    }
 }
 
 /**
@@ -521,4 +559,3 @@ fun createBossCLI(): BossCommand =
         BossMcpCommand(),
         BossCompletionCommand(),
     )
-

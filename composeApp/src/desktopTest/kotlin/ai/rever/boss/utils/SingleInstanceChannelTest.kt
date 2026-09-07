@@ -1,5 +1,8 @@
 package ai.rever.boss.utils
 
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -23,9 +26,6 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Covers the single-instance channel: the descriptor it publishes, the wire
@@ -122,7 +122,8 @@ class SingleInstanceChannelTest {
         assertEquals(token, mcpList.token)
 
         val multilineArgs = "{\n  \"path\": \"foo.kt\",\n  \"content\": \"line 1\\nline 2\\nline 3\"\n}"
-        val mcpInvoke = assertNotNull(parseRequestLine(formatMcpInvokeRequest(token, "mcp__boss__write_file", multilineArgs)))
+        val invokeReq = formatMcpInvokeRequest(token, "mcp__boss__write_file", multilineArgs)
+        val mcpInvoke = assertNotNull(parseRequestLine(invokeReq))
         assertEquals(VERB_MCP_INVOKE, mcpInvoke.verb)
         assertEquals(token, mcpInvoke.token)
         assertEquals("mcp__boss__write_file", mcpInvoke.toolName)
@@ -130,7 +131,8 @@ class SingleInstanceChannelTest {
 
         val largeContent = "x".repeat(10_000)
         val largeArgs = "{\"data\":\"$largeContent\"}"
-        val largeInvoke = assertNotNull(parseRequestLine(formatMcpInvokeRequest(token, "test_tool", largeArgs)))
+        val largeInvokeReq = formatMcpInvokeRequest(token, "test_tool", largeArgs)
+        val largeInvoke = assertNotNull(parseRequestLine(largeInvokeReq))
         assertEquals(VERB_MCP_INVOKE, largeInvoke.verb)
         assertEquals(largeArgs, largeInvoke.argsJson)
     }
@@ -295,7 +297,8 @@ class SingleInstanceChannelTest {
     @Test
     fun `mcp invoke executes tool with multiline args and returns structured json`() {
         SingleInstanceManager.mcpInvokeHandlerOverride = { toolName, argsJson ->
-            ai.rever.boss.plugin.api.McpToolResult(text = "Executed $toolName with args: $argsJson", isError = false)
+            ai.rever.boss.plugin.api
+                .McpToolResult(text = "Executed $toolName with args: $argsJson", isError = false)
         }
         assertTrue(SingleInstanceManager.acquireLock())
 
@@ -311,7 +314,8 @@ class SingleInstanceChannelTest {
     @Test
     fun `mcp invoke with error flag is surfaced correctly in payload`() {
         SingleInstanceManager.mcpInvokeHandlerOverride = { toolName, _ ->
-            ai.rever.boss.plugin.api.McpToolResult(text = "Permission denied for $toolName", isError = true)
+            ai.rever.boss.plugin.api
+                .McpToolResult(text = "Permission denied for $toolName", isError = true)
         }
         assertTrue(SingleInstanceManager.acquireLock())
 
@@ -337,18 +341,28 @@ class SingleInstanceChannelTest {
     @Test
     fun `single-instance channel handles requests with CRLF without Base64 decode errors`() {
         SingleInstanceManager.mcpInvokeHandlerOverride = { tool, args ->
-            ai.rever.boss.plugin.api.McpToolResult("Echo: $tool -> $args")
+            ai.rever.boss.plugin.api
+                .McpToolResult("Echo: $tool -> $args")
         }
         assertTrue(SingleInstanceManager.acquireLock())
         val descriptor = assertNotNull(readPublishedDescriptor())
 
-        val base64Args = java.util.Base64.getEncoder().encodeToString("{\"test\":1}".toByteArray(StandardCharsets.UTF_8))
+        val base64Args =
+            java.util.Base64
+                .getEncoder()
+                .encodeToString("{\"test\":1}".toByteArray(StandardCharsets.UTF_8))
         val rawCrlfLine = "$PROTOCOL_VERSION ${descriptor.token} $VERB_MCP_INVOKE echo_tool $base64Args\r"
         val response = exchange(descriptor, rawCrlfLine)
         assertNotNull(response)
         assertTrue(response.startsWith(RESPONSE_MCP_INVOKE_PREFIX))
         val base64Resp = response.removePrefix(RESPONSE_MCP_INVOKE_PREFIX).trim()
-        val decoded = String(java.util.Base64.getDecoder().decode(base64Resp), StandardCharsets.UTF_8)
+        val decoded =
+            String(
+                java.util.Base64
+                    .getDecoder()
+                    .decode(base64Resp),
+                StandardCharsets.UTF_8,
+            )
         assertTrue(decoded.contains("\"success\":true"))
         val element = Json.parseToJsonElement(decoded).jsonObject
         val content = element["content"]?.jsonPrimitive?.content
@@ -358,7 +372,8 @@ class SingleInstanceChannelTest {
     @Test
     fun `mcp invoke with malformed JSON arguments returns isError true without crashing channel`() {
         SingleInstanceManager.mcpInvokeHandlerOverride = { tool, _ ->
-            ai.rever.boss.plugin.api.McpToolResult("Executed $tool")
+            ai.rever.boss.plugin.api
+                .McpToolResult("Executed $tool")
         }
         assertTrue(SingleInstanceManager.acquireLock())
 
@@ -376,7 +391,8 @@ class SingleInstanceChannelTest {
     fun `mcp invoke coroutine dispatch allows switching dispatchers`() {
         SingleInstanceManager.mcpInvokeHandlerOverride = { tool, _ ->
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-                ai.rever.boss.plugin.api.McpToolResult("Async result for $tool")
+                ai.rever.boss.plugin.api
+                    .McpToolResult("Async result for $tool")
             }
         }
         assertTrue(SingleInstanceManager.acquireLock())
@@ -434,10 +450,13 @@ class SingleInstanceChannelTest {
         val medianMcpListMs = median(mcpListLatenciesMs)
         val medianRoundtripMs = median(roundtripLatenciesMs)
 
+        val statusFmt = String.format(java.util.Locale.US, "%.2f", medianStatusMs)
+        val mcpListFmt = String.format(java.util.Locale.US, "%.2f", medianMcpListMs)
+        val roundtripFmt = String.format(java.util.Locale.US, "%.2f", medianRoundtripMs)
         println("\n=== Loopback IPC Benchmark Results (100 Iterations) ===")
-        println("STATUS query median latency:       ${String.format(java.util.Locale.US, "%.2f", medianStatusMs)} ms")
-        println("MCP_LIST query median latency:     ${String.format(java.util.Locale.US, "%.2f", medianMcpListMs)} ms")
-        println("Combined roundtrip median latency: ${String.format(java.util.Locale.US, "%.2f", medianRoundtripMs)} ms")
+        println("STATUS query median latency:       $statusFmt ms")
+        println("MCP_LIST query median latency:     $mcpListFmt ms")
+        println("Combined roundtrip median latency: $roundtripFmt ms")
         println("=======================================================\n")
 
         assertTrue(medianStatusMs < 50.0, "Status query median must be under 50ms")

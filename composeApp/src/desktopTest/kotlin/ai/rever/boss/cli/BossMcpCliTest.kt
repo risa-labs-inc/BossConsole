@@ -16,7 +16,6 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class BossMcpCliTest {
-
     private val originalIn = System.`in`
     private val originalOut = System.out
     private val originalErr = System.err
@@ -104,9 +103,10 @@ class BossMcpCliTest {
         System.setOut(PrintStream(outContent))
         System.setErr(PrintStream(errContent))
 
-        val exit = assertFailsWith<ProgramResult> {
-            cli.parse(listOf("mcp", "invoke", "failing_tool"))
-        }
+        val exit =
+            assertFailsWith<ProgramResult> {
+                cli.parse(listOf("mcp", "invoke", "failing_tool"))
+            }
         assertEquals(1, exit.statusCode)
         assertTrue(errContent.toString().contains("failing_tool failed deliberately"))
         assertEquals("", outContent.toString().trim(), "stdout must remain clean on error")
@@ -216,9 +216,10 @@ class BossMcpCliTest {
         System.setOut(PrintStream(outContent))
         System.setErr(PrintStream(errContent))
 
-        val exit = assertFailsWith<ProgramResult> {
-            cli.parse(listOf("mcp", "describe", "nonexistent_tool"))
-        }
+        val exit =
+            assertFailsWith<ProgramResult> {
+                cli.parse(listOf("mcp", "describe", "nonexistent_tool"))
+            }
         assertEquals(1, exit.statusCode)
         assertTrue(errContent.toString().contains("nonexistent_tool' not found"))
         assertEquals("", outContent.toString().trim(), "stdout must remain clean")
@@ -230,9 +231,10 @@ class BossMcpCliTest {
         val errContent = ByteArrayOutputStream()
         System.setErr(PrintStream(errContent))
 
-        val exit = assertFailsWith<ProgramResult> {
-            cli.parse(listOf("mcp", "destroy"))
-        }
+        val exit =
+            assertFailsWith<ProgramResult> {
+                cli.parse(listOf("mcp", "destroy"))
+            }
         assertEquals(1, exit.statusCode)
         assertTrue(errContent.toString().contains("Unknown mcp action: 'destroy'"))
     }
@@ -243,9 +245,10 @@ class BossMcpCliTest {
         val errContent = ByteArrayOutputStream()
         System.setErr(PrintStream(errContent))
 
-        val exit = assertFailsWith<ProgramResult> {
-            cli.parse(listOf("mcp", "invoke"))
-        }
+        val exit =
+            assertFailsWith<ProgramResult> {
+                cli.parse(listOf("mcp", "invoke"))
+            }
         assertEquals(1, exit.statusCode)
         assertTrue(errContent.toString().contains("Missing tool name"))
     }
@@ -277,9 +280,10 @@ class BossMcpCliTest {
         System.setOut(PrintStream(outContent))
         System.setErr(PrintStream(errContent))
 
-        val exit = assertFailsWith<ProgramResult> {
-            cli.parse(listOf("mcp", "invoke", "any_tool"))
-        }
+        val exit =
+            assertFailsWith<ProgramResult> {
+                cli.parse(listOf("mcp", "invoke", "any_tool"))
+            }
         assertEquals(1, exit.statusCode)
         val err = errContent.toString().trim()
         assertTrue(err.startsWith("Error: BOSS is not running"))
@@ -296,9 +300,10 @@ class BossMcpCliTest {
         System.setOut(PrintStream(outContent))
         System.setErr(PrintStream(errContent))
 
-        val exit = assertFailsWith<ProgramResult> {
-            cli.parse(listOf("status"))
-        }
+        val exit =
+            assertFailsWith<ProgramResult> {
+                cli.parse(listOf("status"))
+            }
         assertEquals(1, exit.statusCode)
         val err = errContent.toString().trim()
         assertTrue(err.startsWith("Error: BOSS is not running"))
@@ -315,9 +320,10 @@ class BossMcpCliTest {
         System.setOut(PrintStream(outContent))
         System.setErr(PrintStream(errContent))
 
-        val exit = assertFailsWith<ProgramResult> {
-            cli.parse(listOf("mcp", "invoke", "any_tool", "-a", "{invalid json"))
-        }
+        val exit =
+            assertFailsWith<ProgramResult> {
+                cli.parse(listOf("mcp", "invoke", "any_tool", "-a", "{invalid json"))
+            }
         assertEquals(1, exit.statusCode)
         assertTrue(errContent.toString().contains("Malformed JSON arguments"))
         assertEquals("", outContent.toString().trim(), "stdout must remain clean")
@@ -331,9 +337,10 @@ class BossMcpCliTest {
         System.setOut(PrintStream(outContent))
         System.setErr(PrintStream(errContent))
 
-        val exit = assertFailsWith<ProgramResult> {
-            cli.parse(listOf("mcp", "invoke", "any_tool", "-a", "[\"not\",\"an\",\"object\"]"))
-        }
+        val exit =
+            assertFailsWith<ProgramResult> {
+                cli.parse(listOf("mcp", "invoke", "any_tool", "-a", "[\"not\",\"an\",\"object\"]"))
+            }
         assertEquals(1, exit.statusCode)
         assertTrue(errContent.toString().contains("must be a JSON object"))
         assertEquals("", outContent.toString().trim(), "stdout must remain clean")
@@ -350,9 +357,10 @@ class BossMcpCliTest {
         System.setOut(PrintStream(outContent))
         System.setErr(PrintStream(errContent))
 
-        val exit = assertFailsWith<ProgramResult> {
-            cli.parse(listOf("mcp", "invoke", "any_tool", "--stdin"))
-        }
+        val exit =
+            assertFailsWith<ProgramResult> {
+                cli.parse(listOf("mcp", "invoke", "any_tool", "--stdin"))
+            }
         assertEquals(1, exit.statusCode)
         assertTrue(errContent.toString().contains("exceeded maximum size"))
         assertEquals("", outContent.toString().trim(), "stdout must remain clean")
@@ -379,9 +387,10 @@ class BossMcpCliTest {
         System.setOut(PrintStream(outContent))
         System.setErr(PrintStream(errContent))
 
-        val exit = assertFailsWith<ProgramResult> {
-            cli.parse(listOf("completion", "powershell"))
-        }
+        val exit =
+            assertFailsWith<ProgramResult> {
+                cli.parse(listOf("completion", "powershell"))
+            }
         assertEquals(1, exit.statusCode)
         assertTrue(errContent.toString().contains("Error: Unsupported shell 'powershell'"))
         assertEquals("", outContent.toString().trim(), "stdout must remain clean")
