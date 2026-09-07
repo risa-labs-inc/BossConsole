@@ -219,9 +219,9 @@ fun WorkspaceButton(
                 // The same glyph the Top of Mind footer opens a Space with
                 // (`SpaceIcon`), not a briefcase. A briefcase says "work", which is the half of
                 // the old word that got dropped when Workspace became Space, where a big pane
-                // beside two stacked ones is what a Space actually IS - on a card standing a
-                // little off the ground, so the glyph says "panes, with some depth to them"
-                // rather than "a tile". And this button and that footer button do the same
+                // beside two stacked ones is what a Space actually IS - on a card tipped back a
+                // few degrees, so the glyph says "panes, with some depth to them" rather than
+                // "a tile". And this button and that footer button do the same
                 // job, raising the same picker, so wearing different icons made one control read
                 // as two.
                 leftIcon = SpaceIcon,
