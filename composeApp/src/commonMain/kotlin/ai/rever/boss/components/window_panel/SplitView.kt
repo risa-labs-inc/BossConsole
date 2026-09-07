@@ -6,6 +6,7 @@ import ai.rever.boss.components.model.TabDraggableComponent
 import ai.rever.boss.components.model.TabDropResult
 import ai.rever.boss.components.model.TabDropTarget
 import ai.rever.boss.components.overlays.OverlayCorner
+import ai.rever.boss.components.overlays.PanelDropZoneOverlay
 import ai.rever.boss.components.plugin.TabTypeAvailability
 import ai.rever.boss.components.plugin.disposePluginBrowsers
 import ai.rever.boss.components.plugin.tab_types.PanelHostTabInfo
@@ -1927,8 +1928,13 @@ class SplitViewState(
      * The index is clamped rather than rejected. A caller computes it from a list it read a frame
      * ago - a tab can close in between - and "as near as asked" is a better answer to that than
      * refusing a move the user has already committed to with a drop.
+     *
+     * Internal rather than private because the drag path needs the same two steps: `adoptTab`
+     * appends and there is no adopt-at-index, so `TabDropHandler` lands a cross-pane drop by
+     * adopting and then calling this. A second copy would be the one that forgot to clamp, or the
+     * one that reached `tabsNavigation.moveTab` directly and skipped `pinnedCountAfterMove`.
      */
-    private fun reorderWithinPanel(
+    internal fun reorderWithinPanel(
         panel: SplitNode.Panel,
         tabId: String,
         targetIndex: Int,
@@ -2818,8 +2824,12 @@ private fun RenderSplitNode(
                     }
                 }
 
-                // Track drop target for panel drop zone highlights
-                val dropTarget = tabDragComponent?.dropTarget
+                // Whether a drag is in flight at all, and whose tab it is. Both change twice in
+                // a whole drag, unlike the drop TARGET - which now carries an insertion index and
+                // so changes every time the pointer crosses a row. That is read inside
+                // PanelDropZoneOverlay, behind derivedStateOf, rather than here: reading it in
+                // this body would recompose one pane's entire subtree, its tab content included,
+                // at pointer rate.
                 val isDragging = tabDragComponent?.isDragging == true
                 val draggingTab = tabDragComponent?.draggingTab
 
@@ -2859,7 +2869,7 @@ private fun RenderSplitNode(
                     if (isDragging && draggingTab != null && draggingTab.sourcePanelId != node.id) {
                         PanelDropZoneOverlay(
                             panelId = node.id,
-                            dropTarget = dropTarget,
+                            tabDragComponent = tabDragComponent,
                             // The zones themselves start after a vertical tab bar that covers
                             // this panel's leading edge (see PanelDropZones.fromBounds), so the
                             // highlight has to as well - a left-split band painted over the bar
@@ -2939,100 +2949,6 @@ private fun RenderSplitNode(
                         showPanelTabBar = showPanelTabBar,
                     )
                 },
-            )
-        }
-    }
-}
-
-/**
- * Overlay that shows drop zone highlights on panel edges during drag operations.
- */
-@Composable
-private fun PanelDropZoneOverlay(
-    panelId: String,
-    dropTarget: TabDropTarget?,
-    leadingInset: Dp = 0.dp,
-) {
-    // Check which zone is highlighted
-    val isLeftHighlighted =
-        dropTarget is TabDropTarget.SplitPanel &&
-            dropTarget.panelId == panelId &&
-            dropTarget.orientation == SplitOrientation.VERTICAL
-
-    val isRightHighlighted = isLeftHighlighted // Same condition for vertical split
-
-    val isTopHighlighted =
-        dropTarget is TabDropTarget.SplitPanel &&
-            dropTarget.panelId == panelId &&
-            dropTarget.orientation == SplitOrientation.HORIZONTAL
-
-    val isBottomHighlighted = isTopHighlighted // Same condition for horizontal split
-
-    val isCenterHighlighted =
-        dropTarget is TabDropTarget.ExistingPanel &&
-            dropTarget.panelId == panelId
-
-    Box(modifier = Modifier.fillMaxSize().padding(start = leadingInset)) {
-        // Left edge highlight
-        if (isLeftHighlighted) {
-            Box(
-                modifier =
-                    Modifier
-                        .align(Alignment.CenterStart)
-                        .width(60.dp)
-                        .fillMaxHeight()
-                        .alpha(0.3f)
-                        .background(BossTheme.colors.signal),
-            )
-        }
-
-        // Right edge highlight
-        if (isRightHighlighted) {
-            Box(
-                modifier =
-                    Modifier
-                        .align(Alignment.CenterEnd)
-                        .width(60.dp)
-                        .fillMaxHeight()
-                        .alpha(0.3f)
-                        .background(BossTheme.colors.signal),
-            )
-        }
-
-        // Top edge highlight
-        if (isTopHighlighted) {
-            Box(
-                modifier =
-                    Modifier
-                        .align(Alignment.TopCenter)
-                        .fillMaxWidth()
-                        .height(60.dp)
-                        .alpha(0.3f)
-                        .background(BossTheme.colors.signal),
-            )
-        }
-
-        // Bottom edge highlight
-        if (isBottomHighlighted) {
-            Box(
-                modifier =
-                    Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .height(60.dp)
-                        .alpha(0.3f)
-                        .background(BossTheme.colors.signal),
-            )
-        }
-
-        // Center highlight (add to existing panel)
-        if (isCenterHighlighted) {
-            Box(
-                modifier =
-                    Modifier
-                        .fillMaxSize()
-                        .alpha(0.15f)
-                        .background(BossTheme.colors.signal),
             )
         }
     }

@@ -1106,6 +1106,83 @@ identically before and after it comes on screen. That path deliberately does **n
 `panelName`: panel ids are unique only within one tree (every workspace's first pane is `main`), so
 a name given to one pane would be returned for the pane of that name in every other workspace.
 
+## Dropping a tab into a pane, at a position
+
+The window's vertical bar registers one rectangle per PANE (`RegisterGroupBounds` carves the
+scrolling column into slices), so "dropping anywhere in a pane targets that pane" has always
+worked. What it did not carry was a POSITION: `tabBarTargetAt` answered
+`TabDropTarget.ExistingPanel(panelId)` for any pane but the drag's source, which appended and drew
+no line, so the only way to say where a tab should sit was to move it and then reorder it.
+
+`ExistingPanel` now carries a nullable `targetIndex`, and the slot comes from the SAME arithmetic a
+reorder uses - `reorderIndexFor` over `tabBounds`, filtered to the target pane. Five things about
+that:
+
+- **The rectangles are the target pane's, not the source's.** Tab bounds are keyed
+  `panelId:tabId`, so a pane other than the source has its own measured rows to compare against.
+  Reading the source's is the bug the test `the index comes from the target pane's rows` pins.
+- **Null means append, and it has to stay expressible.** Three drops name a pane and no position
+  in it: the centre of a panel's content area, a sidebar panel dragged out onto one
+  (`ProcessPendingPromoteToTab`), and a bar whose tabs have not been measured yet. Defaulting
+  those to 0 would land the tab at the head of a list the user never pointed at.
+- **The index is carried through UNADJUSTED.** A reorder's is nudged down when the source sat
+  earlier in the same list, because removing the tab shifts everything after it. A cross-pane move
+  takes nothing out of the destination, so the slot the indicator drew is the slot the tab lands
+  in.
+- **`insertionEdgeFor` is the drawing rule, and it is pure.** Every slot is drawn by the row
+  BENEATH it, and the one slot with no row beneath - past the end - rides the last row's trailing
+  edge, so a boundary two rows touch is never drawn twice. `InsertionEdgeTest` asserts that as a
+  property over a whole list ("every slot is drawn exactly once") rather than case by case,
+  because a doubled boundary and a lost final slot each satisfy every individual case.
+- **The pane fill and the line say different things.** The fill (`PanelDropZoneOverlay`) is which
+  pane will take the tab; the line is where in it. Both are wanted, and the line is read through
+  one `derivedStateOf` inside each ROW rather than off `dropTarget` in the bar's body - this bar
+  renders every tab in the window, and `dropTarget` changes at pointer rate. The fill needed the
+  same treatment for the same reason: `ExistingPanel` used to be constant while the pointer moved
+  within one pane, and `RenderSplitNode` read it in its body, so a pane's whole subtree - its tab
+  content included - would now recompose every time the pointer crossed a row. It collapses to
+  `PanelDropHighlight`, three answers that change a handful of times in a drag, read inside the
+  overlay. That moved the overlay to `components/overlays/`, where an overlay belongs and where
+  the package name has no underscores for detekt's `PackageNaming` to reject.
+
+**Pinning still follows the line, and that is not automatic.** `BossMainWindowPanel` draws the
+indicator deliberately AFTER the pinned `SectionBreak`, so a line below the separator means the tab
+lands unpinned. That holds for an arriving tab because `TabDropHandler` adopts it (which appends,
+there being no adopt-at-index on `BossTabsComponent`) and then calls
+`SplitViewState.reorderWithinPanel` - the same helper `moveTabToWorkspace` uses for a named pane -
+which goes through `BossTabsComponent.moveTab` and therefore through `pinnedCountAfterMove`. Reach
+`TabsNavigation.moveTab` directly and the count silently stops matching the separator. The reorder
+runs AFTER `selectTab`, because `TabsNavigation.moveTab` carries `activeIndex` along with the tab
+it moves; selecting afterwards would need the post-move index, which is what the call establishes.
+
+Today the two cannot actually coexist - `showSections` is `!several`, so a multi-pane bar draws no
+separator at all - but the ordering is what makes the rule true if they ever do.
+
+**A collapsed pane springs open under a dragged tab**, after the same 550ms the Top of Mind panel
+gives its own headers (`SPRING_LOAD_DELAY_MS`, a second constant on purpose: nothing links the two
+repositories at compile time). A pane that is not being worked in shows one row plus a favicon
+summary, so the tabs a drop would land between are not on screen to aim at, and
+`TabBarGroup.hoverGroup` is wired to a real pointer hover which a captured drag does not produce.
+Four properties, each a decision:
+
+- **The delay is what makes dragging PAST a group free.** An ordinary drag crosses every group
+  between the tab and its destination, and reflowing at each one would move the target out from
+  under the pointer.
+- **It goes through `TabGroupExpansion.hover`**, the same sticky choice a resting pointer makes,
+  rather than a second notion of "this group is open" for the bar to reconcile.
+- **The pointer and the drag are re-checked AFTER the wait.** Snapshot invalidation and
+  recomposition are not synchronous, so the effect's own key can be stale even though it is what
+  cancelled every earlier attempt.
+- **It only ever OPENS.** Nothing collapses a group, and `barExited` is suppressed while a drag is
+  in flight for the same reason: a group that re-closed on exit would take with it the tabs that
+  were the reason to open it. Only panes that are not already expanded are candidates, so a spring
+  never closes a group the user opened.
+
+One difference from the plugin worth knowing: the plugin gives its collapsed summary row no index,
+because that row stands for whichever tab the pane is showing rather than the tab at position zero.
+The host's single collapsed row carries its true model index (`TabBoundInfo.actualIndex`), so a
+drop on it lands next to the tab that was on screen and needs no exception.
+
 ## A missing plugin no longer fails silently
 
 Browser, editor and terminal tabs are plugin-provided. `addTab` logged "Dropped

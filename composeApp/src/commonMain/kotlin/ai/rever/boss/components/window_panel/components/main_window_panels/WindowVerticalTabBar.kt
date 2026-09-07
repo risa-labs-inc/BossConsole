@@ -26,6 +26,7 @@ import androidx.compose.material.Divider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -40,6 +41,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
@@ -52,6 +54,21 @@ private val windowVerticalTabBarLogger = BossLogger.forComponent("WindowVertical
  * full bleed while the tab one is inset: the difference is what tells the two divisions apart.
  */
 internal val GROUP_RULE_GAP = 10.dp
+
+/**
+ * How long a dragged tab has to rest over a collapsed pane's slice of the bar before that pane
+ * opens under it.
+ *
+ * The DELAY is what makes dragging past a group free. An ordinary drag crosses every group between
+ * the tab and its destination, and reflowing the bar at each one would move the target out from
+ * under the pointer - so a pane opens only for a drag that stops on it.
+ *
+ * Same 550ms the Top of Mind panel uses for its own workspace and pane headers, so the two
+ * surfaces feel like one gesture. Deliberately a second constant rather than one shared across
+ * repositories: nothing links them at compile time, and a plugin whose timing drifted from the
+ * host's would be a plugin bug rather than a host one.
+ */
+private const val SPRING_LOAD_DELAY_MS = 550L
 
 /**
  * Build one [TabBarGroup] per pane, in the order the panes are laid out on screen.
@@ -240,11 +257,18 @@ fun WindowVerticalTabBar(
     // The whole bar, which is what the rail registers - a rail has no list to carve up.
     var railBounds by remember { mutableStateOf<Rect?>(null) }
 
-    // Leaving the bar drops the hover choice. Tracked on the bar rather than per group because
-    // that is the only boundary the sticky-hover model cares about - see TabGroupExpansion.
+    // Which group is open follows the pointer, and now the dragged tab too. Tracked on the bar
+    // rather than per group because that is the only boundary the sticky-hover model cares about -
+    // see TabGroupExpansion.
     val barInteraction = remember { MutableInteractionSource() }
-    val barHovered by barInteraction.collectIsHoveredAsState()
-    LaunchedEffect(barHovered) { if (!barHovered) expansion.barExited() }
+    TrackGroupExpansion(
+        groups = groups,
+        expansion = expansion,
+        barInteraction = barInteraction,
+        // The drawer passes none, which is right: it registers no bounds, so there is no slice of
+        // it to be over and nothing a drag started elsewhere could aim at.
+        tabDragComponent = tabDragComponent.takeIf { registerBounds },
+    )
 
     VerticalBar(
         width = verticalTabBarWidth(collapsed = collapsed, width = width),
@@ -397,6 +421,92 @@ fun BoxScope.WindowRevealedTabBarDrawer(
                 onDismiss()
             },
         )
+    }
+}
+
+/**
+ * Which pane's group is open: the pointer's sticky choice, and a dragged tab's.
+ *
+ * Both live here because they write the same one field on [TabGroupExpansion] and the two answers
+ * have to be ordered rather than merely both happen - see the exit rule below.
+ */
+@Composable
+private fun TrackGroupExpansion(
+    groups: List<TabBarGroup>,
+    expansion: TabGroupExpansion,
+    barInteraction: MutableInteractionSource,
+    tabDragComponent: TabDraggableComponent?,
+) {
+    val barHovered by barInteraction.collectIsHoveredAsState()
+    LaunchedEffect(barHovered) {
+        // Leaving the bar drops the hover choice - but NOT while a tab is in hand. A group springs
+        // open under a drag precisely so the tabs a drop would land between are on screen to aim
+        // at, and closing it again on the way out would take those tabs with it, so the spring
+        // only ever opens. Read in the body rather than as an effect key, so ending the drag does
+        // not re-fire this and undo it.
+        if (!barHovered && tabDragComponent?.isDragging != true) expansion.barExited()
+    }
+
+    SpringOpenUnderDrag(groups = groups, expansion = expansion, tabDragComponent = tabDragComponent)
+}
+
+/**
+ * Open a collapsed pane's group when a dragged tab rests over its slice of the bar.
+ *
+ * A pane that is not being worked in shows one row and a favicon summary, so the tabs a drop would
+ * land between are not on screen to aim at. Hover already opens a group, but
+ * [TabBarGroup.hoverGroup] is wired to a real pointer hover and a drag is a captured gesture -
+ * `PointerEventType.Enter` never arrives for the row under a pressed pointer - so nothing opened
+ * a group for a tab being carried past it.
+ *
+ * Four things about the shape, each of them a decision rather than an accident:
+ *
+ * - **The delay.** See [SPRING_LOAD_DELAY_MS]: crossing a group must be free, resting on one must
+ *   not be.
+ * - **It goes through [TabGroupExpansion.hover]**, the same sticky choice a resting pointer makes,
+ *   rather than a second notion of "this group is open" that the bar would then have to reconcile
+ *   with the first.
+ * - **The pointer and the drag are re-checked AFTER the wait.** Either may have moved on, and a
+ *   `derivedStateOf` read taken at composition time is not proof of where the pointer is 550ms
+ *   later - snapshot invalidation and recomposition are not synchronous, so the effect's own key
+ *   can be stale even though it is what cancelled every earlier attempt.
+ * - **It only ever OPENS.** Nothing here collapses a group, and `barExited` is suppressed while a
+ *   drag is in flight for the same reason: a group that re-closed would take with it the tabs that
+ *   were the reason to open it.
+ *
+ * The pane under the pointer is derived state, not a composition read of the drag position: the
+ * drop target and the drag delta both change at pointer rate, and this bar draws every tab in the
+ * window.
+ */
+@Composable
+private fun SpringOpenUnderDrag(
+    groups: List<TabBarGroup>,
+    expansion: TabGroupExpansion,
+    tabDragComponent: TabDraggableComponent?,
+) {
+    if (tabDragComponent == null) return
+
+    // Restricted to the groups THIS bar is drawing, and to ones that are not open already.
+    // `tabBarBounds` is a window-wide map - a pane's own top strip registers there too - and
+    // `hover` chooses which pane is the open one, so calling it for a pane that is already
+    // expanded would close whichever group the user had opened, for no gain.
+    val collapsedIds = groups.filterNot { it.expanded }.map { it.panelId }
+    val paneUnderDrag =
+        remember(tabDragComponent, collapsedIds) {
+            derivedStateOf {
+                val position = tabDragComponent.getCurrentPosition()?.takeIf { tabDragComponent.isDragging }
+                position?.let { at ->
+                    collapsedIds.firstOrNull { tabDragComponent.tabBarBounds[it]?.bounds?.contains(at) == true }
+                }
+            }
+        }
+
+    val resting by paneUnderDrag
+    LaunchedEffect(resting) {
+        val panelId = resting ?: return@LaunchedEffect
+        delay(SPRING_LOAD_DELAY_MS)
+        if (paneUnderDrag.value != panelId || !tabDragComponent.isDragging) return@LaunchedEffect
+        expansion.hover(panelId)
     }
 }
 
