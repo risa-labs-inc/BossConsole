@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0B0D12"/>
+      <stop offset="100%" stop-color="#12161F"/>
+    </linearGradient>
+    <style>
+      .t { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif; fill: #E8EEF7; }
+      .m { font-family: ui-sans-serif, system-ui, sans-serif; fill: #9AA8BC; }
+      .teal { fill: #2DD4BF; }
+      .amber { fill: #F5C842; }
+      .card { fill: #171B24; stroke: #2A3344; stroke-width: 2; }
+      .nest { fill: none; stroke: #2DD4BF; stroke-width: 2; opacity: 0.85; }
+      .pill { fill: #1C2430; stroke: #2DD4BF; stroke-width: 1.5; }
+    </style>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/>
+
+  <text class="t" x="64" y="72" font-size="42" font-weight="700">HA HUNT</text>
+  <text class="m" x="64" y="104" font-size="18">human · agent · hunt  ·  hahunt.com</text>
+  <text class="teal" x="64" y="132" font-size="16">Boss Console — the console is the product (guests plug in)</text>
+
+  <!-- nests -->
+  <rect class="nest" x="60" y="170" width="980" height="420" rx="28"/>
+  <text class="m" x="84" y="200" font-size="14">Boss</text>
+  <rect class="nest" x="100" y="220" width="900" height="340" rx="24" stroke-opacity="0.7"/>
+  <text class="m" x="124" y="248" font-size="14">Boss</text>
+  <rect class="nest" x="140" y="270" width="820" height="260" rx="20" stroke-opacity="0.55"/>
+  <text class="m" x="164" y="298" font-size="14">Boss · hunk hunt inside hunk hunt</text>
+
+  <!-- token spine -->
+  <rect x="180" y="330" width="740" height="64" rx="14" fill="#10141C" stroke="#2DD4BF" stroke-width="2"/>
+  <text class="t" x="200" y="370" font-size="16">TOKEN SPINE  ·  text → IDs → transformer → tokens  ·  info ≈ energy</text>
+
+  <!-- slider -->
+  <text class="m" x="180" y="440" font-size="13">SEAT SLIDER</text>
+  <rect x="180" y="455" width="180" height="44" rx="22" class="pill" stroke="#F5C842"/>
+  <text class="t" x="210" y="483" font-size="14">FULL HUMAN</text>
+  <rect x="390" y="450" width="220" height="54" rx="27" fill="#12352F" stroke="#2DD4BF" stroke-width="2"/>
+  <text class="teal" x="445" y="483" font-size="15" font-weight="700">GREY HUNT</text>
+  <rect x="640" y="455" width="180" height="44" rx="22" class="pill" stroke="#F5C842"/>
+  <text class="t" x="670" y="483" font-size="14">FULL AGENT</text>
+
+  <!-- pass dance -->
+  <text class="m" x="180" y="545" font-size="13">PASS</text>
+  <rect x="180" y="555" width="120" height="40" rx="20" class="pill"/>
+  <text class="t" x="210" y="581" font-size="14">Rally</text>
+  <rect x="330" y="555" width="140" height="40" rx="20" class="pill"/>
+  <text class="t" x="350" y="581" font-size="14">Surrender</text>
+  <rect x="500" y="555" width="160" height="40" rx="20" class="pill"/>
+  <text class="t" x="520" y="581" font-size="14">Domination</text>
+  <text class="amber" x="700" y="581" font-size="14">→ FLUCK = the move</text>
+
+  <!-- right column -->
+  <rect class="card" x="1100" y="170" width="440" height="420" rx="24"/>
+  <text class="t" x="1130" y="220" font-size="22" font-weight="700">Modular plugs</text>
+  <text class="m" x="1130" y="250" font-size="14">all welcome · no node lock-in</text>
+  <rect x="1130" y="280" width="380" height="48" rx="12" fill="#1C2430"/>
+  <text class="t" x="1150" y="310" font-size="15">Astra-class agent seat</text>
+  <rect x="1130" y="345" width="380" height="48" rx="12" fill="#1C2430"/>
+  <text class="t" x="1150" y="375" font-size="15">Atlas-class world seat</text>
+  <rect x="1130" y="410" width="380" height="48" rx="12" fill="#1C2430"/>
+  <text class="t" x="1150" y="440" font-size="15">Any GPU era / vendor</text>
+  <rect x="1130" y="475" width="380" height="48" rx="12" fill="#1C2430"/>
+  <text class="t" x="1150" y="505" font-size="15">Any outer mouth (Grok…)</text>
+  <text class="teal" x="1130" y="555" font-size="14">→ infinite lock-in on Boss Console</text>
+
+  <!-- bottom -->
+  <rect x="60" y="640" width="1480" height="200" rx="24" class="card"/>
+  <text class="t" x="100" y="700" font-size="20" font-weight="700">Progress-shaped</text>
+  <text class="m" x="100" y="735" font-size="16">problem space (pain)  →  hunk hunt grammar  →  progress space (possibility)</text>
+  <text class="m" x="100" y="775" font-size="15">Universe types: Solo · Pair · Nest · Braid · Brake-bound · Parked · Spatial · Agentic</text>
+  <text class="teal" x="100" y="815" font-size="15">Fractal test: forget which nest you’re in — can you still hunt?</text>
+</svg>

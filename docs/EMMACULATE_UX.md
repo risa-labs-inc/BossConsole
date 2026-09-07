@@ -121,3 +121,9 @@ changes; hunk hunt links do not.)
 
 - Agent-less MCP kill-switch discoverability: #380 / #382
 - Token spine teaching: adoption wraps the stream
+
+## Visual
+
+![HA Hunt flow](ha-hunt-visual-flow.png)
+
+Source: `docs/ha-hunt-visual-flow.svg`
