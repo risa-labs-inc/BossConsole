@@ -1,6 +1,7 @@
 package ai.rever.boss.components.workspaces
 
 import ai.rever.boss.components.buttons.BossActionButton
+import ai.rever.boss.components.icons.SpaceIcon
 import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel
@@ -13,7 +14,6 @@ import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material.icons.outlined.SpaceDashboard
 import androidx.compose.material.icons.outlined.Tab
 import androidx.compose.material.icons.outlined.Upload
 import androidx.compose.runtime.Composable
@@ -217,13 +217,14 @@ fun WorkspaceButton(
         Box {
             BossActionButton(
                 // The same glyph the Top of Mind footer opens a Space with
-                // (`Icons.Outlined.SpaceDashboard`), not a briefcase. Two reasons, and the second
-                // is the one that matters: a briefcase says "work", which is the half of the old
-                // word that got dropped when Workspace became Space, where a large pane beside two
-                // stacked ones is what a Space actually IS. And this button and that footer button
-                // do the same job, raising the same picker, so wearing different icons made one
-                // control read as two.
-                leftIcon = Icons.Outlined.SpaceDashboard,
+                // (`SpaceIcon`), not a briefcase. A briefcase says "work", which is the half of
+                // the old word that got dropped when Workspace became Space, where a big pane
+                // beside two stacked ones is what a Space actually IS - tipped onto the same
+                // isometric plane the floors view draws, so the glyph says "panes seen from a
+                // corner" rather than "a tile". And this button and that footer button do the same
+                // job, raising the same picker, so wearing different icons made one control read
+                // as two.
+                leftIcon = SpaceIcon,
                 compact = compact,
                 text =
                     currentWorkspace?.let { workspace ->
