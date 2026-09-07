@@ -240,6 +240,9 @@ fun BossRightBottomBar() {
     // it used to be one of, rather than at the far edge of the bar.
     DownloadCenterStatusItem()
 
+    // Agent Mission Control: real-time MCP call telemetry & HITL approval indicator
+    McpInspectorStatusItem()
+
     // Performance indicator (shows memory/CPU usage)
     val showIndicator = PerformanceState.shouldShowIndicator()
     if (showIndicator) {

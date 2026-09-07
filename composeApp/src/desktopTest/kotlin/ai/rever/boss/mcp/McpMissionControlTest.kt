@@ -1,0 +1,294 @@
+package ai.rever.boss.mcp
+
+import ai.rever.boss.plugin.api.McpToolDefinition
+import ai.rever.boss.plugin.api.McpToolHandler
+import ai.rever.boss.plugin.api.McpToolProvider
+import ai.rever.boss.plugin.api.McpToolResult
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
+import java.io.File
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+
+class McpMissionControlTest {
+    private val tempFiles = mutableListOf<File>()
+
+    private fun tempDisabledFile(): File {
+        val dir = kotlin.io.path.createTempDirectory("mcp-mission-control-test").toFile()
+        return File(dir, "mcp-disabled-tools.json").also { tempFiles.add(it) }
+    }
+
+    @BeforeTest
+    fun setup() {
+        McpTelemetryRecorder.clear()
+        McpTelemetryRecorder.setGlobalSafeMode(false)
+    }
+
+    @AfterTest
+    fun cleanup() {
+        tempFiles.forEach { it.parentFile?.deleteRecursively() }
+        tempFiles.clear()
+        McpTelemetryRecorder.clear()
+        McpTelemetryRecorder.setGlobalSafeMode(false)
+    }
+
+    private fun provider(id: String, vararg defs: McpToolDefinition) = object : McpToolProvider {
+        override val providerId = id
+        override fun tools() = defs.toList()
+    }
+
+    private fun echoTool(
+        name: String,
+        handler: McpToolHandler = McpToolHandler { args -> McpToolResult("echo:${args.raw}") },
+    ) = McpToolDefinition(name = name, description = "Test tool $name", handler = handler)
+
+    @Test
+    fun `ring buffer retains maximum 200 records and evicts oldest first`() {
+        // Record 250 calls
+        for (i in 1..250) {
+            val callId = "call-$i"
+            McpTelemetryRecorder.recordStart(callId, "tool-$i", """{"i":$i}""")
+            McpTelemetryRecorder.recordComplete(callId, McpToolResult("ok"), durationMs = 5L)
+        }
+
+        val records = McpTelemetryRecorder.records.value
+        assertEquals(McpTelemetryRecorder.MAX_RECORDS, records.size)
+
+        // Newest should be call-250 (at head of list)
+        assertEquals("call-250", records.first().callId)
+        // Oldest retained should be call-51 (at tail of list)
+        assertEquals("call-51", records.last().callId)
+
+        val stats = McpTelemetryRecorder.stats.value
+        assertEquals(200L, stats.totalCalls)
+        assertEquals(200L, stats.successCount)
+        assertEquals(0L, stats.errorCount)
+    }
+
+    @Test
+    fun `successful invocation records duration, payload, and status`() = runBlocking {
+        val core = McpToolRegistryCore(disabledFile = tempDisabledFile())
+        core.registerProvider(provider("p1", echoTool("calculate")))
+
+        val result = core.invoke("calculate", """{"x":10,"y":20}""")
+        assertFalse(result.isError)
+
+        val record = McpTelemetryRecorder.records.value.first()
+        assertEquals("calculate", record.toolName)
+        assertEquals(McpCallStatus.SUCCESS, record.status)
+        assertTrue(record.durationMs >= 0L)
+        assertNotNull(record.resultPayload)
+        assertTrue(record.resultPayload!!.contains("echo:"))
+    }
+
+    @Test
+    fun `blocked invocation records BLOCKED status when tool is disabled`() = runBlocking {
+        val core = McpToolRegistryCore(disabledFile = tempDisabledFile())
+        core.registerProvider(provider("p1", echoTool("dangerous_delete")))
+        core.setToolEnabled("dangerous_delete", false)
+
+        val result = core.invoke("dangerous_delete", """{"file":"/root"}""")
+        assertTrue(result.isError)
+
+        val record = McpTelemetryRecorder.records.value.first()
+        assertEquals("dangerous_delete", record.toolName)
+        assertEquals(McpCallStatus.BLOCKED, record.status)
+        assertTrue(record.errorMessage!!.contains("Unknown or disabled"))
+    }
+
+    @Test
+    fun `timeout invocation records TIMEOUT status`() = runBlocking {
+        val core = McpToolRegistryCore(disabledFile = tempDisabledFile(), invokeTimeoutMs = 50L)
+        core.registerProvider(
+            provider(
+                "p1",
+                echoTool(
+                    "slow_tool",
+                    handler = McpToolHandler {
+                        delay(200L)
+                        McpToolResult("done")
+                    },
+                ),
+            ),
+        )
+
+        val result = core.invoke("slow_tool", "{}")
+        assertTrue(result.isError)
+        assertTrue(result.text.contains("timed out"))
+
+        val record = McpTelemetryRecorder.records.value.first()
+        assertEquals("slow_tool", record.toolName)
+        assertEquals(McpCallStatus.TIMEOUT, record.status)
+        assertTrue(record.durationMs >= 50L)
+    }
+
+    @Test
+    fun `human in the loop approval flow - operator approves call`() = runBlocking {
+        val core = McpToolRegistryCore(disabledFile = tempDisabledFile())
+        core.registerProvider(provider("p1", echoTool("deploy_prod")))
+
+        McpTelemetryRecorder.setToolRequiresApproval("deploy_prod", true)
+        assertTrue(McpTelemetryRecorder.isApprovalRequired("deploy_prod"))
+
+        // Run invocation asynchronously
+        val deferredResult = async {
+            core.invoke("deploy_prod", """{"version":"1.0.0"}""")
+        }
+
+        // Wait until pending approval is registered
+        while (McpTelemetryRecorder.pendingApprovals.value.isEmpty()) {
+            delay(10L)
+        }
+
+        val pending = McpTelemetryRecorder.pendingApprovals.value.first()
+        assertEquals("deploy_prod", pending.toolName)
+
+        // Operator approves the action
+        McpTelemetryRecorder.resolveApproval(pending.callId, ApprovalDecision.Approved())
+
+        val result = deferredResult.await()
+        assertFalse(result.isError)
+
+        val record = McpTelemetryRecorder.records.value.first()
+        assertEquals(McpCallStatus.SUCCESS, record.status)
+        assertTrue(record.requiresApproval)
+    }
+
+    @Test
+    fun `human in the loop approval flow - operator denies call`() = runBlocking {
+        val core = McpToolRegistryCore(disabledFile = tempDisabledFile())
+        core.registerProvider(provider("p1", echoTool("rm_rf")))
+
+        McpTelemetryRecorder.setToolRequiresApproval("rm_rf", true)
+
+        val deferredResult = async {
+            core.invoke("rm_rf", """{"path":"/etc"}""")
+        }
+
+        while (McpTelemetryRecorder.pendingApprovals.value.isEmpty()) {
+            delay(10L)
+        }
+
+        val pending = McpTelemetryRecorder.pendingApprovals.value.first()
+        McpTelemetryRecorder.resolveApproval(
+            pending.callId,
+            ApprovalDecision.Denied("Dangerous path deletion rejected by operator"),
+        )
+
+        val result = deferredResult.await()
+        assertTrue(result.isError)
+        assertTrue(result.text.contains("Dangerous path deletion rejected"))
+
+        val record = McpTelemetryRecorder.records.value.first()
+        assertEquals(McpCallStatus.DENIED, record.status)
+        assertEquals("Dangerous path deletion rejected by operator", record.errorMessage)
+    }
+
+    @Test
+    fun `human in the loop approval flow - operator modifies arguments`() = runBlocking {
+        val core = McpToolRegistryCore(disabledFile = tempDisabledFile())
+        var executedArgs: String? = null
+        core.registerProvider(
+            provider(
+                "p1",
+                echoTool(
+                    "write_config",
+                    handler = McpToolHandler { args ->
+                        executedArgs = args.raw
+                        McpToolResult("ok")
+                    },
+                ),
+            ),
+        )
+
+        McpTelemetryRecorder.setToolRequiresApproval("write_config", true)
+
+        val deferredResult = async {
+            core.invoke("write_config", """{"env":"production"}""")
+        }
+
+        while (McpTelemetryRecorder.pendingApprovals.value.isEmpty()) {
+            delay(10L)
+        }
+
+        val pending = McpTelemetryRecorder.pendingApprovals.value.first()
+        // Operator modifies arguments to staging
+        McpTelemetryRecorder.resolveApproval(
+            pending.callId,
+            ApprovalDecision.Approved(modifiedArgs = """{"env":"staging"}"""),
+        )
+
+        deferredResult.await()
+        assertEquals("""{"env":"staging"}""", executedArgs)
+    }
+
+    @Test
+    fun `secret redaction masks passwords, tokens, and credentials in arguments`() {
+        val raw = """{"username":"alice","password":"mypassword123","apiKey":"secret-token-xyz","port":8080}"""
+        val masked = McpTelemetryRecorder.maskSecrets(raw)
+
+        assertFalse(masked.contains("mypassword123"))
+        assertFalse(masked.contains("secret-token-xyz"))
+        assertTrue(masked.contains("***REDACTED***"))
+        assertTrue(masked.contains("alice"))
+        assertTrue(masked.contains("8080"))
+    }
+
+    @Test
+    fun `concurrent invocations maintain thread safety and accurate stats`() = runBlocking {
+        val core = McpToolRegistryCore(disabledFile = tempDisabledFile())
+        core.registerProvider(provider("p1", echoTool("concurrent_tool")))
+
+        coroutineScope {
+            val jobs = (1..50).map { i ->
+                async {
+                    core.invoke("concurrent_tool", """{"index":$i}""")
+                }
+            }
+            jobs.awaitAll()
+        }
+
+        val stats = McpTelemetryRecorder.stats.value
+        assertEquals(50L, stats.totalCalls)
+        assertEquals(50L, stats.successCount)
+        assertEquals(0L, stats.errorCount)
+        assertEquals(0, stats.activeInFlight)
+        assertEquals(50, McpTelemetryRecorder.records.value.size)
+    }
+
+    @Test
+    fun `agent self-awareness tools report history and failure diagnosis`() = runBlocking {
+        val core = McpToolRegistryCore(disabledFile = tempDisabledFile())
+        core.registerProvider(McpMissionControlToolProvider)
+
+        // Seed one successful and one failed tool call
+        val s1 = McpTelemetryRecorder.nextCallId()
+        McpTelemetryRecorder.recordStart(s1, "git_status", "{}")
+        McpTelemetryRecorder.recordComplete(s1, McpToolResult("clean"), durationMs = 12L)
+
+        val s2 = McpTelemetryRecorder.nextCallId()
+        McpTelemetryRecorder.recordStart(s2, "k8s_deploy", "{}")
+        McpTelemetryRecorder.recordComplete(s2, McpToolResult("ImagePullBackOff", isError = true), durationMs = 45L)
+
+        // Agent queries history
+        val historyResult = core.invoke("get_tool_history", """{"limit":5}""")
+        assertFalse(historyResult.isError)
+        assertTrue(historyResult.text.contains("git_status"))
+        assertTrue(historyResult.text.contains("k8s_deploy"))
+
+        // Agent diagnoses last failure
+        val diagResult = core.invoke("diagnose_last_failure", "{}")
+        assertFalse(diagResult.isError)
+        assertTrue(diagResult.text.contains("k8s_deploy"))
+        assertTrue(diagResult.text.contains("ImagePullBackOff"))
+        assertTrue(diagResult.text.contains("recommendedAction"))
+    }
+}

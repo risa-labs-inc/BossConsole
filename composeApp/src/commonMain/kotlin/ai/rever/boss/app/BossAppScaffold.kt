@@ -1,6 +1,7 @@
 package ai.rever.boss.app
 
 import ai.rever.boss.components.bars.horizontal.BossBottomBar
+import ai.rever.boss.components.bars.horizontal.McpApprovalBanner
 import ai.rever.boss.components.bars.horizontal.BossTitleBar
 import ai.rever.boss.components.bars.horizontal.BossTopBar
 import ai.rever.boss.components.bars.isBarVisible
@@ -888,7 +889,10 @@ internal fun BossAppScaffold(
                     Box(
                         modifier = Modifier.hoverable(interactionSource = reveal.bottomBarInteractionSource),
                     ) {
-                        BossBottomBar(splitViewState.getActiveTabsComponent())
+                        Column {
+                            McpApprovalBanner()
+                            BossBottomBar(splitViewState.getActiveTabsComponent())
+                        }
                     }
                 }
             }

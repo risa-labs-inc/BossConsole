@@ -102,6 +102,10 @@ object McpToolRegistryImpl : McpToolRegistry {
             onFault = { StatusMessageManager.showMessage(it.message, durationMs = FAULT_MESSAGE_MS) },
         )
 
+    init {
+        core.registerProvider(McpMissionControlToolProvider)
+    }
+
     override val allTools: StateFlow<List<RegisteredMcpTool>> get() = core.allTools
     override val disabledToolNames: StateFlow<Set<String>> get() = core.disabledToolNames
     override val tools: StateFlow<List<RegisteredMcpTool>> get() = core.tools
@@ -634,23 +638,63 @@ internal class McpToolRegistryCore(
         // Only enabled tools are reachable (the bridge exposes exactly _tools).
         val tool =
             _tools.value.firstOrNull { it.definition.name == toolName }
-                ?: return McpToolResult("Unknown or disabled MCP tool: $toolName", isError = true)
-        val args = parseArgs(arguments)
+        val callId = McpTelemetryRecorder.nextCallId()
+        if (tool == null) {
+            val msg = "Unknown or disabled MCP tool: $toolName"
+            McpTelemetryRecorder.recordBlocked(callId, toolName, arguments, msg)
+            return McpToolResult(msg, isError = true)
+        }
+
+        // Human-in-the-Loop approval gate
+        var effectiveArguments = arguments
+        val needsApproval = McpTelemetryRecorder.isApprovalRequired(toolName)
+        if (needsApproval) {
+            when (val decision = McpTelemetryRecorder.requestApproval(callId, toolName, arguments)) {
+                is ApprovalDecision.Approved -> {
+                    if (decision.modifiedArgs != null) {
+                        effectiveArguments = decision.modifiedArgs
+                    }
+                }
+                is ApprovalDecision.Denied -> {
+                    return McpToolResult(decision.reason, isError = true)
+                }
+            }
+        }
+
+        McpTelemetryRecorder.recordStart(
+            callId = callId,
+            toolName = toolName,
+            arguments = effectiveArguments,
+            providerId = tool.providerId,
+            requiresApproval = needsApproval,
+        )
+        val startMs = System.currentTimeMillis()
+        val args = parseArgs(effectiveArguments)
         return try {
-            withTimeout(invokeTimeoutMs) { tool.definition.handler.call(args) }
+            val result = withTimeout(invokeTimeoutMs) { tool.definition.handler.call(args) }
+            val durationMs = System.currentTimeMillis() - startMs
+            McpTelemetryRecorder.recordComplete(callId, result, durationMs)
+            result
         } catch (t: TimeoutCancellationException) {
+            val durationMs = System.currentTimeMillis() - startMs
+            val msg = "Tool '$toolName' timed out after ${invokeTimeoutMs / 1000}s"
+            McpTelemetryRecorder.recordTimeout(callId, durationMs, msg)
             logger.warn(
                 LogCategory.SYSTEM,
                 "MCP tool handler timed out",
                 mapOf("tool" to toolName, "providerId" to tool.providerId, "timeoutMs" to invokeTimeoutMs),
                 error = t,
             )
-            McpToolResult("Tool '$toolName' timed out after ${invokeTimeoutMs / 1000}s", isError = true)
+            McpToolResult(msg, isError = true)
         } catch (t: CancellationException) {
+            val durationMs = System.currentTimeMillis() - startMs
+            McpTelemetryRecorder.recordCancelled(callId, durationMs)
             // Caller cancellation (not our timeout) must propagate — swallowing it
             // would break structured concurrency during request cancel/shutdown.
             throw t
         } catch (t: Throwable) {
+            val durationMs = System.currentTimeMillis() - startMs
+            McpTelemetryRecorder.recordFailure(callId, t, durationMs)
             logger.warn(
                 LogCategory.SYSTEM,
                 "MCP tool handler failed",
