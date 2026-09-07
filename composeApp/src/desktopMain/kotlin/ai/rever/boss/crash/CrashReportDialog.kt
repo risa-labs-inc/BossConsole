@@ -118,15 +118,19 @@ internal fun CrashReportDialog(
     val bodyOverflows by remember { derivedStateOf { bodyScrollState.isClipping() } }
     val traceOverflows by remember { derivedStateOf { stackTraceScrollState.isClipping() } }
 
-    // Compose's default scrollbar is black at 12% alpha — invisible against these dark
-    // panels, which would make the thumb useless as a "there is more below" cue.
+    // #106 moved this fix to the BossTheme root (plugin-ui-core's BossTheme.kt) so every
+    // other scrollbar in the app inherits it — but this dialog renders through its own
+    // ComposePanel().setContent root (see CrashHandler.kt) with no BossTheme ancestor, so
+    // that provider never reaches here. Kept as a local copy for that reason, with the
+    // same colors BossTheme.kt uses: textSecondary clears the 3:1 UI-component contrast
+    // floor in all six themes (textMuted at 45% alpha, this fix's first cut, did not).
     val defaultScrollbarStyle = LocalScrollbarStyle.current
-    val thumbColor = BossTheme.colors.textMuted
-    val thumbHoverColor = BossTheme.colors.textSecondary
+    val thumbColor = BossTheme.colors.textSecondary
+    val thumbHoverColor = BossTheme.colors.textPrimary
     val scrollbarStyle =
         remember(defaultScrollbarStyle, thumbColor, thumbHoverColor) {
             defaultScrollbarStyle.copy(
-                unhoverColor = thumbColor.copy(alpha = 0.45f),
+                unhoverColor = thumbColor,
                 hoverColor = thumbHoverColor,
             )
         }
