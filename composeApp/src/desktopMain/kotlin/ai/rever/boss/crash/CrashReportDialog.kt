@@ -37,6 +37,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
@@ -564,122 +565,126 @@ internal fun CrashReportDialog(
                 Spacer(modifier = Modifier.height(16.dp))
             }
 
-            // Action buttons
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                // Clean & Restart button. Gated on the disposition as well as the
-                // callback: the caller already passes null for a recoverable crash,
-                // but that left the invariant - "wiping the install is never offered
-                // as the answer to one plugin misbehaving" - resting entirely on a
-                // call site with no test, and a test here could only assert it
-                // vacuously. Now it holds however this is called.
-                if (onCleanAndRestart != null && recoverablePluginId == null) {
-                    Button(
-                        onClick = onCleanAndRestart,
-                        enabled = !isSubmitting,
-                        colors =
-                            ButtonDefaults.buttonColors(
-                                backgroundColor = BossTheme.colors.alert,
-                                contentColor = BossTheme.colors.onSignal,
-                                disabledBackgroundColor = BossTheme.colors.raised,
-                                disabledContentColor = BossTheme.colors.textMuted,
-                            ),
-                        shape = RoundedCornerShape(6.dp),
-                    ) {
-                        Text("Clean Data & Restart")
-                    }
-                    Spacer(modifier = Modifier.weight(1f))
-                }
-
-                // Dismiss button. For a recoverable crash this is the *recovery* action rather
-                // than a decline, so it reads as one and is given the foreground colour - the
-                // user who wants their session back must not have to guess that the greyed-out
-                // "Don't Send" is the button that keeps it.
-                TextButton(
-                    onClick = onDismiss,
-                    enabled = !isSubmitting,
-                    colors =
-                        ButtonDefaults.textButtonColors(
-                            contentColor =
-                                if (recoverablePluginId != null) {
-                                    BossTheme.colors.textPrimary
-                                } else {
-                                    BossTheme.colors.textSecondary
-                                },
-                        ),
-                ) {
-                    Text(dismissLabel)
-                }
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                // Report Issue button
-                Button(
-                    onClick = {
-                        isSubmitting = true
-                        onSubmittingChanged(true)
-                        coroutineScope.launch {
-                            // try/finally, and the finally is load-bearing now.
-                            // isSubmitting gates all three exits, and the window is
-                            // DO_NOTHING_ON_CLOSE, so a submit that threw anywhere -
-                            // updateReportWithUserInput, or the plumbing around
-                            // submitCrashReport that sits outside its own inner
-                            // catch - used to leave the flag set forever and the
-                            // crash dialog with no way out but killing the process,
-                            // on a machine already in a bad state. Before this
-                            // change the close box always worked, so the same throw
-                            // was survivable.
-                            // Exception, not a narrower type: the point is that
-                            // NOTHING escapes and leaves isSubmitting stuck, and the
-                            // paths involved reach the network, the filesystem and a
-                            // config loader.
-                            @Suppress("TooGenericExceptionCaught")
-                            val submitted =
-                                try {
-                                    submitReport(
-                                        userNotes = userNotes.takeIf { it.isNotBlank() },
-                                        includeLogs = includeLogs,
-                                    ).also { submitResult = it }
-                                } catch (e: Exception) {
-                                    submitResult =
-                                        CrashReportService.SubmitResult.Error(
-                                            "Failed to submit crash report: ${e.message ?: e.javaClass.simpleName}",
-                                        )
-                                    null
-                                } finally {
-                                    isSubmitting = false
-                                    onSubmittingChanged(false)
-                                }
-
-                            // If successful, call onSubmit after a brief delay
-                            if (submitted is CrashReportService.SubmitResult.Success) {
-                                kotlinx.coroutines.delay(SUBMIT_CONFIRMATION_MILLIS)
-                                onSubmit(userNotes.takeIf { it.isNotBlank() }, includeLogs)
-                            }
+            // Action buttons. Extracted per-button so the same three can be laid out either
+            // side by side or stacked — see the BoxWithConstraints below.
+            //
+            // Bound to a local val (rather than checking `onCleanAndRestart != null` at each of
+            // the two call sites below) precisely so it *is* the non-null reference the compiler
+            // can smart-cast from — the two-branch layout needs it twice, and re-deriving the
+            // condition from the parameter wouldn't carry that smart cast across either branch.
+            val cleanAndRestart = onCleanAndRestart.takeIf { recoverablePluginId == null }
+            val reportIssueEnabled = !isSubmitting && submitResult !is CrashReportService.SubmitResult.Success
+            val onReportIssueClick: () -> Unit = {
+                isSubmitting = true
+                onSubmittingChanged(true)
+                coroutineScope.launch {
+                    // try/finally, and the finally is load-bearing now.
+                    // isSubmitting gates all three exits, and the window is
+                    // DO_NOTHING_ON_CLOSE, so a submit that threw anywhere -
+                    // updateReportWithUserInput, or the plumbing around
+                    // submitCrashReport that sits outside its own inner
+                    // catch - used to leave the flag set forever and the
+                    // crash dialog with no way out but killing the process,
+                    // on a machine already in a bad state. Before this
+                    // change the close box always worked, so the same throw
+                    // was survivable.
+                    // Exception, not a narrower type: the point is that
+                    // NOTHING escapes and leaves isSubmitting stuck, and the
+                    // paths involved reach the network, the filesystem and a
+                    // config loader.
+                    @Suppress("TooGenericExceptionCaught")
+                    val submitted =
+                        try {
+                            submitReport(
+                                userNotes = userNotes.takeIf { it.isNotBlank() },
+                                includeLogs = includeLogs,
+                            ).also { submitResult = it }
+                        } catch (e: Exception) {
+                            submitResult =
+                                CrashReportService.SubmitResult.Error(
+                                    "Failed to submit crash report: ${e.message ?: e.javaClass.simpleName}",
+                                )
+                            null
+                        } finally {
+                            isSubmitting = false
+                            onSubmittingChanged(false)
                         }
-                    },
-                    enabled = !isSubmitting && submitResult !is CrashReportService.SubmitResult.Success,
-                    colors =
-                        ButtonDefaults.buttonColors(
-                            backgroundColor = BossTheme.colors.signal,
-                            contentColor = BossTheme.colors.onSignal,
-                            disabledBackgroundColor = BossTheme.colors.raised,
-                            disabledContentColor = BossTheme.colors.textMuted,
-                        ),
-                    shape = RoundedCornerShape(6.dp),
-                ) {
-                    if (isSubmitting) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            color = BossTheme.colors.textPrimary,
-                            strokeWidth = 2.dp,
+
+                    // If successful, call onSubmit after a brief delay
+                    if (submitted is CrashReportService.SubmitResult.Success) {
+                        kotlinx.coroutines.delay(SUBMIT_CONFIRMATION_MILLIS)
+                        onSubmit(userNotes.takeIf { it.isNotBlank() }, includeLogs)
+                    }
+                }
+            }
+
+            // Below FooterActionsInlineMinWidth the three buttons don't fit on one row at the
+            // crash window's 450dp minimum. Compose's Row then squeezes the space it can't
+            // reclaim elsewhere into the *last* child rather than overflowing, which shreds the
+            // primary button's label ("Report Issue" / "Submitting...") across several lines
+            // instead of the row simply running wide (#104). Below the breakpoint, stack the
+            // same three buttons full-width instead.
+            BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                if (showsInlineFooterActions(maxWidth)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        // Clean & Restart button. Gated on the disposition as well as the
+                        // callback: the caller already passes null for a recoverable crash,
+                        // but that left the invariant - "wiping the install is never offered
+                        // as the answer to one plugin misbehaving" - resting entirely on a
+                        // call site with no test, and a test here could only assert it
+                        // vacuously. Now it holds however this is called.
+                        if (cleanAndRestart != null) {
+                            CleanAndRestartButton(onClick = cleanAndRestart, enabled = !isSubmitting)
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
+
+                        // Dismiss button. For a recoverable crash this is the *recovery* action
+                        // rather than a decline, so it reads as one and is given the foreground
+                        // colour - the user who wants their session back must not have to guess
+                        // that the greyed-out "Don't Send" is the button that keeps it.
+                        DismissActionButton(
+                            label = dismissLabel,
+                            onClick = onDismiss,
+                            enabled = !isSubmitting,
+                            isPrimary = recoverablePluginId != null,
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Submitting...")
-                    } else {
-                        Text("Report Issue")
+
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        ReportIssueButton(
+                            isSubmitting = isSubmitting,
+                            enabled = reportIssueEnabled,
+                            onClick = onReportIssueClick,
+                        )
+                    }
+                } else {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        if (cleanAndRestart != null) {
+                            CleanAndRestartButton(
+                                onClick = cleanAndRestart,
+                                enabled = !isSubmitting,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                        DismissActionButton(
+                            label = dismissLabel,
+                            onClick = onDismiss,
+                            enabled = !isSubmitting,
+                            isPrimary = recoverablePluginId != null,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        ReportIssueButton(
+                            isSubmitting = isSubmitting,
+                            enabled = reportIssueEnabled,
+                            onClick = onReportIssueClick,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
                 }
             }
@@ -774,3 +779,100 @@ internal const val TRACE_SCROLLBAR_TAG = "crash-dialog-trace-scrollbar"
  * composition of any content, however short.
  */
 private fun ScrollState.isClipping(): Boolean = maxValue in 1 until Int.MAX_VALUE
+
+/**
+ * Width below which the footer's three buttons ("Clean Data & Restart", the dismiss button,
+ * "Report Issue"/"Submitting...") stop fitting on one row and stack instead.
+ *
+ * Measured (#104): at the crash window's 450dp minimum, available content width is ~386-402dp,
+ * while the three buttons together want "Clean Data & Restart" (198dp) + the dismiss button
+ * (104dp) + a 12dp spacer + "[spinner] Submitting..." (~145dp) ≈ 459dp. Below that, Compose's Row
+ * squeezes the space it can't reclaim elsewhere into the *last* child instead of overflowing,
+ * which shreds the primary button's label rather than the row running wide. This constant sits
+ * above that 459dp figure, with headroom for the worst-case ("Submitting...") label.
+ *
+ * A named constant with a pure predicate ([showsInlineFooterActions]) rather than an inline
+ * comparison, so the breakpoint is pinned by a test with no display — the shape
+ * `HomeHeader.showsInlineSearch` already established for the same reason.
+ */
+internal val FooterActionsInlineMinWidth: Dp = 480.dp
+
+internal fun showsInlineFooterActions(availableWidth: Dp): Boolean = availableWidth >= FooterActionsInlineMinWidth
+
+@Composable
+private fun CleanAndRestartButton(
+    onClick: () -> Unit,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        colors =
+            ButtonDefaults.buttonColors(
+                backgroundColor = BossTheme.colors.alert,
+                contentColor = BossTheme.colors.onSignal,
+                disabledBackgroundColor = BossTheme.colors.raised,
+                disabledContentColor = BossTheme.colors.textMuted,
+            ),
+        shape = RoundedCornerShape(6.dp),
+        modifier = modifier,
+    ) {
+        Text("Clean Data & Restart")
+    }
+}
+
+@Composable
+private fun DismissActionButton(
+    label: String,
+    onClick: () -> Unit,
+    enabled: Boolean,
+    isPrimary: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    TextButton(
+        onClick = onClick,
+        enabled = enabled,
+        colors =
+            ButtonDefaults.textButtonColors(
+                contentColor = if (isPrimary) BossTheme.colors.textPrimary else BossTheme.colors.textSecondary,
+            ),
+        modifier = modifier,
+    ) {
+        Text(label)
+    }
+}
+
+@Composable
+private fun ReportIssueButton(
+    isSubmitting: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        colors =
+            ButtonDefaults.buttonColors(
+                backgroundColor = BossTheme.colors.signal,
+                contentColor = BossTheme.colors.onSignal,
+                disabledBackgroundColor = BossTheme.colors.raised,
+                disabledContentColor = BossTheme.colors.textMuted,
+            ),
+        shape = RoundedCornerShape(6.dp),
+        modifier = modifier,
+    ) {
+        if (isSubmitting) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(16.dp),
+                color = BossTheme.colors.textPrimary,
+                strokeWidth = 2.dp,
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Submitting...")
+        } else {
+            Text("Report Issue")
+        }
+    }
+}
