@@ -468,7 +468,13 @@ fun BossPopup(
                 // sees the node as the PARENT sees it - correct position, zero size - and the width
                 // comes from the measurement captured within.
                 .onGloballyPositioned { coordinates ->
-                    anchorPositionPx = coordinates.positionInWindow()
+                    // Equality-guarded: both this and the layout write below feed State that is
+                    // read during composition, so an unguarded write here invalidates composition
+                    // from inside layout on every pass - a redundant composition-measure-layout
+                    // cycle per frame while e.g. a window-resize drag holds the position steady but
+                    // still re-delivers it. A no-op in the steady state once the value stops moving.
+                    val newPosition = coordinates.positionInWindow()
+                    if (newPosition != anchorPositionPx) anchorPositionPx = newPosition
                 }.layout { measurable, constraints ->
                     val placeable = measurable.measure(constraints)
                     // The CONSTRAINT, not the placeable. On the heavyweight path this Box has no
@@ -476,8 +482,8 @@ fun BossPopup(
                     // the anchor would report no width at all. maxWidth is what the caller is
                     // offering, which is the width the popup should adopt. Unbounded (a scrolling
                     // parent) has no such answer, so fall back to whatever the content measured.
-                    measuredWidthPx =
-                        if (constraints.hasBoundedWidth) constraints.maxWidth else placeable.width
+                    val newWidth = if (constraints.hasBoundedWidth) constraints.maxWidth else placeable.width
+                    if (newWidth != measuredWidthPx) measuredWidthPx = newWidth
                     // Report 0x0 but still PLACE the child: the lightweight path nests a real Popup
                     // in here, and an unplaced subtree would never compose it.
                     layout(0, 0) { placeable.place(0, 0) }

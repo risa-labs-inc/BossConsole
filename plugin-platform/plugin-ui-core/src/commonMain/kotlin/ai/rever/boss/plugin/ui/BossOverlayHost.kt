@@ -49,9 +49,44 @@ import androidx.compose.ui.window.DialogProperties
  * the binary-compatibility validator rejects as a whole-plugin failure.
  */
 object BossOverlayHost {
+    /**
+     * Reports (via [diagnostics]) that [name] was written more than once, for the four fields below
+     * that are documented "WRITE-ONCE at startup, before any composition" while being plain public
+     * `var`s today - so nothing stops a plugin's `BossOverlayHost.useHeavyweightOverlays = false`
+     * from silently reinstating the occluded-dialog bug this file exists to fix, or a stray
+     * `modalRenderer = null` from taking every heavyweight dialog in the app back to lightweight.
+     * Not a new trust boundary - the plugin model is already in-process and cooperative, so this
+     * stops an accident, not an attacker - and a custom setter keeps the exact same JVM descriptor
+     * (getter/setter signatures are unchanged), so this needs no coordinated host and api release.
+     *
+     * [openHeavyweightPopups] is deliberately NOT guarded this way: its own KDoc documents it as a
+     * running `++`/`--` counter maintained across the lifetime of every heavyweight popup, not a
+     * startup registration, and a write-once guard would freeze it at whatever the first popup left
+     * it at.
+     */
+    private fun reportDuplicateWrite(name: String) {
+        diagnostics?.invoke(
+            "Ignored a write to BossOverlayHost.$name after the host's own startup injection - " +
+                "a plugin (or a second host copy) tried to overwrite a write-once registry field.",
+        )
+    }
+
     /** True when modals must escape into heavyweight windows (HARDWARE_ACCELERATED browser). */
     @Volatile
     var useHeavyweightOverlays: Boolean = false
+        set(value) {
+            // No nullable "unwritten" sentinel for a Boolean, so this needs its own written flag
+            // rather than the null-check the two renderers and diagnostics below use.
+            if (useHeavyweightOverlaysWritten) {
+                reportDuplicateWrite("useHeavyweightOverlays")
+                return
+            }
+            useHeavyweightOverlaysWritten = true
+            field = value
+        }
+
+    @Volatile
+    private var useHeavyweightOverlaysWritten = false
 
     /**
      * Platform-injected modal renderer: shows [content] in a separate always-on-top window
@@ -72,6 +107,13 @@ object BossOverlayHost {
             content: @Composable () -> Unit,
         ) -> Unit
     )? = null
+        set(value) {
+            if (field != null) {
+                reportDuplicateWrite("modalRenderer")
+                return
+            }
+            field = value
+        }
 
     /**
      * Platform-injected POPUP renderer: shows [content] in a separate always-on-top window anchored
@@ -97,6 +139,13 @@ object BossOverlayHost {
             content: @Composable () -> Unit,
         ) -> Unit
     )? = null
+        set(value) {
+            if (field != null) {
+                reportDuplicateWrite("popupRenderer")
+                return
+            }
+            field = value
+        }
 
     /**
      * How many heavyweight POPUP windows are currently open.
@@ -132,6 +181,13 @@ object BossOverlayHost {
      */
     @Volatile
     var diagnostics: ((String) -> Unit)? = null
+        set(value) {
+            if (field != null) {
+                reportDuplicateWrite("diagnostics")
+                return
+            }
+            field = value
+        }
 
     /** Reported at most once per process; a per-frame warning would drown the log. */
     @Volatile
