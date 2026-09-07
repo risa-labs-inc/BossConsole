@@ -90,7 +90,7 @@ At every nest: same chrome, spine, slider, pass dance, brakes, omit–commission
 | Model / agent CLI | Codex, Claude, Gemini, OpenCode, Astra-class, … |
 | World | Fluck pages, Arcade, Atlas-class spatial, mocks |
 | GPU / datacenter | workloads move across NVIDIA gens and vendors without rewriting Hunt |
-| Outer mouth | Grok Bot, other harnesses — optional clothing |
+| Outer mouth | Bot chats (any harness) — optional clothing |
 
 **Commission:** shared stream, Fluck-visible pass, kill-switches, Tool Creator hack surface.  
 **Omit:** vendor-only skins that hide governance; dock chaos; blind full-auto without surrender.
@@ -105,10 +105,21 @@ changes; hunk hunt links do not.)
 
 ## Power accessible now
 
-1. `(boss)` = Grok mouth × Boss-only machine (terminal, Fluck, files, Toolbox, plugins).
-2. Attach strongest available agent as Astra-stand-in.
-3. Fluck (+ Arcade mocks) as Atlas-stand-in until spatial world APIs land.
-4. Kill-switches always on the human seat’s side of the dance.
+**One-liner:** Home Boss copies you for the agent. Same home nests in both.
+
+**Seats** (same names at every nest):
+
+1. **Bot chats** — input mouth / harness
+2. **Machine 1** — agents run this boss, pair work ready
+3. **Machine 2** — for me — solo boss instance (current Boss version)
+
+**Call Boss** only when the task is complex and needs parallelisation (State 0 stays single-stream; dim Machine 1 until then). Nest mouths are local. Same Boss follows home (not “chrome only”). Always expose exit / brake.
+
+Also:
+
+1. Attach strongest available agent as Astra-stand-in into Machine 1.
+2. Fluck (+ Arcade mocks) as Atlas-stand-in until spatial world APIs land.
+3. Kill-switches stay on the human side (Bot chats / Machine 2).
 
 ## Ask of maintainers
 
@@ -124,6 +135,10 @@ changes; hunk hunt links do not.)
 
 ## Visual
 
-![HA Hunt flow](ha-hunt-visual-flow.png)
+Labeled Depth (Hunt mode seats):
 
-Source: `docs/ha-hunt-visual-flow.svg`
+![Hunt mode](ha-hunt-visual-flow.png)
+
+Structure only (no text):
+
+![Hunt mode structure](ha-hunt-visual-flow-silent.png)
