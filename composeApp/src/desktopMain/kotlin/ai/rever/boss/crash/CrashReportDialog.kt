@@ -238,7 +238,10 @@ internal fun CrashReportDialog(
             // instead of pushing the action buttons past the bottom of the window.
             // `fill = false` keeps the cap from becoming a floor: when the content is short the
             // body stays short and the footer sits right below it, as it did before the cap.
-            Box(modifier = Modifier.weight(1f, fill = false).fillMaxWidth()) {
+            BoxWithConstraints(modifier = Modifier.weight(1f, fill = false).fillMaxWidth()) {
+                // A stacked footer leaves less room for the body. Keep the nested trace viewport
+                // within half of that space so surrounding report content remains reachable.
+                val tracePaneMaxHeight = minOf(TRACE_PANE_MAX_HEIGHT, maxHeight / 2)
                 Column(
                     modifier = Modifier.fillMaxWidth().verticalScroll(bodyScrollState),
                 ) {
@@ -344,7 +347,7 @@ internal fun CrashReportDialog(
                                             modifier =
                                                 Modifier
                                                     .fillMaxWidth()
-                                                    .heightIn(max = TRACE_PANE_MAX_HEIGHT)
+                                                    .heightIn(max = tracePaneMaxHeight)
                                                     .testTag(TRACE_PANE_TAG)
                                                     .background(
                                                         BossTheme.colors.panel,
