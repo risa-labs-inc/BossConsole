@@ -13,9 +13,9 @@ import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.SpaceDashboard
 import androidx.compose.material.icons.outlined.Tab
 import androidx.compose.material.icons.outlined.Upload
-import androidx.compose.material.icons.outlined.Workspaces
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -217,13 +217,13 @@ fun WorkspaceButton(
         Box {
             BossActionButton(
                 // The same glyph the Top of Mind footer opens a Space with
-                // (`Icons.Outlined.Workspaces`), not a briefcase. Two reasons, and the second is
-                // the one that matters: a briefcase says "work", which is the half of the old word
-                // that got dropped when Workspace became Space - three panes in a frame says what
-                // a Space actually is. And this button and that footer button do the SAME job,
-                // raising the same picker, so wearing different icons made them read as two
-                // different controls.
-                leftIcon = Icons.Outlined.Workspaces,
+                // (`Icons.Outlined.SpaceDashboard`), not a briefcase. Two reasons, and the second
+                // is the one that matters: a briefcase says "work", which is the half of the old
+                // word that got dropped when Workspace became Space, where a large pane beside two
+                // stacked ones is what a Space actually IS. And this button and that footer button
+                // do the same job, raising the same picker, so wearing different icons made one
+                // control read as two.
+                leftIcon = Icons.Outlined.SpaceDashboard,
                 compact = compact,
                 text =
                     currentWorkspace?.let { workspace ->
