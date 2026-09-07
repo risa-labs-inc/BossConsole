@@ -15,14 +15,13 @@ import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Tab
 import androidx.compose.material.icons.outlined.Upload
+import androidx.compose.material.icons.outlined.Workspaces
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import compose.icons.FeatherIcons
-import compose.icons.feathericons.Briefcase
 
 /**
  * Platform-specific function to open workspace directory
@@ -217,7 +216,14 @@ fun WorkspaceButton(
     Box {
         Box {
             BossActionButton(
-                leftIcon = FeatherIcons.Briefcase,
+                // The same glyph the Top of Mind footer opens a Space with
+                // (`Icons.Outlined.Workspaces`), not a briefcase. Two reasons, and the second is
+                // the one that matters: a briefcase says "work", which is the half of the old word
+                // that got dropped when Workspace became Space - three panes in a frame says what
+                // a Space actually is. And this button and that footer button do the SAME job,
+                // raising the same picker, so wearing different icons made them read as two
+                // different controls.
+                leftIcon = Icons.Outlined.Workspaces,
                 compact = compact,
                 text =
                     currentWorkspace?.let { workspace ->
