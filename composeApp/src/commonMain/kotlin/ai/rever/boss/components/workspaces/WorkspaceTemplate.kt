@@ -142,9 +142,32 @@ internal suspend fun materialiseTemplateForProject(
  * menu, the home screen's cards and the startup "which Space" prompt - so a template becomes a
  * Space wherever it is picked from and not only in the picker that grouped it as one.
  *
+ * **Being a template and being materialised are two different questions, and this answers only the
+ * second.** The picker's Templates section is IDENTITY - one of the eight ids in
+ * [PredefinedWorkspaces.allIds] - and this gate is SHAPE, [requiresProject]. They disagree on
+ * exactly one built-in: **Browser Only**, a single browser panel on a fixed URL, is one of the
+ * layouts we ship and has nothing to parameterise.
+ *
+ * **So picking Browser Only applies it directly, and does not save a copy.** That is a decision,
+ * not an oversight, and the reason is that there is nothing to put in the copy's name. The seven
+ * others are named for the project their placeholders resolve against; this layout references no
+ * project, and naming it after the one the window happens to have selected would claim a
+ * connection the layout does not have. The alternatives are a counter ("Browser Only 2") or an
+ * epoch, both of which put a Space in the user's list that they did not ask for and that says
+ * nothing about itself - on every pick. Applying the shipped layout is what the tile looks like it
+ * does.
+ *
+ * The known cost, which is not specific to Browser Only and is why it is not fixed here: while the
+ * current Space is a BUILT-IN, an explicit save writes a file whose name collides with the shipped
+ * entry, and `WorkspaceManager.loadAllWorkspaces` drops a saved file whose name matches a
+ * predefined one - so that write does not survive a relaunch (the layout still returns through Last
+ * Session). Every built-in applied as-is reaches that, including the seven whenever no project is
+ * selected, so it wants one rule in the save path rather than a special case in this function.
+ *
  * Three outcomes:
  *
- * - **Not a template**: returned unchanged. Nothing is written and nothing is said.
+ * - **Nothing to substitute** - not a built-in at all, or Browser Only: returned unchanged. Nothing
+ *   is written and nothing is said.
  * - **A template, with a project selected**: substituted, saved under
  *   [materialisedTemplateName], and returned for the caller to load and apply. Saved BEFORE it is
  *   applied, so a Space the user can switch back to exists from the moment its tabs do.

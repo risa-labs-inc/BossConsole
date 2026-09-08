@@ -1240,11 +1240,25 @@ the whole `TabTypeId`, whose equality includes `pluginId` and `defaultOrder`.
 
 ## The built-in layouts are TEMPLATES, and picking one materialises it
 
-`PredefinedWorkspaces.allWorkspaces` is eight parameterised layouts, not eight Spaces:
-`{projectPath}`, `{gitRemoteUrl}`, `{currentFile}` and `{claudeContinueFlag}` stand in for a project
-nobody has chosen yet. Applying one resolved those placeholders on the way to building its tabs and
-threw the answers away, so the Space list still said `{projectPath}` afterwards and the layout on
-screen belonged to no Space at all.
+`PredefinedWorkspaces.allWorkspaces` is the eight layouts BOSS ships, not eight Spaces. Seven are
+parameterised - `{projectPath}`, `{gitRemoteUrl}`, `{currentFile}` and `{claudeContinueFlag}` stand
+in for a project nobody has chosen yet - and applying one resolved those placeholders on the way to
+building its tabs and threw the answers away, so the Space list still said `{projectPath}`
+afterwards and the layout on screen belonged to no Space at all.
+
+**Two different questions, and conflating them is a bug in either direction.**
+
+| | Browser Only | the other seven |
+|---|---|---|
+| a layout BOSS ships (`PredefinedWorkspaces.allIds`) | yes | yes |
+| has placeholders left to substitute (`requiresProject()`) | no | yes |
+
+Being a **TEMPLATE** is the first row: identity, "one of the eight we ship", which is what the Space
+picker groups on. Being **MATERIALISED** on pick is the second: shape, which is what `spaceToOpen`
+gates on. They agree on seven and disagree on Browser Only, a single browser panel on a fixed URL.
+Answering the first question with the second put one of the shipped layouts in with the user's own
+Spaces; answering the second with the first would try to name a copy of it after a project the
+layout does not reference.
 
 `spaceToOpen` (`components/workspaces/WorkspaceTemplate.kt`) is the one door every pick goes
 through, and it MATERIALISES a template: substitutes the placeholders, sets `projectPath`, names it
@@ -1255,13 +1269,21 @@ and menu (through `WorkspaceSwitch.resolve`), the home screen's cards
 (`BossAppEventBusEffects`) and the startup "which Space" prompt (`BossAppDialogs`) - because a
 template picked from the fourth of those is the same gesture as one picked from the first.
 
-- **The predicate is `LayoutWorkspace.requiresProject()`, which already existed**, and there is
-  deliberately NO `isTemplate` field. Holding an unsubstituted project placeholder is exactly what
-  makes something a template, and a saved Space is written from live state by `WorkspaceExtractor`
-  with real paths in it, so it can never satisfy the predicate. `LayoutWorkspace` is the plugin api
-  type; a new constructor parameter on it rejects every already-built plugin (see the
-  `@JvmOverloads` note on `PanelConfig`). A materialised Space therefore stops being a template by
-  construction, which is what makes it show up under Spaces from then on.
+- **Templates are the SET of built-in ids, and it cannot be a prefix test.**
+  `PredefinedWorkspaces.allIds` is derived from `allWorkspaces`, so a ninth built-in joins by
+  existing; all eight ids are named constants so one can be referred to. `LayoutWorkspace.generateId()`
+  mints `workspace-<epoch millis>`, so a saved Space carries the same `workspace-` prefix as a
+  built-in and `startsWith("workspace-")` would call every Space a template. The NAME is not the key
+  either - a user can save a Space called "Claude Code".
+- **There is deliberately NO `isTemplate` field on `LayoutWorkspace`.** It is the plugin api type,
+  and a new constructor parameter on it rejects every already-built plugin (see the `@JvmOverloads`
+  note on `PanelConfig`). The id it already carries is enough.
+- **Materialising is gated on `requiresProject()`, which is untouched**, and Browser Only must keep
+  answering false to it: `shouldApplyOnFreshStart` declines a layout that needs a project, so if
+  that flipped a new install with no project would come up on an empty window instead of on a
+  browser. Two tests depend on it. The template notion was added alongside it, not over it.
+- **A materialised Space is never a template again by construction**: it gets a fresh
+  `generateId()`, which is not in `allIds`.
 - **The substitution is `WorkspacePlaceholders.processPlaceholders`, not a second pass.** Per-field,
   and the split is `createTabFromWorkspaceConfig`'s: `initialCommand` is shell content so
   `{projectPath}` is substituted SHELL-QUOTED there and raw in `url`, `filePath` and
@@ -1275,9 +1297,25 @@ template picked from the fourth of those is the same gesture as one picked from 
   and a status message says why - the wording the home screen used to refuse the click with, which
   is now `spaceToOpen`'s rather than a copy of the rule in one call site. A project picker at that
   moment is a second dialog on top of the one the user just used, and is not built.
-- **The plugin only GROUPS.** Top of Mind's picker has a Templates section, which needs the same
-  predicate over the api's own types, so `SpaceTemplates.kt` there repeats the four placeholder
-  strings and says so. Nothing about the decision lives on that side: resolving `{gitRemoteUrl}`
+- **Picking Browser Only applies it directly and saves no copy**, which is a decision rather than a
+  gap. There is nothing to put in the copy's name: the seven others are named for the project their
+  placeholders resolve against, this layout references no project, and naming it after whichever
+  project the window happens to have selected would claim a connection the layout does not have. The
+  alternatives are a counter ("Browser Only 2") or an epoch, both of which put a Space in the user's
+  list that they did not ask for and that says nothing about itself, on every pick. Applying the
+  shipped layout is what the tile looks like it does. The picker's section hint is worded to promise
+  neither behaviour for that reason.
+- **Known, and general rather than about Browser Only:** while the current Space is a BUILT-IN, an
+  explicit save writes a file whose name collides with the shipped entry, and `loadAllWorkspaces`
+  drops a saved file whose name matches a predefined one - so that write does not survive a relaunch
+  (the layout still returns through Last Session). Every built-in applied as-is reaches this,
+  including the seven whenever no project is selected, so it wants one rule in the save path rather
+  than a special case at the pick.
+- **The plugin only GROUPS.** Top of Mind's picker has a Templates section, which needs the id set
+  over the api's own types, so `SpaceTemplates.kt` there repeats the eight ids and says so. The
+  drift is the mild direction: a built-in this repo ships and that list does not name shows under
+  Spaces, a tile in the wrong section and nothing else, because the host still owns both applying
+  and materialising. Nothing about those decisions lives on that side - resolving `{gitRemoteUrl}`
   forks `git` in the project directory, which no plugin can do.
 
 ## Unsaved Spaces, and the save button in the vertical bar

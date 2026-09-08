@@ -71,22 +71,81 @@ class WorkspaceTemplateTest {
             is HorizontalSplit -> tabsOf(layout.top) + tabsOf(layout.bottom)
         }
 
-    // ==================== the predicate ====================
+    // ==================== two different questions ====================
+
+    /**
+     * **Being a TEMPLATE is identity; needing a project is shape.** The Space picker groups on the
+     * first and the host materialises on the second, and they agree on seven of the eight built-ins
+     * and disagree on exactly Browser Only - a single browser panel on a fixed URL, which is one of
+     * the layouts we ship and has nothing to parameterise. Conflating them in either direction is
+     * the bug: one way files a shipped layout in with the user's own Spaces, the other way tries to
+     * name a copy of it after a project the layout does not reference.
+     */
+    @Test
+    fun `the built-in SET is identity, and only seven of the eight need a project`() {
+        val ids = PredefinedWorkspaces.allIds
+        val needProject = PredefinedWorkspaces.allWorkspaces.filter { it.requiresProject() }.map { it.id }
+
+        assertEquals(EXPECTED_BUILT_IN_IDS, ids, "the shipped set, which the picker's copy mirrors")
+        assertEquals(
+            EXPECTED_BUILT_IN_IDS - PredefinedWorkspaces.BROWSER_ONLY_ID,
+            needProject.toSet(),
+            "every built-in but Browser Only has placeholders left to substitute",
+        )
+    }
+
+    /**
+     * Browser Only must keep `requiresProject() == false`, and this is the reason: it is the
+     * fresh-start default that can stand on its own. `shouldApplyOnFreshStart` declines a layout
+     * that needs a project, so if this flipped, a new install with no project would come up on an
+     * empty window instead of on a browser.
+     */
+    @Test
+    fun `Browser Only needs no project, which is what lets a fresh install come up on it`() {
+        val browserOnly =
+            PredefinedWorkspaces.allWorkspaces.single { it.id == PredefinedWorkspaces.BROWSER_ONLY_ID }
+
+        assertFalse(browserOnly.requiresProject(), "it carries no placeholder to substitute")
+        assertTrue(
+            browserOnly.id in PredefinedWorkspaces.allIds,
+            "and it is still one of ours, so the picker files it under Templates",
+        )
+    }
 
     @Test
-    fun `a built-in layout carrying a project placeholder is a template`() {
-        // Not a fixture: the shipped list is what the picker groups, so the rule is asserted
-        // against it. Browser Only is the one that stands without a project, which is what lets
-        // it be applied on a fresh start at all.
-        val templates = PredefinedWorkspaces.allWorkspaces.filter { it.requiresProject() }
-        val spaces = PredefinedWorkspaces.allWorkspaces.filterNot { it.requiresProject() }
+    fun `every named constant is one of the shipped ids`() {
+        // The constants are for naming ONE built-in; `allIds` is for asking about all of them.
+        // They cannot drift, because `allIds` is derived from the list the constants are used in -
+        // but a constant that stopped being used in it would go unnoticed without this.
+        listOf(
+            PredefinedWorkspaces.CLAUDE_CODE_ID,
+            PredefinedWorkspaces.CODE_REVIEW_ID,
+            PredefinedWorkspaces.GEMINI_ID,
+            PredefinedWorkspaces.CODEX_ID,
+            PredefinedWorkspaces.OPENCODE_ID,
+            PredefinedWorkspaces.TERMINAL_BROWSER_ID,
+            PredefinedWorkspaces.DUAL_TERMINAL_ID,
+            PredefinedWorkspaces.BROWSER_ONLY_ID,
+        ).forEach { id ->
+            assertTrue(id in PredefinedWorkspaces.allIds, "$id is a constant for a layout nobody ships")
+        }
+    }
 
-        assertEquals(
-            listOf("Browser Only"),
-            spaces.map { it.name },
-            "Browser Only is the only built-in that needs no project; everything else is a template",
+    /**
+     * A saved Space can never be mistaken for a built-in, which is why the picker's rule is the
+     * explicit SET and not a prefix.
+     */
+    @Test
+    fun `a generated Space id is never a built-in id`() {
+        val generated = LayoutWorkspace.generateId()
+
+        assertTrue(generated.startsWith("workspace-"), "it shares the prefix, which is the trap")
+        assertFalse(generated in PredefinedWorkspaces.allIds)
+        assertFalse(
+            materialise(template(layout = SinglePanel(PanelConfig(id = "main", tabs = listOf(tab()))))).id
+                in PredefinedWorkspaces.allIds,
+            "a materialised template is a Space of the user's, not one of ours",
         )
-        assertTrue(templates.size >= 7, "the seven project-shaped built-ins are templates")
     }
 
     // ==================== materialising ====================
@@ -223,5 +282,26 @@ class WorkspaceTemplateTest {
         assertEquals("Boss", projectNameFor("/Users/me/Boss/"))
         assertEquals("Boss", projectNameFor("C:\\Users\\me\\Boss"))
         assertEquals("Project", projectNameFor("/"), "a path with no segment still names something")
+    }
+
+    private companion object {
+        /**
+         * The eight ids BOSS ships, written out rather than read off `allIds`.
+         *
+         * A test that derived the expectation from the thing under test would assert nothing. This
+         * is also the list the Space picker's plugin-side copy mirrors, so a ninth built-in fails
+         * here first and names the file to update.
+         */
+        val EXPECTED_BUILT_IN_IDS =
+            setOf(
+                "workspace-claude-code",
+                "workspace-code-review",
+                "workspace-gemini",
+                "workspace-codex",
+                "workspace-opencode",
+                "workspace-terminal-browser",
+                "workspace-dual-terminal",
+                "workspace-browser",
+            )
     }
 }
