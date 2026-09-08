@@ -191,13 +191,13 @@ class WorkspaceManager {
         val current = _currentWorkspace.value ?: return null
         val now = Clock.System.now().toEpochMilliseconds()
         val savedWorkspace =
-            if (current.id in PredefinedWorkspaces.allIds) {
-                // Saving while the current Space is a SHIPPED layout creates the user's own copy
-                // rather than writing over the template: a new id, and a name that collides with
-                // nothing. Writing the built-in's own id and name is what the old behaviour did,
-                // and the file it produced was silently dropped on the next launch. See
-                // `savedCopyOfBuiltIn`.
-                savedCopyOfBuiltIn(
+            if (isSpaceSlot(current.id)) {
+                // Saving while the current Space is a SLOT - a shipped layout, or the `last-session`
+                // autosave record - creates the user's own copy rather than writing over the slot:
+                // a new id, and a name that collides with nothing and is never "Last Session".
+                // Writing the slot's own id and name is what the old behaviour did, and the file it
+                // produced was silently dropped on the next launch. See `savedCopyOfSlot`.
+                savedCopyOfSlot(
                     current = current,
                     id = LayoutWorkspace.generateId(),
                     now = now,

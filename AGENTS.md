@@ -1499,10 +1499,8 @@ there is one save path rather than two.
   "Never saved at all" is still covered for any Space that has an id, by `isUnsaved`'s
   null-saved-copy branch: a template applied as-is has a list entry that still says `{projectPath}`
   and no file matching the layout on screen.
-- **Last Session is never marked unsaved, and that follows from the same rule.** The mark means
-  "the Space named in the button beside it does not have this layout on disk", and the watcher
-  keeps the Last Session record current - so when the button says "Last Session", the file does
-  hold what is on screen. Last Session is the autosave, not the document.
+- **Last Session is ALWAYS marked unsaved, and getting that backwards hid the whole feature.**
+  See the next section: it is the state every launch lands in.
 
 ### The watcher could not see a tab being added
 
@@ -1554,6 +1552,68 @@ an extract. Bounded twice over, which is why it was never reported as data loss:
   static, is where the record went stale.
 
 Repaired by the same one change, since it is one flow; nothing was done to Last Session itself.
+
+### Last Session is a slot, not a document
+
+The mark used to be suppressed on Last Session, reasoning that the watcher keeps the record current
+so the file really does hold what is on screen. **True about the file and wrong about the user**, and
+wrong in the state that matters most: every launch restores Last Session as the current Space
+(`BossAppStartupEffects` finds the record by `LAST_SESSION_NAME` and loads it), so the affordance
+could never appear on a fresh launch, and the mark cleared itself inside the settle window - the
+exact defect already fixed once for named Spaces, surviving in the most visible place there is.
+
+**The record existing is not the same as the user's work being saved.** `last-session` is one
+app-level slot, overwritten on every layout change and by every window; nothing in it is
+addressable, nameable, or safe from the next session. Treating "the record matches the screen" as
+"saved" conflates a crash-recovery buffer with a document.
+
+- **`spaceIsUnsaved` answers Last Session unconditionally**, and the manager's per-window set is
+  left honest about DISK. Those are different questions and they disagree exactly here: `isUnsaved`
+  compares the live layout against a file that really does match it. Putting the exception in the
+  affordance's rule rather than in `reportUnsaved` keeps `savedCopyOf`-derived state from lying.
+- **Unconditional, rather than "only once the layout changed since the restore".** The earlier
+  argument against lighting a control the instant a window opens was about FLICKER - the no-Space
+  state lasts about two seconds and then goes away by itself, and a control that appears and
+  vanishes is noise. This mark is stable: it stays until the user saves, which is the action it
+  offers. The alternative needs a frozen per-window baseline captured at restore and reset on every
+  switch, which is more state in order to say "nothing is saved" slightly later.
+- **A window with NO Space still reads saved.** That one is the real flicker case, and the branch
+  above takes over the moment the watcher gives it a current Space.
+
+### Saving out of a slot
+
+`isSpaceSlot` is now the eight shipped layouts **and** `last-session`, and `savedCopyOfSlot` writes
+a new Space for either - a fresh `generateId()` and a name that collides with nothing.
+
+- **`"Last Session"` can never become a saved Space's name**, however it is asked for.
+  `loadAllWorkspaces` resolves the record BY NAME, so a second claim on it would make which one
+  restores a matter of scan order. `reservedNameRefused` drops it even when the user types it, and
+  a name is derived instead.
+- **The derived name differs by kind of slot**, because they have different things to say. A
+  shipped layout gives `"<Name> (saved)"`, since a copy of Claude Code is recognisably that. Last
+  Session gives `"Workspace <epoch seconds>"` - the convention the save path ALREADY uses for a
+  window with no current Space, so there is one answer to "keep this unnamed thing" rather than
+  two. `"Last Session (saved)"` would name the copy after a slot rather than after anything the
+  user recognises.
+- **A name the user typed still wins** (the "Save Space..." dialog asks), the reserved one aside.
+- **The result is an ordinary document**: a `generateId()` id, so it is not a slot and not a
+  template, it appears under Spaces, and its mark comes from the manager's set like any other
+  Space's.
+- **Known, and the judgement call:** `"Workspace 1788845279"` is not a nice name. Routing the bar's
+  button to the naming dialog instead would need a second save path - `WorkspaceButton` owns its
+  save dialog as an internal `remember` - and "one save path" is the property that keeps the File
+  menu, the bar and the plugin agreeing. The Space menu can rename it.
+
+**Last Session keeps recording afterwards**, which is the trade this must not make: after the save
+the window is in a named Space, and `layoutWatcherWrite` still returns the record as the only file
+it writes. Pinned by a test that follows the whole sequence - restore, edit, save out, edit again -
+and asserts the record still holds the layout on screen.
+
+`LastSessionIsNotADocumentTest` carries the headline, and **its second clause is the bug**: a test
+that only checks the instant after a tab is added passes against the old code, because `isUnsaved`
+was briefly true before the watcher rewrote the record. So it runs the watcher's write and asks
+again. Restoring the suppression fails it, and fails "reads unsaved even before anything is
+touched" too.
 
 ### The watcher does not write a named Space any more
 

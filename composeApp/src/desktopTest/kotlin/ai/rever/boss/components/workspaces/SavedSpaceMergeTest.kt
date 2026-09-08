@@ -22,7 +22,7 @@ import kotlin.test.assertTrue
  *
  * `WorkspaceManager` itself cannot be driven from a test - it is a singleton on a
  * `Dispatchers.Main` scope writing to the user's real Documents folder - so the two rules it now
- * calls are the pure functions [savedCopyOfBuiltIn] and [mergeSavedWorkspaces], and these exercise
+ * calls are the pure functions [savedCopyOfSlot] and [mergeSavedWorkspaces], and these exercise
  * them either side of the file manager exactly as it does.
  */
 class SavedSpaceMergeTest {
@@ -63,8 +63,8 @@ class SavedSpaceMergeTest {
         list: List<LayoutWorkspace>,
         requestedName: String? = null,
     ): LayoutWorkspace =
-        if (current.id in PredefinedWorkspaces.allIds) {
-            savedCopyOfBuiltIn(
+        if (isSpaceSlot(current.id)) {
+            savedCopyOfSlot(
                 current = current,
                 id = "workspace-1788000000000",
                 now = 2_000,

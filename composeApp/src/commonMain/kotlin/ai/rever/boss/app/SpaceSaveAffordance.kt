@@ -1,5 +1,6 @@
 package ai.rever.boss.app
 
+import ai.rever.boss.components.workspaces.LAST_SESSION_ID
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -29,21 +30,44 @@ import androidx.compose.ui.unit.dp
 /**
  * Whether the Space this window is showing has changes that are not on disk.
  *
- * Pure, so the rule can be tested without a bar: the flag is per WINDOW (see
- * `WorkspaceManager.unsavedWorkspaces`) and the Space on screen is per window too, so the
- * affordance is a lookup of one in the other.
+ * Pure, so the rule can be tested without a bar: the manager's flag is per WINDOW (see
+ * `WorkspaceManager.unsavedWorkspaces`) and the Space on screen is per window too, so most of this
+ * is a lookup of one in the other.
  *
- * **A window with NO Space loaded reads as saved, deliberately.** That state lasts about two
- * seconds - the layout watcher writes it out as "Last Session" and the manager then has a current
- * Space - so lighting a Save button there would be a control that appears and vanishes on every
- * new window. "Never saved at all" is still covered for any Space that HAS an id, by
- * `isUnsaved`'s null-saved-copy branch: a template applied as-is has an entry in the Space list
- * that still carries `{projectPath}` and no file that matches the layout on screen.
+ * **Last Session is ALWAYS unsaved, and that is the whole of the third branch.** The record
+ * existing is not the same as the user's work being saved: `last-session` is one app-level slot,
+ * overwritten on every layout change and by every window, and nothing in it is addressable,
+ * nameable, or safe from the next session. The manager's set is honest about DISK and so cannot
+ * answer this - the watcher keeps that record current, so `isUnsaved` compares the live layout
+ * against a file that really does match it and says "saved". True about the file, wrong about the
+ * user: a layout built in Last Session is unsaved work.
+ *
+ * It matters because it is the DEFAULT state, not an edge case - every launch restores Last
+ * Session as the current Space, so suppressing the mark there meant the affordance could never
+ * appear on a fresh launch, and the mark cleared itself within the settle window exactly as it
+ * used to for named Spaces.
+ *
+ * **Unconditional rather than "only once the layout has changed since the restore".** The earlier
+ * argument against lighting a control the instant a window opens was about FLICKER - the no-Space
+ * state below lasts about two seconds and then goes away by itself, and a control that appears and
+ * vanishes is noise. This mark is stable: it stays until the user saves, which is the action it
+ * offers. A true, persistent mark is not the thing that argument was against, and the alternative
+ * needs a frozen per-window baseline captured at restore and reset on every switch - more state,
+ * to say "nothing is saved" slightly later.
+ *
+ * **A window with NO Space loaded still reads as saved.** That one really is the flicker case: the
+ * layout watcher writes the first change out as Last Session and the manager then has a current
+ * Space, at which point the branch above takes over and the mark appears for good.
  */
 internal fun spaceIsUnsaved(
     currentWorkspaceId: String?,
     unsavedWorkspaceIds: Set<String>,
-): Boolean = currentWorkspaceId != null && currentWorkspaceId in unsavedWorkspaceIds
+): Boolean =
+    when {
+        currentWorkspaceId == null -> false
+        currentWorkspaceId == LAST_SESSION_ID -> true
+        else -> currentWorkspaceId in unsavedWorkspaceIds
+    }
 
 /** Test tag of the save affordance - see `SpaceSaveAffordanceLayoutTest`. */
 internal const val SPACE_SAVE_TAG = "vertical-bar-space-save"

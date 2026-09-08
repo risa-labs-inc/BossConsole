@@ -16,7 +16,7 @@ package ai.rever.boss.components.workspaces
  *   with templates, and worse than the first because there was no hint at all.
  *
  * Both close by deduping on **id**: a saved file with a distinct id is a distinct Space whatever it
- * is called. The other half is [savedCopyOfBuiltIn], which stops a save on a built-in producing a
+ * is called. The other half is [savedCopyOfSlot], which stops a save on a slot producing a
  * file with a built-in's id in the first place.
  */
 
@@ -52,22 +52,50 @@ internal fun uniqueWorkspaceName(
 }
 
 /**
- * The Space an explicit save should write when the current one is a SHIPPED layout.
+ * Whether [id] names a SLOT rather than a document, so an explicit save has to write a new Space.
  *
- * **A new Space, not an overwrite**, which is what a template is for: the shipped entry stays
- * pristine in the picker's Templates section and the user gets their own copy of it. Writing over
- * it was what the old behaviour did, and the write did not survive a relaunch.
+ * Two kinds, and the second is the one that is easy to get wrong:
  *
- * [id] is a parameter because `LayoutWorkspace.generateId()` is a clock read; the caller passes a
- * fresh one. A NEW id is the load-bearing half - a file carrying a built-in's id is the legacy
- * shape [mergeSavedWorkspaces] has to clean up after, and minting one is what stops this creating
- * more of them.
+ * - **The eight shipped layouts.** A template exists so you get your own copy; writing over it
+ *   takes the pristine entry out of the picker's Templates section, and the write did not survive
+ *   a relaunch anyway.
+ * - **`last-session`.** The autosave record. **Its existing is not the same as the user's work
+ *   being saved**: it is one slot, app-level, overwritten on every layout change and by every
+ *   window, and nothing in it is addressable, nameable, or safe from the next session. Treating
+ *   "the record matches the screen" as "saved" conflates a crash-recovery buffer with a document -
+ *   and since every launch restores Last Session as the current Space, that conflation is the
+ *   default state, not an edge case.
+ *
+ * `"Last Session"` must never become a saved Space's NAME either: `loadAllWorkspaces` finds the
+ * record by that name, so a second claim on it would make which one restores a matter of scan
+ * order.
+ */
+internal fun isSpaceSlot(id: String): Boolean = id in PredefinedWorkspaces.allIds || id == LAST_SESSION_ID
+
+/**
+ * The Space an explicit save should write when the current one is a [isSpaceSlot].
+ *
+ * **A new Space, not an overwrite.** [id] is a parameter because `LayoutWorkspace.generateId()` is
+ * a clock read; the caller passes a fresh one. A NEW id is the load-bearing half - a file carrying
+ * a slot's id is the legacy shape [mergeSavedWorkspaces] has to clean up after, and minting one is
+ * what stops this creating more of them.
+ *
+ * The derived NAME depends on which kind of slot, because they have different things to say:
+ *
+ * - a shipped layout is named after itself, `"<Name> (saved)"`, since a copy of Claude Code is
+ *   recognisably that;
+ * - **Last Session is named with the app's existing convention for a layout nobody named**,
+ *   `"Workspace <epoch seconds>"`, which is exactly what the save path already produces for a
+ *   window with no current Space at all. `"Last Session (saved)"` would name the copy after a slot
+ *   rather than after anything the user recognises, and one convention for "keep this unnamed
+ *   thing" beats two.
  *
  * [requestedName] is honoured when the user typed one ("Save Space..." asks), because they named
  * it; only the automatic case derives a name. A typed name that collides with a built-in's is
- * their business and survives now, since the merge keys on id.
+ * their business and survives now, since the merge keys on id - but a save cannot be talked into
+ * the reserved `"Last Session"`, which [reservedNameRefused] refuses.
  */
-internal fun savedCopyOfBuiltIn(
+internal fun savedCopyOfSlot(
     current: LayoutWorkspace,
     id: String,
     now: Long,
@@ -76,9 +104,30 @@ internal fun savedCopyOfBuiltIn(
 ): LayoutWorkspace =
     current.copy(
         id = id,
-        name = requestedName ?: uniqueWorkspaceName(current.name + SAVED_COPY_SUFFIX, takenNames),
+        name = reservedNameRefused(requestedName) ?: uniqueWorkspaceName(baseNameForSlot(current, now), takenNames),
         timestamp = now,
     )
+
+/**
+ * [requested] unless it is the reserved record name, in which case null - let a name be derived.
+ *
+ * The one name a save must not take, however it was asked for: `loadAllWorkspaces` resolves the
+ * record by it.
+ */
+private fun reservedNameRefused(requested: String?): String? = requested?.takeIf { it != LAST_SESSION_NAME }
+
+private fun baseNameForSlot(
+    current: LayoutWorkspace,
+    now: Long,
+): String =
+    if (current.id == LAST_SESSION_ID) {
+        // The convention `BossAppMenuActionEffects` already uses for a window with no Space.
+        "Workspace ${now / MILLIS_PER_SECOND}"
+    } else {
+        current.name + SAVED_COPY_SUFFIX
+    }
+
+private const val MILLIS_PER_SECOND = 1000L
 
 /**
  * The Space list: the shipped layouts, then everything on disk that is a Space of the user's.
