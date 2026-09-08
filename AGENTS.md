@@ -1369,6 +1369,70 @@ there is one save path rather than two.
   null-saved-copy branch: a template applied as-is has a list entry that still says `{projectPath}`
   and no file matching the layout on screen.
 
+## Last Session is a SET of Spaces, not one Space
+
+A window RUNS several Spaces at once and shows one of them: `SplitViewState.preserveCurrentState`
+keeps the whole split tree of each, with live browsers and terminals in it. The session record was
+ONE `LayoutWorkspace` stamped `last-session`, so a restart brought back whichever Space happened to
+be on screen and silently dropped the rest.
+
+`LastSessionSet` (`components/workspaces/LastSessionSet.kt`) records every Space the window was
+running plus which one was showing. `restoreLastSessionSet` (`app/LastSessionSetRestore.kt`) brings
+them all back.
+
+- **ADDITIVE, in its own file.** `Last_Session_Set.json`, beside the Spaces. Not a field on
+  `LayoutWorkspace` (the plugin api type, member-checked against 33 plugin repos) and not a change
+  to `Last_Session.json`, which an installed build has on disk right now and which must keep
+  restoring.
+- **The old file goes on being written, unchanged, every session.** `saveLastSessionBlocking` is
+  untouched, so after a new-format save the directory holds BOTH: `Last_Session.json` with the
+  layout that was on screen, and `Last_Session_Set.json` with all of them. Three things follow, all
+  deliberate: a downgrade still restores the Space that was showing, the "Last Session" entry the
+  Space list has always had is still there, and restore reads the SET first and falls back to the
+  single file when there is none.
+- **A set is written only for two or more Spaces, and DELETED otherwise.** One running Space is
+  exactly what the old file records, and a second file saying the same thing is a second thing that
+  can disagree. The delete is not tidiness: the set is read in preference to the single file, so a
+  set left over from a three-Space session would reopen two Spaces the user had closed.
+  `sessionSetOf` answers both, and `isRestorable` asks the same question on the way back in.
+- **Still ONE writer, still app-level (Issue #19).** `LastSessionCoordinator` allows exactly one
+  window to produce the session record per session - every window's dispose used to write its own
+  layout into the one record, so closing a secondary window overwrote the primary's. That has not
+  changed: the set is a second write under the SAME claim, in `writeLastSession`, so the two files
+  are produced together by one window and cannot describe different sessions. A separate writer for
+  the set would have reintroduced #19 by another route.
+- **The active Space is restored LAST.** Applying a Space replaces what is on screen, so the last
+  apply is what is left showing; `restoreOrder` puts everything else first. Each Space is preserved
+  before the next is applied - the ordinary apply-then-preserve pair a workspace switch performs, so
+  a restored Space is a running Space in every sense and switching back to it restores a tree rather
+  than rebuilding a layout. There is no second mechanism.
+- **The preserve reads `splitViewState.currentWorkspaceId`, not the previous iteration.**
+  `preserveCurrentState` stores under the id it is CURRENTLY holding while its arguments describe
+  the workspace being left, so an apply that threw halfway - which leaves the split state holding
+  the id it had reached - would otherwise file its partial tree under the previous Space's name.
+- **One Space failing does not take the rest**, and above all not the active one, which is applied
+  last. Each apply is guarded and logged.
+- **Only the FIRST apply restores the project.** Every entry carries the WINDOW's project, because a
+  window has one at a time and every extracted tab already holds real absolute paths - so nothing in
+  the restore depends on a per-Space path, and what it decides is which project the window comes
+  back in. Selecting it must happen before any tabs are built, since `applyWorkspace` resolves the
+  directory its terminals open in from the window's selection.
+- **`WorkspaceManager.loadAllWorkspaces` skips the set file by NAME.**
+  `WorkspaceFileManager.listWorkspaces` is "every `*.json` in the directory" and the manager reads
+  each as a Space, so without the skip the set is deserialized as one on every launch, fails and
+  logs a warning for ever. `LastSessionSetTest` asserts that the set IS listed by the scan, so the
+  reason for the skip cannot be forgotten.
+- **`WorkspaceFileManager.writeDocumentBlocking` is one verb for write and remove**, `content =
+  null` meaning absent. The caller has one intention - make the record on disk be the truth - and
+  the class was at detekt's function ceiling.
+
+Known limit: a Space in the set whose id is not in `workspaceManager.workspaces` when the next
+`workspaces` emission arrives has its preserved state dropped by
+`SplitViewState.cleanupDeletedWorkspaces`, which removes preserved trees for Spaces that no longer
+exist. In practice every id in a set came from that list, since a Space has to have been opened to
+be running; the case that reaches it is a Space whose file was deleted while it was running, where
+dropping it is the existing behaviour.
+
 ## The product word is "Space", the code word is `workspace`
 
 What a person reads in BOSS is a **Space**. What the code calls it is still `workspace`,

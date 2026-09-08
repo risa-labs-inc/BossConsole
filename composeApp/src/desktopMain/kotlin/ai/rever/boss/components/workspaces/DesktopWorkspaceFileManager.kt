@@ -155,4 +155,49 @@ actual class WorkspaceFileManager actual constructor(
         }
 
     actual fun getWorkspaceFilePath(fileName: String): String = Paths.get(workspaceDirectory, fileName).toString()
+
+    actual fun writeDocumentBlocking(
+        fileName: String,
+        content: String?,
+    ): Boolean =
+        try {
+            val file = File(getWorkspaceFilePath(fileName))
+            if (content == null) {
+                // Absent is success: the caller wants it gone, and it is.
+                if (file.exists()) file.delete() else true
+            } else {
+                val dir = File(workspaceDirectory)
+                if (!dir.exists()) {
+                    dir.mkdirs()
+                }
+                // Atomic, for the reason saveWorkspaceBlocking is: this is the shutdown path, and
+                // an in-place write killed halfway leaves JSON that fails to parse next launch.
+                file.atomicWriteText(content)
+                true
+            }
+        } catch (e: Exception) {
+            logger.warn(
+                LogCategory.WORKSPACE,
+                "Failed to write workspace document",
+                mapOf("fileName" to fileName, "removing" to (content == null).toString()),
+                error = e,
+            )
+            false
+        }
+
+    actual suspend fun loadDocument(fileName: String): String? =
+        withContext(Dispatchers.IO) {
+            try {
+                val file = File(getWorkspaceFilePath(fileName))
+                if (file.exists()) file.readText() else null
+            } catch (e: Exception) {
+                logger.warn(
+                    LogCategory.WORKSPACE,
+                    "Failed to read workspace document",
+                    mapOf("fileName" to fileName),
+                    error = e,
+                )
+                null
+            }
+        }
 }

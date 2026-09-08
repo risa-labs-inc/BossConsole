@@ -16,9 +16,12 @@ import ai.rever.boss.components.workspaces.WorkspaceSettingsManager
 import ai.rever.boss.components.workspaces.applyWorkspace
 import ai.rever.boss.components.workspaces.asLastSession
 import ai.rever.boss.components.workspaces.extractCurrentWorkspace
+import ai.rever.boss.components.workspaces.extractRunningWorkspaces
+import ai.rever.boss.components.workspaces.isRestorable
 import ai.rever.boss.components.workspaces.isUnsaved
 import ai.rever.boss.components.workspaces.requiresProject
 import ai.rever.boss.components.workspaces.resolveOnProjectSelection
+import ai.rever.boss.components.workspaces.sessionSetOf
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.consumePendingInitialProject
 import ai.rever.boss.consumePendingInitialTab
@@ -151,6 +154,22 @@ internal fun BossAppStartupEffects(state: BossAppState) {
         LastSessionCoordinator.instance.register(
             windowId = windowId,
             isFirstWindow = isFirstWindow,
+            // Every Space this window is running, and which one is showing - so a restart brings
+            // the whole window back rather than the one Space that happened to be on screen.
+            // Null for a window running fewer than two, which the single-Space record below
+            // already describes on its own; see `sessionSetOf`.
+            extractSet = {
+                sessionSetOf(
+                    spaces =
+                        extractRunningWorkspaces(
+                            splitViewState,
+                            windowProjectState.selectedProject.value.path,
+                            defaultWorkingDirectory = defaultWorkingDirectory,
+                            identityFor = { id -> workspaceManager.savedCopyOf(id) },
+                        ),
+                    activeWorkspaceId = splitViewState.currentWorkspaceId,
+                )
+            },
         ) {
             // Invoked at teardown, possibly from the shutdown-hook thread, so read
             // live state here rather than closing over a recomposition snapshot.
@@ -614,10 +633,29 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                     // Only load "Last Session" for the first window (app startup)
                     // New windows should start fresh (Issue #129)
                     if (isFirstWindow) {
+                        // The multi-Space record first, and the single-Space one only when there
+                        // is none. An installed build upgrading into this has only
+                        // `Last_Session.json`, and a session that ran one Space deliberately
+                        // writes no set - so the fallback is the normal path, not an error path.
+                        // Read here rather than up front because this branch is reached at most
+                        // once: `loadWorkspace` below sets currentWorkspace, which is the guard
+                        // on this whole block.
+                        val sessionSet = workspaceManager.loadLastSessionSet()?.takeIf { isRestorable(it) }
+
                         // Check if there's a saved "last-session" workspace
                         val lastSessionConfig = configs.find { it.name == LAST_SESSION_NAME }
 
-                        if (lastSessionConfig != null) {
+                        if (sessionSet != null) {
+                            // Before applyWorkspace, for the reason the single-Space path below
+                            // states: the effect watching selectedProject.path has to be able to
+                            // tell a restore apart from the user picking a project. Every entry
+                            // carries the window's project, so the active one's is all of them.
+                            state.restoredProjectPath =
+                                sessionSet.spaces
+                                    .firstOrNull { it.id == sessionSet.activeWorkspaceId }
+                                    ?.projectPath
+                            restoreLastSessionSet(sessionSet, splitViewState, windowProjectState)
+                        } else if (lastSessionConfig != null) {
                             // Ensure it has the correct ID
                             val configWithId =
                                 if (lastSessionConfig.id != LAST_SESSION_ID) {

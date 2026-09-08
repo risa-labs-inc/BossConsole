@@ -152,6 +152,10 @@ class WorkspaceManager {
                         fileManager.listWorkspaces()
                     }
                 savedWorkspaces.forEach { fileInfo ->
+                    // The session-set record lives in this directory and is not a Space. The scan
+                    // is "every *.json", so without this it is deserialized as one on every
+                    // launch, fails, and logs a warning for ever. See LAST_SESSION_SET_FILE.
+                    if (fileInfo.fileName == LAST_SESSION_SET_FILE) return@forEach
                     val workspace =
                         withContext(Dispatchers.IO) {
                             fileManager.loadWorkspace(fileInfo.fileName)
@@ -251,6 +255,53 @@ class WorkspaceManager {
                 if (existingIndex >= 0) workspaces[existingIndex] = lastSession else workspaces.add(lastSession)
             }
         return true
+    }
+
+    /**
+     * Persist [set] as the multi-Space session record, blocking until the bytes are down, and
+     * return whether the write succeeded. A null [set] DELETES the record.
+     *
+     * The shutdown path's other half, beside [saveLastSessionBlocking], and blocking for the same
+     * reason: a coroutine queued on `Dispatchers.Main` while the app is closing may never run.
+     * Both are called under `LastSessionCoordinator`'s single claim, so the two files are written
+     * together by one window and cannot disagree about which session they describe.
+     *
+     * The delete is not tidiness. Restore reads the set in preference to `Last_Session.json`, so a
+     * set left behind by a three-Space session would reopen two Spaces after a session that had
+     * closed them.
+     */
+    fun saveLastSessionSetBlocking(set: LastSessionSet?): Boolean {
+        val written =
+            fileManager.writeDocumentBlocking(
+                LAST_SESSION_SET_FILE,
+                set?.let { LastSessionSetSerializer.serialize(it) },
+            )
+        if (!written) {
+            logger.warn(
+                LogCategory.WORKSPACE,
+                "Last Session set write failed",
+                mapOf("spaces" to (set?.spaces?.size ?: 0).toString(), "removing" to (set == null).toString()),
+            )
+        }
+        return written
+    }
+
+    /**
+     * The multi-Space session record on disk, or null when there is none or it cannot be read.
+     *
+     * Null is the ordinary answer, not an error: an installed build upgrading into this has only
+     * `Last_Session.json`, and a single-Space session deliberately writes no set. A file that
+     * cannot be parsed is also null, so a truncated or hand-broken record falls back to the
+     * single-Space restore rather than failing the launch.
+     */
+    suspend fun loadLastSessionSet(): LastSessionSet? {
+        val json = fileManager.loadDocument(LAST_SESSION_SET_FILE) ?: return null
+        return try {
+            LastSessionSetSerializer.deserialize(json)
+        } catch (e: Exception) {
+            logger.warn(LogCategory.WORKSPACE, "Last Session set could not be read", error = e)
+            null
+        }
     }
 
     /**

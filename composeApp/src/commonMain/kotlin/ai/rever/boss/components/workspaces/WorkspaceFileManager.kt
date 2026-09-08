@@ -60,6 +60,28 @@ expect class WorkspaceFileManager(
      * Get full path for a workspace file
      */
     fun getWorkspaceFilePath(fileName: String): String
+
+    /**
+     * Make [fileName] in the workspace directory hold [content], or be ABSENT when [content] is
+     * null. Returns whether the directory now says what was asked.
+     *
+     * For records that live beside the Spaces without being one - `Last_Session_Set.json`. Not
+     * typed as a [LayoutWorkspace] because it is not one, and blocking rather than suspending
+     * because the shutdown path is the only caller: see [saveWorkspaceBlocking] for why a dispatch
+     * cannot be trusted while the process is closing.
+     *
+     * **Write and remove are ONE verb** because the caller has one intention - make the record on
+     * disk be the truth - and the removal is not tidiness: a session-set file left over from a
+     * three-Space session is read in preference to `Last_Session.json`, so leaving it would
+     * restore two Spaces the user had closed.
+     */
+    fun writeDocumentBlocking(
+        fileName: String,
+        content: String?,
+    ): Boolean
+
+    /** Read [fileName] from the workspace directory, or null if it is absent or unreadable. */
+    suspend fun loadDocument(fileName: String): String?
 }
 
 /**

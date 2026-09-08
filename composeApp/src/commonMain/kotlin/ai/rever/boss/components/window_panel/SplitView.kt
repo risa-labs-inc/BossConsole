@@ -420,6 +420,48 @@ class SplitViewState(
     val liveWorkspaceIds: Set<String>
         get() = preservedWorkspaceStates.keys + setOfNotNull(_currentWorkspaceId)
 
+    /**
+     * One workspace this window is running: which it is, and the split tree it is running.
+     *
+     * What the multi-Space session record is written from. `liveWorkspaceIds` answers WHICH
+     * workspaces are running and `panelsInWorkspace` answers what panes one has, but neither hands
+     * back the TREE, and the tree is the shape - a flat list of panes cannot say which of them are
+     * beside each other.
+     */
+    data class RunningWorkspace(
+        val workspaceId: String,
+        /**
+         * The name recorded when this tree was preserved, or "" for the one on screen.
+         *
+         * Empty for the current workspace because nothing has preserved it yet - the caller knows
+         * its name, from `WorkspaceManager.currentWorkspace`. A preserved state carries the name
+         * `preserveCurrentState` was given, which is the name of the workspace whose tree it is.
+         */
+        val workspaceName: String,
+        val rootNode: SplitNode,
+    )
+
+    /**
+     * Every workspace this window is running, preserved ones first and the one on screen LAST.
+     *
+     * The order matches [liveWorkspaceIds]'s composition and is not the order anything is restored
+     * in - `restoreOrder` derives that from which workspace was active, because what has to be
+     * applied last is whichever one was showing.
+     */
+    fun runningWorkspaces(): List<RunningWorkspace> =
+        preservedWorkspaceStates.map { (workspaceId, preserved) ->
+            RunningWorkspace(
+                workspaceId = workspaceId,
+                workspaceName = preserved.workspaceName,
+                rootNode = preserved.rootNode,
+            )
+        } +
+            listOfNotNull(
+                _currentWorkspaceId?.let { currentId ->
+                    RunningWorkspace(workspaceId = currentId, workspaceName = "", rootNode = _rootNode.value)
+                },
+            )
+
     // Data class to hold preserved state
     data class PreservedWorkspaceState(
         val rootNode: SplitNode,
