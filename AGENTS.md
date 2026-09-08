@@ -1485,6 +1485,14 @@ there is one save path rather than two.
   truncates away. `signalText`, not `signal`: it is drawn as a glyph, and `signal` is the fill
   token, held to no text contrast floor. The hint says it in words as well, because a colour is not
   a sentence.
+- **The STATE has its own mark, and the description leads with it.** A floppy glyph labelled "Save
+  this space" is what a save button looks like whether or not anything has changed, so the one thing
+  the affordance exists to say was carried only by its presence. There is a filled dot between the
+  Space button and the save button now - the editor vocabulary for "modified", the same mark the
+  Space menu prints beside a running Space, and unmistakably not something to press - and the
+  description reads "Unsaved changes - press to save this space". Same `signalText` as the glyph at
+  6dp, so the three marks read as one thing saying one thing rather than three announcements. No
+  `contentDescription` on the dot: a screen reader would otherwise hear the state twice.
 - **A window with NO Space loaded reads as saved, deliberately.** It is a short-lived state - the
   layout watcher writes the first change out as "Last Session" and the manager then has a current
   Space - so lighting a button there would be a control that appears and vanishes on a new window.
@@ -1495,6 +1503,57 @@ there is one save path rather than two.
   "the Space named in the button beside it does not have this layout on disk", and the watcher
   keeps the Last Session record current - so when the button says "Last Session", the file does
   hold what is on screen. Last Session is the autosave, not the document.
+
+### The watcher could not see a tab being added
+
+`snapshotFlow { extractCurrentWorkspace(…) }` re-emits when a **Compose snapshot** read inside it
+changes. Three kinds of layout state are Compose state and were observed all along: the split tree
+(`SplitViewState._rootNode`), each pane's `_pinnedCount`, and each tab's own `title`, `currentUrl`
+and `workingDirectory`. The fourth is not: `BossTabsComponent.tabsState` is a **Decompose `Value`**,
+and `WorkspaceExtractor` reads it as `node.tabsComponent.tabsState.value` - a plain property read
+that registers no snapshot read at all.
+
+So adding a tab changed nothing the watcher was watching. Nothing re-extracted, so the Space was
+never marked unsaved and nothing reached the Last Session record. Closing, reordering, pinning and
+a cross-pane move are the same blind spot; pinning turned out to be covered already, because
+`_pinnedCount` is `mutableStateOf`, so the affected set is exactly the ones that change the tab
+LIST: add, close, reorder, and move between panes (including the `detachTab`/`adoptTab` transfer).
+
+`SplitViewState.tabListChanges()` is the missing subscription. The bridge is the one the app already
+uses for this same `Value` - `subscribeAsState()` in `BossBottomBar` and `BossMainWindowPanel`
+inside a composition, a `callbackFlow` over `Value.subscribe` outside one - and the watcher now
+merges two sources, each the plain observation of its own kind of state.
+
+- **Observing the source, not counting mutations.** A revision counter would have to be bumped in
+  `addTab`, `removeTab`, `moveTab`, `reorderWithinPanel`, `detachTab` and `adoptTab`, and one
+  missed call site is this same silent bug again. The subscription cannot miss a mutation, because
+  the mutation is what publishes it.
+- **The outer half re-subscribes.** It is a `snapshotFlow` over the panel list, so a pane created by
+  a split gets a subscription too; a one-shot subscribe would leave every tab added to a new split
+  invisible. That is its own named test, and reducing the outer flow to `flowOf` fails it.
+- **`.conflate()`**, because a cross-pane move publishes twice, once either side, and the watcher
+  needs one re-extract rather than two.
+
+**A unit test on `isUnsaved` cannot catch this and did not.** Both halves were right in isolation -
+the extractor reads the tabs, the comparison notices the difference - and the SUBSCRIPTION between
+them was missing, which is exactly why it shipped with tests passing. `TabListChangesTest` collects
+the real flow against a real `SplitViewState` and mutates it. Unsubscribing the tab source fails
+four named tests, `adding a tab is observed` among them.
+
+**The bigger consequence, which is older than the save button.** This same flow is the only
+in-session writer of `Last_Session.json` (the other writer is the shutdown coordinator). So a tab
+added was NOT in the recovery record until some later tree, pin or title change happened to trigger
+an extract. Bounded twice over, which is why it was never reported as data loss:
+
+- **A clean exit is unaffected.** `LastSessionCoordinator` extracts fresh at teardown and writes
+  blocking, so closing the window, Cmd+Q, `quitForUpdate` and SIGTERM all record a complete layout.
+  Only a hard kill - SIGKILL, a native crash - never reaches the shutdown hook, and that is exactly
+  the case the record exists for.
+- **A window with a live browser or terminal re-extracted anyway**, because those update their
+  titles constantly and a title IS snapshot state. A window of editor tabs, whose titles are
+  static, is where the record went stale.
+
+Repaired by the same one change, since it is one flow; nothing was done to Last Session itself.
 
 ### The watcher does not write a named Space any more
 

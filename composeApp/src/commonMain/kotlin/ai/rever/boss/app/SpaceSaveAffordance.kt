@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Icon
 import androidx.compose.material.icons.Icons
@@ -47,8 +48,18 @@ internal fun spaceIsUnsaved(
 /** Test tag of the save affordance - see `SpaceSaveAffordanceLayoutTest`. */
 internal const val SPACE_SAVE_TAG = "vertical-bar-space-save"
 
-/** What the save affordance says it does, and the string its layout test finds it by. */
-internal const val SPACE_SAVE_DESCRIPTION = "Save this space"
+/** Test tag of the unsaved dot. */
+internal const val SPACE_UNSAVED_DOT_TAG = "vertical-bar-space-unsaved"
+
+/**
+ * What the affordance says, and the string its layout test finds it by.
+ *
+ * **The STATE first, then the action.** It said "Save this space", which is what a floppy glyph
+ * already looks like - so the whole control read as a save button that is always there, and the one
+ * thing it exists to say, that this Space is unsaved, was carried only by its presence. The state is
+ * the news; saving is what you can do about it.
+ */
+internal const val SPACE_SAVE_DESCRIPTION = "Unsaved changes - press to save this space"
 
 /**
  * The Space button, with a save affordance beside it while there is something to save.
@@ -76,8 +87,35 @@ internal fun SpaceRow(
         horizontalArrangement = Arrangement.spacedBy(SPACE_ROW_GAP),
     ) {
         Box(modifier = Modifier.weight(1f)) { spaceButton() }
-        if (unsaved) SpaceSaveButton(onSave = onSave)
+        if (unsaved) {
+            UnsavedDot()
+            SpaceSaveButton(onSave = onSave)
+        }
     }
+}
+
+/**
+ * The mark that says the Space is unsaved, as opposed to the button that offers to fix it.
+ *
+ * **A state needs its own mark.** Relying on the button's mere presence made the whole affordance
+ * read as a save button, because a floppy glyph is what a save button looks like whether or not
+ * anything has changed. A filled dot is the editor vocabulary for "modified", it is the same mark
+ * the Space menu already uses for a running Space (`Icons.Filled.Circle`), and it cannot be
+ * confused with something to press.
+ *
+ * `signalText` and 6dp, so it belongs to the tinted Space glyph on its left rather than announcing
+ * itself: three marks of one colour saying one thing. No `contentDescription` - a screen reader
+ * would otherwise hear the state twice, since the button beside it leads with exactly that.
+ */
+@Composable
+private fun UnsavedDot() {
+    Box(
+        modifier =
+            Modifier
+                .size(SPACE_UNSAVED_DOT)
+                .testTag(SPACE_UNSAVED_DOT_TAG)
+                .background(color = BossTheme.colors.signalText, shape = CircleShape),
+    )
 }
 
 /**
@@ -125,6 +163,14 @@ private val SPACE_SAVE_ICON = 13.dp
 
 /** The bar's own 4dp radius, as the footer's action buttons use. */
 private val SPACE_SAVE_RADIUS = 4.dp
+
+/**
+ * The unsaved dot.
+ *
+ * 6dp: smaller than the 8dp dot the Space menu prints beside a running Space, because that one sits
+ * alone in a menu row and this one sits between a 13dp glyph and a 13dp glyph.
+ */
+private val SPACE_UNSAVED_DOT = 6.dp
 
 /**
  * Air between the Space button and the save button.

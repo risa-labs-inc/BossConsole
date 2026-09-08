@@ -12,6 +12,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -82,6 +83,39 @@ class SpaceSaveAffordanceLayoutTest {
         mountRow(WIDE, unsaved = false)
 
         rule.onAllNodesWithTag(SPACE_SAVE_TAG).assertCountEquals(0)
+        rule.onAllNodesWithTag(SPACE_UNSAVED_DOT_TAG).assertCountEquals(0)
+    }
+
+    /**
+     * The state has its own mark. Without it the affordance was a floppy glyph labelled "Save this
+     * space", which is what a save button looks like whether or not anything has changed - so the
+     * one thing it exists to say was carried only by its presence.
+     */
+    @Test
+    fun `the unsaved state is marked, and the description leads with it`() {
+        mountRow(WIDE, unsaved = true)
+
+        rule.onNodeWithTag(SPACE_UNSAVED_DOT_TAG).assertExists()
+        assertTrue(
+            SPACE_SAVE_DESCRIPTION.startsWith("Unsaved"),
+            "the description has to say the STATE, not just name the action: $SPACE_SAVE_DESCRIPTION",
+        )
+        rule.onNodeWithContentDescription(SPACE_SAVE_DESCRIPTION).assertExists()
+    }
+
+    @Test
+    fun `the dot and the save button both fit at the bar's narrowest width`() {
+        // The dot is another unweighted child, so it comes out of the same width the label gets.
+        mountRow(narrowest, unsaved = true)
+
+        val row = rule.onNodeWithTag(ROW_TAG).fetchSemanticsNode().boundsInRoot
+        val dot = rule.onNodeWithTag(SPACE_UNSAVED_DOT_TAG).fetchSemanticsNode().boundsInRoot
+        val save = rule.onNodeWithTag(SPACE_SAVE_TAG).fetchSemanticsNode().boundsInRoot
+
+        assertTrue(dot.width > 0f && dot.height > 0f, "a zero-sized dot is an absent one: $dot")
+        assertTrue(dot.left >= row.left && dot.right <= row.right, "inside the bar: $dot in $row")
+        assertTrue(save.left >= dot.right, "the mark reads before the action it offers")
+        assertEquals(SAVE_SIZE_PX, save.width.toInt(), "and the save target still keeps its size")
     }
 
     @Test

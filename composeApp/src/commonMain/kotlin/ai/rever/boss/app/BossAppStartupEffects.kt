@@ -22,6 +22,7 @@ import ai.rever.boss.components.workspaces.layoutWatcherWrite
 import ai.rever.boss.components.workspaces.requiresProject
 import ai.rever.boss.components.workspaces.resolveOnProjectSelection
 import ai.rever.boss.components.workspaces.sessionSetOf
+import ai.rever.boss.components.workspaces.tabListChanges
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.consumePendingInitialProject
 import ai.rever.boss.consumePendingInitialTab
@@ -63,6 +64,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -794,15 +797,32 @@ internal fun BossAppStartupEffects(state: BossAppState) {
             )
         }
 
-        // Monitor the entire layout structure for changes
-        snapshotFlow {
-            // Extract current layout workspace
+        fun extract() =
             extractCurrentWorkspace(
                 splitViewState,
                 selectedProject.path,
                 defaultWorkingDirectory = defaultWorkingDirectory,
             )
-        }.onEach { currentLayout ->
+
+        // Monitor the entire layout structure for changes.
+        //
+        // TWO sources, because the layout is kept in two kinds of state and one of them is
+        // invisible to `snapshotFlow`:
+        //
+        // - The snapshot half sees everything that is Compose state - the split TREE, each pane's
+        //   `_pinnedCount`, and each tab's own title, url and working directory.
+        // - `tabListChanges()` sees what the snapshot half cannot: `tabsState` is a Decompose
+        //   `Value`, so reading it registers no snapshot read and a tab added, closed, reordered or
+        //   moved between panes changed NOTHING this flow was observing. Nothing re-extracted, so
+        //   nothing was marked unsaved and nothing reached the Last Session record.
+        //
+        // Merged rather than folded into one producer, so each half stays the plain observation of
+        // its own source. A change visible to both costs one extra extract and no more: the
+        // downstream is idempotent, and a duplicate only reschedules the settle delay.
+        merge(
+            snapshotFlow { extract() },
+            splitViewState.tabListChanges().map { extract() },
+        ).onEach { currentLayout ->
             latestLayout = currentLayout
             reportUnsaved()
 
