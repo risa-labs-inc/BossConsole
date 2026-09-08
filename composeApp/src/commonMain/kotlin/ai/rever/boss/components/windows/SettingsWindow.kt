@@ -1,5 +1,6 @@
 package ai.rever.boss.components.windows
 
+import ai.rever.boss.components.settings.search.SettingsHighlight
 import androidx.compose.runtime.Composable
 
 /**
@@ -21,4 +22,13 @@ expect fun SettingsWindow(
     initialSection: String? = null,
     focusRequest: Int = 0,
     sectionRequest: Int = 0,
+    /** The row to point at once navigation lands, or null. See `SettingsWindowState.reveal`. */
+    requestedHighlight: SettingsHighlight? = null,
+    /**
+     * Bumped once per request that could change [requestedHighlight], a clear included.
+     *
+     * The window keys its adopt effect on this rather than on the highlight's nonce, because null
+     * carries no nonce - see `SettingsWindowState.highlightRequest`.
+     */
+    highlightRequest: Int = 0,
 )

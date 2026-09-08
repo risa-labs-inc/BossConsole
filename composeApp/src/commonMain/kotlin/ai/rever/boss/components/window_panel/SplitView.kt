@@ -1036,7 +1036,11 @@ class SplitViewState(
             // unhides the sidebar panel. newComponent isn't in the split tree yet, so the
             // search below can only ever find the original.
             if (copiedTab is PanelHostTabInfo && newIndex >= 0) {
-                findPanelContainingTab(copiedTab.id)?.tabsComponent?.removeTabById(copiedTab.id)
+                // recordForReopen = false: this is the second half of a move, and the tab is
+                // already live in newComponent by the time it runs.
+                findPanelContainingTab(copiedTab.id)
+                    ?.tabsComponent
+                    ?.removeTabById(copiedTab.id, recordForReopen = false)
             }
         }
 
