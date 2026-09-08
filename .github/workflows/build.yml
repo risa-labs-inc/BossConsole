@@ -30,6 +30,9 @@ jobs:
           # and the guard passes every PR. Reproduced in a depth-1 clone.
           fetch-depth: 0
 
+      - name: 🧪 Claude review authorization tests
+        run: node --test .github/scripts/test-claude-review.cjs
+
       - name: 🧪 Release publish — TUS slice tests
         # Guards the byte-accurate chunk slicing in the release publish path
         # (regressed twice: #877 misaligned resume, and the SIGPIPE status bug).
