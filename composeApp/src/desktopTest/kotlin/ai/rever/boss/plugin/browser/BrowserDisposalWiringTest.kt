@@ -10,7 +10,10 @@ import kotlin.test.assertTrue
 class BrowserDisposalWiringTest {
     private fun source(name: String): String {
         val relative = "src/desktopMain/kotlin/ai/rever/boss/plugin/browser/$name.kt"
-        return listOf(File(relative), File("composeApp/$relative")).firstOrNull { it.isFile }?.readText()
+        return listOf(File(relative), File("composeApp/$relative"))
+            .firstOrNull { it.isFile }
+            ?.readText()
+            ?.replace("\r\n", "\n")
             ?: error("Cannot locate browser source $relative from ${File(".").absolutePath}")
     }
 
