@@ -122,7 +122,7 @@ class SavedSpaceMergeTest {
             written.id !in PredefinedWorkspaces.allIds,
             "a file carrying a built-in id is the legacy shape this exists to stop making more of",
         )
-        assertEquals("Browser Only (saved)", written.name)
+        assertEquals("Browser Only (custom)", written.name)
         assertTrue(predefined.none { it.name == written.name }, "and no shipped layout answers to it")
     }
 
@@ -135,7 +135,7 @@ class SavedSpaceMergeTest {
         val third = saveOf(browserOnly, predefined + first + second)
 
         assertEquals(
-            listOf("Browser Only (saved)", "Browser Only (saved) 2", "Browser Only (saved) 3"),
+            listOf("Browser Only (custom)", "Browser Only (custom) 2", "Browser Only (custom) 3"),
             listOf(first, second, third).map { it.name },
         )
     }
@@ -204,7 +204,7 @@ class SavedSpaceMergeTest {
         assertEquals(predefined.single { it.id == "workspace-gemini" }, shipped, "the template stays pristine")
 
         val adopted = list.single { it.id == "workspace-gemini-saved" }
-        assertEquals("Gemini (saved)", adopted.name)
+        assertEquals("Gemini (custom)", adopted.name)
         assertEquals(layout("a", "b", "c"), adopted.layout, "with the layout the file actually held")
     }
 
@@ -215,8 +215,8 @@ class SavedSpaceMergeTest {
         // every preserved-state key.
         val legacy = space(id = "workspace-gemini", name = "Gemini")
 
-        val first = mergeSavedWorkspaces(predefined, listOf(legacy)).single { it.name == "Gemini (saved)" }
-        val second = mergeSavedWorkspaces(predefined, listOf(legacy)).single { it.name == "Gemini (saved)" }
+        val first = mergeSavedWorkspaces(predefined, listOf(legacy)).single { it.name == "Gemini (custom)" }
+        val second = mergeSavedWorkspaces(predefined, listOf(legacy)).single { it.name == "Gemini (custom)" }
 
         assertEquals(first.id, second.id)
         assertTrue(first.id !in PredefinedWorkspaces.allIds)
@@ -229,11 +229,11 @@ class SavedSpaceMergeTest {
     @Test
     fun `an adopted name that is already taken gets a number`() {
         val legacy = space(id = "workspace-gemini", name = "Gemini")
-        val alreadyMine = space(id = "workspace-1788000000000", name = "Gemini (saved)")
+        val alreadyMine = space(id = "workspace-1788000000000", name = "Gemini (custom)")
 
         val list = mergeSavedWorkspaces(predefined, listOf(alreadyMine, legacy))
 
-        assertEquals("Gemini (saved) 2", list.single { it.id == "workspace-gemini-saved" }.name)
+        assertEquals("Gemini (custom) 2", list.single { it.id == "workspace-gemini-saved" }.name)
     }
 
     // ==================== two files, one id ====================
@@ -302,5 +302,44 @@ class SavedSpaceMergeTest {
         assertTrue(runBlocking { fileManager.listWorkspaces() }.any { it.fileName == LAST_SESSION_SET_FILE })
         assertNull(reload(fileManager).firstOrNull(), "and the manager's filter is what keeps it out of the list")
         dir.deleteRecursively()
+    }
+
+    /**
+     * The bug this closes was visible in the Space button: a Space called "Code Review (saved)"
+     * sitting beside the dot that says it is NOT saved. Renaming the suffix fixes new loads, and
+     * would have left every session set already on disk showing the old name for ever.
+     */
+    @Test
+    fun `a name comes from the Space list, not from the snapshot that recorded it`() {
+        val recorded = space(id = "workspace-code-review-saved", name = "Code Review (saved)")
+        val known = space(id = "workspace-code-review-saved", name = "Code Review (custom)")
+
+        assertEquals(
+            listOf("Code Review (custom)"),
+            withKnownNames(listOf(recorded), listOf(known)).map { it.name },
+        )
+    }
+
+    @Test
+    fun `a Space the list does not know keeps the only name it has`() {
+        val recorded = space(id = "workspace-1788000000000", name = "Mine")
+
+        assertEquals(
+            listOf("Mine"),
+            withKnownNames(listOf(recorded), emptyList()).map { it.name },
+        )
+    }
+
+    @Test
+    fun `resolving a name changes nothing else about the Space`() {
+        // A layout replaced along with the name would silently restore the CATALOGUE entry's
+        // layout rather than the one the session actually had on screen.
+        val recorded = space(id = "x", name = "old", layout = layout("recorded"), timestamp = 5)
+        val known = space(id = "x", name = "new", layout = layout("catalogue"), timestamp = 99)
+
+        val resolved = withKnownNames(listOf(recorded), listOf(known)).single()
+        assertEquals("new", resolved.name)
+        assertEquals(recorded.layout, resolved.layout)
+        assertEquals(recorded.timestamp, resolved.timestamp)
     }
 }

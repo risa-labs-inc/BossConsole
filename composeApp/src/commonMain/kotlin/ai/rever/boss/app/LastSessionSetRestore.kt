@@ -5,6 +5,7 @@ import ai.rever.boss.components.workspaces.LastSessionSet
 import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.applyWorkspace
 import ai.rever.boss.components.workspaces.restoreOrder
+import ai.rever.boss.components.workspaces.withKnownNames
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -52,8 +53,12 @@ internal suspend fun restoreLastSessionSet(
     splitViewState: SplitViewState,
     windowProjectState: WindowProjectState,
     onLoad: (LayoutWorkspace) -> Unit = { workspaceManager.loadWorkspace(it) },
+    knownSpaces: List<LayoutWorkspace> = workspaceManager.workspaces.value,
 ): List<LayoutWorkspace> {
-    val order = restoreOrder(set)
+    // Names come from the Space list, not from the set. See `withKnownNames`: an adopted Space's
+    // name is derived at load, so a set written before that derivation changed would otherwise
+    // show the old name for ever - and so would a Space the user has since renamed.
+    val order = withKnownNames(restoreOrder(set), knownSpaces)
     val applied = mutableListOf<LayoutWorkspace>()
 
     order.forEachIndexed { index, space ->

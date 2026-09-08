@@ -28,8 +28,17 @@ package ai.rever.boss.components.workspaces
  * Only has no project at all. A suffix is acceptable here where a counter was not acceptable at
  * pick time, because an explicit save is the user asking to keep this thing rather than something
  * happening on every pick.
+ *
+ * **Not "(saved)", and that is the whole point of the word chosen.** This suffix is shown in the
+ * Space button, immediately left of the unsaved dot and the save button - so a Space named
+ * "Code Review (saved)" sat next to a mark saying it was NOT saved, and read as the app
+ * contradicting itself. The name says where the layout came from; the dot says whether it is on
+ * disk. Those are different facts and the name must not borrow the other one's vocabulary.
+ *
+ * `ADOPTED_ID_SUFFIX` deliberately still ends in `-saved`: it is an id, never displayed, and it
+ * is recorded in session sets and preserved-state keys that already exist on disk.
  */
-const val SAVED_COPY_SUFFIX = " (saved)"
+const val SAVED_COPY_SUFFIX = " (custom)"
 
 /**
  * [base], or [base] with a number, so the result is not in [taken].
@@ -82,11 +91,11 @@ internal fun isSpaceSlot(id: String): Boolean = id in PredefinedWorkspaces.allId
  *
  * The derived NAME depends on which kind of slot, because they have different things to say:
  *
- * - a shipped layout is named after itself, `"<Name> (saved)"`, since a copy of Claude Code is
+ * - a shipped layout is named after itself, `"<Name> (custom)"`, since a copy of Claude Code is
  *   recognisably that;
  * - **Last Session is named with the app's existing convention for a layout nobody named**,
  *   `"Workspace <epoch seconds>"`, which is exactly what the save path already produces for a
- *   window with no current Space at all. `"Last Session (saved)"` would name the copy after a slot
+ *   window with no current Space at all. `"Last Session (custom)"` would name the copy after a slot
  *   rather than after anything the user recognises, and one convention for "keep this unnamed
  *   thing" beats two.
  *
@@ -210,4 +219,25 @@ internal fun mergeSavedWorkspaces(
  * Deliberately not something `generateId()` could produce (`workspace-<epoch millis>`), so an
  * adopted id is recognisable as one and can never be mistaken for a Space the user saved normally.
  */
+
 private const val ADOPTED_ID_SUFFIX = "-saved"
+
+/**
+ * [spaces] with each name replaced by the one the Space list currently carries for that id.
+ *
+ * **A name belongs to the Space catalogue, not to a layout snapshot.** A session set records whole
+ * `LayoutWorkspace` values, so the name in it is whatever the Space was called on the day it was
+ * written - and an adopted Space's name is DERIVED at load ([SAVED_COPY_SUFFIX]), so changing that
+ * suffix, or the user renaming a Space, leaves every set already on disk displaying the old one
+ * for ever. Resolving by id at restore makes the set a record of layouts and lets the list stay
+ * the single source of names.
+ *
+ * A Space the list does not know keeps its own name: it is the only name there is.
+ */
+internal fun withKnownNames(
+    spaces: List<LayoutWorkspace>,
+    known: List<LayoutWorkspace>,
+): List<LayoutWorkspace> {
+    val namesById = known.associate { it.id to it.name }
+    return spaces.map { space -> namesById[space.id]?.let { space.copy(name = it) } ?: space }
+}
