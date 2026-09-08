@@ -68,6 +68,7 @@ import ai.rever.boss.window.LocalWindowGitState
 import ai.rever.boss.window.LocalWindowId
 import ai.rever.boss.window.LocalWindowProjectState
 import ai.rever.boss.window.LocalWindowRunnerState
+import ai.rever.boss.window.MenuActionsHandler
 import ai.rever.boss.window.TabBarPosition
 import ai.rever.boss.window.WindowAppearanceSettings
 import androidx.compose.animation.AnimatedVisibility
@@ -803,6 +804,9 @@ internal fun BossAppScaffold(
                                     onShowTopOfMind = {
                                         openTopOfMindQuickSwitcher(state.windowId, state.coroutineScope)
                                     },
+                                    // The File menu's own Save Space, not a second copy of it:
+                                    // one path extracts the live layout, writes it and reports.
+                                    onSaveWorkspace = { MenuActionsHandler.triggerSaveWorkspace(state.windowId) },
                                 )
                             },
                         )

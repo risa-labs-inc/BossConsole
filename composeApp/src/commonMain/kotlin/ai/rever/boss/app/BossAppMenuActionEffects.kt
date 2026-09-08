@@ -26,7 +26,6 @@ import ai.rever.boss.plugin.browser.ActiveBrowserRegistry
 import ai.rever.boss.plugin.tab.terminal.TerminalTabInfo
 import ai.rever.boss.plugin.tab.terminal.TerminalTabType
 import ai.rever.boss.project.DefaultWorkingDirectory
-import ai.rever.boss.topofmind.TabTreeState
 import ai.rever.boss.window.MenuActionsHandler
 import ai.rever.boss.window.WindowAppearanceSettings
 import ai.rever.boss.window.WindowAppearanceSettingsManager
@@ -518,7 +517,10 @@ internal fun BossAppMenuActionEffects(
                             )
                         workspaceManager.updateCurrentWorkspace(updatedConfig)
                         workspaceManager.saveCurrentWorkspace()
-                        TabTreeState.markWorkspaceAsSaved(currentConfig.id)
+                        // Nothing marks it saved here. The unsaved flag is DERIVED, from the live
+                        // layout against the copy in `workspaceManager.workspaces` - which this
+                        // write replaces - so the affordance turns itself off when the bytes land
+                        // rather than when the button was pressed. See BossAppStartupEffects.
                         StatusMessageManager.showMessage("Space Saved")
                     } else {
                         val currentLayout = extractCurrentWorkspace(splitViewState, windowProjectState.selectedProject.value.path)

@@ -60,6 +60,20 @@ fun WorkspaceButton(
     onOpenWorkspacePicker: (() -> Boolean)? = null,
     /** Sized for the vertical tab bar rather than the top bar. See BossActionButton. */
     compact: Boolean = false,
+    /**
+     * Whether the Space on screen has changes that are not on disk.
+     *
+     * Marks the GLYPH, not the label. The label is capped at 130dp with an ellipsis in the
+     * vertical bar, so a marker appended to the text is the first thing a long Space name
+     * truncates away - the mark would be missing exactly on the names most likely to be a
+     * project's. `signalText` rather than `signal`, because this is a glyph and `signal` is the
+     * fill token, held to no text contrast floor.
+     *
+     * Off by default, so the top bar's copy of this button is untouched: the save affordance that
+     * answers the mark lives in the vertical bar's footer, and a mark with nothing beside it says
+     * there is a problem without saying what to do about it.
+     */
+    unsaved: Boolean = false,
 ) {
     val currentWorkspace by workspaceManager.currentWorkspace.collectAsState()
     val workspaces by workspaceManager.workspaces.collectAsState()
@@ -226,6 +240,7 @@ fun WorkspaceButton(
                 // as two.
                 leftIcon = SpaceIcon,
                 compact = compact,
+                iconColor = if (unsaved) BossTheme.colors.signalText else null,
                 text =
                     currentWorkspace?.let { workspace ->
                         if (workspace.name != "Current") workspace.name else "Default"
@@ -239,6 +254,8 @@ fun WorkspaceButton(
                         // whose left click already opens the menu, a user right-clicks and gets
                         // nothing.
                         if (onOpenWorkspacePicker != null) append("\nRight-click for space options")
+                        // Said in the hint as well as drawn, because a colour is not a sentence.
+                        if (unsaved) append("\nUnsaved changes - use the save button beside this one")
                         append("\nSpaces saved to: ${workspaceManager.getWorkspaceDirectory()}")
                     },
             )

@@ -67,7 +67,66 @@ class WorkspaceManager {
     /** Forget a window, on close. Without this its workspace stays marked active for ever. */
     fun releaseWindow(windowId: String) {
         _windowWorkspaces.value = _windowWorkspaces.value - windowId
+        // And its unsaved marks, for the same reason: a closed window's dirt is not anybody's to
+        // save, and a reused window id would inherit it.
+        _unsavedWorkspaces.value = _unsavedWorkspaces.value - windowId
     }
+
+    /**
+     * Ids of the Spaces whose live layout differs from what is on disk, by window.
+     *
+     * **Per window, and that is not optional.** Two windows run different Spaces and each one's
+     * layout is its own; one flat set would light the Save button in a window that has nothing to
+     * save the moment the other window was edited. The window is the only party that can answer at
+     * all - the live layout lives in its `SplitViewState` - so it reports, exactly as
+     * [setWindowWorkspaces] has it report which Spaces it is running.
+     *
+     * A `StateFlow`, so the vertical bar's Save affordance can watch it. This replaces
+     * `TabTreeState.modifiedWorkspaces`, which was written from three places and READ FROM NONE -
+     * there was no dirty state in the app, only the bookkeeping for one.
+     */
+    private val _unsavedWorkspaces = MutableStateFlow<Map<String, Set<String>>>(emptyMap())
+
+    /** Every Space with unsaved changes, in every window. See [isWorkspaceUnsavedIn]. */
+    val unsavedWorkspaces: StateFlow<Map<String, Set<String>>> = _unsavedWorkspaces.asStateFlow()
+
+    /**
+     * Record whether [windowId]'s copy of [workspaceId] has changes that are not on disk.
+     *
+     * Called from the window's own layout watcher, which extracts the live layout already. The
+     * decision itself is [isUnsaved], which is pure and tested; this only stores it.
+     */
+    fun setWorkspaceUnsaved(
+        windowId: String,
+        workspaceId: String,
+        unsaved: Boolean,
+    ) {
+        val current = _unsavedWorkspaces.value[windowId].orEmpty()
+        val updated = if (unsaved) current + workspaceId else current - workspaceId
+        if (updated == current) return
+        _unsavedWorkspaces.value =
+            if (updated.isEmpty()) {
+                _unsavedWorkspaces.value - windowId
+            } else {
+                _unsavedWorkspaces.value + (windowId to updated)
+            }
+    }
+
+    /** Whether [windowId] holds unsaved changes to [workspaceId]. */
+    fun isWorkspaceUnsavedIn(
+        windowId: String,
+        workspaceId: String,
+    ): Boolean = workspaceId in _unsavedWorkspaces.value[windowId].orEmpty()
+
+    /**
+     * The Space with [workspaceId] as it exists ON DISK, or null if nothing there answers to it.
+     *
+     * [workspaces] is the honest answer to that question and [currentWorkspace] is not:
+     * `updateCurrentWorkspace` writes the live layout into it BEFORE the save is attempted, so
+     * comparing against it would read clean the instant an auto-save was queued rather than when
+     * the bytes landed. This list is only replaced once `fileManager` has returned a path.
+     */
+    fun savedCopyOf(workspaceId: String): LayoutWorkspace? = _workspaces.value.firstOrNull { it.id == workspaceId }
 
     private val fileManager = WorkspaceFileManager()
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())

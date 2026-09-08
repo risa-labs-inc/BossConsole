@@ -16,6 +16,7 @@ import ai.rever.boss.components.workspaces.WorkspaceSettingsManager
 import ai.rever.boss.components.workspaces.applyWorkspace
 import ai.rever.boss.components.workspaces.asLastSession
 import ai.rever.boss.components.workspaces.extractCurrentWorkspace
+import ai.rever.boss.components.workspaces.isUnsaved
 import ai.rever.boss.components.workspaces.requiresProject
 import ai.rever.boss.components.workspaces.resolveOnProjectSelection
 import ai.rever.boss.components.workspaces.workspaceManager
@@ -39,7 +40,6 @@ import ai.rever.boss.services.bookmarks.BookmarkAPIAccess
 import ai.rever.boss.services.terminal.TerminalAPIAccess
 import ai.rever.boss.setupDownloadTabCloseCallback
 import ai.rever.boss.startup.StartupSettingsManager
-import ai.rever.boss.topofmind.TabTreeState
 import ai.rever.boss.updater.UpdateCoordinator
 import ai.rever.boss.utils.CLIInstaller
 import ai.rever.boss.utils.CLIVersionManager
@@ -734,6 +734,28 @@ internal fun BossAppStartupEffects(state: BossAppState) {
         // state, so a browser updating its title mid-navigation re-runs the whole walk.
         val defaultWorkingDirectory = DefaultWorkingDirectory.nominalPath()
 
+        // The last layout this window extracted, so the unsaved flag can be recomputed when the
+        // OTHER half of the comparison moves. Both halves change independently: the live layout
+        // when the user does something, and the saved copy when a write lands - and a write lands
+        // asynchronously (`saveCurrentWorkspace` returns before the file exists), so a flag set
+        // only from the layout side would stay lit after a save until the user touched something
+        // else. Recomputing from both is what makes the affordance self-healing rather than
+        // needing a "now clear it" call after every save path in the app.
+        var latestLayout: LayoutWorkspace? = null
+
+        fun reportUnsaved() {
+            val live = latestLayout
+            // An empty id is a Space that cannot be keyed - `LayoutWorkspace.id` defaults to ""
+            // and `applyWorkspace` mints one only for the copy it applies.
+            val workspaceId = workspaceManager.currentWorkspace.value?.id
+            if (live == null || workspaceId.isNullOrEmpty()) return
+            workspaceManager.setWorkspaceUnsaved(
+                windowId = windowId,
+                workspaceId = workspaceId,
+                unsaved = isUnsaved(live, workspaceManager.savedCopyOf(workspaceId)),
+            )
+        }
+
         // Monitor the entire layout structure for changes
         snapshotFlow {
             // Extract current layout workspace
@@ -743,6 +765,9 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                 defaultWorkingDirectory = defaultWorkingDirectory,
             )
         }.onEach { currentLayout ->
+            latestLayout = currentLayout
+            reportUnsaved()
+
             // Check if we have a loaded workspace
             val loadedConfig = workspaceManager.currentWorkspace.value
 
@@ -754,11 +779,6 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                 } else if (currentLayout != lastWorkspaceSnapshot) {
                     // Layout has changed (splits, tabs added/removed, etc.)
                     lastWorkspaceSnapshot = currentLayout
-
-                    // Mark the current workspace as modified (if it's not "Last Session")
-                    if (loadedConfig.name != LAST_SESSION_NAME) {
-                        TabTreeState.markWorkspaceAsModified(loadedConfig.id)
-                    }
 
                     // Cancel previous save job if any
                     saveJob?.cancel()
@@ -781,9 +801,6 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                                     )
                                 workspaceManager.updateCurrentWorkspace(updatedConfig)
                                 workspaceManager.saveCurrentWorkspace()
-
-                                // Clear the modified state since we just auto-saved
-                                TabTreeState.markWorkspaceAsSaved(loadedConfig.id)
                             }
                         }
                 }
@@ -812,10 +829,18 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                 if (config != null && config.name != LAST_SESSION_NAME) {
                     // Workspace loaded (but not Last Session), reset tracking
                     lastWorkspaceSnapshot = null
-                    // Clear modified status when loading a workspace
-                    TabTreeState.markWorkspaceAsSaved(config.id)
                 }
+                // Whichever Space is showing now, the answer to "is it unsaved" is about that one.
+                reportUnsaved()
             }.launchIn(this)
+
+        // The saved side of the comparison. A successful write replaces the entry in this list -
+        // and only a successful one does, which is why `savedCopyOf` reads it rather than
+        // `currentWorkspace` - so this is where an auto-save or a press of the save button turns
+        // the affordance off.
+        workspaceManager.workspaces
+            .onEach { reportUnsaved() }
+            .launchIn(this)
     }
 }
 

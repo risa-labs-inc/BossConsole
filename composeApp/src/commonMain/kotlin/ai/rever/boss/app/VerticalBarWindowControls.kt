@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.Divider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -69,10 +71,20 @@ internal fun VerticalBarWindowControls(
     onApplyWorkspace: (LayoutWorkspace) -> Unit,
     getCurrentWorkspace: () -> LayoutWorkspace,
     onShowTopOfMind: () -> Unit,
+    /** Save the Space on screen. `MenuActionsHandler.triggerSaveWorkspace`, which the File menu uses. */
+    onSaveWorkspace: () -> Unit,
 ) {
     if (!topBarHidden) return
 
     val scope = rememberCoroutineScope()
+
+    // Which Space is showing here, and whether this window holds changes to it that are not on
+    // disk. Both are collected rather than read, because the affordance below appears and
+    // disappears with the answer - see `WorkspaceManager.unsavedWorkspaces` for why the unsaved
+    // set is keyed by window.
+    val currentWorkspace by workspaceManager.currentWorkspace.collectAsState()
+    val unsavedWorkspaces by workspaceManager.unsavedWorkspaces.collectAsState()
+    val unsaved = spaceIsUnsaved(currentWorkspace?.id, unsavedWorkspaces[windowId].orEmpty())
 
     Divider(color = BossTheme.colors.line)
     Column(
@@ -89,20 +101,30 @@ internal fun VerticalBarWindowControls(
         // project (LayoutWorkspace.projectPath) and switching workspace restores it, so the
         // workspace is the outer choice and the project is a property of the one you are in.
         // Listing the project first read as the reverse - as though a project held workspaces.
-        WorkspaceButton(
-            onOpenWorkspace = onApplyWorkspace,
-            workspaceManager = workspaceManager,
-            getCurrentWorkspace = getCurrentWorkspace,
-            onShowTopOfMind = onShowTopOfMind,
-            // The left click opens Top of Mind and asks it for its workspace picker, which is a
-            // searchable list of workspaces sitting above a tree of every tab in them - more than
-            // this button's own menu has ever been able to say in a 200dp column. The menu is not
-            // lost: it moves to the right click, which is the only place Open Workspace Folder and
-            // Reset to Default exist at all. Returns false when Top of Mind is not installed or is
-            // disabled, and the click then opens the menu exactly as it used to.
-            onOpenWorkspacePicker = { openTopOfMindWorkspacePicker(windowId, scope) },
-            compact = true,
-        )
+        // The Space button and, while there is something to save, a save button beside it. The
+        // save affordance lives HERE rather than in the footer's action row because this is where
+        // the Space it saves is named: a button that says "save" next to a control that says
+        // which Space is on screen needs no label of its own.
+        SpaceRow(unsaved = unsaved, onSave = onSaveWorkspace) {
+            WorkspaceButton(
+                onOpenWorkspace = onApplyWorkspace,
+                workspaceManager = workspaceManager,
+                getCurrentWorkspace = getCurrentWorkspace,
+                onShowTopOfMind = onShowTopOfMind,
+                // The left click opens Top of Mind and asks it for its workspace picker, which is
+                // a searchable list of workspaces sitting above a tree of every tab in them - more
+                // than this button's own menu has ever been able to say in a 200dp column. The menu
+                // is not lost: it moves to the right click, which is the only place Open Workspace
+                // Folder and Reset to Default exist at all. Returns false when Top of Mind is not
+                // installed or is disabled, and the click then opens the menu as it used to.
+                onOpenWorkspacePicker = { openTopOfMindWorkspacePicker(windowId, scope) },
+                compact = true,
+                // The Space itself is marked, not only the button beside it: the save button says
+                // "there is something you can do", the mark says "this Space is the thing it is
+                // about". Both, because with two windows open only one of them may be lit.
+                unsaved = unsaved,
+            )
+        }
         BossActionButton(
             // A folder rather than the top bar's project LOGO tile. That tile is 28dp of solid
             // colour built to anchor a wide bar; down a 200dp column it is the loudest thing on

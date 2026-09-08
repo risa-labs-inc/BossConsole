@@ -1280,6 +1280,95 @@ template picked from the fourth of those is the same gesture as one picked from 
   strings and says so. Nothing about the decision lives on that side: resolving `{gitRemoteUrl}`
   forks `git` in the project directory, which no plugin can do.
 
+## Unsaved Spaces, and the save button in the vertical bar
+
+There was no dirty tracking in the app, only the bookkeeping for one:
+`TabTreeState.modifiedWorkspaces` was written from three places and READ FROM NONE, a leftover of
+the deleted host-side Top of Mind. It is gone; the state lives on `WorkspaceManager` now, where the
+vertical bar can watch it.
+
+- **`WorkspaceManager.unsavedWorkspaces` is a `Map<windowId, Set<workspaceId>>`, and the per-window
+  part is not optional.** Two windows run different Spaces and each one's layout is its own; one
+  flat set would light the Save button in a window with nothing to save the moment the other window
+  was edited. The window reports, exactly as it already reports which Spaces it is running through
+  `setWindowWorkspaces`, because the live layout only exists in its `SplitViewState`.
+- **The flag is DERIVED from both halves, so nothing has to remember to clear it.** The layout
+  watcher in `BossAppStartupEffects` recomputes on every extract, and a second collector recomputes
+  on every change to `workspaceManager.workspaces` - which is where a successful write lands. So an
+  auto-save, the File menu's Save Space and the bar's own button all turn the affordance off by
+  writing the file, and none of them calls a "mark saved". The saved side is read through
+  `savedCopyOf`, off `workspaces`, and deliberately NOT off `currentWorkspace`:
+  `updateCurrentWorkspace` writes the live layout into that one BEFORE the save is attempted, so
+  comparing against it would read clean when a write was queued rather than when it landed.
+
+### The comparison, which was measured rather than reasoned
+
+`saved != live` is PERMANENTLY TRUE, and `WorkspaceDirtyStateTest` drives the real extractor and the
+real applier to prove each normalisation. What the first run printed:
+
+```
+two extracts of an UNCHANGED window
+  id        workspace-1788834771145   vs   workspace-1788834771152
+  timestamp 1788834771145             vs   1788834771152
+  layout    equal
+
+the SAME Space, extracted right after applying it
+  saved panel ids   [main, split--1997346227960953891]
+  live  panel ids   [main, split-2247261763438958480]
+  tabs, pinned counts and split shape all equal
+```
+
+So `comparable()` strips exactly four things, and each one is a false positive rather than
+leniency:
+
+- **`id` and `timestamp`**, because `extractCurrentWorkspace` mints a `generateId()` and reads the
+  clock on every call - it is a snapshot of a layout, not a Space.
+- **`name` and `description`**, because the extractor always writes "Current" / "Current layout
+  workspace" where the saved copy carries the Space's own. They are the saved Space's identity;
+  the live layout has no opinion about them.
+- **Panel ids, renumbered by POSITION**, because `applyWorkspace` throws the saved ids away
+  (`clearAllPanels()` then `splitPanel`, which mints one per pane) and maps panes back by position
+  in the tree. A saved id is a record of the session that wrote it and can never match the session
+  reading it. Renumbered rather than dropped: two panes in one tree have to stay distinguishable,
+  or a tab moved from the left pane to the right would compare equal to where it started.
+- **`breadcrumbConfig`**, the one reasoned entry: nothing in the app reads or writes it, so the
+  extractor can only ever produce the default, and a hand-edited file carrying anything else would
+  be permanently unsaved with no way for the user to clear it.
+
+What is NOT normalised, each with a test: the split shape, which pane holds which tab and in what
+order, each pane's `pinnedCount`, and `projectPath`. Three mutations are verified - dropping the
+panel-id renumbering, keeping the timestamp, and treating a missing saved copy as clean - and each
+fails a named test.
+
+### The affordance
+
+`SpaceRow` in `app/SpaceSaveAffordance.kt` wraps the vertical bar's Space button and puts a save
+button beside it while there is something to save. It presses
+`MenuActionsHandler.triggerSaveWorkspace(windowId)`, which is the File menu's own Save Space, so
+there is one save path rather than two.
+
+- **The Space button takes the Row's WEIGHT and the save button does not.** A `Row` measures its
+  unweighted children first, so the save button's 24dp is taken out before the 130dp label gets
+  anything. The other way round is the failure `HostActionsFlowRow` measured: a `Row` too narrow
+  for its children hands the LAST one zero width rather than clipping it, so the button silently is
+  not there at a width the user can reach by dragging. `SpaceSaveAffordanceLayoutTest` mounts the
+  row at the bar's 120dp floor and asserts the button's SIZE, not only its position, because a
+  zero-width rect at the origin is inside every bounds check that will ever be written. Dropping
+  the weight fails that test.
+- **Sized against `BossActionButton` in COMPACT mode**: a 24dp target around a 13dp glyph, which is
+  the bar's own leading-icon size, not the 20dp `iconSize` an icon-only top bar button gets.
+- **The Space is marked too, on its GLYPH rather than its label.** The label is capped at 130dp
+  with an ellipsis, so a marker appended to the text is the first thing a project-length Space name
+  truncates away. `signalText`, not `signal`: it is drawn as a glyph, and `signal` is the fill
+  token, held to no text contrast floor. The hint says it in words as well, because a colour is not
+  a sentence.
+- **A window with NO Space loaded reads as saved, deliberately.** That state lasts about two
+  seconds - the layout watcher writes it out as "Last Session" and the manager then has a current
+  Space - so lighting a button there would be a control that appears and vanishes on every new
+  window. "Never saved at all" is still covered for any Space that has an id, by `isUnsaved`'s
+  null-saved-copy branch: a template applied as-is has a list entry that still says `{projectPath}`
+  and no file matching the layout on screen.
+
 ## The product word is "Space", the code word is `workspace`
 
 What a person reads in BOSS is a **Space**. What the code calls it is still `workspace`,
