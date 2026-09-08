@@ -20,6 +20,21 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class BrowserNativeDisposalTest {
+    @Test
+    fun `view detachment precedes native disposal even when detachment fails`() {
+        val order = mutableListOf<String>()
+        assertFailsWith<IllegalStateException> {
+            finishLocalBrowserDisposal(
+                detachView = {
+                    order += "detach"
+                    error("view failure")
+                },
+                requestNativeClose = { order += "native" },
+            )
+        }
+        assertEquals(listOf("detach", "native"), order)
+    }
+
     /** #409's fast-drain case: the native close follows the actual return of the worker. */
     @Test
     fun `close follows a fast admitted call and runs only once`(): Unit =

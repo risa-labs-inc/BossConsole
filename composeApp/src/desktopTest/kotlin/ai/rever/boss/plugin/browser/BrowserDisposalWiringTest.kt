@@ -10,7 +10,8 @@ import kotlin.test.assertTrue
 class BrowserDisposalWiringTest {
     private fun source(name: String): String {
         val relative = "src/desktopMain/kotlin/ai/rever/boss/plugin/browser/$name.kt"
-        return listOf(File(relative), File("composeApp/$relative")).first { it.isFile }.readText()
+        return listOf(File(relative), File("composeApp/$relative")).firstOrNull { it.isFile }?.readText()
+            ?: error("Cannot locate browser source $relative from ${File(".").absolutePath}")
     }
 
     @Test
@@ -24,7 +25,10 @@ class BrowserDisposalWiringTest {
                     it.groupValues[1] + if (it.groupValues[2] == "BoundedBrowserCall") ".executor" else ""
                 }.toSet()
         assertTrue(declared.isNotEmpty())
-        assertFalse(handle.contains("Executors.new"), "Use the owned draining executor factory")
+        assertFalse(
+            handle.contains("Executors.new"),
+            "Native workers must use the owned draining factory to participate in disposal",
+        )
         val owner = handle.substringAfter("private val ownedExecutors =").substringBefore("private val nativeDisposal")
         val owned =
             Regex("listOf\\(([^)]*)\\)")
@@ -37,6 +41,25 @@ class BrowserDisposalWiringTest {
         assertEquals(declared, owned)
         assertTrue(handle.contains("BrowserNativeDisposal(ownedExecutors,"))
         assertTrue(handle.substringAfter("override fun dispose()").contains("nativeDisposal.start()"))
+    }
+
+    @Test
+    fun `early teardown failures and renderer close cannot bypass native disposal`() {
+        val handle = source("BrowserHandleImpl")
+        val dispose = handle.substringAfter("override fun dispose()")
+        assertTrue(dispose.contains("val popOutCleanup = runCatching { closePopOutOnEdt() }"))
+        assertTrue(dispose.contains("try {\n            popOutCleanup.getOrThrow()"))
+        val completion = dispose.substringAfter("} finally {")
+        assertTrue(completion.contains("finishLocalBrowserDisposal("))
+        assertTrue(completion.contains("currentViewState?.close()"))
+        assertTrue(completion.contains("requestNativeClose = { nativeDisposal.start() }"))
+        val closed =
+            handle.substringAfter("browser.on(BrowserClosed::class.java)").substringBefore("rendererPid.onGone()")
+        assertTrue(closed.contains("disposed.set(true)"))
+        assertTrue(
+            closed.contains("nativeDisposal.start()"),
+            "External close must settle disposal despite the disposed guard",
+        )
     }
 
     @Test

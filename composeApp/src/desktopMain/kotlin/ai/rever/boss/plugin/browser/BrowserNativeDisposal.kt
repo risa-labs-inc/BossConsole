@@ -162,10 +162,23 @@ internal suspend fun acquireManagedProfileLock(
                 true
             }
         check(completed == true) {
-            "Managed browser profile is still in use; native disposal may be pending. Retry after it completes."
+            "Managed browser profile is still in use by an open browser or pending native disposal. " +
+                "Retry after it closes."
         }
         delivered = true
     } finally {
         if (acquired && !delivered) mutex.unlock()
+    }
+}
+
+/** Attempt view detachment even after earlier teardown fails, before an idle drain can close native state. */
+internal fun finishLocalBrowserDisposal(
+    detachView: () -> Unit,
+    requestNativeClose: () -> Unit,
+) {
+    try {
+        detachView()
+    } finally {
+        requestNativeClose()
     }
 }

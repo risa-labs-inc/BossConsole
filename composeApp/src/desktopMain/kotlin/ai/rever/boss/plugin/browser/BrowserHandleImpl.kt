@@ -4243,9 +4243,13 @@ internal class BrowserHandleImpl(
         // anything this thread holds. A timeout turns that into a late cleanup instead of a
         // frozen app, and the task stays queued so the window is still disposed once the EDT
         // frees up. On the EDT already - composition teardown - it runs inline.
-        closePopOutOnEdt()
-        if (!disposed.compareAndSet(false, true)) return
+        val popOutCleanup = runCatching { closePopOutOnEdt() }
+        if (!disposed.compareAndSet(false, true)) {
+            popOutCleanup.getOrThrow()
+            return
+        }
         try {
+            popOutCleanup.getOrThrow()
             rendererPid.onGone()
             // Shut the interaction bridge FIRST. Its only gate is this authority, and the
             // collector flushes on `pagehide` — which is precisely when this runs. Closing the
@@ -4328,11 +4332,6 @@ internal class BrowserHandleImpl(
             loadingListeners.clear()
             zoomListeners.clear()
 
-            // Close browser view state
-            currentViewState?.close()
-            currentViewState = null
-            currentViewStateWindowId = null
-
             // Release find-in-page state and its timers before closing the browser: a debounce that
             // fires afterwards would search a closed object.
             BrowserFindController.dispose(browser)
@@ -4344,7 +4343,14 @@ internal class BrowserHandleImpl(
         } finally {
             // Do not turn a caller deadline into permission to close a live native call.
             // This also covers direct plugin/window disposal and local teardown failures.
-            nativeDisposal.start()
+            finishLocalBrowserDisposal(
+                detachView = {
+                    currentViewState?.close()
+                    currentViewState = null
+                    currentViewStateWindowId = null
+                },
+                requestNativeClose = { nativeDisposal.start() },
+            )
             logger.debug(
                 LogCategory.BROWSER,
                 "Browser native disposal requested",
