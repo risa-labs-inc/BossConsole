@@ -34,6 +34,11 @@ jobs:
         with:
           fetch-depth: 1
 
+      # The native installer can report success without creating its launcher when
+      # this directory is absent on a fresh runner (executable_not_found in the SDK).
+      - name: Prepare Claude launcher directory
+        run: mkdir -p "$HOME/.local/bin"
+
       - name: Run Claude Code Review
         id: claude-review
         uses: anthropics/claude-code-action@v1
