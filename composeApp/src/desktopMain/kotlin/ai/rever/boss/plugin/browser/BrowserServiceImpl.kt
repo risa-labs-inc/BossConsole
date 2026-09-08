@@ -688,22 +688,11 @@ object BrowserServiceImpl : BrowserService {
         activeBrowsers.remove(handle.id)
         browserOwners.unregister(handle.id)
 
-        handle.prepareForDisposal()
-
-        // Issue #300: If the browser is closed while a native JxBrowser operation is in flight,
-        // the renderer can crash. Suspend briefly to let operations finish safely.
-        withTimeoutOrNull(500) {
-            handle.awaitPendingNativeOperations()
-        }
-
-        try {
-            handle.dispose()
-        } finally {
-            // Managed-profile cleanup must run even if dispose() throws — otherwise the
-            // per-named-profile fence stays locked (deadlock) and ephemeral profiles
-            // leak. Delete ephemeral profiles, refresh+evict named ones, release fence.
-            managedByHandle.remove(handle.id)?.let { finishManagedProfile(it) }
-        }
+        disposeBrowserResources(
+            dispose = handle::dispose,
+            awaitNativeClose = { (handle as? BrowserHandleImpl)?.awaitNativeDisposal() },
+            release = { managedByHandle.remove(handle.id)?.let { finishManagedProfile(it) } },
+        ).await()
 
         logger.debug(
             LogCategory.BROWSER,
@@ -779,13 +768,13 @@ object BrowserServiceImpl : BrowserService {
         if (!activeBrowsers.remove(handle.id, handle)) return false
 
         browserOwners.unregister(handle.id)
-        try {
-            handle.dispose()
-        } finally {
-            // Window/application teardown cannot suspend for profile accounting,
-            // but it must release profile locks and delete ephemeral profiles.
-            managedByHandle.remove(handle.id)?.let(::releaseManaged)
-        }
+        // View teardown is synchronous so it precedes destruction of the window's AWT peer.
+        // Native close and profile release remain host-owned if the renderer is still busy.
+        disposeBrowserResources(
+            dispose = handle::dispose,
+            awaitNativeClose = { handle.awaitNativeDisposal() },
+            release = { managedByHandle.remove(handle.id)?.let(::releaseManaged) },
+        )
         return true
     }
 

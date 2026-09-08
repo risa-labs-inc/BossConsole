@@ -575,6 +575,27 @@ logger.error(LogCategory.NETWORK, "Request failed", error = exception)
 
 **Config**: Set `BOSS_LOG_LEVEL` env var or `boss.log.level` system property (TRACE/DEBUG/INFO/WARN/ERROR)
 
+## Browser native disposal
+
+`BrowserHandleImpl.dispose()` invalidates the handle and detaches its UI, then
+`BrowserNativeDisposal` closes the browser only after its four renderer-call
+executors drain. Direct plugin disposal and host window teardown share this
+boundary. Never replace the drain with a fixed timeout followed by `browser.close()`:
+cancelling a caller's coroutine does not stop a JxBrowser round trip.
+
+`DrainingBrowserExecutor` signals actual executor termination, including failed
+calls and cancelled queued jobs. Waiting suspends in a host-owned scope without
+parking another thread. Keep `executeJavaScript` on `BoundedBrowserCall`: the
+JxBrowser async Consumer overload does not invoke its consumer on RPC error, so
+that callback alone cannot settle a native-operation count.
+
+Profile release must follow `awaitNativeDisposal`, through `disposeBrowserResources`.
+Its cleanup outlives cancellation of the caller. A genuinely wedged call retains
+its browser/profile until it returns or engine recovery releases it; native-close
+failure deliberately retains the potentially live profile and is logged. This
+is not an engine-abort mechanism and does not coordinate external raw-JxBrowser
+callers or engine-level forced closure.
+
 ## Browser telemetry, and how to turn it off
 
 The integrated browser reports which sites BOSS is used with and how - page views,

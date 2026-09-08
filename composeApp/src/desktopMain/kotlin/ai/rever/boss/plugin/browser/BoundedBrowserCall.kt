@@ -14,9 +14,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.CancellationException
-import java.util.concurrent.LinkedBlockingQueue
-import java.util.concurrent.ThreadPoolExecutor
-import java.util.concurrent.TimeUnit
 import kotlin.coroutines.ContinuationInterceptor
 import kotlin.coroutines.coroutineContext
 
@@ -51,7 +48,7 @@ import kotlin.coroutines.coroutineContext
  * independently - a tab, a peer, an integration - rather than sharing one process-wide. A shared
  * instance turns "this tab stopped answering" into "every call in the process costs a full deadline
  * and answers null", for as long as a dialog nobody knows about stays open. The thread costs nothing
- * until the first call and retires itself after [IDLE_THREAD_TTL_SECONDS] idle, so per-instance is
+ * until the first call and retires itself after its idle timeout, so per-instance is
  * cheap even where instances are churned through without ever making a call.
  *
  * One residual constraint cannot be fixed here, so it is warned about at runtime instead: a caller
@@ -72,16 +69,7 @@ internal class BoundedBrowserCall(
      * one. That is what makes an instance cheap enough to hand out per tab: an instance that never
      * makes a call never creates a thread, and one that goes quiet gives its thread back.
      */
-    private val executor =
-        ThreadPoolExecutor(
-            1,
-            1,
-            IDLE_THREAD_TTL_SECONDS,
-            TimeUnit.SECONDS,
-            LinkedBlockingQueue(),
-        ) { runnable ->
-            Thread(runnable, threadName).apply { isDaemon = true }
-        }.apply { allowCoreThreadTimeOut(true) }
+    internal val executor = DrainingBrowserExecutor(threadName)
 
     /**
      * The one thread every blocking round trip runs on.
@@ -227,7 +215,7 @@ internal class BoundedBrowserCall(
     val backlog: Int get() = executor.queue.size
 
     /**
-     * Stop accepting new calls, and wait briefly for whatever is already running to finish.
+     * Stop accepting new calls.
      *
      * `shutdown()` and not `shutdownNow()`: a call already inside JxBrowser cannot be interrupted,
      * so interrupting would buy nothing, and work already queued still deserves to run. The thread
@@ -236,29 +224,11 @@ internal class BoundedBrowserCall(
      * Not a full teardown, and deliberately not: [scope] is left uncancelled and [dispatcher] left
      * open, because cancelling the scope would drop work already queued - which is the teardown its
      * owner usually just posted. Both are reachable-object concerns only, and the executor's thread
-     * retires on its own after [IDLE_THREAD_TTL_SECONDS], so the whole instance becomes garbage with
+     * retires on its own after its idle timeout, so the whole instance becomes garbage with
      * whatever owned it. Later calls answer null via the rejected-dispatch path in [call].
-     *
-     * **BossConsole#300.** A call already in flight on [dispatcher] cannot be interrupted - see
-     * [call]'s KDoc - so a caller that closes the underlying browser right after this returns can
-     * still touch it from two threads at once: this thread finishing `browser.close()`, and
-     * [dispatcher]'s thread still inside a native round trip that started before shutdown. The
-     * bounded [awaitTermination][ThreadPoolExecutor.awaitTermination] here narrows that window for
-     * the common case - an in-flight call that was always going to finish in milliseconds now does
-     * so before the caller proceeds - without reintroducing the freeze this class exists to prevent:
-     * the wait itself is bounded, so a genuinely wedged call (the case [call]'s deadline exists for)
-     * still lets shutdown return, having merely waited [drainTimeoutMs] rather than forever. It
-     * cannot close the window when the in-flight call *is* the wedge - there is no JxBrowser API on
-     * this version able to interrupt a blocking round trip already inside the native call, which is
-     * the whole reason [call] confines it to its own thread instead of trying to cancel it.
      */
-    fun shutdown(drainTimeoutMs: Long = SHUTDOWN_DRAIN_TIMEOUT_MS) {
+    fun shutdown() {
         executor.shutdown()
-        try {
-            executor.awaitTermination(drainTimeoutMs, TimeUnit.MILLISECONDS)
-        } catch (_: InterruptedException) {
-            Thread.currentThread().interrupt()
-        }
     }
 
     companion object {
@@ -274,20 +244,5 @@ internal class BoundedBrowserCall(
          * match is exactly the pair this repo pins in a test elsewhere.
          */
         const val DEFAULT_TIMEOUT_MS = 10_000L
-
-        /** Long enough to serve a burst of calls on one thread, short enough not to hold one idle. */
-        private const val IDLE_THREAD_TTL_SECONDS = 30L
-
-        /**
-         * How long [shutdown] waits for an in-flight call to drain before the caller proceeds to
-         * close the browser anyway (BossConsole#300). Costs nothing in the overwhelmingly common
-         * case - [ThreadPoolExecutor.awaitTermination] returns immediately once the queue and the
-         * one worker thread are both idle, which is where an instance sits between calls - and only
-         * this long in the rare case something was genuinely still running. Short relative to
-         * [DEFAULT_TIMEOUT_MS] on purpose: this is a best-effort narrowing of a race window, not
-         * another deadline a caller is meant to notice, and [POP_OUT_EDT_TIMEOUT_MS] in
-         * `BrowserHandleImpl` is the precedent for what a teardown path already tolerates waiting.
-         */
-        private const val SHUTDOWN_DRAIN_TIMEOUT_MS = 1_000L
     }
 }

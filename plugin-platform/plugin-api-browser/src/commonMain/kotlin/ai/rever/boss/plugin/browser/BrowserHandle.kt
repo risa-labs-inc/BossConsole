@@ -179,17 +179,6 @@ interface BrowserHandle {
     suspend fun executeJavaScript(script: String): Any? = null
 
     /**
-     * Prepares this handle for disposal by refusing any new asynchronous native operations.
-     */
-    fun prepareForDisposal() {}
-
-    /**
-     * Suspends until all in-flight native asynchronous operations (such as executeJavaScript)
-     * have completed or safely aborted.
-     */
-    suspend fun awaitPendingNativeOperations() = Unit
-
-    /**
      * Get the current URL.
      *
      * @return The current URL, or empty string if invalid
@@ -778,6 +767,10 @@ interface BrowserHandle {
      *
      * After calling this, [isValid] will return false and
      * all other methods will be no-ops.
+     *
+     * Native close may finish asynchronously after already-admitted renderer calls drain.
+     * Caller cancellation does not abort those calls; a wedged renderer can defer native
+     * resource release until recovery. The handle becomes invalid immediately.
      *
      * If this browser owns a fullscreen rendering surface, disposal may wait
      * briefly for UI-thread detachment. Do not call while holding a lock that

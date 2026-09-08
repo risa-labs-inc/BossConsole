@@ -102,11 +102,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.booleanOrNull
@@ -120,7 +116,6 @@ import java.awt.Window
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
-import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
@@ -320,7 +315,6 @@ internal class BrowserHandleImpl(
     private val swipeNavBridge = BrowserSwipeNavBridge(onNavigate = ::onSwipeNavigate)
 
     private val disposed = AtomicBoolean(false)
-    private val tracker = NativeOperationTracker(disposed)
 
     /**
      * Latched when a synchronous RPC through this browser fails because its transport is gone.
@@ -744,9 +738,7 @@ internal class BrowserHandleImpl(
      * page already suspected of misbehaving, and it runs on every http(s) commit.
      */
     private val frameProbeExecutor =
-        Executors.newSingleThreadExecutor { runnable ->
-            Thread(runnable, "boss-frame-probe-$id").apply { isDaemon = true }
-        }
+        DrainingBrowserExecutor("boss-frame-probe-$id")
     private val frameProbeDispatcher = frameProbeExecutor.asCoroutineDispatcher()
 
     /**
@@ -767,9 +759,7 @@ internal class BrowserHandleImpl(
     // park a shared-pool worker indefinitely. Confined here, the cost is one parked thread
     // and later lookups queue behind it.
     private val contextMenuExecutor =
-        Executors.newSingleThreadExecutor { runnable ->
-            Thread(runnable, "boss-context-menu-$id").apply { isDaemon = true }
-        }
+        DrainingBrowserExecutor("boss-context-menu-$id")
     private val contextMenuLookupDispatcher = contextMenuExecutor.asCoroutineDispatcher()
 
     // The coroutine that *waits* on that lookup must NOT share its thread. Both on one
@@ -802,9 +792,7 @@ internal class BrowserHandleImpl(
     // interrupt a call already inside executeJavaScript, so a wedged renderer costs one parked
     // thread and later injections queue behind it.
     private val pageInjectExecutor =
-        Executors.newSingleThreadExecutor { runnable ->
-            Thread(runnable, "boss-page-inject-$id").apply { isDaemon = true }
-        }
+        DrainingBrowserExecutor("boss-page-inject-$id")
     private val pageInjectDispatcher = pageInjectExecutor.asCoroutineDispatcher()
 
     private val pageInjectScope =
@@ -823,6 +811,17 @@ internal class BrowserHandleImpl(
      * sticks is worth injecting into, exactly as for [frameStallJob].
      */
     private val pageInjectJob = AtomicReference<Job?>(null)
+
+    private val nativeDisposal =
+        BrowserNativeDisposal(
+            listOf(handleCall.executor, frameProbeExecutor, contextMenuExecutor, pageInjectExecutor),
+        ) {
+            if (!browser.isClosed) browser.close()
+            logger.debug(LogCategory.BROWSER, "Browser native disposal finished", mapOf("handleId" to id))
+        }
+
+    /** Completes only after native work has drained and the close has finished. */
+    internal suspend fun awaitNativeDisposal() = nativeDisposal.awaitCompletion()
 
     // Lock for thread-safe browser operations
     private val browserLock = ReentrantReadWriteLock()
@@ -1408,6 +1407,7 @@ internal class BrowserHandleImpl(
             browser.on(BrowserClosed::class.java) {
                 logger.debug(LogCategory.BROWSER, "Browser closed", mapOf("handleId" to id))
                 disposed.set(true)
+                nativeDisposal.start()
                 rendererPid.onGone()
                 // Stop streaming: the underlying page is gone.
                 coBrowseCapturing = false
@@ -2573,50 +2573,17 @@ internal class BrowserHandleImpl(
      */
     override suspend fun executeJavaScript(script: String): Any? {
         if (!isValid) return null
-        val outcome =
-            kotlinx.coroutines.withTimeoutOrNull(BoundedBrowserCall.DEFAULT_TIMEOUT_MS) {
-                Result.success(
-                    browser.executeJavaScriptSuspending(
-                        script,
-                        ::tryInitiateNativeOperation,
-                        ::endNativeOperation,
-                    ) { e ->
-                        logger.warn(
-                            LogCategory.BROWSER,
-                            "JS execution error",
-                            mapOf("handleId" to id, "error" to (e.message ?: "unknown")),
-                        )
-                    },
+        return handleCall.call(
+            onError = { e ->
+                logger.warn(
+                    LogCategory.BROWSER,
+                    "JS execution error",
+                    mapOf("handleId" to id, "error" to (e.message ?: "unknown")),
                 )
-            }
-
-        return if (outcome == null) {
-            logger.warn(
-                LogCategory.BROWSER,
-                "Browser round trip timed out - the renderer did not answer",
-                mapOf(
-                    "thread" to "boss-browser-call-$id",
-                    "timeoutMs" to BoundedBrowserCall.DEFAULT_TIMEOUT_MS.toString(),
-                ),
-            )
-            null
-        } else {
-            outcome.getOrNull()
+            },
+        ) {
+            browser.mainFrame().map { it.executeJavaScript<Any?>(script) }.orElse(null)
         }
-    }
-
-    override fun prepareForDisposal() {
-        tracker.prepareForDisposal()
-    }
-
-    private fun tryInitiateNativeOperation(initiate: () -> Unit): Boolean = tracker.tryInitiateOperation(initiate)
-
-    private fun endNativeOperation() {
-        tracker.endNativeOperation()
-    }
-
-    override suspend fun awaitPendingNativeOperations() {
-        tracker.awaitPendingNativeOperations()
     }
 
     override fun getCurrentUrl(): String = syncCall("url", "") { browser.url() }
@@ -4258,8 +4225,6 @@ internal class BrowserHandleImpl(
         }
     }
 
-    private val disposeExecuted = AtomicBoolean(false)
-
     override fun dispose() {
         // Synchronously, and before the guard below: invokeLater would let browser.close() run
         // first, and closing the browser under a still-attached Swing view is exactly the
@@ -4273,115 +4238,112 @@ internal class BrowserHandleImpl(
         // frozen app, and the task stays queued so the window is still disposed once the EDT
         // frees up. On the EDT already - composition teardown - it runs inline.
         closePopOutOnEdt()
-        // Ensure disposed state is entered even if prepareForDisposal was skipped
-        disposed.set(true)
-        if (!disposeExecuted.compareAndSet(false, true)) return
-        rendererPid.onGone()
-        // Shut the interaction bridge FIRST. Its only gate is this authority, and the
-        // collector flushes on `pagehide` — which is precisely when this runs. Closing the
-        // tracker first left a window between the two statements in which a batch arriving on
-        // the JS thread still read a non-null authority, so a tab close emitted PAGE_LEFT,
-        // TAB_CLOSED, and then clicks on a tab that was already gone: the exact race this
-        // pair exists to close. Nulling first cannot lose a visit, since closed() is guarded
-        // by its own `finished` flag and does not consult this.
-        currentPageAuthority = null
-        // Then flush the visit in progress. This is the only place a page's dwell time can be
-        // closed out when a tab is shut while still on a page — every other path ends a visit
-        // by starting the next one.
-        visitTracker.closed()
-        FullscreenBrowserWindow.exitFullscreen(browser)
+        if (!disposed.compareAndSet(false, true)) return
+        try {
+            rendererPid.onGone()
+            // Shut the interaction bridge FIRST. Its only gate is this authority, and the
+            // collector flushes on `pagehide` — which is precisely when this runs. Closing the
+            // tracker first left a window between the two statements in which a batch arriving on
+            // the JS thread still read a non-null authority, so a tab close emitted PAGE_LEFT,
+            // TAB_CLOSED, and then clicks on a tab that was already gone: the exact race this
+            // pair exists to close. Nulling first cannot lose a visit, since closed() is guarded
+            // by its own `finished` flag and does not consult this.
+            currentPageAuthority = null
+            // Then flush the visit in progress. This is the only place a page's dwell time can be
+            // closed out when a tab is shut while still on a page — every other path ends a visit
+            // by starting the next one.
+            visitTracker.closed()
+            FullscreenBrowserWindow.exitFullscreen(browser)
 
-        // Stop co-browse capture so a disposed tab can never keep streaming.
-        coBrowseCapturing = false
-        coBrowseControlGranted = false
-        coBrowseSink = null
-        coBrowseBridge.onEvent = null
-        coBrowseScope.cancel()
-        // Same for the page event channel: a disposed tab must not deliver another event, and the
-        // sink belongs to a plugin that may itself be going away.
-        pageEventScript = null
-        pageEventBridge.onEvent = null
-        // The provider closes over `browser`, so it goes too rather than outliving the handle.
-        pageEventBridge.urlProvider = { "" }
-        pageEventScope.cancel()
-        // A pending frame-stall probe outlives the tab otherwise, and its next act is a blocking
-        // executeJavaScript against a browser that is being torn down. shutdown() not
-        // shutdownNow(), for the same reason as the context-menu executor: a round-trip already
-        // inside executeJavaScript cannot be interrupted, and the thread is daemon.
-        frameStallJob.getAndSet(null)?.cancel()
-        frameStallScope.cancel()
-        frameProbeExecutor.shutdown()
-        // Stops queued menu lookups from starting. A lookup already blocked inside
-        // executeJavaScript cannot be interrupted by cancellation — the delivery site
-        // checks `disposed` before handing anything back. shutdown() (not shutdownNow())
-        // for the same reason: the thread is daemon, so a wedged lookup cannot hold up
-        // exit, and interrupting it would buy nothing.
-        contextMenuScope.cancel()
-        contextMenuExecutor.shutdown()
-        // A pending commit follow-up outlives the tab otherwise, and its next act is a blocking
-        // round trip against a browser being torn down. shutdown() not shutdownNow(), for the
-        // reason the two above give: the thread is daemon and a call already inside JxBrowser
-        // cannot be interrupted, so interrupting would buy nothing.
-        pageInjectJob.getAndSet(null)?.cancel()
-        pageInjectScope.cancel()
-        pageInjectExecutor.shutdown()
-        // Last of the four. Note what this ordering does NOT buy: coBrowseScope and pageEventScope
-        // were cancelled above, and cancelling a scope also cancels children that were dispatched but
-        // have not started - startCoroutineCancellable means DispatchedTask.run sees an inactive job
-        // and resumes with the cancellation instead of running the body. So the teardown queued by
-        // stopCoBrowseCapture (recordStop, setControlGuard(false)) does not run here, and did not
-        // before this change either, when both scopes were cancelled the same way on Main.
-        //
-        // Left alone rather than re-posted outside the cancelled scope: the browser is closing a few
-        // lines below, so stopping a recorder in a page that is about to go away buys nothing.
-        // See [BoundedBrowserCall.shutdown] for why not shutdownNow().
-        handleCall.shutdown()
-        // Drop this browser's injectors, WITHOUT unclaiming the shared callback slot - that slot
-        // belongs to BrowserInjectDispatcher on behalf of every registered injector, and removing
-        // it here would tear down another feature's hook as a side effect of this teardown.
-        //
-        // An earlier version of this comment claimed nothing leaked because the dispatcher keys its
-        // registry weakly. That was wrong: a WeakHashMap value strongly references whatever it
-        // captures, and these injectors are lambdas closing over `this` - which holds the key. So
-        // the entry pinned a whole BrowserHandleImpl per closed tab. unregister() is the fix.
-        BrowserInjectDispatcher.unregister(browser)
-        // The flags are latched SET rather than cleared: the entry has just been dropped, so a
-        // re-registration here would put an injector back on a browser that is closing. isValid is
-        // already false too, which is what stops setPageEventScript reaching this in the first place.
-        coBrowseInjectRegistered.set(true)
-        pageEventInjectRegistered.set(true)
+            // Stop co-browse capture so a disposed tab can never keep streaming.
+            coBrowseCapturing = false
+            coBrowseControlGranted = false
+            coBrowseSink = null
+            coBrowseBridge.onEvent = null
+            coBrowseScope.cancel()
+            // Same for the page event channel: a disposed tab must not deliver another event, and the
+            // sink belongs to a plugin that may itself be going away.
+            pageEventScript = null
+            pageEventBridge.onEvent = null
+            // The provider closes over `browser`, so it goes too rather than outliving the handle.
+            pageEventBridge.urlProvider = { "" }
+            pageEventScope.cancel()
+            // A pending frame-stall probe outlives the tab otherwise, and its next act is a blocking
+            // executeJavaScript against a browser that is being torn down. shutdown() not
+            // shutdownNow(), for the same reason as the context-menu executor: a round-trip already
+            // inside executeJavaScript cannot be interrupted, and the thread is daemon.
+            frameStallJob.getAndSet(null)?.cancel()
+            frameStallScope.cancel()
+            frameProbeExecutor.shutdown()
+            // Stops queued menu lookups from starting. A lookup already blocked inside
+            // executeJavaScript cannot be interrupted by cancellation — the delivery site
+            // checks `disposed` before handing anything back. shutdown() (not shutdownNow())
+            // for the same reason: the thread is daemon, so a wedged lookup cannot hold up
+            // exit, and interrupting it would buy nothing.
+            contextMenuScope.cancel()
+            contextMenuExecutor.shutdown()
+            // A pending commit follow-up outlives the tab otherwise, and its next act is a blocking
+            // round trip against a browser being torn down. shutdown() not shutdownNow(), for the
+            // reason the two above give: the thread is daemon and a call already inside JxBrowser
+            // cannot be interrupted, so interrupting would buy nothing.
+            pageInjectJob.getAndSet(null)?.cancel()
+            pageInjectScope.cancel()
+            pageInjectExecutor.shutdown()
+            // Last of the four. Note what this ordering does NOT buy: coBrowseScope and pageEventScope
+            // were cancelled above, and cancelling a scope also cancels children that were dispatched but
+            // have not started - startCoroutineCancellable means DispatchedTask.run sees an inactive job
+            // and resumes with the cancellation instead of running the body. So the teardown queued by
+            // stopCoBrowseCapture (recordStop, setControlGuard(false)) does not run here, and did not
+            // before this change either, when both scopes were cancelled the same way on Main.
+            //
+            // Left alone rather than re-posted outside the cancelled scope: the native disposal below
+            // closes the browser after these workers drain, and capture delivery is already disabled.
+            // See [BoundedBrowserCall.shutdown] for why not shutdownNow().
+            handleCall.shutdown()
+            // Drop this browser's injectors, WITHOUT unclaiming the shared callback slot - that slot
+            // belongs to BrowserInjectDispatcher on behalf of every registered injector, and removing
+            // it here would tear down another feature's hook as a side effect of this teardown.
+            //
+            // An earlier version of this comment claimed nothing leaked because the dispatcher keys its
+            // registry weakly. That was wrong: a WeakHashMap value strongly references whatever it
+            // captures, and these injectors are lambdas closing over `this` - which holds the key. So
+            // the entry pinned a whole BrowserHandleImpl per closed tab. unregister() is the fix.
+            BrowserInjectDispatcher.unregister(browser)
+            // The flags are latched SET rather than cleared: the entry has just been dropped, so a
+            // re-registration here would put an injector back on a browser that is closing. isValid is
+            // already false too, which is what stops setPageEventScript reaching this in the first place.
+            coBrowseInjectRegistered.set(true)
+            pageEventInjectRegistered.set(true)
 
-        // Unsubscribe from all events
-        subscriptions.forEach { it.unsubscribe() }
-        subscriptions.clear()
+            // Unsubscribe from all events
+            subscriptions.forEach { it.unsubscribe() }
+            subscriptions.clear()
 
-        // Clear listeners
-        navigationListeners.clear()
-        titleListeners.clear()
-        faviconListeners.clear()
-        loadingListeners.clear()
-        zoomListeners.clear()
+            // Clear listeners
+            navigationListeners.clear()
+            titleListeners.clear()
+            faviconListeners.clear()
+            loadingListeners.clear()
+            zoomListeners.clear()
 
-        // Close browser view state
-        currentViewState?.close()
-        currentViewState = null
-        currentViewStateWindowId = null
+            // Close browser view state
+            currentViewState?.close()
+            currentViewState = null
+            currentViewStateWindowId = null
 
-        // Release find-in-page state and its timers before closing the browser: a debounce that
-        // fires afterwards would search a closed object.
-        BrowserFindController.dispose(browser)
+            // Release find-in-page state and its timers before closing the browser: a debounce that
+            // fires afterwards would search a closed object.
+            BrowserFindController.dispose(browser)
 
-        // Unconditional, unlike the composition's token-guarded removal: the handle is gone, so
-        // there is no successor registration this could delete. Covers a handle disposed out from
-        // under a surface that is still composed - an engine generation bump does exactly that.
-        ActiveBrowserRegistry.unregister(id)
-
-        // Close browser
-        if (!browser.isClosed) {
-            browser.close()
+            // Unconditional, unlike the composition's token-guarded removal: the handle is gone, so
+            // there is no successor registration this could delete. Covers a handle disposed out from
+            // under a surface that is still composed - an engine generation bump does exactly that.
+            ActiveBrowserRegistry.unregister(id)
+        } finally {
+            // Do not turn a caller deadline into permission to close a live native call.
+            // This also covers direct plugin/window disposal and local teardown failures.
+            nativeDisposal.start()
         }
-
-        logger.debug(LogCategory.BROWSER, "Browser handle disposed", mapOf("handleId" to id))
     }
 
     companion object {
@@ -4752,88 +4714,3 @@ internal fun shouldAllowPinch(
  * Restart-scoped: read once per browser view, not live-tunable.
  */
 internal fun parseTopInsetDp(raw: String?): Int = raw?.trim()?.toIntOrNull()?.coerceIn(0, 200) ?: 0
-
-internal suspend fun Browser.executeJavaScriptSuspending(
-    script: String,
-    tryInitiateOp: (initiate: () -> Unit) -> Boolean = {
-        it()
-        true
-    },
-    endOp: () -> Unit = {},
-    logError: (Exception) -> Unit = {},
-): Any? =
-    kotlinx.coroutines.suspendCancellableCoroutine { cont ->
-        try {
-            mainFrame().ifPresentOrElse({ frame ->
-                val initiated =
-                    tryInitiateOp {
-                        frame.executeJavaScript(script) { result ->
-                            endOp()
-                            if (cont.isActive) {
-                                cont.resumeWith(Result.success(result))
-                            }
-                        }
-                    }
-                if (!initiated) {
-                    if (cont.isActive) cont.resumeWith(Result.success(null))
-                }
-            }, {
-                if (cont.isActive) cont.resumeWith(Result.success(null))
-            })
-        } catch (e: IllegalStateException) {
-            logError(e)
-            if (cont.isActive) cont.resumeWith(Result.success(null))
-        } catch (e: ObjectClosedException) {
-            logError(e)
-            if (cont.isActive) cont.resumeWith(Result.success(null))
-        }
-    }
-
-/**
- * Tracks the lifecycle of asynchronous JxBrowser operations against the browser's disposal state.
- *
- * Uses [MutableStateFlow] for lock-free, multi-waiter safe operation tracking, guaranteeing
- * that no native operations can start after disposal has been requested, and allowing
- * disposal to cleanly await pending ones.
- */
-internal class NativeOperationTracker(
-    private val disposed: AtomicBoolean,
-) {
-    private val pendingOperationsCount = MutableStateFlow(0)
-    private val disposalLock = Any()
-
-    fun prepareForDisposal() {
-        synchronized(disposalLock) {
-            disposed.set(true)
-        }
-    }
-
-    /**
-     * Synchronizes the initiation of a native operation with disposal.
-     * Ensures that once [prepareForDisposal] completes, no new native operations can be initiated.
-     */
-    inline fun tryInitiateOperation(initiate: () -> Unit): Boolean {
-        synchronized(disposalLock) {
-            if (disposed.get()) return false
-            pendingOperationsCount.update { it + 1 }
-            try {
-                initiate()
-            } catch (e: IllegalStateException) {
-                pendingOperationsCount.update { it - 1 }
-                throw e
-            } catch (e: com.teamdev.jxbrowser.ObjectClosedException) {
-                pendingOperationsCount.update { it - 1 }
-                throw e
-            }
-            return true
-        }
-    }
-
-    fun endNativeOperation() {
-        pendingOperationsCount.update { it - 1 }
-    }
-
-    suspend fun awaitPendingNativeOperations() {
-        pendingOperationsCount.first { it == 0 }
-    }
-}
