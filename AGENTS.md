@@ -1238,6 +1238,48 @@ literal table: the mapping lives in each plugin's `plugin.json` and when the
 plugin is absent there is no manifest to read. It keys on the **type string**, not
 the whole `TabTypeId`, whose equality includes `pluginId` and `defaultOrder`.
 
+## The built-in layouts are TEMPLATES, and picking one materialises it
+
+`PredefinedWorkspaces.allWorkspaces` is eight parameterised layouts, not eight Spaces:
+`{projectPath}`, `{gitRemoteUrl}`, `{currentFile}` and `{claudeContinueFlag}` stand in for a project
+nobody has chosen yet. Applying one resolved those placeholders on the way to building its tabs and
+threw the answers away, so the Space list still said `{projectPath}` afterwards and the layout on
+screen belonged to no Space at all.
+
+`spaceToOpen` (`components/workspaces/WorkspaceTemplate.kt`) is the one door every pick goes
+through, and it MATERIALISES a template: substitutes the placeholders, sets `projectPath`, names it
+`"<Template> (<project>)"`, mints a fresh `LayoutWorkspace.generateId()`, saves it, and hands the
+copy back for the caller to load and apply. Four call sites, deliberately all of them - the Top of
+Mind Space picker (through `SplitViewOperationsImpl.applyWorkspace`), the host's own Space button
+and menu (through `WorkspaceSwitch.resolve`), the home screen's cards
+(`BossAppEventBusEffects`) and the startup "which Space" prompt (`BossAppDialogs`) - because a
+template picked from the fourth of those is the same gesture as one picked from the first.
+
+- **The predicate is `LayoutWorkspace.requiresProject()`, which already existed**, and there is
+  deliberately NO `isTemplate` field. Holding an unsubstituted project placeholder is exactly what
+  makes something a template, and a saved Space is written from live state by `WorkspaceExtractor`
+  with real paths in it, so it can never satisfy the predicate. `LayoutWorkspace` is the plugin api
+  type; a new constructor parameter on it rejects every already-built plugin (see the
+  `@JvmOverloads` note on `PanelConfig`). A materialised Space therefore stops being a template by
+  construction, which is what makes it show up under Spaces from then on.
+- **The substitution is `WorkspacePlaceholders.processPlaceholders`, not a second pass.** Per-field,
+  and the split is `createTabFromWorkspaceConfig`'s: `initialCommand` is shell content so
+  `{projectPath}` is substituted SHELL-QUOTED there and raw in `url`, `filePath` and
+  `workingDirectory`. Backwards either way is a real bug - an unquoted path with a space in it makes
+  `cd /Users/me/My Project` two arguments, and a quoted one in a `filePath` opens a file whose name
+  contains the quotes. Mutation-verified: swapping the two flags fails two named tests.
+- **The NAME carries the project because `WorkspaceManager` keys Spaces by name.** It writes to
+  `generateFileName(name)` and replaces the list entry whose name matches, so a name without the
+  project would make "Claude Code" against a second project destroy the first one.
+- **With no project selected nothing is materialised.** The template is applied exactly as before
+  and a status message says why - the wording the home screen used to refuse the click with, which
+  is now `spaceToOpen`'s rather than a copy of the rule in one call site. A project picker at that
+  moment is a second dialog on top of the one the user just used, and is not built.
+- **The plugin only GROUPS.** Top of Mind's picker has a Templates section, which needs the same
+  predicate over the api's own types, so `SpaceTemplates.kt` there repeats the four placeholder
+  strings and says so. Nothing about the decision lives on that side: resolving `{gitRemoteUrl}`
+  forks `git` in the project directory, which no plugin can do.
+
 ## The product word is "Space", the code word is `workspace`
 
 What a person reads in BOSS is a **Space**. What the code calls it is still `workspace`,

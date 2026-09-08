@@ -41,6 +41,7 @@ import ai.rever.boss.components.wizard.plugin.PluginWizardWindow
 import ai.rever.boss.components.wizard.plugin.rememberPluginInstallWizardState
 import ai.rever.boss.components.workspaces.SelectWorkspaceDialog
 import ai.rever.boss.components.workspaces.applyWorkspace
+import ai.rever.boss.components.workspaces.spaceToOpen
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.dashboard.DashboardStatsManager
 import ai.rever.boss.html.HtmlFileOpenMode
@@ -406,8 +407,11 @@ internal fun BossAppDialogs(state: BossAppState) {
                     if (currentWorkspace != null && currentWorkspace.id.isNotEmpty()) {
                         splitViewState.preserveCurrentState(currentWorkspace.id, currentWorkspace.name)
                     }
-                    workspaceManager.loadWorkspace(workspace)
-                    applyWorkspace(workspace, splitViewState, windowProjectState)
+                    // A template picked here is materialised into a Space first - see
+                    // `spaceToOpen`, which every pick in the app goes through.
+                    val opened = spaceToOpen(workspace, windowProjectState.selectedProject.value.path)
+                    workspaceManager.loadWorkspace(opened)
+                    applyWorkspace(opened, splitViewState, windowProjectState)
                 }
                 state.focusRequester.requestFocus()
             },

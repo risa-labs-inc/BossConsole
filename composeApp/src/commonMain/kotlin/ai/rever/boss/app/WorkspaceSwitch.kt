@@ -8,6 +8,7 @@ import ai.rever.boss.components.workspaces.WorkspaceSwitchAction
 import ai.rever.boss.components.workspaces.WorkspaceSwitchDialog
 import ai.rever.boss.components.workspaces.applyWorkspace
 import ai.rever.boss.components.workspaces.resolveOnWorkspaceSwitch
+import ai.rever.boss.components.workspaces.spaceToOpen
 import ai.rever.boss.components.workspaces.workspaceManager
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
@@ -51,10 +52,16 @@ internal fun rememberWorkspaceSwitch(
                 }
             }
 
+            // A TEMPLATE picked here becomes a Space first: substituted, named for the project and
+            // saved, so what gets loaded and applied is an ordinary Space. Returns `workspace`
+            // unchanged for anything that is not a template, and for a template picked with no
+            // project selected (which says so and applies as before). See `spaceToOpen`.
+            val opened = spaceToOpen(workspace, state.windowProjectState.selectedProject.value.path)
+
             // Load first to reset dirty state, then apply - which may restore state preserved
             // for the workspace being entered.
-            workspaceManager.loadWorkspace(workspace)
-            applyWorkspace(workspace, splitViewState, state.windowProjectState)
+            workspaceManager.loadWorkspace(opened)
+            applyWorkspace(opened, splitViewState, state.windowProjectState)
         }
     }
 
