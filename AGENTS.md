@@ -1290,9 +1290,10 @@ template picked from the fourth of those is the same gesture as one picked from 
   `workingDirectory`. Backwards either way is a real bug - an unquoted path with a space in it makes
   `cd /Users/me/My Project` two arguments, and a quoted one in a `filePath` opens a file whose name
   contains the quotes. Mutation-verified: swapping the two flags fails two named tests.
-- **The NAME carries the project because `WorkspaceManager` keys Spaces by name.** It writes to
-  `generateFileName(name)` and replaces the list entry whose name matches, so a name without the
-  project would make "Claude Code" against a second project destroy the first one.
+- **The NAME carries the project because a Space's FILE is keyed by name.** `WorkspaceManager`
+  writes to `generateFileName(name)`, so a name without the project would make "Claude Code"
+  against a second project overwrite the first one's file. (The in-memory list is keyed by id -
+  see the next section.)
 - **With no project selected nothing is materialised.** The template is applied exactly as before
   and a status message says why - the wording the home screen used to refuse the click with, which
   is now `spaceToOpen`'s rather than a copy of the rule in one call site. A project picker at that
@@ -1305,18 +1306,100 @@ template picked from the fourth of those is the same gesture as one picked from 
   list that they did not ask for and that says nothing about itself, on every pick. Applying the
   shipped layout is what the tile looks like it does. The picker's section hint is worded to promise
   neither behaviour for that reason.
-- **Known, and general rather than about Browser Only:** while the current Space is a BUILT-IN, an
-  explicit save writes a file whose name collides with the shipped entry, and `loadAllWorkspaces`
-  drops a saved file whose name matches a predefined one - so that write does not survive a relaunch
-  (the layout still returns through Last Session). Every built-in applied as-is reaches this,
-  including the seven whenever no project is selected, so it wants one rule in the save path rather
-  than a special case at the pick.
+- **An explicit save while on a built-in creates the user's own copy** rather than writing over the
+  shipped entry - see the next section, which is the one rule in the save path this used to want.
 - **The plugin only GROUPS.** Top of Mind's picker has a Templates section, which needs the id set
   over the api's own types, so `SpaceTemplates.kt` there repeats the eight ids and says so. The
   drift is the mild direction: a built-in this repo ships and that list does not name shows under
   Spaces, a tile in the wrong section and nothing else, because the host still owns both applying
   and materialising. Nothing about those decisions lives on that side - resolving `{gitRemoteUrl}`
   forks `git` in the project directory, which no plugin can do.
+
+## A saved Space is identified by its id, not its name
+
+`loadAllWorkspaces` deduped saved files against the shipped list **by name**:
+
+```kotlin
+// Only add if not already in predefined list
+if (allWorkspaces.none { ws -> ws.name == workspaceWithId.name }) { … }
+```
+
+Two distinct defects fell out of that one line, and the second is not about templates at all.
+
+- **A save made while the current Space was a built-in was silently discarded on relaunch.** The
+  save wrote the built-in's own id and name, so it landed as `Claude_Code.json` and this dropped it
+  in favour of the shipped entry at the next launch. The Save button exists so a modification
+  survives, so a save that vanishes is the button not working. Reachable on Browser Only always, and
+  on the other seven whenever no project was selected.
+- **A user's own Space vanished if its name happened to match a built-in.** Hand-roll one called
+  "Codex" and it was gone at the next launch, with nothing at all to say it had happened. Nothing to
+  do with templates, and worse than the first because there was no hint.
+
+Both close in `SavedSpaceMerge.kt`:
+
+- **`mergeSavedWorkspaces` dedupes by ID.** A saved file with an id of its own is a distinct Space
+  whatever it is called, so the shipped "Codex" and a user's "Codex" both stand.
+- **`savedCopyOfBuiltIn` stops a save producing a built-in's id in the first place.** Saving while
+  the current Space is a shipped layout creates the user's own copy: a fresh `generateId()`, and a
+  name that collides with nothing (`"<Name> (saved)"`, numbered from 2 if that is taken, through
+  `uniqueWorkspaceName`). The shipped entry stays pristine in Templates, which is what a template is
+  for. A name the user TYPED into "Save Space..." is honoured as-is - only the id is forced.
+- **The manager's in-memory list update is keyed by id too.** By name, saving a Space of the user's
+  called "Codex" replaced the SHIPPED Codex in that list, so Templates lost a tile for the rest of
+  the session; and a rename appended a second entry rather than updating the one it renamed, since
+  the new name matched nothing.
+
+### What happens to a file whose id EQUALS a built-in id
+
+These exist on disk right now - the old auto-save wrote the built-in's own id and name every two
+seconds while you worked in one. **Checked rather than reasoned about:**
+`~/Documents/BOSS/workspaces` on the machine this was written on held four
+(`Browser_Only`, `Claude_Code`, `Code_Review`, `Gemini`), fully substituted, up to six tabs, and
+**every one of them was already being dropped on every launch** by the name dedupe.
+
+They are **ADOPTED** as distinct Spaces: id `<built-in id>-saved`, name through
+`uniqueWorkspaceName`, and the shipped layout stays where it is. The two alternatives are both
+worse:
+
+- **Dropping** them by id preserves exactly today's behaviour and loses layouts the user may have
+  meant to keep - and there is no way to tell an auto-save dump from a deliberate save, because the
+  old code wrote both identically.
+- **Replacing** the shipped entry takes the pristine template out of the Templates section, which is
+  the section's whole purpose, and files a fully substituted layout under a built-in id - so the
+  picker would call the user's own work a template.
+
+Nobody's disk gets worse: the alternative for these files today is oblivion. Run against that real
+directory, the merge leaves the eight shipped layouts and Last Session exactly as they were and adds
+`Code Review (saved)`, `Browser Only (saved)`, `Claude Code (saved)` and `Gemini (saved)`.
+
+Three properties of the adoption worth keeping:
+
+- **The derived id is deterministic, not generated.** A `generateId()` there would mint a different
+  id for the same file on every launch, so nothing could refer to that Space across a restart - the
+  session set records ids, and so does every preserved-state key.
+- **It cannot be mistaken for either kind of id.** No built-in id ends in `-saved`, and
+  `generateId()` produces `workspace-<epoch millis>`, so an adopted id is recognisable as one. The
+  plugin's template set is the eight literal ids, so an adopted Space files under Spaces.
+- **Nothing is rewritten on disk.** The migration is in memory, so a launch that reads a legacy file
+  cannot half-write anything, and the file keeps the name the user sees in the folder.
+
+Two saved files claiming one id keep the **newer** `timestamp` - reachable by hand-copying a file,
+and reachable through the adoption itself once the user re-saves an adopted Space.
+
+`SavedSpaceMergeTest` round-trips through a real `WorkspaceFileManager` on a temp directory, because
+the defect lived in the seam between writing and reading: the write was fine and the read threw it
+away, so a test on either half alone passes against the bug. Restoring the name dedupe fails
+`a saved Space named exactly like a built-in survives a reload`; dropping the new-id-on-save fails
+`a save made while on a built-in is still there after a reload`; both together - the code as it
+shipped - fail eight.
+
+Still keyed by name, deliberately unchanged and worth knowing: a Space's FILE
+(`generateFileName(name)`), `deleteWorkspace(name)`, `renameWorkspace(oldName, …)` and
+`WorkspaceButton`'s deletable filter. So a user's own Space called exactly "Codex" now survives, but
+cannot be deleted or renamed from the menu - those resolve the name to the shipped layout first and
+refuse because it is predefined. That is the same name-keying this section fixes one instance of;
+closing it means giving those three id-shaped verbs, which is an api change on
+`WorkspaceDataProvider`.
 
 ## Unsaved Spaces, and the save button in the vertical bar
 

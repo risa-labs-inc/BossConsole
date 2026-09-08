@@ -141,9 +141,7 @@ class WorkspaceManager {
 
     private fun loadAllWorkspaces() {
         scope.launch {
-            // Start with predefined workspaces
-            val allWorkspaces = mutableListOf<LayoutWorkspace>()
-            allWorkspaces.addAll(PredefinedWorkspaces.allWorkspaces)
+            val saved = mutableListOf<LayoutWorkspace>()
 
             // Load saved workspaces from disk
             try {
@@ -162,16 +160,7 @@ class WorkspaceManager {
                         }
                     workspace?.let {
                         // Ensure workspace has an ID
-                        val workspaceWithId =
-                            if (it.id.isEmpty()) {
-                                it.copy(id = LayoutWorkspace.generateId())
-                            } else {
-                                it
-                            }
-                        // Only add if not already in predefined list
-                        if (allWorkspaces.none { ws -> ws.name == workspaceWithId.name }) {
-                            allWorkspaces.add(workspaceWithId)
-                        }
+                        saved.add(if (it.id.isEmpty()) it.copy(id = LayoutWorkspace.generateId()) else it)
                     }
                 }
             } catch (e: Exception) {
@@ -179,7 +168,12 @@ class WorkspaceManager {
                 logger.warn(LogCategory.WORKSPACE, "Error loading workspaces", error = e)
             }
 
-            _workspaces.value = allWorkspaces
+            // Merged by ID, never by name. A saved file called "Codex" used to be DROPPED here in
+            // favour of the shipped layout of that name, and so did a save made while the current
+            // Space was a built-in - which is the Save button not working. See
+            // `mergeSavedWorkspaces`, which also says what becomes of a legacy file whose id IS a
+            // built-in's.
+            _workspaces.value = mergeSavedWorkspaces(PredefinedWorkspaces.allWorkspaces, saved)
         }
     }
 
@@ -195,12 +189,28 @@ class WorkspaceManager {
      */
     fun saveCurrentWorkspace(name: String? = null): LayoutWorkspace? {
         val current = _currentWorkspace.value ?: return null
+        val now = Clock.System.now().toEpochMilliseconds()
         val savedWorkspace =
-            current.copy(
-                id = current.id.ifEmpty { LayoutWorkspace.generateId() },
-                name = name ?: current.name,
-                timestamp = Clock.System.now().toEpochMilliseconds(),
-            )
+            if (current.id in PredefinedWorkspaces.allIds) {
+                // Saving while the current Space is a SHIPPED layout creates the user's own copy
+                // rather than writing over the template: a new id, and a name that collides with
+                // nothing. Writing the built-in's own id and name is what the old behaviour did,
+                // and the file it produced was silently dropped on the next launch. See
+                // `savedCopyOfBuiltIn`.
+                savedCopyOfBuiltIn(
+                    current = current,
+                    id = LayoutWorkspace.generateId(),
+                    now = now,
+                    takenNames = _workspaces.value.map { it.name }.toSet(),
+                    requestedName = name,
+                )
+            } else {
+                current.copy(
+                    id = current.id.ifEmpty { LayoutWorkspace.generateId() },
+                    name = name ?: current.name,
+                    timestamp = now,
+                )
+            }
 
         scope.launch {
             // Save to disk (on IO thread)
@@ -209,9 +219,14 @@ class WorkspaceManager {
                     fileManager.saveWorkspace(savedWorkspace)
                 }
             if (filePath != null) {
-                // Update workspaces list (on Main thread)
+                // Update workspaces list (on Main thread), keyed by ID for the reason
+                // `mergeSavedWorkspaces` is: by NAME, saving a Space of the user's that happens to
+                // be called "Codex" replaced the SHIPPED Codex in this list, so the Templates
+                // section lost a tile for the rest of the session. By name a RENAME also appended a
+                // second entry rather than updating the one it renamed, since the new name matched
+                // nothing.
                 val workspaces = _workspaces.value.toMutableList()
-                val existingIndex = workspaces.indexOfFirst { it.name == savedWorkspace.name }
+                val existingIndex = workspaces.indexOfFirst { it.id == savedWorkspace.id }
 
                 if (existingIndex >= 0) {
                     workspaces[existingIndex] = savedWorkspace
