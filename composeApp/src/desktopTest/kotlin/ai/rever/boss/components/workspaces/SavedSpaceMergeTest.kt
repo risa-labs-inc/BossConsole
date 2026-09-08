@@ -122,7 +122,7 @@ class SavedSpaceMergeTest {
             written.id !in PredefinedWorkspaces.allIds,
             "a file carrying a built-in id is the legacy shape this exists to stop making more of",
         )
-        assertEquals("Browser Only (custom)", written.name)
+        assertEquals("Browser Only (unsaved)", written.name)
         assertTrue(predefined.none { it.name == written.name }, "and no shipped layout answers to it")
     }
 
@@ -135,7 +135,7 @@ class SavedSpaceMergeTest {
         val third = saveOf(browserOnly, predefined + first + second)
 
         assertEquals(
-            listOf("Browser Only (custom)", "Browser Only (custom) 2", "Browser Only (custom) 3"),
+            listOf("Browser Only (unsaved)", "Browser Only (unsaved) 2", "Browser Only (unsaved) 3"),
             listOf(first, second, third).map { it.name },
         )
     }
@@ -204,7 +204,7 @@ class SavedSpaceMergeTest {
         assertEquals(predefined.single { it.id == "workspace-gemini" }, shipped, "the template stays pristine")
 
         val adopted = list.single { it.id == "workspace-gemini-saved" }
-        assertEquals("Gemini (custom)", adopted.name)
+        assertEquals("Gemini (unsaved)", adopted.name)
         assertEquals(layout("a", "b", "c"), adopted.layout, "with the layout the file actually held")
     }
 
@@ -215,8 +215,8 @@ class SavedSpaceMergeTest {
         // every preserved-state key.
         val legacy = space(id = "workspace-gemini", name = "Gemini")
 
-        val first = mergeSavedWorkspaces(predefined, listOf(legacy)).single { it.name == "Gemini (custom)" }
-        val second = mergeSavedWorkspaces(predefined, listOf(legacy)).single { it.name == "Gemini (custom)" }
+        val first = mergeSavedWorkspaces(predefined, listOf(legacy)).single { it.name == "Gemini (unsaved)" }
+        val second = mergeSavedWorkspaces(predefined, listOf(legacy)).single { it.name == "Gemini (unsaved)" }
 
         assertEquals(first.id, second.id)
         assertTrue(first.id !in PredefinedWorkspaces.allIds)
@@ -229,11 +229,11 @@ class SavedSpaceMergeTest {
     @Test
     fun `an adopted name that is already taken gets a number`() {
         val legacy = space(id = "workspace-gemini", name = "Gemini")
-        val alreadyMine = space(id = "workspace-1788000000000", name = "Gemini (custom)")
+        val alreadyMine = space(id = "workspace-1788000000000", name = "Gemini (unsaved)")
 
         val list = mergeSavedWorkspaces(predefined, listOf(alreadyMine, legacy))
 
-        assertEquals("Gemini (custom) 2", list.single { it.id == "workspace-gemini-saved" }.name)
+        assertEquals("Gemini (unsaved) 2", list.single { it.id == "workspace-gemini-saved" }.name)
     }
 
     // ==================== two files, one id ====================
@@ -312,10 +312,10 @@ class SavedSpaceMergeTest {
     @Test
     fun `a name comes from the Space list, not from the snapshot that recorded it`() {
         val recorded = space(id = "workspace-code-review-saved", name = "Code Review (saved)")
-        val known = space(id = "workspace-code-review-saved", name = "Code Review (custom)")
+        val known = space(id = "workspace-code-review-saved", name = "Code Review (unsaved)")
 
         assertEquals(
-            listOf("Code Review (custom)"),
+            listOf("Code Review (unsaved)"),
             withKnownNames(listOf(recorded), listOf(known)).map { it.name },
         )
     }

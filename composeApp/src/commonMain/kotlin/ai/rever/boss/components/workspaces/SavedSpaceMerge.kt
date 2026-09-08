@@ -29,16 +29,22 @@ package ai.rever.boss.components.workspaces
  * pick time, because an explicit save is the user asking to keep this thing rather than something
  * happening on every pick.
  *
- * **Not "(saved)", and that is the whole point of the word chosen.** This suffix is shown in the
- * Space button, immediately left of the unsaved dot and the save button - so a Space named
- * "Code Review (saved)" sat next to a mark saying it was NOT saved, and read as the app
- * contradicting itself. The name says where the layout came from; the dot says whether it is on
- * disk. Those are different facts and the name must not borrow the other one's vocabulary.
+ * **"(unsaved)", chosen by the user over "(custom)".** It first read "(saved)", which was wrong in
+ * the way that matters: the suffix is shown in the Space button immediately left of the unsaved dot
+ * and the save button, so "Code Review (saved)" sat beside a mark saying it was NOT saved and read
+ * as the app contradicting itself. These layouts were auto-save dumps that no explicit save ever
+ * produced, so "(unsaved)" describes what they are.
+ *
+ * **The mirrored case is real and is not handled**: the name is fixed at adoption, so once the user
+ * presses save, a Space called "Code Review (unsaved)" IS saved and the dot beside it is gone. That
+ * was a deliberate call - dropping the suffix on first save would rename the Space, and the name is
+ * its file name (`generateFileName`) and the key `WorkspaceManager` matches list entries on, so a
+ * silent rename means a second file and a stale entry. Renaming from the Space menu is the exit.
  *
  * `ADOPTED_ID_SUFFIX` deliberately still ends in `-saved`: it is an id, never displayed, and it
  * is recorded in session sets and preserved-state keys that already exist on disk.
  */
-const val SAVED_COPY_SUFFIX = " (custom)"
+const val SAVED_COPY_SUFFIX = " (unsaved)"
 
 /**
  * [base], or [base] with a number, so the result is not in [taken].
@@ -91,11 +97,11 @@ internal fun isSpaceSlot(id: String): Boolean = id in PredefinedWorkspaces.allId
  *
  * The derived NAME depends on which kind of slot, because they have different things to say:
  *
- * - a shipped layout is named after itself, `"<Name> (custom)"`, since a copy of Claude Code is
+ * - a shipped layout is named after itself, `"<Name> (unsaved)"`, since a copy of Claude Code is
  *   recognisably that;
  * - **Last Session is named with the app's existing convention for a layout nobody named**,
  *   `"Workspace <epoch seconds>"`, which is exactly what the save path already produces for a
- *   window with no current Space at all. `"Last Session (custom)"` would name the copy after a slot
+ *   window with no current Space at all. `"Last Session (unsaved)"` would name the copy after a slot
  *   rather than after anything the user recognises, and one convention for "keep this unnamed
  *   thing" beats two.
  *
