@@ -282,6 +282,57 @@ class BoundedBrowserCallTest {
         }
     }
 
+    /**
+     * BossConsole#300: an in-flight call cannot be interrupted, so a caller that closes the
+     * underlying browser right after `shutdown()` returns could otherwise still race a call from
+     * before shutdown that is finishing up on [BoundedBrowserCall.dispatcher]'s thread. Waiting for
+     * a call that was always going to finish quickly narrows that window before the caller proceeds.
+     */
+    @Test
+    fun `shutdown waits for a fast in-flight call to finish before it returns`() {
+        val call = BoundedBrowserCall("test-bounded-drain-fast")
+        val entered = CountDownLatch(1)
+        val finished =
+            java.util.concurrent.atomic
+                .AtomicBoolean(false)
+        call.post {
+            entered.countDown()
+            Thread.sleep(50)
+            finished.set(true)
+        }
+        entered.await()
+
+        call.shutdown(generous)
+
+        assertTrue(finished.get(), "shutdown returned before the in-flight call finished")
+    }
+
+    /**
+     * The other half of the trade: the drain wait is itself bounded, so a call that is genuinely
+     * wedged - the exact case [BoundedBrowserCall.call]'s own deadline exists for - still lets
+     * `shutdown` return, having merely waited its own timeout rather than forever. Waiting forever
+     * here would reintroduce the freeze this class exists to prevent, just moved from a plugin's
+     * await into every caller's teardown path.
+     */
+    @Test
+    fun `shutdown does not wait past its own drain timeout for a wedged call`() {
+        val call = BoundedBrowserCall("test-bounded-drain-wedge")
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        call.post {
+            entered.countDown()
+            release.await()
+        }
+        entered.await()
+        try {
+            val elapsed = measureTimeMillis { call.shutdown(timeout) }
+            assertTrue(elapsed < generous, "shutdown waited ${elapsed}ms - the drain bound did not hold")
+            assertTrue(elapsed >= timeout, "shutdown returned after ${elapsed}ms, before its own ${timeout}ms bound")
+        } finally {
+            release.countDown()
+        }
+    }
+
     /** The caller's own cancellation is not swallowed by the shutdown handling above. */
     @Test
     fun `a caller's cancellation still propagates`() {
