@@ -123,6 +123,9 @@ internal fun VerticalBarWindowControls(
                 // "there is something you can do", the mark says "this Space is the thing it is
                 // about". Both, because with two windows open only one of them may be lit.
                 unsaved = unsaved,
+                // And every row of the menu behind it, which can mark a Space that is running but
+                // not on screen - the button's own mark can only speak for the current one.
+                unsavedWorkspaceIds = unsavedWorkspaces[windowId].orEmpty(),
             )
         }
         BossActionButton(

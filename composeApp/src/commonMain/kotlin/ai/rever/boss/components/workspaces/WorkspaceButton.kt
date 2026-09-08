@@ -8,7 +8,6 @@ import ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Circle
-import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.RestartAlt
@@ -74,6 +73,19 @@ fun WorkspaceButton(
      * there is a problem without saying what to do about it.
      */
     unsaved: Boolean = false,
+    /**
+     * Every Space THIS WINDOW holds unsaved changes to, for the menu rows.
+     *
+     * A set rather than the [unsaved] boolean because the menu marks every row, not only the one on
+     * screen: a window runs several Spaces at once and can have edited more than one of them. Per
+     * window for the reason `WorkspaceManager.unsavedWorkspaces` is - the live layout only exists
+     * in a window's own `SplitViewState`, so one flat set would mark a Space here because it was
+     * edited over there.
+     *
+     * Read through `spaceIsUnsaved` rather than by containment, so the menu and the bar answer with
+     * one rule - which is what puts a mark on Last Session, a slot that is never a document.
+     */
+    unsavedWorkspaceIds: Set<String> = emptySet(),
 ) {
     val currentWorkspace by workspaceManager.currentWorkspace.collectAsState()
     val workspaces by workspaceManager.workspaces.collectAsState()
@@ -180,31 +192,34 @@ fun WorkspaceButton(
         buildList {
             // Workspaces at the top
             workspaces.forEach { workspace ->
-                // Three states, not two: the workspace on screen here, one that is running
-                // somewhere - behind this one, or in another window - and one that is not running
-                // at all. The middle state had no mark, so a workspace whose tabs were live
-                // looked exactly like one that had never been opened.
-                val isCurrentWorkspace = currentWorkspace?.id == workspace.id
-                val isRunning = !isCurrentWorkspace && workspace.id in running
+                // Two independent facts per row - where it is running, and whether it holds
+                // work that is not on disk. See [SpaceRowMarks] for why they are not one mark.
+                val marks =
+                    spaceRowMarks(
+                        workspaceId = workspace.id,
+                        currentWorkspaceId = currentWorkspace?.id,
+                        runningWorkspaceIds = running,
+                        unsavedWorkspaceIds = unsavedWorkspaceIds,
+                    )
 
                 add(
                     ContextMenuItem(
                         text = workspace.name,
                         icon = null,
-                        // Filled for this window, outlined for another's: the same mark at two
-                        // strengths says "running" once and "yours" only on the one that is.
-                        trailingIcon =
-                            when {
-                                isCurrentWorkspace -> Icons.Filled.Circle
-                                isRunning -> Icons.Outlined.Circle
-                                else -> null
-                            },
+                        trailingIcon = marks.run.dotIcon(),
                         trailingIconColor =
-                            when {
-                                isCurrentWorkspace -> BossTheme.colors.ok
-                                isRunning -> BossTheme.colors.textSecondary
-                                else -> null
+                            when (marks.run) {
+                                SpaceRunState.Current -> BossTheme.colors.ok
+                                SpaceRunState.Running -> BossTheme.colors.textSecondary
+                                SpaceRunState.Idle -> null
                             },
+                        // The unsaved mark, in the second trailing slot so it sits beside the
+                        // running dot rather than replacing it. Same glyph and same `signalText`
+                        // as the vertical bar's dot, because it is the same fact: a reader should
+                        // not have to learn a second vocabulary between the bar and this menu.
+                        secondaryTrailingIcon = Icons.Filled.Circle.takeIf { marks.unsaved },
+                        secondaryTrailingIconColor = BossTheme.colors.signalText,
+                        secondaryTrailingDescription = SPACE_UNSAVED_ROW_DESCRIPTION,
                         onClick = {
                             workspaceManager.loadWorkspace(workspace)
                             onOpenWorkspace(workspace)
