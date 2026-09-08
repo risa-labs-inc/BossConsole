@@ -60,7 +60,9 @@ class PluginClassLoader(
 ) : URLClassLoader(urls, parent) {
     companion object {
         init {
-            // Register during class initialization so getClassLoadingLock is per name.
+            // Caller-sensitive: Kotlin emits this block into PluginClassLoader.<clinit>.
+            // Keep the call here, not in a companion helper whose caller is not a ClassLoader.
+            // PluginClassLoaderConcurrencyTest checks registration and independent-name progress.
             registerAsParallelCapable()
         }
 
@@ -210,7 +212,9 @@ class PluginClassLoader(
     /**
      * Mark this classloader as being unloaded.
      *
-     * After calling this, no new classes should be loaded from this classloader.
+     * New child-first misses stop delegating to the parent. Own-jar and shared-class loads
+     * still work during teardown. A parent lookup admitted while ACTIVE can finish after
+     * this marker; the per-name class-loading locks are not an unload/drain barrier.
      */
     fun markUnloading() {
         if (_state.compareAndSet(ClassLoaderState.ACTIVE, ClassLoaderState.UNLOAD_IN_PROGRESS)) {
