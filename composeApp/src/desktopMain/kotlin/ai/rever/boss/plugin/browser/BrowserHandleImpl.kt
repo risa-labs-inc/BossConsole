@@ -812,10 +812,16 @@ internal class BrowserHandleImpl(
      */
     private val pageInjectJob = AtomicReference<Job?>(null)
 
+    private val ownedExecutors =
+        listOf(
+            handleCall.executor,
+            frameProbeExecutor,
+            contextMenuExecutor,
+            pageInjectExecutor,
+        )
+
     private val nativeDisposal =
-        BrowserNativeDisposal(
-            listOf(handleCall.executor, frameProbeExecutor, contextMenuExecutor, pageInjectExecutor),
-        ) {
+        BrowserNativeDisposal(ownedExecutors, handleId = id) {
             if (!browser.isClosed) browser.close()
             logger.debug(LogCategory.BROWSER, "Browser native disposal finished", mapOf("handleId" to id))
         }
@@ -4274,21 +4280,18 @@ internal class BrowserHandleImpl(
             // inside executeJavaScript cannot be interrupted, and the thread is daemon.
             frameStallJob.getAndSet(null)?.cancel()
             frameStallScope.cancel()
-            frameProbeExecutor.shutdown()
             // Stops queued menu lookups from starting. A lookup already blocked inside
             // executeJavaScript cannot be interrupted by cancellation — the delivery site
             // checks `disposed` before handing anything back. shutdown() (not shutdownNow())
             // for the same reason: the thread is daemon, so a wedged lookup cannot hold up
             // exit, and interrupting it would buy nothing.
             contextMenuScope.cancel()
-            contextMenuExecutor.shutdown()
             // A pending commit follow-up outlives the tab otherwise, and its next act is a blocking
             // round trip against a browser being torn down. shutdown() not shutdownNow(), for the
             // reason the two above give: the thread is daemon and a call already inside JxBrowser
             // cannot be interrupted, so interrupting would buy nothing.
             pageInjectJob.getAndSet(null)?.cancel()
             pageInjectScope.cancel()
-            pageInjectExecutor.shutdown()
             // Last of the four. Note what this ordering does NOT buy: coBrowseScope and pageEventScope
             // were cancelled above, and cancelling a scope also cancels children that were dispatched but
             // have not started - startCoroutineCancellable means DispatchedTask.run sees an inactive job
@@ -4299,7 +4302,6 @@ internal class BrowserHandleImpl(
             // Left alone rather than re-posted outside the cancelled scope: the native disposal below
             // closes the browser after these workers drain, and capture delivery is already disabled.
             // See [BoundedBrowserCall.shutdown] for why not shutdownNow().
-            handleCall.shutdown()
             // Drop this browser's injectors, WITHOUT unclaiming the shared callback slot - that slot
             // belongs to BrowserInjectDispatcher on behalf of every registered injector, and removing
             // it here would tear down another feature's hook as a side effect of this teardown.
@@ -4343,6 +4345,11 @@ internal class BrowserHandleImpl(
             // Do not turn a caller deadline into permission to close a live native call.
             // This also covers direct plugin/window disposal and local teardown failures.
             nativeDisposal.start()
+            logger.debug(
+                LogCategory.BROWSER,
+                "Browser native disposal requested",
+                mapOf("handleId" to id),
+            )
         }
     }
 

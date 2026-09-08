@@ -62,7 +62,9 @@ interface BrowserService {
      * Dispose a browser instance.
      *
      * This is equivalent to calling [BrowserHandle.dispose] but allows
-     * batch disposal operations.
+     * batch disposal operations. It requests native close and profile cleanup without
+     * awaiting outstanding renderer calls; those finish in host-owned background work.
+     * Returning does not guarantee that native resources have been released.
      *
      * If the browser owns a fullscreen rendering surface, disposal may wait
      * briefly for UI-thread detachment. Do not call while holding a lock that

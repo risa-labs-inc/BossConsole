@@ -2,6 +2,7 @@ package ai.rever.boss.plugin.browser
 
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -9,6 +10,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
@@ -35,6 +38,8 @@ internal class DrainingBrowserExecutor(
         drained.complete(Unit)
     }
 
+    // terminated() completes under the executor's mainLock. Production waiters use Dispatchers.IO,
+    // so their continuations are dispatched; do not put inline/Unconfined work on this signal.
     suspend fun awaitDrained() = drained.await()
 
     companion object {
@@ -54,6 +59,11 @@ internal class DrainingBrowserExecutor(
  */
 internal class BrowserNativeDisposal(
     private val executors: List<DrainingBrowserExecutor>,
+    private val handleId: String = "unknown",
+    private val warningAfterMs: Long = 10_000L,
+    private val reportPending: () -> Unit = {
+        logger.warn(LogCategory.BROWSER, "Browser native disposal still pending", mapOf("handleId" to handleId))
+    },
     private val close: () -> Unit,
 ) {
     private val started = AtomicBoolean(false)
@@ -65,13 +75,31 @@ internal class BrowserNativeDisposal(
         scope.launch {
             val result =
                 runCatching {
-                    executors.forEach { it.awaitDrained() }
+                    val drained =
+                        withTimeoutOrNull(warningAfterMs) {
+                            executors.forEach { it.awaitDrained() }
+                            true
+                        }
+                    if (drained == null) {
+                        reportPending()
+                        // Expiry is diagnostic only. It never authorizes native close.
+                        executors.forEach { it.awaitDrained() }
+                    }
                     close()
                 }
             result.fold(
                 onSuccess = { completion.complete(Unit) },
                 onFailure = { error ->
-                    logger.warn(LogCategory.BROWSER, "Deferred browser close failed", error = error)
+                    if (error is CancellationException) {
+                        completion.cancel(error)
+                        throw error
+                    }
+                    logger.warn(
+                        LogCategory.BROWSER,
+                        "Deferred browser close failed",
+                        mapOf("handleId" to handleId),
+                        error = error,
+                    )
                     completion.completeExceptionally(error)
                 },
             )
@@ -104,6 +132,7 @@ internal fun disposeBrowserResources(
             release()
             teardown.getOrThrow()
         }.getOrElse { error ->
+            if (error is CancellationException) throw error
             BrowserDisposalCleanup.logger.warn(LogCategory.BROWSER, "Browser resource cleanup failed", error = error)
             throw error
         }
@@ -113,4 +142,30 @@ internal fun disposeBrowserResources(
 private object BrowserDisposalCleanup {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     val logger = BossLogger.forComponent("BrowserDisposalCleanup")
+}
+
+/**
+ * Acquire a profile lease with a bounded wait, leaving a potentially live profile protected.
+ * The caller owns the lock on return. A timeout/cancellation during handoff must give it back.
+ */
+internal suspend fun acquireManagedProfileLock(
+    mutex: Mutex,
+    timeoutMs: Long = 10_000L,
+) {
+    var acquired = false
+    var delivered = false
+    try {
+        val completed =
+            withTimeoutOrNull(timeoutMs) {
+                mutex.lock()
+                acquired = true
+                true
+            }
+        check(completed == true) {
+            "Managed browser profile is still in use; native disposal may be pending. Retry after it completes."
+        }
+        delivered = true
+    } finally {
+        if (acquired && !delivered) mutex.unlock()
+    }
 }

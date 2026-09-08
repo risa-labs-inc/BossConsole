@@ -5,6 +5,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Test
@@ -61,6 +62,49 @@ class BrowserNativeDisposalTest {
                         true
                     },
                 )
+                assertEquals(0, closes.get())
+                release.countDown()
+                withTimeout(5_000) { disposal.awaitCompletion() }
+                assertEquals(1, closes.get())
+            } finally {
+                release.countDown()
+                disposal.start()
+            }
+        }
+
+    @Test
+    fun `pending warning fires once and never permits early close`() =
+        runBlocking {
+            val executor = DrainingBrowserExecutor("test-drain-warning")
+            val entered = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            val warned = CompletableDeferred<Unit>()
+            val warnings = AtomicInteger()
+            val closes = AtomicInteger()
+            executor.execute {
+                entered.countDown()
+                release.await()
+            }
+            val disposal =
+                BrowserNativeDisposal(
+                    listOf(executor),
+                    warningAfterMs = 25,
+                    reportPending = {
+                        warnings.incrementAndGet()
+                        warned.complete(Unit)
+                    },
+                ) { closes.incrementAndGet() }
+            try {
+                assertTrue(entered.await(5, TimeUnit.SECONDS))
+                disposal.start()
+                withTimeout(5_000) { warned.await() }
+                assertNull(
+                    withTimeoutOrNull(100) {
+                        disposal.awaitCompletion()
+                        true
+                    },
+                )
+                assertEquals(1, warnings.get())
                 assertEquals(0, closes.get())
                 release.countDown()
                 withTimeout(5_000) { disposal.awaitCompletion() }
@@ -207,9 +251,20 @@ class BrowserNativeDisposalTest {
     fun `failed native close does not release a potentially live profile`() =
         runBlocking {
             val disposal = BrowserNativeDisposal(emptyList()) { error("native close failed") }
+            val mutex = Mutex(locked = true)
             var released = false
-            val cleanup = disposeBrowserResources(disposal::start, disposal::awaitCompletion) { released = true }
-            assertFailsWith<IllegalStateException> { withTimeout(5_000) { cleanup.await() } }
-            assertFalse(released)
+            val cleanup =
+                disposeBrowserResources(disposal::start, disposal::awaitCompletion) {
+                    released = true
+                    mutex.unlock()
+                }
+            try {
+                assertFailsWith<IllegalStateException> { withTimeout(5_000) { cleanup.await() } }
+                assertFalse(released)
+                assertFailsWith<IllegalStateException> { acquireManagedProfileLock(mutex, timeoutMs = 25) }
+                assertTrue(mutex.isLocked)
+            } finally {
+                mutex.unlock()
+            }
         }
 }
