@@ -645,8 +645,10 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                         // on this whole block.
                         val sessionSet = workspaceManager.loadLastSessionSet()?.takeIf { isRestorable(it) }
 
-                        // Check if there's a saved "last-session" workspace
-                        val lastSessionConfig = configs.find { it.name == LAST_SESSION_NAME }
+                        // The record, BY ID. By name, a Space of the user's called "Last Session"
+                        // was restored instead of the record - and the record's own layout, which
+                        // is the crash-recovery copy, was never applied.
+                        val lastSessionConfig = configs.find { it.id == LAST_SESSION_ID }
 
                         if (sessionSet != null) {
                             // Before applyWorkspace, for the reason the single-Space path below
@@ -867,7 +869,7 @@ internal fun BossAppStartupEffects(state: BossAppState) {
         // Reset snapshot when workspace changes
         workspaceManager.currentWorkspace
             .onEach { config ->
-                if (config != null && config.name != LAST_SESSION_NAME) {
+                if (config != null && config.id != LAST_SESSION_ID) {
                     // Workspace loaded (but not Last Session), reset tracking
                     lastWorkspaceSnapshot = null
                 }

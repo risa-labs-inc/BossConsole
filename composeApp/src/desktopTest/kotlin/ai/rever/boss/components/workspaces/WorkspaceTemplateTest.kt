@@ -58,9 +58,8 @@ class WorkspaceTemplateTest {
         path: String = "/Users/me/Boss",
     ) = materialiseTemplate(
         template = template,
-        id = "workspace-1700000000000",
+        stamp = MaterialisedStamp(id = "workspace-1700000000000", now = 1_700_000_000_000),
         projectPath = path,
-        now = 1_700_000_000_000,
         substitute = substitution(path),
     )
 
@@ -261,9 +260,12 @@ class WorkspaceTemplateTest {
     }
 
     /**
-     * Two projects, two Spaces. `WorkspaceManager` keys saved Spaces by NAME - it writes to
-     * `generateFileName(name)` and replaces the list entry whose name matches - so a name that
-     * did not carry the project would make the second materialisation destroy the first.
+     * Two projects, two Spaces, two names - so the list says which is which.
+     *
+     * It used to be a data-safety rule as well: the file path was `generateFileName(name)`, so a
+     * name that did not carry the project made the second materialisation destroy the first
+     * layout. `WorkspaceFileManagerCommon.fileNameForId` closed that, so this is now about the
+     * list being readable rather than about losing work.
      */
     @Test
     fun `the same template against two projects gives two names`() {
@@ -274,6 +276,32 @@ class WorkspaceTemplateTest {
 
         assertEquals("Claude Code (Boss)", materialise(original, "/Users/me/Boss").name)
         assertEquals("Claude Code (BossTerm)", materialise(original, "/Users/me/BossTerm").name)
+    }
+
+    /**
+     * The SAME template against the SAME project twice, which used to be the unguarded case: two
+     * ids, one name, one file - and the second save atomically replaced the first Space's layout.
+     * `materialisedTemplateName` goes through `uniqueWorkspaceName` now.
+     */
+    @Test
+    fun `the same template against the same project twice gives two names`() {
+        val original =
+            template(
+                layout = SinglePanel(PanelConfig(id = "main", tabs = listOf(tab(workingDirectory = "{projectPath}")))),
+            )
+        val first = materialise(original, "/Users/me/Boss")
+
+        val second =
+            materialiseTemplate(
+                template = original,
+                stamp = MaterialisedStamp(id = "workspace-1700000000001", now = 1_700_000_000_001),
+                projectPath = "/Users/me/Boss",
+                takenNames = setOf(first.name),
+                substitute = substitution("/Users/me/Boss"),
+            )
+
+        assertEquals("Claude Code (Boss)", first.name)
+        assertEquals("Claude Code (Boss) 2", second.name)
     }
 
     @Test

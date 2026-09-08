@@ -17,10 +17,15 @@ import kotlin.test.assertTrue
  * working. It writes the Last Session record instead, and a named Space is written by an explicit
  * save alone.
  *
- * **The disk is modelled as a map keyed by NAME, because that is how `WorkspaceManager` keys a
- * write**: it saves to `generateFileName(workspace.name)` and replaces the list entry whose name
- * matches. So "which file did that write land on" is answerable here, which is the whole question -
- * and the answer used to be "Foo.json".
+ * **The disk is modelled as a map keyed by ID, because that is how `WorkspaceManager` keys a
+ * write**: `WorkspaceFileManagerCommon.fileNameForId`, and the list entry with that id. So "which
+ * file did that write land on" is answerable here, which is the whole question - and the answer
+ * used to be the Space you were working in.
+ *
+ * The model was keyed by NAME until the path stopped being derived from one. Rekeying it is not a
+ * string change: a name-keyed model makes a same-named Space and the record indistinguishable, so
+ * "the watcher wrote the record and not Foo" would have been unprovable in exactly the case these
+ * tests exist for.
  */
 class LayoutWatcherWriteTest {
     private fun layout(vararg titles: String) =
@@ -59,15 +64,15 @@ class LayoutWatcherWriteTest {
             timestamp = 500,
         )
 
-    /** The workspace directory, keyed by name the way `WorkspaceManager` writes it. */
+    /** The workspace directory, keyed by ID the way `WorkspaceManager` writes it. */
     private fun disk() =
         mutableMapOf(
-            fooOnDisk.name to fooOnDisk,
-            lastSessionOnDisk.name to lastSessionOnDisk,
+            fooOnDisk.id to fooOnDisk,
+            lastSessionOnDisk.id to lastSessionOnDisk,
         )
 
     private fun MutableMap<String, LayoutWorkspace>.applyWrite(record: LayoutWorkspace) {
-        this[record.name] = record
+        this[record.id] = record
     }
 
     private companion object {
@@ -90,11 +95,11 @@ class LayoutWatcherWriteTest {
 
         assertEquals(
             fooOnDisk,
-            disk["Foo"],
+            disk[fooOnDisk.id],
             "the watcher must not touch the file of the Space the user is working in",
         )
         assertTrue(
-            isUnsaved(live, disk["Foo"]),
+            isUnsaved(live, disk[fooOnDisk.id]),
             "so the Space is still unsaved, and the save button is still there to be pressed",
         )
     }
@@ -110,7 +115,7 @@ class LayoutWatcherWriteTest {
         // What the save path writes: the Space's own identity, the layout that is on screen.
         disk.applyWrite(fooOnDisk.copy(layout = live.layout, timestamp = NOW))
 
-        assertFalse(isUnsaved(live, disk["Foo"]), "an explicit save clears the mark")
+        assertFalse(isUnsaved(live, disk[fooOnDisk.id]), "an explicit save clears the mark")
     }
 
     @Test
@@ -120,7 +125,7 @@ class LayoutWatcherWriteTest {
         val disk = disk()
         repeat(5) { interval ->
             disk.applyWrite(layoutWatcherWrite(fooOnDisk, live, NOW + interval).record)
-            assertTrue(isUnsaved(live, disk["Foo"]), "still unsaved after ${interval + 1} intervals")
+            assertTrue(isUnsaved(live, disk[fooOnDisk.id]), "still unsaved after ${interval + 1} intervals")
         }
     }
 
@@ -136,7 +141,7 @@ class LayoutWatcherWriteTest {
 
         disk.applyWrite(layoutWatcherWrite(fooOnDisk, live, NOW).record)
 
-        val record = assertNotNull(disk[LAST_SESSION_NAME])
+        val record = assertNotNull(disk[LAST_SESSION_ID])
         assertEquals(live.layout, record.layout, "the recovery record holds the layout on screen")
         assertEquals(LAST_SESSION_ID, record.id)
         assertEquals(NOW, record.timestamp)
@@ -147,11 +152,11 @@ class LayoutWatcherWriteTest {
         // Before, working in a named Space wrote THAT Space and left the recovery record at
         // whatever it held when the window last had no Space. The stale layout was the exposure.
         val disk = disk()
-        assertEquals(layout("stale"), disk[LAST_SESSION_NAME]?.layout)
+        assertEquals(layout("stale"), disk[LAST_SESSION_ID]?.layout)
 
         disk.applyWrite(layoutWatcherWrite(fooOnDisk, live, NOW).record)
 
-        assertEquals(live.layout, disk[LAST_SESSION_NAME]?.layout)
+        assertEquals(live.layout, disk[LAST_SESSION_ID]?.layout)
     }
 
     @Test

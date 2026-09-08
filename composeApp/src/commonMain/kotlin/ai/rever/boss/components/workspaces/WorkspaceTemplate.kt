@@ -42,15 +42,19 @@ private val logger = BossLogger.forComponent("WorkspaceTemplate")
  *
  * Template plus project, because that is what the Space is: "Claude Code" against `Boss` and
  * "Claude Code" against `BossTerm` are two Spaces with two split trees and two sets of live
- * terminals, and a user who materialises the same template against a second project must not have
- * the first one silently overwritten. `WorkspaceManager` keys saved Spaces by NAME - it saves to
- * `generateFileName(name)` and replaces the list entry whose name matches - so the name is the
- * only thing standing between those two.
+ * terminals, and each wants its own row in the list.
+ *
+ * Through [uniqueWorkspaceName], which this used to bypass: materialising the SAME template against
+ * the SAME project twice minted two ids and one name, and while the name WAS the file path that
+ * meant the second one atomically destroyed the first one's layout - the data loss a suffix on
+ * adopted names was really guarding, reachable with no suffix in sight.
+ * `WorkspaceFileManagerCommon.fileNameForId` closed the loss; numbering keeps the list readable.
  */
 internal fun materialisedTemplateName(
     templateName: String,
     projectName: String,
-): String = "$templateName ($projectName)"
+    takenNames: Set<String> = emptySet(),
+): String = uniqueWorkspaceName("$templateName ($projectName)", takenNames)
 
 /**
  * A project path's display name, the way `applyWorkspace` derives it when it restores a project.
@@ -76,25 +80,36 @@ internal fun projectNameFor(projectPath: String): String =
  * space in it (`cd /Users/me/My Project && claude` is two arguments) or write a quoted path into
  * a `filePath`, which is not shell-parsed and would be opened with the quotes in its name.
  *
- * [id] and [now] are parameters so this is testable: [LayoutWorkspace.generateId] is a clock
- * read, and two calls in one millisecond return the same id. The project NAME is not a parameter -
- * it is [projectNameFor] of the path, so a caller cannot hand in a name that disagrees with the
- * project the placeholders were resolved against.
+ * [stamp] is a parameter so this is testable: [LayoutWorkspace.generateId] is a clock read, and
+ * two calls in one millisecond return the same id. The project NAME is not a parameter - it is
+ * [projectNameFor] of the path, so a caller cannot hand in a name that disagrees with the project
+ * the placeholders were resolved against.
  */
 internal fun materialiseTemplate(
     template: LayoutWorkspace,
-    id: String,
+    stamp: MaterialisedStamp,
     projectPath: String,
-    now: Long,
+    takenNames: Set<String> = emptySet(),
     substitute: (content: String, quote: Boolean) -> String,
 ): LayoutWorkspace =
     template.copy(
-        id = id,
-        name = materialisedTemplateName(template.name, projectNameFor(projectPath)),
+        id = stamp.id,
+        name = materialisedTemplateName(template.name, projectNameFor(projectPath), takenNames),
         layout = template.layout.substituted(substitute),
-        timestamp = now,
+        timestamp = stamp.now,
         projectPath = projectPath,
     )
+
+/**
+ * The identity a materialisation mints: a fresh id and the moment it happened.
+ *
+ * One parameter rather than two, because they are one fact (this copy, made now) and because
+ * `materialiseTemplate` was over detekt's parameter ceiling with both spelled out.
+ */
+internal data class MaterialisedStamp(
+    val id: String,
+    val now: Long,
+)
 
 private fun SplitConfig.substituted(substitute: (String, Boolean) -> String): SplitConfig =
     when (this) {
@@ -123,13 +138,18 @@ private fun TabConfig.substituted(substitute: (String, Boolean) -> String): TabC
 internal suspend fun materialiseTemplateForProject(
     template: LayoutWorkspace,
     projectPath: String,
+    takenNames: Set<String> = emptySet(),
 ): LayoutWorkspace =
     withContext(Dispatchers.IO) {
         materialiseTemplate(
             template = template,
-            id = LayoutWorkspace.generateId(),
+            stamp =
+                MaterialisedStamp(
+                    id = LayoutWorkspace.generateId(),
+                    now = Clock.System.now().toEpochMilliseconds(),
+                ),
             projectPath = projectPath,
-            now = Clock.System.now().toEpochMilliseconds(),
+            takenNames = takenNames,
         ) { content, quote ->
             WorkspacePlaceholders.processPlaceholders(content, projectPath, null, quoteProjectPath = quote)
         }
@@ -206,7 +226,8 @@ private suspend fun materialisedAndSaved(
     projectPath: String,
     manager: WorkspaceManager,
 ): LayoutWorkspace {
-    val materialised = materialiseTemplateForProject(template, projectPath)
+    val materialised =
+        materialiseTemplateForProject(template, projectPath, savedSpaceNames(manager.workspaces.value))
     // Load then save, which is how every other save in the app writes a Space:
     // saveCurrentWorkspace() persists whatever the manager holds as current, under its own name.
     manager.loadWorkspace(materialised)

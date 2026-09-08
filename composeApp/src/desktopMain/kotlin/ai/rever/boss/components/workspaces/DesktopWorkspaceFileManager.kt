@@ -60,7 +60,9 @@ actual class WorkspaceFileManager actual constructor(
                 dir.mkdirs()
             }
 
-            val actualFileName = fileName ?: WorkspaceFileManagerCommon.generateFileName(workspace.name)
+            // The ID, not the name: see WorkspaceFileManagerCommon.fileNameForId. A caller that
+            // knows the Space came from a legacy path passes it explicitly.
+            val actualFileName = fileName ?: WorkspaceFileManagerCommon.fileNameForId(workspace.id)
             val filePath = getWorkspaceFilePath(actualFileName)
             val file = File(filePath)
 

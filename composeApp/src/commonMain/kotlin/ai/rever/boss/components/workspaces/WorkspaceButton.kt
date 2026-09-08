@@ -110,13 +110,11 @@ fun WorkspaceButton(
                 ),
             )
 
-            // Delete workspace section
-            val deletableWorkspaces =
-                workspaces.filter { workspace ->
-                    !PredefinedWorkspaces.allWorkspaces.any { it.name == workspace.name }
-                }
+            // Delete workspace section. By ID, not by name - see `deletableWorkspaces`, which is
+            // also what the dialog below filters with, so the entry and the list cannot disagree.
+            val deletable = deletableWorkspaces(workspaces)
 
-            if (deletableWorkspaces.isNotEmpty()) {
+            if (deletable.isNotEmpty()) {
                 add(
                     ContextMenuItem(
                         text = "Delete Space...",
@@ -294,13 +292,13 @@ fun WorkspaceButton(
     // Delete dialog
     if (showDeleteDialog) {
         DeleteWorkspaceDialog(
-            workspaces =
-                workspaces.filter { workspace ->
-                    !PredefinedWorkspaces.allWorkspaces.any { it.name == workspace.name }
-                },
+            // The same id-keyed filter as the menu entry that opens this.
+            workspaces = deletableWorkspaces(workspaces),
             onDismiss = { showDeleteDialog = false },
-            onDelete = { workspaceName ->
-                workspaceManager.deleteWorkspace(workspaceName)
+            onDelete = { workspaceId ->
+                // By ID all the way through, so picking one of two same-named rows deletes the
+                // one that was ticked.
+                workspaceManager.deleteWorkspaceById(workspaceId)
                 showDeleteDialog = false
             },
         )

@@ -21,40 +21,21 @@ package ai.rever.boss.components.workspaces
  */
 
 /**
- * How a copy of a shipped layout is named: the layout's name and this.
- *
- * Not a project, and that constraint is the same one the pick makes: `spaceToOpen` refuses to name
- * a materialised template after a project the layout does not reference, and a copy of Browser
- * Only has no project at all. A suffix is acceptable here where a counter was not acceptable at
- * pick time, because an explicit save is the user asking to keep this thing rather than something
- * happening on every pick.
- *
- * **"(unsaved)", chosen by the user over "(custom)".** It first read "(saved)", which was wrong in
- * the way that matters: the suffix is shown in the Space button immediately left of the unsaved dot
- * and the save button, so "Code Review (saved)" sat beside a mark saying it was NOT saved and read
- * as the app contradicting itself. These layouts were auto-save dumps that no explicit save ever
- * produced, so "(unsaved)" describes what they are.
- *
- * **The mirrored case is real and is not handled**: the name is fixed at adoption, so once the user
- * presses save, a Space called "Code Review (unsaved)" IS saved and the dot beside it is gone. That
- * was a deliberate call - dropping the suffix on first save would rename the Space, and the name is
- * its file name (`generateFileName`) and the key `WorkspaceManager` matches list entries on, so a
- * silent rename means a second file and a stale entry. Renaming from the Space menu is the exit.
- *
- * `ADOPTED_ID_SUFFIX` deliberately still ends in `-saved`: it is an id, never displayed, and it
- * is recorded in session sets and preserved-state keys that already exist on disk.
- */
-const val SAVED_COPY_SUFFIX = " (unsaved)"
-
-/**
  * [base], or [base] with a number, so the result is not in [taken].
  *
- * The Space list is keyed by NAME in two places that matter - `WorkspaceManager` writes to
- * `generateFileName(name)` and replaces the list entry whose name matches - so two entries sharing
- * a name means one of them cannot be saved without destroying the other. This is what keeps a
- * derived name from walking into that.
+ * **Cosmetic now, and deliberately kept.** It used to be load-bearing: the file path was
+ * `generateFileName(name)`, so two Spaces sharing a name shared a file and the second save
+ * destroyed the first layout. `WorkspaceFileManagerCommon.fileNameForId` closed that, so a
+ * collision costs nothing - but two identical rows in a list the user picks from is still a bad
+ * list, and the two paths that used to bypass this (a typed name, and
+ * `materialisedTemplateName`) go through it now.
  *
  * Numbering starts at 2, because the unnumbered one is the first.
+ *
+ * **Only ever against other SAVED Spaces** - see [savedSpaceNames]. A Space is allowed to be
+ * called "Code Review" while the shipped Code Review exists, because they are two sections of the
+ * picker; numbering against the shipped names is what turned the four recovered Spaces into
+ * "Code Review 2" on the first run of the round trip.
  */
 internal fun uniqueWorkspaceName(
     base: String,
@@ -64,6 +45,43 @@ internal fun uniqueWorkspaceName(
     var suffix = 2
     while ("$base $suffix" in taken) suffix++
     return "$base $suffix"
+}
+
+/**
+ * The names already taken by SPACES, which is what a new name has to avoid.
+ *
+ * **The shipped layouts are deliberately not in it.** A name is identity, and "Code Review" names
+ * both a template BOSS ships and a Space of the user's built from it - they are two rows in two
+ * sections of the picker, and neither has to give its name up. Two Spaces sharing a name is the
+ * only collision worth numbering: it is a list the user picks from by name.
+ */
+internal fun savedSpaceNames(workspaces: List<LayoutWorkspace>): Set<String> =
+    workspaces.filterNot { it.id in PredefinedWorkspaces.allIds }.map { it.name }.toSet()
+
+/**
+ * Whether the Space with [id] is the USER'S, so they may delete or rename it.
+ *
+ * **By id, and that is the fix.** It was `PredefinedWorkspaces.allWorkspaces.any { it.name == … }`
+ * in four places, so a Space of the user's that happened to be called "Codex" was hidden from the
+ * delete dialog and refused by the manager - the shipped Codex answers to that name, and after the
+ * merge stopped keying on names those are two different Spaces.
+ *
+ * The session record is "the user's" here, which is not obviously right and is unchanged
+ * behaviour: it was never a predefined NAME either, so the dialog has always listed it.
+ */
+internal fun isUserOwnedSpace(id: String): Boolean = id !in PredefinedWorkspaces.allIds
+
+/**
+ * The Spaces a delete or rename may act on.
+ *
+ * One definition, because there were two copies of this filter in `WorkspaceButton` - the menu
+ * entry that opens the dialog and the dialog's own list - and they have to agree or the entry
+ * appears for a list that turns out to be empty.
+ */
+internal fun deletableWorkspaces(workspaces: List<LayoutWorkspace>): List<LayoutWorkspace> {
+    // A block body only because the expression form is 138 characters, over the line limit, while
+    // ktlint requires an expression body to start on the signature's line.
+    return workspaces.filter { isUserOwnedSpace(it.id) }
 }
 
 /**
@@ -97,18 +115,21 @@ internal fun isSpaceSlot(id: String): Boolean = id in PredefinedWorkspaces.allId
  *
  * The derived NAME depends on which kind of slot, because they have different things to say:
  *
- * - a shipped layout is named after itself, `"<Name> (unsaved)"`, since a copy of Claude Code is
- *   recognisably that;
+ * - **a shipped layout is named after itself, with NO suffix.** A copy of Claude Code is called
+ *   "Claude Code", and the shipped template of that name lives in the picker's Templates section,
+ *   which is where the distinction belongs. It carried " (saved)", then " (custom)", then
+ *   " (unsaved)" - three attempts at a word that should never have been there, the last of which
+ *   sat in the Space button immediately left of the dot and the save button reporting the actual
+ *   state. A name is identity; "unsaved" is a state, and the state has its own marks.
  * - **Last Session is named with the app's existing convention for a layout nobody named**,
  *   `"Workspace <epoch seconds>"`, which is exactly what the save path already produces for a
- *   window with no current Space at all. `"Last Session (unsaved)"` would name the copy after a slot
- *   rather than after anything the user recognises, and one convention for "keep this unnamed
- *   thing" beats two.
+ *   window with no current Space at all. The record's own name says nothing about the layout in it,
+ *   so there is nothing to name the copy after.
  *
  * [requestedName] is honoured when the user typed one ("Save Space..." asks), because they named
- * it; only the automatic case derives a name. A typed name that collides with a built-in's is
- * their business and survives now, since the merge keys on id - but a save cannot be talked into
- * the reserved `"Last Session"`, which [reservedNameRefused] refuses.
+ * it - through [uniqueWorkspaceName], which it used to bypass. `"Last Session"` needs no special
+ * refusal any more: the record is resolved by ID everywhere now, so a Space merely called that is
+ * an ordinary Space.
  */
 internal fun savedCopyOfSlot(
     current: LayoutWorkspace,
@@ -119,17 +140,9 @@ internal fun savedCopyOfSlot(
 ): LayoutWorkspace =
     current.copy(
         id = id,
-        name = reservedNameRefused(requestedName) ?: uniqueWorkspaceName(baseNameForSlot(current, now), takenNames),
+        name = uniqueWorkspaceName(requestedName ?: baseNameForSlot(current, now), takenNames),
         timestamp = now,
     )
-
-/**
- * [requested] unless it is the reserved record name, in which case null - let a name be derived.
- *
- * The one name a save must not take, however it was asked for: `loadAllWorkspaces` resolves the
- * record by it.
- */
-private fun reservedNameRefused(requested: String?): String? = requested?.takeIf { it != LAST_SESSION_NAME }
 
 private fun baseNameForSlot(
     current: LayoutWorkspace,
@@ -139,7 +152,7 @@ private fun baseNameForSlot(
         // The convention `BossAppMenuActionEffects` already uses for a window with no Space.
         "Workspace ${now / MILLIS_PER_SECOND}"
     } else {
-        current.name + SAVED_COPY_SUFFIX
+        current.name
     }
 
 private const val MILLIS_PER_SECOND = 1000L
@@ -194,9 +207,12 @@ internal fun mergeSavedWorkspaces(
     saved.forEach { file ->
         val adopted =
             if (file.id in builtInIds) {
+                // The id is derived so it cannot collide with the shipped layout's; the NAME is
+                // the file's own. "Code Review" is what this Space is called, and the shipped
+                // Code Review sits in the Templates section, which is the distinction.
                 file.copy(
                     id = file.id + ADOPTED_ID_SUFFIX,
-                    name = uniqueWorkspaceName(file.name + SAVED_COPY_SUFFIX, merged.map { it.name }.toSet()),
+                    name = uniqueWorkspaceName(file.name, savedSpaceNames(merged)),
                 )
             } else {
                 file
@@ -233,10 +249,10 @@ private const val ADOPTED_ID_SUFFIX = "-saved"
  *
  * **A name belongs to the Space catalogue, not to a layout snapshot.** A session set records whole
  * `LayoutWorkspace` values, so the name in it is whatever the Space was called on the day it was
- * written - and an adopted Space's name is DERIVED at load ([SAVED_COPY_SUFFIX]), so changing that
- * suffix, or the user renaming a Space, leaves every set already on disk displaying the old one
- * for ever. Resolving by id at restore makes the set a record of layouts and lets the list stay
- * the single source of names.
+ * written - and an adopted Space's name is DERIVED at load, so a user renaming a Space, or the
+ * derivation itself changing (it has three times), leaves every set already on disk displaying the
+ * old one for ever. Resolving by id at restore makes the set a record of layouts and lets the list
+ * stay the single source of names.
  *
  * A Space the list does not know keeps its own name: it is the only name there is.
  */

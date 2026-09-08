@@ -104,13 +104,42 @@ object WorkspaceFileManagerCommon {
     fun getDefaultWorkspaceDirectoryName(): String = "BOSS/workspaces"
 
     /**
-     * Generate a filename from workspace name
+     * The file a Space is written to: its ID.
+     *
+     * **A name is identity, not an address.** The path used to be
+     * [generateFileName] of the display name, so one name was one file and two Spaces sharing a
+     * name shared a file - the second save atomically replaced the first one's layout while both
+     * rows stayed in the list. That hazard is what a `(saved)` suffix on the name was really
+     * guarding, and it is reachable with no suffix in sight: `materialisedTemplateName` mints a
+     * fresh id with no uniqueness check, so materialising one template twice against one project
+     * gives two ids and one file, and a name typed into "Save Space..." bypasses
+     * `uniqueWorkspaceName` altogether.
+     *
+     * An id is already unique by construction (`LayoutWorkspace.generateId()`), so this makes the
+     * collision impossible rather than improbable, and it frees the name to be whatever the user
+     * wants. Copied from `WorkspaceServiceImpl.persistToDisk`, which has written `<id>.json` all
+     * along.
+     *
+     * It also closes a reserved-path collision as a class: `generateFileName("Last Session Set")`
+     * resolved to `Last_Session_Set.json`, so a Space with that name overwrote the session record
+     * and was then skipped on load, and nothing refused the name.
+     *
+     * Sanitised the same way, because an id read out of a hand-edited file is arbitrary text and a
+     * path separator in it would escape the directory.
      */
-    fun generateFileName(workspaceName: String): String {
-        // Replace spaces and special characters with underscores
-        val sanitized = workspaceName.replace(Regex("[^a-zA-Z0-9.-]"), "_")
-        return "$sanitized.json"
-    }
+    fun fileNameForId(workspaceId: String): String = "${sanitize(workspaceId)}.json"
+
+    /**
+     * Generate a filename from workspace name.
+     *
+     * **The LEGACY path, and a reader only.** Every file written before [fileNameForId] is named
+     * this way, and `WorkspaceManager` keeps saving each of those Spaces into the file it was
+     * loaded from - so nothing is rewritten or renamed on disk by an upgrade. Nothing derives a
+     * NEW path from a name; use [fileNameForId] for that.
+     */
+    fun generateFileName(workspaceName: String): String = "${sanitize(workspaceName)}.json"
+
+    private fun sanitize(value: String): String = value.replace(Regex("[^a-zA-Z0-9.-]"), "_")
 
     /**
      * Extract workspace name from filename

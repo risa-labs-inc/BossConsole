@@ -157,7 +157,8 @@ class LastSessionSetTest {
         assertTrue(fileManager.writeDocumentBlocking(LAST_SESSION_SET_FILE, content = null))
         assertFalse(File(fileManager.getWorkspaceFilePath(LAST_SESSION_SET_FILE)).exists())
         assertTrue(
-            File(fileManager.getWorkspaceFilePath(WorkspaceFileManagerCommon.generateFileName("Alpha"))).exists(),
+            // By the Space's ID, which is what its path is derived from now.
+            File(fileManager.getWorkspaceFilePath(WorkspaceFileManagerCommon.fileNameForId("a"))).exists(),
             "deleting the session record must not touch a saved Space",
         )
         assertTrue(

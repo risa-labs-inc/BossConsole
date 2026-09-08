@@ -131,6 +131,23 @@ class WorkspaceManager {
     private val fileManager = WorkspaceFileManager()
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
+    /**
+     * The file each Space was LOADED from, by id, for the ones whose path predates
+     * [WorkspaceFileManagerCommon.fileNameForId].
+     *
+     * A new Space is written to `<id>.json` and needs no entry. A Space read out of
+     * `Code_Review.json` keeps saving into `Code_Review.json`, so **an upgrade rewrites and renames
+     * nothing on disk** - the same in-memory-migration discipline `mergeSavedWorkspaces` uses, and
+     * for the same reason: a launch that half-wrote would be worse than any naming.
+     *
+     * Populated by the load scan, which already reads every file's id out of its contents.
+     */
+    private val loadedFileNames = mutableMapOf<String, String>()
+
+    /** Where [workspace] should be written: the file it came from, or `<id>.json`. */
+    private fun fileNameFor(workspace: LayoutWorkspace): String =
+        loadedFileNames[workspace.id] ?: WorkspaceFileManagerCommon.fileNameForId(workspace.id)
+
     // Callback for when a workspace is deleted
     private var onWorkspaceDeleted: ((String) -> Unit)? = null
 
@@ -160,7 +177,12 @@ class WorkspaceManager {
                         }
                     workspace?.let {
                         // Ensure workspace has an ID
-                        saved.add(if (it.id.isEmpty()) it.copy(id = LayoutWorkspace.generateId()) else it)
+                        val withId = if (it.id.isEmpty()) it.copy(id = LayoutWorkspace.generateId()) else it
+                        saved.add(withId)
+                        // Remember the file it came from, so a legacy path keeps being this
+                        // Space's file. A file already named `<id>.json` records the same answer
+                        // `fileNameFor` would derive, so the entry is harmless either way.
+                        loadedFileNames[withId.id] = fileInfo.fileName
                     }
                 }
             } catch (e: Exception) {
@@ -201,24 +223,35 @@ class WorkspaceManager {
                     current = current,
                     id = LayoutWorkspace.generateId(),
                     now = now,
-                    takenNames = _workspaces.value.map { it.name }.toSet(),
+                    // Only other SPACES, so saving out of the shipped Claude Code gives a Space
+                    // called "Claude Code" rather than "Claude Code 2". See `savedSpaceNames`.
+                    takenNames = savedSpaceNames(_workspaces.value),
                     requestedName = name,
                 )
             } else {
                 current.copy(
                     id = current.id.ifEmpty { LayoutWorkspace.generateId() },
-                    name = name ?: current.name,
+                    // A typed name goes through `uniqueWorkspaceName` too, which it used to
+                    // bypass entirely - the one path that could still put two identical rows in
+                    // the list. Its own name is never "taken" by itself, so re-saving a Space
+                    // under the name it already has is not numbered.
+                    name =
+                        name?.let {
+                            uniqueWorkspaceName(it, savedSpaceNames(_workspaces.value) - current.name)
+                        } ?: current.name,
                     timestamp = now,
                 )
             }
 
         scope.launch {
             // Save to disk (on IO thread)
+            val fileName = fileNameFor(savedWorkspace)
             val filePath =
                 withContext(Dispatchers.IO) {
-                    fileManager.saveWorkspace(savedWorkspace)
+                    fileManager.saveWorkspace(savedWorkspace, fileName)
                 }
             if (filePath != null) {
+                loadedFileNames[savedWorkspace.id] = fileName
                 // Update workspaces list (on Main thread), keyed by ID for the reason
                 // `mergeSavedWorkspaces` is: by NAME, saving a Space of the user's that happens to
                 // be called "Codex" replaced the SHIPPED Codex in this list, so the Templates
@@ -255,17 +288,22 @@ class WorkspaceManager {
      * Last Session record needs saving when it had just been written.
      */
     suspend fun saveLastSessionRecord(record: LayoutWorkspace): Boolean {
+        val fileName = fileNameFor(record)
         val filePath =
             withContext(Dispatchers.IO) {
-                fileManager.saveWorkspace(record)
+                fileManager.saveWorkspace(record, fileName)
             }
         if (filePath == null) {
             logger.warn(LogCategory.WORKSPACE, "Last Session record write failed")
             return false
         }
+        loadedFileNames[record.id] = fileName
         _workspaces.value =
             _workspaces.value.toMutableList().also { workspaces ->
-                val existingIndex = workspaces.indexOfFirst { it.name == record.name }
+                // By ID. By NAME this wrote over whatever row happened to be called "Last
+                // Session", which after the merge stopped keying on names can be a Space of the
+                // user's that is merely CALLED that.
+                val existingIndex = workspaces.indexOfFirst { it.id == record.id }
                 if (existingIndex >= 0) workspaces[existingIndex] = record else workspaces.add(record)
             }
         return true
@@ -287,15 +325,18 @@ class WorkspaceManager {
             asLastSession(layout).copy(
                 timestamp = Clock.System.now().toEpochMilliseconds(),
             )
-        val filePath = fileManager.saveWorkspaceBlocking(lastSession)
+        val fileName = fileNameFor(lastSession)
+        val filePath = fileManager.saveWorkspaceBlocking(lastSession, fileName)
         if (filePath == null) {
             logger.warn(LogCategory.WORKSPACE, "Last Session save failed", mapOf("workspace" to lastSession.name))
             return false
         }
+        loadedFileNames[lastSession.id] = fileName
         _currentWorkspace.value = lastSession
         _workspaces.value =
             _workspaces.value.toMutableList().also { workspaces ->
-                val existingIndex = workspaces.indexOfFirst { it.name == lastSession.name }
+                // By ID, for the reason `saveLastSessionRecord` states.
+                val existingIndex = workspaces.indexOfFirst { it.id == lastSession.id }
                 if (existingIndex >= 0) workspaces[existingIndex] = lastSession else workspaces.add(lastSession)
             }
         return true
@@ -369,16 +410,19 @@ class WorkspaceManager {
 
             // Save the imported workspace to disk
             scope.launch {
+                val fileName = fileNameFor(workspace)
                 withContext(Dispatchers.IO) {
-                    fileManager.saveWorkspace(workspace)
+                    fileManager.saveWorkspace(workspace, fileName)
                 }
+                loadedFileNames[workspace.id] = fileName
 
-                // Update workspaces list (on Main thread)
+                // Update workspaces list (on Main thread), by ID. By NAME an import whose name
+                // matched anything already listed wrote the file and then declined to add the row,
+                // so the user pressed Open from File and saw nothing happen at all.
                 val workspaces = _workspaces.value.toMutableList()
-                if (workspaces.none { it.name == workspace.name }) {
-                    workspaces.add(workspace)
-                    _workspaces.value = workspaces
-                }
+                val existingIndex = workspaces.indexOfFirst { it.id == workspace.id }
+                if (existingIndex >= 0) workspaces[existingIndex] = workspace else workspaces.add(workspace)
+                _workspaces.value = workspaces
             }
 
             workspace
@@ -395,30 +439,43 @@ class WorkspaceManager {
     }
 
     /**
-     * Delete a workspace
+     * Delete the Space named [name].
+     *
+     * **Resolves the name to ONE Space and then works by id.** Two rows can share a name now that
+     * the merge keys on ids, and by name this filtered BOTH out of the list while deleting one
+     * file and firing `onWorkspaceDeleted` once - so the second Space vanished from every list
+     * while its tabs were never torn down and its file stayed on disk. The name form is kept
+     * because it is the plugin api's shape (`WorkspaceDataProvider.deleteWorkspace(name)`); a
+     * caller that knows which one it means should use [deleteWorkspaceById].
      */
     fun deleteWorkspace(name: String) {
+        val workspace = _workspaces.value.find { it.name == name } ?: return
+        deleteWorkspaceById(workspace.id)
+    }
+
+    /** Delete the Space with [workspaceId]. Refuses a shipped layout, which has no file to delete. */
+    fun deleteWorkspaceById(workspaceId: String) {
         scope.launch {
-            // Find workspace
-            val workspace = _workspaces.value.find { it.name == name }
-            if (workspace != null && !PredefinedWorkspaces.allWorkspaces.any { it.name == name }) {
-                // Only delete if it's not a predefined workspace
-                val fileName = WorkspaceFileManagerCommon.generateFileName(name)
-                val deleted =
-                    withContext(Dispatchers.IO) {
-                        fileManager.deleteWorkspace(fileName)
-                    }
-                if (deleted) {
-                    // Update state on Main thread
-                    _workspaces.value = _workspaces.value.filter { it.name != name }
+            val workspace = _workspaces.value.find { it.id == workspaceId } ?: return@launch
+            // By ID, not by name: a Space merely CALLED "Codex" is the user's and is deletable,
+            // where the shipped Codex is not. By name the veto refused both.
+            if (!isUserOwnedSpace(workspaceId)) return@launch
 
-                    // Notify that workspace was deleted (this will cleanup tabs)
-                    onWorkspaceDeleted?.invoke(workspace.id)
+            val deleted =
+                withContext(Dispatchers.IO) {
+                    fileManager.deleteWorkspace(fileNameFor(workspace))
+                }
+            if (deleted) {
+                // Update state on Main thread
+                _workspaces.value = _workspaces.value.filter { it.id != workspaceId }
+                loadedFileNames.remove(workspaceId)
 
-                    // If current workspace was deleted, reset
-                    if (_currentWorkspace.value?.name == name) {
-                        resetToDefault()
-                    }
+                // Notify that workspace was deleted (this will cleanup tabs)
+                onWorkspaceDeleted?.invoke(workspaceId)
+
+                // If current workspace was deleted, reset
+                if (_currentWorkspace.value?.id == workspaceId) {
+                    resetToDefault()
                 }
             }
         }
@@ -431,51 +488,59 @@ class WorkspaceManager {
         oldName: String,
         newName: String,
     ) {
-        // Don't allow renaming to an existing name or empty name
-        if (newName.isEmpty() || newName == oldName) return
-        if (_workspaces.value.any { it.name == newName }) {
+        val workspace = _workspaces.value.find { it.name == oldName } ?: return
+        renameWorkspaceById(workspace.id, newName)
+    }
+
+    /**
+     * Rename the Space with [workspaceId].
+     *
+     * **A rename no longer moves a file.** The path comes from the id, so writing the renamed Space
+     * to the same file IS the rename - where the name-derived path needed a write-then-delete pair
+     * that left the old file behind whenever the write failed. It also means a legacy file keeps
+     * its path under a new display name, which is what stops an upgrade renaming anything on disk.
+     */
+    fun renameWorkspaceById(
+        workspaceId: String,
+        newName: String,
+    ) {
+        val existing = _workspaces.value.find { it.id == workspaceId }
+        val taken = _workspaces.value.any { it.id != workspaceId && it.name == newName }
+        if (taken) {
             logger.debug(LogCategory.WORKSPACE, "Workspace with name already exists", mapOf("name" to newName))
-            return
         }
+        // Nothing to do for an unknown Space, a name another Space holds, an empty name, or the
+        // name it already has.
+        val nameIsNew = newName.isNotEmpty() && newName != existing?.name
+        if (existing == null || taken || !nameIsNew) return
 
         scope.launch {
-            // Find workspace
-            val workspace = _workspaces.value.find { it.name == oldName }
-            if (workspace != null && !PredefinedWorkspaces.allWorkspaces.any { it.name == oldName }) {
-                // Only rename if it's not a predefined workspace
-                val oldFileName = WorkspaceFileManagerCommon.generateFileName(oldName)
-                val newFileName = WorkspaceFileManagerCommon.generateFileName(newName)
+            // By ID: a Space merely CALLED "Codex" is renameable where the shipped Codex is not.
+            if (!isUserOwnedSpace(workspaceId)) return@launch
 
-                // Create renamed workspace
-                val renamedWorkspace =
-                    workspace.copy(
-                        name = newName,
-                        timestamp = Clock.System.now().toEpochMilliseconds(),
-                    )
+            val renamedWorkspace =
+                existing.copy(
+                    name = newName,
+                    timestamp = Clock.System.now().toEpochMilliseconds(),
+                )
 
-                // Save with new name and delete old file
-                val success =
-                    withContext(Dispatchers.IO) {
-                        val saved = fileManager.saveWorkspace(renamedWorkspace, newFileName)
-                        if (saved != null) {
-                            fileManager.deleteWorkspace(oldFileName)
-                            true
-                        } else {
-                            false
-                        }
+            val fileName = fileNameFor(renamedWorkspace)
+            val success =
+                withContext(Dispatchers.IO) {
+                    fileManager.saveWorkspace(renamedWorkspace, fileName) != null
+                }
+
+            if (success) {
+                loadedFileNames[workspaceId] = fileName
+                // Update state on Main thread
+                _workspaces.value =
+                    _workspaces.value.map {
+                        if (it.id == workspaceId) renamedWorkspace else it
                     }
 
-                if (success) {
-                    // Update state on Main thread
-                    _workspaces.value =
-                        _workspaces.value.map {
-                            if (it.name == oldName) renamedWorkspace else it
-                        }
-
-                    // If current workspace was renamed, update it
-                    if (_currentWorkspace.value?.name == oldName) {
-                        _currentWorkspace.value = renamedWorkspace
-                    }
+                // If current workspace was renamed, update it
+                if (_currentWorkspace.value?.id == workspaceId) {
+                    _currentWorkspace.value = renamedWorkspace
                 }
             }
         }

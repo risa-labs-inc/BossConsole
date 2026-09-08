@@ -83,13 +83,18 @@ fun OpenWorkspaceDialog(
 }
 
 /**
- * Delete workspace dialog
+ * Delete workspace dialog.
+ *
+ * **Selection is by ID, and [onDelete] reports an id.** It selected by NAME, so two Spaces sharing
+ * a name ticked together and the delete resolved to whichever the list found first - a way to
+ * destroy the wrong Space by pointing at the right one. Names are identity to a reader and are not
+ * unique; ids are.
  */
 @Composable
 fun DeleteWorkspaceDialog(
     workspaces: List<LayoutWorkspace>,
     onDismiss: () -> Unit,
-    onDelete: (String) -> Unit,
+    onDelete: (workspaceId: String) -> Unit,
 ) {
     var selectedWorkspace by remember { mutableStateOf<String?>(null) }
 
@@ -108,13 +113,13 @@ fun DeleteWorkspaceDialog(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .clickable { selectedWorkspace = workspace.name }
+                                .clickable { selectedWorkspace = workspace.id }
                                 .padding(vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         RadioButton(
-                            selected = selectedWorkspace == workspace.name,
-                            onClick = { selectedWorkspace = workspace.name },
+                            selected = selectedWorkspace == workspace.id,
+                            onClick = { selectedWorkspace = workspace.id },
                         )
                         androidx.compose.material.Text(
                             text = workspace.name,

@@ -44,10 +44,16 @@ internal data class LayoutWatcherWrite(
 /**
  * [LayoutWatcherWrite] for a window showing [current] whose live layout is [live].
  *
- * A null [current], or one that IS Last Session, adopts the record as the current Space - which is
- * how a window that has never loaded a Space comes to be "in" Last Session, and the behaviour that
- * was already here for both of those cases. A NAMED Space keeps its own id, name and description
- * and takes only the layout, so the watcher can never rename the Space someone is working in.
+ * A null [current], or one whose ID is the record's, adopts the record as the current Space - which
+ * is how a window that has never loaded a Space comes to be "in" Last Session, and the behaviour
+ * that was already here for both of those cases. A NAMED Space keeps its own id, name and
+ * description and takes only the layout, so the watcher can never rename the Space someone is
+ * working in.
+ *
+ * **The test is the ID, not the name.** By name, a Space of the user's merely CALLED "Last Session"
+ * was silently re-stamped with the record's identity here and its own file never written again -
+ * a live bug independent of any naming question, reachable the moment the merge stopped keying on
+ * names.
  */
 internal fun layoutWatcherWrite(
     current: LayoutWorkspace?,
@@ -57,7 +63,7 @@ internal fun layoutWatcherWrite(
     val record = asLastSession(live).copy(timestamp = now)
     return LayoutWatcherWrite(
         current =
-            if (current == null || current.name == LAST_SESSION_NAME) {
+            if (current == null || current.id == LAST_SESSION_ID) {
                 record
             } else {
                 current.copy(layout = live.layout, timestamp = now)

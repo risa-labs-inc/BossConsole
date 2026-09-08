@@ -1339,11 +1339,10 @@ Both close in `SavedSpaceMerge.kt`:
 
 - **`mergeSavedWorkspaces` dedupes by ID.** A saved file with an id of its own is a distinct Space
   whatever it is called, so the shipped "Codex" and a user's "Codex" both stand.
-- **`savedCopyOfBuiltIn` stops a save producing a built-in's id in the first place.** Saving while
-  the current Space is a shipped layout creates the user's own copy: a fresh `generateId()`, and a
-  name that collides with nothing (`"<Name> (saved)"`, numbered from 2 if that is taken, through
-  `uniqueWorkspaceName`). The shipped entry stays pristine in Templates, which is what a template is
-  for. A name the user TYPED into "Save Space..." is honoured as-is - only the id is forced.
+- **`savedCopyOfSlot` stops a save producing a slot's id in the first place.** Saving while the
+  current Space is a shipped layout creates the user's own copy: a fresh `generateId()` and the
+  layout's own name. The shipped entry stays pristine in Templates, which is what a template is
+  for. A name the user TYPED into "Save Space..." is honoured - only the id is forced.
 - **The manager's in-memory list update is keyed by id too.** By name, saving a Space of the user's
   called "Codex" replaced the SHIPPED Codex in that list, so Templates lost a tile for the rest of
   the session; and a rename appended a second entry rather than updating the one it renamed, since
@@ -1357,9 +1356,8 @@ seconds while you worked in one. **Checked rather than reasoned about:**
 (`Browser_Only`, `Claude_Code`, `Code_Review`, `Gemini`), fully substituted, up to six tabs, and
 **every one of them was already being dropped on every launch** by the name dedupe.
 
-They are **ADOPTED** as distinct Spaces: id `<built-in id>-saved`, name through
-`uniqueWorkspaceName`, and the shipped layout stays where it is. The two alternatives are both
-worse:
+They are **ADOPTED** as distinct Spaces: id `<built-in id>-saved`, **the file's own name**, and the
+shipped layout stays where it is. The two alternatives are both worse:
 
 - **Dropping** them by id preserves exactly today's behaviour and loses layouts the user may have
   meant to keep - and there is no way to tell an auto-save dump from a deliberate save, because the
@@ -1368,9 +1366,10 @@ worse:
   the section's whole purpose, and files a fully substituted layout under a built-in id - so the
   picker would call the user's own work a template.
 
-Nobody's disk gets worse: the alternative for these files today is oblivion. Run against that real
-directory, the merge leaves the eight shipped layouts and Last Session exactly as they were and adds
-`Code Review (saved)`, `Browser Only (saved)`, `Claude Code (saved)` and `Gemini (saved)`.
+Nobody's disk gets worse: the alternative for these files today is oblivion. Run against a copy of
+that real directory, the merge leaves the eight shipped layouts and Last Session exactly as they
+were and adds `Code Review`, `Browser Only`, `Claude Code` and `Gemini` - the names their files
+carry, with no suffix. See the next section.
 
 Three properties of the adoption worth keeping:
 
@@ -1393,13 +1392,105 @@ away, so a test on either half alone passes against the bug. Restoring the name 
 `a save made while on a built-in is still there after a reload`; both together - the code as it
 shipped - fail eight.
 
-Still keyed by name, deliberately unchanged and worth knowing: a Space's FILE
-(`generateFileName(name)`), `deleteWorkspace(name)`, `renameWorkspace(oldName, …)` and
-`WorkspaceButton`'s deletable filter. So a user's own Space called exactly "Codex" now survives, but
-cannot be deleted or renamed from the menu - those resolve the name to the shipped layout first and
-refuse because it is predefined. That is the same name-keying this section fixes one instance of;
-closing it means giving those three id-shaped verbs, which is an api change on
-`WorkspaceDataProvider`.
+Everything that was still keyed by name is id-keyed now - see the next section.
+
+## A name is identity; "unsaved" is state
+
+The Space button and the Open Space dialog showed `Code Review (unsaved)`. Wrong twice over: those
+four Spaces are real files on disk, and a name carrying a save-state word sat directly beside the
+dot and save button that report the actual state. The word was changed three times - `(saved)`,
+`(custom)`, `(unsaved)` - instead of being removed, which was the wrong fix each time.
+
+**Why the suffix was load-bearing, and why deleting it alone would have been data loss.**
+`WorkspaceFileManagerCommon.generateFileName` derived the path by sanitising the display NAME, and
+`DesktopWorkspaceFileManager` atomically replaces whatever sits there. One name was one file, so two
+Spaces sharing a name shared a file and the second save destroyed the first layout while both rows
+stayed in the list. A suffix on derived names made that collision improbable.
+
+It was **already reachable with no suffix in sight**, which is what settled fixing the path rather
+than the word: `materialisedTemplateName` minted a fresh id with no uniqueness check, so
+materialising one template twice against one project gave two ids and one file, and a name typed
+into "Save Space..." bypassed `uniqueWorkspaceName` entirely.
+
+### The path is the id
+
+`WorkspaceFileManagerCommon.fileNameForId` - copied from `WorkspaceServiceImpl.persistToDisk`, which
+has written `<id>.json` all along. An id is unique by construction, so the collision is impossible
+rather than improbable, and the name is free to be whatever the user wants.
+
+- **Nothing is rewritten or renamed on disk by an upgrade.** `loadAllWorkspaces` already read every
+  file's id out of its contents, so it now records an `id -> fileName` map as it scans and
+  `fileNameFor` prefers it. A Space read out of `Code_Review.json` keeps saving into
+  `Code_Review.json`; only a NEW Space gets `<id>.json`. Same in-memory-migration discipline as
+  `mergeSavedWorkspaces`, and for the same reason: a launch that half-wrote would be worse than any
+  naming.
+- **A rename no longer moves a file.** Writing the renamed Space to the same path IS the rename,
+  where the name-derived path needed a write-then-delete pair that left the old file behind whenever
+  the write failed.
+- **`generateFileName` survives as a reader only**, for the legacy paths already on disk.
+- **A reserved-path collision disappears as a class.** `generateFileName("Last Session Set")`
+  resolved to `Last_Session_Set.json`, so a Space with that name overwrote the session record and
+  was then skipped on load, and nothing refused the name. Ids are `workspace-*` or `last-session`,
+  so no id can land there.
+- **The id is sanitised too**, because it is a path component now and one read out of a hand-edited
+  file is arbitrary text.
+
+### Everything else is keyed on the id
+
+`isUserOwnedSpace(id)` replaced four copies of `allWorkspaces.any { it.name == … }`, and
+`deletableWorkspaces` is the one filter both `WorkspaceButton` call sites use. `deleteWorkspaceById`
+and `renameWorkspaceById` are the real implementations; the name-keyed forms resolve a name to ONE
+Space and delegate, because those signatures are the plugin api's shape. The delete dialog selects
+by id and reports an id - it selected by NAME, so two Spaces sharing one ticked together and the
+delete resolved to whichever the list found first, a way to destroy the wrong Space by pointing at
+the right one.
+
+Three duplicate-name failures that the path change alone does not cover, all now id-keyed:
+
+- `deleteWorkspace` **filtered the list by name**, so BOTH rows vanished while one file was deleted
+  and `onWorkspaceDeleted` fired once - the second Space gone from every list with its tabs never
+  torn down and its file still on disk.
+- `renameWorkspace` **mapped every matching row** to one value.
+- `importWorkspace` wrote the file and then declined to add a row when the name matched anything
+  already listed, so Open from File appeared to do nothing at all.
+
+And two name equalities on the session record, which was a live bug independent of naming: the
+watcher **re-stamped a Space merely CALLED "Last Session" with the record's identity** and never
+wrote its file again, and the startup restore would have loaded that Space instead of the record.
+Both read `id == LAST_SESSION_ID` now, which is also why `reservedNameRefused` could go: a Space may
+be called "Last Session" and be an ordinary Space.
+
+### The suffix is gone
+
+An adopted Space and a saved copy both take the plain name. `uniqueWorkspaceName` stays for genuine
+**user-vs-user** collisions, and the two paths that bypassed it - a typed name and
+`materialisedTemplateName` - go through it now.
+
+**It numbers against other SPACES only** (`savedSpaceNames`), never against the shipped layouts. A
+Space is allowed to be called "Code Review" while the shipped Code Review exists, because they are
+two sections of the picker. Numbering against the shipped names is not hypothetical: the first run
+of the round trip turned all four recovered Spaces into "Code Review 2".
+
+### Verified on a copy of the real directory
+
+`RecoveredSpacesRoundTripTest` runs against a copy of `~/Documents/BOSS/workspaces`, never the
+directory itself, and skips when the fixture is absent so CI stays green. Five files load; the merge
+produces the eight templates, the record, and four Spaces named `Code Review`, `Browser Only`,
+`Claude Code`, `Gemini`. All six source files stayed byte-identical (SHA-256 compared before and
+after), and its second test saves a recovered Space and asserts the write landed on
+`Gemini.json` - the file it was loaded from - with no second file created.
+
+Two failing-before tests justify the track, in `SpaceNameIsNotAPathTest`:
+
+- **two Spaces with one name both survive a save and reload with their own layouts.** Restoring the
+  name-derived path fails it, by destroying one layout.
+- **a Space named exactly like a template is the user's, so it can be deleted and renamed.**
+  Restoring the name-keyed deletable filter fails it.
+
+Re-adding the suffix to the adopted name fails `a Space adopted from a legacy file keeps the name
+the file carries` and the round trip. One mutation attempt did NOT fail anything and had to be
+replaced: `isUserOwnedSpace` takes only an id, so a faithful reproduction of the old veto has to be
+made on `deletableWorkspaces`, where the row's name is in scope.
 
 ## Unsaved Spaces, and the save button in the vertical bar
 

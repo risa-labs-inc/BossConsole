@@ -10,6 +10,7 @@ import ai.rever.boss.components.workspaces.asLastSession
 import ai.rever.boss.components.workspaces.extractCurrentWorkspace
 import ai.rever.boss.components.workspaces.isSpaceSlot
 import ai.rever.boss.components.workspaces.isUnsaved
+import ai.rever.boss.components.workspaces.isUserOwnedSpace
 import ai.rever.boss.components.workspaces.layoutWatcherWrite
 import ai.rever.boss.components.workspaces.savedCopyOfSlot
 import ai.rever.boss.plugin.api.TabComponentWithUI
@@ -72,8 +73,14 @@ class LastSessionIsNotADocumentTest {
             filePath = "/tmp/$name",
         )
 
-    /** The workspace directory, keyed the way `WorkspaceManager` keys a write: by NAME. */
-    private fun disk(record: LayoutWorkspace) = mutableMapOf(record.name to record)
+    /**
+     * The workspace directory, keyed the way `WorkspaceManager` keys a write: by **ID**.
+     *
+     * It was by NAME, which is what the path used to be derived from. That model is wrong now -
+     * `WorkspaceFileManagerCommon.fileNameForId` - and keeping it would have quietly made these
+     * tests assert against a disk the app does not have.
+     */
+    private fun disk(record: LayoutWorkspace) = mutableMapOf(record.id to record)
 
     /**
      * What the window holds after a launch: the record restored as the current Space, and the same
@@ -91,7 +98,7 @@ class LastSessionIsNotADocumentTest {
         live: LayoutWorkspace,
         current: LayoutWorkspace,
         disk: Map<String, LayoutWorkspace>,
-    ): Set<String> = if (isUnsaved(live, disk[current.name])) setOf(current.id) else emptySet()
+    ): Set<String> = if (isUnsaved(live, disk[current.id])) setOf(current.id) else emptySet()
 
     // ==================== the headline ====================
 
@@ -104,7 +111,7 @@ class LastSessionIsNotADocumentTest {
 
         // Nothing has been touched yet: the record really does match the screen.
         val atRestore = extractCurrentWorkspace(state, projectPath = PROJECT)
-        assertFalse(isUnsaved(atRestore, disk[record.name]), "the FILE matches, which is what fooled the old rule")
+        assertFalse(isUnsaved(atRestore, disk[record.id]), "the FILE matches, which is what fooled the old rule")
 
         state.getPanel("main")!!.tabsComponent.addTab(editor("added"))
         val live = extractCurrentWorkspace(state, projectPath = PROJECT)
@@ -116,9 +123,9 @@ class LastSessionIsNotADocumentTest {
 
         // Now the watcher settles and rewrites the record, which is what used to clear the mark.
         val write = layoutWatcherWrite(current = record, live = live, now = 2_000)
-        disk[write.record.name] = write.record
+        disk[write.record.id] = write.record
         assertFalse(
-            isUnsaved(live, disk[record.name]),
+            isUnsaved(live, disk[record.id]),
             "the record now matches the screen again - the manager is right about the file",
         )
 
@@ -169,15 +176,22 @@ class LastSessionIsNotADocumentTest {
             )
 
         assertNotEquals(LAST_SESSION_ID, saved.id, "a slot's id must not be reused")
-        assertNotEquals(LAST_SESSION_NAME, saved.name, "and the record's name is reserved")
+        assertNotEquals(LAST_SESSION_NAME, saved.name, "the record's own name says nothing about the layout")
         assertEquals("Workspace 1788000000", saved.name, "the convention the save path already uses")
         assertEquals(record.layout, saved.layout, "carrying the layout that was on screen")
     }
 
+    /**
+     * The reserved-name refusal is GONE, deliberately, and this is what replaced it.
+     *
+     * It existed because `loadAllWorkspaces` resolved the record BY NAME, so a Space also called
+     * "Last Session" made which one restored a matter of scan order. Every one of those lookups is
+     * keyed on `LAST_SESSION_ID` now - the restore, the watcher, and both record writers - so a
+     * Space merely CALLED that is an ordinary Space, and refusing the name would be refusing a
+     * name for no reason.
+     */
     @Test
-    fun `Last Session is never taken as a saved Space's name, even if it is asked for`() {
-        // `loadAllWorkspaces` resolves the record BY NAME, so a second claim on it would make
-        // which one restores a matter of scan order.
+    fun `a Space may now be called Last Session, because the record is resolved by id`() {
         val (_, record, disk) = restoredWindow()
 
         val saved =
@@ -189,7 +203,10 @@ class LastSessionIsNotADocumentTest {
                 requestedName = LAST_SESSION_NAME,
             )
 
-        assertNotEquals(LAST_SESSION_NAME, saved.name)
+        assertEquals(LAST_SESSION_NAME, saved.name, "the typed name is honoured")
+        assertNotEquals(LAST_SESSION_ID, saved.id, "and it is a document, not the slot")
+        assertTrue(isUserOwnedSpace(saved.id))
+        assertFalse(isSpaceSlot(saved.id), "so the next save writes IT rather than making another copy")
     }
 
     @Test
@@ -228,17 +245,17 @@ class LastSessionIsNotADocumentTest {
         val live = extractCurrentWorkspace(state, projectPath = PROJECT)
 
         val saved = savedCopyOfSlot(record, "workspace-1788000000000", 1_788_000_000_000, disk.keys)
-        disk[saved.name] = saved.copy(layout = live.layout)
+        disk[saved.id] = saved.copy(layout = live.layout)
 
         // The window is now in a named Space. The watcher keeps going.
         state.getPanel("main")!!.tabsComponent.addTab(editor("later"))
         val afterwards = extractCurrentWorkspace(state, projectPath = PROJECT)
         val write = layoutWatcherWrite(current = saved, live = afterwards, now = 3_000)
-        disk[write.record.name] = write.record
+        disk[write.record.id] = write.record
 
         assertEquals(
             afterwards.layout,
-            disk[LAST_SESSION_NAME]?.layout,
+            disk[LAST_SESSION_ID]?.layout,
             "the recovery record must still track the screen, or this traded one bug for a worse one",
         )
         assertEquals(saved.id, write.current.id, "and the window stays in its own Space")

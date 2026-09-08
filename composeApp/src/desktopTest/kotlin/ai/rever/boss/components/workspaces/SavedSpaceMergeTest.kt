@@ -57,7 +57,14 @@ class SavedSpaceMergeTest {
                 .mapNotNull { fileManager.loadWorkspace(it.fileName) }
         }
 
-    /** What `saveCurrentWorkspace` writes, for a window whose current Space is [current]. */
+    /**
+     * What `saveCurrentWorkspace` writes, for a window whose current Space is [current].
+     *
+     * The taken set is `savedSpaceNames(list)`, exactly as the manager passes it - the SHIPPED
+     * names are deliberately not in it. Passing the raw names here numbered the first save to
+     * "Browser Only 2", which is the helper failing to model the call site rather than the rule
+     * being wrong.
+     */
     private fun saveOf(
         current: LayoutWorkspace,
         list: List<LayoutWorkspace>,
@@ -68,7 +75,7 @@ class SavedSpaceMergeTest {
                 current = current,
                 id = "workspace-1788000000000",
                 now = 2_000,
-                takenNames = list.map { it.name }.toSet(),
+                takenNames = savedSpaceNames(list),
                 requestedName = requestedName,
             )
         } else {
@@ -115,27 +122,35 @@ class SavedSpaceMergeTest {
     }
 
     @Test
-    fun `a save on a built-in takes a new id and a name that collides with nothing`() {
+    fun `a save on a built-in takes a new id and keeps the layout's own name`() {
         val written = saveOf(browserOnly, predefined)
 
         assertTrue(
             written.id !in PredefinedWorkspaces.allIds,
             "a file carrying a built-in id is the legacy shape this exists to stop making more of",
         )
-        assertEquals("Browser Only (unsaved)", written.name)
-        assertTrue(predefined.none { it.name == written.name }, "and no shipped layout answers to it")
+        // The NEW id is the whole guard: the name is free to be the plain one, because
+        // `WorkspaceFileManagerCommon.fileNameForId` means a shared name is no longer a shared
+        // file. It carried " (saved)", then " (custom)", then " (unsaved)" - a state word sitting
+        // in the Space button next to the dot and save button that report the actual state.
+        assertEquals("Browser Only", written.name)
+        assertTrue(
+            predefined.any { it.name == written.name },
+            "and it is allowed to share the shipped layout's name: the template is in the Templates section",
+        )
     }
 
     @Test
-    fun `a second save on the same built-in does not collide with the first`() {
-        // The Space list is keyed by NAME where it writes, so two entries sharing one would mean
-        // saving either destroys the other.
+    fun `a second save on the same built-in is numbered against the first, not against the template`() {
+        // Cosmetic now rather than load-bearing: two Spaces sharing a name is a list the user
+        // cannot pick from, but it can no longer destroy a layout. The FIRST one takes the plain
+        // name, because the template it came from is a different section rather than a rival.
         val first = saveOf(browserOnly, predefined)
         val second = saveOf(browserOnly, predefined + first)
         val third = saveOf(browserOnly, predefined + first + second)
 
         assertEquals(
-            listOf("Browser Only (unsaved)", "Browser Only (unsaved) 2", "Browser Only (unsaved) 3"),
+            listOf("Browser Only", "Browser Only 2", "Browser Only 3"),
             listOf(first, second, third).map { it.name },
         )
     }
@@ -204,7 +219,9 @@ class SavedSpaceMergeTest {
         assertEquals(predefined.single { it.id == "workspace-gemini" }, shipped, "the template stays pristine")
 
         val adopted = list.single { it.id == "workspace-gemini-saved" }
-        assertEquals("Gemini (unsaved)", adopted.name)
+        // The file's own name, verbatim. The shipped Gemini is still called Gemini and still sits
+        // in the Templates section, which is the distinction a suffix was trying to draw.
+        assertEquals("Gemini", adopted.name)
         assertEquals(layout("a", "b", "c"), adopted.layout, "with the layout the file actually held")
     }
 
@@ -215,8 +232,10 @@ class SavedSpaceMergeTest {
         // every preserved-state key.
         val legacy = space(id = "workspace-gemini", name = "Gemini")
 
-        val first = mergeSavedWorkspaces(predefined, listOf(legacy)).single { it.name == "Gemini (unsaved)" }
-        val second = mergeSavedWorkspaces(predefined, listOf(legacy)).single { it.name == "Gemini (unsaved)" }
+        // Found by ID, because the adopted Space and the shipped layout share a NAME now - which
+        // is the point, and which makes the id the only way to name one of them.
+        val first = mergeSavedWorkspaces(predefined, listOf(legacy)).single { it.id == "workspace-gemini-saved" }
+        val second = mergeSavedWorkspaces(predefined, listOf(legacy)).single { it.id == "workspace-gemini-saved" }
 
         assertEquals(first.id, second.id)
         assertTrue(first.id !in PredefinedWorkspaces.allIds)
@@ -227,13 +246,18 @@ class SavedSpaceMergeTest {
     }
 
     @Test
-    fun `an adopted name that is already taken gets a number`() {
+    fun `an adopted name already taken by another SPACE gets a number`() {
         val legacy = space(id = "workspace-gemini", name = "Gemini")
-        val alreadyMine = space(id = "workspace-1788000000000", name = "Gemini (unsaved)")
+        val alreadyMine = space(id = "workspace-1788000000000", name = "Gemini")
 
         val list = mergeSavedWorkspaces(predefined, listOf(alreadyMine, legacy))
 
-        assertEquals("Gemini (unsaved) 2", list.single { it.id == "workspace-gemini-saved" }.name)
+        // Numbered against the user's other Space, never against the shipped Gemini - which is
+        // exactly the distinction `savedSpaceNames` draws, and getting it wrong turned all four
+        // recovered Spaces into "Gemini 2" on the first run of the round trip.
+        assertEquals("Gemini", list.single { it.id == alreadyMine.id }.name)
+        assertEquals("Gemini 2", list.single { it.id == "workspace-gemini-saved" }.name)
+        assertEquals("Gemini", list.single { it.id == "workspace-gemini" }.name, "and the template keeps its own")
     }
 
     // ==================== two files, one id ====================
@@ -305,17 +329,20 @@ class SavedSpaceMergeTest {
     }
 
     /**
-     * The bug this closes was visible in the Space button: a Space called "Code Review (saved)"
-     * sitting beside the dot that says it is NOT saved. Renaming the suffix fixes new loads, and
-     * would have left every session set already on disk showing the old name for ever.
+     * A session set records whole `LayoutWorkspace` values, so the name in it is whatever the Space
+     * was called on the day it was written. Two things change a name under a set that is already on
+     * disk: the user renaming the Space, and the derivation for an ADOPTED name changing - which
+     * has now happened three times ("(saved)", "(custom)", "(unsaved)") before landing on the
+     * file's own name. Resolving by id at restore is what stops a set showing a name nothing uses
+     * any more.
      */
     @Test
     fun `a name comes from the Space list, not from the snapshot that recorded it`() {
-        val recorded = space(id = "workspace-code-review-saved", name = "Code Review (saved)")
-        val known = space(id = "workspace-code-review-saved", name = "Code Review (unsaved)")
+        val recorded = space(id = "workspace-code-review-saved", name = "Code Review (unsaved)")
+        val known = space(id = "workspace-code-review-saved", name = "Code Review")
 
         assertEquals(
-            listOf("Code Review (unsaved)"),
+            listOf("Code Review"),
             withKnownNames(listOf(recorded), listOf(known)).map { it.name },
         )
     }
