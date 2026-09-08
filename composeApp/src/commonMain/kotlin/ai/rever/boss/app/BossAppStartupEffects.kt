@@ -14,11 +14,11 @@ import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.ProjectSelectionWorkspace
 import ai.rever.boss.components.workspaces.WorkspaceSettingsManager
 import ai.rever.boss.components.workspaces.applyWorkspace
-import ai.rever.boss.components.workspaces.asLastSession
 import ai.rever.boss.components.workspaces.extractCurrentWorkspace
 import ai.rever.boss.components.workspaces.extractRunningWorkspaces
 import ai.rever.boss.components.workspaces.isRestorable
 import ai.rever.boss.components.workspaces.isUnsaved
+import ai.rever.boss.components.workspaces.layoutWatcherWrite
 import ai.rever.boss.components.workspaces.requiresProject
 import ai.rever.boss.components.workspaces.resolveOnProjectSelection
 import ai.rever.boss.components.workspaces.sessionSetOf
@@ -806,59 +806,42 @@ internal fun BossAppStartupEffects(state: BossAppState) {
             latestLayout = currentLayout
             reportUnsaved()
 
-            // Check if we have a loaded workspace
             val loadedConfig = workspaceManager.currentWorkspace.value
 
-            if (loadedConfig != null) {
-                // Compare with the last known workspace state
-                if (lastWorkspaceSnapshot == null) {
-                    // First snapshot after loading
-                    lastWorkspaceSnapshot = currentLayout
-                } else if (currentLayout != lastWorkspaceSnapshot) {
-                    // Layout has changed (splits, tabs added/removed, etc.)
-                    lastWorkspaceSnapshot = currentLayout
-
-                    // Cancel previous save job if any
-                    saveJob?.cancel()
-
-                    // Auto-save to current workspace or "Last Session" after a short delay
-                    saveJob =
-                        launch {
-                            delay(2000) // Wait 2 seconds before saving
-
-                            if (loadedConfig.name == LAST_SESSION_NAME) {
-                                // If we're already in "Last Session", update it
-                                workspaceManager.updateCurrentWorkspace(asLastSession(currentLayout))
-                                workspaceManager.saveCurrentWorkspace(LAST_SESSION_NAME)
-                            } else {
-                                // Update the current loaded workspace with changes
-                                val updatedConfig =
-                                    loadedConfig.copy(
-                                        layout = currentLayout.layout,
-                                        timestamp = Clock.System.now().toEpochMilliseconds(),
-                                    )
-                                workspaceManager.updateCurrentWorkspace(updatedConfig)
-                                workspaceManager.saveCurrentWorkspace()
-                            }
-                        }
+            // Prime on the FIRST extract of a loaded Space rather than treating it as a change:
+            // the first walk of a Space that was just applied is not something the user did. A
+            // window with no Space has nothing to prime against, and its first extract IS the
+            // change that makes it "in" Last Session - both behaviours are as they were.
+            val changed =
+                when {
+                    loadedConfig != null && lastWorkspaceSnapshot == null -> false
+                    currentLayout != lastWorkspaceSnapshot -> true
+                    else -> false
                 }
-            } else {
-                // No workspace loaded, but still save as "Last Session"
-                if (currentLayout != lastWorkspaceSnapshot) {
-                    lastWorkspaceSnapshot = currentLayout
+            lastWorkspaceSnapshot = currentLayout
+            if (!changed) return@onEach
 
-                    // Cancel previous save job if any
-                    saveJob?.cancel()
+            // Cancel previous save job if any
+            saveJob?.cancel()
 
-                    // Auto-save as "Last Session" after a short delay
-                    saveJob =
-                        launch {
-                            delay(2000) // Wait 2 seconds before saving
-                            workspaceManager.updateCurrentWorkspace(asLastSession(currentLayout))
-                            workspaceManager.saveCurrentWorkspace(LAST_SESSION_NAME)
-                        }
+            saveJob =
+                launch {
+                    delay(LAYOUT_SETTLE_MS)
+
+                    // ONE write, and it is the Last Session record - never the named Space the
+                    // user is working in, whose file is written by an explicit save alone. See
+                    // `layoutWatcherWrite`, which owns that decision, and note that the manager's
+                    // current workspace IS still refreshed: it is the in-memory "Space I am in, as
+                    // it looks now", which a plugin's Save reads.
+                    val write =
+                        layoutWatcherWrite(
+                            current = loadedConfig,
+                            live = currentLayout,
+                            now = Clock.System.now().toEpochMilliseconds(),
+                        )
+                    workspaceManager.updateCurrentWorkspace(write.current)
+                    workspaceManager.saveLastSessionRecord(write.record)
                 }
-            }
         }.launchIn(this)
 
         // Reset snapshot when workspace changes
@@ -881,6 +864,15 @@ internal fun BossAppStartupEffects(state: BossAppState) {
             .launchIn(this)
     }
 }
+
+/**
+ * How long the layout has to sit still before the watcher writes the Last Session record.
+ *
+ * The literal 2000 this replaces, named because it is now the ONE cadence in the auto-save (the
+ * named-Space write it used to share the delay with is gone) and because a test asserting that a
+ * Space stays unsaved "across the watcher's interval" has to be able to say which interval.
+ */
+private const val LAYOUT_SETTLE_MS = 2000L
 
 /**
  * Ask the app-level [UpdateCoordinator] to start update checks.

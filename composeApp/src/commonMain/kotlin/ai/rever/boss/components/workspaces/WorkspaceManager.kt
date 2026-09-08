@@ -228,6 +228,35 @@ class WorkspaceManager {
     }
 
     /**
+     * Write [record] as the Last Session file, and refresh the list entry for it.
+     *
+     * The layout watcher's only write. Deliberately does NOT touch [currentWorkspace]: while the
+     * user is working in a named Space that is the Space they are in, and stamping it "Last
+     * Session" would rename it under them. The caller sets it, from
+     * `LayoutWatcherWrite.current`, which is the live layout under the identity it already has.
+     *
+     * The list entry IS refreshed, because [savedCopyOf] reads that list to answer "what is on
+     * disk" and the unsaved flag is derived from the answer - an entry left stale would say the
+     * Last Session record needs saving when it had just been written.
+     */
+    suspend fun saveLastSessionRecord(record: LayoutWorkspace): Boolean {
+        val filePath =
+            withContext(Dispatchers.IO) {
+                fileManager.saveWorkspace(record)
+            }
+        if (filePath == null) {
+            logger.warn(LogCategory.WORKSPACE, "Last Session record write failed")
+            return false
+        }
+        _workspaces.value =
+            _workspaces.value.toMutableList().also { workspaces ->
+                val existingIndex = workspaces.indexOfFirst { it.name == record.name }
+                if (existingIndex >= 0) workspaces[existingIndex] = record else workspaces.add(record)
+            }
+        return true
+    }
+
+    /**
      * Persist [layout] as the "Last Session" workspace, blocking until the file
      * has been written, and return whether the write succeeded.
      *

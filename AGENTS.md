@@ -1294,12 +1294,14 @@ vertical bar can watch it.
   `setWindowWorkspaces`, because the live layout only exists in its `SplitViewState`.
 - **The flag is DERIVED from both halves, so nothing has to remember to clear it.** The layout
   watcher in `BossAppStartupEffects` recomputes on every extract, and a second collector recomputes
-  on every change to `workspaceManager.workspaces` - which is where a successful write lands. So an
-  auto-save, the File menu's Save Space and the bar's own button all turn the affordance off by
-  writing the file, and none of them calls a "mark saved". The saved side is read through
-  `savedCopyOf`, off `workspaces`, and deliberately NOT off `currentWorkspace`:
-  `updateCurrentWorkspace` writes the live layout into that one BEFORE the save is attempted, so
-  comparing against it would read clean when a write was queued rather than when it landed.
+  on every change to `workspaceManager.workspaces` - which is where a successful write lands. So
+  the File menu's Save Space and the bar's own button turn the affordance off by writing the file,
+  and neither calls a "mark saved". The saved side is read through `savedCopyOf`, off `workspaces`,
+  and deliberately NOT off `currentWorkspace` - a distinction that is now load-bearing twice over.
+  `updateCurrentWorkspace` writes the live layout into `currentWorkspace` BEFORE a save is
+  attempted, so comparing against it would read clean when a write was queued rather than when it
+  landed; and since the watcher stopped writing named Spaces, `currentWorkspace` runs ahead of the
+  file on purpose (see below), which is exactly the difference the mark is about.
 
 ### The comparison, which was measured rather than reasoned
 
@@ -1362,12 +1364,62 @@ there is one save path rather than two.
   truncates away. `signalText`, not `signal`: it is drawn as a glyph, and `signal` is the fill
   token, held to no text contrast floor. The hint says it in words as well, because a colour is not
   a sentence.
-- **A window with NO Space loaded reads as saved, deliberately.** That state lasts about two
-  seconds - the layout watcher writes it out as "Last Session" and the manager then has a current
-  Space - so lighting a button there would be a control that appears and vanishes on every new
-  window. "Never saved at all" is still covered for any Space that has an id, by `isUnsaved`'s
+- **A window with NO Space loaded reads as saved, deliberately.** It is a short-lived state - the
+  layout watcher writes the first change out as "Last Session" and the manager then has a current
+  Space - so lighting a button there would be a control that appears and vanishes on a new window.
+  "Never saved at all" is still covered for any Space that has an id, by `isUnsaved`'s
   null-saved-copy branch: a template applied as-is has a list entry that still says `{projectPath}`
   and no file matching the layout on screen.
+- **Last Session is never marked unsaved, and that follows from the same rule.** The mark means
+  "the Space named in the button beside it does not have this layout on disk", and the watcher
+  keeps the Last Session record current - so when the button says "Last Session", the file does
+  hold what is on screen. Last Session is the autosave, not the document.
+
+### The watcher does not write a named Space any more
+
+The layout watcher used to write the Space you were working in two seconds after every change. That
+made "unsaved" a state that lasted two seconds and cleared itself, which is a save button that can
+never usefully be pressed - so the affordance above needed the auto-save changed rather than the
+comparison. Editor semantics now: the buffer is dirty until you save, and the file stays at its
+last explicit save. **An explicit save is the only thing that writes a named Space** - the bar's
+button and the File menu, both through `MenuActionsHandler.triggerSaveWorkspace`.
+
+`layoutWatcherWrite` (`components/workspaces/LayoutWatcherWrite.kt`) owns the decision and returns
+two things that have to agree:
+
+- **`record`** is the Last Session record, and the only file the watcher touches. It is written on
+  the same cadence as before (`LAYOUT_SETTLE_MS`), whichever Space is on screen - which is
+  **stronger than what it replaced, not weaker**. Before, working in a named Space wrote that Space
+  and left `Last_Session.json` stale from whenever the window last had no Space; the recovery record
+  now tracks the live layout the whole time. It is the only thing between an unsaved layout and a
+  crash, because the multi-Space set is written at shutdown and a hard kill never reaches that.
+- **`current`** is what the manager should hold as the window's current Space: the live layout under
+  the identity it already has. This is the dependency that is easy to lose along with the write.
+  `WorkspaceDataProvider` gives a plugin no way to reach the split tree, so Top of Mind's Save
+  button saves whatever the manager holds - and dropping the `updateCurrentWorkspace` would have
+  made that button silently save the layout as of load time. So the in-memory copy still tracks the
+  live layout; only the file write went away. A named Space keeps its own id, name and description,
+  so the watcher can never rename the Space someone is working in.
+
+`WorkspaceManager.saveLastSessionRecord` is the write. It refreshes the list entry (because
+`savedCopyOf` reads that list to answer "what is on disk") and deliberately does NOT touch
+`currentWorkspace`, which is the caller's to set.
+
+**What depended on the old behaviour, checked before removing it.** Nothing reads a named Space's
+file except the switch path, and only when there is no preserved tree to restore instead: applying a
+Space tries `restorePreservedState` first, so switching away and back within a session uses the live
+tree either way. The rebuild-from-file case is reached when the user answered CLOSE to the
+keep-or-close prompt (`WorkspaceSwitchAction`, default ASK), which is a user saying to throw that
+layout away - editor semantics again. `exportWorkspace` serialises whatever it is handed and reads
+no file. The Space picker's tiles draw the SAVED `SplitConfig`, so an unsaved split now shows as
+saved for longer - a cost that plugin's own docs already state, with the floors view as the live
+picture.
+
+`LayoutWatcherWriteTest` models the disk as a map keyed by NAME, which is how `WorkspaceManager`
+keys a write, so "which file did that write land on" is answerable. It pins that a named Space is
+still unsaved after the watcher has run and across repeated intervals, that an explicit save is what
+clears it, and that the Last Session record does hold the live layout. Reinstating the old write is a
+mutation that fails five of them.
 
 ## Last Session is a SET of Spaces, not one Space
 
