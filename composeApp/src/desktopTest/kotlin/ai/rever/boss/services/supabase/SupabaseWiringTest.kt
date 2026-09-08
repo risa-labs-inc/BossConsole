@@ -3,6 +3,7 @@ package ai.rever.boss.services.supabase
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.test.fail
 
@@ -50,7 +51,12 @@ class SupabaseWiringTest {
          *
          *  - the sanitised forms themselves, including the `safe` local that
          *    `SupabaseDataProviderImpl` sanitises once and uses for both the log and the
-         *    returned message;
+         *    returned message; `SecretService` (BossConsole#145) does the same but passes
+         *    `safe` straight to `Result.failure` rather than re-wrapping `safe.message` in a
+         *    new `Exception`, which is a second legitimate shape of the same "sanitize once"
+         *    rule, not a second rule. This helper only sanitizes SerializationException;
+         *    the legacy error = safe exemption is not a guarantee for arbitrary server errors.
+         *    SecretService is checked separately below and must not log the throwable at all;
          *  - the declaration of `supabaseJson`, which is necessarily a `Json { }`;
          *  - `validate().getOrElse { return Result.failure(it) }`, which returns an
          *    `IllegalArgumentException` this code constructed from the caller's own request.
@@ -61,7 +67,7 @@ class SupabaseWiringTest {
          */
         val ALLOWED =
             Regex(
-                """sanitizeSupabaseFailure\(|error = safe|\$\{safe\.message\}|""" +
+                """sanitizeSupabaseFailure\(|error = safe|\$\{safe\.message\}|Result\.failure\(safe\)|""" +
                     """val supabaseJson = Json|validate\(\)\.getOrElse""",
             )
     }
@@ -134,13 +140,26 @@ class SupabaseWiringTest {
 
     @Test
     fun `every SecretService catch block is sanitised`() {
-        // Derived from the number of catch blocks rather than hardcoded, so deleting a method
-        // cannot quietly satisfy the assertion.
+        // Check each catch rather than a file-wide sanitizer count. RAW_RETURNED also guards
+        // direct raw returns across the package; here the same sanitized local must be returned.
+        // These source checks cover wiring without sending secret RPCs to a live backend.
         val source = File(sourceDir(), "SecretService.kt").readText()
         val catches = Regex("""catch \(e: Exception\)""").findAll(source).count()
-        val sanitised = Regex("""Result\.failure\(sanitizeSupabaseFailure\(""").findAll(source).count()
+        val blocks = Regex("""catch \(e: Exception\) \{([^{}]*)}""").findAll(source).toList()
 
         assertTrue(catches > 0, "found no catch blocks - has the file moved?")
-        assertEquals(catches, sanitised, "$catches catch blocks but $sanitised sanitised returns")
+        assertEquals(catches, blocks.size, "a catch changed shape; update the wiring guard")
+        blocks.forEach { match ->
+            val body =
+                match.groupValues[1]
+                    .replace(Regex("""/\*.*?\*/""", RegexOption.DOT_MATCHES_ALL), "")
+                    .replace(Regex("""//[^\n]*"""), "")
+            assertTrue(body.contains("val safe = sanitizeSupabaseFailure("), "catch must sanitize: $body")
+            assertTrue(body.contains("Result.failure(safe)"), "catch must return the sanitized local: $body")
+            assertTrue(body.contains("logger.warn("), "RPC failure must remain visible: $body")
+            assertTrue(body.contains("\"errorType\" to e::class.simpleName"), "keep diagnostic type: $body")
+            assertFalse(Regex("""error\s*=""").containsMatchIn(body), "never log the throwable: $body")
+            assertFalse(body.contains(".message"), "server messages can echo secret values: $body")
+        }
     }
 }

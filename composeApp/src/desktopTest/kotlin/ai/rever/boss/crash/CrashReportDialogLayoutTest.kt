@@ -317,8 +317,8 @@ class CrashReportDialogLayoutTest {
 
     @Test
     fun aSubmitFailureIsSanitizedBeforeItIsShown() {
-        // This card is selectable and the likeliest thing to be pasted into a public issue, and its
-        // text interpolates a raw exception message. maskUriParams — which this originally used —
+        // This selectable card is likely to be pasted into a public issue, so verify the rendered
+        // message stays sanitized. maskUriParams, which the original render site used,
         // only redacts named params inside a `?`/`#` segment, so it returned a ktor timeout message
         // carrying the request URL completely untouched.
         setDialogAtMinimumWindowSize(

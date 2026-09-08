@@ -202,8 +202,6 @@
     <ID>EmptyFunctionBlock:TabDropResultHandlingTest.kt$TabDropResultHandlingTest.DropTestComponent${ }</ID>
     <ID>EmptyIfBlock:FluckEngine.kt$FluckEngine${ }</ID>
     <ID>ExplicitGarbageCollectionCall:PerformanceMonitor.kt$PerformanceMonitor$gc()</ID>
-    <ID>ForbiddenComment:BossTopBar.kt$// TODO: #91 - BossTopRunBar function (currently disabled)</ID>
-    <ID>ForbiddenComment:BossTopBar.kt$// TODO: #93 - Lanager functionality (currently disabled - plugin removed)</ID>
     <ID>ForbiddenComment:FluckEngine.kt$FluckEngine$// TODO: Implement if needed</ID>
     <ID>ForbiddenComment:FluckEngine.kt$FluckEngine$// TODO: Show user warning dialog (for now, just proceed)</ID>
     <ID>ForbiddenComment:PluginStateBridge.kt$PluginStateBridge$// TODO: Implement actual JSON Merge Patch for delta state.</ID>

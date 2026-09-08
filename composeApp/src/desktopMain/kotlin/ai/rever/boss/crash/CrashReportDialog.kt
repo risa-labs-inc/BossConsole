@@ -494,10 +494,8 @@ internal fun CrashReportDialog(
 
             // Submit result message
             submitResult?.let { result ->
-                // Keyed on the result, not recomputed per composition: userNotes is read in this
-                // same restartable scope, so every keystroke in the notes field recomposes the
-                // whole dialog — and this runs several regex passes over a string a TLS or proxy
-                // error can make arbitrarily long.
+                // Keep the display text keyed to the result while edits to userNotes recompose
+                // this scope. Error messages already passed through the sanitizer at construction.
                 val resultMessage =
                     remember(result) {
                         when (result) {
@@ -510,8 +508,8 @@ internal fun CrashReportDialog(
                             }
 
                             is CrashReportService.SubmitResult.Error -> {
-                                // The text most likely to end up pasted into a public issue, and it
-                                // interpolates a raw exception message.
+                                // SubmitResult.Error sanitizes its message at construction time via
+                                // LogSanitizer.sanitizeExceptionMessage.
                                 //
                                 // sanitizeExceptionMessage, not maskUriParams: the latter redacts
                                 // named params inside a `?`/`#` segment, and the case that
@@ -521,14 +519,9 @@ internal fun CrashReportDialog(
                                 // exception message and stack trace through the same function
                                 // before they reach CrashReport.
                                 //
-                                // Scope, measured rather than assumed: a host is removed when it
-                                // appears *inside a URL* — filePathPattern swallows everything after
-                                // the scheme colon, which covers ktor's `[url=…]` messages. A bare
-                                // host does not match any location pattern and renders verbatim:
-                                // UnknownHostException.getMessage() is just the hostname, so
-                                // "Failed to submit crash report: proxy.corp.internal" survives
-                                // intact. Harmless for our own public endpoint, not necessarily so
-                                // for a corporate proxy — see #109.
+                                // The shared sanitizer also masks selected bare hostnames. Its
+                                // conservative pattern does not cover every DNS spelling or every
+                                // URL query value; see #109 for the remaining coverage limits.
                                 //
                                 // Cost of what it does remove: the endpoint is no longer named
                                 // here, only in the log. The diagnostic half survives ("Request
@@ -536,7 +529,7 @@ internal fun CrashReportDialog(
                                 // `request` nor `timeout` marks a secret), which keeps this
                                 // narrower than a blunt redaction. A blank message renders
                                 // "[no message]" where maskUriParams gave "[empty]".
-                                LogSanitizer.sanitizeExceptionMessage(result.message)
+                                result.message
                             }
                         }
                     }
@@ -607,6 +600,11 @@ internal fun CrashReportDialog(
                                 includeLogs = includeLogs,
                             ).also { submitResult = it }
                         } catch (e: Exception) {
+                            BossLogger.forComponent("CrashReportDialog").error(
+                                LogCategory.SYSTEM,
+                                "Crash report submission threw",
+                                error = e,
+                            )
                             submitResult =
                                 CrashReportService.SubmitResult.Error(
                                     "Failed to submit crash report: ${e.message ?: e.javaClass.simpleName}",
