@@ -25,31 +25,37 @@ internal class HtmlFileSettingsStore(
             encodeDefaults = true
         }
 
-    suspend fun awaitSettings(): HtmlFileSettings = withContext(Dispatchers.IO) {
-        mutex.withLock {
-            loadLocked()
-            state.value
-        }
-    }
-
-    suspend fun update(settings: HtmlFileSettings? = null) = withContext(Dispatchers.IO) {
-        mutex.withLock {
-            loadLocked()
-            if (settings != null) state.value = settings
-            try {
-                file.parentFile?.mkdirs()
-                file.writeText(json.encodeToString(HtmlFileSettings.serializer(), state.value))
-            } catch (e: IOException) {
-                onFailure(e)
+    suspend fun awaitSettings(): HtmlFileSettings =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                loadLocked()
+                state.value
             }
         }
-    }
+
+    suspend fun update(settings: HtmlFileSettings? = null) =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                loadLocked()
+                if (settings != null) state.value = settings
+                try {
+                    file.parentFile?.mkdirs()
+                    file.writeText(json.encodeToString(HtmlFileSettings.serializer(), state.value))
+                } catch (e: IOException) {
+                    onFailure(e)
+                } catch (e: SecurityException) {
+                    onFailure(e)
+                }
+            }
+        }
 
     private fun loadLocked() {
         if (loaded) return
         try {
             if (file.exists()) state.value = json.decodeFromString<HtmlFileSettings>(file.readText())
         } catch (e: IOException) {
+            onFailure(e)
+        } catch (e: SecurityException) {
             onFailure(e)
         } catch (e: IllegalArgumentException) {
             onFailure(e)

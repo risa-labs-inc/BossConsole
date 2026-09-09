@@ -213,10 +213,14 @@ private fun updatesEntries() =
         setting("Include Pre-release Versions", "Update Settings", "beta", "alpha", "rc")
     }
 
-private fun EntryScope.htmlFileEntries() {
+private fun EntryScope.fileAndLinkEntries() {
     group("HTML Files")
     setting("Open HTML files with", "HTML Files", "html", "htm", "webpage", "code editor")
     setting("Reset HTML File Behavior", "HTML Files")
+    group("Terminal Links")
+    setting("Open links with", "Terminal Links", "terminal link", "click", "url handler")
+    setting("Target panel", "Terminal Links")
+    setting("Reset Link Behavior", "Terminal Links")
 }
 
 private fun browserEntries() =
@@ -249,11 +253,7 @@ private fun browserEntries() =
         group("User Agent")
         setting("Browser Identity", "User Agent", "user agent", "ua", "spoof")
         setting("Custom User Agent String", "User Agent", "ua string")
-        htmlFileEntries()
-        group("Terminal Links")
-        setting("Open links with", "Terminal Links", "terminal link", "click", "url handler")
-        setting("Target panel", "Terminal Links")
-        setting("Reset Link Behavior", "Terminal Links")
+        fileAndLinkEntries()
         group("Secret Manager")
         setting(
             "Suggest Strong Passwords",

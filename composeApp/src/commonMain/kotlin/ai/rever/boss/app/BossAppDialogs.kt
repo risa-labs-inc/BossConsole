@@ -825,16 +825,30 @@ internal fun BossAppDialogs(state: BossAppState) {
                 onDismiss = { state.pendingHtmlFileOpen = null },
                 onOpenChoice = { mode, rememberChoice ->
                     coroutineScope.launch {
-                        if (rememberChoice) {
-                            HtmlFileSettingsManager.setOpenMode(mode)
+                        try {
+                            if (rememberChoice) {
+                                HtmlFileSettingsManager.setOpenMode(mode)
+                            }
+                            when (mode) {
+                                HtmlFileOpenMode.EDITOR -> {
+                                    splitViewState.openFileInEditorTab(request.filePath, request.fileName)
+                                }
+
+                                HtmlFileOpenMode.BROWSER -> {
+                                    splitViewState.openFileInBrowserTab(request.filePath, request.fileName)
+                                }
+
+                                HtmlFileOpenMode.ALWAYS_ASK -> {
+                                    Unit
+                                }
+                            }
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            logger.error(LogCategory.FILE, "Unable to open HTML file", error = e)
+                        } finally {
+                            state.pendingHtmlFileOpen = null
                         }
-                        when (mode) {
-                            HtmlFileOpenMode.EDITOR, HtmlFileOpenMode.ALWAYS_ASK ->
-                                splitViewState.openFileInEditorTab(request.filePath, request.fileName)
-                            HtmlFileOpenMode.BROWSER ->
-                                splitViewState.openFileInBrowserTab(request.filePath, request.fileName)
-                        }
-                        state.pendingHtmlFileOpen = null
                     }
                 },
             )

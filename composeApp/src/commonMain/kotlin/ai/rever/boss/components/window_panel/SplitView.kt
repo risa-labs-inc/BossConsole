@@ -559,7 +559,14 @@ class SplitViewState(
     fun openFileInActivePanel(
         filePath: String,
         fileName: String,
+        line: Int = 0,
     ) {
+        // A source location (search result / go-to-definition) is explicit editor intent.
+        if (line > 0) {
+            openFileInEditorTab(filePath, fileName)
+            return
+        }
+
         // Route browser-renderable files (images, PDFs) to the browser tab
         if (shouldOpenInBrowser(fileName)) {
             openUrlInActivePanel(toFileUrl(filePath), fileName)

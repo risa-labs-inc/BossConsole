@@ -84,7 +84,7 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
         FileEventBus.fileOpenEvents
             .filter { event -> event.sourceWindowId == windowId }
             .onEach { event ->
-                splitViewState.openFileInActivePanel(event.filePath, event.fileName)
+                splitViewState.openFileInActivePanel(event.filePath, event.fileName, event.line)
                 // Emit navigation target for cursor positioning (PSI navigation)
                 // Issue #506: Pass windowId for multi-window filtering
                 if (event.line > 0) {
@@ -362,10 +362,14 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
             // Await persisted preferences even on the first open after startup. Re-read for
             // each queued file so Remember my choice also applies to the remaining batch.
             when (HtmlFileSettingsManager.awaitSettings().openMode) {
-                HtmlFileOpenMode.EDITOR ->
+                HtmlFileOpenMode.EDITOR -> {
                     splitViewState.openFileInEditorTab(event.filePath, event.fileName)
-                HtmlFileOpenMode.BROWSER ->
+                }
+
+                HtmlFileOpenMode.BROWSER -> {
                     splitViewState.openFileInBrowserTab(event.filePath, event.fileName)
+                }
+
                 HtmlFileOpenMode.ALWAYS_ASK -> {
                     state.pendingHtmlFileOpen = event
                     snapshotFlow { state.pendingHtmlFileOpen }.first { it == null }
@@ -941,7 +945,7 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                 }
             val isProcessingURLs = URLHandlerService.isProcessingURLs()
             val isProcessingTerminals = TerminalHandlerService.isProcessingTerminals()
-            val isProcessingFiles = FileHandlerService.isProcessingFiles()
+            val isProcessingFiles = FileHandlerService.isProcessingFiles() || splitViewState.htmlFileOpens.hasPending
 
             data class ProcessingState(
                 val totalTabs: Int,

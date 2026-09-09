@@ -13,9 +13,10 @@ import kotlinx.coroutines.launch
 /** Desktop persistence. Routing waits for loading; UI can observe defaults immediately. */
 actual object HtmlFileSettingsManager {
     private val logger = BossLogger.forComponent("HtmlFileSettingsManager")
-    private val store = HtmlFileSettingsStore(BossDirectories.resolve("html-file-settings.json")) { error ->
-        logger.warn(LogCategory.UI, "Unable to read or save HTML file settings", error = error)
-    }
+    private val store =
+        HtmlFileSettingsStore(BossDirectories.resolve("html-file-settings.json")) { error ->
+            logger.warn(LogCategory.UI, "Unable to read or save HTML file settings", error = error)
+        }
     actual val currentSettings = store.currentSettings
 
     init {
