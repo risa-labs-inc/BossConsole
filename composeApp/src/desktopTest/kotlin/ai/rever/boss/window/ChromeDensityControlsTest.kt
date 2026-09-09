@@ -14,10 +14,24 @@ import kotlin.test.assertTrue
 class ChromeDensityControlsTest {
     @Test
     fun `screen defaults preserve the lean rails and the status bar`() {
-        val defaults = WindowAppearanceSettingsManager.getDefaultSettings()
-        assertEquals(false, defaults.showLeftStrip)
-        assertEquals(false, defaults.showRightStrip)
-        assertEquals(true, defaults.showBottomBar)
+        for (height in listOf(null, 956, 1000, 1440)) {
+            val defaults = defaultWindowAppearanceSettings(isMacOs = true, screenHeightDp = height)
+            assertEquals(false, defaults.showLeftStrip)
+            assertEquals(false, defaults.showRightStrip)
+            assertEquals(true, defaults.showBottomBar)
+        }
+    }
+
+    @Test
+    fun `read failure recovery does not apply the fresh install screen profile`() {
+        for (isMacOs in listOf(false, true)) {
+            val recovery = defaultWindowAppearanceSettings(isMacOs = isMacOs)
+            val fresh = defaultWindowAppearanceSettings(isMacOs = isMacOs, screenHeightDp = 956)
+            assertEquals(ChromeDensity.COMFORTABLE, recovery.density)
+            assertEquals(ChromeDensity.COMPACT, fresh.density)
+            assertEquals(isMacOs, recovery.showTitleBar)
+            assertEquals(recovery.copy(density = ChromeDensity.COMPACT), fresh)
+        }
     }
 
     @Test
@@ -53,7 +67,7 @@ class ChromeDensityControlsTest {
     }
 
     @Test
-    fun `every preset exposes a global density shortcut without collisions`() {
+    fun `density shortcut is assignable everywhere but opt-in for editor presets`() {
         val presets =
             listOf(
                 KeymapPresets.getBOSSDefault(),
@@ -61,10 +75,12 @@ class ChromeDensityControlsTest {
                 KeymapPresets.getIntelliJPreset(),
                 KeymapPresets.getEmacsPreset(),
             )
-        for (preset in presets) {
+        for ((index, preset) in presets.withIndex()) {
             val binding = assertNotNull(preset.getBinding(KeymapActions.CHROME_DENSITY_CYCLE))
             assertEquals(ShortcutContext.GLOBAL, binding.context)
-            assertTrue(KeymapValidator.validate(preset).isEmpty(), KeymapValidator.validate(preset).toString())
+            assertEquals(index == 0 || index == 3, binding.enabled)
+            val conflicts = KeymapValidator.validate(preset)
+            assertTrue(conflicts.isEmpty(), conflicts.toString())
         }
     }
 }

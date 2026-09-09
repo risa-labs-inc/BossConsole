@@ -552,6 +552,8 @@ object KeymapPresets {
                 KeyBinding(
                     actionId = KeymapActions.CHROME_DENSITY_CYCLE,
                     key = "D",
+                    // Opt-in: leave familiar editor/debug chords to the focused plugin.
+                    enabled = false,
                     modifiers = listOf("Cmd", "Shift"),
                     context = ShortcutContext.GLOBAL,
                     category = KeymapActions.Categories.VIEW,
@@ -843,6 +845,8 @@ object KeymapPresets {
                 KeyBinding(
                     actionId = KeymapActions.CHROME_DENSITY_CYCLE,
                     key = "D",
+                    // Opt-in: leave familiar editor/debug chords to the focused plugin.
+                    enabled = false,
                     modifiers = listOf("Cmd", "Shift"),
                     context = ShortcutContext.GLOBAL,
                     category = KeymapActions.Categories.VIEW,

@@ -94,7 +94,8 @@ actual object WindowAppearanceSettingsManager {
             }
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Failed to load settings", error = e)
-            _currentSettings.value = getDefaultSettings()
+            // An unreadable existing file is not a fresh install. Do not apply a screen profile.
+            _currentSettings.value = defaultWindowAppearanceSettings(isMacOs = SystemUtils.isMacOS)
         }
     }
 
@@ -130,10 +131,9 @@ actual object WindowAppearanceSettingsManager {
         //
         // Stamped current: a fresh file is already on this build's defaults and must not be
         // migrated on the next launch as though it were an older one.
-        return WindowAppearanceSettings(
-            showTitleBar = SystemUtils.isMacOS,
-            density = defaultDensityFor(primaryScreenHeightDp()),
-            settingsVersion = WindowAppearanceSettings.CURRENT_SETTINGS_VERSION,
+        return defaultWindowAppearanceSettings(
+            isMacOs = SystemUtils.isMacOS,
+            screenHeightDp = primaryScreenHeightDp(),
         )
     }
 
@@ -165,8 +165,7 @@ private const val SMALL_SCREEN_HEIGHT_THRESHOLD_DP = 1000
  * The density a fresh install should start on, given its primary screen's logical height in dp.
  *
  * A pure function, not a method on the manager, so it is directly testable without touching AWT -
- * [WindowAppearanceSettingsManager.getDefaultSettings] is the only caller, and it is the one that
- * reads [Toolkit]. `null` (the height could not be read) is treated as "not small": the manager
+ * [defaultWindowAppearanceSettings] applies it; only fresh-install defaults read [Toolkit]. `null` (the height could not be read) is treated as "not small": the manager
  * must not crash or misconfigure a fresh install because a display could not be measured.
  */
 internal fun defaultDensityFor(screenHeightDp: Int?): ChromeDensity =
@@ -175,3 +174,14 @@ internal fun defaultDensityFor(screenHeightDp: Int?): ChromeDensity =
     } else {
         ChromeDensity.COMFORTABLE
     }
+
+/** Only fresh installs supply a screen height; read-failure recovery keeps Comfortable. */
+internal fun defaultWindowAppearanceSettings(
+    isMacOs: Boolean,
+    screenHeightDp: Int? = null,
+): WindowAppearanceSettings =
+    WindowAppearanceSettings(
+        showTitleBar = isMacOs,
+        density = defaultDensityFor(screenHeightDp),
+        settingsVersion = WindowAppearanceSettings.CURRENT_SETTINGS_VERSION,
+    )
