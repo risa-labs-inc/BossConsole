@@ -48,7 +48,7 @@ fun String.extractFileName(): String = this.substringAfterLast('/').substringAft
  *
  * Implementation: Normalizes to forward slashes, then extracts the parent folder name,
  * ignoring repeated separators before the filename.
- * A bare filename is returned unchanged; bare-filename handling is a separate fix.
+ * Returns an empty string for a filename without a parent path.
  *
  * Root-level POSIX files have an empty parent label; Windows root-level files return
  * the drive prefix (for example, "C:"). UNC files return the containing folder/share
@@ -56,6 +56,6 @@ fun String.extractFileName(): String = this.substringAfterLast('/').substringAft
  */
 fun String.extractParentName(): String {
     val normalized = this.replace('\\', '/')
-    val parentPath = normalized.substringBeforeLast('/').trimEnd('/')
+    val parentPath = normalized.substringBeforeLast('/', missingDelimiterValue = "").trimEnd('/')
     return parentPath.substringAfterLast('/')
 }
