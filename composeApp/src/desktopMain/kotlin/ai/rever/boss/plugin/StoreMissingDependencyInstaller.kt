@@ -66,6 +66,7 @@ class StoreMissingDependencyInstaller(
     override suspend fun displayNameFor(pluginId: String): String? {
         val lookup = runCatching { repository()?.getPlugin(pluginId) }.getOrElse { Result.failure(it) }
         lookup?.exceptionOrNull()?.let { error ->
+            if (error is CancellationException) throw error
             logger.warn(
                 LogCategory.SYSTEM,
                 "Could not read a dependency's display name from the store; falling back to its id",
@@ -132,11 +133,21 @@ class StoreMissingDependencyInstaller(
         return DETACHED_PLANS.run(
             key = acceptedOrder,
             onDetachedFailure = { error ->
-                logger.error(LogCategory.SYSTEM, "Detached dependency plan failed: $acceptedOrder", error = error)
+                logger.error(
+                    LogCategory.SYSTEM,
+                    "Detached dependency plan failed",
+                    mapOf("plan" to acceptedOrder.joinToString(",")),
+                    error = error,
+                )
             },
         ) {
             super.installAll(acceptedOrder).onFailure { error ->
-                logger.warn(LogCategory.SYSTEM, "Dependency install plan failed: $acceptedOrder", error = error)
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Dependency install plan failed",
+                    mapOf("plan" to acceptedOrder.joinToString(",")),
+                    error = error,
+                )
             }
         }
     }
@@ -408,6 +419,12 @@ class StoreMissingDependencyInstaller(
          */
         private val INSTALL_SCOPE = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
+        // Separate jobs keyed by the full consent list avoid self-joining a per-plugin job
+        // and never coalesce two different consent plans for the same root.
+        // Different consent plans may overlap: a single-plugin fallback in another window can
+        // load the root before this plan reaches it. Ordering is guaranteed within each plan.
+        private val DETACHED_PLANS = KeyedDetachedJobs<List<String>, Result<Unit>>(INSTALL_SCOPE)
+
         /**
          * Detaches installs from the window that asked and coalesces them per plugin id.
          *
@@ -418,12 +435,6 @@ class StoreMissingDependencyInstaller(
          * first job rather than racing it - and so loads into the manager that started it,
          * which is the multi-window limitation already documented on `MissingDependencyPrompt`.
          */
-        // Separate jobs keyed by the full consent list avoid self-joining a per-plugin job
-        // and never coalesce two different consent plans for the same root.
-        // Different consent plans may overlap: a single-plugin fallback in another window can
-        // load the root before this plan reaches it. Ordering is guaranteed within each plan.
-        private val DETACHED_PLANS = KeyedDetachedJobs<List<String>, Result<Unit>>(INSTALL_SCOPE)
-
         private val DETACHED_INSTALLS = KeyedDetachedJobs<String, Result<Unit>>(INSTALL_SCOPE)
     }
 }

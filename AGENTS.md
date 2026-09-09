@@ -207,9 +207,13 @@ about is always in the plan and always last, even if it turns out to be present,
 Install guard already answers that and an empty plan has no sensible reading. A store that cannot
 describe a plugin contributes null, and that plugin is attempted but not expanded. If it cannot
 install, the plan stops before its dependents, including the root; metadata failure is not proof
-that an unknown dependency is optional. The entire accepted plan is detached from the window. And `planFor` has a default of "the plugin alone" on
+that an unknown dependency is optional. Finally, `planFor` has a default of "the plugin alone" on
 the interface, because `PluginLoadGateRecovery` and `PluginStoreVersionBridge` install a plugin the
 user named and were never shown a closure to consent to; only the dialog asks for a plan.
+
+The entire accepted plan is detached from the window, so closing the observing window does not
+abandon later dependencies or the root. Different consent lists can run concurrently; ordering is
+guaranteed within each plan, not across windows that accepted different lists.
 
 Deliberately out of scope, so nobody assumes more than exists:
 
