@@ -58,6 +58,7 @@ internal fun closeContextMenuQuietly(tell: ShowContextMenuCallback.Action) {
 /** A newly created browser has no owner yet; a failed setup must release it before propagating. */
 internal fun installBrowserChromeOrClose(
     browser: Browser,
+    releaseOwnership: () -> Unit = {},
     install: (Browser) -> Unit = ::installDefaultBrowserChrome,
 ) {
     var installed = false
@@ -65,6 +66,11 @@ internal fun installBrowserChromeOrClose(
         install(browser)
         installed = true
     } finally {
-        if (!installed) runCatching { browser.close() }
+        if (!installed) {
+            runCatching { browser.close() }
+            // A dead native browser must not prevent releasing its profile fence. Neither
+            // cleanup is allowed to replace the setup failure (including a fatal Error).
+            runCatching { releaseOwnership() }
+        }
     }
 }

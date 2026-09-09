@@ -574,7 +574,14 @@ object BrowserServiceImpl : BrowserService {
             }
 
             // Chrome setup is not an engine creation failure and must not trigger wedge recovery.
-            installBrowserChromeOrClose(browser)
+            installBrowserChromeOrClose(
+                browser,
+                releaseOwnership = {
+                    val failedProfile = managed
+                    managed = null // Do not release twice if the outer Exception handler runs.
+                    failedProfile?.let(::releaseManaged)
+                },
+            )
 
             // Enable swipe navigation for touchscreen devices.
             //
