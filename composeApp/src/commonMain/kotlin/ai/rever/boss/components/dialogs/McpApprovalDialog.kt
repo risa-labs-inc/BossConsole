@@ -60,7 +60,7 @@ internal fun McpApprovalDialog(
         onDismissRequest = onDismiss,
         properties =
             DialogProperties(
-                dismissOnClickOutside = true,
+                dismissOnClickOutside = false,
                 dismissOnBackPress = true,
             ),
     ) {
@@ -147,7 +147,7 @@ internal fun McpApprovalDialog(
                 // Guidance Notice
                 Text(
                     text =
-                        "An AI agent is requesting permission to perform this action." +
+                        "A tool caller is requesting permission to perform this action." +
                             " Review carefully before approving.",
                     fontSize = 12.sp,
                     color = colors.textSecondary,

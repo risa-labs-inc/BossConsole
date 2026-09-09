@@ -1024,3 +1024,17 @@ the whole `TabTypeId`, whose equality includes `pluginId` and `defaultOrder`.
 - [Windows Deep Link](docs/WINDOWS_DEEP_LINK_SETUP.md) - Windows protocol handler setup
 - [Release Rebuild](docs/RELEASE_REBUILD_GUIDE.md) - Re-running release builds
 
+
+
+### MCP runtime approval scope (#336)
+
+The host gates calls routed through `McpToolRegistry.invoke`; the terminal-tab MCP
+bridge calls this method (`McpDynamicTools.registerOne`). This is an operator
+consent layer for tool callers, not isolation from installed JVM plugin code.
+Public API handlers remain accessible to trusted plugins; keep API pin 1.0.88.
+Risk names must be reviewed alongside plugin tool additions. Unknown names remain
+LOW in this proposal, so this is not a complete policy for arbitrary plugins.
+Read-only results can contain sensitive data. Shell-pattern matching only changes
+prompt wording; HIGH and CRITICAL both require approval. Prompt arguments are
+withheld, consent is per call, and each delivered request belongs to one window.
+Do not coalesce calls solely by tool/risk: their actual arguments may differ.

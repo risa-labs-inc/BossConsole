@@ -55,13 +55,23 @@ class McpToolSandboxTest {
     // ---------------------------------------------------------------------
 
     @Test
+    fun `infrastructure creates and credential mutations require approval`() {
+        val evaluator = DefaultMcpRiskEvaluator()
+        for (name in listOf("docker_build", "docker_compose_up", "k8s_apply", "helm_install", "secret_delete")) {
+            val assessment = evaluator.evaluateRisk(name, McpToolArgs(emptyMap()))
+            assertTrue(assessment.level == McpRiskLevel.HIGH || assessment.level == McpRiskLevel.CRITICAL)
+        }
+    }
+
+    @Test
     fun `risk classification is deterministic for read-only tools`() {
         val evaluator = DefaultMcpRiskEvaluator()
         val emptyArgs = McpToolArgs(emptyMap(), "{}")
 
         val assessment = evaluator.evaluateRisk("codebase_read", emptyArgs)
         assertEquals(McpRiskLevel.LOW, assessment.level)
-        assertTrue(assessment.reason.contains("Safe read-only"))
+        assertTrue(assessment.reason.contains("Read-only"))
+        assertTrue(assessment.reason.contains("sensitive"))
     }
 
     @Test

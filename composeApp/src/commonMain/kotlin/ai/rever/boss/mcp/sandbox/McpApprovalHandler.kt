@@ -5,8 +5,8 @@ import ai.rever.boss.plugin.api.McpToolArgs
 /**
  * Abstraction for requesting human approval for an MCP tool invocation.
  *
- * In Milestone 1, no interactive UI handler is attached by default.
- * In Milestone 2, a Compose UI approval dialog implementation will implement this interface.
+ * The default event bus routes requests to a Compose approval dialog.
+ * Tests and embedding hosts can supply a different handler.
  */
 fun interface McpApprovalHandler {
     suspend fun requestApproval(

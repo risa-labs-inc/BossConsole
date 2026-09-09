@@ -45,11 +45,11 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 )
             }
 
-            // Destructive Docker infrastructure operations
+            // Docker infrastructure mutations
             normalizedName in DOCKER_DESTRUCTIVE_TOOLS -> {
                 McpRiskAssessment(
                     level = McpRiskLevel.CRITICAL,
-                    reason = "Destructive Docker infrastructure operation '$toolName'",
+                    reason = "Docker infrastructure mutation '$toolName'",
                 )
             }
 
@@ -57,7 +57,7 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
             normalizedName in K8S_DESTRUCTIVE_TOOLS -> {
                 McpRiskAssessment(
                     level = McpRiskLevel.CRITICAL,
-                    reason = "Destructive Kubernetes/Helm operation '$toolName'",
+                    reason = "Kubernetes/Helm mutation '$toolName'",
                 )
             }
 
@@ -73,7 +73,7 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
             normalizedName in READ_ONLY_TOOLS -> {
                 McpRiskAssessment(
                     level = McpRiskLevel.LOW,
-                    reason = "Safe read-only tool '$toolName'",
+                    reason = "Read-only tool (returned data may be sensitive) '$toolName'",
                 )
             }
 
@@ -111,6 +111,7 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
         }
     }
 
+    // Wording heuristic only: both HIGH and CRITICAL must require approval. This is not a shell parser.
     private fun isDestructiveShellCommand(cmd: String): Boolean {
         if (cmd.isEmpty()) return false
         return cmd.contains("rm -rf") ||
@@ -137,6 +138,8 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
         private val SECRET_MANAGEMENT_TOOLS =
             setOf(
                 "secret_create",
+                "secret_update",
+                "secret_delete",
                 "secret_search",
                 "secrets_list",
             )
@@ -146,6 +149,12 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 "docker_rm",
                 "docker_stop",
                 "docker_compose_down",
+                "docker_compose_up",
+                "docker_build",
+                "docker_start",
+                "docker_restart",
+                "docker_run",
+                "docker_exec",
             )
 
         private val K8S_DESTRUCTIVE_TOOLS =
@@ -153,6 +162,13 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 "k8s_delete",
                 "helm_uninstall",
                 "helm_rollback",
+                "helm_install",
+                "helm_upgrade",
+                "k8s_apply",
+                "k8s_scale",
+                "k8s_rollout_restart",
+                "k8s_use_context",
+                "k8s_port_forward_stop",
             )
 
         private val FILE_WRITE_TOOLS =
