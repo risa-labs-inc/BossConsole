@@ -144,9 +144,10 @@ actual object WindowAppearanceSettingsManager {
      * which must not crash a fresh install's very first launch - `runCatching` and a null fall
      * through [defaultDensityFor] to [ChromeDensity.COMFORTABLE], the same as it always defaulted.
      */
-    private fun primaryScreenHeightDp(): Int? = runCatching {
-        Toolkit.getDefaultToolkit().screenSize.height
-    }.getOrNull()
+    private fun primaryScreenHeightDp(): Int? =
+        runCatching {
+            Toolkit.getDefaultToolkit().screenSize.height
+        }.getOrNull()
 }
 
 /**
