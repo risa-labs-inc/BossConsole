@@ -39,9 +39,8 @@ import kotlin.test.assertTrue
  *
  * Public JVM classes, constructors, methods and fields are compared, including nested types,
  * default-argument bridges and Compose stability fields referenced by compiled Kotlin callers.
- * Module-mangled internal methods and synthetic access$ helpers for private implementation state
- * are excluded. Generic signatures, Kotlin source compatibility and mixing private implementation
- * classes from different builds are outside this public JVM linkage check.
+ * Only module-mangled internal methods are excluded. Generic signatures and Kotlin source-level
+ * compatibility are outside this erased JVM linkage check.
  */
 class ApiPackageDivergenceTest {
     private val apiJar: File by lazy {

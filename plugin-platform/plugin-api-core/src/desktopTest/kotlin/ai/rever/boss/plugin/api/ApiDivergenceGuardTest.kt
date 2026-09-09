@@ -16,12 +16,12 @@ class ApiDivergenceGuardTest {
     }
 
     @Test
-    fun `private state accessors are excluded but explicit similarly named methods remain`() {
-        val klass = WithPrivateState::class.java
-        assertTrue(klass.methods.any { it.isSynthetic && it.name.startsWith("access\$") })
-        val members = ApiSurface.publicMemberSignatures(klass)
-        assertFalse(members.any { "access\$getSecret" in it })
-        assertTrue(members.any { "access\$explicit(" in it })
+    fun `private lambda accessors are not plugin contract members`() {
+        val dialog = Class.forName("ai.rever.boss.plugin.ui.BossDialogKt")
+        val accessors = dialog.methods.filter { it.isSynthetic && "\$lambda\$" in it.name }
+        assertTrue(accessors.isNotEmpty(), "Fixture must contain compiler-generated lambda accessors")
+        val members = ApiSurface.publicMemberSignatures(dialog)
+        assertFalse(members.any { "access\$ScrimmedModalContent\$lambda\$" in it })
     }
 
     @Test
@@ -99,17 +99,6 @@ class ApiDivergenceGuardTest {
         val value: String,
     ) {
         fun call(value: String = "default") = value
-    }
-
-    class WithPrivateState {
-        private val secret = "private"
-
-        inner class Reader {
-            fun read() = secret
-        }
-
-        @JvmName("access\$explicit")
-        fun explicitEntryPoint() = Unit
     }
 
     class WithoutDefaults {

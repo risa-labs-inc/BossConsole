@@ -132,6 +132,43 @@ internal fun canonicalKeyName(keyName: String): String {
 }
 
 /**
+ * Every key the keymap vocabulary recognises, in canonical form.
+ *
+ * This is the set of keys BOSS can actually dispatch: exactly what
+ * `AWTKeyboardInterceptor.getKeyName` names, folded through [canonicalKeyName], which is also
+ * every key `KeymapPresets` binds and every key the capture dialog can store.
+ * `ShortcutTesterKeyNamesTest` checks it against that table in both directions: nothing here is
+ * unrecognised by the tester, and nothing here is a key the interceptor cannot name. What it does
+ * NOT catch is a key added to the interceptor's table alone, because the test drives that table
+ * through a hand-written list of AWT key codes rather than reading the `when` itself. Adding a
+ * key there means adding it here by hand.
+ *
+ * It exists because the Shortcuts screen's tester had its own hand-written copy of this list -
+ * the fourth in the codebase - and it was wrong. It omitted every function key and Home, End,
+ * PageUp and PageDown, so a shortcut rebound onto F5 was reported as "Unknown key name 'F5' -
+ * won't match user input" while working perfectly.
+ *
+ * Note what this is NOT: proof that an absent name cannot match. [canonicalKeyName] folds an
+ * unknown name onto itself, and the keyboard has keys outside the interceptor's table (F13 and
+ * up, the numeric keypad) that `KeyEvent.getKeyText` still names. So absence is a reason to say
+ * "unrecognised", never a reason to report a failure.
+ */
+internal val KNOWN_KEY_NAMES: Set<String> =
+    buildSet {
+        for (letter in 'a'..'z') add(letter.toString())
+        addAll(listOf("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"))
+        for (n in 1..12) add("f$n")
+        addAll(listOf("enter", "escape", "space", "tab", "backspace", "delete"))
+        addAll(listOf("directionleft", "directionright", "directionup", "directiondown"))
+        addAll(listOf("home", "end", "pageup", "pagedown"))
+        addAll(listOf("minus", "equals", "openbracket", "closebracket", "slash", "backslash"))
+        addAll(listOf("semicolon", "apostrophe", "comma", "period", "grave"))
+    }
+
+/** Whether [keyName], in any of its spellings, names a key this build can dispatch. */
+internal fun isKnownKeyName(keyName: String): Boolean = canonicalKeyName(keyName) in KNOWN_KEY_NAMES
+
+/**
  * Every spelling that is not already its own canonical name, keyed lowercase.
  *
  * A table rather than a `when` so adding a spelling is a one-line edit and the function stays

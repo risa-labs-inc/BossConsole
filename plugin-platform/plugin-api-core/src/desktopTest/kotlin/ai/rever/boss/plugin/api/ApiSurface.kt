@@ -51,11 +51,11 @@ internal object ApiSurface {
     ): Set<String> {
         val methods =
             klass.methods
+                // Private lambda accessors are compiler implementation details; their numeric
+                // suffix changes when the enclosing implementation changes. Keep other synthetic
+                // bridges (including public inline/default-argument entry points) in the contract.
+                .filterNot { it.isSynthetic && it.name.startsWith("access\$") && "\$lambda\$" in it.name }
                 .filter { member -> internalSuffixes.none { member.name.endsWith(it) } }
-                // Kotlin emits public synthetic access$ helpers for private implementation state.
-                // Their names change with local lambda numbering; they are not plugin entry points.
-                // Do not exclude all synthetic methods: plugins call default-argument bridges.
-                .filterNot { it.isSynthetic && it.name.startsWith("access\$") }
                 .map { m ->
                     val parameters = m.parameterTypes.joinToString(",") { it.name }
                     "${staticKind(m.modifiers)} fun ${m.name}($parameters):${m.returnType.name}"
