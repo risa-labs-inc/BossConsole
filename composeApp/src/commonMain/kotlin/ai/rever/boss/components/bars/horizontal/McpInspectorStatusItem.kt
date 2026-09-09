@@ -44,9 +44,9 @@ fun McpInspectorStatusItem() {
 
     val label =
         when {
-            stats.activeInFlight > 0 -> "⚡ MCP: ${stats.activeInFlight} running"
-            stats.totalCalls > 0 -> "⚡ MCP: ${stats.totalCalls} calls"
             globalSafeMode -> "⚡ MCP: Safe Mode"
+            stats.activeInFlight > 0 -> "⚡ MCP: ${stats.activeInFlight} running"
+            stats.totalCalls > 0 -> "⚡ MCP: ${stats.totalCalls} shown"
             else -> "⚡ MCP: Idle"
         }
 

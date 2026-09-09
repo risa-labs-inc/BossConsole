@@ -31,3 +31,15 @@ need explicit integration before they ship together; this workbench does not ful
 Local automated validation covers recording, bounded history, approvals, edited arguments, denial,
 timeout, cancellation cleanup, revocation, secret-output omission and diagnostic access. Manual checks
 remain for banner/dialog placement over native browser surfaces, narrow windows and light/dark themes.
+
+Approval prompts remain visible when focus mode hides the bottom bar; Inspect opens the workbench
+from the prompt. Replay reserves its invocation before dispatch so rapid double-clicks cannot run it
+twice. Clearing history retains active calls until they complete. Queue overflow is recorded as a
+blocked call. At most 16 approvals may wait; a flood can occupy those slots until cancellation,
+response or timeout. Input nesting is bounded before parsing.
+
+The MCP registry and its safe mode/history are process-wide because the local MCP bridge serves all
+windows through one registry. Any local operator window may answer the same pending request; its
+deferred decision completes once. This does not isolate one connected agent from another: an agent
+with access to the admin-only diagnostic tools can read the shared, best-effort-redacted history.
+Desktop UI controls belong to the local operator, while the diagnostic MCP gate limits agent access.

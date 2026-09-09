@@ -74,13 +74,7 @@ object McpMissionControlToolProvider : McpToolProvider {
                     val records = McpTelemetryRecorder.records.value
                     val lastFailure =
                         records.firstOrNull { r ->
-                            r.status in
-                                setOf(
-                                    McpCallStatus.ERROR,
-                                    McpCallStatus.TIMEOUT,
-                                    McpCallStatus.DENIED,
-                                    McpCallStatus.BLOCKED,
-                                )
+                            r.status.isUnsuccessful
                         }
 
                     if (lastFailure == null) {
@@ -102,6 +96,10 @@ object McpMissionControlToolProvider : McpToolProvider {
                             McpCallStatus.BLOCKED -> {
                                 "The tool is disabled or requires elevated permissions. " +
                                     "Ask the operator to enable '${lastFailure.toolName}' in Toolbox -> MCP."
+                            }
+
+                            McpCallStatus.CANCELLED -> {
+                                "The caller cancelled this request. Confirm intent before retrying."
                             }
 
                             McpCallStatus.ERROR -> {

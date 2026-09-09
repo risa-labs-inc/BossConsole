@@ -3,6 +3,7 @@ package ai.rever.boss.components.dialogs
 import ai.rever.boss.mcp.ApprovalDecision
 import ai.rever.boss.mcp.McpCallRecord
 import ai.rever.boss.mcp.McpCallStatus
+import ai.rever.boss.mcp.McpReplayRunner
 import ai.rever.boss.mcp.McpTelemetryRecorder
 import ai.rever.boss.mcp.McpToolRegistryImpl
 import ai.rever.boss.plugin.ui.BossDialog
@@ -62,9 +63,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
-import kotlinx.coroutines.launch
-
-private val errorStatuses = setOf(McpCallStatus.ERROR, McpCallStatus.TIMEOUT, McpCallStatus.DENIED)
 
 private enum class FilterTab {
     ALL,
@@ -96,7 +94,8 @@ fun McpMissionControlDialog(onDismiss: () -> Unit) {
     var isReplayMode by remember { mutableStateOf(false) }
     var replayArgs by remember { mutableStateOf("") }
     var replayResult by remember { mutableStateOf<String?>(null) }
-    var isReplaying by remember { mutableStateOf(false) }
+    val replayRunner = remember(scope) { McpReplayRunner(scope) }
+    val isReplaying by replayRunner.running.collectAsState()
 
     val filteredRecords =
         remember(records, searchQuery, selectedFilter) {
@@ -111,7 +110,7 @@ fun McpMissionControlDialog(onDismiss: () -> Unit) {
                     when (selectedFilter) {
                         FilterTab.ALL -> true
                         FilterTab.PENDING -> r.status == McpCallStatus.AWAITING_APPROVAL
-                        FilterTab.ERRORS -> r.status in errorStatuses
+                        FilterTab.ERRORS -> r.status.isUnsuccessful
                         FilterTab.SUCCESS -> r.status == McpCallStatus.SUCCESS
                     }
                 matchesSearch && matchesFilter
@@ -218,17 +217,16 @@ fun McpMissionControlDialog(onDismiss: () -> Unit) {
                                 )
                                 isReplayMode = false
                             } else if (selectedRecord != null && !isReplaying) {
-                                scope.launch {
-                                    isReplaying = true
+                                val toolName = selectedRecord.toolName
+                                val arguments = replayArgs
+                                replayRunner.start {
                                     try {
-                                        val res = McpToolRegistryImpl.invoke(selectedRecord.toolName, replayArgs)
+                                        val res = McpToolRegistryImpl.invoke(toolName, arguments)
                                         replayResult = if (res.isError) "Replay failed" else "Replay completed"
                                     } catch (cancelled: kotlinx.coroutines.CancellationException) {
                                         throw cancelled
                                     } catch (t: Exception) {
                                         replayResult = "Replay failed: ${t::class.simpleName}"
-                                    } finally {
-                                        isReplaying = false
                                     }
                                 }
                             }

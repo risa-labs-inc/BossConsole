@@ -3,7 +3,7 @@ package ai.rever.boss.app
 import ai.rever.boss.components.bars.horizontal.BossBottomBar
 import ai.rever.boss.components.bars.horizontal.BossTitleBar
 import ai.rever.boss.components.bars.horizontal.BossTopBar
-import ai.rever.boss.components.bars.horizontal.McpApprovalBanner
+import ai.rever.boss.components.bars.horizontal.McpApprovalHost
 import ai.rever.boss.components.bars.isBarVisible
 import ai.rever.boss.components.bars.vertical.BossLeftSideBar
 import ai.rever.boss.components.bars.vertical.BossRightSideBar
@@ -872,6 +872,9 @@ internal fun BossAppScaffold(
                     }
                 }
 
+                // Approval is actionable independently of optional bottom-bar chrome.
+                McpApprovalHost()
+
                 // Bottom bar - hidden in focus mode with smooth expand/shrink animation
                 AnimatedVisibility(
                     visible = appearance.showBottomBar && reveal.showBottomBar,
@@ -889,10 +892,7 @@ internal fun BossAppScaffold(
                     Box(
                         modifier = Modifier.hoverable(interactionSource = reveal.bottomBarInteractionSource),
                     ) {
-                        Column {
-                            McpApprovalBanner()
-                            BossBottomBar(splitViewState.getActiveTabsComponent())
-                        }
+                        BossBottomBar(splitViewState.getActiveTabsComponent())
                     }
                 }
             }

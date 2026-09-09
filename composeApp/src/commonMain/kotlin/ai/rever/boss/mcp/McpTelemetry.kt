@@ -50,6 +50,15 @@ enum class McpCallStatus {
 
     /** Caller coroutine was cancelled. */
     CANCELLED,
+
+    ;
+
+    val isUnsuccessful: Boolean
+        get() =
+            when (this) {
+                ERROR, TIMEOUT, DENIED, BLOCKED, CANCELLED -> true
+                else -> false
+            }
 }
 
 /**
@@ -92,6 +101,7 @@ sealed interface ApprovalDecision {
 
     data class Denied(
         val reason: String = "Execution denied by operator",
+        val timedOut: Boolean = false,
     ) : ApprovalDecision
 }
 
@@ -123,6 +133,9 @@ object McpTelemetryRecorder {
         }
 
     /** Maximum records retained in memory. Oldest evicted first. */
+    const val MAX_PENDING_APPROVALS = 16
+    private const val MAX_ARGUMENT_DEPTH = 64
+
     const val MAX_RECORDS = 200
 
     /** Default approval timeout: 60 seconds. Fails closed on timeout. */
@@ -268,18 +281,21 @@ object McpTelemetryRecorder {
             )
 
         synchronized(lock) {
-            if (_pendingApprovals.value.size >= 16) {
-                return ApprovalDecision.Denied("Too many pending approval requests")
+            if (_pendingApprovals.value.size >= MAX_PENDING_APPROVALS) {
+                val reason = "Too many pending approval requests"
+                recordBlocked(callId, toolName, arguments, reason)
+                return ApprovalDecision.Denied(reason)
             }
             _pendingApprovals.update { it + request }
-            _records.value = (listOf(awaitingRecord) + _records.value).take(MAX_RECORDS)
+            val remainingRecords = _records.value.filterNot { it.callId == callId }
+            _records.value = (listOf(awaitingRecord) + remainingRecords).take(MAX_RECORDS)
             recomputeStats()
         }
 
         val decision =
             try {
                 withTimeoutOrNull(timeoutMs) { deferred.await() }
-                    ?: ApprovalDecision.Denied("Approval timed out after ${timeoutMs / 1000}s")
+                    ?: ApprovalDecision.Denied("Approval timed out after ${timeoutMs / 1000}s", timedOut = true)
             } catch (cancelled: CancellationException) {
                 recordCancelled(callId, System.currentTimeMillis() - request.timestampMs)
                 throw cancelled
@@ -312,8 +328,9 @@ object McpTelemetryRecorder {
 
                             is ApprovalDecision.Denied -> {
                                 r.copy(
-                                    status = McpCallStatus.DENIED,
-                                    errorMessage = "Approval denied by operator",
+                                    status = if (decision.timedOut) McpCallStatus.TIMEOUT else McpCallStatus.DENIED,
+                                    errorMessage =
+                                        if (decision.timedOut) "Approval timed out" else "Approval denied by operator",
                                     durationMs = System.currentTimeMillis() - r.startTimeEpochMs,
                                 )
                             }
@@ -452,7 +469,11 @@ object McpTelemetryRecorder {
      */
     fun clear() {
         synchronized(lock) {
-            _records.value = emptyList()
+            _records.value =
+                _records.value.filter {
+                    it.status == McpCallStatus.RUNNING || it.status == McpCallStatus.AWAITING_APPROVAL ||
+                        it.status == McpCallStatus.APPROVED
+                }
             recomputeStats()
         }
     }
@@ -469,7 +490,7 @@ object McpTelemetryRecorder {
         val snapshot = _records.value
         val total = snapshot.size.toLong()
         val success = snapshot.count { it.status == McpCallStatus.SUCCESS }.toLong()
-        val errors = snapshot.count { it.status == McpCallStatus.ERROR || it.status == McpCallStatus.TIMEOUT }.toLong()
+        val errors = snapshot.count { it.status.isUnsuccessful }.toLong()
         val inFlight = snapshot.count { it.status == McpCallStatus.RUNNING }
         val pending = _pendingApprovals.value.size
 
@@ -498,6 +519,7 @@ object McpTelemetryRecorder {
     @Suppress("TooGenericExceptionCaught", "ReturnCount") // Invalid or oversized JSON is omitted before publication.
     fun maskSecrets(rawJson: String): String {
         if (rawJson.length > MAX_PAYLOAD_CHARS) return "[Arguments omitted: too large]"
+        if (hasExcessiveNesting(rawJson)) return "[Arguments omitted: too deeply nested]"
         if (rawJson.isBlank()) return rawJson
         return try {
             val element = json.parseToJsonElement(rawJson)
@@ -568,9 +590,34 @@ object McpTelemetryRecorder {
     @Suppress("TooGenericExceptionCaught") // Reject invalid operator edits without dispatching a tool.
     fun canUseEditedArguments(arguments: String): Boolean =
         try {
-            json.parseToJsonElement(arguments) is JsonObject &&
+            arguments.length <= MAX_PAYLOAD_CHARS && !hasExcessiveNesting(arguments) &&
+                json.parseToJsonElement(arguments) is JsonObject &&
                 !arguments.contains("REDACTED") && !arguments.contains("[Arguments omitted:")
         } catch (_: Exception) {
             false
         }
+
+    /** Bound the parser itself, ignoring delimiters inside correctly escaped JSON strings. */
+    private fun hasExcessiveNesting(raw: String): Boolean {
+        var depth = 0
+        var quoted = false
+        var escaped = false
+        for (char in raw) {
+            if (quoted) {
+                when {
+                    escaped -> escaped = false
+                    char == '\\' -> escaped = true
+                    char == '"' -> quoted = false
+                }
+                continue
+            }
+            when (char) {
+                '"' -> quoted = true
+                '{', '[' -> depth++
+                '}', ']' -> depth--
+            }
+            if (depth > MAX_ARGUMENT_DEPTH) return true
+        }
+        return false
+    }
 }

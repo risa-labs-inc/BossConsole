@@ -31,6 +31,10 @@ class McpMissionControlTest {
 
     @BeforeTest
     fun setup() {
+        McpTelemetryRecorder.toolsRequiringApproval.value.forEach {
+            McpTelemetryRecorder.setToolRequiresApproval(it, false)
+        }
+        assertTrue(McpTelemetryRecorder.pendingApprovals.value.isEmpty())
         McpTelemetryRecorder.clear()
         McpTelemetryRecorder.setGlobalSafeMode(false)
     }
@@ -39,6 +43,10 @@ class McpMissionControlTest {
     fun cleanup() {
         tempFiles.forEach { it.parentFile?.deleteRecursively() }
         tempFiles.clear()
+        McpTelemetryRecorder.toolsRequiringApproval.value.forEach {
+            McpTelemetryRecorder.setToolRequiresApproval(it, false)
+        }
+        assertTrue(McpTelemetryRecorder.pendingApprovals.value.isEmpty())
         McpTelemetryRecorder.clear()
         McpTelemetryRecorder.setGlobalSafeMode(false)
     }
@@ -384,5 +392,97 @@ class McpMissionControlTest {
             core.registerProvider(McpMissionControlToolProvider)
             assertTrue(core.invoke("get_tool_history", "{}").isError)
             assertTrue(core.invoke("diagnose_last_failure", "{}").isError)
+        }
+
+    @Test
+    fun `deep JSON is omitted before recursive parsing and strings do not count as nesting`() {
+        val deep = "[".repeat(2000) + "0" + "]".repeat(2000)
+        assertTrue(McpTelemetryRecorder.maskSecrets(deep).contains("too deeply nested"))
+        assertFalse(McpTelemetryRecorder.canUseEditedArguments(deep))
+        val quoted = """{"text":"[[[[\"[[["}"""
+        assertTrue(McpTelemetryRecorder.canUseEditedArguments(quoted))
+    }
+
+    @Test
+    fun `approval overflow is recorded and cancellation frees all slots`() =
+        runBlocking {
+            val jobs =
+                (1..McpTelemetryRecorder.MAX_PENDING_APPROVALS).map { index ->
+                    async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                        McpTelemetryRecorder.requestApproval("pending-$index", "write", "{}")
+                    }
+                }
+            try {
+                val decision = McpTelemetryRecorder.requestApproval("overflow", "write", "{}")
+                assertTrue(decision is ApprovalDecision.Denied)
+                val record = McpTelemetryRecorder.records.value.first { it.callId == "overflow" }
+                assertEquals(McpCallStatus.BLOCKED, record.status)
+                assertTrue(record.errorMessage!!.contains("Too many pending"))
+            } finally {
+                jobs.forEach { it.cancel() }
+                jobs.forEach { it.join() }
+            }
+            assertTrue(McpTelemetryRecorder.pendingApprovals.value.isEmpty())
+        }
+
+    @Test
+    fun `approval timeout leaves a final timeout row`() =
+        runBlocking {
+            val decision = McpTelemetryRecorder.requestApproval("timeout", "write", "{}", timeoutMs = 1)
+            assertTrue(decision is ApprovalDecision.Denied)
+            assertEquals(
+                McpCallStatus.TIMEOUT,
+                McpTelemetryRecorder.records.value
+                    .single()
+                    .status,
+            )
+            assertTrue(McpTelemetryRecorder.pendingApprovals.value.isEmpty())
+        }
+
+    @Test
+    fun `clear history retains active rows until completion`() {
+        McpTelemetryRecorder.recordStart("running", "read", "{}")
+        McpTelemetryRecorder.recordStart("done", "read", "{}")
+        McpTelemetryRecorder.recordComplete("done", McpToolResult("ok"), 1)
+        McpTelemetryRecorder.clear()
+        assertEquals(
+            "running",
+            McpTelemetryRecorder.records.value
+                .single()
+                .callId,
+        )
+        McpTelemetryRecorder.recordComplete("running", McpToolResult("ok"), 2)
+        assertEquals(
+            McpCallStatus.SUCCESS,
+            McpTelemetryRecorder.records.value
+                .single()
+                .status,
+        )
+    }
+
+    @Test
+    fun `invalid edited approval preserves actionable host rejection in history`() =
+        runBlocking {
+            val core = McpToolRegistryCore(disabledFile = null)
+            var calls = 0
+            core.registerProvider(
+                provider(
+                    "p",
+                    echoTool("edit-reject") {
+                        calls++
+                        McpToolResult("ok")
+                    },
+                ),
+            )
+            McpTelemetryRecorder.setToolRequiresApproval("edit-reject", true)
+            val result = async { core.invoke("edit-reject", "{}") }
+            while (McpTelemetryRecorder.pendingApprovals.value.isEmpty()) delay(1)
+            val request = McpTelemetryRecorder.pendingApprovals.value.first()
+            McpTelemetryRecorder.resolveApproval(request.callId, ApprovalDecision.Approved("{bad}"))
+            assertTrue(result.await().isError)
+            assertEquals(0, calls)
+            val record = McpTelemetryRecorder.records.value.single()
+            assertEquals(McpCallStatus.BLOCKED, record.status)
+            assertTrue(record.errorMessage!!.contains("valid JSON"))
         }
 }

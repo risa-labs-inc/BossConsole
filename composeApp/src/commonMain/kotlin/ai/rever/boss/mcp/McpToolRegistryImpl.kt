@@ -655,7 +655,7 @@ internal class McpToolRegistryCore(
             val edited = (decision as ApprovalDecision.Approved).modifiedArgs
             if (edited != null && !McpTelemetryRecorder.canUseEditedArguments(edited)) {
                 val error = McpToolResult("Use valid JSON and replace omitted values before approval", isError = true)
-                McpTelemetryRecorder.recordComplete(callId, error, 0)
+                McpTelemetryRecorder.recordBlocked(callId, toolName, arguments, error.text)
                 return error
             }
             effectiveArguments = edited ?: arguments

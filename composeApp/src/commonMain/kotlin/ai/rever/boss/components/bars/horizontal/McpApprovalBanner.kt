@@ -1,5 +1,6 @@
 package ai.rever.boss.components.bars.horizontal
 
+import ai.rever.boss.components.dialogs.McpMissionControlDialog
 import ai.rever.boss.mcp.ApprovalDecision
 import ai.rever.boss.mcp.McpTelemetryRecorder
 import ai.rever.boss.plugin.ui.BossTheme
@@ -25,6 +26,9 @@ import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -171,4 +175,12 @@ fun McpApprovalBanner(
             }
         }
     }
+}
+
+/** Approval must remain operable even when focus mode hides the status bar. */
+@Composable
+fun McpApprovalHost() {
+    var inspect by remember { mutableStateOf(false) }
+    McpApprovalBanner(onInspectRequested = { inspect = true })
+    if (inspect) McpMissionControlDialog(onDismiss = { inspect = false })
 }
