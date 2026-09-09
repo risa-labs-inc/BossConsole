@@ -210,6 +210,14 @@ object EmacsPresetDefinition {
                     category = KeymapActions.Categories.VIEW,
                     description = KeymapActions.getDescription(KeymapActions.SETTINGS_OPEN),
                 ),
+                KeyBinding(
+                    actionId = KeymapActions.CHROME_DENSITY_CYCLE,
+                    key = "D",
+                    modifiers = listOf("Ctrl", "Shift"),
+                    context = ShortcutContext.GLOBAL,
+                    category = KeymapActions.Categories.VIEW,
+                    description = KeymapActions.getDescription(KeymapActions.CHROME_DENSITY_CYCLE),
+                ),
                 // Help - Emacs: C-h ? (help) - simplified to ? (Shift+/)
                 KeyBinding(
                     actionId = KeymapActions.HELP_SHORTCUTS,

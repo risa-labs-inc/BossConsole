@@ -96,14 +96,24 @@ class PluginUpdateManager(
      */
     private val hostBossVersion: String = "",
     /**
-     * Returns the installed boss-plugin-api (runtime API layer) version,
-     * compared against each candidate's `minApiVersion`. A lambda because the
-     * manager is constructed before the api layer resolves at startup — the
-     * host passes `{ System.getProperty("boss.api.version") ?: "" }` so the
-     * value is read at check time. Blank disables the gate (fail-open); the
-     * loader's own minApiVersion check remains the backstop.
+     * Returns the installed boss-plugin-api (runtime API layer) version, compared against each
+     * candidate's `minApiVersion`. A lambda because the manager is constructed before the api
+     * layer resolves at startup, so the value is read at check time.
+     *
+     * The three results mean different things and are treated differently by
+     * [satisfiesMinApiVersion]:
+     *
+     * - `null`: the api layer has NOT resolved yet. The host passes
+     *   `{ System.getProperty("boss.api.version") }` and the property is absent until
+     *   `DynamicPluginManager.initializeApiLayer` publishes it.
+     * - `""`: it resolved and found no api jar. `ApiClassLoader.apiVersion` is null on a first
+     *   run offline, and the host publishes that as an empty property.
+     * - a version: the api jar's `Implementation-Version`, falling back to its `plugin.json`.
+     *
+     * Defaults to `{ "" }` so a manager constructed without host awareness (dev builds, tests)
+     * keeps the fail-open answer it has always had.
      */
-    private val hostApiVersion: () -> String = { "" },
+    private val hostApiVersion: () -> String? = { "" },
 ) {
     private val logger = BossLogger.forComponent("PluginUpdateManager")
 
@@ -212,6 +222,10 @@ class PluginUpdateManager(
             val failed = mutableMapOf<String, String>()
             val notices = mutableListOf<IncompatibleNotice>()
 
+            // One read for the whole sweep. See the api branch below for why re-reading it
+            // per use is wrong.
+            val installedApi = hostApiVersion()
+
             for ((pluginId, installedVersion) in installedPlugins) {
                 try {
                     val pluginResult = repositoryManager.getPlugin(pluginId)
@@ -242,10 +256,15 @@ class PluginUpdateManager(
                                 ),
                             )
                             listeners.forEach { it.onUpdateRejectedAsIncompatible(notice) }
-                        } else if (!satisfiesMinApiVersion(candidate.minApiVersion)) {
-                            // Newer version exists but requires a newer runtime
-                            // API layer (boss-plugin-api jar) than installed.
-                            // Report it as an advisory; never auto-install.
+                        } else if (!satisfiesMinApiVersion(candidate.minApiVersion, installedApi)) {
+                            // Newer version exists but the installed runtime API layer
+                            // (boss-plugin-api jar) does not satisfy its floor, or could not be
+                            // read at all. Report it as an advisory; never auto-install.
+                            //
+                            // installedApi is read once for the whole sweep: the api layer
+                            // resolving is exactly the event this branch is about, so reading
+                            // it again here could report a host version that would have
+                            // satisfied the floor the check just failed.
                             val notice =
                                 IncompatibleNotice(
                                     pluginId = pluginId,
@@ -253,19 +272,36 @@ class PluginUpdateManager(
                                     currentVersion = installedVersion,
                                     advertisedLatest = candidate.version,
                                     requiredApiVersion = candidate.minApiVersion,
-                                    hostApiVersion = hostApiVersion(),
+                                    hostApiVersion = installedApi ?: "",
                                 )
                             notices.add(notice)
-                            logger.info(
-                                LogCategory.SYSTEM,
-                                "Skipping plugin update requiring newer API layer",
-                                mapOf(
-                                    "pluginId" to pluginId,
-                                    "advertisedLatest" to candidate.version,
-                                    "requiredApiVersion" to candidate.minApiVersion,
-                                    "hostApiVersion" to hostApiVersion(),
-                                ),
-                            )
+                            // Two different reasons reach here and a user chasing "why is there
+                            // no update" needs to tell them apart: the candidate really does
+                            // want a newer api, or this host cannot say what api it has. The
+                            // second is a host problem, can persist, and is a WARN.
+                            if (installedApi == null || SemanticVersion.parse(installedApi) == null) {
+                                logger.warn(
+                                    LogCategory.SYSTEM,
+                                    "Withholding plugin update: cannot read the installed API layer version",
+                                    mapOf(
+                                        "pluginId" to pluginId,
+                                        "advertisedLatest" to candidate.version,
+                                        "requiredApiVersion" to candidate.minApiVersion,
+                                        "hostApiVersion" to (installedApi ?: "<unresolved>"),
+                                    ),
+                                )
+                            } else {
+                                logger.info(
+                                    LogCategory.SYSTEM,
+                                    "Skipping plugin update requiring newer API layer",
+                                    mapOf(
+                                        "pluginId" to pluginId,
+                                        "advertisedLatest" to candidate.version,
+                                        "requiredApiVersion" to candidate.minApiVersion,
+                                        "hostApiVersion" to installedApi,
+                                    ),
+                                )
+                            }
                             listeners.forEach { it.onUpdateRejectedAsIncompatible(notice) }
                         } else if (isIpcCompatible(candidate.minIpcVersion)) {
                             updates.add(createUpdateInfo(candidate, installedVersion))
@@ -600,12 +636,57 @@ class PluginUpdateManager(
         satisfiesFloor(required = minBossVersion, installed = hostBossVersion)
 
     /**
-     * True when the installed runtime API layer satisfies a candidate's
-     * `minApiVersion`. Same helper as [satisfiesMinBossVersion]; the loader's
-     * own minApiVersion check is the backstop.
+     * True when the installed runtime API layer satisfies a candidate's `minApiVersion`.
+     *
+     * Fails CLOSED when a floor IS declared but the installed API version cannot be
+     * established, which is the opposite of [satisfiesVersionFloor] and deliberate.
+     *
+     * The shared helper answers true for a blank or unparseable `installed`, and that is right
+     * for its other callers: the home grid would rather show a tile, and the retirement check
+     * has its own fail-closed wrapper. It is wrong here. `hostApiVersion` is
+     * `System.getProperty("boss.api.version")`, so an API layer that has not resolved yet
+     * reads as blank, the floor is skipped, and the update is installed. The loader then
+     * rejects it on the same floor, but only AFTER the jar has been swapped, which is how
+     * Toolbox 1.8.4 on BOSS 9.2.25 left a broken plugin behind rather than no update.
+     *
+     * Declining to offer an update is recoverable: the next check re-reads the property, and
+     * by then the API layer has resolved. Swapping a jar the host cannot load is not.
+     *
+     * An unparseable `minApiVersion` still fails open, via the shared helper. That value comes
+     * from the store rather than from us, and one malformed row should withhold nothing.
      */
-    private fun satisfiesMinApiVersion(minApiVersion: String): Boolean =
-        satisfiesFloor(required = minApiVersion, installed = hostApiVersion())
+    // Guard clauses, for the same reason satisfiesVersionFloor carries this suppression: each
+    // case below is a separate rule with a different reason, and folding them into one
+    // expression would hide which of them withheld an update.
+    @Suppress("ReturnCount")
+    private fun satisfiesMinApiVersion(
+        minApiVersion: String,
+        installed: String?,
+    ): Boolean {
+        // `required` first, and via parse rather than isBlank: parse rejects blank, so a
+        // candidate with no floor and a candidate with a MALFORMED floor both fail open here
+        // unconditionally. Asking about `installed` first made the malformed case depend on
+        // the host version, which contradicted this function's own documentation.
+        SemanticVersion.parse(minApiVersion) ?: return true
+
+        // Not resolved YET: fail closed. This is the case the gate exists for. Declining is
+        // recoverable, because the next check re-reads the property and by then the api layer
+        // has resolved; swapping a jar whose floor we could not check is not.
+        if (installed == null) return false
+
+        // Resolved, but no api jar was found. Unlike the case above this can persist for a
+        // whole session, so failing closed here would withhold every floor-declaring update
+        // indefinitely on such a host. Keep the answer this code has always given, which is
+        // also what DynamicPluginLoader does: it skips minApiVersion validation outright when
+        // currentApiVersion is null rather than rejecting.
+        if (installed.isBlank()) return true
+
+        // Resolved to something we cannot read: fail closed, and the caller logs this reason
+        // separately, because it is a property of THIS host rather than of the candidate.
+        if (SemanticVersion.parse(installed) == null) return false
+
+        return satisfiesFloor(required = minApiVersion, installed = installed)
+    }
 
     /**
      * True when [installed] satisfies the [required] floor.

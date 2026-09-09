@@ -30,6 +30,7 @@ import ai.rever.boss.window.MenuActionsHandler
 import ai.rever.boss.window.WindowAppearanceSettings
 import ai.rever.boss.window.WindowAppearanceSettingsManager
 import ai.rever.boss.window.WindowOperations
+import ai.rever.boss.window.withNextDensity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -321,6 +322,20 @@ internal fun BossAppMenuActionEffects(
                 if (eventWindowId == windowId) {
                     coroutineScope.launch {
                         FocusModeSettingsManager.toggleFocusMode()
+                    }
+                }
+            }.launchIn(this)
+    }
+
+    LaunchedEffect(windowId) {
+        // Only the originating window cycles. Re-read inside the handler so rapid presses
+        // see the previous update, which publishes its value before suspending to save.
+        MenuActionsHandler.chromeDensityCycleEvents
+            .onEach { eventWindowId ->
+                if (eventWindowId == windowId) {
+                    coroutineScope.launch {
+                        val settings = WindowAppearanceSettingsManager.currentSettings.value
+                        WindowAppearanceSettingsManager.updateSettings(settings.withNextDensity())
                     }
                 }
             }.launchIn(this)

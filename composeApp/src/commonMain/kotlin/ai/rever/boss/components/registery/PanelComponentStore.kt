@@ -18,7 +18,7 @@ import com.arkivanov.essenty.lifecycle.resume
  * These are the same default context services used by tabs; hiding a panel does not remove it.
  */
 class PanelComponentStore(
-    private val registry: PanelRegistry,
+    val registry: PanelRegistry,
 ) {
     private val logger = BossLogger.forComponent("PanelComponentStore")
     private val panelLifecycles = mutableMapOf<PanelId, LifecycleRegistry>()

@@ -1,11 +1,7 @@
 package ai.rever.boss.plugin.updater
 
 import ai.rever.boss.plugin.repository.PluginInfo
-import ai.rever.boss.plugin.repository.PluginRepository
 import ai.rever.boss.plugin.repository.PluginRepositoryManager
-import ai.rever.boss.plugin.repository.PluginSearchFilter
-import ai.rever.boss.plugin.repository.PluginSearchResult
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -36,7 +32,7 @@ class PluginUpdateManagerCheckCompatTest {
         latest: PluginInfo,
         isCompatible: (String) -> Boolean,
     ): PluginUpdateManager {
-        val repos = PluginRepositoryManager().apply { addRepository(FakeRemoteRepository(latest)) }
+        val repos = PluginRepositoryManager().apply { addRepository(FakeSingleVersionRepository(latest)) }
         return PluginUpdateManager(
             repositoryManager = repos,
             hostIpcVersion = "1.0.0",
@@ -82,36 +78,4 @@ class PluginUpdateManagerCheckCompatTest {
             assertTrue(result.availableUpdates.isEmpty())
             assertTrue(result.incompatibleNotices.isEmpty())
         }
-}
-
-/** Minimal remote [PluginRepository] that always resolves to [latest]. */
-private class FakeRemoteRepository(
-    private val latest: PluginInfo,
-) : PluginRepository {
-    override val id = "fake-remote"
-    override val name = "Fake Remote"
-    override val isLocal = false
-    override val isAvailable = true
-
-    override suspend fun listPlugins(): Result<List<PluginInfo>> = Result.success(listOf(latest))
-
-    override suspend fun searchPlugins(filter: PluginSearchFilter): Result<PluginSearchResult> =
-        Result.success(PluginSearchResult(listOf(latest), totalCount = 1))
-
-    override suspend fun getPlugin(pluginId: String): Result<PluginInfo?> =
-        Result.success(if (pluginId == latest.pluginId) latest else null)
-
-    override suspend fun getPluginVersions(pluginId: String): Result<List<PluginInfo>> =
-        Result.success(if (pluginId == latest.pluginId) listOf(latest) else emptyList())
-
-    override suspend fun downloadPlugin(
-        pluginId: String,
-        version: String?,
-        targetPath: String,
-        onProgress: ((Float) -> Unit)?,
-    ): Result<String> = Result.success(targetPath)
-
-    override fun getDownloadProgress(pluginId: String): Flow<Float>? = null
-
-    override suspend fun refresh(): Result<Unit> = Result.success(Unit)
 }

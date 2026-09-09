@@ -27,6 +27,10 @@ import ai.rever.boss.components.workspaces.requiresProject
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.dashboard.DashboardStatsManager
 import ai.rever.boss.git.GitTerminalService
+import ai.rever.boss.html.HtmlFileOpenMode
+import ai.rever.boss.html.HtmlFileSettingsManager
+import ai.rever.boss.mcp.McpToolRegistryImpl
+import ai.rever.boss.mcp.consumeApprovals
 import ai.rever.boss.plugin.api.NewTabContext
 import ai.rever.boss.plugin.api.Panel.Companion.bottom
 import ai.rever.boss.plugin.api.Panel.Companion.left
@@ -82,7 +86,7 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
         FileEventBus.fileOpenEvents
             .filter { event -> event.sourceWindowId == windowId }
             .onEach { event ->
-                splitViewState.openFileInActivePanel(event.filePath, event.fileName)
+                splitViewState.openFileInActivePanel(event.filePath, event.fileName, event.line)
                 // Emit navigation target for cursor positioning (PSI navigation)
                 // Issue #506: Pass windowId for multi-window filtering
                 if (event.line > 0) {
@@ -124,6 +128,13 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
 
         // Note: We DON'T call markReady() here - that happens AFTER Last Session loads
         // just like URL handler, to prevent terminals from being destroyed by clearAllPanels()
+    }
+
+    // A delivered security prompt belongs to exactly one window.
+    LaunchedEffect(Unit) {
+        McpToolRegistryImpl.approvalBus.consumeApprovals { request ->
+            state.pendingMcpApproval = request
+        }
     }
 
     // Listen for runner terminal events (Issue #347 - Runner in terminal sidebar)
@@ -352,6 +363,28 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                     }
                 }
             }.launchIn(this)
+    }
+
+    // Listen for HTML file open prompt events
+    LaunchedEffect(splitViewState, windowId) {
+        splitViewState.htmlFileOpens.events.collect { event ->
+            // Await persisted preferences even on the first open after startup. Re-read for
+            // each queued file so Remember my choice also applies to the remaining batch.
+            when (HtmlFileSettingsManager.awaitSettings().openMode) {
+                HtmlFileOpenMode.EDITOR -> {
+                    splitViewState.openFileInEditorTab(event.filePath, event.fileName)
+                }
+
+                HtmlFileOpenMode.BROWSER -> {
+                    splitViewState.openFileInBrowserTab(event.filePath, event.fileName)
+                }
+
+                HtmlFileOpenMode.ALWAYS_ASK -> {
+                    state.pendingHtmlFileOpen = event
+                    snapshotFlow { state.pendingHtmlFileOpen }.first { it == null }
+                }
+            }
+        }
     }
 
     // Listen for run execute events (Issue #321 - Run functionality)
@@ -921,7 +954,7 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
                 }
             val isProcessingURLs = URLHandlerService.isProcessingURLs()
             val isProcessingTerminals = TerminalHandlerService.isProcessingTerminals()
-            val isProcessingFiles = FileHandlerService.isProcessingFiles()
+            val isProcessingFiles = FileHandlerService.isProcessingFiles() || splitViewState.htmlFileOpens.hasPending
 
             data class ProcessingState(
                 val totalTabs: Int,

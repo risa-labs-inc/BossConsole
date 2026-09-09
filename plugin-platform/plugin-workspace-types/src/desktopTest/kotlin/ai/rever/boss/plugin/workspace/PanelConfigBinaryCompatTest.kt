@@ -1,11 +1,17 @@
 package ai.rever.boss.plugin.workspace
 
+import kotlinx.serialization.MissingFieldException
+import kotlinx.serialization.json.Json
+import java.lang.reflect.InvocationTargetException
 import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
- * Pins the constructors already-built plugins link against.
+ * Pins the constructors, copy bridges, and serialization descriptors in the published API.
  *
  * This module is published to Maven Central and plugins compile against it, so its constructors
  * are ABI. A Kotlin default parameter does not preserve the previous shape: adding
@@ -23,6 +29,7 @@ import kotlin.test.assertTrue
  * `PanelConfig(id, tabs)` through the default and pass whatever the current shape is. Only the
  * emitted bytecode answers the question a plugin's linker asks.
  */
+@OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
 class PanelConfigBinaryCompatTest {
     @Test
     fun `the two-argument constructor plugins were built against still exists`() {
@@ -60,5 +67,57 @@ class PanelConfigBinaryCompatTest {
         // parameter would compile, pass the test above, and lose pinning on every save.
         val panel = PanelConfig(id = "panel-1", tabs = emptyList(), pinnedCount = 3)
         assertTrue(panel.pinnedCount == 3)
+    }
+
+    @Test
+    fun `old copy descriptor preserves host pinned count`() {
+        val panel = PanelConfig("old", emptyList(), pinnedCount = 2)
+        val copy = PanelConfig::class.java.getMethod("copy", String::class.java, List::class.java)
+        val result = copy.invoke(panel, "new", emptyList<TabConfig>()) as PanelConfig
+        assertEquals("new", result.id)
+        assertEquals(2, result.pinnedCount)
+        assertEquals(1, panel.copy(pinnedCount = 1).pinnedCount)
+        assertEquals(2, panel.copy(id = "source-copy").pinnedCount)
+    }
+
+    @Test
+    fun `old default copy bridge retains unspecified properties`() {
+        val panel = PanelConfig("old", emptyList(), pinnedCount = 2)
+        val bridge =
+            PanelConfig::class.java.getMethod(
+                "copy\$default",
+                PanelConfig::class.java,
+                String::class.java,
+                List::class.java,
+                Int::class.javaPrimitiveType,
+                Any::class.java,
+            )
+        val result = bridge.invoke(null, panel, null, null, 3, null) as PanelConfig
+        assertEquals(panel, result)
+        val renamed = bridge.invoke(null, panel, "renamed", null, 2, null) as PanelConfig
+        assertEquals("renamed", renamed.id)
+        assertEquals(2, renamed.pinnedCount)
+    }
+
+    @Test
+    fun `old serialization constructor defaults pinned count and enforces required fields`() {
+        val constructor =
+            PanelConfig::class.java.constructors.single {
+                it.parameterCount == 4 && it.parameterTypes.first() == Int::class.javaPrimitiveType
+            }
+        val panel = constructor.newInstance(3, "restored", emptyList<TabConfig>(), null) as PanelConfig
+        assertEquals(PanelConfig("restored", emptyList(), 0), panel)
+        val failure =
+            assertFailsWith<InvocationTargetException> {
+                constructor.newInstance(2, null, emptyList<TabConfig>(), null)
+            }
+        assertIs<MissingFieldException>(failure.cause)
+    }
+
+    @Test
+    fun `host serialization still round trips pinned count and reads old json`() {
+        val panel = PanelConfig("panel", emptyList(), 2)
+        assertEquals(panel, Json.decodeFromString<PanelConfig>(Json.encodeToString(panel)))
+        assertEquals(0, Json.decodeFromString<PanelConfig>("""{"id":"old","tabs":[]}""").pinnedCount)
     }
 }

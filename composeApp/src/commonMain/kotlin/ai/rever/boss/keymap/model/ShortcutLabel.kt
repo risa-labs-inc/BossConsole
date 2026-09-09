@@ -1,7 +1,5 @@
 package ai.rever.boss.keymap.model
 
-import ai.rever.boss.utils.SystemUtils
-
 /**
  * A keystroke rendered for display: "⌘⇧P" on macOS, "Ctrl+Shift+P" elsewhere.
  *
@@ -19,20 +17,7 @@ import ai.rever.boss.utils.SystemUtils
 fun formatShortcutLabel(
     modifiers: List<String>,
     key: String,
-): String {
-    val isMacOS = SystemUtils.isMacOS
-    val symbols =
-        modifiers.map { modifier ->
-            when (modifier.lowercase()) {
-                "cmd", "meta" -> if (isMacOS) "⌘" else "Ctrl"
-                "ctrl", "control" -> if (isMacOS) "⌃" else "Ctrl"
-                "shift" -> if (isMacOS) "⇧" else "Shift"
-                "alt", "option" -> if (isMacOS) "⌥" else "Alt"
-                else -> modifier
-            }
-        }
-    return (symbols + key).joinToString(if (isMacOS) "" else "+")
-}
+): String = KeyStroke(canonicalKeyName(key), modifiers).displayString()
 
 /**
  * The display label for [actionId]'s current binding, or null when it has none.

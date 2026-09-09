@@ -58,9 +58,9 @@ jna = "5.19.1"
 # (Chromium "Login Data", Firefox places.sqlite / key4.db). Desktop-only.
 sqlite-jdbc = "3.53.4.0"
 # gRPC + Protobuf for IPC
-grpc = "1.83.1"
+grpc = "1.84.0"
 grpc-kotlin = "1.5.0"
-protobuf = "4.36.0"
+protobuf = "4.36.1"
 protobuf-gradle-plugin = "0.10.0"
 graalvm-native-plugin = "1.1.11"
 # IntelliJ PSI for code navigation

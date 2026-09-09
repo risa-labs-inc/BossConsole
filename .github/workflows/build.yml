@@ -33,6 +33,9 @@ jobs:
       - name: 🧪 Claude review authorization tests
         run: node --test .github/scripts/test-claude-review.cjs
 
+      - name: Headless CLI launcher tests
+        run: bash scripts/test/test-headless-cli.sh
+
       - name: 🧪 Release publish — TUS slice tests
         # Guards the byte-accurate chunk slicing in the release publish path
         # (regressed twice: #877 misaligned resume, and the SIGPIPE status bug).
@@ -258,7 +261,10 @@ jobs:
           name: test-results-${{ matrix.os }}
           path: |
             **/build/test-results/test/
+            **/build/test-results/desktopTest/
             **/build/reports/tests/test/
+            **/build/reports/tests/desktopTest/
+            **/build/reports/tests/allTests/
           retention-days: 7
 
       - name: 📦 Upload Build Artifacts

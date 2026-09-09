@@ -39,13 +39,17 @@ class BossPopupAnchorLayoutTest {
 
     @After
     fun resetRegistry() {
+        resetOverlayFieldForTest("useHeavyweightOverlays")
         BossOverlayHost.useHeavyweightOverlays = false
+        resetOverlayFieldForTest("popupRenderer")
         BossOverlayHost.popupRenderer = null
     }
 
     private fun captureAnchor(): IntRect? {
         var captured: IntRect? = null
+        resetOverlayFieldForTest("useHeavyweightOverlays")
         BossOverlayHost.useHeavyweightOverlays = true
+        resetOverlayFieldForTest("popupRenderer")
         BossOverlayHost.popupRenderer = { _, anchorInWindow, _, _, _, _ -> captured = anchorInWindow }
         rule.setContent {
             CompositionLocalProvider(LocalHeavyweightOverlays provides true) {
@@ -106,13 +110,17 @@ class BossPopupLayoutNeutralityTest {
 
     @After
     fun resetRegistry() {
+        resetOverlayFieldForTest("useHeavyweightOverlays")
         BossOverlayHost.useHeavyweightOverlays = false
+        resetOverlayFieldForTest("popupRenderer")
         BossOverlayHost.popupRenderer = null
     }
 
     @Test
     fun `a sibling after the popup keeps its position`() {
+        resetOverlayFieldForTest("useHeavyweightOverlays")
         BossOverlayHost.useHeavyweightOverlays = true
+        resetOverlayFieldForTest("popupRenderer")
         BossOverlayHost.popupRenderer = { _, _, _, _, _, _ -> }
         rule.setContent {
             CompositionLocalProvider(LocalHeavyweightOverlays provides true) {
@@ -149,14 +157,18 @@ class BossPopupFirstFrameTest {
 
     @After
     fun resetRegistry() {
+        resetOverlayFieldForTest("useHeavyweightOverlays")
         BossOverlayHost.useHeavyweightOverlays = false
+        resetOverlayFieldForTest("popupRenderer")
         BossOverlayHost.popupRenderer = null
     }
 
     @Test
     fun `an anchored popup is never placed at the origin, not even on the first frame`() {
         val seen = mutableListOf<IntRect>()
+        resetOverlayFieldForTest("useHeavyweightOverlays")
         BossOverlayHost.useHeavyweightOverlays = true
+        resetOverlayFieldForTest("popupRenderer")
         BossOverlayHost.popupRenderer = { _, anchorInWindow, _, _, _, _ -> seen += anchorInWindow }
         rule.setContent {
             CompositionLocalProvider(LocalHeavyweightOverlays provides true) {
@@ -190,7 +202,9 @@ class BossPopupFirstFrameTest {
     @Test
     fun `cursor anchoring is not delayed, since it never reads the anchor`() {
         var invoked = false
+        resetOverlayFieldForTest("useHeavyweightOverlays")
         BossOverlayHost.useHeavyweightOverlays = true
+        resetOverlayFieldForTest("popupRenderer")
         BossOverlayHost.popupRenderer = { _, _, _, _, _, _ -> invoked = true }
         rule.setContent {
             CompositionLocalProvider(LocalHeavyweightOverlays provides true) {

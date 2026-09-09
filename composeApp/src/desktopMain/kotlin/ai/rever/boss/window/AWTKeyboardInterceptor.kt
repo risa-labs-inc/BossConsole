@@ -549,8 +549,13 @@ object AWTKeyboardInterceptor {
      * worked only because the native menu carries its own accelerator, and fell dead the moment
      * a terminal or browser held focus. [keyNameMatches] accepts both spellings so an older or
      * hand-edited keymap file still resolves.
+     *
+     * `internal` so `KeyVocabularyAgreementTest` can hold this table against the names Compose
+     * renders for the same physical keys. The two are separate hand-maintained vocabularies over
+     * one keyboard, and every time they have drifted the symptom has been a chord that works on
+     * one path and silently does nothing on the other.
      */
-    private fun getKeyName(keyCode: Int): String =
+    internal fun getKeyName(keyCode: Int): String =
         when (keyCode) {
             KeyEvent.VK_A -> "A"
             KeyEvent.VK_B -> "B"
@@ -772,6 +777,11 @@ object AWTKeyboardInterceptor {
             // View Controls
             KeymapActions.FOCUS_MODE_TOGGLE -> {
                 MenuActionsHandler.triggerToggleFocusMode(windowId)
+                true
+            }
+
+            KeymapActions.CHROME_DENSITY_CYCLE -> {
+                MenuActionsHandler.triggerChromeDensityCycle(windowId)
                 true
             }
 
