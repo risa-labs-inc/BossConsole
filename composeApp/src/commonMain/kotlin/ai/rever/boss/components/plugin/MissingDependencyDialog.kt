@@ -18,6 +18,7 @@ import androidx.compose.material.CircularProgressIndicator
 import androidx.compose.material.Text
 import androidx.compose.material.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
@@ -44,6 +45,8 @@ import androidx.compose.ui.window.DialogProperties
  * @param prompt the unmet dependency plus the installer that can fix it
  * @param installing true while the install is in flight, so the dialog stays put and shows why
  * @param error a failure from the last attempt, kept on screen with Retry rather than vanishing
+ * @param onInstall receives the plan that was on screen when Install was pressed, so what gets
+ *   installed is exactly what the user was shown, even if the store answered after the click
  */
 @Composable
 fun MissingDependencyDialog(
@@ -51,7 +54,7 @@ fun MissingDependencyDialog(
     installing: Boolean,
     error: String?,
     onDismiss: () -> Unit,
-    onInstall: () -> Unit,
+    onInstall: (DependencyInstallPlan) -> Unit,
 ) {
     val missing = prompt.missing
 
@@ -65,6 +68,8 @@ fun MissingDependencyDialog(
                 ?.takeIf { it.isNotBlank() }
                 ?.let { value = it }
         }
+
+    val plan by rememberInstallPlan(prompt)
 
     BossDialog(
         // Not dismissable while installing: the install continues regardless, and a dialog
@@ -97,12 +102,41 @@ fun MissingDependencyDialog(
             MissingDependencyBody(
                 missing = missing,
                 resolvedName = resolvedName,
+                alsoInstalls = plan.order.dropLast(1),
                 installing = installing,
                 error = error,
                 onDismiss = onDismiss,
-                onInstall = onInstall,
+                onInstall = { onInstall(plan) },
             )
         }
+    }
+}
+
+/**
+ * What Install will do for [prompt], as a plan of the one missing plugin until the store answers.
+ *
+ * Same shape as the display name, for the same reason: the plan comes from the store, so the
+ * dialog opens immediately and grows an "also installs" line when the answer lands. Install acts
+ * on whatever plan is on screen at the click, so someone who clicks before the store answers gets
+ * today's single install and never something they were not shown. A store that cannot answer
+ * leaves the single plan in place.
+ */
+@Composable
+private fun rememberInstallPlan(prompt: MissingDependencyPrompt): State<DependencyInstallPlan> {
+    val pluginId = prompt.missing.missingPluginId
+    return produceState(
+        initialValue =
+            DependencyInstallPlan(
+                order = listOf(pluginId),
+                unresolved = emptySet(),
+                cyclic = false,
+                truncated = false,
+            ),
+        pluginId,
+    ) {
+        runCatching { prompt.installer.planFor(pluginId) }
+            .getOrNull()
+            ?.let { value = it }
     }
 }
 
@@ -110,6 +144,7 @@ fun MissingDependencyDialog(
 private fun MissingDependencyBody(
     missing: MissingPluginDependency,
     resolvedName: String,
+    alsoInstalls: List<String>,
     installing: Boolean,
     error: String?,
     onDismiss: () -> Unit,
@@ -150,6 +185,22 @@ private fun MissingDependencyBody(
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
+
+        if (alsoInstalls.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(8.dp))
+            // What this plugin needs in turn, so one answer covers the whole closure and the
+            // user is never handed a second dialog as the consequence of the first. Ids rather
+            // than names, for the reason the id is shown above: this is consent to download and
+            // run code, and the id is what the host will install by. Deps-first order is the
+            // installer's; shown as-is so a failure message names something visible here.
+            Text(
+                text = "Also installs: ${alsoInstalls.joinToString(", ")}",
+                fontSize = 11.sp,
+                color = BossTheme.colors.textMuted,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
 
         if (error != null) {
             Spacer(modifier = Modifier.height(12.dp))
