@@ -52,6 +52,10 @@ allprojects {
         parallel = true
     }
 
+    tasks.withType<io.gitlab.arturbosch.detekt.Detekt>().configureEach {
+        jvmTarget = "17"
+    }
+
     extensions.configure<KtlintExtension> {
         // Pin the ktlint engine to the exact version the format-the-world
         // reformat was produced with (ktlint-gradle 14.2.0 bundles 1.5.0 by

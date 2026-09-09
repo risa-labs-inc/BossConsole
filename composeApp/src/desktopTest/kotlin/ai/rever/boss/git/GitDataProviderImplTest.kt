@@ -112,10 +112,14 @@ class GitDataProviderImplTest {
             val state = WindowGitState("test-window")
 
             val provider = GitDataProviderImpl(state, { "test-window" }) { plain.absolutePath }
-            provider.refreshStatus()
+            try {
+                provider.refreshStatus()
 
-            assertFalse(state.isGitRepository.value)
-            plain.deleteRecursively()
+                assertFalse(state.isGitRepository.value)
+            } finally {
+                provider.dispose()
+                plain.deleteRecursively()
+            }
         }
 
     @Test
@@ -127,29 +131,32 @@ class GitDataProviderImplTest {
                     .toFile()
             val state = WindowGitState("test-window")
             val provider = GitDataProviderImpl(state, { "test-window" }) { plain.absolutePath }
+            try {
+                provider.refreshStatus()
+                assertFalse(state.isGitRepository.value)
+                assertEquals(plain.absolutePath, state.projectPath.value)
 
-            provider.refreshStatus()
-            assertFalse(state.isGitRepository.value)
-            assertEquals(plain.absolutePath, state.projectPath.value)
+                // A cached "not a repository" is not the same fact as a cached
+                // "is a repository": `git init`, or a panel's first probe simply
+                // losing a startup race, can both turn a real non-repo into a
+                // real repo underneath an already-open panel. Unlike the
+                // confirmed-repo case (which cannot spontaneously reverse), this
+                // costs only the one `isGitRepo` command per re-check - the
+                // four-command branch bundle still never runs until it is true -
+                // so the panel's own Refresh (or the next status poll) must pick
+                // it up rather than being stuck showing "not a Git repository"
+                // for the rest of the session.
+                ProcessBuilder("git", "init", "-q", plain.absolutePath).start().waitFor()
+                provider.refreshStatus()
 
-            // A cached "not a repository" is not the same fact as a cached
-            // "is a repository": `git init`, or a panel's first probe simply
-            // losing a startup race, can both turn a real non-repo into a
-            // real repo underneath an already-open panel. Unlike the
-            // confirmed-repo case (which cannot spontaneously reverse), this
-            // costs only the one `isGitRepo` command per re-check - the
-            // four-command branch bundle still never runs until it is true -
-            // so the panel's own Refresh (or the next status poll) must pick
-            // it up rather than being stuck showing "not a Git repository"
-            // for the rest of the session.
-            ProcessBuilder("git", "init", "-q", plain.absolutePath).start().waitFor()
-            provider.refreshStatus()
-
-            assertTrue(
-                state.isGitRepository.value,
-                "a directory that became a repository must be re-probed and reported as one",
-            )
-            plain.deleteRecursively()
+                assertTrue(
+                    state.isGitRepository.value,
+                    "a directory that became a repository must be re-probed and reported as one",
+                )
+            } finally {
+                provider.dispose()
+                plain.deleteRecursively()
+            }
         }
 
     @Test

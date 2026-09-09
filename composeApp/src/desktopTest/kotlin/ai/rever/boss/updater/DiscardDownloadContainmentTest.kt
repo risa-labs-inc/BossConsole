@@ -62,7 +62,15 @@ class DiscardDownloadContainmentTest {
         val dir = createRestrictedDir(defaultStagingDir())
         val link = File(dir, "link-to-victim.dmg")
         link.delete()
-        Files.createSymbolicLink(link.toPath(), victim.toPath())
+        try {
+            Files.createSymbolicLink(link.toPath(), victim.toPath())
+        } catch (e: java.nio.file.FileSystemException) {
+            org.junit.jupiter.api.Assumptions.assumeTrue(
+                false,
+                "Symlinks not supported or permitted on this OS environment: ${e.message}",
+            )
+            return
+        }
 
         service.discardDownload(link.absolutePath)
 
