@@ -43,6 +43,7 @@ class HeavyweightCornerSizingTest {
     private fun harness(
         initialAvailable: DpSize,
         contentSize: DpSize,
+        measurementCeiling: DpSize = ceiling,
     ): Harness {
         val seen = mutableListOf<IntSize>()
         var available by mutableStateOf(initialAvailable)
@@ -55,7 +56,7 @@ class HeavyweightCornerSizingTest {
                 Box(
                     modifier =
                         Modifier
-                            .measuredAgainst(ceiling)
+                            .measuredAgainst(measurementCeiling)
                             .onGloballyPositioned { seen += it.size },
                 ) {
                     Box(modifier = Modifier.size(contentSize.width, contentSize.height))
@@ -78,6 +79,21 @@ class HeavyweightCornerSizingTest {
         val resize: (DpSize) -> Unit,
         val density: Float,
     )
+
+    @Test
+    fun `content taller than the first frame is measured in full within the parent region`() {
+        val parentCeiling = regionCeiling(intArrayOf(0, 0, 1000, 800), ceiling)
+        val h =
+            harness(
+                initialAvailable = ceiling,
+                contentSize = DpSize(400.dp, 750.dp),
+                measurementCeiling = parentCeiling,
+            )
+        assertTrue(h.seen.isNotEmpty())
+        h.seen.forEach { size ->
+            assertEquals((750 * h.density).toInt(), size.height)
+        }
+    }
 
     @Test
     fun `content is measured against the ceiling, not the window's current size`() {

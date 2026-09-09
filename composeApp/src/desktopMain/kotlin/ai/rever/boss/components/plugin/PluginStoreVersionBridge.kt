@@ -83,8 +83,15 @@ actual object PluginStoreVersionBridge {
         // looking at, and detaching it would let the swap start before anyone had answered.
         // Same reasoning as PluginUpdateBridge - this path forces the unload too, so it never
         // met the veto and never restarted the dependents.
+        //
+        // Skipped entirely for a not-hot-reloadable plugin (BossConsole#71): StoreVersionInstaller
+        // defers that swap to a restart rather than unloading anything, so nothing depending on
+        // it is touched either, and asking would be a confusing prompt about an unload that is
+        // not going to happen.
         val displayName = manager.getPluginInfo(pluginId)?.manifest?.displayName ?: pluginId
-        if (!confirmDependentRestart(pluginId, displayName, PluginUnloadIntent.UPDATE, manager)) {
+        if (!HotReloadPolicy.requiresRestartInsteadOfHotReload(pluginId) &&
+            !confirmDependentRestart(pluginId, displayName, PluginUnloadIntent.UPDATE, manager)
+        ) {
             return Result.failure(DependentRestartDeclinedException(pluginId))
         }
         return DETACHED_SWAPS.run(
@@ -123,6 +130,7 @@ actual object PluginStoreVersionBridge {
                             version = version,
                             sourceUrl = sourceUrl,
                             runningJarPath = manager.getPluginInfo(pluginId)?.jarPath,
+                            hasLiveInstance = manager.getPluginInfo(pluginId)?.state == PluginState.LOADED,
                         ),
                     unload = { id -> manager.uninstallPlugin(id, force = true).map { } },
                     load = { path ->

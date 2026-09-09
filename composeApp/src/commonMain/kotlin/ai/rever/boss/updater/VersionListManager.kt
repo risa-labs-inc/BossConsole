@@ -5,6 +5,9 @@ import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.time.Duration.Companion.hours
 
 /**
@@ -17,9 +20,14 @@ import kotlin.time.Duration.Companion.hours
  * Note: fetchVersions() is a suspend function called from composable scope,
  * so no dedicated coroutine scope is needed here.
  */
-class VersionListManager(
-    private val updateService: UpdateService,
+class VersionListManager internal constructor(
+    private val fetchReleases: suspend () -> List<VersionInfo>,
 ) {
+    constructor(updateService: UpdateService) : this(updateService::fetchAllReleases)
+
+    private val fetchMutex = Mutex()
+    private val fetchGeneration = AtomicLong()
+    private var successfulGeneration = 0L
     private val logger = BossLogger.forComponent("VersionListManager")
     private val _versions = MutableStateFlow<List<VersionInfo>>(emptyList())
     val versions: StateFlow<List<VersionInfo>> = _versions
@@ -38,38 +46,48 @@ class VersionListManager(
      * Uses cached data if available and not expired.
      */
     suspend fun fetchVersions(forceRefresh: Boolean = false) {
-        if (_isLoading.value) return
+        val requestedGeneration = fetchGeneration.get()
+        fetchMutex.withLock {
+            // Only a successful fetch STARTED after this request can satisfy its invalidation.
+            // Generations avoid wall-clock jumps and coalesce events waiting on the same fetch.
+            if (forceRefresh && successfulGeneration > requestedGeneration) return@withLock
+            // A realtime refresh must wait for an older fetch, not disappear behind it.
+            // Ordinary callers recheck the cache after waiting and reuse that result.
 
-        // Check cache validity
-        val now =
-            kotlin.time.Clock.System
-                .now()
-        val cacheValid =
-            lastFetchTime?.let { lastFetch ->
-                (now - lastFetch) < cacheDuration
-            } ?: false
+            // Check cache validity
+            val now =
+                kotlin.time.Clock.System
+                    .now()
+            val cacheValid =
+                lastFetchTime?.let { lastFetch ->
+                    (now - lastFetch) < cacheDuration
+                } ?: false
 
-        if (!forceRefresh && cacheValid && _versions.value.isNotEmpty()) {
-            return // Use cached data
-        }
+            if (!forceRefresh && cacheValid && _versions.value.isNotEmpty()) {
+                return@withLock // Use cached data
+            }
 
-        _isLoading.value = true
-        _error.value = null
+            val generation = fetchGeneration.incrementAndGet()
+            _isLoading.value = true
+            _error.value = null
 
-        try {
-            val allVersions =
-                updateService
-                    .fetchAllReleases()
-                    .filter { !it.isDraft && !it.isPrerelease }
-                    .sortedByDescending { it.version }
+            try {
+                val allVersions =
+                    fetchReleases()
+                        .filter { !it.isDraft && !it.isPrerelease }
+                        .sortedByDescending { it.version }
 
-            _versions.value = allVersions
-            lastFetchTime = now
-        } catch (e: Exception) {
-            _error.value = "Failed to fetch versions: ${e.message}"
-            logger.warn(LogCategory.NETWORK, "Error fetching version list", error = e)
-        } finally {
-            _isLoading.value = false
+                _versions.value = allVersions
+                lastFetchTime = now
+                successfulGeneration = generation
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _error.value = "Failed to fetch versions: ${e.message}"
+                logger.warn(LogCategory.NETWORK, "Error fetching version list", error = e)
+            } finally {
+                _isLoading.value = false
+            }
         }
     }
 

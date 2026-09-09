@@ -16,7 +16,7 @@
     Opens the URL in Fluck browser
 
 .EXAMPLE
-    boss.ps1 terminal -Command "ls -la"
+    boss.ps1 terminal -c "ls -la"
     Opens a terminal tab with the specified command
 
 .EXAMPLE
@@ -24,17 +24,36 @@
     Opens the folder in the codebase plugin
 #>
 
-param(
-    [Parameter(Position=0, Mandatory=$true)]
-    [string]$Command,
+# Preserve the original named script interface alongside positional CLI forwarding.
+if ($args.Count -gt 0 -and $args[0] -in '-Command', '-Argument', '-CommandToRun') {
+    $legacy = @{}
+    for ($i = 0; $i -lt $args.Count; $i += 2) {
+        if ($i + 1 -ge $args.Count -or $args[$i] -notin '-Command', '-Argument', '-CommandToRun', '-c') {
+            [Console]::Error.WriteLine("Error: Invalid named launcher arguments.")
+            exit 1
+        }
+        $legacy[$args[$i].TrimStart('-')] = $args[$i + 1]
+    }
+    $args = @($legacy['Command'])
+    if ($legacy.ContainsKey('Argument')) { $args += $legacy['Argument'] }
+    $legacyRun = if ($legacy.ContainsKey('CommandToRun')) { $legacy['CommandToRun'] } else { $legacy['c'] }
+    if ($legacyRun) { $args += @('-c', $legacyRun) }
+}
 
-    [Parameter(Position=1)]
-    [string]$Argument,
+if ($args.Count -eq 0) {
+    Write-Error "Error: No command specified"
+    Write-Host "Run 'boss.ps1 --help' for usage information"
+    exit 1
+}
 
-    [Parameter()]
-    [Alias("c")]
-    [string]$CommandToRun
-)
+$Command = $args[0]
+$Argument = if ($args.Count -gt 1) { $args[1] } else { $null }
+$CommandToRun = $null
+for ($i = 1; $i -lt $args.Count; $i++) {
+    if ($args[$i] -in "-c", "--command" -and ($i + 1) -lt $args.Count) {
+        $CommandToRun = $args[$i + 1]
+    }
+}
 
 function Open-BossDeepLink {
     param([string]$DeepLink)
@@ -108,6 +127,9 @@ function Show-Help {
     Write-Host "  boss.ps1 <command> [arguments]     Run explicit command"
     Write-Host ""
     Write-Host "Commands:"
+    Write-Host "  status                 Queries status and health of the running BOSS instance"
+    Write-Host "  mcp <action> [args]    Discovers and invokes desktop MCP tools (list, describe, invoke)"
+    Write-Host "  completion <shell>     Generates shell completion script (bash, zsh, fish)"
     Write-Host "  url <url>              Opens a URL in Fluck browser"
     Write-Host "  workspace <config>     Loads a workspace configuration"
     Write-Host "  file <path>            Opens a file in the editor"
@@ -213,6 +235,33 @@ switch ($Command.ToLower()) {
         $encoded = [System.Uri]::EscapeDataString($Argument)
         $deepLink = "boss://plugin?id=$encoded"
         Open-BossDeepLink $deepLink
+    }
+
+    { $_ -in "status", "mcp", "completion" } {
+        $bossExe = $env:BOSS_EXE
+        if ($bossExe -and -not (Test-Path $bossExe -PathType Leaf)) {
+            [Console]::Error.WriteLine("Error: BOSS_EXE does not name an executable file.")
+            exit 1
+        }
+        if (-not $bossExe -or -not (Test-Path $bossExe)) {
+            $bossExe = "$env:LOCALAPPDATA\Programs\BOSS\BOSS.exe"
+        }
+        if (-not (Test-Path $bossExe)) {
+            $bossExe = "$env:ProgramFiles\BOSS\BOSS.exe"
+        }
+        if (-not (Test-Path $bossExe)) {
+            $bossExe = "$PSScriptRoot\..\composeApp\build\compose\binaries\main\app\BOSS\BOSS.exe"
+        }
+        if (Test-Path $bossExe) {
+            $forwardArgs = @($args)
+            if ($PSVersionTable.PSVersion -ge [Version]"7.3") {
+                $PSNativeCommandArgumentPassing = 'Standard'
+            }
+            & $bossExe @forwardArgs
+            exit $LASTEXITCODE
+        }
+        [Console]::Error.WriteLine("Error: BOSS application binary not found. Set BOSS_EXE to the packaged executable.")
+        exit 1
     }
 
     { $_ -in "help", "--help", "-h", "-?" } {

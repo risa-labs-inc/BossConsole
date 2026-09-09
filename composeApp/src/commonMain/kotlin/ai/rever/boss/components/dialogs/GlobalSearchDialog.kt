@@ -143,6 +143,7 @@ fun GlobalSearchDialog(
     onToolSelect: ((panelId: String) -> Unit)? = null,
     onSettingSelect: ((result: SearchResult.SettingResult) -> Unit)? = null,
     onPageSelect: ((url: String) -> Unit)? = null,
+    onMcpToolSelect: ((result: SearchResult.McpToolResult) -> Unit)? = null,
 ) {
     var searchQuery by remember { mutableStateOf("") }
     var selectedIndex by remember { mutableStateOf(0) }
@@ -309,20 +310,12 @@ fun GlobalSearchDialog(
                 dispatch("url", LogSanitizer.maskUriParams(result.url), result.url, onPageSelect)
             }
 
-            // No handler, by design: an MCP tool takes arguments a search row cannot collect, so
-            // this answers "does a tool for this exist, and what is it called" and stops.
-            //
-            // Logged here rather than through dispatchResult, which warns about a missing handler.
-            // That warning is worth having for a branch the host merely forgot to wire, and this
-            // branch is never going to have a handler - routing through it meant every MCP pick
-            // filed a warning, which is how a real integration gap stops being noticeable.
+            // Opens Toolbox (plugin-manager) for kill-switch management - invoking an MCP tool
+            // still needs arguments a search row cannot collect, but agent-less operators need a
+            // path from "I found mcp__boss__X" to the toggle UI without an attached coding CLI
+            // (BossConsole#380).
             is SearchResult.McpToolResult -> {
-                globalSearchLogger.debug(
-                    LogCategory.UI,
-                    "MCP tool selected; nothing to activate",
-                    mapOf("tool" to result.name),
-                )
-                onDismiss()
+                dispatch("tool", result.name, result, onMcpToolSelect)
             }
         }
     }
@@ -1332,8 +1325,8 @@ internal fun SearchResult.simpleRow(): SimpleRow? =
                 // would quietly pull that object's disabled-tools file read into composition.
                 title = "${McpToolRegistryImpl.CLIENT_TOOL_PREFIX}$name",
                 subtitle = description,
-                // This row does nothing when selected, so its state has to be legible here: a
-                // disabled tool is exactly the one someone searched for, and it says so.
+                // Enabled state stays legible: a disabled tool is exactly the one someone
+                // searched for. Selecting the row opens Toolbox for kill-switches (#380).
                 trailing = if (enabled) providerId else "off - $providerId",
             )
         }
@@ -1874,7 +1867,8 @@ private fun SearchCategory.accent(): Color =
  * up over a result that did nothing.
  *
  * A null handler closing the dialog is deliberate, not a fallback of last resort: the integrating
- * code is not required to support every result type, and `McpToolResult` has no handler at all.
+ * code is not required to support every result type. Hosts should wire `onMcpToolSelect` so MCP
+ * rows open Toolbox for kill-switch management (BossConsole#380).
  */
 @Suppress("LongParameterList")
 private fun <T> dispatchResult(

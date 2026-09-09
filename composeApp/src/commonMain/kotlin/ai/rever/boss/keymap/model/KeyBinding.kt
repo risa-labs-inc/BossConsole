@@ -26,6 +26,90 @@ internal fun canonicalModifiers(modifiers: List<String>): Set<String> =
         }
 
 /**
+ * The prefix `Key.toString()` renders in front of a key's name.
+ *
+ * Compose exposes no accessor for the name itself, so anything that needs one reads it back out
+ * of the rendered string. Two places did that with their own copy of the offset; naming it once
+ * means they cannot disagree about where the name starts.
+ */
+private const val KEY_RENDER_PREFIX = "Key: "
+
+/**
+ * The name Compose renders for a [Key], which is one of the two key vocabularies in the app.
+ *
+ * The other is `AWTKeyboardInterceptor.getKeyName`. Neither is derived from the other, and where
+ * they disagree a chord fires on one path and silently does nothing on the other;
+ * [canonicalKeyName] is the fold that reconciles them and `KeyVocabularyAgreementTest` walks both.
+ *
+ * Two things about this rendering are worth knowing before depending on it. It is not the
+ * presets' vocabulary - the left arrow renders "Left" against their "DirectionLeft". And it is
+ * not stable: `Key.toString()` falls through to AWT's `getKeyText`, which answers with a word
+ * while the toolkit is cold and with the macOS glyph once it is up, so `Key.Tab` is "Tab" in a
+ * headless test and "⇥" in a running app. Anything PERSISTING a name wants the fold, not this.
+ *
+ * `Key.keyCode` is a packed Long rather than a name, so it is a last resort here and only for a
+ * future rendering that does not carry this prefix. Current Compose desktop always prefixes
+ * the text; unnamed native codes render as AWT diagnostic strings instead of numbers.
+ */
+internal fun composeKeyName(key: Key): String {
+    val rendered = key.toString()
+    return if (rendered.startsWith(KEY_RENDER_PREFIX)) {
+        rendered.substring(KEY_RENDER_PREFIX.length).trim()
+    } else {
+        key.keyCode.toString()
+    }
+}
+
+/**
+ * The name a captured [Key] should be STORED under, as opposed to merely compared by.
+ *
+ * [composeKeyName] gives whatever Compose renders, which is not the vocabulary the presets use:
+ * the left arrow renders "Left" against the presets' "DirectionLeft", the right bracket renders
+ * "Close Bracket" against "CloseBracket", and the 1 key renders "1" against "One". Every one of
+ * those MATCHES, because [canonicalKeyName] folds them - but none of them DISPLAYS the same,
+ * because `KeyStroke.formatKeyDisplay` knows "directionleft" and not "left". Stored raw, a
+ * rebound arrow would sit in the Shortcuts list as "⌘LEFT" beside a preset's "⌘←".
+ *
+ * Folding first makes a rebind indistinguishable from a preset binding everywhere: same match,
+ * same signature, same rendering. It also makes the stored value STABLE, which the raw rendering
+ * is not: `Key.toString()` falls through to AWT's `getKeyText`, so the same user rebinding Tab
+ * gets "Tab" or "⇥" in their file depending on whether the toolkit was up when they did it.
+ *
+ * Case is the one thing the fold does not carry, so the file
+ * gains "directionleft" where a preset has "DirectionLeft" - every comparison in the keymap is
+ * case-insensitive, and a lowercase name a reader can recognise beats a correctly-cased one
+ * nobody can.
+ */
+internal fun storedKeyName(key: Key): String = canonicalKeyName(composeKeyName(key))
+
+/**
+ * The key name a stored packed `Key.keyCode` stands for, or null when [stored] is not one.
+ *
+ * Every keymap ever saved through the Shortcuts screen carries these, so two callers need the
+ * answer: [canonicalKeyName], so an unmigrated file still MATCHES, and the settings migration,
+ * so the file stops holding a fifteen-digit key and the Shortcuts list stops rendering one.
+ * Both want the folded name, for the reason [storedKeyName] gives.
+ *
+ * Guarded to strings no key name can be - two or more characters, all digits. The single-digit
+ * spellings are claimed by [KEY_ALIASES] before this is reached, and Compose names no key in
+ * digits alone, so this cannot shadow a real name.
+ */
+internal fun keyNameForStoredKeyCode(stored: String): String? {
+    if (stored.length < 2 || !stored.all { it.isDigit() }) return null
+    // Check before folding so a numeric rendering cannot recurse through canonicalKeyName.
+    // Current desktop Compose uses an AWT diagnostic for unknown keys instead.
+    return stored
+        .toLongOrNull()
+        // Native AWT key codes are non-negative; negative low bits can render invalid Unicode.
+        ?.takeIf { it.toInt() >= 0 }
+        ?.let { composeKeyName(Key(it)) }
+        // AWT names unknown codes with a diagnostic placeholder. That is not a recoverable
+        // key name and must not replace the original value in a user's settings file.
+        ?.takeIf { it != stored && !it.contains(" keyCode: 0x", ignoreCase = true) }
+        ?.let { canonicalKeyName(it) }
+}
+
+/**
  * The one name a key answers to, with every spelling the codebase can produce folded together.
  *
  * Three vocabularies reach this: Compose's `Key` property names, which the presets store
@@ -39,8 +123,50 @@ internal fun canonicalModifiers(modifiers: List<String>): Set<String> =
  */
 internal fun canonicalKeyName(keyName: String): String {
     val lower = keyName.lowercase()
-    return KEY_ALIASES[lower] ?: lower
+    // The keyCode branch is for a packed `Key.keyCode`, written by every pre-#329 rebind. It is
+    // folded here rather than only migrated because the migration rewrites ONE file: a keymap
+    // restored from a backup, copied off another machine, or exported and re-imported reaches the
+    // matchers before it reaches the migration, and the whole failure is a rebind that silently
+    // does nothing.
+    return KEY_ALIASES[lower] ?: keyNameForStoredKeyCode(lower) ?: lower
 }
+
+/**
+ * Every key the keymap vocabulary recognises, in canonical form.
+ *
+ * This is the set of keys BOSS can actually dispatch: exactly what
+ * `AWTKeyboardInterceptor.getKeyName` names, folded through [canonicalKeyName], which is also
+ * every key `KeymapPresets` binds and every key the capture dialog can store.
+ * `ShortcutTesterKeyNamesTest` checks it against that table in both directions: nothing here is
+ * unrecognised by the tester, and nothing here is a key the interceptor cannot name. What it does
+ * NOT catch is a key added to the interceptor's table alone, because the test drives that table
+ * through a hand-written list of AWT key codes rather than reading the `when` itself. Adding a
+ * key there means adding it here by hand.
+ *
+ * It exists because the Shortcuts screen's tester had its own hand-written copy of this list -
+ * the fourth in the codebase - and it was wrong. It omitted every function key and Home, End,
+ * PageUp and PageDown, so a shortcut rebound onto F5 was reported as "Unknown key name 'F5' -
+ * won't match user input" while working perfectly.
+ *
+ * Note what this is NOT: proof that an absent name cannot match. [canonicalKeyName] folds an
+ * unknown name onto itself, and the keyboard has keys outside the interceptor's table (F13 and
+ * up, the numeric keypad) that `KeyEvent.getKeyText` still names. So absence is a reason to say
+ * "unrecognised", never a reason to report a failure.
+ */
+internal val KNOWN_KEY_NAMES: Set<String> =
+    buildSet {
+        for (letter in 'a'..'z') add(letter.toString())
+        addAll(listOf("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"))
+        for (n in 1..12) add("f$n")
+        addAll(listOf("enter", "escape", "space", "tab", "backspace", "delete"))
+        addAll(listOf("directionleft", "directionright", "directionup", "directiondown"))
+        addAll(listOf("home", "end", "pageup", "pagedown"))
+        addAll(listOf("minus", "equals", "openbracket", "closebracket", "slash", "backslash"))
+        addAll(listOf("semicolon", "apostrophe", "comma", "period", "grave"))
+    }
+
+/** Whether [keyName], in any of its spellings, names a key this build can dispatch. */
+internal fun isKnownKeyName(keyName: String): Boolean = canonicalKeyName(keyName) in KNOWN_KEY_NAMES
 
 /**
  * Every spelling that is not already its own canonical name, keyed lowercase.
@@ -61,8 +187,27 @@ private val KEY_ALIASES: Map<String, String> =
         alias("directionup", "up", "arrowup", "↑")
         alias("directiondown", "down", "arrowdown", "↓")
         alias("space", "spacebar", "␣", " ")
-        alias("escape", "esc")
-        alias("enter", "return")
+        // Compose renders these two ways on one machine. `Key.toString()` falls through to AWT's
+        // `getKeyText`, which answers with a word while the toolkit is cold and with the macOS
+        // glyph once it is up - so "Tab" and "⇥" are both real spellings of one key, and which
+        // one you get depends on nothing the user did.
+        //
+        // The GLYPH is what a running app produces, so these were live on the Compose matcher
+        // path before any of this: `KeymapMatcher` derives the event's name from `Key.toString()`
+        // and compares it against the preset's, so Ctrl+Tab and Ctrl+Shift+Tab - TAB_NEXT and
+        // TAB_PREVIOUS, shipped in all four presets - asked whether "⇥" was "Tab" and were told
+        // no. They survive on the AWT interceptor, which says "Tab" on both sides. Measured warm
+        // and cold; `KeyVocabularyAgreementTest` covers whichever one an environment renders and
+        // `CanonicalKeyNameTest` enumerates both.
+        //
+        // The arrow and space glyphs above are here for the same reason; these are the rest.
+        alias("escape", "esc", "⎋")
+        alias("enter", "return", "⏎")
+        alias("tab", "⇥")
+        alias("backspace", "⌫")
+        alias("delete", "⌦")
+        alias("home", "movehome", "↖")
+        alias("end", "moveend", "↘")
         // A dedicated + key and Shift+= are the same chord to every preset: zoom in is stored as
         // Equals with a Cmd+Shift+Equals alternate.
         alias("equals", "plus", "+", "=")
@@ -76,12 +221,21 @@ private val KEY_ALIASES: Map<String, String> =
         alias("closebracket", "close bracket", "right bracket", "rightbracket", "]")
         // Shift+/ reports "?" on a US layout.
         alias("slash", "/", "?")
-        alias("backslash", "\\")
+        // AWT can name this key "Back Slash" while hand-edited files use the character.
+        // Accept both without depending on whether a platform installs a display override.
+        alias("backslash", "back slash", "\\")
         alias("semicolon", ";")
-        alias("apostrophe", "'")
         alias("comma", ",")
         alias("period", ".")
-        alias("grave", "`")
+        // Cold spellings again, in the same shape: Compose renders "Quote", "Back Quote",
+        // "Page Up" and "Page Down" where the interceptor says "Apostrophe", "Grave", "PageUp"
+        // and "PageDown". A running app renders "'" and "`" for the first two (already folded)
+        // and the glyphs above for the page keys. `KeyVocabularyAgreementTest` walks both tables
+        // so the next divergence fails a build rather than a keystroke.
+        alias("apostrophe", "quote", "'")
+        alias("grave", "back quote", "`")
+        alias("pageup", "page up", "⇞")
+        alias("pagedown", "page down", "⇟")
         // Digit characters against the word forms the presets store ("One" for Cmd+1).
         listOf("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
             .forEachIndexed { digit, word -> put(digit.toString(), word) }
@@ -331,7 +485,10 @@ data class KeyBinding(
 
             return KeyBinding(
                 actionId = actionId,
-                key = key.keyCode.toString(),
+                // The name, not `key.keyCode` - see [composeKeyName]. Same defect as the capture
+                // dialog's (#329); this copy has no caller today, which is exactly why it would
+                // have been the one to survive.
+                key = storedKeyName(key),
                 modifiers = modifiers,
                 context = context,
                 enabled = true,

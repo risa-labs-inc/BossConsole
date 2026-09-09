@@ -36,6 +36,7 @@ class OverlayCornerForwardingTest {
     @After
     fun tearDown() {
         OverlayConfig.heavyweightCorner = previousRenderer
+        resetOverlayFieldForTest("useHeavyweightOverlays")
         OverlayConfig.useHeavyweightPopups = previousHeavyweight
     }
 
@@ -52,6 +53,7 @@ class OverlayCornerForwardingTest {
         regionInWindow: IntRect?,
     ): Captured {
         val captured = Captured()
+        resetOverlayFieldForTest("useHeavyweightOverlays")
         OverlayConfig.useHeavyweightPopups = true
         OverlayConfig.heavyweightCorner = { alignment, initialSize, inset, isFocusable, region, _ ->
             // Recorded, not composed: composing a real Window needs a display.

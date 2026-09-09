@@ -1,10 +1,12 @@
 package ai.rever.boss.plugin
 
+import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.components.plugin.DependentPlugin
 import ai.rever.boss.components.plugin.DependentRestartCoordinator
 import ai.rever.boss.components.plugin.DependentRestartEventBus
 import ai.rever.boss.components.plugin.DynamicPluginInfo
 import ai.rever.boss.components.plugin.DynamicPluginManager
+import ai.rever.boss.components.plugin.HotReloadPolicy
 import ai.rever.boss.components.plugin.MicrokernelRuntime
 import ai.rever.boss.components.plugin.ReloadJarCandidates
 import ai.rever.boss.components.plugin.findRelocatedPluginJar
@@ -153,8 +155,15 @@ class PluginLoaderDelegateImpl(
             // sidecar goes with it: an uninstall→reinstall of the same version
             // reuses the filename, so a surviving `.sig` would meet fresh bytes
             // and hard-fail at load — worse than being unsigned.
-            runCatching { File(jarPath).delete() }
-            runCatching { PluginSignatureSidecar.delete(jarPath) }
+            //
+            // Gated on the JAR going, like every other paired delete: if the JAR
+            // survives (held open, read-only dir) it will be refused again on the
+            // next scan, and an unsigned survivor is a worse starting point than a
+            // signed one should enforcement ever reach this path.
+            val jarDeleted = runCatching { File(jarPath).delete() }.getOrDefault(false)
+            if (jarDeleted) {
+                runCatching { PluginSignatureSidecar.delete(jarPath) }
+            }
             logger.info(
                 LogCategory.SYSTEM,
                 "Refusing to install microkernel runtime as a plugin",
@@ -458,6 +467,18 @@ class PluginLoaderDelegateImpl(
                 logReloadSource(pluginId, loadedJarPath, jarPath)
             }
 
+            // Some plugins (BossConsole#71) own a native OS peer bound to the classloader that
+            // created it - force-unloading that loader to load the new jar leaves every open (and
+            // every future) surface unable to attach a view. Defer to the next cold start instead:
+            // the safe half of a reload still happens (the new bytes are on disk and
+            // installed.json points at them), only the live swap does not.
+            if (dynamicPluginManager.getPluginInfo(pluginId)?.state == PluginState.LOADED &&
+                HotReloadPolicy.requiresRestartInsteadOfHotReload(pluginId)
+            ) {
+                withContext(Dispatchers.IO) { deferReloadToRestart(pluginId, jarPath, loadedJarPath) }
+                return dynamicPluginManager.getPluginInfo(pluginId)?.let(::toLoadedPluginInfo)
+            }
+
             // Unload
             val unloadResult = dynamicPluginManager.uninstallPlugin(pluginId, force = true)
             if (unloadResult.isFailure) {
@@ -473,44 +494,82 @@ class PluginLoaderDelegateImpl(
         }
     }
 
+    /**
+     * Records [jarPath] as this plugin's installed jar without touching the running instance,
+     * and tells the user a restart is needed to actually pick it up (BossConsole#71).
+     *
+     * Read the manifest before recording it: this deferred path bypasses installPlugin.
+     */
+    private fun deferReloadToRestart(
+        pluginId: String,
+        jarPath: String,
+        loadedJarPath: String?,
+    ) {
+        if (jarPath == loadedJarPath) {
+            StatusMessageManager.showMessage("Restart BOSS to reload this plugin", durationMs = 5000)
+            return
+        }
+        val manifest = readDeferredPluginManifest(pluginId, jarPath)
+        val existing = PluginPersistence.getInstalledPlugin(pluginId)
+        PluginPersistence.addInstalledPlugin(
+            pluginId = pluginId,
+            jarPath = jarPath,
+            enabled = existing?.enabled ?: true,
+            sourceUrl = existing?.sourceUrl,
+            installedVersion = manifest.version,
+        )
+        logger.info(
+            LogCategory.SYSTEM,
+            "Deferred a hot-reload to the next restart - this plugin owns a native surface",
+            mapOf("pluginId" to pluginId, "jarPath" to jarPath),
+        )
+        val displayName = dynamicPluginManager.getPluginInfo(pluginId)?.manifest?.displayName ?: pluginId
+        StatusMessageManager.showMessage("$displayName was updated - restart BOSS to apply it", durationMs = 5000)
+    }
+
     override fun getLoadedPlugins(): List<LoadedPluginInfo> =
         try {
             // getVisibleInstalledPlugins() already filters by full access
             // (admin status AND required permissions), so no extra filter here.
-            dynamicPluginManager.getVisibleInstalledPlugins().map { info ->
-                // Use manifest.canUnload instead of calling suspend checkCanUnload
-                LoadedPluginInfo(
-                    pluginId = info.manifest.pluginId,
-                    displayName = info.manifest.displayName,
-                    version = info.manifest.version,
-                    description = info.manifest.description,
-                    author = info.manifest.author,
-                    url = info.manifest.url,
-                    // The list the Toolbox's installed view is built from, so this is the site that
-                    // decides where its Update goes. Read per plugin rather than hoisted: the
-                    // persisted config is held in memory behind a lock, so each call is a find on a
-                    // list, not a file read.
-                    sourceUrl = PluginPersistence.getSourceUrl(info.manifest.pluginId).orEmpty(),
-                    type =
-                        info.manifest.type.name
-                            .lowercase(),
-                    apiVersion = info.manifest.apiVersion,
-                    minBossVersion = info.manifest.minBossVersion,
-                    isSystemPlugin = info.manifest.systemPlugin,
-                    canUnload = info.manifest.canUnload,
-                    loadPriority = info.manifest.loadPriority,
-                    isEnabled = info.enabled,
-                    healthy = info.state == PluginState.LOADED,
-                    jarPath = info.jarPath,
-                    installedAt = 0L,
-                    requiresAdmin = info.manifest.requiresAdmin,
-                    isIncompatible = PluginCrashRegistry.isIncompatible(info.manifest.pluginId),
-                )
-            }
+            dynamicPluginManager.getVisibleInstalledPlugins().map(::toLoadedPluginInfo)
         } catch (e: Exception) {
             logger.error(LogCategory.SYSTEM, "Exception getting loaded plugins", error = e)
             emptyList()
         }
+
+    /**
+     * Shared with [doReloadPlugin]'s deferred-to-restart branch, which reports the plugin's
+     * CURRENT (untouched) state rather than `null` - it is still loaded, just not reloaded.
+     */
+    private fun toLoadedPluginInfo(info: DynamicPluginInfo): LoadedPluginInfo =
+        // Use manifest.canUnload instead of calling suspend checkCanUnload
+        LoadedPluginInfo(
+            pluginId = info.manifest.pluginId,
+            displayName = info.manifest.displayName,
+            version = info.manifest.version,
+            description = info.manifest.description,
+            author = info.manifest.author,
+            url = info.manifest.url,
+            // The list the Toolbox's installed view is built from, so this is the site that
+            // decides where its Update goes. Read per plugin rather than hoisted: the
+            // persisted config is held in memory behind a lock, so each call is a find on a
+            // list, not a file read.
+            sourceUrl = PluginPersistence.getSourceUrl(info.manifest.pluginId).orEmpty(),
+            type =
+                info.manifest.type.name
+                    .lowercase(),
+            apiVersion = info.manifest.apiVersion,
+            minBossVersion = info.manifest.minBossVersion,
+            isSystemPlugin = info.manifest.systemPlugin,
+            canUnload = info.manifest.canUnload,
+            loadPriority = info.manifest.loadPriority,
+            isEnabled = info.enabled,
+            healthy = info.state == PluginState.LOADED,
+            jarPath = info.jarPath,
+            installedAt = 0L,
+            requiresAdmin = info.manifest.requiresAdmin,
+            isIncompatible = PluginCrashRegistry.isIncompatible(info.manifest.pluginId),
+        )
 
     override fun isPluginLoaded(pluginId: String): Boolean = dynamicPluginManager.getPluginInfo(pluginId) != null
 
@@ -563,11 +622,20 @@ class PluginLoaderDelegateImpl(
                     "instances" to tabs.size.toString(),
                 ),
             )
-            // Close the stale tab UIs on the EDT and wait for them to detach, then reload
-            // so the freshly-installed version is what's loaded when the user reopens.
-            closeTabsOnEdt(pluginId, tabs)
-            reloadPlugin(pluginId)
-            tabs.size
+            // A not-hot-reloadable plugin (BossConsole#71) gets none of this: closing its tabs
+            // would be for nothing, since reloadPlugin (via doReloadPlugin) defers the actual
+            // swap to a restart rather than tearing the classloader down. Leaving them open is
+            // the point - the native view they hold is still valid on the still-running loader.
+            if (HotReloadPolicy.requiresRestartInsteadOfHotReload(pluginId)) {
+                reloadPlugin(pluginId)
+                0
+            } else {
+                // Close the stale tab UIs on the EDT and wait for them to detach, then reload
+                // so the freshly-installed version is what's loaded when the user reopens.
+                closeTabsOnEdt(pluginId, tabs)
+                reloadPlugin(pluginId)
+                tabs.size
+            }
         } catch (ce: CancellationException) {
             // Self-reset: the detached reload just unloaded the CALLER's own
             // plugin and cancelled its scope. The reload completes on the

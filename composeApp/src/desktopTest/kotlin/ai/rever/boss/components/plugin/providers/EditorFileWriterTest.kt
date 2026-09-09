@@ -39,6 +39,26 @@ class EditorFileWriterTest {
     }
 
     @Test
+    fun `guarded staged failures preserve the original and clean up for IO and stack errors`() {
+        val target = directory.resolve("guarded.txt").toFile().apply { writeText("original") }
+        for (failure in listOf(IOException("disk full"), StackOverflowError("write stack"))) {
+            val writer =
+                EditorFileWriter { output, _ ->
+                    output.writeText("partial")
+                    throw failure
+                }
+
+            assertFalse(
+                guardedWrite(target.path, "replacement", reportFailure = { _, _, _ -> }) { file, text ->
+                    writer.write(file.path, text)
+                },
+            )
+            assertEquals("original", target.readText())
+            assertEquals(listOf("guarded.txt"), directory.toFile().list()!!.toList())
+        }
+    }
+
+    @Test
     fun `a failed first write does not leave a partial file behind`() {
         val target = directory.resolve("new.txt")
 

@@ -22,10 +22,10 @@ class BossFileTypesTest {
 
     private val resourceFile = File(repoRoot, "composeApp/src/desktopMain/resources/boss-file-types.json")
 
-    private val editorLanguagesFile =
+    private val languageIdsFile =
         File(
             repoRoot,
-            "composeApp/src/commonMain/kotlin/ai/rever/boss/components/plugin/language/EditorLanguages.kt",
+            "plugin-platform/plugin-language-types/src/commonMain/kotlin/ai/rever/boss/plugin/language/LanguageIds.kt",
         )
 
     private val table by lazy { BossFileTypes.parse(resourceFile) }
@@ -296,25 +296,25 @@ class BossFileTypesTest {
     // ---- the drift gate ----
 
     @Test
-    fun `the table covers exactly the extensions EditorLanguages knows`() {
-        val editorLanguages = editorLanguageExtensions()
+    fun `the table covers exactly the extensions LanguageIds knows`() {
+        val languageIds = languageIdExtensions()
         assertEquals(
-            editorLanguages.keys.sorted(),
+            languageIds.keys.sorted(),
             table.extensions.map { it.ext }.sorted(),
-            "boss-file-types.json and EditorLanguages.EXTENSIONS disagree about which extensions exist. " +
+            "boss-file-types.json and LanguageIds.EXTENSIONS disagree about which extensions exist. " +
                 "Adding a lexer means adding a row here, or BOSS will not offer to open the files it can now read; " +
                 "removing one and leaving the row means BOSS claims a file type it cannot highlight.",
         )
     }
 
     @Test
-    fun `the table agrees with EditorLanguages about which language each extension is`() {
-        val editorLanguages = editorLanguageExtensions()
+    fun `the table agrees with LanguageIds about which language each extension is`() {
+        val languageIds = languageIdExtensions()
         val disagreements =
             table.extensions.mapNotNull { row ->
-                val expected = editorLanguages[row.ext]
+                val expected = languageIds[row.ext]
                 if (expected != null && expected != row.language) {
-                    ".${row.ext}: EditorLanguages says '$expected', boss-file-types.json says '${row.language}'"
+                    ".${row.ext}: LanguageIds says '$expected', boss-file-types.json says '${row.language}'"
                 } else {
                     null
                 }
@@ -323,25 +323,25 @@ class BossFileTypesTest {
     }
 
     /**
-     * `EditorLanguages.EXTENSIONS`, read out of the source.
+     * `LanguageIds.EXTENSIONS`, read out of the source.
      *
      * A regex over Kotlin source is a poor way to read a map and it is the only
-     * way available here: `buildSrc` compiles before `composeApp` and cannot
+     * way available here: `buildSrc` compiles before `plugin-language-types` and cannot
      * depend on it. The alternative was no gate at all, which is the state that
      * let three copies of this table drift apart in the first place. The pattern
      * is anchored to the `EXTENSIONS` block so `EXACT_NAMES` and `PREFIXED_NAMES`
      * above it cannot leak in.
      */
-    private fun editorLanguageExtensions(): Map<String, String> {
-        assertTrue(editorLanguagesFile.isFile, "EditorLanguages.kt not found at ${editorLanguagesFile.absolutePath}")
-        val source = editorLanguagesFile.readText()
+    private fun languageIdExtensions(): Map<String, String> {
+        assertTrue(languageIdsFile.isFile, "LanguageIds.kt not found at ${languageIdsFile.absolutePath}")
+        val source = languageIdsFile.readText()
         val block =
             source
                 .substringAfter("private val EXTENSIONS =", "")
-                .also { assertTrue(it.isNotEmpty(), "EXTENSIONS block not found; did EditorLanguages get restructured?") }
+                .also { assertTrue(it.isNotEmpty(), "EXTENSIONS block not found; did LanguageIds get restructured?") }
         val pairs = Regex("\"([a-z0-9]+)\" to \"([a-z]+)\"").findAll(block)
         val map = pairs.associate { it.groupValues[1] to it.groupValues[2] }
-        assertTrue(map.size > 50, "only ${map.size} extensions parsed out of EditorLanguages; the regex has gone stale")
+        assertTrue(map.size > 50, "only ${map.size} extensions parsed out of LanguageIds; the regex has gone stale")
         return map
     }
 }

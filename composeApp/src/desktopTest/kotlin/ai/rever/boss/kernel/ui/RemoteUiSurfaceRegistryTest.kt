@@ -43,6 +43,40 @@ class RemoteUiSurfaceRegistryTest {
     private val registry = RemoteUiSurfaceRegistry()
 
     @Test
+    fun `unregister and kernel reset retain ownership while old host compositions can remain`() {
+        registry.register(SURFACE, PROCESS).accepted()
+        registry.unregister(SURFACE)
+        assertIs<SurfaceRegistration.Rejected>(registry.register(SURFACE, "intruder"))
+        registry.clear()
+        assertIs<SurfaceRegistration.Rejected>(registry.register(SURFACE, "intruder"))
+        assertIs<SurfaceRegistration.Accepted>(registry.register(SURFACE, PROCESS))
+    }
+
+    @Test
+    fun `a disconnected visible surface cannot be taken over by another process`() {
+        val original = registry.register(SURFACE, PROCESS).accepted()
+        registry.closeStream(original)
+        assertIs<SurfaceRegistration.Rejected>(registry.register(SURFACE, "intruder"))
+        assertIs<SurfaceRegistration.Accepted>(registry.register(SURFACE, PROCESS))
+    }
+
+    @Test
+    fun `authorization of an old registration cannot remove its replacement`() {
+        val original = registry.register(SURFACE, PROCESS).accepted()
+        val replacement = registry.register(SURFACE, PROCESS).accepted()
+        assertFalse(registry.unregister(SURFACE, original))
+        assertEquals(replacement, registry.surfaceOf(SURFACE))
+    }
+
+    @Test
+    fun `stream ownership is checked when the claim is acquired`() {
+        registry.register(SURFACE, PROCESS).accepted()
+        assertIs<SurfaceStream.NotOwner>(registry.openStream(SURFACE, "intruder"))
+        assertIs<SurfaceStream.NotOwner>(registry.openStream(SURFACE, null))
+        assertIs<SurfaceStream.Bound>(registry.openStream(SURFACE, PROCESS))
+    }
+
+    @Test
     fun `a component attached before the plugin exists still gets the first tree`() {
         val host = RecordingHost()
         registry.attach(SURFACE, host)
@@ -83,7 +117,7 @@ class RemoteUiSurfaceRegistryTest {
         assertIs<SurfaceStream.Bound>(registry.openStream(SURFACE))
         registry.closeStream(first)
 
-        val second = registry.register(SURFACE, "plugin-a-respawned")
+        val second = registry.register(SURFACE, PROCESS)
 
         assertIs<SurfaceRegistration.Accepted>(second)
     }

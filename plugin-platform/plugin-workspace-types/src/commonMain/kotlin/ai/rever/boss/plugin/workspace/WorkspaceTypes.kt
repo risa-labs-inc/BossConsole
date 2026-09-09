@@ -47,9 +47,10 @@ data class TabConfig(
  * silently disabled the bookmarks plugin on a machine that had it. `@JvmOverloads` emits the
  * two-argument constructor as a real overload, so old plugins keep linking.
  *
- * The same hazard applies to any future field here, and to `copy()`, which `@JvmOverloads` does
- * NOT cover - a plugin calling `copy(id, tabs)` would break the same way with no fix short of a
- * plugin rebuild. Prefer adding nothing to these types; see `PanelConfigBinaryCompatTest`.
+ * The same hazard applies to `copy()` and the generated serialization constructor, which
+ * `@JvmOverloads` does not preserve. Hidden overloads below restore their old descriptors without
+ * changing new Kotlin source calls. Any future field needs the same ABI audit; see
+ * `PanelConfigBinaryCompatTest` and the cross-jar `ApiPackageDivergenceTest`.
  */
 @Immutable
 @Serializable
@@ -59,7 +60,42 @@ data class PanelConfig
         val id: String,
         val tabs: List<TabConfig>,
         val pinnedCount: Int = 0,
-    )
+    ) {
+        // The pinned plugin API still has the two-property data class. Keep its copy and
+        // copy$default descriptors while preserving the host-only pinned tab count. As with the
+        // generated copy, the consumer clamps this count to the resulting tab list on restore.
+        @Deprecated("Binary compatibility with the two-property plugin API", level = DeprecationLevel.HIDDEN)
+        fun copy(
+            id: String = this.id,
+            tabs: List<TabConfig> = this.tabs,
+        ): PanelConfig = PanelConfig(id, tabs, pinnedCount)
+
+        // Preserve the public serialization descriptor required by the cross-jar guard. Normal
+        // plugin loading shadows the API's serializer with the host's too, so it uses the new
+        // constructor. The deprecated SerializationConstructorMarker type is intentional here:
+        // only its exact JVM descriptor can preserve the old ABI; MissingFieldException is public.
+        @Deprecated("Binary compatibility with the two-property plugin API", level = DeprecationLevel.HIDDEN)
+        @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+        @Suppress("DEPRECATION_ERROR", "UNUSED_PARAMETER")
+        constructor(
+            seen: Int,
+            id: String?,
+            tabs: List<TabConfig>?,
+            marker: kotlinx.serialization.internal.SerializationConstructorMarker?,
+        ) : this(
+            id =
+                if (seen and 3 != 3) {
+                    throw kotlinx.serialization.MissingFieldException(
+                        listOfNotNull("id".takeIf { seen and 1 == 0 }, "tabs".takeIf { seen and 2 == 0 }),
+                        "ai.rever.boss.plugin.workspace.PanelConfig",
+                    )
+                } else {
+                    requireNotNull(id)
+                },
+            tabs = requireNotNull(tabs),
+            pinnedCount = 0,
+        )
+    }
 
 /**
  * Represents a split layout configuration.
