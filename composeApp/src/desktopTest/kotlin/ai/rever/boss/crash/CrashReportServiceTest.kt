@@ -16,6 +16,14 @@ import kotlin.test.assertTrue
  */
 class CrashReportServiceTest {
     @Test
+    fun `the cap applies before expanding short paths into placeholders`() {
+        val error = CrashReportService.SubmitResult.Error("/a ".repeat(2_000))
+
+        // 1,333 complete three-character tokens fit the independent 4,000-character input bound.
+        assertEquals("[PATH] ".repeat(1_333), error.message)
+    }
+
+    @Test
     fun `bounding does not expose a partially cut private hostname`() {
         val diagnostic = "timeout ".repeat(499)
         val error = CrashReportService.SubmitResult.Error(diagnostic + "employer.corp.internal")
@@ -24,7 +32,7 @@ class CrashReportServiceTest {
     }
 
     @Test
-    fun `oversized input is bounded before construction sanitizes it`() {
+    fun `oversized error retains sanitized diagnostics and omits the tail`() {
         val error =
             CrashReportService.SubmitResult.Error(
                 "https://private.example.com/secret " + "boom ".repeat(100_000) + "TAIL_MARKER",
