@@ -268,7 +268,7 @@ internal fun ComponentContext.rememberBossAppState(
 ): BossAppState {
     // Use the passed panelRegistry instance (created in BossWindow for menu access)
     val tabRegistry = remember { TabRegistry() }
-    val panelComponentStore = remember { PanelComponentStore(this, panelRegistry) }
+    val panelComponentStore = remember { PanelComponentStore(panelRegistry) }
     val draggablePanelComponent = remember { BossDraggableComponent(panelRegistry) }
     val tabDragComponent = remember { TabDraggableComponent() }
     val tabsComponent = remember { BossTabsComponent(this, tabRegistry, windowId) }

@@ -15,7 +15,6 @@ import ai.rever.boss.plugin.workspace.TabConfig
 import androidx.compose.runtime.Composable
 import com.arkivanov.decompose.ComponentContext
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -82,7 +81,9 @@ class BrowserEngineWarmupTriggerTest {
             // that wait cannot be observed until the type is registered, so the warm-up completing
             // while the applier is still parked IS the ordering assertion.
             val applying =
-                launch(Dispatchers.Default) {
+                // The registry is UI-confined. Keep its iteration and registration on this
+                // event loop; a Default worker races registerTabType's mutable collection.
+                launch {
                     applyWorkspace(
                         workspace = browserWorkspace(),
                         splitViewState = splitViewState,
