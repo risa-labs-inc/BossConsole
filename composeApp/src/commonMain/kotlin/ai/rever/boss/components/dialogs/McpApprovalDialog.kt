@@ -50,6 +50,7 @@ import androidx.compose.ui.window.DialogProperties
  * governed by an ASK policy.
  */
 @Composable
+@Suppress("LongMethod") // Declarative Compose layout.
 fun McpApprovalDialog(
     request: McpApprovalRequest,
     pendingQueueSize: Int = 1,
@@ -59,8 +60,8 @@ fun McpApprovalDialog(
     val colors = BossTheme.colors
     val radii = BossTheme.radius
     val isMutating = remember(request.toolName) { McpMutatingToolCatalog.isMutating(request.toolName) }
-    var rejectionReason by remember { mutableStateOf("") }
-    var showReasonInput by remember { mutableStateOf(false) }
+    var rejectionReason by remember(request.id) { mutableStateOf("") }
+    var showReasonInput by remember(request.id) { mutableStateOf(false) }
 
     BossDialog(
         // onDismissRequest is required by BossDialog; outside-click and back-press are disabled below
@@ -123,7 +124,7 @@ fun McpApprovalDialog(
                     modifier =
                         Modifier
                             .fillMaxWidth()
-                            .background(colors.surface, RoundedCornerShape(radii.card))
+                            .background(colors.raised, RoundedCornerShape(radii.card))
                             .border(1.dp, colors.line, RoundedCornerShape(radii.card))
                             .padding(12.dp),
                 ) {
@@ -139,7 +140,7 @@ fun McpApprovalDialog(
                             fontSize = 13.sp,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
-                            color = colors.primary,
+                            color = colors.signal,
                         )
                         Spacer(modifier = Modifier.weight(1f))
                         Text(
@@ -169,7 +170,7 @@ fun McpApprovalDialog(
                                     .fillMaxWidth()
                                     .heightIn(max = 140.dp)
                                     .verticalScroll(rememberScrollState())
-                                    .background(colors.editorBackground, RoundedCornerShape(4.dp))
+                                    .background(colors.raised, RoundedCornerShape(4.dp))
                                     .padding(8.dp),
                         ) {
                             sanitizedArguments.forEach { (k, v) ->
@@ -205,7 +206,7 @@ fun McpApprovalDialog(
                         colors =
                             TextFieldDefaults.outlinedTextFieldColors(
                                 textColor = colors.textPrimary,
-                                cursorColor = colors.primary,
+                                cursorColor = colors.signal,
                                 focusedBorderColor = colors.alert,
                                 unfocusedBorderColor = colors.line,
                             ),
@@ -237,7 +238,7 @@ fun McpApprovalDialog(
                         },
                         colors = ButtonDefaults.buttonColors(backgroundColor = colors.alert),
                     ) {
-                        Text("Deny", color = colors.onPrimary, fontSize = 12.sp)
+                        Text("Deny", color = colors.signalText, fontSize = 12.sp)
                     }
 
                     Spacer(modifier = Modifier.width(8.dp))
@@ -254,9 +255,9 @@ fun McpApprovalDialog(
 
                     Button(
                         onClick = { onApprove(false) },
-                        colors = ButtonDefaults.buttonColors(backgroundColor = colors.primary),
+                        colors = ButtonDefaults.buttonColors(backgroundColor = colors.signal),
                     ) {
-                        Text("Approve Once", color = colors.onPrimary, fontSize = 12.sp)
+                        Text("Approve Once", color = colors.signalText, fontSize = 12.sp)
                     }
                 }
             }

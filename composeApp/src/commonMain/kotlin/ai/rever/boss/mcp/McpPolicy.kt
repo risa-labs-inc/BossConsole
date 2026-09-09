@@ -26,6 +26,7 @@ enum class McpApprovalDisposition {
     DENIED_BY_OPERATOR,
     TIMEOUT,
     POLICY_DENIED,
+    CANCELLED,
 }
 
 /**
@@ -75,6 +76,9 @@ object McpMutatingToolCatalog {
             // File & OS Execution
             "codebase_write",
             "run_command",
+            "run_in_sidebar",
+            "run_in_panel",
+            "send_input",
             "project_replace",
         )
 

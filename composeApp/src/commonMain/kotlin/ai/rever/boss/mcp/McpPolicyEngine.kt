@@ -22,7 +22,7 @@ sealed interface McpPolicyFault {
         val error: String,
     ) : McpPolicyFault {
         override val message: String
-            get() = "MCP policy file could not be read ($error): all mutating tools defaulted to ASK."
+            get() = "MCP policy file could not be read ($error): all tools withheld until policy recovery."
     }
 
     data class PolicyPersistFailed(
@@ -49,7 +49,11 @@ class McpPolicyEngine(
 ) {
     private val logger = BossLogger.forComponent("McpPolicyEngine")
     private val lock = Any()
-    private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
+    private val json =
+        Json {
+            ignoreUnknownKeys = true
+            prettyPrint = true
+        }
 
     private val _fault = MutableStateFlow<McpPolicyFault?>(null)
     val fault: StateFlow<McpPolicyFault?> = _fault.asStateFlow()
@@ -66,7 +70,9 @@ class McpPolicyEngine(
      * Explicit DENY rules in configuration always win over session trust.
      * If [toolName] was trusted by the operator for this session, it returns [McpPolicyAction.ALLOW].
      */
+    @Suppress("ReturnCount") // Ordered deny, trust and default policy precedence.
     fun policyFor(toolName: String): McpPolicyAction {
+        if (_fault.value is McpPolicyFault.PersistedPolicyUnreadable) return McpPolicyAction.DENY
         val configured = _config.value.rules[toolName]
         if (configured == McpPolicyAction.DENY) {
             return McpPolicyAction.DENY
@@ -121,7 +127,7 @@ class McpPolicyEngine(
             val error = persistConfig(updated)
             if (error != null) {
                 val faultObj = McpPolicyFault.PolicyPersistFailed(toolName, error)
-                _fault.value = faultObj
+                if (_fault.value !is McpPolicyFault.PersistedPolicyUnreadable) _fault.value = faultObj
                 onFault(faultObj)
                 logger.warn(
                     LogCategory.SYSTEM,
@@ -140,6 +146,8 @@ class McpPolicyEngine(
         }
     }
 
+    // An absent file uses defaults; I/O and JSON failures withhold tools.
+    @Suppress("ReturnCount", "TooGenericExceptionCaught")
     private fun loadConfig(): McpToolPolicyConfig {
         val file = policyFile ?: return McpToolPolicyConfig()
         if (!file.exists()) return McpToolPolicyConfig()
@@ -147,8 +155,8 @@ class McpPolicyEngine(
         return try {
             val raw = file.readText()
             json.decodeFromString<McpToolPolicyConfig>(raw)
-        } catch (t: Throwable) {
-            val errorMsg = t.message ?: t::class.simpleName ?: "unknown error"
+        } catch (t: Exception) {
+            val errorMsg = t::class.simpleName ?: "unknown error"
             val faultObj = McpPolicyFault.PersistedPolicyUnreadable(file.path, errorMsg)
             _fault.value = faultObj
             onFault(faultObj)
@@ -158,16 +166,20 @@ class McpPolicyEngine(
                 mapOf("path" to file.path, "error" to errorMsg),
             )
             // Fail closed: enforce ASK on mutating tools
-            McpToolPolicyConfig(defaultMutatingAction = McpPolicyAction.ASK)
+            McpToolPolicyConfig(
+                defaultMutatingAction = McpPolicyAction.DENY,
+                defaultReadOnlyAction = McpPolicyAction.DENY,
+            )
         }
     }
 
+    @Suppress("TooGenericExceptionCaught") // Persistence failures must leave the previous policy in force.
     private fun persistConfig(cfg: McpToolPolicyConfig): String? {
         val file = policyFile ?: return null
         return try {
             file.atomicWriteText(json.encodeToString(cfg))
             null
-        } catch (t: Throwable) {
+        } catch (t: Exception) {
             t.message ?: t::class.simpleName ?: "unknown write error"
         }
     }

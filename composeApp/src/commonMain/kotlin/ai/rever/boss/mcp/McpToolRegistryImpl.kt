@@ -14,6 +14,7 @@ import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -656,175 +657,120 @@ internal class McpToolRegistryCore(
         toolName: String,
         arguments: String,
     ): McpToolResult {
-        // Only enabled tools are reachable (the bridge exposes exactly _tools).
         val tool =
             _tools.value.firstOrNull { it.definition.name == toolName }
                 ?: return McpToolResult("Unknown or disabled MCP tool: $toolName", isError = true)
         val args = parseArgs(arguments)
-
-        // 1. Policy check (ALLOW / ASK / DENY)
         val policy = policyEngine.policyFor(toolName)
-        if (policy == McpPolicyAction.DENY) {
-            val errorMsg = "MCP tool '$toolName' is rejected by policy (DENY)"
-            logger.warn(
-                LogCategory.SYSTEM,
-                "MCP tool rejected by policy",
-                mapOf("tool" to toolName, "policy" to "DENY"),
-            )
-            withContext(Dispatchers.IO) {
-                ledger.record(
-                    toolName = toolName,
-                    providerId = tool.providerId,
-                    policyApplied = McpPolicyAction.DENY,
-                    approvalDisposition = McpApprovalDisposition.POLICY_DENIED,
-                    durationMs = 0L,
-                    isError = true,
-                    rawArgs = args.raw,
-                    errorSnippet = LogSanitizer.sanitizeLogMessage(errorMsg),
-                )
-            }
-            return McpToolResult(errorMsg, isError = true)
-        }
-
-        var disposition = McpApprovalDisposition.AUTO_ALLOWED
-        if (policy == McpPolicyAction.ASK) {
-            val decision =
-                approvalBus.requestApproval(
-                    toolName = toolName,
-                    providerId = tool.providerId,
-                    arguments = args.raw,
-                )
-            when (decision) {
-                is McpApprovalDecision.Approved -> {
-                    disposition =
-                        if (decision.trustForSession) {
-                            policyEngine.trustForSession(toolName)
-                            McpApprovalDisposition.SESSION_TRUSTED
-                        } else {
-                            McpApprovalDisposition.APPROVED_ONCE
-                        }
-                }
-
-                is McpApprovalDecision.Denied -> {
-                    val errorMsg = "MCP tool '$toolName' rejected by operator: ${decision.reason}"
-                    withContext(Dispatchers.IO) {
-                        ledger.record(
-                            toolName = toolName,
-                            providerId = tool.providerId,
-                            policyApplied = McpPolicyAction.ASK,
-                            approvalDisposition = McpApprovalDisposition.DENIED_BY_OPERATOR,
-                            durationMs = 0L,
-                            isError = true,
-                            rawArgs = args.raw,
-                            errorSnippet = LogSanitizer.sanitizeLogMessage(errorMsg),
-                        )
-                    }
-                    return McpToolResult(errorMsg, isError = true)
-                }
-
-                is McpApprovalDecision.Timeout -> {
-                    val errorMsg = "MCP tool '$toolName' timed out waiting for operator approval"
-                    withContext(Dispatchers.IO) {
-                        ledger.record(
-                            toolName = toolName,
-                            providerId = tool.providerId,
-                            policyApplied = McpPolicyAction.ASK,
-                            approvalDisposition = McpApprovalDisposition.TIMEOUT,
-                            durationMs = 0L,
-                            isError = true,
-                            rawArgs = args.raw,
-                            errorSnippet = LogSanitizer.sanitizeLogMessage(errorMsg),
-                        )
-                    }
-                    return McpToolResult(errorMsg, isError = true)
-                }
-            }
-        }
-
-        // 2. Execution with timing and journal recording
         val startTime = System.nanoTime()
-        return try {
-            val res = withTimeout(invokeTimeoutMs) { tool.definition.handler.call(args) }
-            val elapsedMs = (System.nanoTime() - startTime) / 1_000_000L
-            withContext(Dispatchers.IO) {
+        var disposition = McpApprovalDisposition.AUTO_ALLOWED
+        var result: McpToolResult? = null
+        try {
+            val authorization = authorizeInvocation(tool, args, policy)
+            disposition = authorization.first
+            val denial = authorization.second
+            result =
+                when {
+                    denial != null -> {
+                        McpToolResult(denial, isError = true)
+                    }
+
+                    _tools.value.none { it.providerId == tool.providerId && it.definition === tool.definition } ||
+                        policyEngine.policyFor(toolName) == McpPolicyAction.DENY -> {
+                        disposition = McpApprovalDisposition.POLICY_DENIED
+                        McpToolResult("MCP tool access revoked while awaiting approval", isError = true)
+                    }
+
+                    else -> {
+                        if (disposition == McpApprovalDisposition.SESSION_TRUSTED) {
+                            policyEngine.trustForSession(toolName)
+                        }
+                        executeAuthorized(tool, args)
+                    }
+                }
+            return requireNotNull(result)
+        } catch (cancelled: CancellationException) {
+            disposition = McpApprovalDisposition.CANCELLED
+            throw cancelled
+        } finally {
+            withContext(NonCancellable + Dispatchers.IO) {
                 ledger.record(
                     toolName = toolName,
                     providerId = tool.providerId,
                     policyApplied = policy,
                     approvalDisposition = disposition,
-                    durationMs = elapsedMs,
-                    isError = res.isError,
-                    rawArgs = args.raw,
-                    errorSnippet = if (res.isError) LogSanitizer.sanitizeLogMessage(res.content) else null,
+                    durationMs = (System.nanoTime() - startTime) / 1_000_000L,
+                    isError = result?.isError ?: true,
+                    rawArgs = McpArgumentSanitizer.parseArguments(args.raw),
+                    errorSnippet =
+                        when {
+                            result == null -> "Execution cancelled by caller"
+                            result?.isError == true -> result?.text
+                            else -> null
+                        },
                 )
             }
-            res
-        } catch (t: TimeoutCancellationException) {
-            val elapsedMs = (System.nanoTime() - startTime) / 1_000_000L
-            val errorMsg = "Tool '$toolName' timed out after ${invokeTimeoutMs / 1000}s"
-            logger.warn(
-                LogCategory.SYSTEM,
-                "MCP tool handler timed out",
-                mapOf("tool" to toolName, "providerId" to tool.providerId, "timeoutMs" to invokeTimeoutMs),
-                error = t,
-            )
-            withContext(Dispatchers.IO) {
-                ledger.record(
-                    toolName = toolName,
-                    providerId = tool.providerId,
-                    policyApplied = policy,
-                    approvalDisposition = disposition,
-                    durationMs = elapsedMs,
-                    isError = true,
-                    rawArgs = args.raw,
-                    errorSnippet = LogSanitizer.sanitizeLogMessage(errorMsg),
-                )
-            }
-            McpToolResult(errorMsg, isError = true)
-        } catch (t: CancellationException) {
-            val elapsedMs = (System.nanoTime() - startTime) / 1_000_000L
-            withContext(Dispatchers.IO) {
-                ledger.record(
-                    toolName = toolName,
-                    providerId = tool.providerId,
-                    policyApplied = policy,
-                    approvalDisposition = disposition,
-                    durationMs = elapsedMs,
-                    isError = true,
-                    rawArgs = args.raw,
-                    errorSnippet = "Execution cancelled by caller",
-                )
-            }
-            // Caller cancellation (not our timeout) must propagate - swallowing it
-            // would break structured concurrency during request cancel/shutdown.
-            throw t
-        } catch (t: Throwable) {
-            val elapsedMs = (System.nanoTime() - startTime) / 1_000_000L
-            val errorMsg = "Tool '$toolName' failed: ${t.message ?: t::class.simpleName}"
-            logger.warn(
-                LogCategory.SYSTEM,
-                "MCP tool handler failed",
-                mapOf(
-                    "tool" to toolName,
-                    "providerId" to tool.providerId,
-                    "error" to (t.message ?: t::class.simpleName),
-                ),
-            )
-            withContext(Dispatchers.IO) {
-                ledger.record(
-                    toolName = toolName,
-                    providerId = tool.providerId,
-                    policyApplied = policy,
-                    approvalDisposition = disposition,
-                    durationMs = elapsedMs,
-                    isError = true,
-                    rawArgs = args.raw,
-                    errorSnippet = LogSanitizer.sanitizeExceptionMessage(t.message ?: t::class.simpleName ?: "error"),
-                )
-            }
-            McpToolResult(errorMsg, isError = true)
         }
     }
+
+    private suspend fun authorizeInvocation(
+        tool: RegisteredMcpTool,
+        args: McpToolArgs,
+        policy: McpPolicyAction,
+    ): Pair<McpApprovalDisposition, String?> =
+        when (policy) {
+            McpPolicyAction.DENY -> {
+                McpApprovalDisposition.POLICY_DENIED to "MCP tool rejected by policy (DENY)"
+            }
+
+            McpPolicyAction.ALLOW -> {
+                McpApprovalDisposition.AUTO_ALLOWED to null
+            }
+
+            McpPolicyAction.ASK -> {
+                when (
+                    val decision =
+                        approvalBus.requestApproval(
+                            tool.definition.name,
+                            tool.providerId,
+                            McpArgumentSanitizer.parseArguments(args.raw),
+                        )
+                ) {
+                    is McpApprovalDecision.Approved -> {
+                        val disposition =
+                            if (decision.trustForSession) {
+                                McpApprovalDisposition.SESSION_TRUSTED
+                            } else {
+                                McpApprovalDisposition.APPROVED_ONCE
+                            }
+                        disposition to null
+                    }
+
+                    is McpApprovalDecision.Denied -> {
+                        McpApprovalDisposition.DENIED_BY_OPERATOR to
+                            "MCP tool rejected by operator: ${decision.reason}"
+                    }
+
+                    McpApprovalDecision.Timeout -> {
+                        McpApprovalDisposition.TIMEOUT to "MCP tool timed out waiting for operator approval"
+                    }
+                }
+            }
+        }
+
+    @Suppress("TooGenericExceptionCaught") // Plugin handlers may throw any implementation-specific exception.
+    private suspend fun executeAuthorized(tool: RegisteredMcpTool, args: McpToolArgs): McpToolResult =
+        try {
+            withTimeout(invokeTimeoutMs) { tool.definition.handler.call(args) }
+        } catch (_: TimeoutCancellationException) {
+            McpToolResult("Tool '${tool.definition.name}' timed out after ${invokeTimeoutMs / 1000}s", isError = true)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            // The tool caller receives a sanitized failure; never log the raw plugin exception.
+            val reason = LogSanitizer.sanitizeExceptionMessage(failure.message ?: failure::class.simpleName)
+            McpToolResult("Tool '${tool.definition.name}' failed: $reason", isError = true)
+        }
 
     /**
      * Read the persisted disabled set. "Absent" and "unparseable" are NOT the same

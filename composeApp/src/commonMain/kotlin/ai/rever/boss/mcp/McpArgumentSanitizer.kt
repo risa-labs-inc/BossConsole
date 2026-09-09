@@ -1,6 +1,10 @@
 package ai.rever.boss.mcp
 
 import ai.rever.boss.plugin.logging.LogSanitizer
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * Sanitizes MCP tool arguments before they reach an operator (the approval dialog) or
@@ -28,14 +32,50 @@ object McpArgumentSanitizer {
                 ")",
         )
 
-    /** Renders every value to its string form and applies the redaction rules above. */
+    /** Parse only for audit/approval; malformed input must never reach those surfaces verbatim. */
+    @Suppress("TooGenericExceptionCaught") // Invalid nested JSON must not enter the audit surface verbatim.
+    fun parseArguments(raw: String): Map<String, Any?> =
+        try {
+            if (raw.length > 16_384) {
+                mapOf("arguments" to "[OMITTED: too large]")
+            } else {
+                (Json.parseToJsonElement(raw) as? JsonObject)?.toMap()
+                    ?: mapOf("arguments" to "[OMITTED: invalid JSON object]")
+            }
+        } catch (_: Exception) {
+            mapOf("arguments" to "[OMITTED: invalid JSON]")
+        }
+
     fun sanitize(args: Map<String, Any?>): Map<String, String> =
         args.mapValues { (key, value) ->
-            val text = value?.toString() ?: "null"
-            when {
-                sensitiveKeyWords.any { key.contains(it, ignoreCase = true) } -> "[REDACTED]"
-                credentialShapePattern.containsMatchIn(text) -> LogSanitizer.maskToken(text)
-                else -> text
+            if (sensitiveKeyWords.any { key.contains(it, ignoreCase = true) } || key.contains("auth", true)) {
+                "[REDACTED]"
+            } else {
+                sanitizeValue(value).take(4096)
             }
+        }
+
+    private fun sanitizeValue(value: Any?): String =
+        when (value) {
+            is JsonObject -> sanitize(value.toMap()).toString()
+            is JsonArray -> value.joinToString(prefix = "[", postfix = "]") { sanitizeValue(it) }
+            is JsonPrimitive -> sanitizeMessage(value.content)
+            is Map<*, *> -> sanitize(value.entries.associate { it.key.toString() to it.value }).toString()
+            is Iterable<*> -> value.joinToString(prefix = "[", postfix = "]") { sanitizeValue(it) }
+            else -> sanitizeMessage(value?.toString() ?: "null")
+        }
+
+    private val sensitiveAssignment =
+        Regex(
+            """(?i)(?:password|token|secret|api[_-]?key|authorization|credential)""" +
+                """\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s&,;}]+)""",
+        )
+    private val bearer = Regex("""(?i)Bearer\s+[^\s"',;}]+""")
+
+    fun sanitizeMessage(text: String): String =
+        if (credentialShapePattern.containsMatchIn(text)) {
+            "[REDACTED]"
+        } else {
+            text.replace(sensitiveAssignment, "[REDACTED]").replace(bearer, "Bearer [REDACTED]")
         }
 }

@@ -18,8 +18,14 @@ import java.util.concurrent.ConcurrentHashMap
  * The operator's decision on a suspended MCP tool invocation.
  */
 sealed interface McpApprovalDecision {
-    data class Approved(val trustForSession: Boolean = false) : McpApprovalDecision
-    data class Denied(val reason: String = "Operator rejected tool execution") : McpApprovalDecision
+    data class Approved(
+        val trustForSession: Boolean = false,
+    ) : McpApprovalDecision
+
+    data class Denied(
+        val reason: String = "Operator rejected tool execution",
+    ) : McpApprovalDecision
+
     data object Timeout : McpApprovalDecision
 }
 
@@ -72,7 +78,7 @@ open class McpApprovalBus(
             McpApprovalRequest(
                 toolName = toolName,
                 providerId = providerId,
-                arguments = arguments,
+                arguments = McpArgumentSanitizer.sanitize(arguments),
                 timeoutMs = timeoutMs,
             )
 
@@ -113,6 +119,7 @@ open class McpApprovalBus(
             }
             decision
         } finally {
+            request.deferred.complete(McpApprovalDecision.Denied("Approval request expired"))
             synchronized(lock) {
                 activeRequests.remove(request.id)
                 _pendingList.update { list -> list.filterNot { it.id == request.id } }
@@ -123,7 +130,10 @@ open class McpApprovalBus(
     /**
      * Approve the request with [requestId].
      */
-    fun approve(requestId: String, trustForSession: Boolean = false): Boolean {
+    fun approve(
+        requestId: String,
+        trustForSession: Boolean = false,
+    ): Boolean {
         val req = activeRequests[requestId] ?: return false
         val completed = req.deferred.complete(McpApprovalDecision.Approved(trustForSession))
         if (completed) {
@@ -139,14 +149,17 @@ open class McpApprovalBus(
     /**
      * Deny the request with [requestId] and optional explanation.
      */
-    fun deny(requestId: String, reason: String = "Operator rejected tool execution"): Boolean {
+    fun deny(
+        requestId: String,
+        reason: String = "Operator rejected tool execution",
+    ): Boolean {
         val req = activeRequests[requestId] ?: return false
         val completed = req.deferred.complete(McpApprovalDecision.Denied(reason))
         if (completed) {
             logger.info(
                 LogCategory.SYSTEM,
                 "Operator denied tool execution",
-                mapOf("tool" to req.toolName, "reason" to reason),
+                mapOf("tool" to req.toolName),
             )
         }
         return completed

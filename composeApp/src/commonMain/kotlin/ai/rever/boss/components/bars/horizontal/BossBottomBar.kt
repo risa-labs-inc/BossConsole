@@ -203,6 +203,7 @@ fun RowScope.BossLeftBottomBar(tabsComponent: BossTabsComponent? = null) {
 }
 
 @Composable
+@Suppress("LongMethod") // Declarative Compose layout.
 fun BossRightBottomBar() {
     val windowId = LocalWindowId.current
     val scope = rememberCoroutineScope()

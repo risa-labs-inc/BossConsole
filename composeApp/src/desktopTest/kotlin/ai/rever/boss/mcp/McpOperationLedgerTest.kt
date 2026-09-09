@@ -13,7 +13,10 @@ class McpOperationLedgerTest {
     private val tempFiles = mutableListOf<File>()
 
     private fun createTempLedgerFile(): File {
-        val dir = kotlin.io.path.createTempDirectory("mcp-ledger-test").toFile()
+        val dir =
+            kotlin.io.path
+                .createTempDirectory("mcp-ledger-test")
+                .toFile()
         return File(dir, "mcp-calls.jsonl").also { tempFiles.add(it) }
     }
 
@@ -42,7 +45,12 @@ class McpOperationLedgerTest {
         assertEquals(1L, ledger.totalCalls.value)
         assertEquals(0L, ledger.totalErrors.value)
         assertEquals(1, ledger.recentOperations.value.size)
-        assertEquals(record.id, ledger.recentOperations.value.first().id)
+        assertEquals(
+            record.id,
+            ledger.recentOperations.value
+                .first()
+                .id,
+        )
 
         // Verify JSONL on disk
         val lines = file.readLines()
@@ -79,9 +87,9 @@ class McpOperationLedgerTest {
 
         // Sensitive fields masked
         val secretVal = decoded.sanitizedArgs["secret_key"] ?: ""
-        assertFalse(secretVal.contains("my-super-secret-password-12345"), "secret_key must not expose secret in plaintext")
+        assertFalse(secretVal.contains("my-super-secret-password-12345"), "secret_key must be redacted")
         val tokenVal = decoded.sanitizedArgs["auth_token"] ?: ""
-        assertFalse(tokenVal.contains("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"), "auth_token must not expose secret in plaintext")
+        assertFalse(tokenVal.contains("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"), "auth_token must be redacted")
     }
 
     @Test
@@ -106,7 +114,7 @@ class McpOperationLedgerTest {
         val lines = file.readLines()
         val decoded = Json.decodeFromString<McpOperationRecord>(lines.first())
         val idVal = decoded.sanitizedArgs["id"] ?: ""
-        assertFalse(idVal.contains("eyJzdWIiOiIxMjM0NTY3ODkwIn0"), "a JWT-shaped value must be masked regardless of its key name")
+        assertFalse(idVal.contains("eyJzdWIiOiIxMjM0NTY3ODkwIn0"), "JWT must be redacted")
     }
 
     @Test
@@ -202,6 +210,19 @@ class McpOperationLedgerTest {
         assertEquals(10L, ledger.totalCalls.value)
         assertEquals(5, ledger.recentOperations.value.size)
         // Most recent first
-        assertEquals("tool_10", ledger.recentOperations.value.first().toolName)
+        assertEquals(
+            "tool_10",
+            ledger.recentOperations.value
+                .first()
+                .toolName,
+        )
+    }
+
+    @Test
+    fun `nested JSON secrets and malformed input never enter audit arguments`() {
+        val nested = McpArgumentSanitizer.parseArguments("""{"config":{"password":"sentinel"},"auth":["sentinel"]}""")
+        assertFalse(McpArgumentSanitizer.sanitize(nested).toString().contains("sentinel"))
+        val malformed = McpArgumentSanitizer.parseArguments("{password:sentinel}")
+        assertFalse(McpArgumentSanitizer.sanitize(malformed).toString().contains("sentinel"))
     }
 }

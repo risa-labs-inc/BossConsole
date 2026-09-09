@@ -46,6 +46,7 @@ class McpOperationLedger(
      * Record a tool execution, rejection, or timeout.
      * Never throws - I/O failures are logged without disrupting tool return.
      */
+    @Suppress("LongParameterList") // One complete audit record, matching the persisted schema.
     fun record(
         toolName: String,
         providerId: String,
@@ -57,7 +58,7 @@ class McpOperationLedger(
         errorSnippet: String? = null,
     ): McpOperationRecord {
         val sanitized = sanitizeArguments(rawArgs)
-        val sanitizedErrorSnippet = errorSnippet?.let { LogSanitizer.sanitizeLogMessage(it) }
+        val sanitizedErrorSnippet = errorSnippet?.let { McpArgumentSanitizer.sanitizeMessage(it).take(4096) }
         val record =
             McpOperationRecord(
                 id = UUID.randomUUID().toString(),
@@ -87,6 +88,7 @@ class McpOperationLedger(
         return record
     }
 
+    @Suppress("TooGenericExceptionCaught") // Audit failure must not change the already-completed tool result.
     private fun persistRecord(record: McpOperationRecord) {
         val file = ledgerFile ?: return
         synchronized(writeLock) {
@@ -94,7 +96,7 @@ class McpOperationLedger(
                 rotateIfNeeded(file)
                 file.parentFile?.mkdirs()
                 file.appendText(json.encodeToString(record) + "\n")
-            } catch (t: Throwable) {
+            } catch (t: Exception) {
                 logger.warn(
                     LogCategory.SYSTEM,
                     "Failed to append record to MCP operation ledger",
@@ -104,6 +106,8 @@ class McpOperationLedger(
         }
     }
 
+    // Rotation walks numbered backups under a single write lock.
+    @Suppress("NestedBlockDepth", "TooGenericExceptionCaught")
     private fun rotateIfNeeded(file: File) {
         if (!file.exists() || file.length() < maxFileSizeBytes) return
 
@@ -143,7 +147,7 @@ class McpOperationLedger(
                 "Rotated MCP operation ledger file",
                 mapOf("path" to file.path),
             )
-        } catch (t: Throwable) {
+        } catch (t: Exception) {
             logger.warn(
                 LogCategory.SYSTEM,
                 "Failed to rotate MCP operation ledger file",
@@ -157,5 +161,5 @@ class McpOperationLedger(
      * Avoids blind length-based string masking so that legitimate arguments
      * like long file paths, URLs, and shell commands are preserved for auditing.
      */
-    private fun sanitizeArguments(rawArgs: Map<String, Any?>): Map<String, String> = McpArgumentSanitizer.sanitize(rawArgs)
+    private fun sanitizeArguments(rawArgs: Map<String, Any?>) = McpArgumentSanitizer.sanitize(rawArgs)
 }

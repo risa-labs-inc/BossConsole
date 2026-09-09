@@ -11,7 +11,10 @@ class McpPolicyEngineTest {
     private val tempFiles = mutableListOf<File>()
 
     private fun createTempPolicyFile(): File {
-        val dir = kotlin.io.path.createTempDirectory("mcp-policy-test").toFile()
+        val dir =
+            kotlin.io.path
+                .createTempDirectory("mcp-policy-test")
+                .toFile()
         return File(dir, "mcp-tool-policy.json").also { tempFiles.add(it) }
     }
 
@@ -83,9 +86,12 @@ class McpPolicyEngineTest {
         assertIs<McpPolicyFault.PersistedPolicyUnreadable>(reportedFault)
         assertIs<McpPolicyFault.PersistedPolicyUnreadable>(engine.fault.value)
 
-        // Defaults to fail-closed: mutating tools require ASK
-        assertEquals(McpPolicyAction.ASK, engine.policyFor("k8s_delete"))
-        assertEquals(McpPolicyAction.ASK, engine.policyFor("run_command"))
+        // Defaults to fail-closed: all tools are denied
+        assertEquals(McpPolicyAction.DENY, engine.policyFor("k8s_delete"))
+        assertEquals(McpPolicyAction.DENY, engine.policyFor("run_command"))
+        assertEquals(McpPolicyAction.DENY, engine.policyFor("git_status"))
+        engine.setToolPolicy("run_command", McpPolicyAction.ASK)
+        assertEquals(McpPolicyAction.DENY, engine.policyFor("git_status"))
     }
 
     @Test
