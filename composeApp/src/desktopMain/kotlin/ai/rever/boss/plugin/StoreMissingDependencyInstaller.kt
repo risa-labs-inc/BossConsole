@@ -129,9 +129,14 @@ class StoreMissingDependencyInstaller(
 
     override suspend fun installAll(order: List<String>): Result<Unit> {
         val acceptedOrder = order.toList()
-        return DETACHED_PLANS.run(acceptedOrder) {
+        return DETACHED_PLANS.run(
+            key = acceptedOrder,
+            onDetachedFailure = { error ->
+                logger.error(LogCategory.SYSTEM, "Detached dependency plan failed: $acceptedOrder", error = error)
+            },
+        ) {
             super.installAll(acceptedOrder).onFailure { error ->
-                logger.warn(LogCategory.SYSTEM, "Dependency install plan failed", error = error)
+                logger.warn(LogCategory.SYSTEM, "Dependency install plan failed: $acceptedOrder", error = error)
             }
         }
     }
@@ -415,6 +420,8 @@ class StoreMissingDependencyInstaller(
          */
         // Separate jobs keyed by the full consent list avoid self-joining a per-plugin job
         // and never coalesce two different consent plans for the same root.
+        // Different consent plans may overlap: a single-plugin fallback in another window can
+        // load the root before this plan reaches it. Ordering is guaranteed within each plan.
         private val DETACHED_PLANS = KeyedDetachedJobs<List<String>, Result<Unit>>(INSTALL_SCOPE)
 
         private val DETACHED_INSTALLS = KeyedDetachedJobs<String, Result<Unit>>(INSTALL_SCOPE)

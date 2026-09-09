@@ -47,11 +47,13 @@ class MissingDependencyConsentTest {
     @Test
     fun `a new prompt cannot inherit the previous prompts resolved plan`() {
         val answer = CompletableDeferred<DependencyInstallPlan>()
+        val nameAnswer = CompletableDeferred<String>()
         val installer =
             object : MissingDependencyInstaller {
                 override fun isInstalled(pluginId: String) = false
 
-                override suspend fun displayNameFor(pluginId: String): String? = null
+                override suspend fun displayNameFor(pluginId: String): String =
+                    if (pluginId == "first") "First tool" else nameAnswer.await()
 
                 override suspend fun install(pluginId: String) = Result.success(Unit)
 
@@ -67,14 +69,17 @@ class MissingDependencyConsentTest {
         )
         rule.setContent {
             val plan by rememberInstallPlan(prompt)
-            Text(plan.order.joinToString(","))
+            val name by rememberDependencyName(prompt)
+            Text("$name: ${plan.order.joinToString(",")}")
         }
-        rule.onNodeWithText("child,first").assertIsDisplayed()
+        rule.onNodeWithText("First tool: child,first").assertIsDisplayed()
         rule.runOnIdle {
             prompt = MissingDependencyPrompt(MissingPluginDependency("parent", "Parent", "second", false), installer)
         }
-        rule.onNodeWithText("second").assertIsDisplayed()
+        rule.onNodeWithText("second: second").assertIsDisplayed()
         rule.runOnIdle { answer.complete(DependencyInstallPlan(listOf("other", "second"), emptySet(), false, false)) }
-        rule.onNodeWithText("other,second").assertIsDisplayed()
+        rule.onNodeWithText("second: other,second").assertIsDisplayed()
+        rule.runOnIdle { nameAnswer.complete("Second tool") }
+        rule.onNodeWithText("Second tool: other,second").assertIsDisplayed()
     }
 }

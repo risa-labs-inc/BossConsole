@@ -99,11 +99,10 @@ class DependencyInstallPlanTest {
         }
 
     @Test
-    fun `a plugin the store cannot describe is installed but not expanded`() =
+    fun `a plugin the store cannot describe stays in the plan but is not expanded`() =
         runTest {
-            // null is "I don't know", not "nothing". Today's behaviour is to install the one
-            // plugin the user was asked about; the plan must never do less than that because
-            // the store had a bad day.
+            // Unknown metadata does not imply an optional dependency. Keep it in the plan so
+            // installation retries the lookup; if that fails, stop before its dependents.
             val plan =
                 PluginDependencyResolution.installPlan(
                     rootId = "b",

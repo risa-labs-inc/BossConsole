@@ -154,8 +154,8 @@ class MissingDependencyInstallerPlanTest {
     @Test
     fun `a store failure on one plugin does not fail the plan`() =
         runTest {
-            // Today Install downloads the one plugin regardless of what the store can say about
-            // it. The plan must never turn that into a failure the user sees.
+            // Metadata failure leaves the dependency in the plan for a fresh lookup at install
+            // time. It is not evidence of optionality: an install failure still stops the plan.
             val installer = installer(GraphStore(mapOf("b" to listOf("c")), failing = setOf("c")))
 
             val plan = installer.planFor("b")

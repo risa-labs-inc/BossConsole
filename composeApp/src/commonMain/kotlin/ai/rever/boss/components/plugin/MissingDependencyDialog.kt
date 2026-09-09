@@ -66,13 +66,7 @@ fun MissingDependencyDialog(
     // Show the id straight away and replace it with the store's display name if that
     // resolves. The alternative - waiting - means a dialog that appears late or not at all
     // when the store is unreachable, which is exactly when the user most needs telling.
-    val resolvedName by
-        produceState(initialValue = missing.missingPluginId, missing.missingPluginId) {
-            runCatching { prompt.installer.displayNameFor(missing.missingPluginId) }
-                .getOrNull()
-                ?.takeIf { it.isNotBlank() }
-                ?.let { value = it }
-        }
+    val resolvedName by rememberDependencyName(prompt)
 
     val plan = rememberInstallPlan(prompt).value
 
@@ -116,6 +110,20 @@ fun MissingDependencyDialog(
         }
     }
 }
+
+@Composable
+internal fun rememberDependencyName(prompt: MissingDependencyPrompt): State<String> =
+    key(prompt) {
+        val pluginId = prompt.missing.missingPluginId
+        produceState(initialValue = pluginId, pluginId) {
+            runCatching { prompt.installer.displayNameFor(pluginId) }
+                .getOrElse { error ->
+                    if (error is CancellationException) throw error
+                    null
+                }?.takeIf { it.isNotBlank() }
+                ?.let { value = it }
+        }
+    }
 
 /**
  * What Install will do for [prompt], as a plan of the one missing plugin until the store answers.
