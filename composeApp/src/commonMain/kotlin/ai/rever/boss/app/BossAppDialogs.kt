@@ -18,12 +18,12 @@ import ai.rever.boss.components.events.DashboardEventBus
 import ai.rever.boss.components.events.FileEventBus
 import ai.rever.boss.components.events.PanelEventBus
 import ai.rever.boss.components.plugin.DependentRestartDeclinedException
-import ai.rever.boss.components.plugin.PanelIds
 import ai.rever.boss.components.plugin.DependentRestartDialog
 import ai.rever.boss.components.plugin.DynamicPluginManager
 import ai.rever.boss.components.plugin.MissingDependencyDialog
 import ai.rever.boss.components.plugin.MissingHandlerPluginDialog
 import ai.rever.boss.components.plugin.MissingHandlerPluginEventBus
+import ai.rever.boss.components.plugin.PanelIds
 import ai.rever.boss.components.plugin.PluginDependencyEventBus
 import ai.rever.boss.components.plugin.PluginLoadGateHost
 import ai.rever.boss.components.plugin.PluginLoadRemedyAccess
@@ -712,7 +712,7 @@ internal fun BossAppDialogs(state: BossAppState) {
                 // coding CLI attached (BossConsole#380). Does not invoke the MCP tool.
                 state.draggablePanelComponent.revealPlugin(PanelIds.PLUGIN_MANAGER.panelId)
                 StatusMessageManager.showMessage(
-                    "Toolbox → MCP tools: toggle kill-switch for ${mcp.name}",
+                    "In Toolbox, select MCP and find ${mcp.name} to manage its kill-switch",
                     durationMs = 8_000L,
                 )
                 state.focusRequester.requestFocus()
