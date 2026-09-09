@@ -112,3 +112,12 @@ __pycache__/
 # Ignored rather than tracked: what lives here is per-developer and per-task, and a stray
 # entry in `git status` is how a real untracked file gets overlooked.
 .worktrees/
+
+# Eclipse/Kotlin-LSP build output. Regenerated on every IDE build; never tracked.
+# Deliberately UNANCHORED: the LSP writes a bin/ under the repo root AND under each
+# module (modules/*/bin/main/...), so an anchored /bin/ would un-ignore the per-module
+# output and leave a dozen untracked directories in git status.
+# Trade-off: it also swallows any legitimate scripts/bin/ or tools/bin/ added later.
+# Re-include such a directory explicitly with e.g. !scripts/bin/ (after this rule).
+bin/
+.kotlin/

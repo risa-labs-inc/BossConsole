@@ -349,9 +349,11 @@ data class MissingDependencyPrompt(
  * UI exists at all - the same reason `TerminalLinkEventBus` exists, though not the same
  * delivery (see [prompts]).
  *
- * **Only user-initiated installs emit here.** Startup restore and the api hot-swap's
- * reload-all both go through `DynamicPluginManager.installPlugin` directly, and a prompt on
- * those paths would be a dialog per plugin on every launch.
+ * **Only user-initiated installs and re-activations emit here.** Startup restore and the api
+ * hot-swap's reload-all both go through `DynamicPluginManager.installPlugin` directly, and a
+ * prompt on those paths would be a dialog per plugin on every launch. Re-activations (enable
+ * after disable, RBAC un-hide) report through the same bus on purpose: the dependency may have
+ * gone missing while the plugin sat disabled (#180).
  *
  * A class with a singleton subclass rather than a bare object, so a test can hold its own bus.
  * The shared buffer otherwise carries prompts between tests, which is the same coupling two

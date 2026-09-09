@@ -34,6 +34,7 @@ import ai.rever.boss.plugin.api.PluginManifest
 import ai.rever.boss.plugin.api.PluginSandboxRef
 import ai.rever.boss.plugin.api.PluginStorageFactory
 import ai.rever.boss.plugin.api.PluginStoreApiKeyProvider
+import ai.rever.boss.plugin.api.ProjectSearchProvider
 import ai.rever.boss.plugin.api.RoleManagementProvider
 import ai.rever.boss.plugin.api.RunConfigurationDataProvider
 import ai.rever.boss.plugin.api.ScreenCaptureProvider
@@ -117,6 +118,9 @@ class SandboxedPluginContext(
 
     override val gitDataProvider: GitDataProvider?
         get() = delegate.gitDataProvider
+
+    override val projectSearchProvider: ProjectSearchProvider?
+        get() = delegate.projectSearchProvider
 
     override val fileSystemDataProvider: FileSystemDataProvider?
         get() = delegate.fileSystemDataProvider

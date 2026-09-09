@@ -61,6 +61,7 @@ class HomeToolCatalogTest {
         store: List<HomeStorePluginInput> = emptyList(),
         installed: Set<String> = emptySet(),
         access: RegistryAccess = admin,
+        versions: Map<String, String> = emptyMap(),
     ) = HomeToolCatalog
         .build(
             tabTypes = tabTypes,
@@ -68,6 +69,7 @@ class HomeToolCatalogTest {
             storeCatalogue = store,
             installedPluginIds = installed,
             access = access,
+            installedVersionOf = { versions[it] },
         )
         // The host actions are always present and tested separately below; every case here is
         // about what plugins and the store contribute.
@@ -197,18 +199,46 @@ class HomeToolCatalogTest {
     }
 
     @Test
-    fun `a retired plugin is never offered`() {
+    fun `a retired plugin is not offered once its replacement is new enough`() {
         // Unlisting the store row is a manual action outside CI, so until it happens the store
         // keeps returning the plugin - and a user could install it, have the startup sweep remove
         // it, and install it again indefinitely. The filter is what makes the retirement hold
-        // regardless of what the store says.
-        val tools = build(store = RetiredPluginIds.ALL.map { storeRow(it) })
+        // regardless of what the store says - and only once the sweep itself would be able to
+        // act (the replacement at its absorbing release or newer).
+        val versions =
+            RetiredPluginIds
+                .ALL
+                .associate { it.replacementId to it.minReplacementVersion }
+        val tools = build(store = RetiredPluginIds.ALL_IDS.map { storeRow(it) }, versions = versions)
 
         assertTrue(
             tools.isEmpty(),
             "a retired plugin reached a tile: installing it only gets it swept away at the " +
                 "next launch",
         )
+    }
+
+    @Test
+    fun `a retired plugin is still offered while its replacement predates the floor`() {
+        // The floor is the sweep's own: between this host release and the replacement's
+        // absorbing release a fresh install has only the retired plugin, so hiding it
+        // unconditionally would leave the machine with no panel at all. An OLD replacement
+        // (installed but below the floor) must therefore NOT hide the retired one.
+        val oldVersion = "0.0.1"
+        val tools =
+            build(
+                store = RetiredPluginIds.ALL_IDS.map { storeRow(it) },
+                versions = RetiredPluginIds.ALL.associate { it.replacementId to oldVersion },
+            )
+        assertEquals(
+            RetiredPluginIds.ALL_IDS.size,
+            tools.size,
+            "the retired plugin was hidden while the sweep is floored out: a fresh install would have no panel",
+        )
+        // ... and a missing replacement is the same answer - offered, because the sweep cannot
+        // act either.
+        val noneInstalled = build(store = RetiredPluginIds.ALL_IDS.map { storeRow(it) })
+        assertEquals(RetiredPluginIds.ALL_IDS.size, noneInstalled.size)
     }
 
     @Test

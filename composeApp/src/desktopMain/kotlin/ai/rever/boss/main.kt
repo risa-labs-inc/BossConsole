@@ -5,6 +5,7 @@ import ai.rever.boss.cli.CLICommandHandler
 import ai.rever.boss.cli.createBossCLI
 import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.components.dialogs.ChromiumDownloadContent
+import ai.rever.boss.components.settings.search.SettingsSearchIndex
 import ai.rever.boss.config.ChromiumAutoDownloader
 import ai.rever.boss.crash.CrashHandler
 import ai.rever.boss.crash.RENDER_RECOVERY_TOAST_MILLIS
@@ -837,6 +838,10 @@ fun main(args: Array<String>) {
 
     // Initialize passkey service for desktop platforms
     PasskeyPlatformInit.initialize()
+
+    // Hand the settings index to the global search. Once, here, because the index is desktopMain
+    // and the search that reads it is commonMain - see SearchSources.
+    SettingsSearchIndex.registerWithGlobalSearch()
 
     // Initialize plugin store (remote repository, download cache, update manager)
     PluginStoreSetup.initialize()

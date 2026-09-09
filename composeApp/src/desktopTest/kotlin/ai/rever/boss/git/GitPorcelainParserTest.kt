@@ -257,13 +257,34 @@ class GitPorcelainParserTest {
     }
 
     @Test
-    fun `C-quoted path is passed through verbatim, not unquoted`() {
-        // Documents the parser's contract: with core.quotePath=true git C-quotes
-        // special paths (e.g. "a\"b.txt"); the parser performs no unquoting and the
-        // quoted token flows through as the path (display-level limitation).
+    fun `C-quoted path with an escaped quote is unquoted`() {
+        // core.quotePath=true (the default) C-quotes a path with a literal quote
+        // in it: "a\"b.txt". The parser undoes that, because the panel hands
+        // the result straight back to git as a pathspec - the quoted token would
+        // match no file.
         val status = GitService.parseStatusLine("M  \"a\\\"b.txt\"")
         assertNotNull(status)
-        assertEquals("\"a\\\"b.txt\"", status.path)
+        assertEquals("a\"b.txt", status.path)
+    }
+
+    @Test
+    fun `C-quoted octal-escaped UTF-8 path round-trips to the real filename`() {
+        // The status -> stage/discard/diffFile round trip: git emits the octal
+        // byte form for é under core.quotePath, and the parsed path must come
+        // back as the file ACTUALLY is named, or the pathspec matches nothing.
+        // \303\251 is the two-byte UTF-8 encoding of é.
+        val status = GitService.parseStatusLine(" M \"docs/caf\\303\\251.txt\"")
+        assertNotNull(status)
+        assertEquals("docs/café.txt", status.path)
+    }
+
+    @Test
+    fun `C-quoted rename unquotes both sides`() {
+        val status = GitService.parseStatusLine("R  \"old/a\\303\\251.txt\" -> \"new/b\\303\\251.txt\"")
+        assertNotNull(status)
+        assertEquals("new/bé.txt", status.path)
+        assertEquals("old/aé.txt", status.originalPath)
+        assertEquals(GitFileStatusType.RENAMED, status.indexStatus)
     }
 
     @Test

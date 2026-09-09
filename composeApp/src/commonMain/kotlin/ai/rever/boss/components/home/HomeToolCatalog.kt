@@ -114,6 +114,7 @@ object HomeToolCatalog {
         storeCatalogue: List<HomeStorePluginInput>,
         installedPluginIds: Set<String>,
         access: RegistryAccess,
+        installedVersionOf: (String) -> String? = { null },
     ): List<HomeTool> {
         val hostTools = HOST_ACTIONS.map(::hostTool)
 
@@ -170,7 +171,9 @@ object HomeToolCatalog {
                 // Nor a plugin another plugin has taken over. Unlisting the store row is a manual
                 // action outside CI, so until it happens the store still returns it - and a user
                 // could install it, have it swept away at the next launch, and install it again.
-                .filterNot { it.pluginId in RetiredPluginIds.ALL }
+                // The floor is the sweep's own: a fresh install whose replacement predates the
+                // absorbing release would otherwise be offered neither half.
+                .filterNot { RetiredPluginIds.hiddenFromOffers(it.pluginId, installedVersionOf) }
                 .filterNot { it.isService }
                 .filter { it.isCompatible }
                 // A plugin the user has no access to is hidden, not greyed. The host already hides

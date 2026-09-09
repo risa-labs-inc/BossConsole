@@ -26,6 +26,30 @@ data class FileOpenEvent(
 )
 
 /**
+ * Event emitted when a git diff should be opened in a dedicated diff tab.
+ *
+ * Exactly one of the three scopes applies:
+ * - working/staged file: [filePath] set, [fromRef]/[toRef] null
+ * - single commit: [filePath] blank, [fromRef] set, [toRef] null
+ * - ref range: [fromRef] and [toRef] both set ([filePath] optional)
+ *
+ * @property filePath File path relative to the project root ("" for commit/range diffs)
+ * @property staged true = staged (index vs HEAD), false = working tree vs index
+ * @property fromRef Base ref for commit/range diffs
+ * @property toRef Target ref for range diffs
+ * @property sourceWindowId The window that initiated this event (required for
+ *   multi-window support, as on [FileOpenEvent]). Consumers filter on exact
+ *   equality, so a blank id routes to NO window - it does not mean "current".
+ */
+data class DiffOpenEvent(
+    val filePath: String,
+    val staged: Boolean,
+    val fromRef: String?,
+    val toRef: String?,
+    val sourceWindowId: String,
+)
+
+/**
  * Callback interface for file open tracking.
  * Implement this to track file opens (e.g., recent files tracking).
  */
@@ -238,6 +262,13 @@ object FileEventBus {
         )
     val fileOpenEvents: SharedFlow<FileOpenEvent> = _fileOpenEvents.asSharedFlow()
 
+    private val _diffOpenEvents =
+        MutableSharedFlow<DiffOpenEvent>(
+            replay = 0, // Don't replay past events to new subscribers (new windows)
+            extraBufferCapacity = 10,
+        )
+    val diffOpenEvents: SharedFlow<DiffOpenEvent> = _diffOpenEvents.asSharedFlow()
+
     // Callback for file tracking (e.g., recent files)
     private var fileOpenCallback: FileOpenCallback? = null
 
@@ -283,5 +314,35 @@ object FileEventBus {
             ),
         )
         _fileOpenEvents.emit(FileOpenEvent(cleanPath, fileName, line, column, sourceWindowId))
+    }
+
+    /**
+     * Opens a git diff in a dedicated diff tab.
+     *
+     * @param filePath File path relative to the project root ("" for commit/range diffs)
+     * @param staged true = staged (index vs HEAD), false = working tree vs index
+     * @param fromRef Base ref for commit/range diffs
+     * @param toRef Target ref for range diffs
+     * @param sourceWindowId The window to open the tab in. Required: consumers filter
+     *   on exact equality, so a blank id matches no window (the caller refuses it).
+     */
+    suspend fun openDiffTab(
+        filePath: String,
+        staged: Boolean,
+        fromRef: String?,
+        toRef: String?,
+        sourceWindowId: String,
+    ) {
+        logger.debug(
+            LogCategory.FILE,
+            "Opening diff tab",
+            mapOf(
+                "path" to filePath,
+                "from" to fromRef,
+                "to" to toRef,
+                "window" to sourceWindowId,
+            ),
+        )
+        _diffOpenEvents.emit(DiffOpenEvent(filePath, staged, fromRef, toRef, sourceWindowId))
     }
 }

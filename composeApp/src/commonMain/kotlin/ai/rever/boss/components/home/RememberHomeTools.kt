@@ -27,7 +27,7 @@ private val logger = BossLogger.forComponent("HomeTools")
  * makes the grid current: install a plugin and its tile appears without a relaunch.
  */
 @Composable
-internal fun rememberHomeTools(): List<HomeTool> {
+internal fun rememberHomeTools(installedVersionOf: (String) -> String? = { null }): List<HomeTool> {
     val tabRegistry = LocalTabRegistry.current
     val panelRegistry = LocalPanelRegistry.current
     val pluginStates by LocalPluginStates.current?.collectAsState()
@@ -112,6 +112,7 @@ internal fun rememberHomeTools(): List<HomeTool> {
             storeCatalogue = discoverable,
             installedPluginIds = installedPluginIds,
             access = access,
+            installedVersionOf = installedVersionOf,
         )
     }
 }

@@ -59,6 +59,30 @@ object RetiredPlugins {
                 replacementDisplayName = "Secret Manager",
                 minReplacementVersion = "1.2.17",
             ),
+            // The codebase panel grew a FILES/SEARCH/GIT tab row (IDE batch P7):
+            // global search/replace, the changes accordion, the commit graph and
+            // the git_* / project_* MCP tools all live there now. 1.6.0 is the
+            // release that absorbed both - lower would sweep the old plugins
+            // while their tools and UI are still only in them.
+            //
+            // Search & Replace is deliberately NOT here. It was written during this
+            // batch and superseded by the SEARCH tab before it was ever published,
+            // so it is installed on no machine: a retirement entry would be a sweep
+            // that can never match, carrying a version floor nobody has to maintain.
+            Retirement(
+                pluginId = "ai.rever.boss.plugin.dynamic.gitstatus",
+                displayName = "Git Status (Dynamic)",
+                replacementId = "ai.rever.boss.plugin.dynamic.codebase",
+                replacementDisplayName = "Codebase (Dynamic)",
+                minReplacementVersion = "1.6.0",
+            ),
+            Retirement(
+                pluginId = "ai.rever.boss.plugin.dynamic.gitlog",
+                displayName = "Git Log (Dynamic)",
+                replacementId = "ai.rever.boss.plugin.dynamic.codebase",
+                replacementDisplayName = "Codebase (Dynamic)",
+                minReplacementVersion = "1.6.0",
+            ),
         )
 
     /**

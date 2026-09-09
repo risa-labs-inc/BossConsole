@@ -1,6 +1,5 @@
 package ai.rever.boss.components.window_panel.components.main_window_panels
 
-import ai.rever.boss.cache.loadFaviconFromCache
 import ai.rever.boss.cache.loadHighQualityFavicon
 import ai.rever.boss.components.model.TabDraggableComponent
 import ai.rever.boss.components.model.TabDropTarget
@@ -285,16 +284,20 @@ private fun FavoritesGrid(
 /**
  * One favourite: its favicon, its title as a tooltip, and a right-click menu to remove it.
  *
- * **The icon is fetched, not just read from cache.** The first version read
- * `loadFaviconFromCache(faviconCacheKey)` synchronously during composition, and every tile came
- * out as a letter: a bookmark saved from anything but a browser tab has no cache key at all, and
- * one saved before its favicon was cached has a key that misses. `loadHighQualityFavicon` starts
- * from the URL instead and returns a 128px icon, which is also the right source for a tile this
- * size - a 16px favicon scaled to 22dp is visibly soft.
+ * **The icon comes from `loadHighQualityFavicon` and nothing else.** It resolves the page's own
+ * cached favicon FIRST and only asks Google about the host when there is none - the order that is
+ * the whole correctness of these tiles, and it lives in the service so the dashboard cards and
+ * the capture picker get it too. The earlier version of this tile fetched first, and a guess
+ * about a host overwrote a known-correct per-page icon: every Google-property favourite came out
+ * as the same "G", because Google resolves subdomains to their parent.
  *
- * Loaded in a LaunchedEffect rather than inline, because it touches the disk and the network and
- * composition is the wrong thread for either. The letter shows until it resolves, so the grid has
- * its final shape on the first frame and does not reflow.
+ * Reading the standard cache here as well would undo the point twice over - once as a second read
+ * of what the service already tried, and once because `LaunchedEffect` does not leave the
+ * composition dispatcher, so the PNG decode would land on the UI thread. The service does its own
+ * work on an IO dispatcher.
+ *
+ * The letter shows until the icon resolves, so the grid has its final shape on the first frame and
+ * does not reflow.
  */
 @Composable
 private fun FavoriteTile(
@@ -314,16 +317,12 @@ private fun FavoriteTile(
         mutableStateOf<TabIcon.Image?>(null)
     }
     LaunchedEffect(config.url, config.faviconCacheKey) {
-        val url = config.url
-        icon =
-            if (url.isNullOrBlank()) {
-                // Not a page - a terminal, a file. Nothing to fetch; the cache key is the only
-                // chance, and usually absent too.
-                runCatching { loadFaviconFromCache(config.faviconCacheKey) }.getOrNull()
-            } else {
-                runCatching { loadHighQualityFavicon(url, config.faviconCacheKey) }.getOrNull()
-                    ?: runCatching { loadFaviconFromCache(config.faviconCacheKey) }.getOrNull()
-            }
+        // A bookmark on something that was never a page - a terminal, a file - has a null or blank
+        // url and so no host to guess from, which leaves it its cached icon or its letter.
+        //
+        // Unguarded on purpose: loadHighQualityFavicon does not throw, and a runCatching here
+        // would swallow the cancellation this effect's disposal raises.
+        icon = loadHighQualityFavicon(config.url, config.faviconCacheKey)
     }
 
     HoverTooltipBox(

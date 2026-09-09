@@ -38,6 +38,7 @@ import ai.rever.boss.plugin.api.PluginManifest
 import ai.rever.boss.plugin.api.PluginSandboxRef
 import ai.rever.boss.plugin.api.PluginStorageFactory
 import ai.rever.boss.plugin.api.PluginStoreApiKeyProvider
+import ai.rever.boss.plugin.api.ProjectSearchProvider
 import ai.rever.boss.plugin.api.RoleManagementProvider
 import ai.rever.boss.plugin.api.RunConfigurationDataProvider
 import ai.rever.boss.plugin.api.ScreenCaptureProvider
@@ -329,6 +330,7 @@ class TrackingPluginContext(
     override val workspaceDataProvider: WorkspaceDataProvider? get() = delegate.workspaceDataProvider
     override val splitViewOperations: SplitViewOperations? get() = delegate.splitViewOperations
     override val gitDataProvider: GitDataProvider? get() = delegate.gitDataProvider
+    override val projectSearchProvider: ProjectSearchProvider? get() = delegate.projectSearchProvider
     override val fileSystemDataProvider: FileSystemDataProvider? get() = delegate.fileSystemDataProvider
     override val secretDataProvider: SecretDataProvider? get() = delegate.secretDataProvider
     override val llmProvider: LlmProvider? get() = delegate.llmProvider

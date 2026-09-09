@@ -56,6 +56,9 @@ object FileEventBus {
     val fileOpenEvents: SharedFlow<FileOpenEvent>
         get() = delegate.fileOpenEvents
 
+    val diffOpenEvents: SharedFlow<ai.rever.boss.plugin.events.DiffOpenEvent>
+        get() = delegate.diffOpenEvents
+
     suspend fun openFile(
         filePath: String,
         line: Int = 0,
@@ -67,5 +70,21 @@ object FileEventBus {
         val cleanPath = stripFilePrefix(filePath)
         val fileName = cleanPath.substringAfterLast('/').substringAfterLast('\\').ifEmpty { "untitled" }
         ipcBridge?.forward("FileOpenEvent", FileOpenEvent(cleanPath, fileName, line, column, sourceWindowId), sourceWindowId)
+    }
+
+    suspend fun openDiffTab(
+        filePath: String,
+        staged: Boolean,
+        fromRef: String?,
+        toRef: String?,
+        sourceWindowId: String,
+    ) {
+        delegate.openDiffTab(filePath, staged, fromRef, toRef, sourceWindowId)
+        ipcBridge?.forward(
+            "DiffOpenEvent",
+            ai.rever.boss.plugin.events
+                .DiffOpenEvent(filePath, staged, fromRef, toRef, sourceWindowId),
+            sourceWindowId,
+        )
     }
 }

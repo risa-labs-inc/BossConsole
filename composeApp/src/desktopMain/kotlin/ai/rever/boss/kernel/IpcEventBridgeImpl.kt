@@ -35,9 +35,14 @@ class IpcEventBridgeImpl(
                     .encodeToString(kotlinx.serialization.serializer(payload.javaClass), payload)
                     .toByteArray(Charsets.UTF_8)
             } catch (e: Exception) {
-                // Fall back to toString() if serialization fails — for debugging
-                logger.debug(
-                    "Payload serialization failed for event {} - forwarding toString(): {}",
+                // Fall back to toString() if serialization fails - for debugging.
+                // Warn, not debug: an un-serializable payload (a new event type
+                // that forgot its @Serializable, the case DiffOpenEvent still is)
+                // is otherwise a SILENT cross-process data loss - the subscriber
+                // gets a toString() blob it cannot decode, and at the default log
+                // level nobody ever sees that it happened.
+                logger.warn(
+                    "Payload serialization failed for event {} - forwarding toString() instead of structured JSON: {}",
                     eventType,
                     e.toString(),
                 )

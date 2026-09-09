@@ -2,6 +2,8 @@ package ai.rever.boss.components.plugin
 
 import ai.rever.boss.plugin.api.TabTypeId
 import ai.rever.boss.plugin.tab.codeeditor.CodeEditorTabType
+import ai.rever.boss.plugin.tab.composer.ComposerTabType
+import ai.rever.boss.plugin.tab.diff.DiffTabType
 import ai.rever.boss.plugin.tab.fluck.FluckTabType
 import ai.rever.boss.plugin.tab.jupyter.JupyterTabInfo
 import ai.rever.boss.plugin.tab.terminal.TerminalTabType
@@ -21,6 +23,10 @@ class TabTypePluginsTest {
         // offered for it and the tab is dropped silently again.
         assertEquals(TabTypePlugins.FLUCK_BROWSER, TabTypePlugins.pluginFor(FluckTabType.typeId))
         assertEquals(TabTypePlugins.EDITOR_TAB, TabTypePlugins.pluginFor(CodeEditorTabType.typeId))
+        // diff and composer are editor-tab's too, and the host opens both - without
+        // them a diff-open with editor-tab absent hangs 15s and silently drops.
+        assertEquals(TabTypePlugins.EDITOR_TAB, TabTypePlugins.pluginFor(DiffTabType.typeId))
+        assertEquals(TabTypePlugins.EDITOR_TAB, TabTypePlugins.pluginFor(ComposerTabType.typeId))
         assertEquals(TabTypePlugins.TERMINAL_TAB, TabTypePlugins.pluginFor(TerminalTabType.typeId))
         assertEquals(TabTypePlugins.JUPYTER_NOTEBOOK, TabTypePlugins.pluginFor(JupyterTabInfo.TYPE_ID))
     }

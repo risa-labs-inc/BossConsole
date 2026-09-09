@@ -14,6 +14,10 @@ import ai.rever.boss.plugin.api.TabTypeId
 import ai.rever.boss.plugin.api.TabTypeInfo
 import ai.rever.boss.plugin.tab.codeeditor.CodeEditorTabType
 import ai.rever.boss.plugin.tab.codeeditor.EditorTabInfo
+import ai.rever.boss.plugin.tab.composer.ComposerTabInfo
+import ai.rever.boss.plugin.tab.composer.ComposerTabType
+import ai.rever.boss.plugin.tab.diff.DiffTabInfo
+import ai.rever.boss.plugin.tab.diff.DiffTabType
 import ai.rever.boss.plugin.tab.fluck.FluckTabType
 import ai.rever.boss.plugin.tab.jupyter.JupyterTabInfo
 import ai.rever.boss.plugin.tab.terminal.TerminalTabInfo
@@ -82,10 +86,18 @@ class WorkspaceExtractorTest {
 
     private val tabRegistry =
         TabRegistry().apply {
-            listOf(TerminalTabType, CodeEditorTabType, FluckTabType, JupyterStubType, CustomTabType, PanelHostTabType)
-                .forEach { type ->
-                    registerTabType(type) { config, ctx -> StubTabComponent(ctx, config, type) }
-                }
+            listOf(
+                TerminalTabType,
+                CodeEditorTabType,
+                FluckTabType,
+                JupyterStubType,
+                CustomTabType,
+                PanelHostTabType,
+                DiffTabType,
+                ComposerTabType,
+            ).forEach { type ->
+                registerTabType(type) { config, ctx -> StubTabComponent(ctx, config, type) }
+            }
         }
 
     private fun newSplitViewState() = SplitViewState(tabRegistry, windowId = "test-window")
@@ -275,6 +287,39 @@ class WorkspaceExtractorTest {
 
         val layout = assertIs<SinglePanel>(extract(state).layout)
         assertEquals(listOf("terminal" to "Term", "editor" to "App.kt"), layout.panel.tabs.map { it.type to it.title })
+    }
+
+    /**
+     * A diff scope the saved form cannot rebuild must be DROPPED, not persisted:
+     * `TabConfig` has no field for refs or for `staged`, so restoring any of these
+     * as an unstaged working-tree diff of the same path would keep the tab position
+     * and title while silently changing the content. Dropping the tab is honest.
+     */
+    @Test
+    fun `only a plain working-tree file diff persists among diff scopes`() {
+        val state = newSplitViewState()
+        val component = state.getPanel("main")!!.tabsComponent
+        component.addTab(DiffTabInfo.create(filePath = "a/b.kt"))
+        component.addTab(DiffTabInfo.create(filePath = "a/b.kt", staged = true))
+        component.addTab(DiffTabInfo.create(filePath = "", fromRef = "abc123"))
+        component.addTab(DiffTabInfo.create(filePath = "a/b.kt", fromRef = "a1", toRef = "b2"))
+        component.addTab(DiffTabInfo.create(filePath = "c/d.kt", staged = true))
+
+        val layout = assertIs<SinglePanel>(extract(state).layout)
+        assertEquals(listOf("diff" to "a/b.kt"), layout.panel.tabs.map { it.type to it.filePath })
+    }
+
+    @Test
+    fun `composer tabs persist their session id, blank sessions are dropped`() {
+        val state = newSplitViewState()
+        val component = state.getPanel("main")!!.tabsComponent
+        component.addTab(ComposerTabInfo.create("sess-1"))
+        component.addTab(ComposerTabInfo.create(""))
+
+        val layout = assertIs<SinglePanel>(extract(state).layout)
+        // The blank-session tab must not persist: the restore side refuses to
+        // rebuild one, so saving it would store a tab that can never come back.
+        assertEquals(listOf("composer" to "sess-1"), layout.panel.tabs.map { it.type to it.filePath })
     }
 
     // ==================== workspace metadata ====================

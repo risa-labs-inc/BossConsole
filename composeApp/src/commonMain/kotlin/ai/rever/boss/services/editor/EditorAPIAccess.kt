@@ -1,7 +1,11 @@
 package ai.rever.boss.services.editor
 
 import ai.rever.boss.components.plugin.DefaultPlugin
+import ai.rever.boss.plugin.api.BufferChange
+import ai.rever.boss.plugin.api.BufferSnapshot
+import ai.rever.boss.plugin.api.EditResult
 import ai.rever.boss.plugin.api.EditorTabPluginAPI
+import ai.rever.boss.plugin.api.FocusedDocument
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.runtime.Composable
@@ -94,4 +98,40 @@ object EditorAPIAccess {
     fun LspSettingsPanel(modifier: Modifier) {
         getProvider()?.LspSettingsPanel(modifier)
     }
+
+    // ==================== Live buffer model (boss-plugin-api 1.0.87, D3) ====================
+    //
+    // Passthroughs for the editor-tab plugin's buffer API. Each returns the
+    // "plugin predates this method" default (null / false) when the installed
+    // editor-tab plugin does not implement the member, so host callers gate on
+    // null exactly like every other EditorAPIAccess surface.
+
+    /** Snapshot of the live buffer for [path], or null when the file has no open buffer (or the plugin predates the method). */
+    suspend fun readBuffer(path: String): BufferSnapshot? = getProvider()?.readBuffer(path)
+
+    /** Apply an undoable edit to the live buffer; see [EditorTabPluginAPI.applyEdit] for the versioning contract. */
+    suspend fun applyEdit(
+        path: String,
+        startLine: Int,
+        startCol: Int,
+        endLine: Int,
+        endCol: Int,
+        newText: String,
+        expectedVersion: Long,
+    ): EditResult? = getProvider()?.applyEdit(path, startLine, startCol, endLine, endCol, newText, expectedVersion)
+
+    /** Observe changes to the buffer at [path]; null when unsupported. */
+    fun observeChanges(path: String): kotlinx.coroutines.flow.Flow<BufferChange>? = getProvider()?.observeChanges(path)
+
+    /** The focused editor document with its selection, or null. */
+    suspend fun focusedDocument(): FocusedDocument? = getProvider()?.focusedDocument()
+
+    /** Open (or focus) an editor tab for [path], optionally at [line]. */
+    suspend fun openEditor(
+        path: String,
+        line: Int? = null,
+    ): Boolean = getProvider()?.openEditor(path, line) ?: false
+
+    /** Open [path] in a split pane of the current editor tab. */
+    suspend fun openSplit(path: String): Boolean = getProvider()?.openSplit(path) ?: false
 }

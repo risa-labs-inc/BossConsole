@@ -12,6 +12,10 @@ import ai.rever.boss.plugin.api.TabRegistry
 import ai.rever.boss.plugin.api.TabTypeId
 import ai.rever.boss.plugin.tab.codeeditor.CodeEditorTabType
 import ai.rever.boss.plugin.tab.codeeditor.EditorTabInfo
+import ai.rever.boss.plugin.tab.composer.ComposerTabInfo
+import ai.rever.boss.plugin.tab.composer.ComposerTabType
+import ai.rever.boss.plugin.tab.diff.DiffTabInfo
+import ai.rever.boss.plugin.tab.diff.DiffTabType
 import ai.rever.boss.plugin.tab.fluck.FluckTabType
 import ai.rever.boss.plugin.tab.jupyter.JupyterTabInfo
 import ai.rever.boss.plugin.tab.terminal.TerminalTabInfo
@@ -214,7 +218,9 @@ private fun tabTypeIdFor(tabConfig: TabConfig): TabTypeId? =
         "browser" -> FluckTabType.typeId
         "terminal" -> TerminalTabType.typeId
         "editor" -> CodeEditorTabType.typeId
+        "diff" -> DiffTabType.typeId
         "jupyter" -> JupyterTabInfo.TYPE_ID
+        "composer" -> ComposerTabType.typeId
         else -> null
     }
 
@@ -421,6 +427,24 @@ internal fun createTabFromWorkspaceConfig(
             createEditorTab(tabConfig, resolvedProjectPath)
         }
 
+        DiffTabType.typeId -> {
+            // Only file diffs are persisted (see WorkspaceExtractor); restore as
+            // a working-tree diff of that file. A blank filePath (corrupt or
+            // hand-edited layout) yields no tab: a diff tab with no scope can
+            // never show anything, and the composer branch below and the
+            // extractor (which refuses to PERSIST a blank path) already agree
+            // on "no scope, no tab".
+            val processedPath =
+                tabConfig.filePath?.let {
+                    WorkspacePlaceholders.processPlaceholders(it, resolvedProjectPath, null)
+                }
+            if (processedPath.isNullOrBlank()) {
+                null
+            } else {
+                DiffTabInfo.create(filePath = processedPath)
+            }
+        }
+
         JupyterTabInfo.TYPE_ID -> {
             if (splitViewState.tabRegistry.isRegistered(JupyterTabInfo.TYPE_ID)) {
                 val filePath =
@@ -433,6 +457,19 @@ internal fun createTabFromWorkspaceConfig(
                 // saved): restore the notebook as an editor tab instead of letting addTab
                 // silently drop it — the same isRegistered guard as SplitViewState.openFile.
                 createEditorTab(tabConfig, resolvedProjectPath)
+            }
+        }
+
+        ComposerTabType.typeId -> {
+            // The session id came out of filePath (see WorkspaceExtractor); a
+            // blank one (corrupt layout) yields no tab. The editor-tab plugin's
+            // factory reloads the session from its own storage, or renders an
+            // empty composer when the session is gone.
+            val sessionId = tabConfig.filePath ?: ""
+            if (sessionId.isBlank()) {
+                null
+            } else {
+                ComposerTabInfo.create(sessionId, tabConfig.title)
             }
         }
 

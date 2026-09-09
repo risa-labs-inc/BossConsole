@@ -19,9 +19,10 @@ import ai.rever.boss.plugin.api.TabTypeId
  * immediately - the dialog offers to install the wrong plugin - rather than
  * silent.
  *
- * Only the four tab types the host itself opens are listed. A plugin that opens
- * its own tab type does not come through here, because it is loaded by
- * definition.
+ * Only the tab types the host itself opens are listed - six, of which `diff`
+ * and `composer` both resolve to editor-tab (the host opens them, the
+ * plugin renders them). A plugin that opens its own tab type does not come
+ * through here, because it is loaded by definition.
  */
 object TabTypePlugins {
     /** Browser tabs: `fluck-browser`. */
@@ -40,6 +41,12 @@ object TabTypePlugins {
         mapOf(
             "fluck" to FLUCK_BROWSER,
             "editor" to EDITOR_TAB,
+            // diff and composer are editor-tab's too: the host opens both (a diff via
+            // GitDataProvider.openDiff, a composer tab), so without these a request with
+            // editor-tab absent fell through to a 15s wait and a silent no-op instead of
+            // the install prompt.
+            "diff" to EDITOR_TAB,
+            "composer" to EDITOR_TAB,
             "terminal" to TERMINAL_TAB,
             "jupyter" to JUPYTER_NOTEBOOK,
         )
@@ -60,6 +67,8 @@ object TabTypePlugins {
         when (typeId.typeId) {
             "fluck" -> "web pages"
             "editor" -> "files in the editor"
+            "diff" -> "git diffs"
+            "composer" -> "the AI composer"
             "terminal" -> "terminals"
             "jupyter" -> "notebooks"
             else -> typeId.typeId

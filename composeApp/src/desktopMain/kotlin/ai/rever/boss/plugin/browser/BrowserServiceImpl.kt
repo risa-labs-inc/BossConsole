@@ -19,7 +19,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
@@ -270,22 +269,21 @@ object BrowserServiceImpl : BrowserService {
      * disposes its browser through the plugin's own handle, exactly the path that never reaches
      * this map.
      *
-     * Fully synchronous, including the managed-profile release. An earlier revision handed the
-     * named-profile bookkeeping to a long-lived IO scope because it can stat a directory; now
-     * that pruning goes through [disposeTrackedBrowserBlocking] - the same path window teardown
-     * takes - it uses the same non-suspending `releaseManaged`, so there is one release path
-     * rather than two that could disagree about whether a fence was dropped.
+     * View teardown remains synchronous, through [disposeTrackedBrowserBlocking], before a
+     * window can destroy its AWT peer. Native close and the same non-suspending [releaseManaged]
+     * are scheduled in host-owned work, with release following native completion. Process exit
+     * can abandon that background work; orphan profile cleanup runs on a later managed create.
      *
      * @return the number of live handles after pruning.
      */
     internal fun reconcileOrphanedBrowsers(): Int {
         val orphans = activeBrowsers.entries.filter { !it.value.isValid }
         for ((id, handle) in orphans) {
-            // Through the same blocking dispose as window teardown, not a bare map removal.
+            // Through the same synchronous view teardown as window disposal, not a bare map removal.
             // An earlier version removed the entry, unregistered ownership and released the
             // profile, but never called `handle.dispose()` - which is not a no-op for a
-            // browser whose transport is gone: it shuts two single-thread executors, cancels
-            // three scopes, unsubscribes every JxBrowser listener and unregisters from
+            // browser whose transport is gone: it shuts its native workers, cancels
+            // its scopes, unsubscribes every JxBrowser listener and unregisters from
             // BrowserFindController and ActiveBrowserRegistry, all host-side state that
             // outlives a dead connection.
             //
@@ -296,10 +294,9 @@ object BrowserServiceImpl : BrowserService {
             // teardown means whatever prune wins the race decides whether the resources are
             // ever released.
             //
-            // Caught per handle: dispose touches a dead transport (`browser.close()` can
-            // throw) and marshals `exitFullscreen` onto the EDT, and one failure must not
-            // strand the rest of the orphans. `dispose()` is idempotent via its own CAS, so
-            // a handle that teardown also reaches later is safe.
+            // Caught per handle so an ownership/bookkeeping failure cannot strand later handles.
+            // View teardown and deferred native/profile failures are logged by the cleanup owner.
+            // dispose() is idempotent, so a handle that window teardown also reaches is safe.
             try {
                 disposeTrackedBrowserBlocking(handle)
             } catch (e: Exception) {
@@ -687,18 +684,16 @@ object BrowserServiceImpl : BrowserService {
     override suspend fun disposeBrowser(handle: BrowserHandle) {
         activeBrowsers.remove(handle.id)
         browserOwners.unregister(handle.id)
-        try {
-            handle.dispose()
-        } finally {
-            // Managed-profile cleanup must run even if dispose() throws — otherwise the
-            // per-named-profile fence stays locked (deadlock) and ephemeral profiles
-            // leak. Delete ephemeral profiles, refresh+evict named ones, release fence.
-            managedByHandle.remove(handle.id)?.let { finishManagedProfile(it) }
-        }
+
+        disposeBrowserResources(
+            dispose = handle::dispose,
+            awaitNativeClose = { (handle as? BrowserHandleImpl)?.awaitNativeDisposal() },
+            release = { managedByHandle.remove(handle.id)?.let { finishManagedProfile(it) } },
+        )
 
         logger.debug(
             LogCategory.BROWSER,
-            "Browser disposed via BrowserService",
+            "Browser disposal requested via BrowserService",
             mapOf(
                 "handleId" to handle.id,
                 "remainingBrowsers" to activeBrowsers.size,
@@ -736,12 +731,12 @@ object BrowserServiceImpl : BrowserService {
      */
     internal fun disposeAllForWindow(windowId: String) {
         val ownedBrowserIds = browserOwners.closeWindow(windowId)
-        var disposedCount = 0
+        var requestedCount = 0
         ownedBrowserIds.forEach { browserId ->
             val handle = activeBrowsers[browserId] ?: return@forEach
             try {
                 if (disposeTrackedBrowserBlocking(handle)) {
-                    disposedCount++
+                    requestedCount++
                 }
             } catch (e: Exception) {
                 logger.warn(
@@ -758,10 +753,10 @@ object BrowserServiceImpl : BrowserService {
 
         logger.info(
             LogCategory.BROWSER,
-            "Window browsers disposed",
+            "Window browser disposal requested",
             mapOf(
                 "windowId" to windowId,
-                "count" to disposedCount,
+                "count" to requestedCount,
             ),
         )
     }
@@ -770,13 +765,13 @@ object BrowserServiceImpl : BrowserService {
         if (!activeBrowsers.remove(handle.id, handle)) return false
 
         browserOwners.unregister(handle.id)
-        try {
-            handle.dispose()
-        } finally {
-            // Window/application teardown cannot suspend for profile accounting,
-            // but it must release profile locks and delete ephemeral profiles.
-            managedByHandle.remove(handle.id)?.let(::releaseManaged)
-        }
+        // View teardown is synchronous so it precedes destruction of the window's AWT peer.
+        // Native close and profile release remain host-owned if the renderer is still busy.
+        disposeBrowserResources(
+            dispose = handle::dispose,
+            awaitNativeClose = { handle.awaitNativeDisposal() },
+            release = { managedByHandle.remove(handle.id)?.let(::releaseManaged) },
+        )
         return true
     }
 
@@ -856,7 +851,7 @@ object BrowserServiceImpl : BrowserService {
                 val namedId = config.profileName!!
                 val fence = NAMED_PREFIX + sanitize(namedId)
                 val mutex = mutexFor(namedId)
-                mutex.lock()
+                acquireManagedProfileLock(mutex)
                 try {
                     inUse.add(fence)
                     val profile =
@@ -923,32 +918,40 @@ object BrowserServiceImpl : BrowserService {
     ) {
         ensureLoaded()
         require(profileName.isNotBlank()) { "profileName must not be blank" }
-        mutexFor(profileName).withLock {
-            val fence = NAMED_PREFIX + sanitize(profileName)
+        val fence = NAMED_PREFIX + sanitize(profileName)
+        val mutex = mutexFor(profileName)
+        acquireManagedProfileLock(mutex)
+        try {
             inUse.add(fence)
-            try {
-                val profile =
-                    FluckEngine.findProfile(fence) ?: run {
-                        evictIfNeeded()
-                        FluckEngine.newRpaProfile(fence)
-                    }
-                if (auth != null) {
-                    val tmp = profile.newBrowser()
-                    try {
-                        seedAndAwait(profile, auth)
-                    } finally {
-                        try {
-                            tmp.close()
-                        } catch (_: Exception) {
-                        }
-                    }
-                } else {
-                    installHeaderCallback(profile, emptyMap())
+            val profile =
+                FluckEngine.findProfile(fence) ?: run {
+                    evictIfNeeded()
+                    FluckEngine.newRpaProfile(fence)
                 }
-                meta[profileName] = NamedMeta(profileName, fence, profile.path(), System.currentTimeMillis())
-                persistMeta()
-            } finally {
-                inUse.remove(fence)
+            if (auth != null) {
+                seedManagedProfileAuthentication(profile, auth)
+            } else {
+                installHeaderCallback(profile, emptyMap())
+            }
+            meta[profileName] = NamedMeta(profileName, fence, profile.path(), System.currentTimeMillis())
+            persistMeta()
+        } finally {
+            inUse.remove(fence)
+            mutex.unlock()
+        }
+    }
+
+    private suspend fun seedManagedProfileAuthentication(
+        profile: Profile,
+        auth: BrowserAuthSpec,
+    ) {
+        val tmp = profile.newBrowser()
+        try {
+            seedAndAwait(profile, auth)
+        } finally {
+            try {
+                tmp.close()
+            } catch (_: Exception) {
             }
         }
     }

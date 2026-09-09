@@ -9,14 +9,17 @@ import ai.rever.boss.plugin.api.TabIcon
 expect fun loadFaviconFromCache(cacheKey: String?): ai.rever.boss.plugin.api.TabIcon.Image?
 
 /**
- * Load high-quality favicon for dashboard display.
- * Uses Google's favicon service for larger icons (128px).
- * Falls back to standard cache if unavailable.
+ * The icon for a page: its own cached favicon if there is one, else Google's guess about its host.
  *
- * @param url The page URL to get favicon for
- * @param standardCacheKey The cache key from standard favicon cache (fallback)
+ * That order is the point - see `HighQualityFaviconService` for why a guess about a host must not
+ * overwrite a per-page icon captured from the tab itself. Do NOT read the standard cache yourself
+ * first; this already does, on an IO dispatcher.
+ *
+ * @param url the page URL, or null for a tab that is not a page (a terminal, a file), which has no
+ *   host to guess from
+ * @param standardCacheKey the key into the standard favicon cache, i.e. the page's own icon
  */
 expect suspend fun loadHighQualityFavicon(
-    url: String,
+    url: String?,
     standardCacheKey: String?,
 ): ai.rever.boss.plugin.api.TabIcon.Image?

@@ -2,6 +2,46 @@
 <SmellBaseline>
   <ManuallySuppressedIssues/>
   <CurrentIssues>
+    <ID>CyclomaticComplexMethod:UnifiedDiffParser.kt$UnifiedDiffParser$internal fun cUnquote(p: String): String</ID>
+    <ID>LongParameterList:HomeToolCatalog.kt$HomeToolCatalog$( tabTypes: List&lt;HomeTabTypeInput&gt;, panels: List&lt;HomePanelInput&gt;, storeCatalogue: List&lt;HomeStorePluginInput&gt;, installedPluginIds: Set&lt;String&gt;, access: RegistryAccess, installedVersionOf: (String) -&gt; String? = { null }, )</ID>
+    <ID>LongParameterList:ContentSearchService.kt$EditorBufferBridge$( path: String, startLine: Int, startCol: Int, endLine: Int, endCol: Int, newText: String, expectedVersion: Long, )</ID>
+    <ID>ReturnCount:ContentSearchService.kt$ContentSearchService$internal fun resolveFile( rawPath: String, projectPath: String, ): File?</ID>
+    <ID>SwallowedException:ContentSearchService.kt$ContentSearchService$e: java.nio.file.AtomicMoveNotSupportedException</ID>
+    <ID>ComplexCondition:UnifiedDiffParser.kt$UnifiedDiffParser$h != null &amp;&amp; (line.startsWith("+") || line.startsWith("-") || line.startsWith(" ") || line.isEmpty())</ID>
+    <ID>ComplexCondition:WorkspaceExtractor.kt$tab.filePath.isBlank() || tab.staged || tab.fromRef != null || tab.toRef != null</ID>
+    <ID>CyclomaticComplexMethod:ContentSearchService.kt$ContentSearchService$override suspend fun searchInProject( query: String, pathPattern: String?, excludePattern: String?, isRegex: Boolean, caseSensitive: Boolean, wholeWord: Boolean, maxResults: Int, ): List&lt;FileMatch&gt;</ID>
+    <ID>CyclomaticComplexMethod:UnifiedDiffParser.kt$UnifiedDiffParser$fun parse(input: String): List&lt;GitDiffData&gt;</ID>
+    <ID>CyclomaticComplexMethod:WorkspaceApplier.kt$internal fun createTabFromWorkspaceConfig( tabConfig: TabConfig, resolvedProjectPath: String, splitViewState: SplitViewState, ): TabInfo?</ID>
+    <ID>LongMethod:WorkspaceApplier.kt$internal fun createTabFromWorkspaceConfig( tabConfig: TabConfig, resolvedProjectPath: String, splitViewState: SplitViewState, ): TabInfo?</ID>
+    <ID>LongMethod:WorkspaceExtractor.kt$private fun extractTabConfig( tab: TabInfo, defaultWorkingDirectory: String, ): TabConfig?</ID>
+    <ID>LongParameterList:ContentSearchService.kt$ContentSearchService$( file: File, text: String, version: Long, regex: Regex, replacement: String, isRegex: Boolean, dryRun: Boolean, )</ID>
+    <ID>LongParameterList:ContentSearchService.kt$ContentSearchService$( projectRoot: String, query: String, pathPattern: String?, excludePattern: String?, isRegex: Boolean, caseSensitive: Boolean, wholeWord: Boolean, path: String, // projectRoot is part of the key because a cached FileMatch carries a path // RELATIVE to the root it was found under. The same absolute file walked under // a different root (switching between nested projects) would otherwise get its // old relative path served from cache until its mtime changed, and a // result-click would resolve it against the new root - the wrong file. )</ID>
+    <ID>LongParameterList:EditorAPIAccess.kt$EditorAPIAccess$( path: String, startLine: Int, startCol: Int, endLine: Int, endCol: Int, newText: String, expectedVersion: Long, )</ID>
+    <ID>LoopWithTooManyJumpStatements:ContentSearchService.kt$ContentSearchService$for</ID>
+    <ID>LoopWithTooManyJumpStatements:DesktopGitService.kt$GitService$for</ID>
+    <ID>LoopWithTooManyJumpStatements:UnifiedDiffParser.kt$UnifiedDiffParser$for</ID>
+    <ID>MaxLineLength:BufferEditRangeTest.kt$BufferEditRangeTest$assertEquals("y", text.substring(offsetOf(lines, r.startLine, r.startCol), offsetOf(lines, r.endLine, r.endCol)))</ID>
+    <ID>MaxLineLength:InstalledPluginVersionDesktop.kt$internal actual fun installedPluginVersionOf(pluginId: String): String?</ID>
+    <ID>MaxLineLength:ContentSearchService.kt$ContentSearchService$cacheKey(projectPath, query, pathPattern, excludePattern, isRegex, caseSensitive, wholeWord, file.absolutePath)</ID>
+    <ID>MaxLineLength:EditorAPIAccess.kt$EditorAPIAccess$/** Snapshot of the live buffer for [path], or null when the file has no open buffer (or the plugin predates the method). */</ID>
+    <ID>MaxLineLength:UnifiedDiffParser.kt$UnifiedDiffParser.HunkBuilder$lines.add(DiffLine(DiffLineKind.ADDED, line.substring(1), oldLine = null, newLine = n.takeIf { n &gt; 0 }))</ID>
+    <ID>MaxLineLength:UnifiedDiffParser.kt$UnifiedDiffParser.HunkBuilder$lines.add(DiffLine(DiffLineKind.REMOVED, line.substring(1), oldLine = o.takeIf { o &gt; 0 }, newLine = null))</ID>
+    <ID>MaxLineLength:UnifiedDiffParser.kt$UnifiedDiffParser$if</ID>
+    <ID>PackageNaming:TabPaths.kt$package ai.rever.boss.components.window_panel</ID>
+    <ID>PackageNaming:TabPathsTest.kt$package ai.rever.boss.components.window_panel</ID>
+    <ID>ReturnCount:ContentSearchService.kt$ContentSearchService$override suspend fun replaceInProject( query: String, replacement: String, files: List&lt;String&gt;, isRegex: Boolean, caseSensitive: Boolean, wholeWord: Boolean, dryRun: Boolean, ): ReplaceSummary</ID>
+    <ID>ReturnCount:ContentSearchService.kt$ContentSearchService$override suspend fun searchInProject( query: String, pathPattern: String?, excludePattern: String?, isRegex: Boolean, caseSensitive: Boolean, wholeWord: Boolean, maxResults: Int, ): List&lt;FileMatch&gt;</ID>
+    <ID>ReturnCount:DesktopGitService.kt$GitService$internal fun isSafeRefName(ref: String): Boolean</ID>
+    <ID>ReturnCount:DesktopGitService.kt$GitService$private fun stagedPathsFor( projectPath: String, filePath: String, ): List&lt;String&gt;</ID>
+    <ID>ReturnCount:UnifiedDiffParser.kt$UnifiedDiffParser$private fun splitSides(s: String): Pair&lt;String, String&gt;?</ID>
+    <ID>SpreadOperator:DesktopGitService.kt$GitService$(projectPath, "restore", "--staged", "--", *paths.toTypedArray())</ID>
+    <ID>SpreadOperator:DesktopGitService.kt$GitService$(projectPath, *args)</ID>
+    <ID>SwallowedException:ContentSearchService.kt$ContentSearchService$e: Exception</ID>
+    <ID>SwallowedException:TabPaths.kt$TabPaths$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:ContentSearchService.kt$ContentSearchService$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:TabPaths.kt$TabPaths$e: Exception</ID>
+    <ID>TooManyFunctions:ContentSearchService.kt$ContentSearchService : ProjectSearchProvider</ID>
+    <ID>TooManyFunctions:EditorAPIAccess.kt$EditorAPIAccess</ID>
     <ID>LongParameterList:DownloadCenter.kt$DownloadCenter$( id: String, title: String, kind: TransferKind, detail: String? = null, onCancel: (() -&gt; Unit)? = null, owner: String? = null, )</ID>
     <ID>LongParameterList:StoreVersionInstaller.kt$StoreVersionInstaller$( store: PluginRepository, request: StoreVersionRequest, unload: suspend (String) -&gt; Result&lt;Unit&gt;, load: suspend (String) -&gt; Result&lt;Boolean&gt;, onProgress: ((Float) -&gt; Unit)? = null, onInstalling: (() -&gt; Unit)? = null, )</ID>
     <ID>ComplexCondition:BossAppEventBusEffects.kt$processingState.totalTabs == 0 &amp;&amp; !processingState.isProcessingURLs &amp;&amp; !processingState.isProcessingTerminals &amp;&amp; !processingState.isProcessingFiles &amp;&amp; processingState.isRestorationComplete</ID>
@@ -42,7 +82,7 @@
     <ID>ConstructorParameterNaming:UserService.kt$UserBasicInfo$val updated_at: String? = null</ID>
     <ID>CyclomaticComplexMethod:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$fun install()</ID>
     <ID>CyclomaticComplexMethod:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$private fun chordMatchesEvent( modifiers: Collection&lt;String&gt;, event: KeyEvent, ): Boolean</ID>
-    <ID>CyclomaticComplexMethod:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$private fun dispatchAction( actionId: String, windowId: String, ): Boolean</ID>
+    <ID>CyclomaticComplexMethod:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$internal fun dispatchAction( actionId: String, windowId: String, ): Boolean</ID>
     <ID>CyclomaticComplexMethod:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$private fun getKeyName(keyCode: Int): String</ID>
     <ID>CyclomaticComplexMethod:AuthScreenContainer.kt$@Composable fun AuthScreenContainer(onLoginSuccess: () -&gt; Unit)</ID>
     <ID>CyclomaticComplexMethod:BossActionButton.kt$@Composable fun BossActionButton( imageVector: ImageVector? = null, leftLogo: (@Composable () -&gt; Unit)? = null, leftIcon: ImageVector? = null, text: String, fontSize: TextUnit = 13.sp, color: Color = BossTheme.colors.textPrimary, iconColor: Color? = null, // Optional separate icon color (defaults to color if null) iconSize: Dp = 20.dp, // Icon size for imageVector mode maxTextWidth: Dp? = null, // Optional max width for text (truncates with ellipsis) modifier: Modifier = Modifier, contentPadding: PaddingValues = PaddingValues(2.dp), isSelected: Boolean = false, contextMenuItems: List&lt;ContextMenuItem&gt;? = null, contextDirection: Panel = bottom, hintText: String? = null, showHintWithDelay: Boolean = true, hintDirection: Panel = bottom, /** * Sized for a narrow column rather than the top bar. * * The vertical tab bar is 200dp wide and its own rows are 24dp of 10sp text; a control built * for a 40dp horizontal bar sits in it like furniture in the wrong room. Opt-in, so the top * bar - where every one of these numbers was chosen - is untouched. */ compact: Boolean = false, onClick: () -&gt; Unit = {}, )</ID>
@@ -105,7 +145,7 @@
     <ID>CyclomaticComplexMethod:FluckEngine.kt$FluckEngine$private fun createEngineInstance( chromiumDir: java.nio.file.Path, profileDirPath: java.nio.file.Path, ): Engine</ID>
     <ID>CyclomaticComplexMethod:FluckEngine.kt$FluckEngine$private fun killStaleChromiumProcesses()</ID>
     <ID>CyclomaticComplexMethod:FormFieldDetector.kt$FormFieldDetector$private fun determineFieldType( inputType: String, fieldName: String, fieldId: String, placeholder: String, autocomplete: String, className: String, ariaLabel: String, ): FieldType</ID>
-    <ID>CyclomaticComplexMethod:GlobalSearchDialog.kt$@Composable fun GlobalSearchDialog( projectPath: String, workspaceManager: WorkspaceManager, onDismiss: () -&gt; Unit, onFileSelect: (String) -&gt; Unit, onTabSelect: ((windowId: String, panelId: String, tabId: String) -&gt; Unit)? = null, onBookmarkSelect: ((bookmarkId: String, collectionId: String) -&gt; Unit)? = null, onRunConfigSelect: ((configId: String) -&gt; Unit)? = null, onCommandSelect: ((actionId: String) -&gt; Unit)? = null, )</ID>
+    <ID>CyclomaticComplexMethod:GlobalSearchDialog.kt$@Composable fun GlobalSearchDialog( projectPath: String, workspaceManager: WorkspaceManager, windowId: String, onDismiss: () -&gt; Unit, onFileSelect: (String) -&gt; Unit, onTabSelect: ((windowId: String, panelId: String, tabId: String) -&gt; Unit)? = null, onBookmarkSelect: ((bookmarkId: String, collectionId: String) -&gt; Unit)? = null, onRunConfigSelect: ((configId: String) -&gt; Unit)? = null, onCommandSelect: ((actionId: String) -&gt; Unit)? = null, onToolSelect: ((panelId: String) -&gt; Unit)? = null, onSettingSelect: ((result: SearchResult.SettingResult) -&gt; Unit)? = null, onPageSelect: ((url: String) -&gt; Unit)? = null, )</ID>
     <ID>CyclomaticComplexMethod:GlobalSearchService.kt$GlobalSearchService$private fun convertPluginSearchResult(result: PluginSearchResult): SearchResult?</ID>
     <ID>CyclomaticComplexMethod:KernelBootstrap.kt$KernelBootstrap$fun registerPluginServices( performanceDataProvider: PerformanceDataProvider? = null, downloadDataProvider: DownloadDataProvider? = null, gitDataProvider: GitDataProvider? = null, logDataProvider: LogDataProvider? = null, activeTabsProvider: ActiveTabsProvider? = null, secretDataProvider: SecretDataProvider? = null, supabaseDataProvider: SupabaseDataProvider? = null, splitViewOperations: SplitViewOperations? = null, runConfigurationDataProvider: RunConfigurationDataProvider? = null, panelEventProvider: PanelEventProvider? = null, roleManagementProvider: RoleManagementProvider? = null, directoryPickerProvider: DirectoryPickerProvider? = null, projectDataProvider: ProjectDataProvider? = null, notificationProvider: NotificationProvider? = null, )</ID>
     <ID>CyclomaticComplexMethod:KeyCaptureDialog.kt$@Composable fun KeyCaptureDialog( actionId: String, actionDescription: String, context: ShortcutContext, category: String, currentBinding: KeyBinding?, onKeyCaptured: (KeyBinding) -&gt; Unit, onDismiss: () -&gt; Unit, )</ID>
@@ -162,8 +202,6 @@
     <ID>EmptyFunctionBlock:TabDropResultHandlingTest.kt$TabDropResultHandlingTest.DropTestComponent${ }</ID>
     <ID>EmptyIfBlock:FluckEngine.kt$FluckEngine${ }</ID>
     <ID>ExplicitGarbageCollectionCall:PerformanceMonitor.kt$PerformanceMonitor$gc()</ID>
-    <ID>ForbiddenComment:BossTopBar.kt$// TODO: #91 - BossTopRunBar function (currently disabled)</ID>
-    <ID>ForbiddenComment:BossTopBar.kt$// TODO: #93 - Lanager functionality (currently disabled - plugin removed)</ID>
     <ID>ForbiddenComment:FluckEngine.kt$FluckEngine$// TODO: Implement if needed</ID>
     <ID>ForbiddenComment:FluckEngine.kt$FluckEngine$// TODO: Show user warning dialog (for now, just proceed)</ID>
     <ID>ForbiddenComment:PluginStateBridge.kt$PluginStateBridge$// TODO: Implement actual JSON Merge Patch for delta state.</ID>
@@ -198,7 +236,7 @@
     <ID>LargeClass:SplitView.kt$SplitViewState</ID>
     <ID>LargeClass:UpdateScriptGenerator.kt$UpdateScriptGenerator</ID>
     <ID>LongMethod:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$fun install()</ID>
-    <ID>LongMethod:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$private fun dispatchAction( actionId: String, windowId: String, ): Boolean</ID>
+    <ID>LongMethod:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$internal fun dispatchAction( actionId: String, windowId: String, ): Boolean</ID>
     <ID>LongMethod:AWTKeyboardInterceptor.kt$AWTKeyboardInterceptor$private fun getKeyName(keyCode: Int): String</ID>
     <ID>LongMethod:ActionCard.kt$@Composable fun ActionCard( icon: ImageVector, title: String, shortcut: String? = null, onClick: () -&gt; Unit, modifier: Modifier = Modifier, )</ID>
     <ID>LongMethod:AdvancedSettings.kt$@Composable fun AdvancedSettings()</ID>
@@ -267,7 +305,7 @@
     <ID>LongMethod:DesktopUpdateService.kt$UpdateService$private suspend fun streamToFile( url: String, expectedSize: Long, destFile: File, onProgress: (progress: Float) -&gt; Unit, )</ID>
     <ID>LongMethod:DowngradeWarningDialog.kt$@Composable fun DowngradeWarningDialog( currentVersion: Version, targetVersion: Version, onConfirm: () -&gt; Unit, onDismiss: () -&gt; Unit, )</ID>
     <ID>LongMethod:DraggableActionButton.kt$@Composable fun BossDraggableComponent.DraggableActionButton( item: SidebarItem, slot: Panel, modifier: Modifier = Modifier, )</ID>
-    <ID>LongMethod:DynamicPluginManager.kt$DynamicPluginManager$private suspend fun handleAccessChange()</ID>
+    <ID>LongMethod:DynamicPluginManager.kt$DynamicPluginManager$private suspend fun handleAccessChange(reportMissingDependencies: Boolean)</ID>
     <ID>LongMethod:DynamicPluginManager.kt$DynamicPluginManager$private suspend fun uninstallPlugin( pluginId: String, force: Boolean, waitForGC: Boolean, closeTabsAcrossWindows: Boolean, ): Result&lt;Unit&gt;</ID>
     <ID>LongMethod:DynamicPluginManager.kt$DynamicPluginManager$suspend fun installPlugin( jarPath: String, enabled: Boolean = true, ): Result&lt;DynamicPluginInfo&gt;</ID>
     <ID>LongMethod:DynamicPluginManager.kt$DynamicPluginManager$suspend fun loadBundledPlugins(bundledDir: java.io.File): Map&lt;String, Result&lt;DynamicPluginInfo&gt;&gt;</ID>
@@ -294,7 +332,7 @@
     <ID>LongMethod:GenericDialogHost.kt$@Composable private fun MultiChoiceDialog(request: DialogRequest.MultiChoice)</ID>
     <ID>LongMethod:GenericDialogHost.kt$@Composable private fun SingleChoiceDialog(request: DialogRequest.SingleChoice)</ID>
     <ID>LongMethod:GenericDialogHost.kt$@Composable private fun TextInputDialog(request: DialogRequest.TextInput)</ID>
-    <ID>LongMethod:GlobalSearchDialog.kt$@Composable fun GlobalSearchDialog( projectPath: String, workspaceManager: WorkspaceManager, onDismiss: () -&gt; Unit, onFileSelect: (String) -&gt; Unit, onTabSelect: ((windowId: String, panelId: String, tabId: String) -&gt; Unit)? = null, onBookmarkSelect: ((bookmarkId: String, collectionId: String) -&gt; Unit)? = null, onRunConfigSelect: ((configId: String) -&gt; Unit)? = null, onCommandSelect: ((actionId: String) -&gt; Unit)? = null, )</ID>
+    <ID>LongMethod:GlobalSearchDialog.kt$@Composable fun GlobalSearchDialog( projectPath: String, workspaceManager: WorkspaceManager, windowId: String, onDismiss: () -&gt; Unit, onFileSelect: (String) -&gt; Unit, onTabSelect: ((windowId: String, panelId: String, tabId: String) -&gt; Unit)? = null, onBookmarkSelect: ((bookmarkId: String, collectionId: String) -&gt; Unit)? = null, onRunConfigSelect: ((configId: String) -&gt; Unit)? = null, onCommandSelect: ((actionId: String) -&gt; Unit)? = null, onToolSelect: ((panelId: String) -&gt; Unit)? = null, onSettingSelect: ((result: SearchResult.SettingResult) -&gt; Unit)? = null, onPageSelect: ((url: String) -&gt; Unit)? = null, )</ID>
     <ID>LongMethod:GlobalSearchDialog.kt$@Composable private fun SearchDialogHeader( fileCount: Int, isIndexing: Boolean, onClose: () -&gt; Unit, )</ID>
     <ID>LongMethod:GlobalSearchDialog.kt$@Composable private fun SearchInputField( query: String, onQueryChange: (String) -&gt; Unit, focusRequester: FocusRequester, isSearching: Boolean, )</ID>
     <ID>LongMethod:KernelBootstrap.kt$KernelBootstrap$fun initialize()</ID>
@@ -373,7 +411,7 @@
     <ID>LongMethod:SettingsComponents.kt$@Composable fun SettingsDropdown( label: String, options: List&lt;String&gt;, selectedOption: String, onOptionSelected: (String) -&gt; Unit, modifier: Modifier = Modifier, description: String? = null, enabled: Boolean = true, )</ID>
     <ID>LongMethod:SettingsComponents.kt$@Composable fun SettingsFilePicker( label: String, value: String, onValueChange: (String) -&gt; Unit, modifier: Modifier = Modifier, description: String? = null, fileExtensions: List&lt;String&gt; = emptyList(), enabled: Boolean = true, )</ID>
     <ID>LongMethod:SettingsComponents.kt$@Composable fun SettingsSectionedDropdown( label: String, sections: Map&lt;String, List&lt;String&gt;&gt;, selectedOption: String, onOptionSelected: (String) -&gt; Unit, modifier: Modifier = Modifier, description: String? = null, enabled: Boolean = true, )</ID>
-    <ID>LongMethod:SettingsWindow.kt$@Composable private fun SettingsContent( initialSection: String? = null, sectionRequest: Int = 0, searchState: SettingsSearchState = remember { SettingsSearchState() }, )</ID>
+    <ID>LongMethod:SettingsWindow.kt$@Composable private fun SettingsContent( initialSection: String? = null, sectionRequest: Int = 0, requestedHighlight: SettingsHighlight? = null, highlightRequest: Int = 0, searchState: SettingsSearchState = remember { SettingsSearchState() }, )</ID>
     <ID>LongMethod:SettingsWindow.kt$@Composable private fun SettingsContentArea( section: SettingsSection, modifier: Modifier = Modifier, )</ID>
     <ID>LongMethod:ShortcutHelpDialog.kt$@Composable fun ShortcutHelpDialog( keymapSettings: KeymapSettings, onDismiss: () -&gt; Unit, onOpenSettings: () -&gt; Unit, )</ID>
     <ID>LongMethod:ShortcutTestDialog.kt$@Composable fun ShortcutTestDialog( keymapSettings: KeymapSettings, onDismiss: () -&gt; Unit, )</ID>
@@ -701,9 +739,6 @@
     <ID>MaxLineLength:GitServiceBridge.kt$GitServiceBridge$override suspend fun unstage(request: GitFilePathRequest): GitOperationResultProto</ID>
     <ID>MaxLineLength:GlobalSearchDialog.kt$enter = fadeIn(tween(200, delayMillis = 100)) + slideInVertically(tween(200, delayMillis = 100)) { it / 2 }</ID>
     <ID>MaxLineLength:GlobalSearchDialog.kt$enter = fadeIn(tween(200, delayMillis = 50)) + slideInVertically(tween(200, delayMillis = 50)) { -it / 2 }</ID>
-    <ID>MaxLineLength:GlobalSearchDialog.kt$globalSearchLogger.debug(LogCategory.UI, "Bookmark selected from search", mapOf("bookmark" to result.bookmarkId))</ID>
-    <ID>MaxLineLength:GlobalSearchDialog.kt$globalSearchLogger.debug(LogCategory.UI, "Command selected from search", mapOf("actionId" to result.actionId))</ID>
-    <ID>MaxLineLength:GlobalSearchDialog.kt$globalSearchLogger.debug(LogCategory.UI, "Run config selected from search", mapOf("config" to result.configId))</ID>
     <ID>MaxLineLength:GlobalSearchDialog.kt$val textColor = if (isHighlighted) BossThemeController.current.colors.textPrimary else BossThemeController.current.colors.textSecondary</ID>
     <ID>MaxLineLength:IpcCompatibility.kt$IpcCompatibility$fun</ID>
     <ID>MaxLineLength:KeyBinding.kt$KeyBinding$fun</ID>
@@ -1166,6 +1201,7 @@
     <ID>ReturnCount:WorkspacePlaceholders.kt$WorkspacePlaceholders$private fun getGitRemoteUrl(projectPath: String): String</ID>
     <ID>SpreadOperator:CrashHandler.kt$CrashHandler$(javaBin, *getRestartArgs())</ID>
     <ID>SpreadOperator:DesktopGitService.kt$GitService$(projectPath, *args.toTypedArray())</ID>
+    <ID>SpreadOperator:DesktopGitService.kt$GitService$(projectPath, *diffArgs.toTypedArray())</ID>
     <ID>SpreadOperator:FilePickerProviderFactory.kt$DesktopFilePickerProvider$( filters.joinToString(", ") { "*.$it" }, *filters.toTypedArray(), )</ID>
     <ID>ThrowsCount:UpdateInstaller.kt$UpdateInstaller$internal fun validateDownloadFile( downloadFile: File, expectedExtension: String, stagingDir: File = defaultStagingDir(), )</ID>
     <ID>ThrowsCount:UpdatePathValidator.kt$UpdatePathValidator$fun validatePath( path: String, description: String, )</ID>
@@ -1415,7 +1451,7 @@
     <ID>TooManyFunctions:FluckEngine.kt$FluckEngine</ID>
     <ID>TooManyFunctions:FontManager.kt$FontManager</ID>
     <ID>TooManyFunctions:FullscreenBrowserWindow.kt$FullscreenBrowserWindow</ID>
-    <ID>TooManyFunctions:GitDataProviderImpl.kt$GitDataProviderImpl : GitDataProvider</ID>
+    <ID>TooManyFunctions:GitDataProviderImpl.kt$GitDataProviderImpl : GitDataProviderDisposableProvider</ID>
     <ID>TooManyFunctions:GitService.kt$GitService</ID>
     <ID>TooManyFunctions:GitServiceBridge.kt$GitServiceBridge : GitServiceCoroutineImplBase</ID>
     <ID>TooManyFunctions:GlobalSearchDialog.kt$ai.rever.boss.components.dialogs.GlobalSearchDialog.kt</ID>
@@ -1821,5 +1857,13 @@
     <ID>PackageNaming:SplitCreatorMap.kt$package ai.rever.boss.components.window_panel.components.main_window_panels</ID>
     <ID>PackageNaming:SplitCreatorMapTest.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:SplitDirectionTest.kt$package ai.rever.boss.components.window_panel</ID>
+    <ID>PackageNaming:DiffTabMatch.kt$package ai.rever.boss.components.window_panel</ID>
+    <ID>PackageNaming:DiffTabMatchTest.kt$package ai.rever.boss.components.window_panel</ID>
+    <ID>LongParameterList:ContentSearchService.kt$ContentSearchService$( file: File, projectRoot: String, regex: Regex, replacement: String, isRegex: Boolean, dryRun: Boolean, isCancelled: () -> Boolean, )</ID>
+    <ID>LongParameterList:ContentSearchService.kt$ContentSearchService$( file: File, regex: Regex, replacement: String, isRegex: Boolean, dryRun: Boolean, isCancelled: () -> Boolean, )</ID>
+    <ID>LongParameterList:ContentSearchService.kt$ContentSearchService$( file: File, text: String, version: Long, regex: Regex, replacement: String, isRegex: Boolean, dryRun: Boolean, isCancelled: () -> Boolean, )</ID>
+    <ID>ReturnCount:ContentSearchService.kt$ContentSearchService$private suspend fun replaceInOneFile( file: File, regex: Regex, replacement: String, isRegex: Boolean, dryRun: Boolean, isCancelled: () -> Boolean, ): FileReplaceResult</ID>
+    <ID>ReturnCount:ContentSearchService.kt$ContentSearchService$private suspend fun replaceInOneFile( file: File, projectRoot: String, regex: Regex, replacement: String, isRegex: Boolean, dryRun: Boolean, isCancelled: () -&gt; Boolean, ): FileReplaceResult</ID>
+    <ID>ReturnCount:ContentSearchService.kt$ContentSearchService$private suspend fun replaceInBuffer( file: File, text: String, version: Long, regex: Regex, replacement: String, isRegex: Boolean, dryRun: Boolean, isCancelled: () -> Boolean, ): FileReplaceResult</ID>
   </CurrentIssues>
 </SmellBaseline>

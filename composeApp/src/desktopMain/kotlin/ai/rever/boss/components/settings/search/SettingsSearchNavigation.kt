@@ -23,6 +23,13 @@ private val logger = BossLogger.forComponent("SettingsSearchNavigation")
  * could quietly break it, because it lives in the hand-declared index rather than being merged in
  * from a registry at query time.
  *
+ * **The global search enforces the same rule by a different route**, because it cannot reach a
+ * `PanelRegistry` from commonMain: `GlobalSearchService.searchSettings` drops a signpost whose
+ * panel id is not among the searching window's registered tools. That is not a second opinion but
+ * a closer one - `activatePlugin` matches the very same list - so both surfaces agree that a
+ * signpost is offered only when picking it does something. This used to be the one place they
+ * disagreed, and the PR that added the global search argued the opposite in its own description.
+ *
  * **A panel registration answers every reason at once.** A plugin that was never installed, that
  * the user switched off, that was rejected as binary-incompatible, or that is hidden because the
  * user lacks its permission all register no panel - so none of those users is offered a row whose
@@ -123,3 +130,26 @@ internal fun revealPanel(
         WindowFocusManager.focusWindow(windowId)
     }
 }
+
+/**
+ * The row to point at for [entry], stamped with [nonce].
+ *
+ * Null when the entry can only reach its page - a delegated section has no host control to point
+ * at, and pointing at nothing is the honest outcome there, better than leaving the previous pick's
+ * highlight armed on a page it does not belong to.
+ *
+ * One caller, not two, despite the shape being shared: `SettingsWindowState.reveal` makes the same
+ * decision and keeps its own copy, because it is commonMain and cannot see [SettingsSearchEntry].
+ * Extracting it still earned its keep - it took `SettingsContent` back under detekt's complexity
+ * ceiling - but the duplication with the holder is real and deliberate, so do not read this as the
+ * single definition of the rule.
+ */
+internal fun highlightFor(
+    entry: SettingsSearchEntry,
+    nonce: Int,
+): SettingsHighlight? =
+    if (entry.highlightable) {
+        SettingsHighlight(group = entry.group, label = entry.label, nonce = nonce)
+    } else {
+        null
+    }

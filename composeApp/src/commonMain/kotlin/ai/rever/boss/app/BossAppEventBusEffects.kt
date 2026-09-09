@@ -91,6 +91,15 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
             }.launchIn(this)
     }
 
+    // Listen for diff open events (git data provider's openDiff) - Issue #506 window filter
+    LaunchedEffect(splitViewState, windowId) {
+        FileEventBus.diffOpenEvents
+            .filter { event -> event.sourceWindowId == windowId }
+            .onEach { event ->
+                splitViewState.openDiffTabInActivePanel(event)
+            }.launchIn(this)
+    }
+
     // Listen for terminal open events - now handled by split state
     // Issue #506: Filter by window to prevent terminal opening in all windows
     LaunchedEffect(splitViewState, windowId) {
@@ -205,8 +214,9 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
     }
 
     // A plugin the user just installed declares a dependency that is not present. Only
-    // user-initiated installs report here (see PluginLoaderDelegateImpl), so this cannot
-    // fire during startup restore or the api hot-swap's reload-all.
+    // user-initiated installs and re-activations report here (see PluginLoaderDelegateImpl
+    // and DynamicPluginManager.onPluginActivated), so this cannot fire during startup
+    // restore or the api hot-swap's reload-all.
     LaunchedEffect(windowId) {
         PluginDependencyEventBus.missingDependencies
             .collect { prompt ->

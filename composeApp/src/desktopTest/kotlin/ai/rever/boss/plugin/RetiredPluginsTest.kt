@@ -2,6 +2,7 @@ package ai.rever.boss.plugin
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -297,23 +298,26 @@ class RetiredPluginsTest {
     }
 
     @Test
-    fun `the shipped retirement names the plugin the wizard no longer installs`() {
-        // Pins the pair rather than the mechanism: PluginListProvider dropped
-        // `usersecretlist` and put `secretmanager` among the defaults in the same change, and
-        // a retirement pointing somewhere else would silently uninstall the wrong plugin.
-        val shipped = RetiredPlugins.ALL.single()
-        assertEquals("ai.rever.boss.plugin.dynamic.usersecretlist", shipped.pluginId)
-        assertEquals("ai.rever.boss.plugin.dynamic.secretmanager", shipped.replacementId)
-        assertTrue(
-            shipped.pluginId !in
-                ai.rever.boss.components.wizard.plugin.PluginListProvider.DEFAULT_PLUGIN_IDS,
-            "the wizard still installs a plugin this sweep uninstalls at the next launch",
-        )
-        assertTrue(
-            shipped.replacementId in
-                ai.rever.boss.components.wizard.plugin.PluginListProvider.DEFAULT_PLUGIN_IDS,
-            "nothing takes the retired plugin's place in a fresh install",
-        )
+    fun `every shipped retirement names plugins the wizard will not and does install`() {
+        // Pins the pairs rather than the mechanism: when a plugin is retired, the wizard
+        // stops offering it and offers its replacement in the same change, and a retirement
+        // pointing somewhere else would silently uninstall the wrong plugin.
+        assertTrue(RetiredPlugins.ALL.isNotEmpty(), "no shipped retirements to pin")
+        RetiredPlugins.ALL.forEach { retirement ->
+            assertTrue(
+                retirement.pluginId !in
+                    ai.rever.boss.components.wizard.plugin.PluginListProvider.DEFAULT_PLUGIN_IDS,
+                "the wizard still installs a plugin this sweep uninstalls at the next launch: " + retirement.pluginId,
+            )
+            assertTrue(
+                retirement.replacementId in
+                    ai.rever.boss.components.wizard.plugin.PluginListProvider.DEFAULT_PLUGIN_IDS,
+                "nothing takes the retired plugin's place in a fresh install: " + retirement.replacementId,
+            )
+        }
+        // The original pair that motivated the pin.
+        val mySecrets = RetiredPlugins.ALL.first { it.pluginId == "ai.rever.boss.plugin.dynamic.usersecretlist" }
+        assertEquals("ai.rever.boss.plugin.dynamic.secretmanager", mySecrets.replacementId)
     }
 
     @Test
@@ -322,9 +326,46 @@ class RetiredPluginsTest {
         // RetiredPluginIds (commonMain) is what the wizard and the home grid refuse to offer. A
         // retirement added to one and not the other leaves the plugin installable, swept away at
         // the next launch, and installable again - which is the loop the filter exists to stop.
-        assertEquals(
-            RetiredPlugins.ALL.map { it.pluginId }.toSet(),
-            ai.rever.boss.components.plugin.RetiredPluginIds.ALL,
+        //
+        // The FLOORS are pinned too: the offer filter hides a retired plugin only from the
+        // moment the sweep would be able to remove it. A floor that drifts between the two
+        // lists re-opens either the install-then-sweep loop (filter too eager) or a fresh
+        // install with no panel at all (filter too lazy).
+        val sweepRetirements =
+            RetiredPlugins.ALL
+                .map { (it.pluginId) to (it.replacementId) to (it.minReplacementVersion) }
+                .toSet()
+        val offerRetirements =
+            ai.rever.boss.components.plugin.RetiredPluginIds
+                .ALL
+                .map { (it.pluginId) to (it.replacementId) to (it.minReplacementVersion) }
+                .toSet()
+        assertEquals(sweepRetirements, offerRetirements)
+    }
+
+    @Test
+    fun `the offer filter uses the sweep floor and fails closed`() {
+        // The gap this floor closes: a fresh install between this host release and the
+        // replacement's absorbing release must STILL be offered the retired plugin, because
+        // the sweep cannot act and hiding the offer would leave no panel.
+        val gitStatus = "ai.rever.boss.plugin.dynamic.gitstatus"
+        val codebase = "ai.rever.boss.plugin.dynamic.codebase"
+        val hide = { version: String? ->
+            ai.rever.boss.components.plugin.RetiredPluginIds.hiddenFromOffers(gitStatus) { id ->
+                if (id == codebase) version else null
+            }
+        }
+        assertTrue(hide("1.6.0"), "the floor version itself must hide the retired plugin")
+        assertTrue(hide("2.0.0"), "a newer replacement must hide the retired plugin")
+        assertFalse(hide("1.5.9"), "a replacement below the floor must NOT hide it")
+        assertFalse(hide(null), "no replacement installed must NOT hide it")
+        assertFalse(hide(""), "a blank version must NOT hide it")
+        assertFalse(hide("dev"), "an unparseable version must NOT hide it (fails closed like the sweep)")
+        assertFalse(hide("-"), "a trailing '-' version must NOT hide it (satisfiesVersionFloor alone would not)")
+        // An id that is not retired is never hidden by this filter.
+        assertFalse(
+            ai.rever.boss.components.plugin.RetiredPluginIds
+                .hiddenFromOffers("ai.rever.boss.plugin.dynamic.codebase") { "1.6.0" },
         )
     }
 

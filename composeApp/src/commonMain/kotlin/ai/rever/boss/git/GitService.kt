@@ -2,6 +2,8 @@
 
 package ai.rever.boss.git
 
+import ai.rever.boss.plugin.api.GitDiffData
+import ai.rever.boss.plugin.api.GitFileStatusData
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -57,6 +59,16 @@ expect object GitService {
     val isLoading: StateFlow<Boolean>
 
     /**
+     * True while ANY git command is running or queued on the process-wide git
+     * lock - all windows, all repos, including status polls. [isLoading] tracks
+     * one operation's own button state; this is what the user needs when a
+     * DIFFERENT window's slow command (an index write now holds the lock for up
+     * to ten minutes) freezes every git read: "a git command is running",
+     * rather than an unexplained blank.
+     */
+    val gitCommandsRunning: StateFlow<Boolean>
+
+    /**
      * Last error message, if any.
      */
     val lastError: StateFlow<String?>
@@ -77,11 +89,15 @@ expect object GitService {
      *
      * @param branchName The branch name to checkout
      * @param windowId Optional window ID to update window-specific state after operation
+     * @param projectPathOverride Repository to act on; null falls back to the global
+     *   current project path. Window-scoped callers pass their own (see the write-verbs
+     *   note below) - the global belongs to whichever window aligned it last.
      * @return Result indicating success or failure
      */
     suspend fun checkout(
         branchName: String,
         windowId: String? = null,
+        projectPathOverride: String? = null,
     ): GitOperationResult
 
     /**
@@ -96,45 +112,57 @@ expect object GitService {
         branchName: String,
         checkout: Boolean = true,
         windowId: String? = null,
+        projectPathOverride: String? = null,
     ): GitOperationResult
 
     /**
      * Pull changes from remote.
      *
+     * @param projectPathOverride The repo to run in (the caller's window's project).
      * @return Result indicating success or failure
      */
-    suspend fun pull(): GitOperationResult
+    suspend fun pull(projectPathOverride: String? = null): GitOperationResult
 
     /**
      * Push changes to remote.
      *
+     * @param projectPathOverride The repo to run in (the caller's window's project).
      * @return Result indicating success or failure
      */
-    suspend fun push(): GitOperationResult
+    suspend fun push(projectPathOverride: String? = null): GitOperationResult
 
     /**
      * Get the URL for creating a pull request in the browser.
      * Returns the GitHub/GitLab PR creation URL based on the remote origin.
      *
+     * @param projectPathOverride The repo to read the remote from (the caller's window's project).
      * @return The PR creation URL, or null if not a supported remote
      */
-    suspend fun getCreatePRUrl(): String?
+    suspend fun getCreatePRUrl(projectPathOverride: String? = null): String?
 
     /**
      * Merge a branch into the current branch.
      *
      * @param branchName The branch to merge into current
+     * @param projectPathOverride The repo to merge in (the caller's window's project).
      * @return Result indicating success or failure
      */
-    suspend fun merge(branchName: String): GitOperationResult
+    suspend fun merge(
+        branchName: String,
+        projectPathOverride: String? = null,
+    ): GitOperationResult
 
     /**
      * Rebase current branch onto another branch.
      *
      * @param branchName The branch to rebase onto
+     * @param projectPathOverride The repo to rebase in (the caller's window's project).
      * @return Result indicating success or failure
      */
-    suspend fun rebase(branchName: String): GitOperationResult
+    suspend fun rebase(
+        branchName: String,
+        projectPathOverride: String? = null,
+    ): GitOperationResult
 
     /**
      * Clear Git state (when no project is selected).
@@ -151,9 +179,10 @@ expect object GitService {
     /**
      * Get current file status (refreshes the fileStatus StateFlow).
      *
+     * @param projectPathOverride The repo to read (null: the global current project).
      * @return List of files with their status
      */
-    suspend fun getStatus(): List<GitFileStatus>
+    suspend fun getStatus(projectPathOverride: String? = null): List<GitFileStatus>
 
     /**
      * Stage a file for commit.
@@ -162,9 +191,15 @@ expect object GitService {
      * @param windowId Optional window ID to update window-specific state after operation
      * @return Result indicating success or failure
      */
+    // The write verbs below all take a projectPathOverride: resolving the repo from
+    // the global current project path in a separate step leaves a window where
+    // another window's align lands in between, and the write runs in the wrong
+    // worktree. The override travels with the call, so nothing can redirect it.
+
     suspend fun stage(
         filePath: String,
         windowId: String? = null,
+        projectPathOverride: String? = null,
     ): GitOperationResult
 
     /**
@@ -173,7 +208,10 @@ expect object GitService {
      * @param windowId Optional window ID to update window-specific state after operation
      * @return Result indicating success or failure
      */
-    suspend fun stageAll(windowId: String? = null): GitOperationResult
+    suspend fun stageAll(
+        windowId: String? = null,
+        projectPathOverride: String? = null,
+    ): GitOperationResult
 
     /**
      * Unstage a file.
@@ -185,6 +223,7 @@ expect object GitService {
     suspend fun unstage(
         filePath: String,
         windowId: String? = null,
+        projectPathOverride: String? = null,
     ): GitOperationResult
 
     /**
@@ -193,7 +232,10 @@ expect object GitService {
      * @param windowId Optional window ID to update window-specific state after operation
      * @return Result indicating success or failure
      */
-    suspend fun unstageAll(windowId: String? = null): GitOperationResult
+    suspend fun unstageAll(
+        windowId: String? = null,
+        projectPathOverride: String? = null,
+    ): GitOperationResult
 
     /**
      * Discard changes to a file in the working tree.
@@ -205,6 +247,7 @@ expect object GitService {
     suspend fun discardChanges(
         filePath: String,
         windowId: String? = null,
+        projectPathOverride: String? = null,
     ): GitOperationResult
 
     // ===== Commit =====
@@ -221,6 +264,7 @@ expect object GitService {
         message: String,
         amend: Boolean = false,
         windowId: String? = null,
+        projectPathOverride: String? = null,
     ): GitOperationResult
 
     /**
@@ -241,25 +285,40 @@ expect object GitService {
      * Get commit log (refreshes the commitLog StateFlow).
      *
      * @param limit Maximum number of commits to retrieve
+     * @param projectPathOverride The repo to read the log from (the caller's window's
+     * project); null falls back to the global current project
      * @return List of commits
      */
-    suspend fun getLog(limit: Int = 100): List<GitCommitInfo>
+    suspend fun getLog(
+        limit: Int = 100,
+        projectPathOverride: String? = null,
+    ): List<GitCommitInfo>
 
     /**
      * Cherry-pick a commit onto the current branch.
      *
      * @param commitHash The commit hash to cherry-pick
+     * @param windowId Optional window ID to update window-specific state after operation
      * @return Result indicating success or failure
      */
-    suspend fun cherryPick(commitHash: String): GitOperationResult
+    suspend fun cherryPick(
+        commitHash: String,
+        windowId: String? = null,
+        projectPathOverride: String? = null,
+    ): GitOperationResult
 
     /**
      * Revert a commit.
      *
      * @param commitHash The commit hash to revert
+     * @param windowId Optional window ID to update window-specific state after operation
      * @return Result indicating success or failure
      */
-    suspend fun revert(commitHash: String): GitOperationResult
+    suspend fun revert(
+        commitHash: String,
+        windowId: String? = null,
+        projectPathOverride: String? = null,
+    ): GitOperationResult
 
     // ===== Stash =====
 
@@ -318,14 +377,20 @@ expect object GitService {
      *
      * @param windowId The window ID for per-window terminal isolation (Issue #498)
      */
-    suspend fun pullInTerminal(windowId: String)
+    suspend fun pullInTerminal(
+        windowId: String,
+        projectPathOverride: String? = null,
+    )
 
     /**
      * Run git push in the terminal (for real-time output).
      *
      * @param windowId The window ID for per-window terminal isolation (Issue #498)
      */
-    suspend fun pushInTerminal(windowId: String)
+    suspend fun pushInTerminal(
+        windowId: String,
+        projectPathOverride: String? = null,
+    )
 
     /**
      * Run git merge in the terminal (for real-time output).
@@ -336,6 +401,7 @@ expect object GitService {
     suspend fun mergeInTerminal(
         windowId: String,
         branchName: String,
+        projectPathOverride: String? = null,
     )
 
     /**
@@ -347,6 +413,7 @@ expect object GitService {
     suspend fun rebaseInTerminal(
         windowId: String,
         branchName: String,
+        projectPathOverride: String? = null,
     )
 
     /**
@@ -394,6 +461,21 @@ expect object GitService {
      * @param projectPath The root path of the project
      * @param windowGitState The window-specific git state to update
      */
+
+    /**
+     * Point the global `currentProjectPath` at [projectPath] - a cheap assignment,
+     * no git invocation.
+     *
+     * The window-scoped write verbs no longer depend on this - they carry their own
+     * projectPathOverride, because align-then-write is two steps and another window's
+     * align could land in between. This still matters for everything that reads the
+     * global with no override (merge/rebase/stash, the top-bar actions): once two
+     * windows on different worktrees have settled, the global belonged to whichever
+     * refreshed last. Aligning here, unconditionally and before the gated probe, keeps
+     * the global tracking the window whose provider is being used.
+     */
+    fun alignCurrentProjectPath(projectPath: String)
+
     suspend fun refreshForWindow(
         projectPath: String,
         windowGitState: ai.rever.boss.window.WindowGitState?,
@@ -427,6 +509,55 @@ expect object GitService {
         limit: Int = 100,
     ): List<GitCommitInfo>
 
+    // ===== Window-scoped remote + ref-scoped log (boss-plugin-api 1.0.87) =====
+    //
+    // These take the WINDOW's state rather than reading the global
+    // `currentProjectPath` the way pull()/push() do. The global is written by
+    // whichever window refreshed last, so a two-window session could fetch,
+    // pull or push the wrong repository; a window-scoped path cannot.
+
+    /**
+     * Commit log for an arbitrary [ref] (`git log <ref>`), for the graph's
+     * branch selector.
+     *
+     * Deliberately does NOT write [ai.rever.boss.window.WindowGitState.commitLog]:
+     * that flow is HEAD's history, which the top bar and the git-log panel
+     * read, and filling it with another branch's commits would silently
+     * mis-label them.
+     *
+     * @param ref branch, tag or commit-ish. Blank/null means HEAD.
+     * @return the commits, or an empty list when [ref] resolves to nothing.
+     */
+    suspend fun getLogForRef(
+        windowGitState: ai.rever.boss.window.WindowGitState?,
+        ref: String?,
+        limit: Int = 100,
+    ): List<GitCommitInfo>
+
+    /**
+     * Local + remote-tracking branches of the window's project, read fresh.
+     *
+     * [ai.rever.boss.window.WindowGitState.localBranches] is only written by
+     * [refreshForWindow], which panels call at most once per project, so it
+     * goes stale the moment a branch is created or fetched.
+     */
+    suspend fun listBranchesForWindow(windowGitState: ai.rever.boss.window.WindowGitState?): List<GitBranchInfo>
+
+    /** `git fetch --all [--prune]` in the window's project. */
+    suspend fun fetchForWindow(
+        windowGitState: ai.rever.boss.window.WindowGitState?,
+        prune: Boolean = false,
+    ): GitOperationResult
+
+    /** `git pull` in the window's project. */
+    suspend fun pullForWindow(windowGitState: ai.rever.boss.window.WindowGitState?): GitOperationResult
+
+    /**
+     * `git push -u origin HEAD` in the window's project. Never `--force`:
+     * a force push has no in-app undo and belongs in a terminal.
+     */
+    suspend fun pushForWindow(windowGitState: ai.rever.boss.window.WindowGitState?): GitOperationResult
+
     /**
      * Watch the project's `.git/HEAD` (and refs) for external mutations and
      * refresh [windowGitState] whenever an external `git checkout`,
@@ -446,4 +577,64 @@ expect object GitService {
         projectPath: String,
         windowGitState: ai.rever.boss.window.WindowGitState?,
     )
+
+    // ===== Diff =====
+
+    /**
+     * Unified diff for one file.
+     *
+     * @param filePath Path relative to the project root.
+     * @param staged true = index vs HEAD (staged changes), false = working tree vs index.
+     * @return Parsed diff data for the file, or empty if there is no diff (or git failed).
+     */
+    // Each takes the WINDOW's project path. Reading the global `currentProjectPath`
+    // meant a two-window session could render the OTHER window's diff: the global is
+    // written by whichever window refreshed last, and ensureRepoState only reseeds it
+    // when that window's project CHANGED - so once both windows settle, nothing
+    // re-aligns it before a diff read. Same fix, same reason, as the remote verbs above.
+    // A null path falls back to the global for callers that have no window.
+    suspend fun getFileDiff(
+        filePath: String,
+        staged: Boolean,
+        projectPathOverride: String? = null,
+    ): List<GitDiffData>
+
+    /**
+     * Unified diff of a single commit (against its parent; a root commit diffs
+     * against the empty tree).
+     *
+     * @param commitHash Full or short commit hash.
+     * @param filePath Optional path to restrict the diff to one file.
+     */
+    suspend fun getCommitDiff(
+        commitHash: String,
+        filePath: String? = null,
+        projectPathOverride: String? = null,
+    ): List<GitDiffData>
+
+    /**
+     * Unified diff between two refs.
+     *
+     * @param fromRef Base ref (commit/branch/tag).
+     * @param toRef Target ref (commit/branch/tag).
+     * @param filePath Optional path to restrict the diff to one file.
+     */
+    suspend fun getRefDiff(
+        fromRef: String,
+        toRef: String,
+        filePath: String? = null,
+        projectPathOverride: String? = null,
+    ): List<GitDiffData>
+
+    /**
+     * Name-status listing of the changed files.
+     *
+     * @param staged true = staged (index vs HEAD), false = working tree vs index.
+     * @return One entry per changed file (untracked files are not included -
+     * they have no index or HEAD entry to diff against).
+     */
+    suspend fun getDiffFileNames(
+        staged: Boolean,
+        projectPathOverride: String? = null,
+    ): List<GitFileStatusData>
 }

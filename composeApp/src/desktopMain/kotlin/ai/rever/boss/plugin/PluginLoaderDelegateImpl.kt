@@ -6,6 +6,7 @@ import ai.rever.boss.components.plugin.DependentRestartEventBus
 import ai.rever.boss.components.plugin.DynamicPluginInfo
 import ai.rever.boss.components.plugin.DynamicPluginManager
 import ai.rever.boss.components.plugin.MicrokernelRuntime
+import ai.rever.boss.components.plugin.ReloadJarCandidates
 import ai.rever.boss.components.plugin.findRelocatedPluginJar
 import ai.rever.boss.components.plugin.resolveReloadJarPath
 import ai.rever.boss.components.registery.PanelComponentStoreRegistry
@@ -19,6 +20,7 @@ import ai.rever.boss.plugin.api.PluginLoaderDelegate
 import ai.rever.boss.plugin.api.PluginState
 import ai.rever.boss.plugin.api.PluginUnloadIntent
 import ai.rever.boss.plugin.api.PluginUnloadResult
+import ai.rever.boss.plugin.loader.PluginManifestReader
 import ai.rever.boss.plugin.loader.PluginSignatureSidecar
 import ai.rever.boss.plugin.loader.PluginUnloadException
 import ai.rever.boss.plugin.repository.remote.PluginStoreConfig
@@ -28,6 +30,7 @@ import ai.rever.boss.plugin.sandbox.ui.PluginUiMountRegistry
 import ai.rever.boss.utils.ApplicationRestarter
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.window.ClosedTabHistory
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -385,6 +388,18 @@ class PluginLoaderDelegateImpl(
         }
     }
 
+    private fun logReloadSource(
+        pluginId: String,
+        loadedJarPath: String?,
+        jarPath: String,
+    ) {
+        logger.info(
+            LogCategory.SYSTEM,
+            "Reloading from a different JAR",
+            mapOf("pluginId" to pluginId, "loadedJarPath" to (loadedJarPath ?: "none"), "jarPath" to jarPath),
+        )
+    }
+
     private suspend fun doReloadPlugin(pluginId: String): LoadedPluginInfo? {
         return try {
             logger.info(LogCategory.SYSTEM, "Reloading plugin via delegate", mapOf("pluginId" to pluginId))
@@ -406,12 +421,27 @@ class PluginLoaderDelegateImpl(
                     val persistedJarPath =
                         PluginPersistence.getInstalledPlugins().firstOrNull { it.pluginId == pluginId }?.jarPath
                     resolveReloadJarPath(
-                        loadedJarPath = loadedJarPath,
-                        persistedJarPath = persistedJarPath,
+                        candidates =
+                            ReloadJarCandidates(
+                                loadedJarPath = loadedJarPath,
+                                persistedJarPath = persistedJarPath,
+                            ),
                         exists = { File(it).isFile },
                         relocated = {
                             val dir = (loadedJarPath ?: persistedJarPath)?.let { File(it).parentFile }
                             findRelocatedPluginJar(dir, pluginId)?.absolutePath
+                        },
+                        manifestVersion = { path ->
+                            // No swallow: let read failures reach the resolver's
+                            // onManifestVersionReadFailed hook so the candidate is logged.
+                            PluginManifestReader.readFromJar(path).version
+                        },
+                        onManifestVersionReadFailed = { path ->
+                            logger.warn(
+                                LogCategory.SYSTEM,
+                                "Could not read manifest version of a reload candidate jar",
+                                mapOf("pluginId" to pluginId, "path" to path),
+                            )
                         },
                     )
                 }
@@ -425,11 +455,7 @@ class PluginLoaderDelegateImpl(
                 return null
             }
             if (jarPath != loadedJarPath) {
-                logger.info(
-                    LogCategory.SYSTEM,
-                    "Reloading from the installed record - the loaded JAR is gone, most likely replaced by an update",
-                    mapOf("pluginId" to pluginId, "loadedJarPath" to (loadedJarPath ?: "none"), "jarPath" to jarPath),
-                )
+                logReloadSource(pluginId, loadedJarPath, jarPath)
             }
 
             // Unload
@@ -753,11 +779,22 @@ class PluginLoaderDelegateImpl(
         pluginId: String?,
         tabs: List<Pair<BossTabsComponent, String>>,
     ) {
+        // Entries the USER closed before this unload are still on the reopen stack, and a
+        // plugin's TabInfo is one of its own classes: leaving them pins the classloader, and an
+        // update would hand the new factory an instance of the old class. Dropped before the
+        // teardown loop so it happens even if a removeTabById throws below.
+        pluginId?.let { ClosedTabHistory.dropEntriesFor(it) }
+
         if (tabs.isEmpty()) return
         runOnEdtAndWait {
             tabs.forEach { (component, tabId) ->
                 try {
-                    component.removeTabById(tabId)
+                    // NOT recorded for reopen: the classloader is about to close, so no factory
+                    // is left to rebuild these. Recording them would bury the user's own closures
+                    // (the stack holds 25, and a plugin can easily own that many tabs), and an
+                    // update - uninstall then reinstall - would register the factory again in
+                    // time for Cmd+Shift+T to resurrect tabs nobody closed.
+                    component.removeTabById(tabId, recordForReopen = false)
                 } catch (e: Throwable) {
                     logger.warn(
                         LogCategory.SYSTEM,

@@ -170,7 +170,10 @@ private fun JumpBackInSection(
 
 @Composable
 private fun ToolsSection(actions: HomeActions) {
-    val tools = rememberHomeTools()
+    // The retired-plugin floor reads installed.json, which only desktopMain can
+    // reach: the lookup is an expect/actual so commonMain stays platform-agnostic
+    // (the same seam `warmBrowserEngineForTabs` uses).
+    val tools = rememberHomeTools(installedVersionOf = ::installedPluginVersionOf)
     val keymap by KeymapSettingsManager.currentSettings.collectAsState()
     var filter by remember { mutableStateOf(HomeToolFilter.ALL) }
     // Ids currently installing, so a tile shows progress rather than looking unresponsive for the

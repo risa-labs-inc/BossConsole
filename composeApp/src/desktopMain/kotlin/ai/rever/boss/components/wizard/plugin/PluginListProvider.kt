@@ -1,6 +1,7 @@
 package ai.rever.boss.components.wizard.plugin
 
 import ai.rever.boss.components.plugin.RetiredPluginIds
+import ai.rever.boss.plugin.PluginPersistence
 import ai.rever.boss.plugin.PluginStoreSetup
 import ai.rever.boss.plugin.repository.PluginInfo
 import ai.rever.boss.plugin.repository.PluginWithSource
@@ -180,9 +181,17 @@ object PluginListProvider {
                             .filter { it.plugin.pluginId != ai.rever.boss.components.plugin.MicrokernelRuntime.PLUGIN_ID }
                             // Nor a plugin another plugin has taken over: the store keeps
                             // returning it until its row is unlisted by hand, and installing it
-                            // here only gets it swept away at the next launch.
-                            .filter { it.plugin.pluginId !in RetiredPluginIds.ALL }
-                            .map { pws: PluginWithSource ->
+                            // here only gets it swept away at the next launch. The floor is the
+                            // sweep's own (see HomeToolCatalog) - an unconditional hide would
+                            // leave a fresh install with no panel until the replacement ships.
+                            .filter {
+                                !RetiredPluginIds.hiddenFromOffers(
+                                    it.plugin.pluginId,
+                                    installedVersionOf = { id ->
+                                        PluginPersistence.getInstalledPlugin(id)?.installedVersion
+                                    },
+                                )
+                            }.map { pws: PluginWithSource ->
                                 convertToWizardPluginInfo(pws.plugin)
                             }
 

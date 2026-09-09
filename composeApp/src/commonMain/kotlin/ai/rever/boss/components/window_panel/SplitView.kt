@@ -33,8 +33,11 @@ import ai.rever.boss.plugin.api.TabIcon
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.api.TabRegistry
 import ai.rever.boss.plugin.api.TabTypeId
+import ai.rever.boss.plugin.events.DiffOpenEvent
 import ai.rever.boss.plugin.tab.codeeditor.CodeEditorTabType
 import ai.rever.boss.plugin.tab.codeeditor.EditorTabInfo
+import ai.rever.boss.plugin.tab.diff.DiffTabInfo
+import ai.rever.boss.plugin.tab.diff.DiffTabType
 import ai.rever.boss.plugin.tab.fluck.FluckTabType
 import ai.rever.boss.plugin.tab.jupyter.JupyterTabInfo
 import ai.rever.boss.plugin.tab.terminal.TerminalTabInfo
@@ -591,7 +594,9 @@ class SplitViewState(
     }
 
     private fun findPanelWithNotebookTab(filePath: String): PanelTabMatch? =
-        findPanelWithTabMatching { tab -> tab is JupyterTabInfo && tab.filePath == filePath }
+        findPanelWithTabMatching { tab ->
+            tab is JupyterTabInfo && TabPaths.pathsMatch(tab.filePath, filePath)
+        }
 
     /** Find the first panel containing a tab that satisfies [predicate]. */
     private fun findPanelWithTabMatching(predicate: (TabInfo) -> Boolean): PanelTabMatch? {
@@ -648,6 +653,42 @@ class SplitViewState(
                 filePath = filePath,
             )
         activeComponent.addTab(editorTab).takeIf { it >= 0 }?.let {
+            activeComponent.selectTab(it)
+        }
+    }
+
+    /**
+     * Open a git diff in the active panel (from a [DiffOpenEvent], i.e. the
+     * git data provider's `openDiff` or a deep link). The diff tab type is
+     * registered by the editor-tab PLUGIN, not the host, so the gate is real:
+     * with that plugin absent or still starting, [requireTabTypeThen] waits for
+     * the type (or prompts) rather than dropping the open.
+     */
+    fun openDiffTabInActivePanel(event: DiffOpenEvent) {
+        requireTabTypeThen(DiffTabType.typeId, "Opening diff") {
+            openDiffTabNow(event)
+        }
+    }
+
+    private fun openDiffTabNow(event: DiffOpenEvent) {
+        val activeComponent = getActiveTabsComponent() ?: return
+
+        // Reuse an open diff of the same thing, like every other open path.
+        // Without this, clicking a changed file added a tab per click.
+        findPanelWithDiffTab(event)?.let { (panelId, component, tabIndex) ->
+            component.selectTab(tabIndex)
+            setActivePanel(panelId)
+            return
+        }
+
+        val diffTab =
+            DiffTabInfo.create(
+                filePath = event.filePath,
+                staged = event.staged,
+                fromRef = event.fromRef,
+                toRef = event.toRef,
+            )
+        activeComponent.addTab(diffTab).takeIf { it >= 0 }?.let {
             activeComponent.selectTab(it)
         }
     }
@@ -995,7 +1036,11 @@ class SplitViewState(
             // unhides the sidebar panel. newComponent isn't in the split tree yet, so the
             // search below can only ever find the original.
             if (copiedTab is PanelHostTabInfo && newIndex >= 0) {
-                findPanelContainingTab(copiedTab.id)?.tabsComponent?.removeTabById(copiedTab.id)
+                // recordForReopen = false: this is the second half of a move, and the tab is
+                // already live in newComponent by the time it runs.
+                findPanelContainingTab(copiedTab.id)
+                    ?.tabsComponent
+                    ?.removeTabById(copiedTab.id, recordForReopen = false)
             }
         }
 
@@ -1227,11 +1272,26 @@ class SplitViewState(
     )
 
     /**
-     * Find the panel that contains an editor tab for the given file path.
-     * Unlike findPanelWithFile, this only matches EditorTabInfo (not browser tabs).
+     * An open diff of the same scope: same file, same side of the index, same
+     * refs. A staged diff and a working-tree diff of one file are different
+     * views and each gets its own tab, as in VS Code.
      */
-    private fun findPanelWithEditorTab(filePath: String): PanelTabMatch? =
-        findPanelWithTabMatching { tab -> tab is EditorTabInfo && tab.filePath == filePath }
+    private fun findPanelWithDiffTab(event: DiffOpenEvent): PanelTabMatch? =
+        findPanelWithTabMatching { tab ->
+            tab is DiffTabInfo &&
+                diffTabMatches(tab, event.filePath, event.staged, event.fromRef, event.toRef)
+        }
+
+    private fun findPanelWithEditorTab(filePath: String): PanelTabMatch? {
+        // A blank path never matches: normalize("") is "", so a blank query
+        // would focus the first Untitled editor tab.
+        if (filePath.isBlank()) return null
+        // pathsMatch keeps the canonicalPath syscalls out of the common case
+        // (identical spellings), paying for them only on a lexical mismatch.
+        return findPanelWithTabMatching { tab ->
+            tab is EditorTabInfo && TabPaths.pathsMatch(tab.filePath, filePath)
+        }
+    }
 
     /**
      * Find the panel that contains a tab with the given URL
@@ -1918,11 +1978,21 @@ fun SplitViewPanel(
     /** Window chrome for the foot of the vertical bar. Ignored in TOP position, which has none. */
     verticalBarFooter: @Composable () -> Unit = {},
     /**
-     * Window chrome for BELOW the split map, at the very foot of the vertical bar - Settings,
-     * Search, Sign Out and the tools launcher when nothing else is left to hold them. Ignored in
-     * TOP position, where those go back to the top bar or a floating cluster.
+     * Window chrome for BELOW the split map, at the very foot of the FULL vertical bar - Settings,
+     * Search, Sign Out and the tools launcher when nothing else is left to hold them.
+     *
+     * Ignored in TOP position, which has no vertical bar: there the same actions go to the top bar
+     * if it is up, an open plugin panel's foot if one is open, and a floating cluster otherwise.
+     * See `focusQuickActionsPlacement`.
      */
     verticalBarBelowMap: @Composable () -> Unit = {},
+    /**
+     * The same chrome for when the bar is down to its RAIL, at the very foot of that.
+     *
+     * A separate slot because the rail and the hover drawer are on screen together, so one slot
+     * handed to both drew the actions twice - see `WindowVerticalTabBar.belowTabs`.
+     */
+    verticalBarRailActions: @Composable () -> Unit = {},
     /**
      * Clearance above the vertical bar.
      *
@@ -1935,9 +2005,10 @@ fun SplitViewPanel(
     /**
      * Reports whether the hover-revealed bar is on screen.
      *
-     * The window needs it because the host's actions live under the bar's split map, and a
-     * COLLAPSED bar has no foot to put them in - so they float instead, until the drawer opens and
-     * gives them one again. Only this composable knows: the reveal state machine lives here.
+     * The window needs it because it decides where the host's actions go: a collapsed bar puts
+     * them at the foot of its rail, and a revealed drawer IS a full bar, so while it is up they
+     * move from the rail's bottom into the bar's foot. Only this composable knows: the reveal
+     * state machine lives here. See `verticalBarHost`.
      */
     onDrawerVisibleChange: (Boolean) -> Unit = {},
     /**
@@ -1945,9 +2016,11 @@ fun SplitViewPanel(
      *
      * Not the same question as the `tabBarCollapsed` preference, which is what the window used to
      * ask: a bar also rails itself when there is no room for a full one, and only this composable
-     * has measured the width. The window needs the MEASURED answer, because a rail has no foot to
-     * put the host's actions in - and while it believed the preference, a narrow window sent them
-     * to a foot that was not being drawn and they rendered nowhere at all.
+     * has measured the width. The window needs the MEASURED answer because it picks which of the
+     * bar's two layouts hosts the host's actions - a row under the split map, or a column at the
+     * bottom of the rail - and the preference alone cannot tell a self-railed narrow window from
+     * an expanded one. While it believed the preference, a narrow window sent them to a foot that
+     * was not being drawn and they rendered nowhere at all.
      */
     onBarRailedChange: (Boolean) -> Unit = {},
 ) {
@@ -2012,6 +2085,7 @@ fun SplitViewPanel(
                 onTabDropResult = onTabDropResult,
                 footer = verticalBarFooter,
                 belowMap = verticalBarBelowMap,
+                belowTabs = verticalBarRailActions,
                 topInset = verticalBarTopInset,
                 splitTree = splitTree,
             )
@@ -2084,6 +2158,8 @@ private fun WindowBarRow(
     onTabDropResult: (TabDropResult) -> Unit,
     footer: @Composable () -> Unit,
     belowMap: @Composable () -> Unit,
+    /** The rail's own copy of that chrome. See `WindowVerticalTabBar.belowTabs`. */
+    belowTabs: @Composable () -> Unit,
     /** Clearance above the bar, for the macOS traffic lights. See [SplitViewPanel]. */
     topInset: Dp,
     splitTree: @Composable (Modifier) -> Unit,
@@ -2132,6 +2208,7 @@ private fun WindowBarRow(
                 tabDragComponent = tabDragComponent,
                 footer = footer,
                 belowMap = belowMap,
+                belowTabs = belowTabs,
                 zoomed = splitViewState.zoomedPanelId != null,
                 onExitZoom = splitViewState::exitZoom,
             )
