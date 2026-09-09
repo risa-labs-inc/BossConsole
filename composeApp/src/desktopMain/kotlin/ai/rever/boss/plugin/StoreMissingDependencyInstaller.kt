@@ -84,44 +84,56 @@ class StoreMissingDependencyInstaller(
      * manifest, which is not available before the download the user has not yet agreed to, so
      * every edge is followed as if required. A store that cannot describe a plugin - no row, a
      * decode failure, a transport error - contributes null and the walk carries on without
-     * expanding that plugin: today's behaviour, and the plan never does less than that.
+     * expanding that plugin. Its install is still attempted and can fail, stopping the plan.
      *
      * Anything the walk found odd is logged here, once: a cycle or a cap hit is a store data
      * problem someone should be able to find, and an unresolved plugin is exactly the silence
      * this method exists to remove.
      */
-    override suspend fun planFor(pluginId: String): DependencyInstallPlan {
-        val store = repository() ?: return super.planFor(pluginId)
-        val plan =
-            PluginDependencyResolution.installPlan(
-                rootId = pluginId,
-                isPresent = ::isInstalled,
-                dependenciesOf = { id ->
-                    val lookup = runCatching { store.getPlugin(id) }.getOrElse { Result.failure(it) }
-                    lookup.exceptionOrNull()?.let { error ->
-                        logger.warn(
-                            LogCategory.SYSTEM,
-                            "Could not read a plugin's dependencies from the store; it will install alone",
-                            mapOf("pluginId" to id),
-                            error = error,
-                        )
-                    }
-                    lookup.getOrNull()?.dependencies
-                },
-            )
-        if (plan.cyclic || plan.truncated || plan.unresolved.isNotEmpty()) {
-            logger.warn(
-                LogCategory.SYSTEM,
-                "Dependency install plan has gaps",
-                mapOf(
-                    "root" to pluginId,
-                    "cyclic" to plan.cyclic.toString(),
-                    "truncated" to plan.truncated.toString(),
-                    "unresolved" to plan.unresolved.joinToString(","),
-                ),
-            )
+    override suspend fun planFor(pluginId: String): DependencyInstallPlan =
+        withContext(Dispatchers.IO) {
+            val store = repository() ?: return@withContext super.planFor(pluginId)
+            val present = mutableMapOf<String, Boolean>()
+            val plan =
+                PluginDependencyResolution.installPlan(
+                    rootId = pluginId,
+                    isPresent = { id -> present.getOrPut(id) { isInstalled(id) } },
+                    dependenciesOf = { id ->
+                        val lookup = runCatching { store.getPlugin(id) }.getOrElse { Result.failure(it) }
+                        lookup.exceptionOrNull()?.let { error ->
+                            if (error is CancellationException) throw error
+                            logger.warn(
+                                LogCategory.SYSTEM,
+                                "Could not read plugin dependencies; installation will retry the store lookup",
+                                mapOf("pluginId" to id),
+                                error = error,
+                            )
+                        }
+                        lookup.getOrNull()?.dependencies
+                    },
+                )
+            if (plan.cyclic || plan.truncated || plan.unresolved.isNotEmpty()) {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Dependency install plan has gaps",
+                    mapOf(
+                        "root" to pluginId,
+                        "cyclic" to plan.cyclic.toString(),
+                        "truncated" to plan.truncated.toString(),
+                        "unresolved" to plan.unresolved.joinToString(","),
+                    ),
+                )
+            }
+            plan
         }
-        return plan
+
+    override suspend fun installAll(order: List<String>): Result<Unit> {
+        val acceptedOrder = order.toList()
+        return DETACHED_PLANS.run(acceptedOrder) {
+            super.installAll(acceptedOrder).onFailure { error ->
+                logger.warn(LogCategory.SYSTEM, "Dependency install plan failed", error = error)
+            }
+        }
     }
 
     override suspend fun install(pluginId: String): Result<Unit> =
@@ -278,9 +290,9 @@ class StoreMissingDependencyInstaller(
      *
      * Deliberately not back through [PluginLoaderDelegateImpl.loadPlugin], so a dependency
      * that has dependencies of its own does not chain prompts: the user answered one question
-     * and should not be handed a second dialog as its consequence. What that plugin needs in
-     * turn was resolved by [planFor] and shown before the question was asked, so by the time
-     * this runs there is nothing left to chain.
+     * and should not be handed a second dialog as its consequence. The accepted [planFor]
+     * result covers the store metadata available when the user answered; dependencies absent
+     * from that metadata are not silently added to the accepted plan.
      */
     private suspend fun vetAndLoad(
         pluginId: String,
@@ -369,17 +381,6 @@ class StoreMissingDependencyInstaller(
     }
 
     /**
-     * Removes a jar and its signature sidecar together.
-     *
-     * The pair matters: reinstalling the same version reuses the filename, so a surviving
-     * `.sig` would meet fresh bytes and hard-fail at load - worse than being unsigned.
-     */
-    private fun discard(jarPath: String) {
-        runCatching { File(jarPath).delete() }
-        runCatching { PluginSignatureSidecar.delete(jarPath) }
-    }
-
-    /**
      * Move the downloaded jar and its signature onto the final name.
      *
      * `persist` rather than `write`, because `target` can already exist - reinstalling the same
@@ -412,6 +413,10 @@ class StoreMissingDependencyInstaller(
          * first job rather than racing it - and so loads into the manager that started it,
          * which is the multi-window limitation already documented on `MissingDependencyPrompt`.
          */
+        // Separate jobs keyed by the full consent list avoid self-joining a per-plugin job
+        // and never coalesce two different consent plans for the same root.
+        private val DETACHED_PLANS = KeyedDetachedJobs<List<String>, Result<Unit>>(INSTALL_SCOPE)
+
         private val DETACHED_INSTALLS = KeyedDetachedJobs<String, Result<Unit>>(INSTALL_SCOPE)
     }
 }
@@ -465,3 +470,14 @@ private fun safe(part: String) = part.replace(Regex("[^A-Za-z0-9.-]"), "_")
 
 /** A user-facing failure: the message is what the dialog shows, so it names a plugin, not a transport. */
 private fun failure(message: String): Result<Unit> = Result.failure(IllegalStateException(message))
+
+/**
+ * Removes a jar and its signature sidecar together.
+ *
+ * The pair matters: reinstalling the same version reuses the filename, so a surviving
+ * `.sig` would meet fresh bytes and hard-fail at load - worse than being unsigned.
+ */
+private fun discard(jarPath: String) {
+    runCatching { File(jarPath).delete() }
+    runCatching { PluginSignatureSidecar.delete(jarPath) }
+}

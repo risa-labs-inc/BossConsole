@@ -62,7 +62,7 @@ data class DependentPlugin(
  * and that call can come from `register()`.
  *
  * The flags are diagnostics for the caller to log, not reasons to refuse: [unresolved] names
- * plugins the store could not describe (they are still installed, just not expanded),
+ * plugins the store could not describe (their install is still attempted, but they are not expanded),
  * [cyclic] means two store rows point at each other, [truncated] means the walk hit
  * [PluginDependencyResolution.MAX_PLAN_SIZE] and stopped expanding.
  */
@@ -204,9 +204,9 @@ object PluginDependencyResolution {
      * usable now" predicate the reporter and the installer already share; the last time two
      * definitions of installed disagreed, a failed install silenced every later dependent of
      * that plugin (see the note on [installedAndOnDisk]). [dependenciesOf] returning null means
-     * the store could not describe that plugin: it is kept in the plan, because installing what
-     * the user was asked about is today's behaviour and the plan must never do less, but it is
-     * not expanded.
+     * the store could not describe that plugin: it is kept in the plan, so a later install can
+     * retry the lookup, but it is not expanded. An install failure
+     * stops the plan before its dependents, including the root.
      *
      * The root is never filtered by [isPresent]. The dialog's Install button already guards on
      * `isInstalled` before calling, and a root that became present between the two reads is the
@@ -248,9 +248,9 @@ object PluginDependencyResolution {
                     .filter { offerable(it, parent = pluginId) }
                     .filterNot(isPresent)
             for (child in children) {
-                if (visited.size >= MAX_PLAN_SIZE) {
+                if (child !in visited && visited.size >= MAX_PLAN_SIZE) {
                     truncated = true
-                    break
+                    continue
                 }
                 visit(child)
             }

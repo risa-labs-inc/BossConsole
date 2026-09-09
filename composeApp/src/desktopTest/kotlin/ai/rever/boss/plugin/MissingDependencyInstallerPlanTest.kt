@@ -6,12 +6,21 @@ import ai.rever.boss.plugin.repository.PluginInfo
 import ai.rever.boss.plugin.repository.PluginRepository
 import ai.rever.boss.plugin.repository.PluginSearchFilter
 import ai.rever.boss.plugin.repository.PluginSearchResult
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
@@ -228,5 +237,87 @@ class MissingDependencyInstallerPlanTest {
             val plan = RecordingInstaller().planFor("b")
 
             assertEquals(DependencyInstallPlan(listOf("b"), emptySet(), cyclic = false, truncated = false), plan)
+        }
+
+    @Test
+    fun `planning propagates thrown and returned cancellation instead of expanding siblings`() =
+        runTest {
+            for (throwFailure in listOf(true, false)) {
+                val delegate = GraphStore(mapOf("b" to listOf("c", "d")))
+                val asked = mutableListOf<String>()
+                val store =
+                    object : PluginRepository by delegate {
+                        override suspend fun getPlugin(pluginId: String): Result<PluginInfo?> {
+                            asked += pluginId
+                            if (pluginId == "c") {
+                                val error = CancellationException("window closed")
+                                if (throwFailure) throw error
+                                return Result.failure(error)
+                            }
+                            return delegate.getPlugin(pluginId)
+                        }
+                    }
+                assertFailsWith<CancellationException> { installer(store).planFor("b") }
+                assertEquals(listOf("b", "c"), asked)
+            }
+        }
+
+    @Test
+    fun `accepted plan reaches its root after the observing window closes`() =
+        runBlocking {
+            val entered = CompletableDeferred<Unit>()
+            val rootReached = CompletableDeferred<Unit>()
+            val release = CountDownLatch(1)
+            val installer =
+                StoreMissingDependencyInstaller(
+                    repository = { null },
+                    pluginDir = { temp },
+                    hooks =
+                        InstallerHooks(
+                            installedNow = { id ->
+                                if (id == "detached-child") {
+                                    entered.complete(Unit)
+                                    check(release.await(5, TimeUnit.SECONDS))
+                                }
+                                if (id == "detached-root") rootReached.complete(Unit)
+                                true
+                            },
+                            load = { Result.success(Unit) },
+                        ),
+                )
+            val caller = launch { installer.installAll(listOf("detached-child", "detached-root")) }
+            try {
+                withTimeout(5_000) { entered.await() }
+                caller.cancelAndJoin()
+                release.countDown()
+                withTimeout(5_000) { rootReached.await() }
+            } finally {
+                release.countDown()
+                caller.cancelAndJoin()
+            }
+        }
+
+    @Test
+    fun `presence checks run off the caller thread and repeated edges are checked once`() =
+        runBlocking {
+            val callerThread = Thread.currentThread()
+            val checked = mutableListOf<String>()
+            val store = GraphStore(mapOf("b" to listOf("c", "c"), "c" to emptyList()))
+            val installer =
+                StoreMissingDependencyInstaller(
+                    repository = { store },
+                    pluginDir = { temp },
+                    hooks =
+                        InstallerHooks(
+                            installedNow = { id ->
+                                assertTrue(Thread.currentThread() !== callerThread)
+                                checked += id
+                                false
+                            },
+                            load = { Result.success(Unit) },
+                        ),
+                )
+            assertEquals(listOf("c", "b"), installer.planFor("b").order)
+            assertEquals(listOf("c"), checked)
         }
 }

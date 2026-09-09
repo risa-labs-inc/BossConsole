@@ -231,4 +231,39 @@ class DependencyInstallPlanTest {
 
             assertEquals(asked.size, asked.toSet().size, "asked twice: $asked")
         }
+
+    @Test
+    fun `a full plan still detects a cycle back to an already visited root`() =
+        runTest {
+            val cap = PluginDependencyResolution.MAX_PLAN_SIZE
+            val plan =
+                PluginDependencyResolution.installPlan(
+                    rootId = "p0",
+                    isPresent = nothingPresent,
+                    dependenciesOf = { id ->
+                        val next = (id.removePrefix("p").toInt() + 1) % cap
+                        listOf("p$next")
+                    },
+                )
+            assertEquals(cap, plan.order.size)
+            assertTrue(plan.cyclic)
+            assertFalse(plan.truncated)
+        }
+
+    @Test
+    fun `a full diamond does not report truncation for repeated edges`() =
+        runTest {
+            val cap = PluginDependencyResolution.MAX_PLAN_SIZE
+            val plan =
+                PluginDependencyResolution.installPlan(
+                    rootId = "root",
+                    isPresent = nothingPresent,
+                    dependenciesOf = { id ->
+                        if (id == "root") (1 until cap).map { "p$it" } + "p1" else emptyList()
+                    },
+                )
+            assertEquals(cap, plan.order.size)
+            assertFalse(plan.truncated)
+            assertFalse(plan.cyclic)
+        }
 }

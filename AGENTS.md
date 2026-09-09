@@ -191,11 +191,12 @@ Reporting is gated to the install entry point. `doReloadPlugin` finishes by call
 the evolver's hot reload - none of which is a user asking to install anything, and re-offering a
 dependency someone declined on every reload would be worse than silence.
 
-**Transitive dependencies are resolved before the question is asked, not after.** The dialog
+**Transitive dependencies are resolved in the consent dialog, before installation.** The dialog
 calls `MissingDependencyInstaller.planFor`, which on the store-backed installer walks the store's
 `dependencies` column through `PluginDependencyResolution.installPlan` - dependencies first, each
 plugin asked about once, cycles and a size cap tolerated and logged - and shows the extra ids as
-an "Also installs" line under the plugin id. Install then runs `installAll` over that plan and
+a scrollable "Also installs" list under the plugin id. Every id stays readable; do not
+ellipsize consent to additional installs. Install then runs `installAll` over that plan and
 stops at the first failure, leaving what came before it. The dependency still loads through the
 manager directly rather than `loadPlugin`, and for the same reason as before: answering one
 question must never produce a second dialog. What changed is that the first question now covers
@@ -204,8 +205,9 @@ the whole closure, where it used to cover one plugin and stay silent about the r
 Three properties of the plan are worth knowing before touching it. The plugin the user was asked
 about is always in the plan and always last, even if it turns out to be present, because the
 Install guard already answers that and an empty plan has no sensible reading. A store that cannot
-describe a plugin contributes null, and that plugin is installed but not expanded, so the plan
-never does less than today's single install. And `planFor` has a default of "the plugin alone" on
+describe a plugin contributes null, and that plugin is attempted but not expanded. If it cannot
+install, the plan stops before its dependents, including the root; metadata failure is not proof
+that an unknown dependency is optional. The entire accepted plan is detached from the window. And `planFor` has a default of "the plugin alone" on
 the interface, because `PluginLoadGateRecovery` and `PluginStoreVersionBridge` install a plugin the
 user named and were never shown a closure to consent to; only the dialog asks for a plan.
 

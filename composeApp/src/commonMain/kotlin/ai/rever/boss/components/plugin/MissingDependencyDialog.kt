@@ -7,10 +7,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Button
 import androidx.compose.material.ButtonDefaults
 import androidx.compose.material.Card
@@ -20,6 +23,7 @@ import androidx.compose.material.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,6 +37,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
+import kotlinx.coroutines.CancellationException
 
 /**
  * Offers to install a dependency a just-installed plugin declares but which is absent.
@@ -69,7 +74,7 @@ fun MissingDependencyDialog(
                 ?.let { value = it }
         }
 
-    val plan by rememberInstallPlan(prompt)
+    val plan = rememberInstallPlan(prompt).value
 
     BossDialog(
         // Not dismissable while installing: the install continues regardless, and a dialog
@@ -122,26 +127,29 @@ fun MissingDependencyDialog(
  * leaves the single plan in place.
  */
 @Composable
-private fun rememberInstallPlan(prompt: MissingDependencyPrompt): State<DependencyInstallPlan> {
-    val pluginId = prompt.missing.missingPluginId
-    return produceState(
-        initialValue =
-            DependencyInstallPlan(
-                order = listOf(pluginId),
-                unresolved = emptySet(),
-                cyclic = false,
-                truncated = false,
-            ),
-        pluginId,
-    ) {
-        runCatching { prompt.installer.planFor(pluginId) }
-            .getOrNull()
-            ?.let { value = it }
+internal fun rememberInstallPlan(prompt: MissingDependencyPrompt): State<DependencyInstallPlan> =
+    key(prompt) {
+        val pluginId = prompt.missing.missingPluginId
+        produceState(
+            initialValue =
+                DependencyInstallPlan(
+                    order = listOf(pluginId),
+                    unresolved = emptySet(),
+                    cyclic = false,
+                    truncated = false,
+                ),
+            pluginId,
+        ) {
+            runCatching { prompt.installer.planFor(pluginId) }
+                .getOrElse { error ->
+                    if (error is CancellationException) throw error
+                    null
+                }?.let { value = it }
+        }
     }
-}
 
 @Composable
-private fun MissingDependencyBody(
+internal fun MissingDependencyBody(
     missing: MissingPluginDependency,
     resolvedName: String,
     alsoInstalls: List<String>,
@@ -186,21 +194,7 @@ private fun MissingDependencyBody(
             overflow = TextOverflow.Ellipsis,
         )
 
-        if (alsoInstalls.isNotEmpty()) {
-            Spacer(modifier = Modifier.height(8.dp))
-            // What this plugin needs in turn, so one answer covers the whole closure and the
-            // user is never handed a second dialog as the consequence of the first. Ids rather
-            // than names, for the reason the id is shown above: this is consent to download and
-            // run code, and the id is what the host will install by. Deps-first order is the
-            // installer's; shown as-is so a failure message names something visible here.
-            Text(
-                text = "Also installs: ${alsoInstalls.joinToString(", ")}",
-                fontSize = 11.sp,
-                color = BossTheme.colors.textMuted,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+        AdditionalDependencies(alsoInstalls)
 
         if (error != null) {
             Spacer(modifier = Modifier.height(12.dp))
@@ -283,6 +277,18 @@ private fun MissingDependencyActions(
                 ),
         ) {
             Text(if (hasError) "Retry" else "Install")
+        }
+    }
+}
+
+@Composable
+private fun AdditionalDependencies(pluginIds: List<String>) {
+    if (pluginIds.isEmpty()) return
+    Spacer(modifier = Modifier.height(8.dp))
+    Column(modifier = Modifier.heightIn(max = 120.dp).verticalScroll(rememberScrollState())) {
+        Text("Also installs:", fontSize = 11.sp, color = BossTheme.colors.textMuted)
+        pluginIds.forEach { pluginId ->
+            Text(pluginId, fontSize = 11.sp, color = BossTheme.colors.textMuted)
         }
     }
 }
