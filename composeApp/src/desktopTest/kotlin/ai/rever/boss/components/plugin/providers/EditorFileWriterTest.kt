@@ -244,6 +244,18 @@ class EditorFileWriterTest {
         assertEquals(Files.getPosixFilePermissions(ordinary), Files.getPosixFilePermissions(target))
     }
 
+    @Test
+    @EnabledOnOs(OS.LINUX, OS.MAC)
+    fun `ownership denial does not prevent saving a writable file`() {
+        val target = Files.writeString(directory.resolve("shared.txt"), "original")
+        val permissions = PosixFilePermissions.fromString("rw-rw----")
+        Files.setPosixFilePermissions(target, permissions)
+        val writer = EditorFileWriter(copyOwnership = { _, _ -> throw IOException("Operation not permitted") })
+        writer.write(target.toString(), "replacement")
+        assertEquals("replacement", Files.readString(target))
+        assertEquals(permissions, Files.getPosixFilePermissions(target))
+    }
+
     private fun failingWriter() =
         EditorFileWriter { output: File, text: String ->
             output.writeText(text.take(3))

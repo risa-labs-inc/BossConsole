@@ -1,5 +1,7 @@
 package ai.rever.boss.components.plugin.providers
 
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
@@ -9,6 +11,7 @@ import java.nio.file.attribute.AclFileAttributeView
 import java.nio.file.attribute.DosFileAttributeView
 import java.nio.file.attribute.FileAttributeView
 import java.nio.file.attribute.PosixFileAttributeView
+import java.nio.file.attribute.PosixFileAttributes
 import java.nio.file.attribute.PosixFilePermissions
 
 /**
@@ -21,6 +24,11 @@ import java.nio.file.attribute.PosixFilePermissions
  */
 internal class EditorFileWriter(
     private val cleanup: (Path) -> Unit = { Files.deleteIfExists(it) },
+    private val copyOwnership: (PosixFileAttributeView, PosixFileAttributes) -> Unit = { destination, attributes ->
+        val current = destination.readAttributes()
+        if (current.owner() != attributes.owner()) destination.setOwner(attributes.owner())
+        if (current.group() != attributes.group()) destination.setGroup(attributes.group())
+    },
     private val writeContent: (File, String) -> Unit = { file, text ->
         file.outputStream().use { output ->
             output.write(text.toByteArray(Charsets.UTF_8))
@@ -60,11 +68,11 @@ internal class EditorFileWriter(
             writeContent(temporary.toFile(), content)
             // Windows may deny two simultaneous replacements of the same directory entry.
             // Only promotion is serialized; staging and syncing remain concurrent.
-            synchronized(promotionLock) {
+            synchronized(promotionLocks[(target.normalize().hashCode() and Int.MAX_VALUE) % promotionLocks.size]) {
                 Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
             }
         } catch (failure: Throwable) {
-            // Cleanup cannot turn a committed save into failure or replace its original cause.
+            // Ordinary cleanup exceptions cannot replace the primary cause. Fatal cleanup errors propagate.
             try {
                 cleanup(temporary)
             } catch (cleanupFailure: Exception) {
@@ -82,8 +90,12 @@ internal class EditorFileWriter(
             val attributes = source.readAttributes()
             val destination =
                 requireView(temporary, PosixFileAttributeView::class.java)
-            destination.setOwner(attributes.owner())
-            destination.setGroup(attributes.group())
+            try {
+                copyOwnership(destination, attributes)
+            } catch (_: IOException) {
+                // Like COPY_ATTRIBUTES: shared writable files need not be owned by the writer.
+                logger.warn(LogCategory.EDITOR, "Editor save could not preserve file ownership")
+            }
             destination.setPermissions(attributes.permissions())
         }
         Files.getFileAttributeView(target, AclFileAttributeView::class.java)?.let { source ->
@@ -108,6 +120,7 @@ internal class EditorFileWriter(
     ): T = Files.getFileAttributeView(path, type) ?: throw IOException("Cannot preserve ${type.simpleName} for $path")
 
     private companion object {
-        val promotionLock = Any()
+        val promotionLocks = Array(64) { Any() }
+        val logger = BossLogger.forComponent("EditorFileWriter")
     }
 }
