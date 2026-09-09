@@ -68,6 +68,15 @@ class EditorFileIoTest {
     }
 
     @Test
+    fun `provider refuses a directory without damaging its contents`(
+        @TempDir directory: Path,
+    ) {
+        val child = Files.writeString(directory.resolve("keep.txt"), "keep")
+        assertFalse(provider.writeFileContent(directory.toString(), "replacement"))
+        assertEquals("keep", Files.readString(child))
+    }
+
+    @Test
     @EnabledOnOs(OS.WINDOWS)
     fun `a refused replacement reports failure without damaging the file`(
         @TempDir directory: Path,

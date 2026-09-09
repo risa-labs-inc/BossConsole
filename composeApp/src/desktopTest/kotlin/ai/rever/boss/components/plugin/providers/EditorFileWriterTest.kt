@@ -206,6 +206,44 @@ class EditorFileWriterTest {
         assertEquals("new", Files.readString(target))
     }
 
+    @Test
+    fun `cleanup failure preserves the original error including fatal errors`() {
+        val target = Files.writeString(directory.resolve("original.txt"), "original")
+        for (failure in listOf(IOException("write"), OutOfMemoryError("heap"))) {
+            val cleanupFailure = IOException("cleanup")
+            val writer = EditorFileWriter(cleanup = { throw cleanupFailure }) { _, _ -> throw failure }
+            val actual = kotlin.test.assertFails { writer.write(target.toString(), "replacement") }
+            kotlin.test.assertSame(failure, actual)
+            kotlin.test.assertSame(cleanupFailure, actual.suppressed.single())
+            assertEquals("original", Files.readString(target))
+        }
+    }
+
+    @Test
+    fun `committed saves never attempt cleanup`() {
+        val target = directory.resolve("committed.txt")
+        EditorFileWriter(cleanup = { error("Cleanup after commit") }).write(target.toString(), "complete")
+        assertEquals("complete", Files.readString(target))
+    }
+
+    @Test
+    fun `failed promotion preserves the original`() {
+        val target = Files.writeString(directory.resolve("original.txt"), "original")
+        val writer = EditorFileWriter { output, _ -> Files.delete(output.toPath()) }
+        assertFailsWith<IOException> { writer.write(target.toString(), "replacement") }
+        assertEquals("original", Files.readString(target))
+        assertEquals(listOf("original.txt"), directory.toFile().list()!!.toList())
+    }
+
+    @Test
+    @EnabledOnOs(OS.LINUX, OS.MAC)
+    fun `new files use ordinary umask permissions`() {
+        val ordinary = Files.createFile(directory.resolve("ordinary.txt"))
+        val target = directory.resolve("new.txt")
+        EditorFileWriter().write(target.toString(), "new")
+        assertEquals(Files.getPosixFilePermissions(ordinary), Files.getPosixFilePermissions(target))
+    }
+
     private fun failingWriter() =
         EditorFileWriter { output: File, text: String ->
             output.writeText(text.take(3))
