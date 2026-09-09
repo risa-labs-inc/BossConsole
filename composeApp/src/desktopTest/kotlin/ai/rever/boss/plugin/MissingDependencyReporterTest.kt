@@ -18,10 +18,11 @@ import kotlin.test.assertTrue
 /**
  * What the reporter puts on the bus, with a real bus and no plugin loader.
  *
- * The reporter exists as a class rather than a private method because three host paths install
- * on a user's behalf - the plugin-manager delegate, the first-run wizard and the update bridge -
- * and for a while only the first of them reported. These tests cover the decisions that were
- * previously reachable only by reading `PluginLoaderDelegateImpl`'s source.
+ * The reporter exists as a class rather than a private method because several host paths
+ * activate a plugin on a user's behalf - the plugin-manager delegate, the first-run wizard,
+ * the update bridge, and re-enable / RBAC un-hide via `onPluginActivated` - and for a while
+ * only the first of them reported. These tests cover the decisions that were previously
+ * reachable only by reading `PluginLoaderDelegateImpl`'s source.
  */
 class MissingDependencyReporterTest {
     private fun manifest(

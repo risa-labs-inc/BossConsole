@@ -51,7 +51,9 @@ interface BrowserService {
      * Create a new browser instance with the given configuration.
      *
      * This is a suspend function as browser creation may involve
-     * async initialization.
+     * async initialization. A managed named profile already leased by an open browser or
+     * pending native disposal is given up to ten seconds to become available; creation
+     * returns null if it remains busy. A failed native close can retain the lease until restart.
      *
      * @param config Configuration for the browser
      * @return A browser handle, or null if creation failed
@@ -62,7 +64,9 @@ interface BrowserService {
      * Dispose a browser instance.
      *
      * This is equivalent to calling [BrowserHandle.dispose] but allows
-     * batch disposal operations.
+     * batch disposal operations. It requests native close and profile cleanup without
+     * awaiting outstanding renderer calls; those finish in host-owned background work.
+     * Returning does not guarantee that native resources have been released.
      *
      * If the browser owns a fullscreen rendering surface, disposal may wait
      * briefly for UI-thread detachment. Do not call while holding a lock that
@@ -114,13 +118,21 @@ interface BrowserService {
     /**
      * Create or refresh a persistent named profile and seed [auth] into it (so a
      * later [createBrowser] with the same `profileName` is pre-authenticated).
+     *
+     * @throws IllegalStateException if an open browser or pending native disposal still
+     * holds the profile after a ten-second wait. Retry after the owning browser closes;
+     * a failed native close can retain the lease until restart.
      */
     suspend fun seedProfile(
         profileName: String,
         auth: BrowserAuthSpec?,
     ) {}
 
-    /** Delete a persistent named profile. Returns false if unsupported or in use. */
+    /**
+     * Delete a persistent named profile. Returns false if unsupported or in use, including
+     * pending native disposal. Calling [disposeBrowser] immediately before this method
+     * does not guarantee deletion; retry after native cleanup completes.
+     */
     fun deleteProfile(profileName: String): Boolean = false
 
     /** List the persistent named profiles this service manages. */

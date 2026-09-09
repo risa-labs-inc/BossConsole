@@ -50,6 +50,13 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
+/** Process-wide because native clipboard state is shared by all browser tabs. */
+private val pasteWithoutFormattingSession =
+    PasteWithoutFormattingSession(
+        currentContents = { Toolkit.getDefaultToolkit().systemClipboard.getContents(null) },
+        install = { Toolkit.getDefaultToolkit().systemClipboard.setContents(it, null) },
+    )
+
 /**
  * Classification of engine initialization errors for better user feedback.
  */
@@ -3098,11 +3105,35 @@ object FluckEngine {
                                 // 3. Dispatch synthetic Cmd+V via JxBrowser API (triggers native paste)
                                 // 4. Restore original clipboard after delay
                                 try {
-                                    val clipboard = Toolkit.getDefaultToolkit().systemClipboard
-                                    val originalContents = clipboard.getContents(null)
-                                    val plainText = clipboard.getData(java.awt.datatransfer.DataFlavor.stringFlavor) as? String
-                                    if (plainText != null) {
-                                        clipboard.setContents(java.awt.datatransfer.StringSelection(plainText), null)
+                                    val restoreTicket = pasteWithoutFormattingSession.beginPaste()
+                                    if (restoreTicket != null) {
+                                        // Arm cleanup before dispatch, which can throw when the browser closes.
+                                        CoroutineScope(Dispatchers.IO).launch {
+                                            delay(200)
+                                            try {
+                                                if (!pasteWithoutFormattingSession.tryRestore(restoreTicket)) {
+                                                    // The clipboard changed hands mid-window, or
+                                                    // every write already restored. Debug, not
+                                                    // info: happy path, and a line per keystroke
+                                                    // would be noise.
+                                                    logger.debug(
+                                                        LogCategory.BROWSER,
+                                                        "Paste-without-formatting restore skipped - clipboard moved on",
+                                                    )
+                                                }
+                                            } catch (e: Exception) {
+                                                // A locked clipboard must not crash the worker.
+                                                // Leaving the plain text in place is the safe
+                                                // side of every failure here: pasting formatted
+                                                // text later is recoverable, destroying a fresh
+                                                // copy is not.
+                                                logger.debug(
+                                                    LogCategory.BROWSER,
+                                                    "Clipboard restore failed, leaving plain text in place",
+                                                    mapOf("error" to (e::class.simpleName ?: "unknown")),
+                                                )
+                                            }
+                                        }
                                         // Dispatch Cmd+V (or Ctrl+V) as a native key event to trigger paste
                                         val pasteModifiers =
                                             com.teamdev.jxbrowser.ui.KeyModifiers
@@ -3124,22 +3155,12 @@ object FluckEngine {
                                                 ).keyModifiers(pasteModifiers)
                                                 .build(),
                                         )
-                                        // Restore original clipboard after paste completes
-                                        if (originalContents != null) {
-                                            CoroutineScope(Dispatchers.IO).launch {
-                                                delay(200)
-                                                try {
-                                                    clipboard.setContents(originalContents, null)
-                                                } catch (_: Exception) {
-                                                }
-                                            }
-                                        }
                                     }
                                 } catch (e: Exception) {
                                     logger.debug(
                                         LogCategory.BROWSER,
                                         "Paste without formatting failed",
-                                        mapOf("error" to (e.message ?: "unknown")),
+                                        mapOf("error" to (e::class.simpleName ?: "unknown")),
                                     )
                                 }
                                 return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response
