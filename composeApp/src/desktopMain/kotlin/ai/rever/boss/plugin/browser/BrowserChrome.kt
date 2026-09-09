@@ -60,10 +60,11 @@ internal fun installBrowserChromeOrClose(
     browser: Browser,
     install: (Browser) -> Unit = ::installDefaultBrowserChrome,
 ) {
+    var installed = false
     try {
         install(browser)
-    } catch (failure: Throwable) {
-        runCatching { browser.close() }
-        throw failure
+        installed = true
+    } finally {
+        if (!installed) runCatching { browser.close() }
     }
 }
