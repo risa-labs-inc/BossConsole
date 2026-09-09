@@ -544,9 +544,7 @@ object BrowserServiceImpl : BrowserService {
                         }
                     }
                     try {
-                        newBrowserTimeBoxed { if (m != null) m.profile.newBrowser() else engine.newBrowser() }.also {
-                            installDefaultBrowserChrome(it)
-                        }
+                        newBrowserTimeBoxed { if (m != null) m.profile.newBrowser() else engine.newBrowser() }
                     } catch (e: Throwable) {
                         engineCallFailed = true
                         throw e
@@ -573,6 +571,14 @@ object BrowserServiceImpl : BrowserService {
                 // recycle that closed cleanly leaves a live renderer to reclaim here.
                 runCatching { browser.close() }
                 error("Engine was recycled during browser creation (generation $generation is stale)")
+            }
+
+            // Chrome setup is not an engine creation failure and must not trigger wedge recovery.
+            try {
+                installDefaultBrowserChrome(browser)
+            } catch (e: Throwable) {
+                runCatching { browser.close() }
+                throw e
             }
 
             // Enable swipe navigation for touchscreen devices.

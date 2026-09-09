@@ -3271,8 +3271,7 @@ internal class BrowserHandleImpl(
         popupBrowser: Browser,
         bounds: Rect,
     ) {
-        ai.rever.boss.plugin.browser
-            .showPopupInWindow(popupBrowser, bounds)
+        openBrowserPopupWindow(popupBrowser, bounds)
     }
 
     /**

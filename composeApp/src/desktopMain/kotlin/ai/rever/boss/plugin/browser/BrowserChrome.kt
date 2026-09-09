@@ -39,6 +39,13 @@ internal fun installSuppressingContextMenu(browser: Browser) {
     }
 }
 
+/**
+ * Answers Chromium, and never throws while doing it.
+ *
+ * `close()` can fail — the request already answered, or the browser torn down mid-callback — and it
+ * is called from a `finally` on a JxBrowser thread, so an escaping exception there would be exactly
+ * the kind of uncaught, off-EDT throw this file exists to remove.
+ */
 @Suppress("TooGenericExceptionCaught") // See installPopupWindowContextMenu - Error must propagate.
 internal fun closeContextMenuQuietly(tell: ShowContextMenuCallback.Action) {
     try {

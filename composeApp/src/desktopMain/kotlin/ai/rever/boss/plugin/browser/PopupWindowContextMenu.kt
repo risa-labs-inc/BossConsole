@@ -69,13 +69,6 @@ private fun clipboardUnavailable(e: Exception): Boolean {
 }
 
 /**
- * Answers Chromium, and never throws while doing it.
- *
- * `close()` can fail — the request already answered, or the browser torn down mid-callback — and it
- * is called from a `finally` on a JxBrowser thread, so an escaping exception there would be exactly
- * the kind of uncaught, off-EDT throw this file exists to remove.
- */
-/**
  * The menu for a right-click, decided entirely from the click target.
  *
  * Pure and derived from [ShowContextMenuCallback.Params] values rather than from the browser,
@@ -305,7 +298,8 @@ internal fun installPopupWindowChrome(
     try {
         installPopupWindowContextMenu(popupBrowser, view)
     } catch (e: Exception) {
-        // WARN, not debug: if this install fails we suppress the menu to avoid the EDT crash.
+        // WARN: fallback removes editing actions for this popup's lifetime. If suppression also
+        // fails, the built-in menu and its disposal race remain, so both failures need diagnostics.
         logger.warn(
             LogCategory.BROWSER,
             "Could not install the popup context menu - suppressing context menu",

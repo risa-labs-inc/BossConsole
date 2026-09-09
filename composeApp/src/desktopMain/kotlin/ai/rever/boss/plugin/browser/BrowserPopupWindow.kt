@@ -12,7 +12,7 @@ private val logger = BossLogger.forComponent("BrowserPopupWindow")
  * Used by both `BrowserHandleImpl` and `BrowserFunctions`.
  */
 @Suppress("TooGenericExceptionCaught")
-internal fun showPopupInWindow(
+internal fun openBrowserPopupWindow(
     popupBrowser: Browser,
     bounds: com.teamdev.jxbrowser.ui.Rect,
 ) {
@@ -27,6 +27,7 @@ internal fun showPopupInWindow(
             frame.setLocation(bounds.origin().x(), bounds.origin().y())
             frame.setSize(bounds.size().width(), bounds.size().height())
 
+            // Claim file-dialog callbacks before BrowserView installs its Swing JFileChooser defaults.
             NativeFileDialogs.installOn(popupBrowser)
 
             val browserView =
@@ -34,6 +35,8 @@ internal fun showPopupInWindow(
                     .newInstance(popupBrowser)
             frame.contentPane.add(browserView)
 
+            // A disposed popup has no screen location: the built-in SuggestionsPopup can crash
+            // the EDT while positioning itself (BossConsole-Releases#17).
             installPopupWindowChrome(popupBrowser, browserView)
 
             subscriptions +=

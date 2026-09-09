@@ -7,7 +7,7 @@ import ai.rever.boss.plugin.browser.FluckEngine
 import ai.rever.boss.plugin.browser.LocalAwtWindow
 import ai.rever.boss.plugin.browser.NativeFileDialogs
 import ai.rever.boss.plugin.browser.installDefaultBrowserChrome
-import ai.rever.boss.plugin.browser.showPopupInWindow
+import ai.rever.boss.plugin.browser.openBrowserPopupWindow
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.runtime.Composable
@@ -256,7 +256,7 @@ private fun configureBrowserPopupHandler(
                     popupBrowser.close()
                 }
             } else {
-                showPopupInWindow(popupBrowser, initialBounds)
+                openBrowserPopupWindow(popupBrowser, initialBounds)
             }
 
             com.teamdev.jxbrowser.browser.callback.OpenPopupCallback.Response
