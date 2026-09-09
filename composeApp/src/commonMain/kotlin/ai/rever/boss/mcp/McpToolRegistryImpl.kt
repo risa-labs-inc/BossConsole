@@ -16,6 +16,7 @@ import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -679,6 +680,12 @@ internal class McpToolRegistryCore(
                 )
             }
         }
+        // Approval can suspend while the operator disables a tool or the provider unloads.
+        // Bind consent to this exact registered definition, never a replacement with the same name.
+        if (_tools.value.none { it.providerId == tool.providerId && it.definition === tool.definition }) {
+            return McpToolResult("MCP tool became unavailable while awaiting approval: $toolName", isError = true)
+        }
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
         return try {
             withTimeout(invokeTimeoutMs) { tool.definition.handler.call(args) }
         } catch (t: TimeoutCancellationException) {

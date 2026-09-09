@@ -102,13 +102,6 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 )
             }
 
-            isHarmlessShellCommand(lowerCmd) -> {
-                McpRiskAssessment(
-                    level = McpRiskLevel.MEDIUM,
-                    reason = "Shell execution tool '$toolName' running routine inspection command",
-                )
-            }
-
             else -> {
                 McpRiskAssessment(
                     level = McpRiskLevel.HIGH,
@@ -128,17 +121,6 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
             cmd.contains("git push -f") ||
             cmd.contains("dd if=") ||
             cmd.contains("chmod -r 777")
-    }
-
-    @Suppress("ReturnCount")
-    private fun isHarmlessShellCommand(cmd: String): Boolean {
-        if (cmd.isEmpty()) return false
-        val tokens = cmd.split(Regex("\\s+"))
-        val firstToken = tokens.firstOrNull() ?: return false
-        return firstToken in HARMLESS_COMMAND_PREFIXES ||
-            cmd.startsWith("git status") ||
-            cmd.startsWith("git diff") ||
-            cmd.startsWith("git log")
     }
 
     companion object {
@@ -178,6 +160,7 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 "codebase_write",
                 "file_delete",
                 "file_write",
+                "project_replace",
             )
 
         private val READ_ONLY_TOOLS =
@@ -194,16 +177,6 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 "plugins_list",
                 "list_tabs",
                 "read_scrollback",
-            )
-
-        private val HARMLESS_COMMAND_PREFIXES =
-            setOf(
-                "ls",
-                "dir",
-                "pwd",
-                "echo",
-                "cat",
-                "whoami",
             )
     }
 }

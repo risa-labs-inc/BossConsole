@@ -75,8 +75,12 @@ import androidx.compose.material.Text
 import androidx.compose.material.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -102,7 +106,14 @@ internal fun BossAppDialogs(state: BossAppState) {
     val keymapSettings by KeymapSettingsManager.currentSettings.collectAsState()
 
     // Agent Tool Sandbox approval prompts for HIGH/CRITICAL MCP tool invocations
-    val currentMcpApprovalRequest by McpApprovalEventBus.approvalRequests.collectAsState(initial = null)
+    var currentMcpApprovalRequest by remember {
+        mutableStateOf<ai.rever.boss.mcp.sandbox.McpApprovalRequest?>(null)
+    }
+    LaunchedEffect(Unit) {
+        ai.rever.boss.mcp.sandbox
+            .consumeMcpApprovals(McpApprovalEventBus) { currentMcpApprovalRequest = it }
+    }
+
     currentMcpApprovalRequest?.takeIf { !it.answer.isCompleted }?.let { request ->
         McpApprovalDialog(
             request = request,

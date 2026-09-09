@@ -101,7 +101,7 @@ class McpToolSandboxTest {
 
         val safeCmdArgs = McpToolArgs(mapOf("command" to "ls -la"), """{"command":"ls -la"}""")
         val safeAssessment = evaluator.evaluateRisk("run_command", safeCmdArgs)
-        assertEquals(McpRiskLevel.MEDIUM, safeAssessment.level)
+        assertEquals(McpRiskLevel.HIGH, safeAssessment.level)
 
         val destructiveCmdArgs =
             McpToolArgs(mapOf("command" to "rm -rf /tmp/test"), """{"command":"rm -rf /tmp/test"}""")
@@ -321,5 +321,71 @@ class McpToolSandboxTest {
             val args = requireNotNull(capturedArgs)
             assertEquals("/src/Main.kt", args.string("path"))
             assertEquals(100, args.int("lines"))
+        }
+
+    @Test
+    fun `shell prefixes never bypass approval`() {
+        val evaluator = DefaultMcpRiskEvaluator()
+        val commands =
+            listOf(
+                "echo ok; touch /tmp/x",
+                "ls $(touch /tmp/x)",
+                "git diff --output=/tmp/x",
+                "cat > /tmp/x",
+                "pwd",
+            )
+        for (command in commands) {
+            val args = McpToolArgs(mapOf("command" to command), "{}")
+            assertEquals(McpRiskLevel.HIGH, evaluator.evaluateRisk("run_command", args).level, command)
+        }
+        assertEquals(McpRiskLevel.HIGH, evaluator.evaluateRisk("project_replace", McpToolArgs(emptyMap(), "{}")).level)
+    }
+
+    @Test
+    fun `approval cannot revive disabled revoked or replaced tool`() =
+        runBlocking {
+            for (change in listOf("disable", "revoke", "unload", "replace")) {
+                var executed = false
+                lateinit var core: McpToolRegistryCore
+                val sandbox =
+                    DefaultMcpToolSandbox(
+                        approvalHandler =
+                            McpApprovalHandler { _, _, _ ->
+                                when (change) {
+                                    "disable" -> {
+                                        core.setToolEnabled("secret_get", false)
+                                    }
+
+                                    "revoke" -> {
+                                        core.updateAccess(false, emptySet())
+                                    }
+
+                                    "unload" -> {
+                                        core.unregisterProvider("p")
+                                    }
+
+                                    "replace" -> {
+                                        core.registerProvider(
+                                            provider("p", testTool("secret_get") { McpToolResult("replacement") }),
+                                        )
+                                    }
+                                }
+                                true
+                            },
+                    )
+                core = McpToolRegistryCore(disabledFile = null, sandbox = sandbox)
+                core.updateAccess(true, emptySet())
+                core.registerProvider(
+                    provider(
+                        "p",
+                        testTool("secret_get", requiresAdmin = true) {
+                            executed = true
+                            McpToolResult("secret")
+                        },
+                    ),
+                )
+                assertTrue(core.invoke("secret_get", "{}").isError, change)
+                assertFalse(executed, change)
+            }
         }
 }

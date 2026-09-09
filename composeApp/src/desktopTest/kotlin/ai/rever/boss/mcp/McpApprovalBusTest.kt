@@ -156,4 +156,37 @@ class McpApprovalBusTest {
             assertFalse(request.answer.complete(false), "Second completion MUST be rejected")
             assertTrue(request.answer.getCompleted(), "Completed decision MUST remain true")
         }
+
+    @Test
+    fun `dialog consumer holds first prompt and clears completed requests`() =
+        kotlinx.coroutines.runBlocking {
+            val bus =
+                ai.rever.boss.mcp.sandbox
+                    .DefaultMcpApprovalBus(timeoutMs = 5000)
+            val shown = kotlinx.coroutines.channels.Channel<ai.rever.boss.mcp.sandbox.McpApprovalRequest?>(16)
+            val consumer =
+                launch {
+                    ai.rever.boss.mcp.sandbox
+                        .consumeMcpApprovals(bus) { shown.trySend(it) }
+                }
+            val first =
+                ai.rever.boss.mcp.sandbox
+                    .McpApprovalRequest("first", ai.rever.boss.mcp.sandbox.McpRiskLevel.HIGH, "test")
+            val second =
+                ai.rever.boss.mcp.sandbox
+                    .McpApprovalRequest("second", ai.rever.boss.mcp.sandbox.McpRiskLevel.HIGH, "test")
+            val one = async { bus.submitRequest(first) }
+            assertEquals(first, shown.receive())
+            val two = async { bus.submitRequest(second) }
+            kotlinx.coroutines.yield()
+            assertTrue(shown.tryReceive().isFailure)
+            first.answer.complete(true)
+            assertTrue(one.await())
+            assertEquals(null, shown.receive())
+            assertEquals(second, shown.receive())
+            consumer.cancel()
+            consumer.join()
+            assertFalse(two.await())
+            assertEquals(null, shown.receive())
+        }
 }

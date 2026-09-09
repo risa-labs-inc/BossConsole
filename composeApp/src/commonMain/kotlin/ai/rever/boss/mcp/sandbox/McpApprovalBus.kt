@@ -5,6 +5,7 @@ import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -90,3 +91,21 @@ class DefaultMcpApprovalBus(
 
 /** Process-wide singleton instance for production host wiring. */
 object McpApprovalEventBus : McpApprovalBus by DefaultMcpApprovalBus()
+
+/** One window owns each delivered request until it resolves or that window closes. */
+suspend fun consumeMcpApprovals(
+    bus: McpApprovalBus,
+    show: (McpApprovalRequest?) -> Unit,
+) {
+    bus.approvalRequests.collect { request ->
+        if (!request.answer.isCompleted) {
+            show(request)
+            try {
+                request.answer.await()
+            } finally {
+                request.answer.complete(false)
+                show(null)
+            }
+        }
+    }
+}
