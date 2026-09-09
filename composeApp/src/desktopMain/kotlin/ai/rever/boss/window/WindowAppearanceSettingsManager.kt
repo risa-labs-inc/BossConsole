@@ -165,7 +165,8 @@ private const val SMALL_SCREEN_HEIGHT_THRESHOLD_DP = 1000
  * The density a fresh install should start on, given its primary screen's logical height in dp.
  *
  * A pure function, not a method on the manager, so it is directly testable without touching AWT -
- * [defaultWindowAppearanceSettings] applies it; only fresh-install defaults read [Toolkit]. `null` (the height could not be read) is treated as "not small": the manager
+ * [defaultWindowAppearanceSettings] applies it; only fresh-install defaults read [Toolkit].
+ * `null` (the height could not be read) is treated as "not small": the manager
  * must not crash or misconfigure a fresh install because a display could not be measured.
  */
 internal fun defaultDensityFor(screenHeightDp: Int?): ChromeDensity =
