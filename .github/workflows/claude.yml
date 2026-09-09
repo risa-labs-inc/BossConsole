@@ -58,10 +58,19 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Install pinned Claude CLI
+        id: cli
+        run: |
+          npm install --prefix "$RUNNER_TEMP/claude-cli" @anthropic-ai/claude-code@2.1.265
+          CLAUDE_PATH="$RUNNER_TEMP/claude-cli/node_modules/.bin/claude"
+          "$CLAUDE_PATH" --version
+          echo "path=$CLAUDE_PATH" >> "$GITHUB_OUTPUT"
+
       - name: Run Claude Code
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
+          path_to_claude_code_executable: ${{ steps.cli.outputs.path }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           
           # This is an optional setting that allows Claude to read CI results on PRs
