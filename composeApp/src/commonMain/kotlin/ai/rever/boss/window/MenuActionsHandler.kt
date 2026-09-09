@@ -463,11 +463,10 @@ object MenuActionsHandler {
      * Trigger a "Cycle Chrome Density" action for the specified window.
      */
     fun triggerChromeDensityCycle(windowId: String) {
-
         _chromeDensityCycleEvents.tryEmit(windowId)
-
     }
 
+    /** Trigger a "Split Vertically" action for the specified window. */
     fun triggerSplitVertically(windowId: String) {
         _splitVerticallyEvents.tryEmit(windowId)
     }

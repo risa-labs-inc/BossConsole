@@ -21,8 +21,6 @@ import ai.rever.boss.components.workspaces.applyWorkspace
 import ai.rever.boss.components.workspaces.extractCurrentWorkspace
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.focusmode.FocusModeSettingsManager
-
-import ai.rever.boss.layout.ChromeDensity
 import ai.rever.boss.plugin.browser.ActiveBrowserRegistry
 import ai.rever.boss.plugin.tab.terminal.TerminalTabInfo
 import ai.rever.boss.plugin.tab.terminal.TerminalTabType
@@ -31,6 +29,7 @@ import ai.rever.boss.topofmind.TabTreeState
 import ai.rever.boss.window.MenuActionsHandler
 import ai.rever.boss.window.WindowAppearanceSettings
 import ai.rever.boss.window.WindowAppearanceSettingsManager
+import ai.rever.boss.window.withNextDensity
 import ai.rever.boss.window.WindowOperations
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -334,14 +333,7 @@ internal fun BossAppMenuActionEffects(
                 if (eventWindowId == windowId) {
                     coroutineScope.launch {
                         val settings = WindowAppearanceSettingsManager.currentSettings.value
-                        val nextDensity = when (settings.density) {
-                            ChromeDensity.COMPACT -> ChromeDensity.COMFORTABLE
-                            ChromeDensity.COMFORTABLE -> ChromeDensity.SPACIOUS
-                            ChromeDensity.SPACIOUS -> ChromeDensity.COMPACT
-                        }
-                        WindowAppearanceSettingsManager.updateSettings(
-                            settings.copy(density = nextDensity),
-                        )
+                        WindowAppearanceSettingsManager.updateSettings(settings.withNextDensity())
                     }
                 }
             }.launchIn(this)

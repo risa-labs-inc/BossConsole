@@ -304,8 +304,8 @@ private fun BarsSection() {
                 }
             },
             description =
-                "How much room the bars above take, all from one control. Compact is worth about " +
-                    "20dp of extra height on a laptop screen; Spacious is roomier, for a large display.",
+                "Controls the size of visible window bars in all windows. Compact uses less space; " +
+                    "Spacious provides more room.",
         )
     }
 }

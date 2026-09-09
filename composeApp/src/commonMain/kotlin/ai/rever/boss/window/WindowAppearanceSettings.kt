@@ -329,3 +329,14 @@ val TabBarPosition.displayName: String
             TabBarPosition.TOP -> "Top"
             TabBarPosition.LEFT -> "Left"
         }
+
+/** Cycle density without changing any standing bar preferences. */
+internal fun WindowAppearanceSettings.withNextDensity(): WindowAppearanceSettings =
+    copy(
+        density =
+            when (density) {
+                ChromeDensity.COMPACT -> ChromeDensity.COMFORTABLE
+                ChromeDensity.COMFORTABLE -> ChromeDensity.SPACIOUS
+                ChromeDensity.SPACIOUS -> ChromeDensity.COMPACT
+            },
+    )
