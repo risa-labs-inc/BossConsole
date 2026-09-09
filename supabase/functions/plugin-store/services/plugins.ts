@@ -100,6 +100,42 @@ export async function searchPlugins(
 }
 
 /**
+ * Look up a plugin by manifest id for the PUBLISH paths, including unpublished rows.
+ *
+ * getPlugin() goes through the get_plugin_with_stats RPC, whose body ends in
+ * `WHERE p.published = true`. That is right for the storefront and wrong for deciding
+ * create-vs-update on publish: an unpublished row is invisible to that lookup while still
+ * occupying the unique plugin_id index, so the caller took the create branch and the INSERT
+ * failed with 23505, surfaced to publishers as "Plugin ID already exists" on an HTTP 500.
+ * The effect was that an unpublished plugin could never be published again by any route.
+ *
+ * Deliberately a direct table read rather than a widened RPC: get_plugin_with_stats backs the
+ * public storefront, and dropping its published filter there would list unpublished plugins to
+ * everyone.
+ */
+export async function getPluginForPublish(
+  supabase: SupabaseClient,
+  pluginId: string
+): Promise<{ id: string; authorId: string; published: boolean } | null> {
+  const { data, error } = await supabase
+    .from('plugins')
+    .select('id, author_id, published')
+    .eq('plugin_id', pluginId)
+    .maybeSingle()
+
+  if (error) {
+    console.error('Error getting plugin for publish:', error)
+    throw new Error(`Failed to get plugin: ${error.message}`)
+  }
+
+  if (!data) {
+    return null
+  }
+
+  return { id: data.id, authorId: data.author_id, published: data.published }
+}
+
+/**
  * Get plugin details by plugin ID string
  */
 export async function getPlugin(
@@ -337,6 +373,7 @@ export async function updatePlugin(
     type?: string
     apiVersion?: string
     requiredPermissions?: string[]
+    published?: boolean
   }
 ): Promise<void> {
   const updateData: Record<string, unknown> = {}
@@ -348,6 +385,7 @@ export async function updatePlugin(
   if (updates.type !== undefined) updateData.type = updates.type
   if (updates.apiVersion !== undefined) updateData.api_version = updates.apiVersion
   if (updates.requiredPermissions !== undefined) updateData.required_permissions = updates.requiredPermissions
+  if (updates.published !== undefined) updateData.published = updates.published
 
   if (Object.keys(updateData).length === 0) {
     return // Nothing to update

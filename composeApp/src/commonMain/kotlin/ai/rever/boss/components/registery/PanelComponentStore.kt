@@ -5,13 +5,23 @@ import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.snapshots.SnapshotStateMap
-import com.arkivanov.decompose.ComponentContext
+import com.arkivanov.decompose.DefaultComponentContext
+import com.arkivanov.essenty.lifecycle.Lifecycle
+import com.arkivanov.essenty.lifecycle.LifecycleRegistry
+import com.arkivanov.essenty.lifecycle.destroy
+import com.arkivanov.essenty.lifecycle.resume
 
+/**
+ * Owns one independent Decompose context per cached panel, rather than sharing the window's.
+ * Each context gets its own StateKeeper (isolated keys), lifecycle-bound InstanceKeeper and
+ * standalone BackDispatcher. Back callbacks are not connected to the window dispatcher.
+ * These are the same default context services used by tabs; hiding a panel does not remove it.
+ */
 class PanelComponentStore(
-    private val rootContext: ComponentContext,
     private val registry: PanelRegistry,
 ) {
     private val logger = BossLogger.forComponent("PanelComponentStore")
+    private val panelLifecycles = mutableMapOf<PanelId, LifecycleRegistry>()
 
     // Map of active components by panel ID
     val activeComponents: SnapshotStateMap<PanelId, PanelComponentWithUI> = mutableStateMapOf()
@@ -28,8 +38,7 @@ class PanelComponentStore(
         // Return existing component if available
         activeComponents[panelId]?.let { return it }
 
-        // Create new component
-        val component = registry.createComponent(panelId, rootContext) ?: return null
+        val component = createComponent(panelId) ?: return null
 
         // Store and return
         activeComponents[panelId] = component
@@ -39,6 +48,19 @@ class PanelComponentStore(
     // Remove a component when panel is closed
     fun removeComponent(panelId: PanelId) {
         activeComponents.remove(panelId)
+        destroyLifecycle(panelId, panelLifecycles.remove(panelId))
+    }
+
+    // Destroys every active panel lifecycle when the owning window closes.
+    // Must run on the UI thread because activeComponents is Compose snapshot state.
+    fun dispose() {
+        val lifecycles = panelLifecycles.toList()
+        activeComponents.clear()
+        panelLifecycles.clear()
+
+        lifecycles.forEach { (panelId, lifecycle) ->
+            destroyLifecycle(panelId, lifecycle)
+        }
     }
 
     /**
@@ -46,7 +68,7 @@ class PanelComponentStore(
      *
      * This method implements the "component recreation" reset strategy:
      * 1. Call onBeforeReset() on the current component for cleanup
-     * 2. Remove component from activeComponents (triggers Decompose disposal)
+     * 2. Remove the old component and destroy its lifecycle
      * 3. Create a fresh component instance
      * 4. Call onInitialized() on the new component
      * 5. Store and activate the new component
@@ -79,14 +101,17 @@ class PanelComponentStore(
             logger.warn(LogCategory.UI, "onBeforeReset failed during panel reset (continuing)", mapOf("panelId" to panelId.panelId), t)
         }
 
-        // Remove from active components (triggers Decompose disposal)
-        activeComponents.remove(panelId)
+        // Remove the old component and notify its lifecycle subscribers.
+        removeComponent(panelId)
 
         try {
-            // Create new component instance
-            val newComponent = registry.createComponent(panelId, rootContext)
+            val newComponent = createComponent(panelId)
             if (newComponent == null) {
-                logger.warn(LogCategory.UI, "Failed to create new component", mapOf("panelId" to panelId.panelId))
+                logger.warn(
+                    LogCategory.UI,
+                    "Failed to create new component",
+                    mapOf("panelId" to panelId.panelId),
+                )
                 return false
             }
 
@@ -99,8 +124,61 @@ class PanelComponentStore(
             logger.info(LogCategory.UI, "Successfully reset panel", mapOf("panelId" to panelId.panelId))
             return true
         } catch (t: Throwable) {
+            destroyLifecycle(panelId, panelLifecycles.remove(panelId))
             logger.error(LogCategory.UI, "Error resetting panel", mapOf("panelId" to panelId.panelId), error = t)
             return false
+        }
+    }
+
+    private fun createComponent(panelId: PanelId): PanelComponentWithUI? {
+        // A factory can register cleanup and then throw before returning a component.
+        // CREATED makes that partial instance destroyable even if it never reaches resume().
+        // Essenty replays onCreate synchronously when a subscriber is registered at CREATED,
+        // including doOnCreate in a factory; it is not deferred until the factory returns.
+        val lifecycle = LifecycleRegistry(Lifecycle.State.CREATED)
+        try {
+            val component =
+                registry.createComponent(
+                    panelId,
+                    DefaultComponentContext(lifecycle),
+                )
+            if (component == null) {
+                destroyLifecycle(panelId, lifecycle)
+                return null
+            }
+
+            lifecycle.resume()
+            panelLifecycles[panelId] = lifecycle
+            return component
+        } catch (t: Throwable) {
+            // Covers both factory failure and lifecycle up-callbacks throwing in resume().
+            destroyLifecycle(panelId, lifecycle)
+            throw t
+        }
+    }
+
+    private fun destroyLifecycle(
+        panelId: PanelId,
+        lifecycle: LifecycleRegistry?,
+    ) {
+        if (lifecycle == null) return
+
+        // Essenty advances state before dispatching callbacks. A failing onPause/onStop
+        // interrupts destroy() before onDestroy, so continue from the advanced state.
+        // A failure in onDestroy itself is terminal; do not redeliver that event.
+        while (lifecycle.state != Lifecycle.State.DESTROYED) {
+            val previousState = lifecycle.state
+            try {
+                lifecycle.destroy()
+            } catch (t: Throwable) {
+                logger.warn(
+                    LogCategory.UI,
+                    "Panel lifecycle destroy failed (continuing)",
+                    mapOf("panelId" to panelId.panelId),
+                    t,
+                )
+            }
+            if (lifecycle.state == previousState) return
         }
     }
 }
