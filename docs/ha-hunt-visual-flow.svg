@@ -19,7 +19,7 @@
 
   <text class="t" x="64" y="72" font-size="42" font-weight="700">HA HUNT</text>
   <text class="m" x="64" y="104" font-size="18">human · agent · hunt  ·  hahunt.com</text>
-  <text class="teal" x="64" y="132" font-size="16">Boss Console — the console is the product (guests plug in)</text>
+  <text class="teal" x="64" y="132" font-size="16">Boss Console - the console is the product (guests plug in)</text>
 
   <!-- nests -->
   <rect class="nest" x="60" y="170" width="980" height="420" rx="28"/>
@@ -71,5 +71,5 @@
   <text class="t" x="100" y="700" font-size="20" font-weight="700">Progress-shaped</text>
   <text class="m" x="100" y="735" font-size="16">problem space (pain)  →  hunk hunt grammar  →  progress space (possibility)</text>
   <text class="m" x="100" y="775" font-size="15">Universe types: Solo · Pair · Nest · Braid · Brake-bound · Parked · Spatial · Agentic</text>
-  <text class="teal" x="100" y="815" font-size="15">Fractal test: forget which nest you’re in — can you still hunt?</text>
+  <text class="teal" x="100" y="815" font-size="15">Fractal test: forget which nest you’re in - can you still hunt?</text>
 </svg>
