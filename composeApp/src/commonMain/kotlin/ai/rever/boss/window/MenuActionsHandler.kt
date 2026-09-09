@@ -102,6 +102,10 @@ object MenuActionsHandler {
     private val _toggleFocusModeEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val toggleFocusModeEvents: SharedFlow<String> = _toggleFocusModeEvents.asSharedFlow()
 
+    private val _chromeDensityCycleEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
+
+    val chromeDensityCycleEvents: SharedFlow<String> = _chromeDensityCycleEvents.asSharedFlow()
+
     private val _splitVerticallyEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val splitVerticallyEvents: SharedFlow<String> = _splitVerticallyEvents.asSharedFlow()
 
@@ -456,10 +460,13 @@ object MenuActionsHandler {
     }
 
     /**
-     * Trigger a "Split Vertically" action for the specified window.
-     *
-     * @param windowId The ID of the window where the action was triggered
+     * Trigger a "Cycle Chrome Density" action for the specified window.
      */
+    fun triggerChromeDensityCycle(windowId: String) {
+        _chromeDensityCycleEvents.tryEmit(windowId)
+    }
+
+    /** Trigger a "Split Vertically" action for the specified window. */
     fun triggerSplitVertically(windowId: String) {
         _splitVerticallyEvents.tryEmit(windowId)
     }

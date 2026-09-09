@@ -775,6 +775,11 @@ object AWTKeyboardInterceptor {
                 true
             }
 
+            KeymapActions.CHROME_DENSITY_CYCLE -> {
+                MenuActionsHandler.triggerChromeDensityCycle(windowId)
+                true
+            }
+
             // Panel Navigation.
             //
             // Gated on there being somewhere to navigate TO, mirroring the `enabled` flag on the
