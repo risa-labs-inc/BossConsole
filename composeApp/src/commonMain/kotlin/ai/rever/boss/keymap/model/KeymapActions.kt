@@ -90,6 +90,7 @@ object KeymapActions {
     // View/UI Actions
     const val FOCUS_MODE_TOGGLE = "view.focus_mode_toggle"
     const val SETTINGS_OPEN = "view.settings_open"
+    const val CHROME_DENSITY_CYCLE = "view.chrome_cycle"
 
     // Help Actions
     const val HELP_SHORTCUTS = "help.shortcuts"
@@ -164,6 +165,7 @@ object KeymapActions {
             GLOBAL_SEARCH_OPEN to "Open global search (Double-Shift)",
             FOCUS_MODE_TOGGLE to "Toggle Focus Mode (hide/show UI bars)",
             SETTINGS_OPEN to "Open application settings",
+            CHROME_DENSITY_CYCLE to "Cycle Chrome density (Compact/Comfortable/Spacious)",
             HELP_SHORTCUTS to "Show keyboard shortcuts help dialog",
             TEST_EXTERNAL_LINK to "Test external link handling (debug)",
         )
@@ -218,6 +220,7 @@ object KeymapActions {
             GLOBAL_SEARCH_OPEN to Categories.SEARCH,
             FOCUS_MODE_TOGGLE to Categories.VIEW,
             SETTINGS_OPEN to Categories.VIEW,
+            CHROME_DENSITY_CYCLE to Categories.VIEW,
             HELP_SHORTCUTS to Categories.HELP,
             TEST_EXTERNAL_LINK to Categories.DEBUG,
         )
@@ -272,6 +275,7 @@ object KeymapActions {
             GLOBAL_SEARCH_OPEN to ShortcutContext.GLOBAL,
             FOCUS_MODE_TOGGLE to ShortcutContext.GLOBAL,
             SETTINGS_OPEN to ShortcutContext.GLOBAL,
+            CHROME_DENSITY_CYCLE to ShortcutContext.GLOBAL,
             HELP_SHORTCUTS to ShortcutContext.GLOBAL,
             TEST_EXTERNAL_LINK to ShortcutContext.GLOBAL,
         )
@@ -326,6 +330,7 @@ object KeymapActions {
             GLOBAL_SEARCH_OPEN,
             FOCUS_MODE_TOGGLE,
             SETTINGS_OPEN,
+            CHROME_DENSITY_CYCLE,
             HELP_SHORTCUTS,
             TEST_EXTERNAL_LINK,
         )
