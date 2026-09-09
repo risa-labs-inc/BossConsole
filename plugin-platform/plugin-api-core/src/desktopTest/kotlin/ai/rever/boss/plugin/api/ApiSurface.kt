@@ -51,6 +51,10 @@ internal object ApiSurface {
     ): Set<String> {
         val methods =
             klass.methods
+                // Private lambda accessors are compiler implementation details; their numeric
+                // suffix changes when the enclosing implementation changes. Keep other synthetic
+                // bridges (including public inline/default-argument entry points) in the contract.
+                .filterNot { it.isSynthetic && it.name.startsWith("access\$") && "\$lambda\$" in it.name }
                 .filter { member -> internalSuffixes.none { member.name.endsWith(it) } }
                 .map { m ->
                     val parameters = m.parameterTypes.joinToString(",") { it.name }

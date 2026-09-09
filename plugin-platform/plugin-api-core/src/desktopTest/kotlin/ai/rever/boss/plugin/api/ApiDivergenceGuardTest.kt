@@ -16,6 +16,15 @@ class ApiDivergenceGuardTest {
     }
 
     @Test
+    fun `private lambda accessors are not plugin contract members`() {
+        val dialog = Class.forName("ai.rever.boss.plugin.ui.BossDialogKt")
+        val accessors = dialog.methods.filter { it.isSynthetic && "\$lambda\$" in it.name }
+        assertTrue(accessors.isNotEmpty(), "Fixture must contain compiler-generated lambda accessors")
+        val members = ApiSurface.publicMemberSignatures(dialog)
+        assertFalse(members.any { "access\$ScrimmedModalContent\$lambda\$" in it })
+    }
+
+    @Test
     fun `changed constructor is detected`() {
         val required = ApiSurface.publicMemberSignatures(WithDefaults::class.java)
         val available = ApiSurface.publicMemberSignatures(WithoutDefaults::class.java)
