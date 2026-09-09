@@ -56,4 +56,31 @@ class BrowserChromeTest {
         )
         assertEquals(1, closes)
     }
+
+    @Test
+    fun `fatal failure from either production installer closes the new browser`() {
+        for (failedRegistration in 1..2) {
+            var registrations = 0
+            var closes = 0
+            val failure = LinkageError("callback registration failed")
+            val browser =
+                Proxy.newProxyInstance(Browser::class.java.classLoader, arrayOf(Browser::class.java)) { _, method, _ ->
+                    when (method.name) {
+                        "set" -> {
+                            registrations++
+                            if (registrations == failedRegistration) throw failure
+                        }
+
+                        "close" -> closes++
+
+                        else -> error("unexpected browser access: ${method.name}")
+                    }
+                    null
+                } as Browser
+
+            assertSame(failure, assertFailsWith<LinkageError> { installBrowserChromeOrClose(browser) })
+            assertEquals(failedRegistration, registrations)
+            assertEquals(1, closes)
+        }
+    }
 }

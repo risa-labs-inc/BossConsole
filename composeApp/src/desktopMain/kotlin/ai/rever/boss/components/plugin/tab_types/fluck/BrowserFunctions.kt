@@ -6,7 +6,7 @@ import ai.rever.boss.plugin.browser.EngineInitError
 import ai.rever.boss.plugin.browser.FluckEngine
 import ai.rever.boss.plugin.browser.LocalAwtWindow
 import ai.rever.boss.plugin.browser.NativeFileDialogs
-import ai.rever.boss.plugin.browser.installDefaultBrowserChrome
+import ai.rever.boss.plugin.browser.installBrowserChromeOrClose
 import ai.rever.boss.plugin.browser.openBrowserPopupWindow
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -266,12 +266,11 @@ private fun configureBrowserPopupHandler(
 }
 
 actual fun createBrowser(): Any {
-    val browser = FluckEngine.engine.newBrowser()
+    val browser = FluckEngine.engine.newBrowser().also { installBrowserChromeOrClose(it) }
     browser.settings().enableOverscrollHistoryNavigation()
     FluckEngine.setupBrowserDownloadHandler(browser as com.teamdev.jxbrowser.browser.Browser)
     FluckEngine.setupCaptureSessionHandler(browser)
     FluckEngine.setupKeyboardInterceptor(browser)
-    installDefaultBrowserChrome(browser)
     return browser
 }
 

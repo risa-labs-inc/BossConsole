@@ -2,7 +2,7 @@ package ai.rever.boss.components.auth.screens
 
 import ai.rever.boss.plugin.browser.FluckEngine
 import ai.rever.boss.plugin.browser.LocalAwtWindow
-import ai.rever.boss.plugin.browser.installDefaultBrowserChrome
+import ai.rever.boss.plugin.browser.installBrowserChromeOrClose
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -51,7 +51,7 @@ actual fun PasskeyBrowserView(
             // Create new browser instance for WebAuthn
             val newBrowser =
                 engine.newBrowser().also {
-                    installDefaultBrowserChrome(it)
+                    installBrowserChromeOrClose(it)
                 }
             browser = newBrowser
 
