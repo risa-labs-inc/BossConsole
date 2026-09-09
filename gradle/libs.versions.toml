@@ -143,7 +143,18 @@ intellij-platform = "243.21565.199"
 # The host implements the new members in this branch: UnifiedDiffParser + git diff
 # plumbing, the diff/composer tab types, the editor buffer API, and
 # ContentSearchService. Same forced order as above: api first, then this.
-boss-plugin-api = "1.0.87"
+#
+# 1.0.88 adds the terminal-tab surface, as ONE release (boss-plugin-api#50, which
+# consolidated #47/#48/#49 so this pin moves once rather than three times):
+# initialCommand overloads on splitVertical/splitHorizontal, renameTab, and
+# tabActivity/tabActivityFlow/sendCommand/sendInterrupt on TerminalTabPluginAPI.
+#
+# Superset of 1.0.87, and nothing here is for the host to implement. The host only
+# CONSUMES this interface, through TerminalAPIAccess.getProvider(); terminal-tab is the
+# implementor. Every addition also carries a default body, so no existing implementor
+# gains an abstract member. The host needs the bump only so a plugin calling these
+# resolves them against the api the host loads, rather than finding them absent.
+boss-plugin-api = "1.0.88"
 
 [libraries]
 kotlin-test-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin" }

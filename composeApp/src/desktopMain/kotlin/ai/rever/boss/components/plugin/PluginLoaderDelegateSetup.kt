@@ -46,6 +46,23 @@ actual object PluginLoaderDelegateSetup {
         val delegate = PluginLoaderDelegateImpl(dynamicPluginManager)
         context.registerPluginAPI(delegate)
 
+        // Menu reloads use the manager directly, so they need the installer's current path too.
+        // The manager invokes this lookup on IO before it unloads the running plugin.
+        dynamicPluginManager.persistedReloadJarPath = { pluginId ->
+            PluginPersistence.getInstalledPlugins().firstOrNull { it.pluginId == pluginId }?.jarPath
+        }
+
+        // Re-enable and RBAC un-hide never go through the install reporters, so
+        // a required dependency removed while the plugin sat disabled used to
+        // come back with no prompt (#180). Per-manager: reporting must read
+        // this window's pluginStates, and capturing the first window would
+        // leave every other window offering installs into a disposed manager.
+        // Bound once, outside the callback: forManager allocates the states
+        // lambda and the installer, and every activation would pay for a
+        // reporter that never changes for this manager.
+        val missingDependencyReporter = MissingDependencyReporter.forManager(dynamicPluginManager)
+        dynamicPluginManager.onPluginActivated = missingDependencyReporter::report
+
         // The home screen's store access: what can be installed, and how. Registered here with
         // the other process-wide wiring rather than from `PluginLoaderDelegateImpl`'s constructor,
         // where a process-global set up as a side effect of constructing an object was easy to

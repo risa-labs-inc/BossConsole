@@ -12,17 +12,7 @@ import com.sun.jna.Native
  */
 private val macOSScreenCaptureLogger = BossLogger.forComponent("MacOSScreenCapture")
 
-private interface CoreGraphics : Library {
-    companion object {
-        val INSTANCE: CoreGraphics? =
-            try {
-                Native.load("CoreGraphics", CoreGraphics::class.java)
-            } catch (e: Exception) {
-                macOSScreenCaptureLogger.debug(LogCategory.SYSTEM, "CoreGraphics not available", mapOf("error" to (e.message ?: "unknown")))
-                null
-            }
-    }
-
+internal interface CoreGraphics : Library {
     /**
      * Returns true if the app has screen capture access, false otherwise.
      * This does NOT trigger a permission prompt.
@@ -44,22 +34,17 @@ private interface CoreGraphics : Library {
  * On non-macOS platforms, these methods return true (permission assumed granted).
  */
 object MacOSScreenCapture {
-    private val isMacOS: Boolean = System.getProperty("os.name")?.lowercase()?.contains("mac") == true
+    private val permissions =
+        ScreenCapturePermissions(
+            isMacOS = System.getProperty("os.name")?.lowercase()?.contains("mac") == true,
+            load = { Native.load("CoreGraphics", CoreGraphics::class.java) },
+        )
 
     /**
      * Check if screen recording permission is granted.
      * @return true if permission is granted or not on macOS
      */
-    fun hasPermission(): Boolean {
-        if (!isMacOS) return true
-
-        return try {
-            CoreGraphics.INSTANCE?.CGPreflightScreenCaptureAccess() ?: true
-        } catch (e: Exception) {
-            macOSScreenCaptureLogger.warn(LogCategory.SYSTEM, "Error checking screen capture permission", error = e)
-            true // Assume granted on error
-        }
-    }
+    fun hasPermission(): Boolean = permissions.hasPermission()
 
     /**
      * Request screen recording permission.
@@ -67,16 +52,35 @@ object MacOSScreenCapture {
      * hasn't been determined yet.
      * @return true if permission is granted or not on macOS
      */
-    fun requestPermission(): Boolean {
-        if (!isMacOS) return true
+    fun requestPermission(): Boolean = permissions.requestPermission()
+}
 
-        return try {
-            val result = CoreGraphics.INSTANCE?.CGRequestScreenCaptureAccess() ?: true
-            macOSScreenCaptureLogger.debug(LogCategory.SYSTEM, "Screen capture permission request", mapOf("result" to result))
-            result
-        } catch (e: Exception) {
-            macOSScreenCaptureLogger.warn(LogCategory.SYSTEM, "Error requesting screen capture permission", error = e)
-            true // Assume granted on error
+/** Lazy binding and fail-closed calls, injectable without touching real OS permissions in tests. */
+internal class ScreenCapturePermissions(
+    private val isMacOS: Boolean,
+    private val load: () -> CoreGraphics?,
+) {
+    private val coreGraphics: CoreGraphics? by lazy {
+        runCatching { load() }.getOrElse { error ->
+            macOSScreenCaptureLogger.warn(LogCategory.SYSTEM, "CoreGraphics not available", error = error)
+            null
+        }
+    }
+
+    fun hasPermission(): Boolean = invokePermission("checking") { it.CGPreflightScreenCaptureAccess() }
+
+    fun requestPermission(): Boolean = invokePermission("requesting") { it.CGRequestScreenCaptureAccess() }
+
+    private fun invokePermission(
+        action: String,
+        invoke: (CoreGraphics) -> Boolean,
+    ): Boolean {
+        if (!isMacOS) return true
+        // JNA can throw LinkageError during both binding and symbol invocation. Neither must
+        // escape the browser callback and leave its permission response unresolved.
+        return runCatching { coreGraphics?.let(invoke) ?: false }.getOrElse { error ->
+            macOSScreenCaptureLogger.warn(LogCategory.SYSTEM, "Error $action screen capture permission", error = error)
+            false
         }
     }
 }
