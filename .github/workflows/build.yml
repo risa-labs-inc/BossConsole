@@ -400,6 +400,9 @@ jobs:
       - name: 🚀 Start local Postgres (applies migrations)
         run: supabase db start
 
+      - name: Prepare real migration fixtures for upgrade regression
+        run: python3 scripts/test/prepare-totp-migration-fixtures.py
+
       - name: 🧪 Run pgTAP RBAC tests
         run: supabase test db
 

@@ -121,3 +121,6 @@ __pycache__/
 # Re-include such a directory explicitly with e.g. !scripts/bin/ (after this rule).
 bin/
 .kotlin/
+
+# Generated copies for pg_prove's tests-only container mount
+supabase/tests/.migration-fixtures/

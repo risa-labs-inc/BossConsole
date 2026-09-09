@@ -1,3 +1,4 @@
+-- First run: python3 scripts/test/prepare-totp-migration-fixtures.py
 -- Exercises a pre-migration database as well as ordinary writes. All fixtures,
 -- function replacements and trigger changes are rolled back; never run on live data.
 BEGIN;
@@ -13,17 +14,17 @@ INSERT INTO public.secrets (id, user_id, website, username, password_encrypted) 
 
 -- Reconstruct the deployed RPC and plaintext storage, then apply ONLY the new
 -- migration. This catches edits to historical migrations that fresh resets hide.
-\ir ../migrations/20260907000000_secrets_paging_tiebreaker.sql
+\ir .migration-fixtures/20260907000000_secrets_paging_tiebreaker.inc
 DROP TRIGGER encrypt_twofa_secret_trigger ON public.secret_metadata;
 INSERT INTO public.secret_metadata (secret_id, twofa_enabled, twofa_type, twofa_secret)
 VALUES ('d1700000-0000-4000-8000-000000000011', true, 'app', 'JBSWY3DPEHPK3PXP');
-\ir ../migrations/20260909000000_encrypt_totp.sql
+\ir .migration-fixtures/20260909000000_encrypt_totp.inc
 SELECT isnt((SELECT twofa_secret FROM public.secret_metadata WHERE secret_id = 'd1700000-0000-4000-8000-000000000011'),
     'JBSWY3DPEHPK3PXP', 'upgrade removes the legacy plaintext');
 SELECT is((SELECT public.safe_decrypt_twofa_secret(twofa_secret) FROM public.secret_metadata WHERE secret_id = 'd1700000-0000-4000-8000-000000000011'),
     'JBSWY3DPEHPK3PXP', 'backfilled seed round trips');
 CREATE TEMP TABLE totp_before AS SELECT twofa_secret FROM public.secret_metadata WHERE secret_id = 'd1700000-0000-4000-8000-000000000011';
-\ir ../migrations/20260909000000_encrypt_totp.sql
+\ir .migration-fixtures/20260909000000_encrypt_totp.inc
 SELECT is((SELECT twofa_secret FROM public.secret_metadata WHERE secret_id = 'd1700000-0000-4000-8000-000000000011'),
     (SELECT twofa_secret FROM totp_before), 'reapplying migration does not double encrypt');
 
