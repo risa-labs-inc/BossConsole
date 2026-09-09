@@ -202,8 +202,6 @@
     <ID>EmptyFunctionBlock:TabDropResultHandlingTest.kt$TabDropResultHandlingTest.DropTestComponent${ }</ID>
     <ID>EmptyIfBlock:FluckEngine.kt$FluckEngine${ }</ID>
     <ID>ExplicitGarbageCollectionCall:PerformanceMonitor.kt$PerformanceMonitor$gc()</ID>
-    <ID>ForbiddenComment:BossTopBar.kt$// TODO: #91 - BossTopRunBar function (currently disabled)</ID>
-    <ID>ForbiddenComment:BossTopBar.kt$// TODO: #93 - Lanager functionality (currently disabled - plugin removed)</ID>
     <ID>ForbiddenComment:FluckEngine.kt$FluckEngine$// TODO: Implement if needed</ID>
     <ID>ForbiddenComment:FluckEngine.kt$FluckEngine$// TODO: Show user warning dialog (for now, just proceed)</ID>
     <ID>ForbiddenComment:PluginStateBridge.kt$PluginStateBridge$// TODO: Implement actual JSON Merge Patch for delta state.</ID>
@@ -307,7 +305,7 @@
     <ID>LongMethod:DesktopUpdateService.kt$UpdateService$private suspend fun streamToFile( url: String, expectedSize: Long, destFile: File, onProgress: (progress: Float) -&gt; Unit, )</ID>
     <ID>LongMethod:DowngradeWarningDialog.kt$@Composable fun DowngradeWarningDialog( currentVersion: Version, targetVersion: Version, onConfirm: () -&gt; Unit, onDismiss: () -&gt; Unit, )</ID>
     <ID>LongMethod:DraggableActionButton.kt$@Composable fun BossDraggableComponent.DraggableActionButton( item: SidebarItem, slot: Panel, modifier: Modifier = Modifier, )</ID>
-    <ID>LongMethod:DynamicPluginManager.kt$DynamicPluginManager$private suspend fun handleAccessChange()</ID>
+    <ID>LongMethod:DynamicPluginManager.kt$DynamicPluginManager$private suspend fun handleAccessChange(reportMissingDependencies: Boolean)</ID>
     <ID>LongMethod:DynamicPluginManager.kt$DynamicPluginManager$private suspend fun uninstallPlugin( pluginId: String, force: Boolean, waitForGC: Boolean, closeTabsAcrossWindows: Boolean, ): Result&lt;Unit&gt;</ID>
     <ID>LongMethod:DynamicPluginManager.kt$DynamicPluginManager$suspend fun installPlugin( jarPath: String, enabled: Boolean = true, ): Result&lt;DynamicPluginInfo&gt;</ID>
     <ID>LongMethod:DynamicPluginManager.kt$DynamicPluginManager$suspend fun loadBundledPlugins(bundledDir: java.io.File): Map&lt;String, Result&lt;DynamicPluginInfo&gt;&gt;</ID>

@@ -14,9 +14,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.CancellationException
-import java.util.concurrent.LinkedBlockingQueue
-import java.util.concurrent.ThreadPoolExecutor
-import java.util.concurrent.TimeUnit
 import kotlin.coroutines.ContinuationInterceptor
 import kotlin.coroutines.coroutineContext
 
@@ -51,7 +48,7 @@ import kotlin.coroutines.coroutineContext
  * independently - a tab, a peer, an integration - rather than sharing one process-wide. A shared
  * instance turns "this tab stopped answering" into "every call in the process costs a full deadline
  * and answers null", for as long as a dialog nobody knows about stays open. The thread costs nothing
- * until the first call and retires itself after [IDLE_THREAD_TTL_SECONDS] idle, so per-instance is
+ * until the first call and retires itself after its idle timeout, so per-instance is
  * cheap even where instances are churned through without ever making a call.
  *
  * One residual constraint cannot be fixed here, so it is warned about at runtime instead: a caller
@@ -72,16 +69,7 @@ internal class BoundedBrowserCall(
      * one. That is what makes an instance cheap enough to hand out per tab: an instance that never
      * makes a call never creates a thread, and one that goes quiet gives its thread back.
      */
-    private val executor =
-        ThreadPoolExecutor(
-            1,
-            1,
-            IDLE_THREAD_TTL_SECONDS,
-            TimeUnit.SECONDS,
-            LinkedBlockingQueue(),
-        ) { runnable ->
-            Thread(runnable, threadName).apply { isDaemon = true }
-        }.apply { allowCoreThreadTimeOut(true) }
+    internal val executor = DrainingBrowserExecutor(threadName)
 
     /**
      * The one thread every blocking round trip runs on.
@@ -236,7 +224,7 @@ internal class BoundedBrowserCall(
      * Not a full teardown, and deliberately not: [scope] is left uncancelled and [dispatcher] left
      * open, because cancelling the scope would drop work already queued - which is the teardown its
      * owner usually just posted. Both are reachable-object concerns only, and the executor's thread
-     * retires on its own after [IDLE_THREAD_TTL_SECONDS], so the whole instance becomes garbage with
+     * retires on its own after its idle timeout, so the whole instance becomes garbage with
      * whatever owned it. Later calls answer null via the rejected-dispatch path in [call].
      */
     fun shutdown() {
@@ -256,8 +244,5 @@ internal class BoundedBrowserCall(
          * match is exactly the pair this repo pins in a test elsewhere.
          */
         const val DEFAULT_TIMEOUT_MS = 10_000L
-
-        /** Long enough to serve a burst of calls on one thread, short enough not to hold one idle. */
-        private const val IDLE_THREAD_TTL_SECONDS = 30L
     }
 }
