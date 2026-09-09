@@ -46,6 +46,9 @@ enum class ClassLoaderState {
  * name it has already resolved, host classes included, so `findLoadedClass`
  * keeps answering those after close and orderly teardown is unaffected. See
  * [loadClassChildFirst].
+ * Non-shared resources also stop delegating after ACTIVE, returning null/empty
+ * for misses while keeping own-JAR resources until close. Shared paths remain
+ * parent-first; META-INF/services is non-shared even for a shared interface.
  *
  * @param pluginId The ID of the plugin this classloader serves
  * @param urls URLs to the plugin JAR and its dependencies
@@ -227,7 +230,12 @@ class PluginClassLoader(
      */
     private val refusedClassNames: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
-    /** One WARN per resource name across both singular and plural lookups; repeats use DEBUG. */
+    /**
+     * One WARN per missing resource name across both lookup APIs; repeats use DEBUG.
+     * Retains one entry per distinct post-ACTIVE miss for this loader's lifetime.
+     * Arbitrary generated paths can grow this set; it is reclaimed with the loader,
+     * and satisfied own-JAR lookups do not add entries.
+     */
     private val refusedResourceNames: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     /**
@@ -474,7 +482,11 @@ class PluginClassLoader(
                     .list(parent.getResources(name))
                     .filterNot { it in own }
             } else {
-                logResourceRefusal(refusedResourceNames.add(name), pluginId, name, stateAtLookup)
+                // Keep the first WARN for a missing result, not a successful own-JAR
+                // lookup during teardown that merely excludes host contributions.
+                if (own.isEmpty()) {
+                    logResourceRefusal(refusedResourceNames.add(name), pluginId, name, stateAtLookup)
+                }
                 emptyList()
             }
         return java.util.Collections.enumeration(own + fromParents)

@@ -173,7 +173,39 @@ class PluginClassLoaderResourceLifecycleTest {
         }
     }
 
-    private fun withLoader(block: (PluginClassLoader) -> Unit) {
+    @Test
+    fun `satisfied unloading enumeration preserves warning for the later closed miss`() {
+        val pluginId = "resource-warning-after-close"
+        val warnings = mutableListOf<LogEntry>()
+        val listener =
+            LogListener { entry ->
+                if (entry.level == LogLevel.WARN && entry.data?.get("pluginId") == pluginId) {
+                    warnings.add(entry)
+                }
+            }
+        BossLogger.addListener(listener)
+        try {
+            withLoader(pluginId) { loader ->
+                loader.markUnloading()
+                assertEquals(listOf("plugin"), contents(loader.getResources(manifestPath)))
+                assertTrue(warnings.isEmpty(), "a satisfied lookup must preserve the warning budget")
+                loader.close()
+                assertTrue(Collections.list(loader.getResources(manifestPath)).isEmpty())
+                assertNull(loader.getResource(manifestPath))
+            }
+        } finally {
+            BossLogger.removeListener(listener)
+        }
+        val warning = warnings.single()
+        assertEquals(manifestPath, warning.data?.get("resourceName"))
+        assertEquals(ClassLoaderState.UNLOADED.name, warning.data?.get("state"))
+        assertNotNull(warning.error)
+    }
+
+    private fun withLoader(
+        pluginId: String = "resource-probe",
+        block: (PluginClassLoader) -> Unit,
+    ) {
         val pluginJar =
             jar(
                 "plugin",
@@ -196,7 +228,7 @@ class PluginClassLoaderResourceLifecycleTest {
             )
         URLClassLoader(arrayOf(hostJar), javaClass.classLoader).use { parent ->
             PluginClassLoader(
-                "resource-probe",
+                pluginId,
                 arrayOf(pluginJar),
                 parent,
                 PluginClassLoader.defaultSharedPackages + ResourceProbeService::class.java.name,
