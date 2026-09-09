@@ -1,9 +1,7 @@
 package ai.rever.boss.plugin.api
 
 import java.io.File
-import java.lang.reflect.Modifier
 import java.net.URLClassLoader
-import java.util.zip.ZipFile
 import kotlin.test.Test
 import kotlin.test.assertTrue
 
@@ -31,8 +29,10 @@ import kotlin.test.assertTrue
  * `plugin-api-core`'s own build already downloads the pinned release
  * (`fetchApiPluginJar`, `boss.api.contract.jar` system property below) to build
  * `apiContractCoreJar` - filtered down to `ai.rever.boss.plugin.api` for host compilation. This
- * test reads the SAME downloaded jar unfiltered, because the seven packages below are exactly the
- * ones that filtering throws away. `ai.rever.boss.plugin.api` itself is not in [duplicatedPackages]:
+ * test reads that resolved jar unfiltered, because the seven packages below are exactly the
+ * ones that filtering throws away. An exact-version sibling build may supply the jar locally;
+ * a release-equivalent result requires checking its digest against the published release.
+ * `ai.rever.boss.plugin.api` itself is not in [duplicatedPackages]:
  * the host compiles against that filtered jar directly, so it cannot diverge from itself.
  * `ai.rever.boss.plugin.bundled` (the api module's own plugin-registration singleton) is api-only
  * and was never duplicated, so it is excluded too.
@@ -69,17 +69,15 @@ class ApiPackageDivergenceTest {
 
     @Test
     fun `host copies of the duplicated api packages have not fallen behind`() {
-        val apiClassNames = comparableClassNames(apiJar, duplicatedPackages)
+        val apiClassNames = ApiSurface.comparableClassNames(apiJar, duplicatedPackages)
         assertTrue(apiClassNames.isNotEmpty(), "Found no classes to compare - package list or jar is wrong")
 
         val mismatches = mutableListOf<String>()
+        val internalSuffixes = ApiSurface.internalSuffixes(apiJar)
 
         IsolatedPackageClassLoader(apiJar, duplicatedPackages, javaClass.classLoader).use { apiLoader ->
             for (className in apiClassNames) {
-                val apiClass = apiLoader.loadClass(className)
-                if (Modifier.isPublic(apiClass.modifiers) && !apiClass.isSynthetic) {
-                    mismatches += classMismatches(apiClass)
-                }
+                mismatches += ApiSurface.inspectClass(className, apiLoader, internalSuffixes)
             }
         }
 
@@ -90,60 +88,6 @@ class ApiPackageDivergenceTest {
                 "runtime, not at compile time:\n" +
                 mismatches.joinToString("\n"),
         )
-    }
-
-    private fun classMismatches(apiClass: Class<*>): List<String> {
-        val hostClass =
-            try {
-                Class.forName(apiClass.name, false, javaClass.classLoader)
-            } catch (e: ClassNotFoundException) {
-                return listOf("${apiClass.name}: exists in boss-plugin-api but not in the host: ${e.message}")
-            }
-        return buildList {
-            if (!Modifier.isPublic(hostClass.modifiers)) add("${apiClass.name}: host class is not public")
-            val missing = publicMemberSignatures(apiClass) - publicMemberSignatures(hostClass)
-            if (missing.isNotEmpty()) add("${apiClass.name}: host is missing ${missing.sorted()}")
-        }
-    }
-
-    /** Public methods and fields, as name+descriptor strings so overloads compare distinctly. */
-    internal fun publicMemberSignatures(klass: Class<*>): Set<String> {
-        val methods =
-            klass.methods
-                .filter { Modifier.isPublic(it.modifiers) && isComparableName(it.name) }
-                .map { m ->
-                    val parameters = m.parameterTypes.joinToString(",") { it.name }
-                    "${staticKind(m.modifiers)} fun ${m.name}($parameters):${m.returnType.name}"
-                }
-
-        val fields =
-            klass.fields
-                .filter { Modifier.isPublic(it.modifiers) && isComparableName(it.name) }
-                .map { f -> "${staticKind(f.modifiers)} val ${f.name}:${f.type.name}" }
-
-        val constructors = klass.constructors.map { c -> "init(${c.parameterTypes.joinToString(",") { it.name }})" }
-        return (methods + fields + constructors).toSet()
-    }
-
-    private fun staticKind(modifiers: Int) = if (Modifier.isStatic(modifiers)) "static" else "instance"
-
-    // Do not discard $default, value-class mangling, or serializer bridges: callers link to them.
-    private fun isComparableName(name: String) = !name.endsWith("\$boss_plugin_api") && !name.contains("\$com_risaboss_")
-
-    internal fun comparableClassNames(
-        jar: File,
-        packages: List<String>,
-    ): List<String> {
-        val prefixes = packages.map { it.replace('.', '/') + "/" }
-        ZipFile(jar).use { zip ->
-            return zip
-                .entries()
-                .asSequence()
-                .map { it.name }
-                .filter { name -> name.endsWith(".class") && prefixes.any { name.startsWith(it) } }
-                .map { it.removeSuffix(".class").replace('/', '.') }
-                .toList()
-        }
     }
 }
 

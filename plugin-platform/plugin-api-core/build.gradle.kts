@@ -183,6 +183,14 @@ kotlin {
 // Reuses fetchApiPluginJar's output rather than re-downloading it.
 tasks.named<Test>("desktopTest") {
     dependsOn(fetchApiPluginJar)
-    inputs.file(apiPluginJar).withPropertyName("apiContractJar").withPathSensitivity(PathSensitivity.NONE)
-    systemProperty("boss.api.contract.jar", apiPluginJar.get().asFile.absolutePath)
+    jvmArgumentProviders.add(ApiContractJarArgumentProvider(apiPluginJar.get().asFile))
+}
+
+// Keep checkout-specific absolute paths out of the test's cache key.
+class ApiContractJarArgumentProvider(
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    val jar: File,
+) : CommandLineArgumentProvider {
+    override fun asArguments(): Iterable<String> = listOf("-Dboss.api.contract.jar=${jar.absolutePath}")
 }

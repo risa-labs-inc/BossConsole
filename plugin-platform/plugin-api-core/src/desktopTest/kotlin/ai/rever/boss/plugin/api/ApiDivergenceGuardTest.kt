@@ -4,36 +4,35 @@ import java.nio.file.Files
 import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
 import kotlin.test.Test
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class ApiDivergenceGuardTest {
-    private val guard = ApiPackageDivergenceTest()
-
     @Test
     fun `default argument bridges remain part of the contract`() {
-        val members = guard.publicMemberSignatures(WithDefaults::class.java)
+        val members = ApiSurface.publicMemberSignatures(WithDefaults::class.java)
         assertTrue(members.any { "call\$default(" in it })
     }
 
     @Test
     fun `changed constructor is detected`() {
-        val required = guard.publicMemberSignatures(WithDefaults::class.java)
-        val available = guard.publicMemberSignatures(WithoutDefaults::class.java)
+        val required = ApiSurface.publicMemberSignatures(WithDefaults::class.java)
+        val available = ApiSurface.publicMemberSignatures(WithoutDefaults::class.java)
         assertTrue("init(java.lang.String)" in required - available)
     }
 
     @Test
     fun `static method cannot be replaced by an instance method`() {
-        val required = guard.publicMemberSignatures(StaticMethod::class.java)
-        val available = guard.publicMemberSignatures(InstanceMethod::class.java)
+        val required = ApiSurface.publicMemberSignatures(StaticMethod::class.java)
+        val available = ApiSurface.publicMemberSignatures(InstanceMethod::class.java)
         assertTrue("static fun call():void" in required - available)
     }
 
     @Test
     fun `inherited public methods satisfy the host contract`() {
-        val required = guard.publicMemberSignatures(InstanceMethod::class.java)
-        val available = guard.publicMemberSignatures(InheritedMethod::class.java)
+        val required = ApiSurface.publicMemberSignatures(InstanceMethod::class.java)
+        val available = ApiSurface.publicMemberSignatures(InheritedMethod::class.java)
         assertTrue((required - available).isEmpty())
     }
 
@@ -46,15 +45,44 @@ class ApiDivergenceGuardTest {
                     output.putNextEntry(JarEntry("example/$name.class"))
                     output.closeEntry()
                 }
+                output.putNextEntry(JarEntry("META-INF/test-module.kotlin_module"))
+                output.closeEntry()
                 output.putNextEntry(JarEntry("exampleOther/Unrelated.class"))
                 output.closeEntry()
             }
-            val names = guard.comparableClassNames(jar, listOf("example"))
+            val names = ApiSurface.comparableClassNames(jar, listOf("example"))
             assertTrue("example.Contract\$Nested" in names)
             assertTrue("example.Contract\$DefaultImpls" in names)
             assertFalse(names.any { "Unrelated" in it })
+            assertTrue(ApiSurface.internalSuffixes(jar) == setOf("\$test_module"))
         } finally {
             Files.deleteIfExists(jar.toPath())
+        }
+    }
+
+    @Test
+    fun `missing public static int fields are detected`() {
+        val required = ApiSurface.publicMemberSignatures(Int::class.javaObjectType)
+        val available = ApiSurface.publicMemberSignatures(WithoutDefaults::class.java)
+        assertTrue("static val MAX_VALUE:int" in required - available)
+    }
+
+    @Test
+    fun `signature linkage failures name the class and unresolved type`() {
+        val brokenLoader =
+            object : ClassLoader() {
+                override fun loadClass(name: String): Class<*> = throw NoClassDefFoundError("example.MissingType")
+            }
+        val failures = ApiSurface.inspectClass("example.Broken", brokenLoader)
+        assertTrue(failures.single().contains("example.Broken"))
+        assertTrue(failures.single().contains("example.MissingType"))
+    }
+
+    @Test
+    fun `parent delegation cannot silently compare the host to itself`() {
+        val delegatingLoader = object : ClassLoader(javaClass.classLoader) {}
+        assertFailsWith<AssertionError> {
+            ApiSurface.inspectClass(WithoutDefaults::class.java.name, delegatingLoader)
         }
     }
 
