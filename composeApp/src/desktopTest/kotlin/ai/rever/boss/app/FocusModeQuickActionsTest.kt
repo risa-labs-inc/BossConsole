@@ -1,7 +1,7 @@
 package ai.rever.boss.app
 
-import ai.rever.boss.components.overlays.resetOverlayFieldForTest
 import ai.rever.boss.components.overlays.OverlayConfig
+import ai.rever.boss.components.overlays.resetOverlayFieldForTest
 import ai.rever.boss.plugin.ui.LocalHeavyweightOverlays
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize

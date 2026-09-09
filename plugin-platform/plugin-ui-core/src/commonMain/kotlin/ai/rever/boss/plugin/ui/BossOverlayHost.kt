@@ -67,7 +67,7 @@ object BossOverlayHost {
     private fun reportDuplicateWrite(name: String) {
         diagnostics?.invoke(
             "Ignored a write to BossOverlayHost.$name after the host's own startup injection - " +
-                "a plugin (or a second host copy) tried to overwrite a write-once registry field.",
+                "a later registration tried to overwrite a write-once registry field.",
         )
     }
 
@@ -77,6 +77,8 @@ object BossOverlayHost {
         set(value) {
             // No nullable "unwritten" sentinel for a Boolean, so this needs its own written flag
             // rather than the null-check the two renderers and diagnostics below use.
+            // An explicit false registers OFF_SCREEN mode and must lock just like true.
+            // Startup injection is serialized; volatile visibility does not make this check atomic.
             if (useHeavyweightOverlaysWritten) {
                 reportDuplicateWrite("useHeavyweightOverlays")
                 return

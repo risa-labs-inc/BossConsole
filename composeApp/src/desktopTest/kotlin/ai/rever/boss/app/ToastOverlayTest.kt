@@ -1,7 +1,7 @@
 package ai.rever.boss.app
 
-import ai.rever.boss.components.overlays.resetOverlayFieldForTest
 import ai.rever.boss.components.overlays.OverlayConfig
+import ai.rever.boss.components.overlays.resetOverlayFieldForTest
 import ai.rever.boss.plugin.sandbox.notification.PluginToastState
 import ai.rever.boss.plugin.sandbox.notification.ToastDuration
 import ai.rever.boss.plugin.sandbox.notification.ToastMessage

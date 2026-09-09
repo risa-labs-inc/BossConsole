@@ -1,7 +1,7 @@
 package ai.rever.boss.components.dialogs
 
-import ai.rever.boss.components.overlays.resetOverlayFieldForTest
 import ai.rever.boss.components.overlays.OverlayConfig
+import ai.rever.boss.components.overlays.resetOverlayFieldForTest
 import ai.rever.boss.plugin.api.TabComponentWithUI
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.api.TabRegistry

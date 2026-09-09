@@ -7,6 +7,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
 
 class OverlayRegistryWriteOnceTest {
     @BeforeEach
@@ -15,11 +16,15 @@ class OverlayRegistryWriteOnceTest {
         listOf("useHeavyweightOverlays", "modalRenderer", "popupRenderer", "diagnostics").forEach {
             resetOverlayFieldForTest(it)
         }
-        BossOverlayHost::class.java.getDeclaredField("useHeavyweightOverlays").apply {
-            isAccessible = true
-            setBoolean(null, false)
-        }
         BossOverlayHost.openHeavyweightPopups = 0
+    }
+
+    @Test
+    fun `hardware mode registers true and rejects a later false`() {
+        BossOverlayHost.useHeavyweightOverlays = true
+        assertTrue(BossOverlayHost.useHeavyweightOverlays)
+        BossOverlayHost.useHeavyweightOverlays = false
+        assertTrue(BossOverlayHost.useHeavyweightOverlays)
     }
 
     @Test
@@ -45,6 +50,9 @@ class OverlayRegistryWriteOnceTest {
         assertSame(popup, BossOverlayHost.popupRenderer)
         assertSame(diagnostic, BossOverlayHost.diagnostics)
         assertEquals(4, messages.size)
+        listOf("useHeavyweightOverlays", "modalRenderer", "popupRenderer", "diagnostics").forEach { name ->
+            assertTrue(messages.any { it.contains("BossOverlayHost.$name after") }, name)
+        }
         BossOverlayHost.openHeavyweightPopups++
         BossOverlayHost.openHeavyweightPopups--
         assertEquals(0, BossOverlayHost.openHeavyweightPopups)
