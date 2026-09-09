@@ -48,7 +48,10 @@ internal fun handleTabDropResult(
                 val detached = sourcePanel.tabsComponent.detachTab(result.tabInfo.id)
                 if (detached != null) {
                     activate(targetPanel.tabsComponent.adoptTab(detached))
-                } else if (sourcePanel.tabsComponent.removeTabById(result.tabInfo.id)) {
+                    // A move, not a close: recordForReopen = false for the same reason
+                    // adoptTab's stale-holder cleanup passes it. The tab is about to exist
+                    // again in this window, and recording would silently burn a history slot.
+                } else if (sourcePanel.tabsComponent.removeTabById(result.tabInfo.id, recordForReopen = false)) {
                     // Component missing but the tab entry survived: recreate-from-config in
                     // the target after cleaning up the source. When the tab is gone entirely
                     // (closed mid-drag) the move is dropped — recreating from the stale
@@ -81,7 +84,8 @@ internal fun handleTabDropResult(
                         splitViewState
                             .getPanel(result.sourcePanelId)
                             ?.tabsComponent
-                            ?.removeTabById(result.tabInfo.id) == true
+                            // A move, as in MoveToPanel above.
+                            ?.removeTabById(result.tabInfo.id, recordForReopen = false) == true
                     if (stillInSource) result.tabInfo else null
                 } else if (!crossPanel) {
                     result.tabInfo

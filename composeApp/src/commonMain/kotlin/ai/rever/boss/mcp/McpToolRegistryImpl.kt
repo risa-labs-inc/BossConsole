@@ -79,6 +79,17 @@ import java.io.IOException
  * wins; later duplicates are logged and skipped.
  */
 object McpToolRegistryImpl : McpToolRegistry {
+    /**
+     * What a client prepends to a registered tool name: `git_status` is typed as
+     * `mcp__boss__git_status`.
+     *
+     * Assigned by the client's own config - the name it files this server under - not by anything
+     * here, which is exactly why it belongs beside the registry rather than in whichever surface
+     * happens to display it. Any surface that shows a tool the way a client types it should use
+     * this, so all of them move together if that name ever does.
+     */
+    const val CLIENT_TOOL_PREFIX = "mcp__boss__"
+
     /** How long a kill-switch fault sits in the bottom bar — longer than a routine status message. */
     private const val FAULT_MESSAGE_MS = 10_000L
 
@@ -104,6 +115,9 @@ object McpToolRegistryImpl : McpToolRegistry {
      * before anyone looked. See [McpKillSwitchFault].
      */
     val killSwitchFault: StateFlow<McpKillSwitchFault?> get() = core.fault
+
+    /** See `Core.permittedTools`. */
+    fun permittedTools(): List<RegisteredMcpTool> = core.permittedTools()
 
     fun registerProvider(provider: McpToolProvider) = core.registerProvider(provider)
 
@@ -215,6 +229,32 @@ sealed interface McpKillSwitchFault {
 }
 
 /**
+ * Whether [def] may be run by a user with [isAdmin] and [permissions]: admin bypasses;
+ * `requiresAdmin` gates to admins; otherwise every required permission must be held.
+ *
+ * A free function rather than a method, so the rule can be tested without the singleton - which
+ * cannot be constructed without reading its disabled-tools file from `~/.boss`. That matters more
+ * here than for most predicates: this is the gate that decides whether the names and full
+ * descriptions of admin-only tools are enumerable by anyone typing into the double-shift search,
+ * and while it lived inside the object it had no test at all.
+ *
+ * Note the default posture it implies: before anyone signs in, [isAdmin] is false and [permissions]
+ * is empty, so a tool with no `requiredPermissions` and `requiresAdmin = false` IS permitted. That
+ * is deliberate - see [McpToolRegistryImpl]'s "Security posture" - because this registry backs a
+ * loopback-only server for the local machine's own agents.
+ */
+internal fun mcpToolPermitted(
+    def: McpToolDefinition,
+    isAdmin: Boolean,
+    permissions: Set<String>,
+): Boolean =
+    when {
+        isAdmin -> true
+        def.requiresAdmin -> false
+        else -> permissions.containsAll(def.requiredPermissions)
+    }
+
+/**
  * Testable core behind [McpToolRegistryImpl]. Extracted so unit tests can
  * exercise the registration/permission/persistence/dispatch logic against a
  * throwaway instance and a temp file, instead of the process-wide singleton
@@ -314,7 +354,27 @@ internal class McpToolRegistryCore(
     private val _disabled = MutableStateFlow(loadDisabled())
     val disabledToolNames: StateFlow<Set<String>> = _disabled.asStateFlow()
 
-    /** Current user's RBAC state, pushed by the host (see [updateAccess]); gates tool exposure. */
+    /**
+     * Current user's RBAC state, pushed by the host (see [updateAccess]); gates tool exposure.
+     *
+     * Already `@Volatile` before the global search existed, which is what makes the new reader
+     * safe: `permittedTools()` is now called from the search's supplier inside an `async` on
+     * `Dispatchers.Default`, so the write needs a happens-before edge to a thread the writer does
+     * not drive. Without it the staleness would fail OPEN - a search dispatched right after
+     * sign-out filtered against the previous session's permissions - which is the wrong direction
+     * for the field deciding whether admin-only tool names are enumerable.
+     *
+     * The two are volatile individually and NOT read as a pair: [updateAccess] writes [isAdmin]
+     * then [permissions] outside any lock a reader takes, so a reader can see the new flag with
+     * the old set. The window is one dispatch wide and only matters for permission-gated (not
+     * admin-gated) tools, which is why it is documented rather than locked.
+     *
+     * **It fails OPEN**, and that is the part to carry forward if this reasoning is ever copied
+     * somewhere else: the exposed set during that window is the outgoing session's, so a tool the
+     * new state would deny can still be listed for one dispatch after a sign-out. Tolerable here
+     * because the registry backs a loopback-only server for the local machine's own agents; not
+     * tolerable in a context where the reader is a remote caller.
+     */
     @Volatile
     private var isAdmin = false
 
@@ -553,12 +613,19 @@ internal class McpToolRegistryCore(
         _tools.value = _all.value.filter { it.definition.name !in disabled && permitted(it.definition) }
     }
 
-    /** Mirrors host RBAC: admin bypasses; requiresAdmin gates to admins; else must hold all perms. */
-    private fun permitted(def: McpToolDefinition): Boolean {
-        if (isAdmin) return true
-        if (def.requiresAdmin) return false
-        return permissions.containsAll(def.requiredPermissions)
-    }
+    /**
+     * Every registered tool the CURRENT user may run, disabled ones included.
+     *
+     * Between [allTools] and [tools]: it keeps the ones a user has switched off, because a search
+     * for a tool someone disabled should find it and say so, but drops the ones they have no
+     * permission for. [allTools] deliberately drops neither, which is right for the management UI
+     * that shows every tool with its state, and wrong anywhere a name and a full description would
+     * be enumerable by whoever is typing.
+     */
+    fun permittedTools(): List<RegisteredMcpTool> = _all.value.filter { permitted(it.definition) }
+
+    /** Mirrors host RBAC. The rule itself is [mcpToolPermitted], which is where it is tested. */
+    private fun permitted(def: McpToolDefinition): Boolean = mcpToolPermitted(def, isAdmin, permissions)
 
     suspend fun invoke(
         toolName: String,

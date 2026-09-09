@@ -33,7 +33,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
@@ -436,35 +435,38 @@ fun BossTabButton(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                // Render icon based on type
-                when {
-                    // For bitmap images (favicons), use Image to preserve colors
-                    tabIcon is ai.rever.boss.plugin.api.TabIcon.Image && painter != null -> {
-                        Image(
-                            painter = painter,
-                            contentDescription = fileName,
-                            modifier = Modifier.size(14.dp),
-                        )
-                    }
+                TabAudioIcon(tabInfo?.id, Modifier.size(14.dp)) {
+                    // Render icon based on type
+                    when {
+                        // For bitmap images (favicons), use Image to preserve colors
+                        tabIcon is ai.rever.boss.plugin.api.TabIcon.Image && painter != null -> {
+                            Image(
+                                painter = painter,
+                                contentDescription = fileName,
+                                modifier = Modifier.size(14.dp),
+                            )
+                        }
 
-                    // For vector icons with custom tint (file type icons)
-                    tabIcon is ai.rever.boss.plugin.api.TabIcon.Vector && tabIcon.tint != null && painter != null -> {
-                        val tintColor = tabIcon.tint // Local copy for smart cast
-                        Icon(
-                            painter = painter,
-                            contentDescription = fileName,
-                            modifier = Modifier.size(14.dp),
-                            tint = tintColor!!,
-                        )
-                    }
+                        // For vector icons with custom tint (file type icons)
+                        tabIcon is ai.rever.boss.plugin.api.TabIcon.Vector &&
+                            tabIcon.tint != null && painter != null -> {
+                            val tintColor = tabIcon.tint // Local copy for smart cast
+                            Icon(
+                                painter = painter,
+                                contentDescription = fileName,
+                                modifier = Modifier.size(14.dp),
+                                tint = tintColor!!,
+                            )
+                        }
 
-                    // For vector icons without tint, use default
-                    painter != null -> {
-                        Icon(
-                            painter = painter,
-                            contentDescription = fileName,
-                            modifier = Modifier.size(14.dp),
-                        )
+                        // For vector icons without tint, use default
+                        painter != null -> {
+                            Icon(
+                                painter = painter,
+                                contentDescription = fileName,
+                                modifier = Modifier.size(14.dp),
+                            )
+                        }
                     }
                 }
 

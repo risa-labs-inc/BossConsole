@@ -2,6 +2,7 @@ package ai.rever.boss.components.dialogs
 
 import ai.rever.boss.components.workspaces.WorkspaceManager
 import ai.rever.boss.icons.FileIcons
+import ai.rever.boss.mcp.McpToolRegistryImpl
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.ui.BossThemeController
@@ -12,6 +13,7 @@ import ai.rever.boss.search.SearchResult
 import ai.rever.boss.utils.extractParentName
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.LogSanitizer
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -70,10 +72,48 @@ private val BookmarksAccent get() = BossThemeController.current.colors.warn // w
 // Deliberate one-off: the design system has no purple token (run-config identity color).
 private val RunConfigAccent = Color(0xFF9C27B0)
 private val CommandsAccent get() = BossThemeController.current.colors.data // data — commands
+private val ToolsAccent get() = BossThemeController.current.colors.signal // signal — tools
+
+// Deliberately the quiet one - a settings row is a destination, not a signal - but textSecondary
+// rather than textMuted, which is exactly SimpleResultItem's subtitle tone and made the icon read
+// as a disabled row beside eight saturated accents.
+private val SettingsAccent get() = BossThemeController.current.colors.textSecondary
+private val McpAccent get() = BossThemeController.current.colors.data // data — MCP tools, with commands
+private val PagesAccent get() = BossThemeController.current.colors.ok // ok — recent pages, with tabs
+
+// Files take the dimmer half of the signal pair so they do not read as Tools, which leads the
+// results and holds `signal` proper.
+private val FilesAccent get() = BossThemeController.current.colors.signalDim
 private val HoverBackground get() = BossThemeController.current.colors.raised
 private val CardShape = RoundedCornerShape(12.dp)
 private val SmallCardShape = RoundedCornerShape(8.dp)
 private val SectionTitleColor get() = BossThemeController.current.colors.textMuted
+
+/**
+ * Tiles per row in the empty state.
+ *
+ * A count, deliberately not a statement about how many rows that makes: the tiles are derived from
+ * [SearchCategory] precisely so adding a category needs no edit here, and a comment naming today's
+ * total would be the one thing that still went stale.
+ */
+private const val EMPTY_STATE_TILES_PER_ROW = 5
+
+/**
+ * Width of an empty-state tile.
+ *
+ * Fixed, so the row is a grid rather than ten columns each as wide as its own label: the names come
+ * from [SearchCategory.displayName] and run from "Files" to "Recent Pages", which laid out
+ * unconstrained gives visibly uneven gaps. Wide enough for two lines of the longest name.
+ */
+private val EmptyStateTileWidth = 76.dp
+
+/**
+ * Ceiling for a result row's trailing chip, so a long plugin id cannot squeeze the title.
+ *
+ * PascalCase like every other `Dp` val in this file, not SCREAMING_SNAKE_CASE - `.editorconfig`
+ * disables ktlint's property-naming rule, so nothing enforces it.
+ */
+private val TrailingChipMaxWidth = 140.dp
 
 /**
  * Global search dialog for BOSS Spotlight - quickly find files, tabs, bookmarks, and run configs.
@@ -93,12 +133,16 @@ private val SectionTitleColor get() = BossThemeController.current.colors.textMut
 fun GlobalSearchDialog(
     projectPath: String,
     workspaceManager: WorkspaceManager,
+    windowId: String,
     onDismiss: () -> Unit,
     onFileSelect: (String) -> Unit,
     onTabSelect: ((windowId: String, panelId: String, tabId: String) -> Unit)? = null,
     onBookmarkSelect: ((bookmarkId: String, collectionId: String) -> Unit)? = null,
     onRunConfigSelect: ((configId: String) -> Unit)? = null,
     onCommandSelect: ((actionId: String) -> Unit)? = null,
+    onToolSelect: ((panelId: String) -> Unit)? = null,
+    onSettingSelect: ((result: SearchResult.SettingResult) -> Unit)? = null,
+    onPageSelect: ((url: String) -> Unit)? = null,
 ) {
     var searchQuery by remember { mutableStateOf("") }
     var selectedIndex by remember { mutableStateOf(0) }
@@ -156,7 +200,9 @@ fun GlobalSearchDialog(
             return@LaunchedEffect
         }
         delay(50)
-        GlobalSearchService.search(searchQuery)
+        // This window, so the Tools rows come from the sidebar this dialog can actually open, and
+        // so a signpost is offered only when its panel is present here - see SearchSources.
+        GlobalSearchService.search(searchQuery, windowId)
     }
 
     // Auto-scroll to selected item (only when triggered by keyboard)
@@ -164,7 +210,12 @@ fun GlobalSearchDialog(
         if (scrollToSelected && filteredResults.isNotEmpty()) {
             val clampedIndex = selectedIndex.coerceIn(0, filteredResults.size - 1)
             coroutineScope.launch {
-                listState.animateScrollToItem(clampedIndex)
+                // A RESULT index is not a LazyColumn item index when sections are shown: each
+                // section contributes a header and a trailing spacer of its own, so the two drift
+                // by two per section above the selection. Arrowing into a late category used to
+                // scroll visibly short of the row it had selected.
+                val grouped = activeCategory == SearchCategory.ALL
+                listState.animateScrollToItem(listItemIndexFor(clampedIndex, filteredResults, showSections = grouped))
             }
             scrollToSelected = false
         }
@@ -198,50 +249,80 @@ fun GlobalSearchDialog(
     // Note: If a callback is null, the dialog closes without action. This is intentional
     // fallback behavior - the integrating code may not support all result types.
     fun selectResult(result: SearchResult) {
+        // One shape for every branch, in `dispatchResult`: name the pick, hand it to the host, and
+        // close when the host supplied no handler.
+        fun <T> dispatch(
+            detailKey: String,
+            detailValue: String,
+            arg: T,
+            handler: ((T) -> Unit)?,
+        ) = dispatchResult(result, detailKey, detailValue, arg, handler, onDismiss)
+
         when (result) {
             is SearchResult.FileResult -> {
-                globalSearchLogger.debug(LogCategory.UI, "File selected from search", mapOf("file" to result.path))
-                onFileSelect(result.path)
+                dispatch("file", result.path, result.path, onFileSelect)
             }
 
             is SearchResult.TabResult -> {
-                globalSearchLogger.debug(LogCategory.UI, "Tab selected from search", mapOf("tab" to result.tabId))
-                if (onTabSelect != null) {
-                    onTabSelect.invoke(result.windowId, result.panelId, result.tabId)
-                } else {
-                    globalSearchLogger.warn(LogCategory.UI, "No tab select handler, closing dialog")
-                    onDismiss()
-                }
+                dispatch(
+                    "tab",
+                    result.tabId,
+                    result,
+                    onTabSelect?.let { select ->
+                        { r: SearchResult.TabResult -> select(r.windowId, r.panelId, r.tabId) }
+                    },
+                )
             }
 
             is SearchResult.BookmarkResult -> {
-                globalSearchLogger.debug(LogCategory.UI, "Bookmark selected from search", mapOf("bookmark" to result.bookmarkId))
-                if (onBookmarkSelect != null) {
-                    onBookmarkSelect.invoke(result.bookmarkId, result.collectionId)
-                } else {
-                    globalSearchLogger.warn(LogCategory.UI, "No bookmark select handler, closing dialog")
-                    onDismiss()
-                }
+                dispatch(
+                    "bookmark",
+                    result.bookmarkId,
+                    result,
+                    onBookmarkSelect?.let { select ->
+                        { r: SearchResult.BookmarkResult -> select(r.bookmarkId, r.collectionId) }
+                    },
+                )
             }
 
             is SearchResult.RunConfigResult -> {
-                globalSearchLogger.debug(LogCategory.UI, "Run config selected from search", mapOf("config" to result.configId))
-                if (onRunConfigSelect != null) {
-                    onRunConfigSelect.invoke(result.configId)
-                } else {
-                    globalSearchLogger.warn(LogCategory.UI, "No run config select handler, closing dialog")
-                    onDismiss()
-                }
+                dispatch("config", result.configId, result.configId, onRunConfigSelect)
             }
 
             is SearchResult.CommandResult -> {
-                globalSearchLogger.debug(LogCategory.UI, "Command selected from search", mapOf("actionId" to result.actionId))
-                if (onCommandSelect != null) {
-                    onCommandSelect.invoke(result.actionId)
-                } else {
-                    globalSearchLogger.warn(LogCategory.UI, "No command select handler, closing dialog")
-                    onDismiss()
-                }
+                dispatch("actionId", result.actionId, result.actionId, onCommandSelect)
+            }
+
+            is SearchResult.ToolResult -> {
+                dispatch("panelId", result.panelId, result.panelId, onToolSelect)
+            }
+
+            is SearchResult.SettingResult -> {
+                dispatch("setting", result.label, result, onSettingSelect)
+            }
+
+            is SearchResult.PageResult -> {
+                // The only detail value that is a URL, and a recent page carries its query string.
+                // The handler still gets the real one - only the log line is masked, which is what
+                // AGENTS.md names LogSanitizer for and what RecentBrowserPagesManager already does
+                // to the same data on the way in.
+                dispatch("url", LogSanitizer.maskUriParams(result.url), result.url, onPageSelect)
+            }
+
+            // No handler, by design: an MCP tool takes arguments a search row cannot collect, so
+            // this answers "does a tool for this exist, and what is it called" and stops.
+            //
+            // Logged here rather than through dispatchResult, which warns about a missing handler.
+            // That warning is worth having for a branch the host merely forgot to wire, and this
+            // branch is never going to have a handler - routing through it meant every MCP pick
+            // filed a warning, which is how a real integration gap stops being noticeable.
+            is SearchResult.McpToolResult -> {
+                globalSearchLogger.debug(
+                    LogCategory.UI,
+                    "MCP tool selected; nothing to activate",
+                    mapOf("tool" to result.name),
+                )
+                onDismiss()
             }
         }
     }
@@ -292,8 +373,13 @@ fun GlobalSearchDialog(
                                 }
 
                                 Key.Tab -> {
-                                    // Cycle through categories
-                                    val categories = SearchCategory.entries
+                                    // The categories ON SCREEN, which is what CategoryTabs draws -
+                                    // not every entry in the enum. Cycling the enum walked through
+                                    // categories with no chip and no results, so Tab landed on
+                                    // "No Tools Found" with nothing on the chip row to say where
+                                    // the user was. Four more categories made that four times
+                                    // likelier, so it stopped being survivable.
+                                    val categories = visibleCategories(resultCounts, activeCategory)
                                     val currentIndex = categories.indexOf(activeCategory)
                                     val nextIndex =
                                         if (event.isShiftPressed) {
@@ -530,13 +616,7 @@ private fun CategoryTabs(
                 .padding(4.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        // Only show categories that have results (or ALL)
-        val visibleCategories =
-            SearchCategory.entries.filter { category ->
-                category == SearchCategory.ALL || (resultCounts[category] ?: 0) > 0
-            }
-
-        for (category in visibleCategories) {
+        for (category in visibleCategories(resultCounts, activeCategory)) {
             val count = resultCounts[category] ?: 0
             val isActive = category == activeCategory
 
@@ -560,15 +640,7 @@ private fun CategoryTab(
     val backgroundColor = if (isActive) SelectionAccent.copy(alpha = 0.2f) else Color.Transparent
     val textColor = if (isActive) SelectionAccent else BossTheme.colors.textSecondary
 
-    val icon =
-        when (category) {
-            SearchCategory.ALL -> Icons.Outlined.Apps
-            SearchCategory.FILES -> Icons.Outlined.Description
-            SearchCategory.TABS -> Icons.Outlined.Tab
-            SearchCategory.BOOKMARKS -> Icons.Outlined.Bookmark
-            SearchCategory.RUN_CONFIGS -> Icons.Outlined.PlayArrow
-            SearchCategory.COMMANDS -> Icons.Outlined.Terminal
-        }
+    val icon = category.chipIcon()
 
     Row(
         modifier =
@@ -651,7 +723,7 @@ private fun SearchInputField(
                 Box {
                     if (query.isEmpty()) {
                         Text(
-                            text = "Search files, tabs, commands...",
+                            text = "Search tools, settings, files, tabs, commands...",
                             color = BossTheme.colors.textSecondary,
                             fontSize = 16.sp,
                         )
@@ -693,18 +765,32 @@ private fun EmptySearchState() {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        // Search categories preview
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            SearchCategoryPreview(Icons.Outlined.Tab, "Tabs", TabsAccent)
-            SearchCategoryPreview(Icons.Outlined.Description, "Files", SelectionAccent)
-            SearchCategoryPreview(Icons.Outlined.Terminal, "Commands", CommandsAccent)
-            SearchCategoryPreview(Icons.Outlined.Bookmark, "Bookmarks", BookmarksAccent)
-            SearchCategoryPreview(Icons.Outlined.PlayArrow, "Run", RunConfigAccent)
-        }
+        // Every category the search actually has, read off the enum rather than listed here.
+        //
+        // Listing them by hand is what left this panel advertising five sources after four more
+        // were added: tools, settings, MCP tools and recent pages were all searchable and nothing
+        // on this screen said so. Derived, it cannot drift again - a new category appears here the
+        // moment it exists, in the same order as the chips and the sections.
+        //
+        // Chunked rather than one row: nine tiles (every category but ALL) do not fit a narrow
+        // window, and wrapping keeps them centred instead of clipping the last ones. The spacer
+        // inside the loop fires after the last row too, which is deliberate - it plus the one
+        // below is the 24dp this panel had before.
+        SearchCategory.entries
+            .filter { it != SearchCategory.ALL }
+            .chunked(EMPTY_STATE_TILES_PER_ROW)
+            .forEach { row ->
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    row.forEach { category ->
+                        SearchCategoryPreview(category.chipIcon(), category.displayName, category.accent())
+                    }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+            }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         Text(
             text = "Search Everything",
@@ -716,7 +802,9 @@ private fun EmptySearchState() {
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = "Find files, switch tabs, run commands, open bookmarks, or run configs",
+            text =
+                "Open a tool or a settings page, find a file, switch tabs, run a command " +
+                    "or a config, open a bookmark or a recent page, or look up an MCP tool",
             color = BossTheme.colors.textSecondary,
             fontSize = 13.sp,
             textAlign = TextAlign.Center,
@@ -756,6 +844,7 @@ private fun SearchCategoryPreview(
     color: Color,
 ) {
     Column(
+        modifier = Modifier.width(EmptyStateTileWidth),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
@@ -778,6 +867,7 @@ private fun SearchCategoryPreview(
             text = label,
             color = BossTheme.colors.textSecondary,
             fontSize = 11.sp,
+            textAlign = TextAlign.Center,
         )
     }
 }
@@ -863,6 +953,30 @@ private fun NoResultsState(
             )
         }
     }
+}
+
+/**
+ * Where the row for [resultIndex] actually sits in [SearchResultsList]'s `LazyColumn`.
+ *
+ * The list emits a header before each section and a spacer after it, so with sections on there are
+ * two extra items per section that starts at or before the selection. Scrolling wants the item
+ * index; selection is expressed as a result index; this converts one to the other.
+ *
+ * Derived from the same walk `SearchResultsList` performs rather than a count of distinct
+ * categories, so the two cannot disagree about where a section begins.
+ *
+ * Correct only because `getFilteredResults` groups by category ordinal - `distinctBy` counts a
+ * category once, which is true of a grouped list and false of an interleaved one. Two coupled
+ * invariants in two files, either changeable alone, which is why both have tests.
+ */
+internal fun listItemIndexFor(
+    resultIndex: Int,
+    results: List<SearchResult>,
+    showSections: Boolean,
+): Int {
+    if (!showSections) return resultIndex
+    val sectionsBefore = results.take(resultIndex + 1).distinctBy { it.category }.size
+    return resultIndex + sectionsBefore * 2 - 1
 }
 
 /**
@@ -955,18 +1069,11 @@ private fun SectionHeader(
                 .padding(vertical = 8.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        val icon =
-            when (category) {
-                SearchCategory.FILES -> Icons.Outlined.Description
-                SearchCategory.TABS -> Icons.Outlined.Tab
-                SearchCategory.BOOKMARKS -> Icons.Outlined.Bookmark
-                SearchCategory.RUN_CONFIGS -> Icons.Outlined.PlayArrow
-                SearchCategory.COMMANDS -> Icons.Outlined.Terminal
-                else -> Icons.Outlined.Apps
-            }
-
         Icon(
-            imageVector = icon,
+            // chipIcon, not a second table: this one named only the five original categories and
+            // fell through to Apps, so every section added by this PR - Tools, Settings, MCP Tools,
+            // Recent Pages - drew the generic grid icon while its own chip drew the right one.
+            imageVector = category.chipIcon(),
             contentDescription = null,
             tint = SectionTitleColor,
             modifier = Modifier.size(14.dp),
@@ -1012,6 +1119,38 @@ private fun SearchResultItem(
             else -> BossTheme.colors.raised
         }
 
+    // Two families, not nine cases. The older result types each have a shape of their own - a file
+    // shows its matched ranges, a tab shows which window it is in - and are dispatched below; the
+    // four newer ones differ only in data, so they share one row and one table (`simpleRow`).
+    //
+    // Which family this is comes from simpleRow returning a row or null, and THAT `when` is
+    // exhaustive over the sealed class - so adding a result type fails the build there rather than
+    // reaching a runtime error from inside a composable.
+    val row = result.simpleRow()
+    if (row != null) {
+        SimpleResultItem(row, isSelected, isHovered, scale, backgroundColor, interactionSource, onClick)
+    } else {
+        DetailedResultItem(result, isSelected, isHovered, scale, backgroundColor, interactionSource, onClick)
+    }
+}
+
+/**
+ * The result types that each draw themselves differently.
+ *
+ * Split from [SearchResultItem] so that adding a result type to the simple family does not keep
+ * growing one function past what anyone can read at once.
+ */
+@Composable
+@Suppress("LongParameterList")
+private fun DetailedResultItem(
+    result: SearchResult,
+    isSelected: Boolean,
+    isHovered: Boolean,
+    scale: Float,
+    backgroundColor: Color,
+    interactionSource: MutableInteractionSource,
+    onClick: () -> Unit,
+) {
     when (result) {
         is SearchResult.FileResult -> {
             FileResultItem(result, isSelected, isHovered, scale, backgroundColor, interactionSource, onClick)
@@ -1022,42 +1161,205 @@ private fun SearchResultItem(
         }
 
         is SearchResult.BookmarkResult -> {
-            BookmarkResultItem(
-                result,
-                isSelected,
-                isHovered,
-                scale,
-                backgroundColor,
-                interactionSource,
-                onClick,
-            )
+            BookmarkResultItem(result, isSelected, isHovered, scale, backgroundColor, interactionSource, onClick)
         }
 
         is SearchResult.RunConfigResult -> {
-            RunConfigResultItem(
-                result,
-                isSelected,
-                isHovered,
-                scale,
-                backgroundColor,
-                interactionSource,
-                onClick,
-            )
+            RunConfigResultItem(result, isSelected, isHovered, scale, backgroundColor, interactionSource, onClick)
         }
 
         is SearchResult.CommandResult -> {
-            CommandResultItem(
-                result,
-                isSelected,
-                isHovered,
-                scale,
-                backgroundColor,
-                interactionSource,
-                onClick,
+            CommandResultItem(result, isSelected, isHovered, scale, backgroundColor, interactionSource, onClick)
+        }
+
+        // Named rather than left to an `else`, so this `when` is exhaustive too. With an `else`,
+        // the exhaustiveness argument for `simpleRow` only went one way: a new type failed the
+        // build there, and the cheapest way to satisfy that was to add it to the null-returning
+        // list - after which this function compiled unchanged and threw during composition, which
+        // in this app means the render-recovery path. Now both ends fail at compile time.
+        //
+        // Unreachable by construction: `SearchResultItem` only calls this when `simpleRow` was
+        // null, which is exactly the five types above.
+        is SearchResult.ToolResult,
+        is SearchResult.SettingResult,
+        is SearchResult.McpToolResult,
+        is SearchResult.PageResult,
+        -> {
+            // Logged and skipped rather than thrown. `simpleRow` already makes a new result type a
+            // compile error, so this branch is unreachable - and it runs inside a composable,
+            // where a throw means the render-recovery path takes out the whole dialog. One missing
+            // row is the better failure for something that cannot happen.
+            globalSearchLogger.error(
+                LogCategory.UI,
+                "DetailedResultItem got a simple result type; skipping the row",
+                mapOf("type" to result::class.simpleName.orEmpty()),
             )
         }
     }
 }
+
+/**
+ * One row shape for the four sources that need nothing special: an icon, a name, where it came
+ * from, and an optional chip on the end.
+ *
+ * Written once rather than as four near-identical copies of [CommandResultItem]. The older result
+ * types each have a shape of their own - a file shows matched ranges, a tab shows its window - and
+ * are left alone; these four do not, and four copies of the same 50 lines is how their padding and
+ * their icon sizes drift apart.
+ */
+@Composable
+@Suppress("LongParameterList")
+private fun SimpleResultItem(
+    row: SimpleRow,
+    isSelected: Boolean,
+    isHovered: Boolean,
+    scale: Float,
+    backgroundColor: Color,
+    interactionSource: MutableInteractionSource,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .scale(scale)
+                .clip(SmallCardShape)
+                .background(backgroundColor)
+                .clickable { onClick() }
+                .hoverable(interactionSource)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = row.icon,
+            contentDescription = null,
+            tint = row.accent,
+            modifier = Modifier.size(22.dp),
+        )
+
+        Spacer(modifier = Modifier.width(12.dp))
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = row.title,
+                color = if (isSelected || isHovered) BossTheme.colors.textPrimary else BossTheme.colors.textSecondary,
+                fontSize = 13.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (row.subtitle.isNotBlank()) {
+                Text(
+                    text = row.subtitle,
+                    color = BossTheme.colors.textMuted,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+
+        row.trailing?.let { trailing ->
+            Spacer(modifier = Modifier.width(8.dp))
+            Box(
+                modifier =
+                    Modifier
+                        .widthIn(max = TrailingChipMaxWidth)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(row.accent.copy(alpha = 0.15f))
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
+            ) {
+                // Bounded and ellipsised, as every other text in this row is. The chip carries a
+                // plugin id and those run long (`ai.rever.boss.plugin.dynamic.terminal-tab`);
+                // unbounded, it squeezed the title, which is the column with weight(1f).
+                Text(
+                    text = trailing,
+                    fontSize = 10.sp,
+                    color = row.accent,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+/** What one of the four simple rows shows. */
+internal data class SimpleRow(
+    val icon: ImageVector,
+    val accent: Color,
+    val title: String,
+    val subtitle: String,
+    val trailing: String? = null,
+)
+
+/**
+ * How each of the four simple results is drawn.
+ *
+ * The differences between them are data - which field is the subtitle, and whether there is a chip
+ * on the end - so they live here as a table rather than as four call sites whose padding and icon
+ * sizes drift. Icon and accent are not among the differences: both come from [chipIcon] and
+ * [accent], so a category looks the same on a result row, its chip and its empty-state tile.
+ *
+ * No match highlighting, unlike the five detailed rows, which render their `matchRanges`. These
+ * four sources carry none - the settings matcher returns ranges only for the label, and the rest
+ * never computed any - so the row shows plain text rather than a highlight that would be right on
+ * some rows and absent on others.
+ *
+ * Null for the five types that draw themselves; [SearchResultItem] branches on that to pick the
+ * family. Not `@Composable`, and `internal` rather than private, because it is a pure mapping over
+ * the sealed class and the one thing worth testing about it - that the two families between them
+ * name every result type, exactly once - is not reachable from inside a composable.
+ */
+internal fun SearchResult.simpleRow(): SimpleRow? =
+    when (this) {
+        is SearchResult.ToolResult -> {
+            SimpleRow(category.chipIcon(), category.accent(), label, panelId)
+        }
+
+        is SearchResult.SettingResult -> {
+            // The breadcrumb, which is most of what tells two similarly named settings apart.
+            SimpleRow(category.chipIcon(), category.accent(), label, breadcrumb)
+        }
+
+        is SearchResult.McpToolResult -> {
+            SimpleRow(
+                icon = category.chipIcon(),
+                accent = category.accent(),
+                // The name clients call it by, so what is on screen is what gets typed.
+                //
+                // Safe to read from a composable only because it is `const`: the compiler inlines
+                // it, so no McpToolRegistryImpl clinit runs here. Demoting it to a plain `val`
+                // would quietly pull that object's disabled-tools file read into composition.
+                title = "${McpToolRegistryImpl.CLIENT_TOOL_PREFIX}$name",
+                subtitle = description,
+                // This row does nothing when selected, so its state has to be legible here: a
+                // disabled tool is exactly the one someone searched for, and it says so.
+                trailing = if (enabled) providerId else "off - $providerId",
+            )
+        }
+
+        is SearchResult.PageResult -> {
+            // A page with no title falls back to its URL for the title - and then the subtitle was
+            // the same URL again, so the row printed it twice. Blank in that case: the icon and
+            // the accent already say which category it is.
+            // displayName already applies the blank-title rule; computing it again here made two
+            // copies of one decision.
+            SimpleRow(category.chipIcon(), category.accent(), displayName, if (displayName == url) "" else url)
+        }
+
+        // Named one by one rather than left to an `else`, which is the whole point: this `when` is
+        // an exhaustive expression over the sealed class, so a new result type fails the build here
+        // and its author has to say which family it belongs to. An `else` would take the decision
+        // silently and hand the row a runtime error instead.
+        is SearchResult.FileResult,
+        is SearchResult.TabResult,
+        is SearchResult.BookmarkResult,
+        is SearchResult.RunConfigResult,
+        is SearchResult.CommandResult,
+        -> {
+            null
+        }
+    }
 
 @Composable
 private fun FileResultItem(
@@ -1477,5 +1779,118 @@ private fun highlightMatches(
                 append(text.substring(lastEnd))
             }
         }
+    }
+}
+
+/**
+ * The categories with a chip: [SearchCategory.ALL], the active one, plus any that matched something.
+ *
+ * Shared with the Tab handler, which is the point - it cycled the whole enum while this list is
+ * what the user can see, so Tab could select a category that had no chip and no results.
+ *
+ * **[active] is kept even at zero results**, which is the other half of the same bug. Filtering on
+ * count alone let the selected chip disappear as the query narrowed: Tab to Tools, keep typing
+ * until no tool matches, and the row drew only "All" - unhighlighted - over a pane reading "No
+ * Tools Found", with nothing on screen saying a filter was on. It also left
+ * `indexOf(activeCategory)` at -1 in the Tab handler, which did not crash but cycled from an
+ * arbitrary place. A chip that is filtering is always visible now, so neither can happen.
+ */
+internal fun visibleCategories(
+    resultCounts: Map<SearchCategory, Int>,
+    active: SearchCategory,
+): List<SearchCategory> =
+    SearchCategory.entries.filter {
+        it == SearchCategory.ALL || it == active || (resultCounts[it] ?: 0) > 0
+    }
+
+/**
+ * The chip's icon for a category.
+ *
+ * A table, out here rather than inside `CategoryTab`: it is one branch per category and nothing
+ * else in that composable is, so leaving it inline made a layout function read as a lookup.
+ */
+private fun SearchCategory.chipIcon(): ImageVector =
+    when (this) {
+        SearchCategory.ALL -> Icons.Outlined.Apps
+
+        SearchCategory.FILES -> Icons.Outlined.Description
+
+        SearchCategory.TABS -> Icons.Outlined.Tab
+
+        SearchCategory.BOOKMARKS -> Icons.Outlined.Bookmark
+
+        SearchCategory.RUN_CONFIGS -> Icons.Outlined.PlayArrow
+
+        SearchCategory.COMMANDS -> Icons.Outlined.Terminal
+
+        // Not Apps, which is ALL's icon: Tools now sits directly beside ALL on the chip row, and
+        // the two chips were the same glyph with different words under them.
+        SearchCategory.TOOLS -> Icons.Outlined.Extension
+
+        SearchCategory.SETTINGS -> Icons.Outlined.Settings
+
+        SearchCategory.MCP -> Icons.Outlined.Build
+
+        SearchCategory.PAGES -> Icons.Outlined.History
+    }
+
+/**
+ * The category's accent colour.
+ *
+ * Beside [chipIcon] and for the same reason: one definition per category, so a result row and the
+ * empty-state tile for the same category cannot drift apart - for the four families that share
+ * [SimpleRow]. `FILES` is the exception and stays one: a file row is tinted by `FileIcons` per
+ * filetype, which is more useful than a category colour, so [FilesAccent] reaches only the chip
+ * and the tile. Section headers deliberately do not
+ * use it - they tint everything with [SectionTitleColor], which is what keeps them quiet.
+ *
+ * **Not nine distinct colours, and not trying to be.** The design system carries seven semantic
+ * colour tokens and there are nine categories, so inventing more would mean inventing colours the
+ * theme does not define - which is worse than sharing, because it is the one thing that does not
+ * re-skin when the theme changes. Two pairs share on purpose, chosen so the pair means something:
+ * tabs and recent pages are both web pages, commands and MCP tools are both things a machine
+ * invokes. The icon and the section header carry the identity; the accent carries the family.
+ * `RUN_CONFIGS` remains the documented one-off, having no token at all.
+ */
+private fun SearchCategory.accent(): Color =
+    when (this) {
+        SearchCategory.ALL -> SelectionAccent
+        SearchCategory.FILES -> FilesAccent
+        SearchCategory.TABS -> TabsAccent
+        SearchCategory.BOOKMARKS -> BookmarksAccent
+        SearchCategory.RUN_CONFIGS -> RunConfigAccent
+        SearchCategory.COMMANDS -> CommandsAccent
+        SearchCategory.TOOLS -> ToolsAccent
+        SearchCategory.SETTINGS -> SettingsAccent
+        SearchCategory.MCP -> McpAccent
+        SearchCategory.PAGES -> PagesAccent
+    }
+
+/**
+ * Hand a picked result to its host, or close the dialog when there is no host handler.
+ *
+ * Nine branches of [GlobalSearchDialog]'s `selectResult` are this same shape, and nine copies is
+ * how one of them ends up logging a different key, or forgetting to dismiss and leaving the dialog
+ * up over a result that did nothing.
+ *
+ * A null handler closing the dialog is deliberate, not a fallback of last resort: the integrating
+ * code is not required to support every result type, and `McpToolResult` has no handler at all.
+ */
+@Suppress("LongParameterList")
+private fun <T> dispatchResult(
+    result: SearchResult,
+    detailKey: String,
+    detailValue: String,
+    arg: T,
+    handler: ((T) -> Unit)?,
+    onDismiss: () -> Unit,
+) {
+    val kind = result::class.simpleName.orEmpty()
+    globalSearchLogger.debug(LogCategory.UI, "Result selected", mapOf("kind" to kind, detailKey to detailValue))
+    if (handler != null) {
+        handler(arg)
+    } else {
+        globalSearchLogger.warn(LogCategory.UI, "No handler for result, closing dialog", mapOf("kind" to kind))
+        onDismiss()
     }
 }
