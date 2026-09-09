@@ -5,6 +5,7 @@ import ai.rever.boss.plugin.browser.pointerInsideBounds
 import ai.rever.boss.plugin.browser.shouldAllowPinch
 import ai.rever.boss.plugin.browser.shouldRetainSurface
 import ai.rever.boss.plugin.ui.BossOverlayHost
+import ai.rever.boss.testsupport.repoRoot
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.unit.IntOffset
@@ -270,8 +271,11 @@ class HeavyweightOverlayTest {
      */
     @AfterTest
     fun resetOverlayConfig() {
+        resetOverlayFieldForTest("useHeavyweightOverlays")
         OverlayConfig.useHeavyweightPopups = false
+        resetOverlayFieldForTest("popupRenderer")
         OverlayConfig.heavyweightPopup = null
+        resetOverlayFieldForTest("modalRenderer")
         OverlayConfig.heavyweightModal = null
         OverlayConfig.heavyweightTooltip = null
         OverlayConfig.hideHeavyweightTooltip = null
@@ -304,6 +308,7 @@ class HeavyweightOverlayTest {
         // what plugin-drawn dialogs read. If that forwarding is ever replaced by a second backing
         // field, the host would route heavyweight while every plugin dialog silently stayed behind
         // the page - the exact bug this path exists to fix, and invisible from either side.
+        resetOverlayFieldForTest("useHeavyweightOverlays")
         OverlayConfig.useHeavyweightPopups = true
         assertTrue(BossOverlayHost.useHeavyweightOverlays)
 
@@ -321,15 +326,59 @@ class HeavyweightOverlayTest {
         // The reported dead end: NewTabDialog's folder dropdown is a ContextMenu, which under
         // HARDWARE is its own always-on-top window. Opening it fires the modal's windowLostFocus,
         // and dismissing there closed the entire dialog the dropdown belongs to.
-        assertFalse(shouldDismissOnFocusLoss(openHeavyweightPopups = 1, oppositeWindow = null))
-        assertFalse(shouldDismissOnFocusLoss(openHeavyweightPopups = 2, oppositeWindow = null))
+        assertFalse(
+            shouldDismissOnFocusLoss(dismissOnFocusLoss = true, openHeavyweightPopups = 1, oppositeWindow = null),
+        )
+        assertFalse(
+            shouldDismissOnFocusLoss(dismissOnFocusLoss = true, openHeavyweightPopups = 2, oppositeWindow = null),
+        )
     }
 
     @Test
     fun `a modal dismisses when focus leaves the application entirely`() {
         // A null opposite window means focus went somewhere AWT does not own - another app. That
         // is the case the focus-loss dismissal actually exists for.
-        assertTrue(shouldDismissOnFocusLoss(openHeavyweightPopups = 0, oppositeWindow = null))
+        assertTrue(
+            shouldDismissOnFocusLoss(dismissOnFocusLoss = true, openHeavyweightPopups = 0, oppositeWindow = null),
+        )
+    }
+
+    @Test
+    fun `an opted-out modal never dismisses on focus loss, even leaving the app entirely`() {
+        // The #152 regression: MemoryPressureNoticeDialog and ScreenCapturePickerDialog dismiss to a
+        // destructive action (acknowledge the once-per-session notice; cancel the share). They pass
+        // dismissOnFocusLoss = false so an alt-tab away cannot trigger it. This is the case a null
+        // oppositeWindow - focus leaving the app - would otherwise dismiss.
+        assertFalse(
+            shouldDismissOnFocusLoss(dismissOnFocusLoss = false, openHeavyweightPopups = 0, oppositeWindow = null),
+        )
+    }
+
+    @Test
+    fun `the opt-out suppresses dismissal even with an open popup`() {
+        // dismissOnFocusLoss = false must win regardless of the other inputs.
+        assertFalse(
+            shouldDismissOnFocusLoss(dismissOnFocusLoss = false, openHeavyweightPopups = 1, oppositeWindow = null),
+        )
+    }
+
+    @Test
+    fun `destructive dialogs retain their dismissal policy around BossDialog`() {
+        val root = repoRoot()
+        listOf(
+            "performance/MemoryPressureNoticeDialog.kt",
+            "plugin/browser/ScreenCapturePickerDialog.kt",
+        ).forEach { path ->
+            val source = root.resolve("composeApp/src/desktopMain/kotlin/ai/rever/boss/$path").readText()
+            assertTrue(
+                Regex(
+                    "CompositionLocalProvider\\(LocalDismissModalOnFocusLoss provides false\\)" +
+                        "\\s*\\{\\s*BossDialog\\(",
+                ).containsMatchIn(source),
+                "$path must opt the whole dialog out of focus-loss dismissal",
+            )
+            assertTrue(source.contains("dismissOnClickOutside = false"), "$path must not dismiss on a return click")
+        }
     }
 
     // --- overlay transparency diagnosis ---

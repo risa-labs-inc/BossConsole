@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Divider
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
@@ -240,12 +241,57 @@ internal fun buildInlineMarkdown(text: String): AnnotatedString =
         append(text.substring(pos))
     }
 
+/**
+ * Returns the first meaningful piece of release prose for a Dashboard card.
+ * Structural headings, download tables, code and separators are skipped.
+ */
+internal fun summarizeReleaseNotes(blocks: List<NotesBlock>): String? =
+    blocks
+        .firstNotNullOfOrNull { block ->
+            when (block) {
+                is NotesBlock.Paragraph -> block.text
+
+                is NotesBlock.ListItem -> block.text
+
+                is NotesBlock.CodeBlock,
+                is NotesBlock.Heading,
+                is NotesBlock.Table,
+                NotesBlock.ThematicBreak,
+                -> null
+            }
+        }?.trim()
+        ?.takeIf { it.isNotEmpty() }
+
 private fun headingFontSize(level: Int) =
     when (level) {
         1 -> 16.sp
         2 -> 14.sp
         else -> 13.sp
     }
+
+@Composable
+internal fun ReleaseNotesContent(releaseNotes: String) {
+    val notesBlocks =
+        remember(releaseNotes) {
+            runCatching { parseReleaseNotes(releaseNotes) }
+                .getOrNull()
+                ?.takeIf { it.isNotEmpty() }
+        }
+
+    if (notesBlocks != null) {
+        notesBlocks.forEach { block ->
+            NotesBlockView(block)
+        }
+    } else {
+        releaseNotes.lines().forEach { line ->
+            Text(
+                line,
+                color = BossTheme.colors.textSecondary,
+                fontSize = 12.sp,
+            )
+        }
+    }
+}
 
 /** One block of rendered release notes; sized for the update dialog (12sp body). */
 @Composable

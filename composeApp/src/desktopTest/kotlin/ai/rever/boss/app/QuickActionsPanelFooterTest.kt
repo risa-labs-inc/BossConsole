@@ -331,6 +331,11 @@ class QuickActionsPanelFooterTest {
             bounds(PLUGIN_TAG).height,
             "the plugin must still fill the whole column",
         )
+        assertEquals(
+            bounds(COLUMN_TAG).width,
+            bounds(PLUGIN_TAG).width,
+            "the existing filling plugin content must retain the column width",
+        )
     }
 }
 

@@ -76,8 +76,7 @@ fun BoxScope.VerticalTabBarDrawer(
     if (heavyweight) {
         OverlayCorner(
             alignment = Alignment.TopStart,
-            // A generous UPPER bound: the window opens at this size and settles once its content
-            // measures, and content that measures inside a too-small window stays clipped.
+            // First-frame size only; later measurements use the parent region.
             initialSize = DpSize(width, region.height.dp),
             regionInWindow = region,
         ) {

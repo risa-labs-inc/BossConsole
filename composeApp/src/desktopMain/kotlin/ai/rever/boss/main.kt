@@ -58,6 +58,7 @@ import androidx.compose.ui.window.WindowExceptionHandlerFactory
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import com.github.ajalt.clikt.core.ProgramResult
 import com.github.ajalt.clikt.core.main
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -68,7 +69,7 @@ import java.io.File
 import javax.swing.JPopupMenu
 import kotlin.system.exitProcess
 
-private val logger = BossLogger.forComponent("Main")
+private val logger by lazy { BossLogger.forComponent("Main") }
 
 /**
  * Decides the render-recovery toast and rate-limits it. EDT-confined: the window
@@ -240,6 +241,29 @@ fun main(args: Array<String>) {
             ai.rever.boss.llm.RisaLlmTokenCommand
                 .execute(),
         )
+    }
+
+    // Headless CLI commands (status, mcp, completion, --help) target the running
+    // instance or generate output headlessly. Execute before AWT, plugins, Skiko,
+    // or acquiring the single-instance lock so they fail without GUI startup when BOSS is
+    // closed without booting the GUI or corrupting standard output streams.
+    val firstNonFlag = args.firstOrNull { !it.startsWith("-") }?.lowercase()
+    val isHeadlessCli =
+        firstNonFlag in setOf("status", "mcp", "completion") ||
+            (args.isNotEmpty() && args.all { it in setOf("-h", "--help") })
+
+    if (isHeadlessCli) {
+        ai.rever.boss.cli
+            .configureHeadlessLogging()
+        try {
+            createBossCLI().main(args)
+            exitProcess(0)
+        } catch (e: ProgramResult) {
+            exitProcess(e.statusCode)
+        } catch (e: Exception) {
+            System.err.println("Error: ${e.message ?: "Failed to execute CLI command"}")
+            exitProcess(1)
+        }
     }
 
     val startupBeganMs = System.currentTimeMillis()
@@ -641,6 +665,10 @@ fun main(args: Array<String>) {
     // BEHIND the page. Dormant - a no-op - wherever OFF_SCREEN is the mode (macOS, Linux), so the
     // unchanged platforms cannot regress. See JxBrowserConfig.renderingMode and
     // benchmarks/speedometer/win/WINDOWS.md.
+    // Install logging before the guarded renderers so startup registration conflicts are visible.
+    ai.rever.boss.plugin.ui.BossOverlayHost.diagnostics = { message ->
+        logger.warn(LogCategory.UI, message)
+    }
     ai.rever.boss.components.overlays.OverlayConfig.heavyweightPopup =
         { onDismiss, anchorInWindow, anchoring, popupOffset, focusable, popupContent ->
             ai.rever.boss.components.overlays
@@ -684,13 +712,6 @@ fun main(args: Array<String>) {
         ->
         ai.rever.boss.components.overlays
             .HeavyweightCorner(alignment, initialSize, inset, focusable, regionInWindow, cornerContent)
-    }
-    // plugin-ui-core owns the modal registry (plugins draw dialogs too) and depends on nothing but
-    // Compose, so it cannot log. Give it this logger instead: the condition it reports is a dialog
-    // that silently fell back to lightweight and is now hidden behind the page, which is invisible
-    // on screen and would otherwise have to be diagnosed from a screenshot.
-    ai.rever.boss.plugin.ui.BossOverlayHost.diagnostics = { message ->
-        logger.warn(LogCategory.UI, message)
     }
     ai.rever.boss.components.overlays.OverlayConfig.useHeavyweightPopups =
         ai.rever.boss.config.JxBrowserConfig.renderingMode ==
@@ -852,9 +873,14 @@ fun main(args: Array<String>) {
     startupScope.launch {
         ai.rever.boss.updater.AppUpdateRealtimeService.instance.apply {
             onReleaseChanged = {
-                // App-level trigger through the app-level owner.
-                ai.rever.boss.updater.UpdateCoordinator.instance
-                    .checkForUpdatesInBackground()
+                val updateCoordinator =
+                    ai.rever.boss.updater.UpdateCoordinator.instance
+
+                // Preserve the existing update notification behavior.
+                updateCoordinator.checkForUpdatesInBackground()
+
+                // Refresh the same cached list used by Settings and the Dashboard.
+                updateCoordinator.versionListManager.fetchVersions(forceRefresh = true)
             }
             start()
         }

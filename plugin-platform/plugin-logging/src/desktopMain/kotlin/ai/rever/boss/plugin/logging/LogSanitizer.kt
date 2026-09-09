@@ -230,6 +230,21 @@ object LogSanitizer {
     private val emailPattern = Regex("""[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}""")
 
     /**
+     * Private DNS names that can reveal an organisation's internal topology in
+     * network failures. Kept to the private-style suffixes measured in #109 so
+     * ordinary dotted prose and package names remain diagnostic. Case folding intentionally
+     * also masks ambiguous constants such as `Status.INTERNAL`: free text cannot distinguish
+     * these from private DNS names. Run before the public matcher to avoid exposing a mixed-case
+     * leading label. Both hostname passes preserve ports because they remain useful diagnostics.
+     * A terminal period is punctuation (or a DNS root dot); a following label blocks the match.
+     */
+    private val privateHostnamePattern =
+        Regex(
+            """(?<![A-Za-z0-9_.-])(?:[A-Za-z0-9-]+\.)+(?:internal|local)(?![A-Za-z0-9_-])(?!\.[A-Za-z0-9_-])""",
+            RegexOption.IGNORE_CASE,
+        )
+
+    /**
      * A bare hostname with no protocol/path around it - the shape `UnknownHostException.getMessage()`
      * and every DNS/proxy-connect failure produces (BossConsole#109). [filePathPattern] needs a `/`,
      * [urlPattern] needs `http`, [emailPattern] needs `@` - none of them fire on this shape, so
@@ -254,15 +269,18 @@ object LogSanitizer {
      * pattern redacted `kotlinx.coroutines.internal` out of one.
      *
      * Coverage limits: multi-level public suffixes such as `.co.uk` are rejected by that same
-     * guard. Matching is case-sensitive: `Acme.corp.internal` retains `Acme.` while a fully
-     * mixed-case `Proxy.Corp.Internal` is untouched. Unlisted suffixes and IP literals also
-     * remain unchanged. This is selected lowercase-host redaction, not complete DNS redaction.
+     * guard. This public-host matcher remains case-sensitive, so
+     * mixed-case public hosts are untouched. The preceding private-host pass handles complete
+     * mixed-case `.internal`/`.local` names and preserves their ports. Unlisted suffixes and IP literals also
+     * remain unchanged. Ports are preserved, as in the private-host pass. The private suffixes
+     * remain here to preserve existing lowercase matching outside the stricter private boundaries.
+     * This is selected lowercase-host redaction, not complete DNS redaction.
      */
     private val hostnamePattern =
         Regex(
             """\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+""" +
                 """(?:internal|local|com|net|org|io|dev|app|co|ai|gov|edu|mil|info|biz)\b""" +
-                """(?::\d{1,5})?(?!\.[A-Za-z])""",
+                """(?!\.[A-Za-z])""",
         )
 
     /**
@@ -418,6 +436,7 @@ object LogSanitizer {
                 .replace(filePathPattern, "[PATH]")
                 .replace(urlPattern, "[URL]")
                 .replace(emailPattern, "[EMAIL]")
+                .replace(privateHostnamePattern, "[HOST]")
                 .replace(hostnamePattern, "[HOST]")
 
         val withMaskedAssignments =

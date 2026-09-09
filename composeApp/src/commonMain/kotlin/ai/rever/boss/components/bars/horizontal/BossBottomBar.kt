@@ -203,6 +203,7 @@ fun RowScope.BossLeftBottomBar(tabsComponent: BossTabsComponent? = null) {
 }
 
 @Composable
+@Suppress("LongMethod") // Declarative Compose layout.
 fun BossRightBottomBar() {
     val windowId = LocalWindowId.current
     val scope = rememberCoroutineScope()
@@ -221,6 +222,40 @@ fun BossRightBottomBar() {
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.widthIn(max = 560.dp).padding(horizontal = 8.dp),
+        )
+    }
+
+    val trustedTools by McpToolRegistryImpl.policyEngine.sessionTrustedTools.collectAsState()
+    if (trustedTools.isNotEmpty()) {
+        androidx.compose.material.TextButton(onClick = { McpToolRegistryImpl.policyEngine.clearSessionTrusts() }) {
+            Text("Revoke MCP session trust (${trustedTools.size})", color = BossTheme.colors.alert)
+        }
+    }
+
+    val policyFault by McpToolRegistryImpl.policyFault.collectAsState()
+    policyFault?.let { fault ->
+        Text(
+            text = "⚠ ${fault.message}",
+            color = BossTheme.colors.alert,
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.widthIn(max = 560.dp).padding(horizontal = 8.dp),
+        )
+    }
+
+    // Governed Autonomy telemetry: show last executed tool, duration, and status
+    val recentOps by McpToolRegistryImpl.ledger.recentOperations.collectAsState()
+    recentOps.firstOrNull()?.let { lastOp ->
+        val statusSymbol = if (lastOp.isError) "✕" else "✓"
+        val statusColor = if (lastOp.isError) BossTheme.colors.alert else BossTheme.colors.textSecondary
+        Text(
+            text = "MCP: ${lastOp.toolName} (${lastOp.durationMs}ms) $statusSymbol",
+            color = statusColor,
+            fontSize = 11.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 6.dp),
         )
     }
 

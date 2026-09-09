@@ -200,7 +200,7 @@ class BossAlertCardLayoutTest {
     }
 
     @Test
-    fun `a card with room to spare is exactly AlertWidth`() {
+    fun `a card with room to spare is exactly ALERT_WIDTH`() {
         setCard(width = 900.dp, height = 600.dp) { Text("x") }
 
         val cardWidth = cardBounds().let { it.right - it.left }
@@ -208,8 +208,8 @@ class BossAlertCardLayoutTest {
         // exact only at density 1, and a fractional density would make this red for a reason that
         // has nothing to do with the property.
         assertTrue(
-            (cardWidth - AlertWidth).value.absoluteValue <= 1f,
-            "a card in a 900.dp frame measured $cardWidth rather than AlertWidth ($AlertWidth)",
+            (cardWidth - ALERT_WIDTH).value.absoluteValue <= 1f,
+            "a card in a 900.dp frame measured $cardWidth rather than ALERT_WIDTH ($ALERT_WIDTH)",
         )
     }
 

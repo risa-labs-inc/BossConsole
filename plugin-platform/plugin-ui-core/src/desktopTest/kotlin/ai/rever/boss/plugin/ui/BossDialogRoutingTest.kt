@@ -69,9 +69,11 @@ class BossDialogRoutingTest {
         val messages = mutableListOf<String>()
         val previous = BossOverlayHost.diagnostics
         try {
+            resetOverlayFieldForTest("diagnostics")
             BossOverlayHost.diagnostics = { messages += it }
             repeat(5) { BossOverlayHost.reportMissingModalRenderer() }
         } finally {
+            resetOverlayFieldForTest("diagnostics")
             BossOverlayHost.diagnostics = previous
         }
         // A dialog recomposes freely; a per-composition warning would bury the log it is meant to

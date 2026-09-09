@@ -10,14 +10,11 @@ import kotlin.math.roundToInt
 internal val FIND_BAR_HEIGHT = 34.dp
 
 /**
- * Upper bound the corner overlay is measured against.
- *
- * A ceiling, not a first guess: `HeavyweightCorner` measures content against this and never
- * against its own window, so anything wider is CLIPPED rather than merely mis-sized on the first
- * frame. Comfortably above the bar's natural width, which is the field plus a counter and four
- * icon buttons.
+ * First-frame size of the corner overlay. Content is measured against the parent region and can
+ * grow beyond this estimate. The value is above the bar's natural width to avoid a visible initial
+ * grow-in while preserving a small click-catching placeholder.
  */
-internal val FIND_BAR_CEILING = DpSize(360.dp, 60.dp)
+internal val FIND_BAR_INITIAL_SIZE = DpSize(360.dp, 60.dp)
 
 /**
  * Gap between the bar and the pane's top and end edges, in dp.

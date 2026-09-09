@@ -2,6 +2,7 @@ package ai.rever.boss.app.editor
 
 import ai.rever.boss.ipc.proto.Empty
 import ai.rever.boss.ipc.proto.services.*
+import ai.rever.boss.plugin.language.LanguageIds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
@@ -63,7 +64,7 @@ class EditorServiceImpl : EditorServiceGrpcKt.EditorServiceCoroutineImplBase() {
                     .newBuilder()
                     .setSuccess(true)
                     .setContent(content)
-                    .setLanguage(detectLanguage(file.extension))
+                    .setLanguage(languageForFile(file))
                     .build()
             } catch (e: Exception) {
                 logger.warn("openFile read failed: {}", e.message)
@@ -142,32 +143,24 @@ class EditorServiceImpl : EditorServiceGrpcKt.EditorServiceCoroutineImplBase() {
         return ListOpenFilesResponse.newBuilder().addAllFiles(infos).build()
     }
 
-    private fun detectLanguage(ext: String): String =
+    // Filename rules take precedence even when a suffix is a known extension
+    // (Dockerfile.sh is a Dockerfile). Preserve this service's proto and unknown defaults.
+    private fun languageForFile(file: File): String =
+        LanguageIds.detect(file.name).takeUnless { it == LanguageIds.TEXT }
+            ?: detectLanguage(file.extension)
+
+    /**
+     * BossConsole#75: this used to be its own hand-maintained table, independent of
+     * (and disagreeing with) `composeApp`'s `EditorLanguages` - most visibly, `.sh`/
+     * `.bash`/`.zsh` were `shell` here and `bash` there. Both now read
+     * [LanguageIds], the module the two were consolidated into. `proto` stays a local
+     * addition: `LanguageIds` is the table shared with `boss-file-types.json`'s
+     * default-file-type-association list, and adding an id there means adding the
+     * extension to that JSON too - out of scope for a language-id fix.
+     */
+    internal fun detectLanguage(ext: String): String =
         when (ext.lowercase()) {
-            "kt", "kts" -> "kotlin"
-            "java" -> "java"
-            "py", "pyw" -> "python"
-            "js", "mjs" -> "javascript"
-            "ts", "tsx" -> "typescript"
-            "go" -> "go"
-            "rs" -> "rust"
-            "c", "h" -> "c"
-            "cpp", "cxx", "cc", "hpp" -> "cpp"
-            "cs" -> "csharp"
-            "swift" -> "swift"
-            "rb" -> "ruby"
-            "php" -> "php"
-            "sh", "bash", "zsh" -> "shell"
-            "html", "htm" -> "html"
-            "css", "scss", "sass" -> "css"
-            "json" -> "json"
-            "xml" -> "xml"
-            "yaml", "yml" -> "yaml"
-            "toml" -> "toml"
-            "md" -> "markdown"
-            "gradle" -> "groovy"
             "proto" -> "protobuf"
-            "sql" -> "sql"
-            else -> "plaintext"
+            else -> LanguageIds.forExtension(ext) ?: "plaintext"
         }
 }

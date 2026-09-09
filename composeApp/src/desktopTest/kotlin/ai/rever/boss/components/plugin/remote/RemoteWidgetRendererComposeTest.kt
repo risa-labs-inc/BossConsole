@@ -1,5 +1,8 @@
 package ai.rever.boss.components.plugin.remote
 
+import ai.rever.boss.ipc.auth.ProcessIdentityInterceptor
+import ai.rever.boss.ipc.auth.ProcessTokenClientInterceptor
+import ai.rever.boss.ipc.auth.ProcessTokenRegistry
 import ai.rever.boss.ipc.proto.PluginUIServiceGrpcKt
 import ai.rever.boss.ipc.proto.UIEvent
 import ai.rever.boss.ipc.proto.UIRegistration
@@ -54,6 +57,15 @@ import kotlin.test.assertTrue
 class RemoteWidgetRendererComposeTest {
     @get:Rule
     val compose = createComposeRule()
+
+    @Test
+    fun `remote content shows disconnection and clears it when connected`() {
+        val connected = androidx.compose.runtime.mutableStateOf(false)
+        compose.setContent { RemoteSurfaceContent(null, connected.value) { _, _ -> } }
+        compose.onNodeWithText("Remote surface disconnected").assertExists()
+        compose.runOnIdle { connected.value = true }
+        compose.onNodeWithText("Remote surface disconnected").assertDoesNotExist()
+    }
 
     @Test
     fun `a text field reports no focus event on its first composition`() {
@@ -192,13 +204,17 @@ class RemoteWidgetRendererComposeTest {
         // runBlocking owns this thread's event loop, and the Compose test rule needs it to advance frames,
         // so nesting the two deadlocks (`waitUntil` times out with the tree sitting undelivered).
         val registry = RemoteUiSurfaceRegistry()
+        val tokenRegistry = ProcessTokenRegistry()
         val server =
             ServerBuilder
                 .forPort(0)
+                .intercept(ProcessIdentityInterceptor(tokenRegistry))
                 .addService(PluginUIServiceBridge(registry))
                 .build()
                 .start()
-        val channel = ManagedChannelBuilder.forAddress("localhost", server.port).usePlaintext().build()
+        // Authenticated as "plugin-a", matching this test's registration/panel process id - the bridge
+        // now verifies identity before RegisterUI/StreamUI/UnregisterUI (BossConsole#53).
+        val channel = authenticatedChannel(server.port, tokenRegistry)
         val plugin = PluginUIServiceGrpcKt.PluginUIServiceCoroutineStub(channel)
         val pluginScope = CoroutineScope(Dispatchers.Default)
         val panel = RemotePanelComponent(PANEL, "Test Panel", "plugin-a", registry)
@@ -256,6 +272,15 @@ class RemoteWidgetRendererComposeTest {
             server.shutdownNow()
         }
     }
+
+    private fun authenticatedChannel(
+        port: Int,
+        tokenRegistry: ProcessTokenRegistry,
+    ) = ManagedChannelBuilder
+        .forAddress("localhost", port)
+        .usePlaintext()
+        .intercept(ProcessTokenClientInterceptor(tokenRegistry.issue("plugin-a")))
+        .build()
 
     /**
      * The first event queued for a surface.

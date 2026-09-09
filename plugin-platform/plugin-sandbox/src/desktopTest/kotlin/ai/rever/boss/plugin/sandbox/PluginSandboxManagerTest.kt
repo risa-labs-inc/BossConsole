@@ -1,8 +1,10 @@
 package ai.rever.boss.plugin.sandbox
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
@@ -373,11 +375,11 @@ class PluginSandboxManagerTest {
                     )
                 val budgetManager = PluginSandboxManagerImpl(config)
                 try {
-                    var disabledNotification: String? = null
+                    val disabledNotification = CompletableDeferred<String>()
                     val listener =
                         object : PluginSandboxListener {
                             override fun onPluginDisabled(pluginId: String) {
-                                disabledNotification = pluginId
+                                disabledNotification.complete(pluginId)
                             }
                         }
                     budgetManager.addListener(listener)
@@ -399,8 +401,10 @@ class PluginSandboxManagerTest {
                     // plugin normally over a dead scope, with no notification
                     // and isPluginDisabled() false - invisible to the user.
                     assertTrue(disabled, "the plugin was never marked disabled")
+                    // DISABLED is published before the listener runs on the watchdog thread.
+                    // Await notification instead of racing that thread through an unsynchronized variable.
+                    assertEquals("plugin-1", withTimeout(10_000) { disabledNotification.await() })
                     assertTrue(budgetManager.isPluginDisabled("plugin-1"))
-                    assertEquals("plugin-1", disabledNotification)
 
                     val terminated =
                         withTimeoutOrNull(5_000) {

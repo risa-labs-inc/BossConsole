@@ -3,6 +3,8 @@ package ai.rever.boss.components.settings.keymap
 import ai.rever.boss.keymap.lifecycle.ShortcutLifecycleManager
 import ai.rever.boss.keymap.model.KeyBinding
 import ai.rever.boss.keymap.model.KeymapSettings
+import ai.rever.boss.keymap.model.canonicalKeyName
+import ai.rever.boss.keymap.model.isKnownKeyName
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -135,23 +137,35 @@ object ShortcutTestRunner {
             return result
         }
 
-        // Step 4: Validate key name - ensure it will match when user presses it
-        val keyValidation = validateKeyName(binding.key)
-        if (!keyValidation.first) {
+        // Legacy codes that the matcher can resolve are valid too. Only a code that remains
+        // numeric after canonicalisation can be rejected here.
+        val keyFailure = invalidKeyReason(binding.key)
+        if (keyFailure != null) {
             val result =
                 ShortcutTestResult(
                     actionId = binding.actionId,
                     binding = binding,
                     status = TestStatus.FAILED,
-                    message = keyValidation.second,
+                    message = keyFailure,
                 )
             updateResult(result)
             logger.warn(
                 LogCategory.UI,
-                "Failed (invalid key)",
-                mapOf("description" to binding.description, "error" to keyValidation.second),
+                "Failed (invalid key name)",
+                mapOf("description" to binding.description, "key" to binding.key),
             )
             return result
+        }
+
+        // Step 4b: note an unrecognised key name. Deliberately NOT a failure - see
+        // [unrecognisedKeyNote] for why that cannot be decided from the name alone.
+        val keyNote = unrecognisedKeyNote(binding.key)
+        if (keyNote != null) {
+            logger.debug(
+                LogCategory.UI,
+                "Key name not recognised",
+                mapOf("description" to binding.description, "key" to binding.key),
+            )
         }
 
         // Step 5: Context-aware validation for specific action types
@@ -162,7 +176,7 @@ object ShortcutTestRunner {
                 actionId = binding.actionId,
                 binding = binding,
                 status = status,
-                message = message,
+                message = if (keyNote != null) "$message ($keyNote)" else message,
             )
         updateResult(result)
 
@@ -175,111 +189,34 @@ object ShortcutTestRunner {
         return result
     }
 
+    /** Whether a numeric key remains unresolved by the same fold the matchers use. */
+    internal fun looksLikePackedKeyCode(keyName: String): Boolean =
+        keyName.length >= 2 && keyName.all { it.isDigit() } && canonicalKeyName(keyName) == keyName
+
     /**
-     * Validates that a key name is recognized and will match when the user presses it.
-     * Checks against known key names that are handled by normalizeKeyName in KeymapMatcher.
+     * A note about [keyName] if it is not one this build recognises, or null if it is.
      *
-     * NOTE: This is a static validation that checks if the key name is in the correct format.
-     * It does NOT actually simulate key presses, because creating synthetic KeyEvent objects
-     * in Compose is complex. However, it catches the most common errors:
-     * - Using character forms ("-", "=", "0") instead of word forms ("Minus", "Equals", "Zero")
-     * - Using arrow characters ("←") instead of word forms ("Left")
-     * - Using unknown key names
+     * This used to be `validateKeyName`, a hand-written set of "valid" key names and a hard
+     * FAILED for anything outside it. It was the fourth copy of the key vocabulary in the
+     * codebase and the only one nothing tested, so it had drifted: it listed no function key at
+     * all, and neither Home, End, PageUp nor PageDown. A shortcut rebound onto F5 was reported
+     * as "Unknown key name 'F5' - won't match user input" while working perfectly, and so were
+     * the character spellings ("-", "=") that `canonicalKeyName` has folded onto their word
+     * forms for as long as it has existed. Fifteen keys in all, every one of them a false
+     * failure on a shortcut that worked.
      *
-     * @return Pair<Boolean, String> - (isValid, errorMessage)
+     * It is a NOTE now rather than a verdict, because the honest answer to "will this match" is
+     * not knowable from the name alone: [canonicalKeyName] folds an unknown name onto itself, and
+     * the keyboard has keys outside the interceptor's table (F13 and up, the keypad) that AWT
+     * still names. Reporting a shortcut as broken when it works is worse than saying nothing, so
+     * an unrecognised name says it is unrecognised and the test does not fail on it.
      */
-    private fun validateKeyName(keyName: String): Pair<Boolean, String> {
-        // List of valid key names (word forms that normalizeKeyName handles)
-        val validWordKeyNames =
-            setOf(
-                // Numbers
-                "Zero",
-                "One",
-                "Two",
-                "Three",
-                "Four",
-                "Five",
-                "Six",
-                "Seven",
-                "Eight",
-                "Nine",
-                // Symbols
-                "Minus",
-                "Equals",
-                "Plus",
-                "OpenBracket",
-                "CloseBracket",
-                "Slash",
-                "Backslash",
-                "Semicolon",
-                "Apostrophe",
-                "Comma",
-                "Period",
-                "Grave",
-                // Directions
-                "Left",
-                "Right",
-                "Up",
-                "Down",
-                "DirectionLeft",
-                "DirectionRight",
-                "DirectionUp",
-                "DirectionDown",
-                // Special keys
-                "Space",
-                "Spacebar",
-                "Enter",
-                "Return",
-                "Escape",
-                "Esc",
-                "Tab",
-                "Backspace",
-                "Delete",
-            )
-
-        // Check if it's a valid word name (case-insensitive)
-        if (validWordKeyNames.any { it.equals(keyName, ignoreCase = true) }) {
-            return Pair(true, "")
+    internal fun unrecognisedKeyNote(keyName: String): String? =
+        if (isKnownKeyName(keyName)) {
+            null
+        } else {
+            "unrecognised key name '$keyName'"
         }
-
-        // Check if it's a single letter (A-Z)
-        if (keyName.length == 1 && keyName[0].isLetter()) {
-            return Pair(true, "")
-        }
-
-        // Check if it's a single character that should be a word name
-        val characterToWordMap =
-            mapOf(
-                // Symbols
-                "-" to "Minus",
-                "=" to "Equals",
-                "+" to "Plus",
-                // Numbers
-                "0" to "Zero",
-                "1" to "One",
-                "2" to "Two",
-                "3" to "Three",
-                "4" to "Four",
-                "5" to "Five",
-                "6" to "Six",
-                "7" to "Seven",
-                "8" to "Eight",
-                "9" to "Nine",
-                // Arrow characters
-                "←" to "Left",
-                "→" to "Right",
-                "↑" to "Up",
-                "↓" to "Down",
-            )
-
-        if (characterToWordMap.containsKey(keyName)) {
-            val correctName = characterToWordMap[keyName]
-            return Pair(false, "Key name should be '$correctName' not '$keyName'")
-        }
-
-        // Unknown key name
-        return Pair(false, "Unknown key name '$keyName' - won't match user input")
-    }
 
     /**
      * Validates context-specific requirements for different action types.
@@ -401,3 +338,18 @@ data class TestProgress(
     val isComplete: Boolean
         get() = completed >= total && total > 0
 }
+
+private fun invalidKeyReason(keyName: String): String? =
+    when {
+        ShortcutTestRunner.looksLikePackedKeyCode(keyName) -> {
+            "Stored as a raw key code ('$keyName') - re-record this shortcut"
+        }
+
+        keyName.isBlank() && !isKnownKeyName(keyName) -> {
+            "Empty key name - re-record this shortcut"
+        }
+
+        else -> {
+            null
+        }
+    }

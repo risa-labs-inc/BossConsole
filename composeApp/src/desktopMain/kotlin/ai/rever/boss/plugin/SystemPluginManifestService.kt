@@ -16,6 +16,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -227,7 +229,10 @@ object SystemPluginManifestService {
         started = true
         onAdditions = onNewPluginsInstallable
 
-        scope.launch { refreshFromRemote() }
+        scope.launch {
+            awaitSupabaseInitialized()
+            refreshFromRemote()
+        }
         subscribeToChanges()
     }
 
@@ -303,6 +308,8 @@ object SystemPluginManifestService {
 
     private fun subscribeToChanges() {
         scope.launch {
+            awaitSupabaseInitialized()
+
             var backoffMs = 5_000L
             val maxBackoffMs = 60_000L
 
@@ -319,9 +326,8 @@ object SystemPluginManifestService {
                     backoffMs = 5_000L
                     logger.info(LogCategory.NETWORK, "Subscribed to system_plugins changes")
 
-                    // Catch up on (re)connect: the startup fetch can lose the
-                    // race with SupabaseConfig initialization, and changes can
-                    // land while the subscription was down.
+                    // Catch up on (re)connect: changes can land before subscription
+                    // or while the subscription was down.
                     refreshFromRemote()
 
                     changeFlow.collect {
@@ -398,4 +404,9 @@ object SystemPluginManifestService {
             )
         }
     }
+}
+
+/** Suspend startup work until the client is ready, including an offline boot with late initialization. */
+internal suspend fun awaitSupabaseInitialized(initialized: StateFlow<Boolean> = SupabaseConfig.isInitialized) {
+    initialized.first { it }
 }
